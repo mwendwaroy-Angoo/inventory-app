@@ -1,0 +1,6 @@
+Django>=5.0,<6.0
+django-bootstrap5
+gunicorn
+whitenoise
+openpyxl
+psycopg2-binary  # For better database later (optional now)

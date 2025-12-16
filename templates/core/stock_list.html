@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Full Stock List</title>
+    {% load django_bootstrap5 %}
+    {% bootstrap_css %}
+    {% bootstrap_javascript %}
+    <style>
+        body { background-color: #f8f9fa; padding: 20px; }
+        .header { background-color: #0d6efd; color: white; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 30px; }
+        .search-box { max-width: 500px; margin: 20px auto; }
+        .reorder { background-color: #fff3cd !important; }
+        .out-of-stock { background-color: #f8d7da !important; }
+        .clickable-row:hover { background-color: #e3f2fd !important; }
+    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    @media (max-width: 768px) {
+    .table { font-size: 0.9rem; }
+    .btn { width: 100%; margin-bottom: 10px; }  /* Stack buttons */
+    .search-box { margin: 10px; }
+    .stat-card { margin-bottom: 20px; }  /* Stack cards on home
+}
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Full Stock List</h1>
+            <p>SF Computer & Maintenance Stores | {{ today }}</p>
+            <a href="{% url 'home' %}" class="btn btn-light">← Back to Dashboard</a>
+        </div>
+
+        <div class="search-box">
+            <input type="text" id="searchInput" class="form-control" placeholder="Search by Material No or Description...">
+        </div>
+
+        <a href="{% url 'export_stock' %}?store={{ request.GET.store }}" class="btn btn-success mb-3">
+    Export to Excel
+</a>
+
+        <div class="table-responsive">
+            <table class="table table-striped table-hover" id="stockTable">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Material No</th>
+                        <th>Item Description</th>
+                        <th>Unit</th>
+                        <th>Current Balance</th>
+                        <th>Physical Balance</th>
+                        <th>Deficit</th>
+                        <th>Surplus</th>
+                        <th>Reorder Level</th>
+                        <th>Reorder Qty</th>
+                        <th>Status</th>
+                        <th>Store</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr class="clickable-row {% if item.needs_reorder %}reorder{% endif %} {% if item.current_balance <= 0 %}out-of-stock{% endif %}" 
+        style="cursor: pointer;" 
+        onclick="window.location='{% url 'item_detail' item.id %}'">
+                        <td><strong>{{ item.material_no }}</strong></td>
+                        <td>{{ item.description }}</td>
+                        <td>{{ item.unit }}</td>
+                        <td>{{ item.current_balance }}</td>
+                        <td>{{ item.physical_balance }}</td>
+                        <td>{% if item.deficit > 0 %}<span class="text-danger">{{ item.deficit }}</span>{% else %}-{% endif %}</td>
+                        <td>{% if item.surplus > 0 %}<span class="text-success">{{ item.surplus }}</span>{% else %}-{% endif %}</td>
+                        <td>{{ item.reorder_level }}</td>
+                        <td>{{ item.reorder_quantity }}</td>
+                        <td>
+                            {% if item.current_balance <= 0 %}
+                                <span class="badge bg-danger">OUT OF STOCK</span>
+                            {% elif item.needs_reorder %}
+                                <span class="badge bg-warning">REORDER</span>
+                            {% else %}
+                                <span class="badge bg-success">AVAILABLE</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ item.store.name }}</td>
+                        <td>
+    {% if user.has_perm 'core.change_item' %}
+        <a href="/admin/core/item/{{ item.id }}/change/" class="btn btn-sm btn-warning">Edit</a>
+    {% endif %}
+</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="10" class="text-center">No items found.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="mb-3 text-center">
+    <form method="get">
+        <label for="store" class="form-label"><strong>Filter by Store</strong></label>
+        <select name="store" id="store" class="form-select d-inline-block w-auto" onchange="this.form.submit()">
+            <option value="">All Stores</option>
+            {% for store in stores %}
+            {% if store.items.exists %}  <!-- Only show stores with items -->
+            <option value="{{ store.id }}" {% if selected_store == store.id %}selected{% endif %}>
+                {{ store.name }}
+            </option>
+            {% endif %}
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+    </form>
+</div>
+
+    <script>
+        // Live search
+        document.getElementById("searchInput").addEventListener("keyup", function() {
+            let input = this.value.toLowerCase();
+            let rows = document.querySelectorAll("#stockTable tbody tr");
+            rows.forEach(row => {
+                let text = row.textContent.toLowerCase();
+                row.style.display = text.includes(input) ? "" : "none";
+            });
+        });
+    </script>
+</body>
+</html>

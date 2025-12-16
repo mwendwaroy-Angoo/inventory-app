@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ item.description }} - Details</title>
+    {% load django_bootstrap5 %}
+    {% bootstrap_css %}
+    {% bootstrap_javascript %}
+    <style>
+        body { background-color: #f8f9fa; padding: 20px; }
+        .header { background-color: #0d6efd; color: white; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 30px; }
+    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    @media (max-width: 768px) {
+    .table { font-size: 0.9rem; }
+    .btn { width: 100%; margin-bottom: 10px; }  /* Stack buttons */
+    .search-box { margin: 10px; }
+    .stat-card { margin-bottom: 20px; }  /* Stack cards on home
+}
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{ item.description }}</h1>
+            <p>Material No: <strong>{{ item.material_no }}</strong> | Store: <strong>{{ item.store.name }}</strong></p>
+            <p>Current Balance: <strong>{{ item.current_balance }} {{ item.unit }}</strong></p>
+            <a href="{% url 'stock_list' %}" class="btn btn-light">← Back to Stock List</a>
+        </div>
+
+        <h3>Transaction History</h3>
+        {% if transactions %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th>Quantity</th>
+                        <th>Department</th>
+                        <th>Doc No</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trans in transactions %}
+                    <tr>
+                        <td>{{ trans.date }}</td>
+                        <td>{{ trans.type }}</td>
+                        <td class="{% if trans.qty < 0 %}text-danger{% else %}text-success{% endif %}">
+    {{ trans.qty }} {{ item.unit }}
+</td>
+                        <td>{{ trans.department|default:"—" }}</td>
+                        <td>{{ trans.doc_no|default:"—" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p>No transactions recorded yet.</p>
+        {% endif %}
+    </div>
+</body>
+</html>

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Transaction History</title>
+    {% load django_bootstrap5 %}
+    {% bootstrap_css %}
+    {% bootstrap_javascript %}
+    <style>
+        body { background-color: #f8f9fa; padding: 20px; }
+        .header { background-color: #0d6efd; color: white; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 30px; }
+    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    @media (max-width: 768px) {
+    .table { font-size: 0.9rem; }
+    .btn { width: 100%; margin-bottom: 10px; }  /* Stack buttons */
+    .search-box { margin: 10px; }
+    .stat-card { margin-bottom: 20px; }  /* Stack cards on home
+}
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Full Transaction History</h1>
+            <p>All issues and receipts | {{ today }}</p>
+            <a href="{% url 'home' %}" class="btn btn-light">← Dashboard</a>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Date</th>
+                        <th>Item</th>
+                        <th>Store</th>
+                        <th>Type</th>
+                        <th>Quantity</th>
+                        <th>Department</th>
+                        <th>Doc No</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trans in transactions %}
+                    <tr>
+                        <td>{{ trans.date }}</td>
+                        <td>{{ trans.item.description }} ({{ trans.item.material_no }})</td>
+                        <td>{{ trans.item.store.name }}</td>
+                        <td>{{ trans.type }}</td>
+                        <td class="{% if trans.qty < 0 %}text-danger{% else %}text-success{% endif %}">
+                            {{ trans.qty }}
+                        </td>
+                        <td>{{ trans.department|default:"—" }}</td>
+                        <td>{{ trans.doc_no|default:"—" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="7" class="text-center">No transactions yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

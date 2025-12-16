@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add New Transaction</title>
+    {% load django_bootstrap5 %}
+    {% bootstrap_css %}
+    {% bootstrap_javascript %}
+    <style>
+        body { background-color: #f8f9fa; padding: 20px; }
+        .header { background-color: #0d6efd; color: white; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 30px; }
+        .form-container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    @media (max-width: 768px) {
+    .table { font-size: 0.9rem; }
+    .btn { width: 100%; margin-bottom: 10px; }  /* Stack buttons */
+    .search-box { margin: 10px; }
+    .stat-card { margin-bottom: 20px; }  /* Stack cards on home
+}
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Add New Transaction</h1>
+            <p>SF Computer & Maintenance Stores | {{ today }}</p>
+            <a href="{% url 'home' %}" class="btn btn-light">← Back to Dashboard</a>
+        </div>
+
+        <div class="form-container">
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-success">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+
+            <form method="post">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label for="item" class="form-label"><strong>Item</strong></label>
+                    <select name="item" id="item" class="form-select" required>
+                        <option value="">--- Select Item ---</option>
+                        {% for item in items %}
+                        <option value="{{ item.id }}">{{ item.material_no }} - {{ item.description }} (Current: {{ item.current_balance }} {{ item.unit }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label for="type" class="form-label"><strong>Transaction Type</strong></label>
+                    <select name="type" id="type" class="form-select" required>
+                        <option value="Receipt">Receipt (Add Stock)</option>
+                        <option value="Issue">Issue (Remove Stock)</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label for="quantity" class="form-label"><strong>Quantity</strong></label>
+                    <input type="number" name="quantity" id="quantity" class="form-control" min="1" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="department" class="form-label">Department (optional)</label>
+                    <input type="text" name="department" id="department" class="form-control" placeholder="e.g., KAKAMEGA, ADMINISTRATION">
+                </div>
+
+                <div class="mb-3">
+                    <label for="doc_no" class="form-label">Document No (optional)</label>
+                    <input type="text" name="doc_no" id="doc_no" class="form-control" placeholder="e.g., 490002787">
+                </div>
+
+                <div class="text-center">
+                    <button type="submit" class="btn btn-success btn-lg">Submit Transaction</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
