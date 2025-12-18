@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Inventory Management System</title>
     {% load django_bootstrap5 %}
     {% bootstrap_css %}
@@ -14,39 +14,44 @@
         .reorder-alert { background-color: #fff3cd; border-left: 5px solid #ffc107; }
         .low-stock { background-color: #f8d7da; border-left: 5px solid #dc3545; }
         a.btn { margin: 10px; }
+
+        @media (max-width: 768px) {
+            .table { font-size: 0.9rem; }
+            .btn { width: 100%; margin-bottom: 10px; }  /* Stack buttons */
+            .search-box { margin: 10px; }
+            .stat-card { margin-bottom: 20px; }  /* Stack cards */
+        }
     </style>
-    <div class="text-end mb-3">
-    {% if user.is_authenticated %}
-        <small>Hello, <strong>{{ user.username }}</strong> | <a href="{% url 'logout' %}">Logout</a></small>
-    {% else %}
-        <small><a href="{% url 'login' %}">Staff Login</a></small>
-    {% endif %}
-</div>
-<a href="{% url 'transaction_history' %}" class="btn btn-info btn-lg">View Transaction History</a>
-{% if user.has_perm 'core.add_transaction' or not user.is_authenticated %}
-    <a href="{% url 'add_transaction' %}" class="btn btn-success btn-lg">Add New Transaction</a>
-{% else %}
-    <p class="text-muted">Contact manager to record transactions</p>
-{% endif %}
-{% if user.has_perm 'core.add_transaction' %}
-    <a href="{% url 'add_transaction' %}" class="btn btn-success btn-lg">Add New Transaction</a>
-{% endif %}
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-@media (max-width: 768px) {
-    .table { font-size: 0.9rem; }
-    .btn { width: 100%; margin-bottom: 10px; }  /* Stack buttons */
-    .search-box { margin: 10px; }
-    .stat-card { margin-bottom: 20px; }  /* Stack cards on home
-}
 </head>
 <body>
     <div class="container mt-5">
+        <!-- Login/Logout bar -->
+        <div class="text-end mb-3">
+            {% if user.is_authenticated %}
+                <small>Hello, <strong>{{ user.username }}</strong> | <a href="{% url 'logout' %}">Logout</a></small>
+            {% else %}
+                <small><a href="{% url 'login' %}">Staff Login</a></small>
+            {% endif %}
+        </div>
+
+               <!-- Main action buttons -->
+        <div class="text-center mb-4">
+            <a href="{% url 'stock_list' %}" class="btn btn-primary btn-lg">View Full Stock List</a>
+            <a href="{% url 'transaction_history' %}" class="btn btn-info btn-lg">View Transaction History</a>
+
+            {% if perms.core.add_transaction %}
+            <a href="{% url 'add_transaction' %}" class="btn btn-success btn-lg">Add New Transaction</a>
+            {% endif %}
+        </div>
+
+        <!-- Header -->
         <div class="header">
             <h1>Stock Control System</h1>
             <p class="lead">SF Computer & Maintenance Stores</p>
             <p><strong>Date:</strong> {{ today }}</p>
         </div>
 
+        <!-- Stats cards -->
         <div class="row mb-4">
             <div class="col-md-4">
                 <div class="stat-card">
@@ -68,11 +73,7 @@
             </div>
         </div>
 
-        <div class="text-center mb-4">
-            <a href="{% url 'stock_list' %}" class="btn btn-primary btn-lg ">View Full Stock List</a>
-            <a href="{% url 'add_transaction' %}" class="btn btn-success btn-lg">Add New Transaction</a>
-        </div>
-
+        <!-- Urgent reorder table -->
         {% if reorder_items %}
         <h3 class="mt-5">🚨 Items Needing Urgent Reorder</h3>
         <div class="table-responsive">

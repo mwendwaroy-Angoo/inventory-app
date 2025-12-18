@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'core',
     'django_bootstrap5',
     'accounts',
+    'django_select2',
 ]
 
 MIDDLEWARE = [

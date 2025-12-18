@@ -1,6 +1,8 @@
 from django.contrib import admin
 from django.urls import path, include
 from core.views import home, stock_list, add_transaction, item_detail, transaction_history, export_stock_excel
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -12,3 +14,7 @@ urlpatterns = [
     path('history/', transaction_history, name='transaction_history'),
     path('export/', export_stock_excel, name='export_stock'),
 ]
+if settings.DEBUG:
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+
+

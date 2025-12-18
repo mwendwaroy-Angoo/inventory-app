@@ -14,7 +14,7 @@
         .reorder { background-color: #fff3cd !important; }
         .out-of-stock { background-color: #f8d7da !important; }
         .clickable-row:hover { background-color: #e3f2fd !important; }
-    </style>
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     @media (max-width: 768px) {
     .table { font-size: 0.9rem; }
@@ -22,6 +22,7 @@
     .search-box { margin: 10px; }
     .stat-card { margin-bottom: 20px; }  /* Stack cards on home
 }
+</style>
 </head>
 <body>
     <div class="container">
@@ -81,7 +82,7 @@
                         </td>
                         <td>{{ item.store.name }}</td>
                         <td>
-    {% if user.has_perm 'core.change_item' %}
+    {% if perms.core.change_item %}
         <a href="/admin/core/item/{{ item.id }}/change/" class="btn btn-sm btn-warning">Edit</a>
     {% endif %}
 </td>
