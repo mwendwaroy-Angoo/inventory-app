@@ -4,3 +4,4 @@ gunicorn
 whitenoise
 openpyxl
 psycopg2-binary  # For better database later (optional now)
+django_select2
