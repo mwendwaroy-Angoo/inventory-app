@@ -28,7 +28,12 @@
         <!-- Login/Logout bar -->
         <div class="text-end mb-3">
             {% if user.is_authenticated %}
-                <small>Hello, <strong>{{ user.username }}</strong> | <a href="{% url 'logout' %}">Logout</a></small>
+                <small>Hello, <strong>{{ user.username }}</strong> |
+                    <form method="post" action="{% url 'logout' %}" style="display:inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-link p-0 m-0 align-baseline" style="vertical-align: baseline;">Logout</button>
+                    </form>
+                </small>
             {% else %}
                 <small><a href="{% url 'login' %}">Staff Login</a></small>
             {% endif %}
