@@ -6,6 +6,10 @@ class ItemAdmin(admin.ModelAdmin):
     list_filter = ['store']
     search_fields = ['material_no', 'description']
     list_editable = ['store']  # Quick edit store directly in list
+@admin.register(Store)
+class StoreAdmin(admin.ModelAdmin):
+    list_display = ('name', 'business')
+    list_filter = ('business',)
 
     actions = ['assign_to_sf', 'assign_to_computer', 'assign_to_maintenance']
 
