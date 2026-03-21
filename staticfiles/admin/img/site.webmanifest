@@ -1,0 +1,21 @@
+{
+  "name": "Stock Made Simple",
+  "short_name": "SMS",
+  "icons": [
+    {
+      "src": "/https://stock-made-simpler-sms.onrender.com/staticfiles/admin/img/icon-192.png)./web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/https://stock-made-simpler-sms.onrender.com/staticfiles/admin/img/icon-192.png)./web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#276cc3",
+  "background_color": "#181a75",
+  "display": "standalone"
+}
