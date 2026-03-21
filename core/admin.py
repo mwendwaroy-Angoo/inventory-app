@@ -43,6 +43,8 @@ class StoreAdmin(admin.ModelAdmin):
         self.message_user(request, f"{updated} items assigned to MAINTENANCE STORE.")
     assign_to_maintenance.short_description = "Assign selected to MAINTENANCE STORE"
 
-admin.site.register(Item, ItemAdmin)
-admin.site.register(Store)
-admin.site.register(Transaction)
+@admin.register(Transaction)
+class TransactionAdmin(admin.ModelAdmin):
+    list_display = ('date', 'item', 'type', 'qty', 'department', 'doc_no')
+    list_filter = ('type', 'date', 'department')
+    search_fields = ('item__description', 'doc_no')
