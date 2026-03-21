@@ -5,7 +5,8 @@ from django.contrib.auth.decorators import login_required, permission_required
 
 
 def home(request):
-    all_items = Item.objects.all()
+    user_profile = request.user.userprofile
+    all_items = Item.objects.filter(store__business=user_profile.business)
     reorder_items = [item for item in all_items if item.needs_reorder()]
     low_stock_count = len([item for item in all_items if item.current_balance() <= item.reorder_level])
     reorder_count = len(reorder_items)
@@ -21,17 +22,18 @@ def home(request):
 
 @login_required
 def stock_list(request):
-    stores = Store.objects.all()
+    user_profile = request.user.userprofile
+    stores = Store.objects.filter(business=user_profile.business)
     selected_store_id = request.GET.get('store')  # This is a string or None
 
     if selected_store_id:
         try:
             selected_store_id = int(selected_store_id)  # Convert to integer
-            items = Item.objects.filter(store_id=selected_store_id).order_by('material_no')
+            items = Item.objects.filter(store_id=selected_store_id, store__business=user_profile.business).order_by('material_no')
         except (ValueError, TypeError):
-            items = Item.objects.all().order_by('material_no')  # Fallback if invalid
+            items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')  # Fallback if invalid
     else:
-        items = Item.objects.all().order_by('material_no')
+        items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
 
     context = {
         'items': items,
@@ -71,7 +73,8 @@ def add_transaction(request):
         return redirect('add_transaction')  # ← This ends the POST block
 
     # GET request - show form (this is reachable now!)
-    items = Item.objects.all().order_by('material_no')
+    user_profile = request.user.userprofile
+    items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
     context = {
         'items': items,
         'today': timezone.now().strftime("%B %d, %Y"),
@@ -80,18 +83,20 @@ def add_transaction(request):
   
 @login_required  
 def item_detail(request, item_id):
-        item = get_object_or_404(Item, id=item_id)
-        transactions = item.transactions.all().order_by('-date')  # Latest first
-        context = {
-            'item': item,
-            'transactions': transactions,
-            'today': timezone.now().strftime("%B %d, %Y"),
-        }
-        return render(request, 'core/item_detail.html', context)
+    user_profile = request.user.userprofile
+    item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
+    transactions = item.transactions.all().order_by('-date')  # Latest first
+    context = {
+        'item': item,
+        'transactions': transactions,
+        'today': timezone.now().strftime("%B %d, %Y"),
+    }
+    return render(request, 'core/item_detail.html', context)
 
 @login_required
 def transaction_history(request):
-    transactions = Transaction.objects.all().select_related('item').order_by('-date')
+    user_profile = request.user.userprofile
+    transactions = Transaction.objects.filter(item__store__business=user_profile.business).select_related('item').order_by('-date')
     context = {
         'transactions': transactions,
         'today': timezone.now().strftime("%B %d, %Y"),

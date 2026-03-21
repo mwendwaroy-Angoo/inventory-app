@@ -1,11 +1,15 @@
 from django.db import models
 from django.utils import timezone
 
+
+from accounts.models import Business
+
 class Store(models.Model):
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='stores')
     name = models.CharField(max_length=100)  # e.g., SF STORE, COMPUTER STORE
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.business.name})"
 
 class Item(models.Model):
     store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='items')
