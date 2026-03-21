@@ -68,7 +68,7 @@ class Item(models.Model):
     reorder_level = models.IntegerField(default=0)
 
     # NEW: Link to business (string reference)
-    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='items')
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='items', null=True, blank=True)
 
     # NEW: Selling price (owner can edit)
     selling_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -109,7 +109,7 @@ class Transaction(models.Model):
     department = models.CharField(max_length=100, blank=True)
 
     # NEW: Link to business (string reference)
-    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='transactions')
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='transactions', null=True, blank=True)
 
     def __str__(self):
         return f"{self.type} {abs(self.qty)} {self.item.unit} - {self.item.description}"
