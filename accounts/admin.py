@@ -1,14 +1,17 @@
 from django.contrib import admin
-from .models import Business, UserProfile  # Adjust model names if different
+from .models import Business, UserProfile
+
 
 @admin.register(Business)
 class BusinessAdmin(admin.ModelAdmin):
-    list_display = ('name', 'owner', 'created_at')  # Customize fields
+    list_display = ('name', 'owner', 'business_type', 'county', 'sub_location', 'created_at')
     search_fields = ('name', 'owner__username')
-    list_filter = ('created_at',)
+    list_filter = ('business_type', 'county', 'created_at')
+    readonly_fields = ('created_at',)
+
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'client')  # or 'business' if you renamed it
-    search_fields = ('user__username', 'client__name')
-    list_filter = ('client',)
+    list_display = ('user', 'business')          # ← fixed: 'client' → 'business'
+    search_fields = ('user__username', 'business__name')
+    list_filter = ('business',)                  # ← fixed: 'client' → 'business'
