@@ -22,6 +22,7 @@
             .stat-card { margin-bottom: 20px; }  /* Stack cards */
         }
     </style>
+    <link rel="manifest" href="/static/manifest.json">
 </head>
 <body>
     <div class="container mt-5">
@@ -119,5 +120,19 @@
         </div>
         {% endif %}
     </div>
+        <script>
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                    navigator.serviceWorker.register('/static/sw.js')
+                        .then(function(registration) {
+                            // Registration successful
+                            console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                        }, function(err) {
+                            // Registration failed
+                            console.log('ServiceWorker registration failed: ', err);
+                        });
+                });
+            }
+        </script>
 </body>
 </html>
