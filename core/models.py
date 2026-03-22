@@ -47,7 +47,7 @@ class SubLocation(models.Model):
 
 class Store(models.Model):
     # Use string reference instead of import
-    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stores')
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stores', null=True, blank=True)
     name = models.CharField(max_length=100)  # e.g., SF STORE, COMPUTER STORE
 
     # NEW: Which business types this store is suitable for
