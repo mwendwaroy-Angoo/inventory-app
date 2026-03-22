@@ -47,14 +47,15 @@ class SubLocation(models.Model):
 
 class Store(models.Model):
     # Use string reference instead of import
-    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stores', null=True, blank=True)
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stores')
     name = models.CharField(max_length=100)  # e.g., SF STORE, COMPUTER STORE
 
     # NEW: Which business types this store is suitable for
     suitable_for_types = models.ManyToManyField(BusinessType, related_name='suitable_stores', blank=True)
 
     def __str__(self):
-        return f"{self.name} ({self.business.name})"
+        business_name = self.business.name if self.business else "No Business"
+        return f"{self.name} ({business_name})"
 
 
 class Item(models.Model):
