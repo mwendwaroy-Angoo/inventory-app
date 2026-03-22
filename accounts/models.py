@@ -2,7 +2,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from core.models import BusinessType, County, SubLocation  # Import these from core
+from core.models import BusinessType, County, SubLocation
 
 
 class Business(models.Model):
@@ -36,15 +36,14 @@ class UserProfile(models.Model):
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
     if created:
-        # For now, assign the first Business (placeholder) — you will change this in signup form
         business = Business.objects.first()
         if not business:
-            # Create a default placeholder business if none exists
             business = Business.objects.create(name=f"Business for {instance.username}")
         UserProfile.objects.create(user=instance, business=business)
 
 
-# Optional: Auto-save profile changes if needed (rarely used)
+# Safer auto-save profile (optional but prevents crashes)
 @receiver(post_save, sender=User)
 def save_user_profile(sender, instance, **kwargs):
-    instance.userprofile.save()
+    if hasattr(instance, 'userprofile'):
+        instance.userprofile.save()
