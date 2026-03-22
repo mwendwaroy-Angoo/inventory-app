@@ -5,19 +5,32 @@ from django.contrib.auth.decorators import login_required, permission_required
 
 
 def home(request):
-    user_profile = request.user.userprofile
-    all_items = Item.objects.filter(store__business=user_profile.business)
-    reorder_items = [item for item in all_items if item.needs_reorder()]
-    low_stock_count = len([item for item in all_items if item.current_balance() <= item.reorder_level])
-    reorder_count = len(reorder_items)
-
     context = {
         'today': timezone.now().strftime("%B %d, %Y"),
-        'total_items': all_items.count(),
-        'low_stock_count': low_stock_count,
-        'reorder_count': reorder_count,
-        'reorder_items': sorted(reorder_items, key=lambda x: x.current_balance())[:20],  # Top 20 urgent
     }
+
+    if request.user.is_authenticated:
+        try:
+            user_profile = request.user.userprofile
+            business = user_profile.business
+            all_items = Item.objects.filter(business=business)
+            reorder_items = [item for item in all_items if item.needs_reorder()]
+            low_stock_count = len([item for item in all_items if item.current_balance() <= item.reorder_level])
+            reorder_count = len(reorder_items)
+
+            context.update({
+                'total_items': all_items.count(),
+                'low_stock_count': low_stock_count,
+                'reorder_count': reorder_count,
+                'reorder_items': sorted(reorder_items, key=lambda x: x.current_balance())[:20],
+            })
+        except AttributeError:
+            # Fallback if profile is missing
+            context['error'] = "Profile not found. Please contact support."
+    else:
+        # Guest users see a welcome or login prompt
+        context['guest'] = True
+
     return render(request, 'core/home.html', context)
 
 @login_required

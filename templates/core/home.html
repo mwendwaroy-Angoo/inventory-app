@@ -45,7 +45,7 @@
             {% endif %}
         </div>
 
-               <!-- Main action buttons -->
+                     <!-- Main action buttons -->
         <div class="text-center mb-4">
             <a href="{% url 'stock_list' %}" class="btn btn-primary btn-lg">View Full Stock List</a>
             <a href="{% url 'transaction_history' %}" class="btn btn-info btn-lg">View Transaction History</a>
@@ -62,67 +62,76 @@
             <p><strong>Date:</strong> {{ today }}</p>
         </div>
 
-        <!-- Stats cards -->
-        <div class="row mb-4">
-            <div class="col-md-4">
-                <div class="stat-card">
-                    <h4>Total Items</h4>
-                    <h2 class="text-primary">{{ total_items }}</h2>
+        {% if user.is_authenticated %}
+            <!-- Stats cards - only visible to logged-in users -->
+            <div class="row mb-4">
+                <div class="col-md-4">
+                    <div class="stat-card">
+                        <h4>Total Items</h4>
+                        <h2 class="text-primary">{{ total_items }}</h2>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="stat-card">
+                        <h4>Low Stock Items</h4>
+                        <h2 class="text-warning">{{ low_stock_count }}</h2>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="stat-card">
+                        <h4>Needs Reorder</h4>
+                        <h2 class="text-danger">{{ reorder_count }}</h2>
+                    </div>
                 </div>
             </div>
-            <div class="col-md-4">
-                <div class="stat-card">
-                    <h4>Low Stock Items</h4>
-                    <h2 class="text-warning">{{ low_stock_count }}</h2>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="stat-card">
-                    <h4>Needs Reorder</h4>
-                    <h2 class="text-danger">{{ reorder_count }}</h2>
-                </div>
-            </div>
-        </div>
 
-        <!-- Urgent reorder table -->
-        {% if reorder_items %}
-        <h3 class="mt-5">🚨 Items Needing Urgent Reorder</h3>
-        <div class="table-responsive">
-            <table class="table table-striped">
-                <thead class="table-dark">
-                    <tr>
-                        <th>Material No</th>
-                        <th>Description</th>
-                        <th>Unit</th>
-                        <th>Current Stock</th>
-                        <th>Reorder Level</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in reorder_items %}
-                    <tr class="{% if item.current_balance < 0 %}low-stock{% else %}reorder-alert{% endif %}">
-                        <td><strong>{{ item.material_no }}</strong></td>
-                        <td>{{ item.description }}</td>
-                        <td>{{ item.unit }}</td>
-                        <td>{{ item.current_balance }}</td>
-                        <td>{{ item.reorder_level }}</td>
-                        <td>
-                            {% if item.current_balance <= 0 %}
-                                <span class="badge bg-danger">OUT OF STOCK</span>
-                            {% else %}
-                                <span class="badge bg-warning">LOW STOCK</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+            <!-- Urgent reorder table - only visible to logged-in users -->
+            {% if reorder_items %}
+            <h3 class="mt-5">🚨 Items Needing Urgent Reorder</h3>
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Material No</th>
+                            <th>Description</th>
+                            <th>Unit</th>
+                            <th>Current Stock</th>
+                            <th>Reorder Level</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in reorder_items %}
+                        <tr class="{% if item.current_balance < 0 %}low-stock{% else %}reorder-alert{% endif %}">
+                            <td><strong>{{ item.material_no }}</strong></td>
+                            <td>{{ item.description }}</td>
+                            <td>{{ item.unit }}</td>
+                            <td>{{ item.current_balance }}</td>
+                            <td>{{ item.reorder_level }}</td>
+                            <td>
+                                {% if item.current_balance <= 0 %}
+                                    <span class="badge bg-danger">OUT OF STOCK</span>
+                                {% else %}
+                                    <span class="badge bg-warning">LOW STOCK</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-success mt-4">
+                <h4>✅ All items are above reorder level. Great job!</h4>
+            </div>
+            {% endif %}
         {% else %}
-        <div class="alert alert-success mt-4">
-            <h4>✅ All items are above reorder level. Great job!</h4>
-        </div>
+            <!-- Guest / not logged in message -->
+            <div class="alert alert-info text-center mt-4">
+                <h4>Welcome to Stock Made Simpler!</h4>
+                <p>Please <a href="{% url 'login' %}" class="alert-link">log in</a> to view your inventory, add transactions, and see low stock alerts.</p>
+                <p>If you're a business owner, <a href="{% url 'signup' %}">register here</a> to get started.</p>
+            </div>
         {% endif %}
     </div>
         <script>
