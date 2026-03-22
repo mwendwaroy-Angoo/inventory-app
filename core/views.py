@@ -1,7 +1,13 @@
-from django.shortcuts import render
+from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth import login
+from django.contrib import messages
+from django.http import HttpResponse
 from .models import Item, Transaction, Store
-from django.contrib.auth.decorators import login_required, permission_required
+import openpyxl
+from openpyxl.utils import get_column_letter
 
 
 def home(request):
@@ -25,17 +31,12 @@ def home(request):
                 'reorder_items': sorted(reorder_items, key=lambda x: x.current_balance())[:20],
             })
         except AttributeError:
-            # Fallback if profile is missing
             context['error'] = "Profile not found. Please contact support."
     else:
-        # Guest users see a welcome or login prompt
         context['guest'] = True
 
     return render(request, 'core/home.html', context)
 
-    from django.shortcuts import render, redirect
-from django.contrib.auth.forms import UserCreationForm
-from django.contrib.auth import login
 
 def signup(request):
     if request.method == 'POST':
@@ -48,18 +49,19 @@ def signup(request):
         form = UserCreationForm()
     return render(request, 'registration/signup.html', {'form': form})
 
+
 @login_required
 def stock_list(request):
     user_profile = request.user.userprofile
     stores = Store.objects.filter(business=user_profile.business)
-    selected_store_id = request.GET.get('store')  # This is a string or None
+    selected_store_id = request.GET.get('store')
 
     if selected_store_id:
         try:
-            selected_store_id = int(selected_store_id)  # Convert to integer
+            selected_store_id = int(selected_store_id)
             items = Item.objects.filter(store_id=selected_store_id, store__business=user_profile.business).order_by('material_no')
         except (ValueError, TypeError):
-            items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')  # Fallback if invalid
+            items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
     else:
         items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
 
@@ -70,9 +72,7 @@ def stock_list(request):
         'today': timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, 'core/stock_list.html', context)
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib import messages
-from .models import Item, Transaction
+
 
 @login_required
 def add_transaction(request):
@@ -85,7 +85,6 @@ def add_transaction(request):
 
         item = get_object_or_404(Item, id=item_id)
 
-        # Make quantity negative for Issue
         if trans_type == 'Issue':
             quantity = -quantity
 
@@ -98,9 +97,8 @@ def add_transaction(request):
         )
 
         messages.success(request, f"{abs(quantity)} {item.unit} of {item.description} recorded as {trans_type.lower()}.")
-        return redirect('add_transaction')  # ← This ends the POST block
+        return redirect('add_transaction')
 
-    # GET request - show form (this is reachable now!)
     user_profile = request.user.userprofile
     items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
     context = {
@@ -108,18 +106,20 @@ def add_transaction(request):
         'today': timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, 'core/add_transaction.html', context)
-  
-@login_required  
+
+
+@login_required
 def item_detail(request, item_id):
     user_profile = request.user.userprofile
     item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
-    transactions = item.transactions.all().order_by('-date')  # Latest first
+    transactions = item.transactions.all().order_by('-date')
     context = {
         'item': item,
         'transactions': transactions,
         'today': timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, 'core/item_detail.html', context)
+
 
 @login_required
 def transaction_history(request):
@@ -131,9 +131,6 @@ def transaction_history(request):
     }
     return render(request, 'core/transaction_history.html', context)
 
-from django.http import HttpResponse
-import openpyxl
-from openpyxl.utils import get_column_letter
 
 def export_stock_excel(request):
     store_id = request.GET.get('store')
