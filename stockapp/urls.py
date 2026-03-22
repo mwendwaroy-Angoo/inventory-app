@@ -1,12 +1,12 @@
 from django.contrib import admin
 from django.urls import path, include
-from core.views import home, stock_list, add_transaction, item_detail, transaction_history, export_stock_excel
+from core.views import home, signup, stock_list, add_transaction, item_detail, transaction_history, export_stock_excel
 from django.conf import settings
 from django.conf.urls.static import static
-
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('accounts/', include('django.contrib.auth.urls')),  # For login/logout
+    path('signup/', signup, name='signup'),
     path('', home, name='home'),  # This makes home.html the homepage
     path('stock/', stock_list, name='stock_list'),  # New URL pattern for stock list
     path('add-transaction/', add_transaction, name='add_transaction'),  # New URL pattern for adding transactions
