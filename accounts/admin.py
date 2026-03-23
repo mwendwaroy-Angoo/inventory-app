@@ -4,7 +4,7 @@ from .models import Business, UserProfile
 
 @admin.register(Business)
 class BusinessAdmin(admin.ModelAdmin):
-    list_display = ('name', 'get_owner_username', 'get_business_type', 'get_county', 'get_sub_location', 'created_at')
+    list_display = ('name', 'get_owner_username', 'get_business_type', 'get_county', 'get_sub_county', 'created_at')
     search_fields = ('name', 'owner__username')
     list_filter = ('business_type', 'county', 'created_at')
     readonly_fields = ('created_at',)
@@ -29,6 +29,6 @@ class BusinessAdmin(admin.ModelAdmin):
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'business')
+    list_display = ('user', 'business', 'role')
     search_fields = ('user__username', 'business__name')
-    list_filter = ('business',)
+    list_filter = ('business', 'role')
