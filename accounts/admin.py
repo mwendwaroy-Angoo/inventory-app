@@ -22,9 +22,9 @@ class BusinessAdmin(admin.ModelAdmin):
         return obj.county.name if obj.county else '-'
     get_county.short_description = 'County'
 
-    def get_sub_location(self, obj):
-        return obj.sub_location.name if obj.sub_location else '-'
-    get_sub_location.short_description = 'Sub Location'
+    def get_sub_county(self, obj):
+        return obj.sub_county.name if obj.sub_county else '-'
+    get_sub_county.short_description = 'Sub County'
 
 
 @admin.register(UserProfile)
