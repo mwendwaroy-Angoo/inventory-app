@@ -12,6 +12,13 @@
                 <small>Create your account and get started</small>
             </div>
             <div class="card-body p-4">
+
+                {% if form.errors %}
+                <div class="alert alert-danger">
+                    Please correct the errors below.
+                </div>
+                {% endif %}
+
                 <form method="post" id="signupForm">
                     {% csrf_token %}
 
@@ -51,48 +58,53 @@
 </div>
 
 <script>
-    // When county changes, load sub-counties
-    document.getElementById('id_county').addEventListener('change', function () {
-        const countyId = this.value;
-        const subCountySelect = document.getElementById('id_sub_county');
-        const wardSelect = document.getElementById('id_ward');
+    const countySelect = document.getElementById('id_county');
+    const subCountySelect = document.getElementById('id_sub_county');
+    const wardSelect = document.getElementById('id_ward');
 
-        // Reset dropdowns
-        subCountySelect.innerHTML = '<option value="">-- Select Sub County --</option>';
-        wardSelect.innerHTML = '<option value="">-- Select Ward --</option>';
+    function resetSelect(selectEl, placeholder) {
+        selectEl.innerHTML = `<option value="">${placeholder}</option>`;
+        selectEl.disabled = true;
+    }
+
+    function populateSelect(selectEl, data, idKey, nameKey) {
+        data.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item[idKey];
+            option.textContent = item[nameKey];
+            selectEl.appendChild(option);
+        });
+        selectEl.disabled = false;
+    }
+
+    // Disable sub-county and ward on page load
+    subCountySelect.disabled = true;
+    wardSelect.disabled = true;
+
+    // When county changes, load sub-counties
+    countySelect.addEventListener('change', function () {
+        const countyId = this.value;
+        resetSelect(subCountySelect, '-- Select Sub County --');
+        resetSelect(wardSelect, '-- Select Ward --');
 
         if (countyId) {
-            fetch(`/accounts/ajax/subcounties/?county_id=${countyId}`)
+            fetch(`/business/ajax/subcounties/?county_id=${countyId}`)
                 .then(response => response.json())
-                .then(data => {
-                    data.forEach(sc => {
-                        const option = document.createElement('option');
-                        option.value = sc.id;
-                        option.textContent = sc.name;
-                        subCountySelect.appendChild(option);
-                    });
-                });
+                .then(data => populateSelect(subCountySelect, data, 'id', 'name'))
+                .catch(() => resetSelect(subCountySelect, '-- Error loading sub-counties --'));
         }
     });
 
     // When sub-county changes, load wards
-    document.getElementById('id_sub_county').addEventListener('change', function () {
+    subCountySelect.addEventListener('change', function () {
         const subCountyId = this.value;
-        const wardSelect = document.getElementById('id_ward');
-
-        wardSelect.innerHTML = '<option value="">-- Select Ward --</option>';
+        resetSelect(wardSelect, '-- Select Ward --');
 
         if (subCountyId) {
-            fetch(`/accounts/ajax/wards/?sub_county_id=${subCountyId}`)
+            fetch(`/business/ajax/wards/?sub_county_id=${subCountyId}`)
                 .then(response => response.json())
-                .then(data => {
-                    data.forEach(w => {
-                        const option = document.createElement('option');
-                        option.value = w.id;
-                        option.textContent = w.name;
-                        wardSelect.appendChild(option);
-                    });
-                });
+                .then(data => populateSelect(wardSelect, data, 'id', 'name'))
+                .catch(() => resetSelect(wardSelect, '-- Error loading wards --'));
         }
     });
 </script>
