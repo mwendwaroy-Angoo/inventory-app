@@ -1,25 +1,87 @@
 from django import forms
 from django.contrib.auth.models import User
-from django.contrib.auth.forms import UserCreationForm
 from .models import Business, UserProfile
-from core.models import BusinessType, County, SubLocation
+from core.models import BusinessType, County, SubCounty, Ward
 
 
 class BusinessSignupForm(forms.Form):
-    # User fields
-    username = forms.CharField(max_length=150)
-    email = forms.EmailField()
-    password1 = forms.CharField(widget=forms.PasswordInput, label='Password')
-    password2 = forms.CharField(widget=forms.PasswordInput, label='Confirm Password')
+    # Account fields
+    username = forms.CharField(
+        max_length=150,
+        widget=forms.TextInput(attrs={'placeholder': 'Choose a username'})
+    )
+    email = forms.EmailField(
+        widget=forms.EmailInput(attrs={'placeholder': 'your@email.com'})
+    )
+    password1 = forms.CharField(
+        widget=forms.PasswordInput(attrs={'placeholder': 'Create a password'}),
+        label='Password'
+    )
+    password2 = forms.CharField(
+        widget=forms.PasswordInput(attrs={'placeholder': 'Confirm your password'}),
+        label='Confirm Password'
+    )
 
     # Business fields
-    business_name = forms.CharField(max_length=255)
-    business_type = forms.ModelChoiceField(queryset=BusinessType.objects.all())
-    county = forms.ModelChoiceField(queryset=County.objects.all())
-    sub_location = forms.ModelChoiceField(queryset=SubLocation.objects.all(), required=False)
-    phone = forms.CharField(max_length=20, required=False)
-    email_business = forms.EmailField(required=False, label='Business Email')
-    address = forms.TextField = forms.CharField(widget=forms.Textarea(attrs={'rows': 2}), required=False)
+    business_name = forms.CharField(
+        max_length=255,
+        widget=forms.TextInput(attrs={'placeholder': 'e.g. The Royal Farm'})
+    )
+    business_type = forms.ModelChoiceField(
+        queryset=BusinessType.objects.all(),
+        empty_label='-- Select Business Type --'
+    )
+    phone = forms.CharField(
+        max_length=20,
+        required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'})
+    )
+    email_business = forms.EmailField(
+        required=False,
+        label='Business Email',
+        widget=forms.EmailInput(attrs={'placeholder': 'business@email.com'})
+    )
+    address = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={'rows': 2, 'placeholder': 'Physical address'})
+    )
+
+    # Location fields
+    county = forms.ModelChoiceField(
+        queryset=County.objects.all(),
+        empty_label='-- Select County --'
+    )
+    sub_county = forms.ModelChoiceField(
+        queryset=SubCounty.objects.none(),  # empty until county selected
+        empty_label='-- Select Sub County --',
+        required=True
+    )
+    ward = forms.ModelChoiceField(
+        queryset=Ward.objects.none(),  # empty until sub county selected
+        empty_label='-- Select Ward --',
+        required=False
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Populate sub_county and ward if data was submitted
+        if 'county' in self.data:
+            try:
+                county_id = int(self.data.get('county'))
+                self.fields['sub_county'].queryset = SubCounty.objects.filter(
+                    county_id=county_id
+                ).order_by('name')
+            except (ValueError, TypeError):
+                pass
+
+        if 'sub_county' in self.data:
+            try:
+                sub_county_id = int(self.data.get('sub_county'))
+                self.fields['ward'].queryset = Ward.objects.filter(
+                    sub_county_id=sub_county_id
+                ).order_by('name')
+            except (ValueError, TypeError):
+                pass
 
     def clean_username(self):
         username = self.cleaned_data['username']
@@ -43,12 +105,32 @@ class BusinessSignupForm(forms.Form):
 
 
 class AddStaffForm(forms.Form):
-    username = forms.CharField(max_length=150)
-    email = forms.EmailField(required=False)
-    password1 = forms.CharField(widget=forms.PasswordInput, label='Password')
-    password2 = forms.CharField(widget=forms.PasswordInput, label='Confirm Password')
-    first_name = forms.CharField(max_length=100, required=False)
-    last_name = forms.CharField(max_length=100, required=False)
+    username = forms.CharField(
+        max_length=150,
+        widget=forms.TextInput(attrs={'placeholder': 'Choose a username'})
+    )
+    email = forms.EmailField(
+        required=False,
+        widget=forms.EmailInput(attrs={'placeholder': 'staff@email.com'})
+    )
+    first_name = forms.CharField(
+        max_length=100,
+        required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'First name'})
+    )
+    last_name = forms.CharField(
+        max_length=100,
+        required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'Last name'})
+    )
+    password1 = forms.CharField(
+        widget=forms.PasswordInput(attrs={'placeholder': 'Create a password'}),
+        label='Password'
+    )
+    password2 = forms.CharField(
+        widget=forms.PasswordInput(attrs={'placeholder': 'Confirm password'}),
+        label='Confirm Password'
+    )
 
     def clean_username(self):
         username = self.cleaned_data['username']

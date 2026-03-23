@@ -2,15 +2,15 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from core.models import BusinessType, County, SubLocation
-
+from core.models import BusinessType, County, SubCounty, Ward  # updated
 
 class Business(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='owned_businesses', null=True, blank=True)
     name = models.CharField(max_length=255, unique=True)
     business_type = models.ForeignKey(BusinessType, on_delete=models.PROTECT, null=True, blank=True)
     county = models.ForeignKey(County, on_delete=models.PROTECT, null=True, blank=True)
-    sub_location = models.ForeignKey(SubLocation, on_delete=models.PROTECT, null=True, blank=True)
+    sub_county = models.ForeignKey(SubCounty, on_delete=models.PROTECT, null=True, blank=True)  # renamed
+    ward = models.ForeignKey(Ward, on_delete=models.PROTECT, null=True, blank=True)  # new
     phone = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True)

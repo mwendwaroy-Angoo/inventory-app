@@ -5,7 +5,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from .forms import BusinessSignupForm, AddStaffForm
 from .models import Business, UserProfile
-
+from django.http import JsonResponse
+from core.models import SubCounty, Ward
 
 def signup(request):
     if request.method == 'POST':
@@ -100,3 +101,18 @@ def staff_list(request):
     ).select_related('user')
 
     return render(request, 'accounts/staff_list.html', {'staff': staff})
+
+def load_subcounties(request):
+    county_id = request.GET.get('county_id')
+    subcounties = SubCounty.objects.filter(
+        county_id=county_id
+    ).order_by('name').values('id', 'name')
+    return JsonResponse(list(subcounties), safe=False)
+
+
+def load_wards(request):
+    sub_county_id = request.GET.get('sub_county_id')
+    wards = Ward.objects.filter(
+        sub_county_id=sub_county_id
+    ).order_by('name').values('id', 'name')
+    return JsonResponse(list(wards), safe=False)

@@ -29,8 +29,8 @@ class County(models.Model):
         ordering = ['name']
 
 
-class SubLocation(models.Model):
-    county = models.ForeignKey(County, on_delete=models.CASCADE, related_name='sublocations')
+class SubCounty(models.Model):
+    county = models.ForeignKey(County, on_delete=models.CASCADE, related_name='subcounties')
     name = models.CharField(max_length=150)
 
     def __str__(self):
@@ -38,6 +38,19 @@ class SubLocation(models.Model):
 
     class Meta:
         unique_together = ['county', 'name']
+        ordering = ['name']
+        verbose_name_plural = "Sub Counties"
+
+
+class Ward(models.Model):
+    sub_county = models.ForeignKey(SubCounty, on_delete=models.CASCADE, related_name='wards')
+    name = models.CharField(max_length=150)
+
+    def __str__(self):
+        return f"{self.name} ({self.sub_county.name})"
+
+    class Meta:
+        unique_together = ['sub_county', 'name']
         ordering = ['name']
 
 

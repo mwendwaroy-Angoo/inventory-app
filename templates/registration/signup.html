@@ -12,7 +12,7 @@
                 <small>Create your account and get started</small>
             </div>
             <div class="card-body p-4">
-                <form method="post">
+                <form method="post" id="signupForm">
                     {% csrf_token %}
 
                     <h5 class="text-muted mb-3 border-bottom pb-2">👤 Account Details</h5>
@@ -30,7 +30,8 @@
 
                     <h5 class="text-muted mb-3 border-bottom pb-2 mt-4">📍 Location</h5>
                     {% bootstrap_field form.county %}
-                    {% bootstrap_field form.sub_location %}
+                    {% bootstrap_field form.sub_county %}
+                    {% bootstrap_field form.ward %}
 
                     <div class="d-grid mt-4">
                         <button type="submit" class="btn btn-primary btn-lg">
@@ -40,7 +41,7 @@
                 </form>
 
                 <div class="text-center mt-3">
-                    <small>Already have an account? 
+                    <small>Already have an account?
                         <a href="{% url 'login' %}">Login here</a>
                     </small>
                 </div>
@@ -48,4 +49,51 @@
         </div>
     </div>
 </div>
+
+<script>
+    // When county changes, load sub-counties
+    document.getElementById('id_county').addEventListener('change', function () {
+        const countyId = this.value;
+        const subCountySelect = document.getElementById('id_sub_county');
+        const wardSelect = document.getElementById('id_ward');
+
+        // Reset dropdowns
+        subCountySelect.innerHTML = '<option value="">-- Select Sub County --</option>';
+        wardSelect.innerHTML = '<option value="">-- Select Ward --</option>';
+
+        if (countyId) {
+            fetch(`/accounts/ajax/subcounties/?county_id=${countyId}`)
+                .then(response => response.json())
+                .then(data => {
+                    data.forEach(sc => {
+                        const option = document.createElement('option');
+                        option.value = sc.id;
+                        option.textContent = sc.name;
+                        subCountySelect.appendChild(option);
+                    });
+                });
+        }
+    });
+
+    // When sub-county changes, load wards
+    document.getElementById('id_sub_county').addEventListener('change', function () {
+        const subCountyId = this.value;
+        const wardSelect = document.getElementById('id_ward');
+
+        wardSelect.innerHTML = '<option value="">-- Select Ward --</option>';
+
+        if (subCountyId) {
+            fetch(`/accounts/ajax/wards/?sub_county_id=${subCountyId}`)
+                .then(response => response.json())
+                .then(data => {
+                    data.forEach(w => {
+                        const option = document.createElement('option');
+                        option.value = w.id;
+                        option.textContent = w.name;
+                        wardSelect.appendChild(option);
+                    });
+                });
+        }
+    });
+</script>
 {% endblock %}
