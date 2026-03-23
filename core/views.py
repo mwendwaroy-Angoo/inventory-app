@@ -52,7 +52,12 @@ def signup(request):
 
 @login_required
 def stock_list(request):
-    user_profile = request.user.userprofile
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        messages.error(request, "Your account has no business profile. Please complete your setup.")
+        return redirect('home')
+
     stores = Store.objects.filter(business=user_profile.business)
     selected_store_id = request.GET.get('store')
 
@@ -76,6 +81,12 @@ def stock_list(request):
 
 @login_required
 def add_transaction(request):
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        messages.error(request, "Your account has no business profile. Please complete your setup.")
+        return redirect('home')
+
     if request.method == 'POST':
         item_id = request.POST['item']
         trans_type = request.POST['type']
@@ -93,13 +104,13 @@ def add_transaction(request):
             type=trans_type,
             qty=quantity,
             department=department,
-            doc_no=doc_no
+            doc_no=doc_no,
+            business=user_profile.business,  # fix null business on transactions
         )
 
         messages.success(request, f"{abs(quantity)} {item.unit} of {item.description} recorded as {trans_type.lower()}.")
         return redirect('add_transaction')
 
-    user_profile = request.user.userprofile
     items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
     context = {
         'items': items,
@@ -110,7 +121,12 @@ def add_transaction(request):
 
 @login_required
 def item_detail(request, item_id):
-    user_profile = request.user.userprofile
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        messages.error(request, "Your account has no business profile. Please complete your setup.")
+        return redirect('home')
+
     item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
     transactions = item.transactions.all().order_by('-date')
     context = {
@@ -123,14 +139,20 @@ def item_detail(request, item_id):
 
 @login_required
 def transaction_history(request):
-    user_profile = request.user.userprofile
-    transactions = Transaction.objects.filter(item__store__business=user_profile.business).select_related('item').order_by('-date')
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        messages.error(request, "Your account has no business profile. Please complete your setup.")
+        return redirect('home')
+
+    transactions = Transaction.objects.filter(
+        item__store__business=user_profile.business
+    ).select_related('item').order_by('-date')
     context = {
         'transactions': transactions,
         'today': timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, 'core/transaction_history.html', context)
-
 
 def export_stock_excel(request):
     store_id = request.GET.get('store')
