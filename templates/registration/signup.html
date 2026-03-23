@@ -1,10 +1,51 @@
 {% extends "base.html" %}
+{% load django_bootstrap5 %}
+
+{% block title %}Register Your Business{% endblock %}
 
 {% block content %}
-  <h2>Sign up</h2>
-  <form method="post">
-    {% csrf_token %}
-    {{ form.as_p }}
-    <button type="submit">Sign up</button>
-  </form>
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <div class="card shadow mt-4 mb-5">
+            <div class="card-header bg-primary text-white text-center py-3">
+                <h3 class="mb-0">📦 Register Your Business</h3>
+                <small>Create your account and get started</small>
+            </div>
+            <div class="card-body p-4">
+                <form method="post">
+                    {% csrf_token %}
+
+                    <h5 class="text-muted mb-3 border-bottom pb-2">👤 Account Details</h5>
+                    {% bootstrap_field form.username %}
+                    {% bootstrap_field form.email %}
+                    {% bootstrap_field form.password1 %}
+                    {% bootstrap_field form.password2 %}
+
+                    <h5 class="text-muted mb-3 border-bottom pb-2 mt-4">🏢 Business Details</h5>
+                    {% bootstrap_field form.business_name %}
+                    {% bootstrap_field form.business_type %}
+                    {% bootstrap_field form.phone %}
+                    {% bootstrap_field form.email_business %}
+                    {% bootstrap_field form.address %}
+
+                    <h5 class="text-muted mb-3 border-bottom pb-2 mt-4">📍 Location</h5>
+                    {% bootstrap_field form.county %}
+                    {% bootstrap_field form.sub_location %}
+
+                    <div class="d-grid mt-4">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            Create Account & Business
+                        </button>
+                    </div>
+                </form>
+
+                <div class="text-center mt-3">
+                    <small>Already have an account? 
+                        <a href="{% url 'login' %}">Login here</a>
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
