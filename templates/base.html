@@ -11,13 +11,99 @@
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
-            <a class="navbar-brand" href="/">Inventory App</a>
-            <div class="navbar-nav ms-auto">
+            <!-- Brand -->
+            <a class="navbar-brand fw-bold" href="{% url 'home' %}">📦 Inventory App</a>
+
+            <!-- Mobile toggle button -->
+            <button class="navbar-toggler" type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <!-- Nav links -->
+            <div class="collapse navbar-collapse" id="navbarNav">
                 {% if user.is_authenticated %}
-                    <a class="nav-link" href="/logout/">Logout</a>
+
+                <ul class="navbar-nav me-auto">
+                    <!-- All users see these -->
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'stock_list' %}">
+                            📋 Stock List
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'add_transaction' %}">
+                            ➕ Add Transaction
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'transaction_history' %}">
+                            🕒 History
+                        </a>
+                    </li>
+
+                    <!-- Owner only links -->
+                    {% if user.userprofile.is_owner %}
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#"
+                           data-bs-toggle="dropdown">
+                            ⚙️ Manage
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li>
+                                <a class="dropdown-item" href="{% url 'manage_stores' %}">
+                                    🏪 Stores
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" href="{% url 'manage_items' %}">
+                                    📦 Items
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <a class="dropdown-item" href="{% url 'staff_list' %}">
+                                    👥 Staff
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" href="{% url 'add_staff' %}">
+                                    ➕ Add Staff
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+                    {% endif %}
+                </ul>
+
+                <!-- Right side: username + logout -->
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <span class="nav-link text-light">
+                            👤 {{ user.username }}
+                            {% if user.userprofile.is_owner %}
+                                <span class="badge bg-warning text-dark ms-1">Owner</span>
+                            {% else %}
+                                <span class="badge bg-secondary ms-1">Staff</span>
+                            {% endif %}
+                        </span>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'logout' %}">Logout</a>
+                    </li>
+                </ul>
+
                 {% else %}
-                    <a class="nav-link" href="/login/">Login</a>
-                    <a class="nav-link" href="/signup/">Sign Up</a>
+                <!-- Logged out links -->
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'login' %}">Login</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'signup' %}">Register</a>
+                    </li>
+                </ul>
                 {% endif %}
             </div>
         </div>
@@ -26,7 +112,10 @@
     <div class="container mt-4">
         {% if messages %}
             {% for message in messages %}
-                <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+            <div class="alert alert-{{ message.tags }} alert-dismissible fade show">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
             {% endfor %}
         {% endif %}
 
