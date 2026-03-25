@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Stores{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <h2 class="mb-4">🏪 Manage Stores</h2>
+
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">Add New Store</div>
+            <div class="card-body">
+                <form method="post" class="d-flex gap-2">
+                    {% csrf_token %}
+                    <input type="text" name="name" class="form-control"
+                           placeholder="e.g. Main Store, Warehouse A" required>
+                    <button type="submit" class="btn btn-primary">Add</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Your Stores</div>
+            <ul class="list-group list-group-flush">
+                {% for store in stores %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    {{ store.name }}
+                    <span class="badge bg-secondary">
+                        {{ store.items.count }} items
+                    </span>
+                </li>
+                {% empty %}
+                <li class="list-group-item text-muted">
+                    No stores yet. Add one above to get started.
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+
+        <div class="mt-3">
+            <a href="{% url 'manage_items' %}" class="btn btn-outline-primary">
+                → Go to Manage Items
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

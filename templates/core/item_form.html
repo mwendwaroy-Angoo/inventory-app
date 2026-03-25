@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% load django_bootstrap5 %}
+
+{% block title %}{{ action }} Item{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card shadow mt-4 mb-5">
+            <div class="card-header bg-primary text-white py-3">
+                <h4 class="mb-0">
+                    {% if action == 'Add' %}➕{% else %}✏️{% endif %}
+                    {{ action }} Stock Item
+                </h4>
+            </div>
+            <div class="card-body p-4">
+
+                {% if form.errors %}
+                <div class="alert alert-danger">
+                    Please correct the errors below.
+                </div>
+                {% endif %}
+
+                <form method="post">
+                    {% csrf_token %}
+
+                    <h6 class="text-muted border-bottom pb-2 mb-3">Required Fields</h6>
+                    {% bootstrap_field form.description %}
+                    {% bootstrap_field form.store %}
+                    {% bootstrap_field form.selling_price %}
+
+                    <h6 class="text-muted border-bottom pb-2 mb-3 mt-4">Optional Fields</h6>
+                    {% bootstrap_field form.material_no %}
+                    {% bootstrap_field form.unit %}
+                    {% bootstrap_field form.opening_bin_balance %}
+                    {% bootstrap_field form.opening_physical %}
+                    {% bootstrap_field form.reorder_level %}
+                    {% bootstrap_field form.reorder_quantity %}
+
+                    <div class="d-flex gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary">
+                            {{ action }} Item
+                        </button>
+                        <a href="{% url 'manage_items' %}" class="btn btn-secondary">
+                            Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

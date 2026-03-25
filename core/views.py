@@ -8,6 +8,8 @@ from django.http import HttpResponse
 from .models import Item, Transaction, Store
 import openpyxl
 from openpyxl.utils import get_column_letter
+from .forms import ItemForm
+from .models import Item, Transaction, Store, BusinessType
 
 
 def home(request):
@@ -184,3 +186,138 @@ def export_stock_excel(request):
     response['Content-Disposition'] = 'attachment; filename=stock_list.xlsx'
     wb.save(response)
     return response
+
+
+
+def owner_required(view_func):
+    """Decorator that restricts access to business owners only."""
+    from functools import wraps
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        try:
+            if not request.user.userprofile.is_owner:
+                messages.error(request, "Only business owners can access this page.")
+                return redirect('stock_list')
+        except Exception:
+            return redirect('home')
+        return view_func(request, *args, **kwargs)
+    return wrapper
+
+
+@login_required
+@owner_required
+def manage_items(request):
+    """Owner view to see all items with edit/delete options."""
+    user_profile = request.user.userprofile
+    items = Item.objects.filter(
+        business=user_profile.business
+    ).select_related('store').order_by('store__name', 'description')
+
+    context = {
+        'items': items,
+        'today': timezone.now().strftime("%B %d, %Y"),
+    }
+    return render(request, 'core/manage_items.html', context)
+
+
+@login_required
+@owner_required
+def add_item(request):
+    """Owner view to add a new item."""
+    user_profile = request.user.userprofile
+
+    if request.method == 'POST':
+        form = ItemForm(request.POST, business=user_profile.business)
+        if form.is_valid():
+            item = form.save(commit=False)
+            item.business = user_profile.business
+            # Auto-generate material_no if not provided
+            if not item.material_no:
+                last_item = Item.objects.filter(
+                    business=user_profile.business
+                ).order_by('id').last()
+                next_id = (last_item.id + 1) if last_item else 1
+                item.material_no = f"MAT-{next_id:04d}"
+            item.save()
+            messages.success(request, f"'{item.description}' added successfully.")
+            return redirect('manage_items')
+    else:
+        form = ItemForm(business=user_profile.business)
+
+    context = {
+        'form': form,
+        'today': timezone.now().strftime("%B %d, %Y"),
+        'action': 'Add',
+    }
+    return render(request, 'core/item_form.html', context)
+
+
+@login_required
+@owner_required
+def edit_item(request, item_id):
+    """Owner view to edit an existing item."""
+    user_profile = request.user.userprofile
+    item = get_object_or_404(Item, id=item_id, business=user_profile.business)
+
+    if request.method == 'POST':
+        form = ItemForm(request.POST, instance=item, business=user_profile.business)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"'{item.description}' updated successfully.")
+            return redirect('manage_items')
+    else:
+        form = ItemForm(instance=item, business=user_profile.business)
+
+    context = {
+        'form': form,
+        'item': item,
+        'today': timezone.now().strftime("%B %d, %Y"),
+        'action': 'Edit',
+    }
+    return render(request, 'core/item_form.html', context)
+
+
+@login_required
+@owner_required
+def delete_item(request, item_id):
+    """Owner view to delete an item."""
+    user_profile = request.user.userprofile
+    item = get_object_or_404(Item, id=item_id, business=user_profile.business)
+
+    if request.method == 'POST':
+        item_name = item.description
+        item.delete()
+        messages.success(request, f"'{item_name}' deleted successfully.")
+        return redirect('manage_items')
+
+    context = {
+        'item': item,
+        'today': timezone.now().strftime("%B %d, %Y"),
+    }
+    return render(request, 'core/delete_item.html', context)
+
+
+
+@login_required
+@owner_required
+def manage_stores(request):
+    user_profile = request.user.userprofile
+    stores = Store.objects.filter(business=user_profile.business)
+
+    if request.method == 'POST':
+        store_name = request.POST.get('name', '').strip()
+        if store_name:
+            Store.objects.create(
+                name=store_name,
+                business=user_profile.business
+            )
+            messages.success(request, f"Store '{store_name}' created successfully.")
+            return redirect('manage_stores')
+        else:
+            messages.error(request, "Store name cannot be empty.")
+
+    context = {
+        'stores': stores,
+        'today': timezone.now().strftime("%B %d, %Y"),
+    }
+    return render(request, 'core/manage_stores.html', context)
