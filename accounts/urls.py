@@ -5,4 +5,6 @@ urlpatterns = [
     path('signup/', views.signup, name='signup'),
     path('staff/add/', views.add_staff, name='add_staff'),
     path('staff/', views.staff_list, name='staff_list'),
+    path('ajax/subcounties/', views.load_subcounties, name='load_subcounties'),
+    path('ajax/wards/', views.load_wards, name='load_wards'),
 ]
