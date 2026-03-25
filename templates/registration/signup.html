@@ -64,7 +64,7 @@
 
     function resetSelect(selectEl, placeholder) {
         selectEl.innerHTML = `<option value="">${placeholder}</option>`;
-        selectEl.disabled = true;
+        selectEl.style.opacity = '0.6';
     }
 
     function populateSelect(selectEl, data, idKey, nameKey) {
@@ -74,37 +74,55 @@
             option.textContent = item[nameKey];
             selectEl.appendChild(option);
         });
-        selectEl.disabled = false;
+        selectEl.style.opacity = '1';
     }
 
-    // Disable sub-county and ward on page load
-    subCountySelect.disabled = true;
-    wardSelect.disabled = true;
+    // Style sub-county and ward on page load (NOT disabled)
+    resetSelect(subCountySelect, '-- Select Sub County --');
+    resetSelect(wardSelect, '-- Select Ward --');
 
     // When county changes, load sub-counties
     countySelect.addEventListener('change', function () {
         const countyId = this.value;
-        resetSelect(subCountySelect, '-- Select Sub County --');
+        resetSelect(subCountySelect, '-- Loading Sub Counties... --');
         resetSelect(wardSelect, '-- Select Ward --');
 
         if (countyId) {
             fetch(`/business/ajax/subcounties/?county_id=${countyId}`)
-                .then(response => response.json())
-                .then(data => populateSelect(subCountySelect, data, 'id', 'name'))
-                .catch(() => resetSelect(subCountySelect, '-- Error loading sub-counties --'));
+                .then(response => {
+                    if (!response.ok) throw new Error('Network response was not ok');
+                    return response.json();
+                })
+                .then(data => {
+                    resetSelect(subCountySelect, '-- Select Sub County --');
+                    populateSelect(subCountySelect, data, 'id', 'name');
+                })
+                .catch(err => {
+                    console.error('Error loading sub-counties:', err);
+                    resetSelect(subCountySelect, '-- Error loading sub-counties --');
+                });
         }
     });
 
     // When sub-county changes, load wards
     subCountySelect.addEventListener('change', function () {
         const subCountyId = this.value;
-        resetSelect(wardSelect, '-- Select Ward --');
+        resetSelect(wardSelect, '-- Loading Wards... --');
 
         if (subCountyId) {
             fetch(`/business/ajax/wards/?sub_county_id=${subCountyId}`)
-                .then(response => response.json())
-                .then(data => populateSelect(wardSelect, data, 'id', 'name'))
-                .catch(() => resetSelect(wardSelect, '-- Error loading wards --'));
+                .then(response => {
+                    if (!response.ok) throw new Error('Network response was not ok');
+                    return response.json();
+                })
+                .then(data => {
+                    resetSelect(wardSelect, '-- Select Ward --');
+                    populateSelect(wardSelect, data, 'id', 'name');
+                })
+                .catch(err => {
+                    console.error('Error loading wards:', err);
+                    resetSelect(wardSelect, '-- Error loading wards --');
+                });
         }
     });
 </script>
