@@ -2,106 +2,384 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Inventory App{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>{% block title %}Duka Mwecheche{% endblock %}</title>
     {% load django_bootstrap5 %}
     {% bootstrap_css %}
     {% bootstrap_javascript %}
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --onyx: #1a1a1a;
+            --onyx-light: #242424;
+            --onyx-card: #2a2a2a;
+            --gold: #c9a84c;
+            --gold-light: #e2c36e;
+            --pearl: #f0ece4;
+            --raspberry: #c0395a;
+            --raspberry-dark: #8b1a35;
+            --white: #ffffff;
+            --muted: #888888;
+            --success: #2ecc71;
+            --warning: #f39c12;
+            --danger: #e74c3c;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--onyx);
+            color: var(--pearl);
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 300;
+            min-height: 100vh;
+        }
+
+        /* ── NAVBAR ── */
+        .navbar {
+            background: linear-gradient(135deg, #111111 0%, #1a1a1a 50%, #1f1a14 100%);
+            border-bottom: 1px solid var(--gold);
+            padding: 0.8rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .navbar-brand {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.4rem;
+            color: var(--gold) !important;
+            letter-spacing: 0.05em;
+            text-decoration: none;
+        }
+
+        .navbar-brand span {
+            color: var(--raspberry);
+        }
+
+        .nav-link {
+            color: var(--pearl) !important;
+            font-size: 0.85rem;
+            font-weight: 400;
+            letter-spacing: 0.05em;
+            padding: 0.4rem 0.8rem !important;
+            transition: color 0.2s;
+            text-transform: uppercase;
+        }
+
+        .nav-link:hover { color: var(--gold) !important; }
+
+        .dropdown-menu {
+            background: var(--onyx-card);
+            border: 1px solid var(--gold);
+            border-radius: 4px;
+        }
+
+        .dropdown-item {
+            color: var(--pearl);
+            font-size: 0.85rem;
+            padding: 0.6rem 1.2rem;
+            transition: all 0.2s;
+        }
+
+        .dropdown-item:hover {
+            background: var(--gold);
+            color: var(--onyx);
+        }
+
+        .dropdown-divider { border-color: #333; }
+
+        .badge-role {
+            font-size: 0.65rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+
+        .badge-owner {
+            background: linear-gradient(135deg, var(--gold), var(--gold-light));
+            color: var(--onyx);
+        }
+
+        .badge-staff {
+            background: #333;
+            color: var(--muted);
+        }
+
+        .navbar-toggler {
+            border-color: var(--gold);
+        }
+
+        .navbar-toggler-icon {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(201, 168, 76, 1)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+        }
+
+        /* ── ALERTS ── */
+        .alert {
+            border-radius: 6px;
+            border: none;
+            font-size: 0.9rem;
+        }
+
+        .alert-success {
+            background: rgba(46, 204, 113, 0.15);
+            color: #2ecc71;
+            border-left: 3px solid #2ecc71;
+        }
+
+        .alert-danger {
+            background: rgba(231, 76, 60, 0.15);
+            color: #e74c3c;
+            border-left: 3px solid #e74c3c;
+        }
+
+        .alert-warning {
+            background: rgba(243, 156, 18, 0.15);
+            color: #f39c12;
+            border-left: 3px solid #f39c12;
+        }
+
+        .alert-info {
+            background: rgba(201, 168, 76, 0.1);
+            color: var(--gold-light);
+            border-left: 3px solid var(--gold);
+        }
+
+        /* ── CARDS ── */
+        .card {
+            background: var(--onyx-card);
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: var(--pearl);
+        }
+
+        .card-header {
+            background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+            border-bottom: 1px solid #444;
+            border-radius: 8px 8px 0 0 !important;
+            color: var(--white);
+            font-family: 'Playfair Display', serif;
+        }
+
+        /* ── BUTTONS ── */
+        .btn-primary {
+            background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+            border: none;
+            color: white;
+            font-weight: 500;
+            letter-spacing: 0.05em;
+            transition: all 0.2s;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, var(--raspberry), #d4446a);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(192, 57, 90, 0.4);
+        }
+
+        .btn-secondary {
+            background: #333;
+            border: 1px solid #444;
+            color: var(--pearl);
+        }
+
+        .btn-secondary:hover {
+            background: #444;
+            color: var(--white);
+        }
+
+        .btn-outline-primary {
+            border: 1px solid var(--raspberry);
+            color: var(--raspberry);
+            background: transparent;
+        }
+
+        .btn-outline-primary:hover {
+            background: var(--raspberry);
+            color: white;
+        }
+
+        .btn-outline-danger {
+            border: 1px solid var(--danger);
+            color: var(--danger);
+            background: transparent;
+        }
+
+        .btn-outline-danger:hover {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-gold {
+            background: linear-gradient(135deg, var(--gold), var(--gold-light));
+            border: none;
+            color: var(--onyx);
+            font-weight: 600;
+        }
+
+        .btn-gold:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(201, 168, 76, 0.4);
+            color: var(--onyx);
+        }
+
+        /* ── TABLES ── */
+        .table {
+            color: var(--pearl);
+            border-color: #333;
+        }
+
+        .table thead th {
+            background: linear-gradient(135deg, #111, #1f1f1f);
+            color: var(--gold);
+            border-color: #333;
+            font-size: 0.8rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-weight: 500;
+            padding: 1rem 0.75rem;
+        }
+
+        .table tbody tr {
+            border-color: #2e2e2e;
+            transition: background 0.15s;
+        }
+
+        .table tbody tr:hover {
+            background: rgba(201, 168, 76, 0.05) !important;
+        }
+
+        .table-striped tbody tr:nth-of-type(odd) {
+            background: rgba(255,255,255,0.02);
+        }
+
+        /* ── FORMS ── */
+        .form-control, .form-select {
+            background: #222;
+            border: 1px solid #444;
+            color: var(--pearl);
+            border-radius: 6px;
+        }
+
+        .form-control:focus, .form-select:focus {
+            background: #2a2a2a;
+            border-color: var(--gold);
+            color: var(--pearl);
+            box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.15);
+        }
+
+        .form-control::placeholder { color: #666; }
+
+        .form-label {
+            color: var(--gold-light);
+            font-size: 0.85rem;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+        }
+
+        /* ── BADGES ── */
+        .badge.bg-success { background: rgba(46,204,113,0.2) !important; color: #2ecc71; border: 1px solid #2ecc71; }
+        .badge.bg-warning { background: rgba(243,156,18,0.2) !important; color: #f39c12; border: 1px solid #f39c12; }
+        .badge.bg-danger  { background: rgba(231,76,60,0.2)  !important; color: #e74c3c; border: 1px solid #e74c3c; }
+
+        /* ── MAIN CONTENT ── */
+        .main-content {
+            padding: 2rem 0 4rem;
+        }
+
+        /* ── GOLD DIVIDER ── */
+        .gold-divider {
+            border: none;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--gold), transparent);
+            margin: 2rem 0;
+        }
+
+        /* ── PAGE TITLE ── */
+        .page-title {
+            font-family: 'Playfair Display', serif;
+            color: var(--gold);
+            font-size: 1.8rem;
+        }
+
+        /* ── SCROLLBAR ── */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--onyx); }
+        ::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 3px; }
+    </style>
+    {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <!-- NAVBAR -->
+    <nav class="navbar navbar-expand-lg">
         <div class="container">
-            <!-- Brand -->
-            <a class="navbar-brand fw-bold" href="{% url 'home' %}">📦 Inventory App</a>
+            <a class="navbar-brand" href="{% url 'home' %}">
+                Duka <span>Mwecheche</span>
+            </a>
 
-            <!-- Mobile toggle button -->
             <button class="navbar-toggler" type="button"
                     data-bs-toggle="collapse"
                     data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
 
-            <!-- Nav links -->
             <div class="collapse navbar-collapse" id="navbarNav">
                 {% if user.is_authenticated %}
-
                 <ul class="navbar-nav me-auto">
-                    <!-- All users see these -->
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'stock_list' %}">
-                            📋 Stock List
-                        </a>
+                        <a class="nav-link" href="{% url 'stock_list' %}">Stock List</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'add_transaction' %}">
-                            ➕ Add Transaction
-                        </a>
+                        <a class="nav-link" href="{% url 'add_transaction' %}">Add Transaction</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'transaction_history' %}">
-                            🕒 History
-                        </a>
+                        <a class="nav-link" href="{% url 'transaction_history' %}">History</a>
                     </li>
 
-                    <!-- Owner only links -->
                     {% if user.userprofile.is_owner %}
                     <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#"
-                           data-bs-toggle="dropdown">
-                            ⚙️ Manage
+                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
+                            Manage
                         </a>
                         <ul class="dropdown-menu">
-                            <li>
-                                <a class="dropdown-item" href="{% url 'manage_stores' %}">
-                                    🏪 Stores
-                                </a>
-                            </li>
-                            <li>
-                                <a class="dropdown-item" href="{% url 'manage_items' %}">
-                                    📦 Items
-                                </a>
-                            </li>
+                            <li><a class="dropdown-item" href="{% url 'manage_stores' %}">🏪 Stores</a></li>
+                            <li><a class="dropdown-item" href="{% url 'manage_items' %}">📦 Items</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li>
-                                <a class="dropdown-item" href="{% url 'staff_list' %}">
-                                    👥 Staff
-                                </a>
-                            </li>
-                            <li>
-                                <a class="dropdown-item" href="{% url 'add_staff' %}">
-                                    ➕ Add Staff
-                                </a>
-                            </li>
+                            <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 Staff</a></li>
+                            <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ Add Staff</a></li>
                         </ul>
                     </li>
                     {% endif %}
                 </ul>
 
-                <!-- Right side: username + logout -->
-                <ul class="navbar-nav ms-auto">
+                <ul class="navbar-nav ms-auto align-items-center gap-2">
                     <li class="nav-item">
-                        <span class="nav-link text-light">
-                            👤 {{ user.username }}
+                        <span class="nav-link">
+                            {{ user.username }}
                             {% if user.userprofile.is_owner %}
-                                <span class="badge bg-warning text-dark ms-1">Owner</span>
+                                <span class="badge-role badge-owner ms-1">Owner</span>
                             {% else %}
-                                <span class="badge bg-secondary ms-1">Staff</span>
+                                <span class="badge-role badge-staff ms-1">Staff</span>
                             {% endif %}
                         </span>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'logout' %}">Logout</a>
+                        <form method="post" action="{% url 'logout' %}" style="display:inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-gold">Logout</button>
+                        </form>
                     </li>
                 </ul>
 
                 {% else %}
-                <!-- Logged out links -->
-                <ul class="navbar-nav ms-auto">
+                <ul class="navbar-nav ms-auto gap-2">
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'login' %}">Login</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'signup' %}">Register</a>
+                        <a class="btn btn-primary btn-sm px-3" href="{% url 'signup' %}">Register</a>
                     </li>
                 </ul>
                 {% endif %}
@@ -109,18 +387,24 @@
         </div>
     </nav>
 
-    <div class="container mt-4">
+    <!-- MESSAGES -->
+    <div class="container mt-3">
         {% if messages %}
             {% for message in messages %}
             <div class="alert alert-{{ message.tags }} alert-dismissible fade show">
                 {{ message }}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
             </div>
             {% endfor %}
         {% endif %}
+    </div>
 
+    <!-- MAIN CONTENT -->
+    <div class="container main-content">
         {% block content %}
         {% endblock %}
     </div>
+
+    {% block extra_js %}{% endblock %}
 </body>
 </html>
