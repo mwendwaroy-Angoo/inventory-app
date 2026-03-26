@@ -1,63 +1,104 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Transaction History</title>
-    {% load django_bootstrap5 %}
-    {% bootstrap_css %}
-    {% bootstrap_javascript %}
-    <style>
-        body { background-color: #f8f9fa; padding: 20px; }
-        .header { background-color: #0d6efd; color: white; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 30px; }
+{% extends "base.html" %}
 
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    @media (max-width: 768px) {
-    .table { font-size: 0.9rem; }
-    .btn { width: 100%; margin-bottom: 10px; }  /* Stack buttons */
-    .search-box { margin: 10px; }
-    .stat-card { margin-bottom: 20px; }  /* Stack cards on home
-}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Full Transaction History</h1>
-            <p>All issues and receipts | {{ today }}</p>
-            <a href="{% url 'home' %}" class="btn btn-light">← Dashboard</a>
-        </div>
+{% block title %}Transaction History — Duka Mwecheche{% endblock %}
 
-        <div class="table-responsive">
-            <table class="table table-striped">
-                <thead class="table-dark">
-                    <tr>
-                        <th>Date</th>
-                        <th>Item</th>
-                        <th>Store</th>
-                        <th>Type</th>
-                        <th>Quantity</th>
-                        <th>Department</th>
-                        <th>Doc No</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for trans in transactions %}
-                    <tr>
-                        <td>{{ trans.date }}</td>
-                        <td>{{ trans.item.description }} ({{ trans.item.material_no }})</td>
-                        <td>{{ trans.item.store.name }}</td>
-                        <td>{{ trans.type }}</td>
-                        <td class="{% if trans.qty < 0 %}text-danger{% else %}text-success{% endif %}">
-                            {{ trans.qty }}
-                        </td>
-                        <td>{{ trans.department|default:"—" }}</td>
-                        <td>{{ trans.doc_no|default:"—" }}</td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="7" class="text-center">No transactions yet.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</body>
-</html>
+{% block extra_css %}
+<style>
+    .history-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .receipt-row td:nth-child(4) { color: var(--success); }
+    .issue-row td:nth-child(4)   { color: var(--raspberry); }
+
+    .type-pill {
+        padding: 0.2rem 0.7rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.05em;
+    }
+
+    .type-receipt {
+        background: rgba(46,204,113,0.15);
+        color: var(--success);
+        border: 1px solid var(--success);
+    }
+
+    .type-issue {
+        background: rgba(192,57,90,0.15);
+        color: var(--raspberry);
+        border: 1px solid var(--raspberry);
+    }
+
+    .search-bar { max-width: 300px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="history-header">
+    <h2 class="page-title">🕒 Transaction History</h2>
+    <input type="text" id="searchInput" class="form-control search-bar"
+           placeholder="Search transactions...">
+</div>
+
+<div class="table-responsive">
+    <table class="table table-hover" id="historyTable">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Item</th>
+                <th>Store</th>
+                <th>Type</th>
+                <th>Qty</th>
+                <th>Department</th>
+                <th>Doc No</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for trans in transactions %}
+            <tr class="{% if trans.type == 'Receipt' %}receipt-row{% else %}issue-row{% endif %}">
+                <td>{{ trans.date }}</td>
+                <td>
+                    <strong>{{ trans.item.description }}</strong>
+                    <br>
+                    <small style="color:var(--muted)">{{ trans.item.material_no }}</small>
+                </td>
+                <td>{{ trans.item.store.name }}</td>
+                <td>
+                    <span class="type-pill {% if trans.type == 'Receipt' %}type-receipt{% else %}type-issue{% endif %}">
+                        {{ trans.type }}
+                    </span>
+                </td>
+                <td>
+                    <strong>{% if trans.qty < 0 %}{{ trans.qty }}{% else %}+{{ trans.qty }}{% endif %}</strong>
+                </td>
+                <td>{{ trans.department|default:"—" }}</td>
+                <td>{{ trans.doc_no|default:"—" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" class="text-center py-4"
+                    style="color:var(--muted)">No transactions yet.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.getElementById("searchInput").addEventListener("keyup", function () {
+        const input = this.value.toLowerCase();
+        document.querySelectorAll("#historyTable tbody tr").forEach(row => {
+            row.style.display = row.textContent.toLowerCase().includes(input) ? "" : "none";
+        });
+    });
+</script>
+{% endblock %}

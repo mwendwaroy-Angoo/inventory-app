@@ -1,62 +1,125 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
 
-{% block title %}Register Your Business{% endblock %}
+{% block title %}Register Your Business — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .signup-card {
+        max-width: 620px;
+        margin: 2rem auto 4rem;
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-top: 3px solid var(--gold);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .signup-header {
+        background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+        padding: 2rem;
+        text-align: center;
+    }
+
+    .signup-header h2 {
+        font-family: 'Playfair Display', serif;
+        color: var(--white);
+        font-size: 1.8rem;
+        margin: 0;
+    }
+
+    .signup-header p {
+        color: rgba(255,255,255,0.7);
+        margin: 0.3rem 0 0;
+        font-size: 0.85rem;
+        letter-spacing: 0.05em;
+    }
+
+    .signup-body { padding: 2rem; }
+
+    .section-divider {
+        display: flex;
+        align-items: center;
+        margin: 1.8rem 0 1.2rem;
+    }
+
+    .section-divider span {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        padding-right: 1rem;
+        white-space: nowrap;
+    }
+
+    .section-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--gold), transparent);
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-8 col-lg-6">
-        <div class="card shadow mt-4 mb-5">
-            <div class="card-header bg-primary text-white text-center py-3">
-                <h3 class="mb-0">📦 Register Your Business</h3>
-                <small>Create your account and get started</small>
-            </div>
-            <div class="card-body p-4">
+<div class="signup-card">
+    <div class="signup-header">
+        <h2>📦 Register Your Business</h2>
+        <p>Create your account and get started</p>
+    </div>
 
-                {% if form.errors %}
-                <div class="alert alert-danger">
-                    Please correct the errors below.
-                </div>
-                {% endif %}
+    <div class="signup-body">
 
-                <form method="post" id="signupForm">
-                    {% csrf_token %}
-
-                    <h5 class="text-muted mb-3 border-bottom pb-2">👤 Account Details</h5>
-                    {% bootstrap_field form.username %}
-                    {% bootstrap_field form.email %}
-                    {% bootstrap_field form.password1 %}
-                    {% bootstrap_field form.password2 %}
-
-                    <h5 class="text-muted mb-3 border-bottom pb-2 mt-4">🏢 Business Details</h5>
-                    {% bootstrap_field form.business_name %}
-                    {% bootstrap_field form.business_type %}
-                    {% bootstrap_field form.phone %}
-                    {% bootstrap_field form.email_business %}
-                    {% bootstrap_field form.address %}
-
-                    <h5 class="text-muted mb-3 border-bottom pb-2 mt-4">📍 Location</h5>
-                    {% bootstrap_field form.county %}
-                    {% bootstrap_field form.sub_county %}
-                    {% bootstrap_field form.ward %}
-
-                    <div class="d-grid mt-4">
-                        <button type="submit" class="btn btn-primary btn-lg">
-                            Create Account & Business
-                        </button>
-                    </div>
-                </form>
-
-                <div class="text-center mt-3">
-                    <small>Already have an account?
-                        <a href="{% url 'login' %}">Login here</a>
-                    </small>
-                </div>
-            </div>
+        {% if form.errors %}
+        <div class="alert alert-danger">
+            Please correct the errors below.
         </div>
+        {% endif %}
+
+        <form method="post" id="signupForm">
+            {% csrf_token %}
+
+            <!-- Account Details -->
+            <div class="section-divider"><span>👤 Account Details</span></div>
+            {% bootstrap_field form.username %}
+            {% bootstrap_field form.email %}
+            {% bootstrap_field form.password1 %}
+            {% bootstrap_field form.password2 %}
+
+            <!-- Business Details -->
+            <div class="section-divider"><span>🏢 Business Details</span></div>
+            {% bootstrap_field form.business_name %}
+            {% bootstrap_field form.business_type %}
+            {% bootstrap_field form.phone %}
+            {% bootstrap_field form.email_business %}
+            {% bootstrap_field form.address %}
+
+            <!-- Location -->
+            <div class="section-divider"><span>📍 Location</span></div>
+            {% bootstrap_field form.county %}
+            {% bootstrap_field form.sub_county %}
+            {% bootstrap_field form.ward %}
+
+            <div class="d-grid mt-4">
+                <button type="submit" class="btn btn-primary btn-lg py-2">
+                    Create Account & Business
+                </button>
+            </div>
+        </form>
+
+        <hr class="gold-divider mt-4">
+
+        <div class="text-center" style="font-size: 0.85rem; color: var(--muted);">
+            Already have an account?
+            <a href="{% url 'login' %}" style="color: var(--gold);">Login here</a>
+        </div>
+
     </div>
 </div>
+{% endblock %}
 
+{% block extra_js %}
 <script>
     const countySelect = document.getElementById('id_county');
     const subCountySelect = document.getElementById('id_sub_county');
@@ -77,11 +140,11 @@
         selectEl.style.opacity = '1';
     }
 
-    // Style sub-county and ward on page load (NOT disabled)
+    // Initial state
     resetSelect(subCountySelect, '-- Select Sub County --');
     resetSelect(wardSelect, '-- Select Ward --');
 
-    // When county changes, load sub-counties
+    // County → Sub County
     countySelect.addEventListener('change', function () {
         const countyId = this.value;
         resetSelect(subCountySelect, '-- Loading Sub Counties... --');
@@ -90,21 +153,18 @@
         if (countyId) {
             fetch(`/business/ajax/subcounties/?county_id=${countyId}`)
                 .then(response => {
-                    if (!response.ok) throw new Error('Network response was not ok');
+                    if (!response.ok) throw new Error('Network error');
                     return response.json();
                 })
                 .then(data => {
                     resetSelect(subCountySelect, '-- Select Sub County --');
                     populateSelect(subCountySelect, data, 'id', 'name');
                 })
-                .catch(err => {
-                    console.error('Error loading sub-counties:', err);
-                    resetSelect(subCountySelect, '-- Error loading sub-counties --');
-                });
+                .catch(() => resetSelect(subCountySelect, '-- Error loading --'));
         }
     });
 
-    // When sub-county changes, load wards
+    // Sub County → Ward
     subCountySelect.addEventListener('change', function () {
         const subCountyId = this.value;
         resetSelect(wardSelect, '-- Loading Wards... --');
@@ -112,17 +172,14 @@
         if (subCountyId) {
             fetch(`/business/ajax/wards/?sub_county_id=${subCountyId}`)
                 .then(response => {
-                    if (!response.ok) throw new Error('Network response was not ok');
+                    if (!response.ok) throw new Error('Network error');
                     return response.json();
                 })
                 .then(data => {
                     resetSelect(wardSelect, '-- Select Ward --');
                     populateSelect(wardSelect, data, 'id', 'name');
                 })
-                .catch(err => {
-                    console.error('Error loading wards:', err);
-                    resetSelect(wardSelect, '-- Error loading wards --');
-                });
+                .catch(() => resetSelect(wardSelect, '-- Error loading --'));
         }
     });
 </script>

@@ -91,7 +91,19 @@
         <a href="{% url 'manage_items' %}" class="btn btn-gold btn-sm">⚙️ Manage Items</a>
         {% endif %}
         <a href="{% url 'export_stock' %}?store={{ request.GET.store }}"
-           class="btn btn-secondary btn-sm">📥 Export Excel</a>
+   class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+         xmlns="http://www.w3.org/2000/svg">
+        <rect width="16" height="16" rx="2" fill="#1D6F42"/>
+        <rect x="8" width="8" height="16" rx="2" fill="#217346"/>
+        <path d="M2 4.5L5.5 8L2 11.5H4.5L6.75 9L9 11.5H11.5L8 8L11.5 4.5H9L6.75 7L4.5 4.5H2Z"
+              fill="white"/>
+        <rect x="9" y="4" width="1" height="8" fill="white" opacity="0.6"/>
+        <rect x="11" y="4" width="1" height="8" fill="white" opacity="0.6"/>
+        <rect x="9" y="7.5" width="3" height="1" fill="white" opacity="0.6"/>
+    </svg>
+    Export Excel
+</a>
     </div>
 </div>
 
