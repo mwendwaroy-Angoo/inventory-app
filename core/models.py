@@ -1,11 +1,9 @@
 from django.db import models
 from django.utils import timezone
 
-# REMOVED: from accounts.models import Business   ← this caused the circle
-
 
 # ────────────────────────────────────────────────
-# NEW MODELS FOR MULTI-TENANCY & FEATURES
+# LOCATION MODELS
 # ────────────────────────────────────────────────
 
 class BusinessType(models.Model):
@@ -55,15 +53,30 @@ class Ward(models.Model):
 
 
 # ────────────────────────────────────────────────
-# EXISTING MODELS – WITH NEW FIELDS & RELATIONS
+# CUSTOMER MODEL  ← now correctly at top level
+# ────────────────────────────────────────────────
+
+class Customer(models.Model):
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='customers')
+    name = models.CharField(max_length=200)
+    phone = models.CharField(max_length=20, blank=True)
+    location = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        ordering = ['name']
+
+
+# ────────────────────────────────────────────────
+# STORE, ITEM, TRANSACTION
 # ────────────────────────────────────────────────
 
 class Store(models.Model):
-    # Use string reference instead of import
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stores')
-    name = models.CharField(max_length=100)  # e.g., SF STORE, COMPUTER STORE
-
-    # NEW: Which business types this store is suitable for
+    name = models.CharField(max_length=100)
     suitable_for_types = models.ManyToManyField(BusinessType, related_name='suitable_stores', blank=True)
 
     def __str__(self):
@@ -80,11 +93,7 @@ class Item(models.Model):
     opening_physical = models.IntegerField(default=0)
     reorder_quantity = models.IntegerField(default=0)
     reorder_level = models.IntegerField(default=0)
-
-    # NEW: Link to business (string reference)
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='items', null=True, blank=True)
-
-    # NEW: Selling price (owner can edit)
     selling_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=3, default='KES', editable=False)
 
@@ -117,12 +126,10 @@ class Transaction(models.Model):
 
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='transactions')
     date = models.DateField(default=timezone.now)
-    doc_no = models.CharField(max_length=50, blank=True)
+    invoice_no = models.CharField(max_length=50, blank=True)
     type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     qty = models.IntegerField()
-    department = models.CharField(max_length=100, blank=True)
-
-    # NEW: Link to business (string reference)
+    recipient = models.CharField(max_length=200, blank=True)
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='transactions', null=True, blank=True)
 
     def __str__(self):

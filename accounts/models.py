@@ -25,16 +25,11 @@ class UserProfile(models.Model):
         ('owner', 'Owner'),
         ('staff', 'Staff'),
     ]
-
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-    business = models.ForeignKey(
-        Business,
-        on_delete=models.CASCADE,
-        related_name='users',
-        null=True,
-        blank=True
-    )
+    business = models.ForeignKey(Business, on_delete=models.CASCADE,
+                                  related_name='users', null=True, blank=True)
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='staff')
+    phone = models.CharField(max_length=20, blank=True)  # ← add this
 
     def __str__(self):
         return f"{self.user.username} ({self.business.name if self.business else 'No Business'}) - {self.role}"

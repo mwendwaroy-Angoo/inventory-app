@@ -4,7 +4,7 @@
 
 {% block extra_css %}
 <style>
-    .history-header {
+    .history-toolbar {
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -13,8 +13,62 @@
         margin-bottom: 1.5rem;
     }
 
-    .receipt-row td:nth-child(4) { color: var(--success); }
-    .issue-row td:nth-child(4)   { color: var(--raspberry); }
+    .search-wrapper {
+        position: relative;
+        max-width: 320px;
+        flex: 1;
+    }
+
+    .search-wrapper input {
+        padding-left: 2.5rem;
+        background: #222;
+        border: 1px solid #444;
+        color: var(--pearl);
+        border-radius: 6px;
+    }
+
+    .search-wrapper input:focus {
+        border-color: var(--gold);
+        box-shadow: 0 0 0 3px rgba(201,168,76,0.15);
+        background: #2a2a2a;
+        color: var(--pearl);
+    }
+
+    .search-icon {
+        position: absolute;
+        left: 0.8rem;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--muted);
+        pointer-events: none;
+    }
+
+    .suggestions-box {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--onyx-card);
+        border: 1px solid var(--gold);
+        border-radius: 6px;
+        z-index: 100;
+        max-height: 200px;
+        overflow-y: auto;
+        display: none;
+    }
+
+    .suggestion-item {
+        padding: 0.5rem 1rem;
+        cursor: pointer;
+        font-size: 0.85rem;
+        color: var(--pearl);
+        border-bottom: 1px solid #2e2e2e;
+    }
+
+    .suggestion-item:hover {
+        background: rgba(201,168,76,0.1);
+        color: var(--gold);
+    }
 
     .type-pill {
         padding: 0.2rem 0.7rem;
@@ -36,15 +90,49 @@
         border: 1px solid var(--raspberry);
     }
 
-    .search-bar { max-width: 300px; }
+    .no-results {
+        text-align: center;
+        padding: 3rem;
+        color: var(--muted);
+    }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="history-header">
+
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <span>Transaction History</span>
+</nav>
+
+<div class="history-toolbar">
     <h2 class="page-title">🕒 Transaction History</h2>
-    <input type="text" id="searchInput" class="form-control search-bar"
-           placeholder="Search transactions...">
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+        <!-- Search -->
+        <div class="search-wrapper">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="searchInput"
+                   class="form-control form-control-sm"
+                   placeholder="Search by item, type, date, recipient..."
+                   autocomplete="off">
+            <div class="suggestions-box" id="suggestionsBox"></div>
+        </div>
+
+        <!-- Export -->
+        <a href="{% url 'export_transactions' %}"
+           class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <rect width="16" height="16" rx="2" fill="#1D6F42"/>
+                <rect x="8" width="8" height="16" rx="2" fill="#217346"/>
+                <path d="M2 4.5L5.5 8L2 11.5H4.5L6.75 9L9 11.5H11.5L8 8L11.5 4.5H9L6.75 7L4.5 4.5H2Z" fill="white"/>
+            </svg>
+            Export Excel
+        </a>
+
+        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+    </div>
 </div>
 
 <div class="table-responsive">
@@ -56,13 +144,13 @@
                 <th>Store</th>
                 <th>Type</th>
                 <th>Qty</th>
-                <th>Department</th>
-                <th>Doc No</th>
+                <th>Recipient</th>
+                <th>Invoice No</th>
             </tr>
         </thead>
-        <tbody>
+        <tbody id="tableBody">
             {% for trans in transactions %}
-            <tr class="{% if trans.type == 'Receipt' %}receipt-row{% else %}issue-row{% endif %}">
+            <tr data-search="{{ trans.date }} {{ trans.item.description }} {{ trans.item.material_no }} {{ trans.item.store.name }} {{ trans.type }} {{ trans.qty }} {{ trans.recipient }} {{ trans.invoice_no }}">
                 <td>{{ trans.date }}</td>
                 <td>
                     <strong>{{ trans.item.description }}</strong>
@@ -76,29 +164,82 @@
                     </span>
                 </td>
                 <td>
-                    <strong>{% if trans.qty < 0 %}{{ trans.qty }}{% else %}+{{ trans.qty }}{% endif %}</strong>
+                    <strong style="color:{% if trans.qty < 0 %}var(--raspberry){% else %}var(--success){% endif %}">
+                        {% if trans.qty > 0 %}+{% endif %}{{ trans.qty }}
+                    </strong>
                 </td>
-                <td>{{ trans.department|default:"—" }}</td>
-                <td>{{ trans.doc_no|default:"—" }}</td>
+                <td>{{ trans.recipient|default:"—" }}</td>
+                <td>{{ trans.invoice_no|default:"—" }}</td>
             </tr>
             {% empty %}
             <tr>
-                <td colspan="7" class="text-center py-4"
-                    style="color:var(--muted)">No transactions yet.</td>
+                <td colspan="7" class="no-results">No transactions yet.</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    document.getElementById("searchInput").addEventListener("keyup", function () {
-        const input = this.value.toLowerCase();
-        document.querySelectorAll("#historyTable tbody tr").forEach(row => {
-            row.style.display = row.textContent.toLowerCase().includes(input) ? "" : "none";
+    const searchInput = document.getElementById('searchInput');
+    const suggestionsBox = document.getElementById('suggestionsBox');
+    const rows = document.querySelectorAll('#tableBody tr[data-search]');
+
+    // Build unique search terms from all row data
+    const allTerms = new Set();
+    rows.forEach(row => {
+        row.dataset.search.split(' ').forEach(term => {
+            if (term.trim() && term.trim() !== '—') allTerms.add(term.trim());
         });
+    });
+
+    searchInput.addEventListener('input', function () {
+        const query = this.value.toLowerCase().trim();
+
+        // Filter rows
+        let visibleCount = 0;
+        rows.forEach(row => {
+            const match = row.dataset.search.toLowerCase().includes(query);
+            row.style.display = match ? '' : 'none';
+            if (match) visibleCount++;
+        });
+
+        // Show suggestions
+        if (query.length >= 1) {
+            const matches = [...allTerms]
+                .filter(t => t.toLowerCase().includes(query))
+                .slice(0, 8);
+
+            if (matches.length > 0) {
+                suggestionsBox.innerHTML = matches.map(m =>
+                    `<div class="suggestion-item">${m}</div>`
+                ).join('');
+                suggestionsBox.style.display = 'block';
+            } else {
+                suggestionsBox.style.display = 'none';
+            }
+        } else {
+            suggestionsBox.style.display = 'none';
+        }
+    });
+
+    // Click suggestion to fill input
+    suggestionsBox.addEventListener('click', function (e) {
+        if (e.target.classList.contains('suggestion-item')) {
+            searchInput.value = e.target.textContent;
+            searchInput.dispatchEvent(new Event('input'));
+            suggestionsBox.style.display = 'none';
+        }
+    });
+
+    // Close suggestions on outside click
+    document.addEventListener('click', function (e) {
+        if (!searchInput.contains(e.target) && !suggestionsBox.contains(e.target)) {
+            suggestionsBox.style.display = 'none';
+        }
     });
 </script>
 {% endblock %}

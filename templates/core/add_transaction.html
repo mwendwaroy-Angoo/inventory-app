@@ -7,7 +7,7 @@
 <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet"/>
 <style>
     .form-card {
-        max-width: 640px;
+        max-width: 660px;
         margin: 0 auto;
         background: var(--onyx-card);
         border: 1px solid #333;
@@ -28,64 +28,98 @@
     }
 
     .form-card-header p {
-        color: rgba(255,255,255,0.7);
+        color: rgba(255,255,255,0.65);
         margin: 0.2rem 0 0;
         font-size: 0.85rem;
     }
 
     .form-card-body { padding: 2rem; }
 
+    .section-divider {
+        display: flex;
+        align-items: center;
+        margin: 1.5rem 0 1rem;
+    }
+
+    .section-divider span {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 0.9rem;
+        padding-right: 1rem;
+        white-space: nowrap;
+    }
+
+    .section-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--gold), transparent);
+    }
+
     /* Select2 dark theme */
-    .select2-container--bootstrap-5 .select2-selection {
+    .select2-container--default .select2-selection--single {
         background-color: #222 !important;
         border: 1px solid #444 !important;
         color: var(--pearl) !important;
         border-radius: 6px !important;
+        height: 42px !important;
+        display: flex !important;
+        align-items: center !important;
     }
 
-    .select2-container--bootstrap-5 .select2-selection--single
+    .select2-container--default .select2-selection--single
     .select2-selection__rendered {
         color: var(--pearl) !important;
+        line-height: 42px !important;
+        padding-left: 12px !important;
     }
+
+    .select2-container--default .select2-selection--single
+    .select2-selection__arrow { height: 42px !important; }
 
     .select2-dropdown {
         background-color: #222 !important;
         border: 1px solid var(--gold) !important;
     }
 
-    .select2-results__option {
-        color: var(--pearl) !important;
-        font-size: 0.9rem;
-    }
-
+    .select2-results__option { color: var(--pearl) !important; font-size: 0.9rem; }
     .select2-results__option--highlighted {
         background-color: var(--raspberry) !important;
     }
 
-    .select2-container--bootstrap-5 .select2-search--dropdown .select2-search__field {
+    .select2-search--dropdown .select2-search__field {
         background: #333 !important;
         border: 1px solid #444 !important;
         color: var(--pearl) !important;
     }
 
-    .type-badge {
-        display: inline-block;
-        padding: 0.2rem 0.6rem;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: 500;
-        letter-spacing: 0.05em;
+    #new-customer-fields {
+        background: rgba(201,168,76,0.05);
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-top: 0.5rem;
+        display: none;
     }
 </style>
 {% endblock %}
 
 {% block content %}
+
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <span>Add Transaction</span>
+</nav>
+
 <div class="form-card">
     <div class="form-card-header">
         <h3>➕ Add Transaction</h3>
         <p>{{ today }}</p>
     </div>
     <div class="form-card-body">
+
         {% if messages %}
             {% for message in messages %}
             <div class="alert alert-{{ message.tags }} alert-dismissible fade show">
@@ -96,13 +130,16 @@
             {% endfor %}
         {% endif %}
 
-        <form method="post">
+        <form method="post" id="transactionForm">
             {% csrf_token %}
 
+            <!-- Item & Type -->
+            <div class="section-divider"><span>📦 Item Details</span></div>
+
             <div class="mb-4">
-                <label for="item" class="form-label">Item</label>
+                <label class="form-label">Item</label>
                 <select name="item" id="item" class="form-select select2"
-                        required style="width: 100%;">
+                        required style="width:100%">
                     <option value="">Type to search item...</option>
                     {% for item in items %}
                     <option value="{{ item.id }}">
@@ -114,37 +151,70 @@
             </div>
 
             <div class="mb-4">
-                <label for="type" class="form-label">Transaction Type</label>
-                <select name="type" id="type" class="form-select" required>
-                    <option value="Receipt">Receipt — Add Stock</option>
-                    <option value="Issue">Issue — Remove Stock</option>
+                <label class="form-label">Transaction Type</label>
+                <select name="type" id="transType" class="form-select" required>
+                    <option value="Receipt">Receipt — Receiving Stock</option>
+                    <option value="Issue">Issue — Issuing / Selling Stock</option>
                 </select>
             </div>
 
             <div class="mb-4">
-                <label for="quantity" class="form-label">Quantity</label>
+                <label class="form-label">Quantity</label>
                 <input type="number" name="quantity" id="quantity"
                        class="form-control" min="1" required
                        placeholder="Enter quantity">
             </div>
 
-            <div class="row g-3 mb-4">
-                <div class="col-md-6">
-                    <label for="department" class="form-label">
-                        Department <span style="color:var(--muted)">(optional)</span>
-                    </label>
-                    <input type="text" name="department" id="department"
-                           class="form-control"
-                           placeholder="e.g. Administration">
+            <!-- Recipient Section -->
+            <div class="section-divider"><span id="recipientLabel">📍 Recipient / Destination</span></div>
+
+            <!-- Receipt → Store dropdown -->
+            <div id="storeField" class="mb-4">
+                <label class="form-label">Receiving Store</label>
+                <select name="recipient" id="storeSelect" class="form-select">
+                    <option value="">-- Select Store --</option>
+                    {% for store in stores %}
+                    <option value="{{ store.name }}">{{ store.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Issue → Customer dropdown -->
+            <div id="customerField" class="mb-4" style="display:none">
+                <label class="form-label">Customer / Recipient</label>
+                <select name="recipient" id="customerSelect" class="form-select select2-customer"
+                        style="width:100%">
+                    <option value="">-- Select or type customer --</option>
+                    {% for customer in customers %}
+                    <option value="{{ customer.name }}">
+                        {{ customer.name }}{% if customer.phone %} — {{ customer.phone }}{% endif %}
+                    </option>
+                    {% endfor %}
+                    <option value="__new__">➕ Add New Customer...</option>
+                </select>
+
+                <!-- New customer quick-add -->
+                <div id="new-customer-fields">
+                    <p style="color:var(--gold); font-size:0.85rem; margin-bottom:0.8rem;">
+                        New Customer Details
+                    </p>
+                    <input type="text" name="new_customer_name" id="newCustomerName"
+                           class="form-control mb-2" placeholder="Customer name *">
+                    <input type="text" name="new_customer_phone"
+                           class="form-control" placeholder="Phone (optional)">
                 </div>
-                <div class="col-md-6">
-                    <label for="doc_no" class="form-label">
-                        Document No <span style="color:var(--muted)">(optional)</span>
-                    </label>
-                    <input type="text" name="doc_no" id="doc_no"
-                           class="form-control"
-                           placeholder="e.g. 490002787">
-                </div>
+            </div>
+
+            <!-- Invoice / Receipt No -->
+            <div class="section-divider"><span>🧾 Document</span></div>
+
+            <div class="mb-4">
+                <label class="form-label" id="invoiceLabel">
+                    Invoice No / Receipt No
+                    <span style="color:var(--muted); font-size:0.8rem">(optional)</span>
+                </label>
+                <input type="text" name="invoice_no" class="form-control"
+                       placeholder="e.g. INV-001 or REC-2026-001">
             </div>
 
             <button type="submit" class="btn btn-primary w-100 py-2">
@@ -153,18 +223,60 @@
         </form>
     </div>
 </div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
-    $(document).ready(function () {
-        $('.select2').select2({
-            placeholder: "Type to search item...",
-            allowClear: true,
-            width: '100%'
-        });
+$(document).ready(function () {
+    // Item search select2
+    $('#item').select2({
+        placeholder: "Type to search item...",
+        allowClear: true,
+        width: '100%'
     });
+
+    // Customer select2
+    $('.select2-customer').select2({
+        placeholder: "Select or type customer name...",
+        allowClear: true,
+        width: '100%',
+        tags: true,  // allows typing new values
+    });
+
+    // Transaction type toggle
+    function toggleRecipient() {
+        const type = $('#transType').val();
+        if (type === 'Receipt') {
+            $('#storeField').show();
+            $('#customerField').hide();
+            $('#storeField select').attr('name', 'recipient');
+            $('#customerSelect').attr('name', '');
+            $('#recipientLabel').text('📍 Receiving Store');
+        } else {
+            $('#storeField').hide();
+            $('#customerField').show();
+            $('#storeField select').attr('name', '');
+            $('#customerSelect').attr('name', 'recipient');
+            $('#recipientLabel').text('👤 Customer / Recipient');
+        }
+    }
+
+    $('#transType').on('change', toggleRecipient);
+    toggleRecipient(); // run on load
+
+    // Show new customer fields
+    $('#customerSelect').on('change', function () {
+        if ($(this).val() === '__new__') {
+            $('#new-customer-fields').show();
+            $('#customerSelect').attr('name', '');
+        } else {
+            $('#new-customer-fields').hide();
+            $('#customerSelect').attr('name', 'recipient');
+        }
+    });
+});
 </script>
 {% endblock %}

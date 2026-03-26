@@ -1,11 +1,97 @@
 {% extends "base.html" %}
+{% load django_bootstrap5 %}
+
+{% block title %}Add Staff — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .staff-form-card {
+        max-width: 520px;
+        margin: 0 auto;
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-top: 3px solid var(--gold);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .staff-form-header {
+        background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+        padding: 1.5rem 2rem;
+    }
+
+    .staff-form-header h3 {
+        font-family: 'Playfair Display', serif;
+        color: white;
+        margin: 0;
+    }
+
+    .staff-form-body { padding: 2rem; }
+
+    .section-divider {
+        display: flex;
+        align-items: center;
+        margin: 1.5rem 0 1rem;
+    }
+
+    .section-divider span {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 0.95rem;
+        padding-right: 1rem;
+        white-space: nowrap;
+    }
+
+    .section-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--gold), transparent);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<h2>Add Staff Member</h2>
-<form method="post">
-    {% csrf_token %}
-    {% load django_bootstrap5 %}
-    {% bootstrap_form form %}
-    <button type="submit" class="btn btn-primary">Add Staff</button>
-    <a href="{% url 'staff_list' %}" class="btn btn-secondary">Cancel</a>
-</form>
+
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'staff_list' %}" style="color:var(--gold)">Staff</a>
+    <span class="mx-1">›</span>
+    <span>Add Staff</span>
+</nav>
+
+<div class="staff-form-card">
+    <div class="staff-form-header">
+        <h3>➕ Add Staff Member</h3>
+    </div>
+    <div class="staff-form-body">
+
+        {% if form.errors %}
+        <div class="alert alert-danger">Please correct the errors below.</div>
+        {% endif %}
+
+        <form method="post">
+            {% csrf_token %}
+
+            <div class="section-divider"><span>👤 Personal Details</span></div>
+            {% bootstrap_field form.first_name %}
+            {% bootstrap_field form.last_name %}
+            {% bootstrap_field form.phone %}
+            {% bootstrap_field form.email %}
+
+            <div class="section-divider"><span>🔐 Login Credentials</span></div>
+            {% bootstrap_field form.username %}
+            {% bootstrap_field form.password1 %}
+            {% bootstrap_field form.password2 %}
+
+            <div class="d-flex gap-2 mt-4">
+                <button type="submit" class="btn btn-primary">Add Staff Member</button>
+                <a href="{% url 'staff_list' %}" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+
 {% endblock %}

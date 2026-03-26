@@ -33,7 +33,7 @@ class BusinessSignupForm(forms.Form):
     )
     phone = forms.CharField(
         max_length=20,
-        required=False,
+        required=True,
         widget=forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'})
     )
     email_business = forms.EmailField(
@@ -52,19 +52,18 @@ class BusinessSignupForm(forms.Form):
         empty_label='-- Select County --'
     )
     sub_county = forms.ModelChoiceField(
-        queryset=SubCounty.objects.none(),  # empty until county selected
+        queryset=SubCounty.objects.none(),
         empty_label='-- Select Sub County --',
         required=True
     )
     ward = forms.ModelChoiceField(
-        queryset=Ward.objects.none(),  # empty until sub county selected
+        queryset=Ward.objects.none(),
         empty_label='-- Select Ward --',
         required=False
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Populate sub_county and ward if data was submitted
         if 'county' in self.data:
             try:
                 county_id = int(self.data.get('county'))
@@ -73,7 +72,6 @@ class BusinessSignupForm(forms.Form):
                 ).order_by('name')
             except (ValueError, TypeError):
                 pass
-
         if 'sub_county' in self.data:
             try:
                 sub_county_id = int(self.data.get('sub_county'))
@@ -122,6 +120,11 @@ class AddStaffForm(forms.Form):
         max_length=100,
         required=False,
         widget=forms.TextInput(attrs={'placeholder': 'Last name'})
+    )
+    phone = forms.CharField(
+        max_length=20,
+        required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'})
     )
     password1 = forms.CharField(
         widget=forms.PasswordInput(attrs={'placeholder': 'Create a password'}),

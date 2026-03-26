@@ -152,26 +152,32 @@
     </div>
 
     <!-- Stats -->
-    <div class="row g-3 mb-4">
-        <div class="col-4">
+<div class="row g-3 mb-4">
+    <div class="col-4">
+        <a href="{% url 'stock_list' %}" style="text-decoration:none">
             <div class="stat-card stat-total">
                 <div class="stat-label">Total Items</div>
                 <div class="stat-value">{{ total_items|default:"0" }}</div>
             </div>
-        </div>
-        <div class="col-4">
+        </a>
+    </div>
+    <div class="col-4">
+        <a href="{% url 'stock_list' %}?status=low_stock" style="text-decoration:none">
             <div class="stat-card stat-low">
                 <div class="stat-label">Low Stock</div>
                 <div class="stat-value">{{ low_stock_count|default:"0" }}</div>
             </div>
-        </div>
-        <div class="col-4">
+        </a>
+    </div>
+    <div class="col-4">
+        <a href="{% url 'stock_list' %}?status=reorder" style="text-decoration:none">
             <div class="stat-card stat-reorder">
                 <div class="stat-label">Needs Reorder</div>
                 <div class="stat-value">{{ reorder_count|default:"0" }}</div>
             </div>
-        </div>
+        </a>
     </div>
+</div>
 
     <!-- Action Buttons -->
     <div class="d-flex flex-wrap gap-2 mb-4">

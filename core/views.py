@@ -1,21 +1,41 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import login
 from django.contrib import messages
-from django.http import HttpResponse
-from .models import Item, Transaction, Store
-import openpyxl
-from openpyxl.utils import get_column_letter
+from django.http import HttpResponse, JsonResponse
+from .models import Item, Transaction, Store, BusinessType, Customer
 from .forms import ItemForm
-from .models import Item, Transaction, Store, BusinessType
+import openpyxl
 
+
+# ── HELPERS ──────────────────────────────────────────────────────────────────
+
+def get_user_profile(request):
+    try:
+        return request.user.userprofile
+    except Exception:
+        return None
+
+
+def owner_required(view_func):
+    from functools import wraps
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        try:
+            if not request.user.userprofile.is_owner:
+                messages.error(request, "Only business owners can access this page.")
+                return redirect('stock_list')
+        except Exception:
+            return redirect('home')
+        return view_func(request, *args, **kwargs)
+    return wrapper
+
+
+# ── HOME ─────────────────────────────────────────────────────────────────────
 
 def home(request):
-    context = {
-        'today': timezone.now().strftime("%B %d, %Y"),
-    }
+    context = {'today': timezone.now().strftime("%B %d, %Y")}
 
     if request.user.is_authenticated:
         try:
@@ -40,61 +60,73 @@ def home(request):
     return render(request, 'core/home.html', context)
 
 
-def signup(request):
-    if request.method == 'POST':
-        form = UserCreationForm(request.POST)
-        if form.is_valid():
-            user = form.save()
-            login(request, user)
-            return redirect('home')
-    else:
-        form = UserCreationForm()
-    return render(request, 'registration/signup.html', {'form': form})
-
+# ── STOCK LIST ────────────────────────────────────────────────────────────────
 
 @login_required
 def stock_list(request):
-    try:
-        user_profile = request.user.userprofile
-    except Exception:
-        messages.error(request, "Your account has no business profile. Please complete your setup.")
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        messages.error(request, "No business profile found.")
         return redirect('home')
 
     stores = Store.objects.filter(business=user_profile.business)
     selected_store_id = request.GET.get('store')
+    status_filter = request.GET.get('status')  # 'low_stock' or 'reorder'
+
+    items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
 
     if selected_store_id:
         try:
             selected_store_id = int(selected_store_id)
-            items = Item.objects.filter(store_id=selected_store_id, store__business=user_profile.business).order_by('material_no')
+            items = items.filter(store_id=selected_store_id)
         except (ValueError, TypeError):
-            items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
-    else:
-        items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
+            pass
+
+    # Convert to list for Python-level filtering
+    all_items = list(items)
+
+    if status_filter == 'low_stock':
+        all_items = [i for i in all_items if i.current_balance() <= i.reorder_level]
+    elif status_filter == 'reorder':
+        all_items = [i for i in all_items if i.needs_reorder()]
 
     context = {
-        'items': items,
+        'items': all_items,
         'stores': stores,
         'selected_store': selected_store_id if selected_store_id else None,
+        'status_filter': status_filter,
         'today': timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, 'core/stock_list.html', context)
 
 
+# ── TRANSACTIONS ──────────────────────────────────────────────────────────────
+
 @login_required
 def add_transaction(request):
-    try:
-        user_profile = request.user.userprofile
-    except Exception:
-        messages.error(request, "Your account has no business profile. Please complete your setup.")
+    user_profile = get_user_profile(request)
+    if not user_profile:
         return redirect('home')
+
+    stores = Store.objects.filter(business=user_profile.business)
+    customers = Customer.objects.filter(business=user_profile.business)
 
     if request.method == 'POST':
         item_id = request.POST['item']
         trans_type = request.POST['type']
         quantity = int(request.POST['quantity'])
-        department = request.POST.get('department', '')
-        doc_no = request.POST.get('doc_no', '')
+        invoice_no = request.POST.get('invoice_no', '')
+        recipient = request.POST.get('recipient', '')
+
+        # Handle new customer creation
+        new_customer_name = request.POST.get('new_customer_name', '').strip()
+        if new_customer_name and trans_type == 'Issue':
+            customer, created = Customer.objects.get_or_create(
+                business=user_profile.business,
+                name=new_customer_name,
+                defaults={'phone': request.POST.get('new_customer_phone', '')}
+            )
+            recipient = customer.name
 
         item = get_object_or_404(Item, id=item_id)
 
@@ -105,28 +137,85 @@ def add_transaction(request):
             item=item,
             type=trans_type,
             qty=quantity,
-            department=department,
-            doc_no=doc_no,
-            business=user_profile.business,  # fix null business on transactions
+            recipient=recipient,
+            invoice_no=invoice_no,
+            business=user_profile.business,
         )
 
-        messages.success(request, f"{abs(quantity)} {item.unit} of {item.description} recorded as {trans_type.lower()}.")
+        messages.success(
+            request,
+            f"{abs(quantity)} {item.unit} of {item.description} recorded as {trans_type.lower()}."
+        )
         return redirect('add_transaction')
 
     items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
     context = {
         'items': items,
+        'stores': stores,
+        'customers': customers,
         'today': timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, 'core/add_transaction.html', context)
 
 
 @login_required
+def transaction_history(request):
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+
+    transactions = Transaction.objects.filter(
+        item__store__business=user_profile.business
+    ).select_related('item', 'item__store').order_by('-date')
+
+    context = {
+        'transactions': transactions,
+        'today': timezone.now().strftime("%B %d, %Y"),
+    }
+    return render(request, 'core/transaction_history.html', context)
+
+
+@login_required
+def export_transactions_excel(request):
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+
+    transactions = Transaction.objects.filter(
+        item__store__business=user_profile.business
+    ).select_related('item', 'item__store').order_by('-date')
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Transaction History"
+    ws.append(['Date', 'Item', 'Material No', 'Store', 'Type', 'Qty', 'Recipient', 'Invoice No'])
+
+    for t in transactions:
+        ws.append([
+            str(t.date),
+            t.item.description,
+            t.item.material_no,
+            t.item.store.name,
+            t.type,
+            t.qty,
+            t.recipient or '—',
+            t.invoice_no or '—',
+        ])
+
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = 'attachment; filename=transaction_history.xlsx'
+    wb.save(response)
+    return response
+
+
+# ── ITEM DETAIL ───────────────────────────────────────────────────────────────
+
+@login_required
 def item_detail(request, item_id):
-    try:
-        user_profile = request.user.userprofile
-    except Exception:
-        messages.error(request, "Your account has no business profile. Please complete your setup.")
+    user_profile = get_user_profile(request)
+    if not user_profile:
         return redirect('home')
 
     item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
@@ -139,75 +228,53 @@ def item_detail(request, item_id):
     return render(request, 'core/item_detail.html', context)
 
 
+# ── EXPORT STOCK ──────────────────────────────────────────────────────────────
+
 @login_required
-def transaction_history(request):
-    try:
-        user_profile = request.user.userprofile
-    except Exception:
-        messages.error(request, "Your account has no business profile. Please complete your setup.")
-        return redirect('home')
-
-    transactions = Transaction.objects.filter(
-        item__store__business=user_profile.business
-    ).select_related('item').order_by('-date')
-    context = {
-        'transactions': transactions,
-        'today': timezone.now().strftime("%B %d, %Y"),
-    }
-    return render(request, 'core/transaction_history.html', context)
-
 def export_stock_excel(request):
+    user_profile = get_user_profile(request)
     store_id = request.GET.get('store')
-    if store_id:
-        items = Item.objects.filter(store_id=store_id)
+
+    if user_profile:
+        items = Item.objects.filter(store__business=user_profile.business)
+        if store_id:
+            items = items.filter(store_id=store_id)
     else:
-        items = Item.objects.all()
+        items = Item.objects.none()
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Stock List"
-
-    columns = ['Material No', 'Description', 'Unit', 'Current Balance', 'Reorder Level', 'Status', 'Store']
-    ws.append(columns)
+    ws.append(['Material No', 'Description', 'Unit', 'Current Balance',
+               'Reorder Level', 'Selling Price', 'Status', 'Store'])
 
     for item in items:
-        status = "OUT OF STOCK" if item.current_balance() <= 0 else "REORDER" if item.needs_reorder() else "AVAILABLE"
+        status = ("OUT OF STOCK" if item.current_balance() <= 0
+                  else "REORDER" if item.needs_reorder() else "AVAILABLE")
         ws.append([
             item.material_no,
             item.description,
             item.unit,
             item.current_balance(),
             item.reorder_level,
+            float(item.selling_price) if item.selling_price else '',
             status,
-            item.store.name
+            item.store.name,
         ])
 
-    response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
     response['Content-Disposition'] = 'attachment; filename=stock_list.xlsx'
     wb.save(response)
     return response
 
 
-
-def owner_required(view_func):
-    """Decorator that restricts access to business owners only."""
-    from functools import wraps
-    @wraps(view_func)
-    def wrapper(request, *args, **kwargs):
-        try:
-            if not request.user.userprofile.is_owner:
-                messages.error(request, "Only business owners can access this page.")
-                return redirect('stock_list')
-        except Exception:
-            return redirect('home')
-        return view_func(request, *args, **kwargs)
-    return wrapper
-
+# ── MANAGE ITEMS ──────────────────────────────────────────────────────────────
 
 @login_required
 @owner_required
 def manage_items(request):
-    """Owner view to see all items with edit/delete options."""
     user_profile = request.user.userprofile
     items = Item.objects.filter(
         business=user_profile.business
@@ -223,7 +290,6 @@ def manage_items(request):
 @login_required
 @owner_required
 def add_item(request):
-    """Owner view to add a new item."""
     user_profile = request.user.userprofile
 
     if request.method == 'POST':
@@ -231,7 +297,6 @@ def add_item(request):
         if form.is_valid():
             item = form.save(commit=False)
             item.business = user_profile.business
-            # Auto-generate material_no if not provided
             if not item.material_no:
                 last_item = Item.objects.filter(
                     business=user_profile.business
@@ -255,7 +320,6 @@ def add_item(request):
 @login_required
 @owner_required
 def edit_item(request, item_id):
-    """Owner view to edit an existing item."""
     user_profile = request.user.userprofile
     item = get_object_or_404(Item, id=item_id, business=user_profile.business)
 
@@ -280,7 +344,6 @@ def edit_item(request, item_id):
 @login_required
 @owner_required
 def delete_item(request, item_id):
-    """Owner view to delete an item."""
     user_profile = request.user.userprofile
     item = get_object_or_404(Item, id=item_id, business=user_profile.business)
 
@@ -297,6 +360,7 @@ def delete_item(request, item_id):
     return render(request, 'core/delete_item.html', context)
 
 
+# ── MANAGE STORES ─────────────────────────────────────────────────────────────
 
 @login_required
 @owner_required
@@ -307,10 +371,7 @@ def manage_stores(request):
     if request.method == 'POST':
         store_name = request.POST.get('name', '').strip()
         if store_name:
-            Store.objects.create(
-                name=store_name,
-                business=user_profile.business
-            )
+            Store.objects.create(name=store_name, business=user_profile.business)
             messages.success(request, f"Store '{store_name}' created successfully.")
             return redirect('manage_stores')
         else:
@@ -321,3 +382,70 @@ def manage_stores(request):
         'today': timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, 'core/manage_stores.html', context)
+
+
+# ── CUSTOMERS ─────────────────────────────────────────────────────────────────
+
+@login_required
+def customer_list(request):
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+
+    customers = Customer.objects.filter(business=user_profile.business)
+    context = {'customers': customers}
+    return render(request, 'core/customer_list.html', context)
+
+
+@login_required
+def add_customer(request):
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        phone = request.POST.get('phone', '').strip()
+        location = request.POST.get('location', '').strip()
+
+        if name:
+            Customer.objects.create(
+                business=user_profile.business,
+                name=name,
+                phone=phone,
+                location=location,
+            )
+            messages.success(request, f"Customer '{name}' added.")
+            return redirect('customer_list')
+        else:
+            messages.error(request, "Customer name is required.")
+
+    return render(request, 'core/customer_list.html',
+                  {'customers': Customer.objects.filter(business=user_profile.business)})
+
+
+@login_required
+@owner_required
+def delete_customer(request, customer_id):
+    user_profile = request.user.userprofile
+    customer = get_object_or_404(Customer, id=customer_id, business=user_profile.business)
+
+    if request.method == 'POST':
+        customer.delete()
+        messages.success(request, "Customer deleted.")
+    return redirect('customer_list')
+
+
+# ── AJAX ──────────────────────────────────────────────────────────────────────
+
+@login_required
+def ajax_customers(request):
+    """Returns customers for the transaction form dropdown."""
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return JsonResponse([], safe=False)
+
+    customers = Customer.objects.filter(
+        business=user_profile.business
+    ).values('id', 'name', 'phone')
+    return JsonResponse(list(customers), safe=False)

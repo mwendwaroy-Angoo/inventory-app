@@ -21,14 +21,15 @@ def signup(request):
 
             # Create the business
             business = Business.objects.create(
-                owner=user,
-                name=form.cleaned_data['business_name'],
-                business_type=form.cleaned_data['business_type'],
-                county=form.cleaned_data['county'],
-                sub_location=form.cleaned_data.get('sub_location'),
-                phone=form.cleaned_data.get('phone', ''),
-                email=form.cleaned_data.get('email_business', ''),
-                address=form.cleaned_data.get('address', ''),
+            owner=user,
+            name=form.cleaned_data['business_name'],
+            business_type=form.cleaned_data['business_type'],
+            county=form.cleaned_data['county'],
+            sub_county=form.cleaned_data.get('sub_county'),  # ← updated
+            ward=form.cleaned_data.get('ward'),              # ← added
+            phone=form.cleaned_data.get('phone', ''),
+            email=form.cleaned_data.get('email_business', ''),
+            address=form.cleaned_data.get('address', ''),
             )
 
             # Create the profile as owner
@@ -54,7 +55,6 @@ def add_staff(request):
     except Exception:
         return redirect('home')
 
-    # Only owners can add staff
     if not user_profile.is_owner:
         messages.error(request, "Only business owners can add staff.")
         return redirect('home')
@@ -74,15 +74,18 @@ def add_staff(request):
                 user=staff_user,
                 business=user_profile.business,
                 role='staff',
+                phone=form.cleaned_data.get('phone', ''),  # ← added
             )
 
-            messages.success(request, f"Staff member '{staff_user.username}' added successfully.")
+            messages.success(
+                request,
+                f"Staff member '{staff_user.username}' added successfully."
+            )
             return redirect('staff_list')
     else:
         form = AddStaffForm()
 
     return render(request, 'accounts/add_staff.html', {'form': form})
-
 
 @login_required
 def staff_list(request):

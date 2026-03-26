@@ -45,6 +45,6 @@ class StoreAdmin(admin.ModelAdmin):
 
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
-    list_display = ('date', 'item', 'type', 'qty', 'department', 'doc_no')
-    list_filter = ('type', 'date', 'department')
-    search_fields = ('item__description', 'doc_no')
+    list_display = ('date', 'item', 'type', 'qty', 'recipient', 'invoice_no')
+    list_filter = ('type', 'date', 'recipient')
+    search_fields = ('item__description', 'invoice_no')

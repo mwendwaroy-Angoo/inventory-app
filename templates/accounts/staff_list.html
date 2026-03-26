@@ -1,25 +1,99 @@
 {% extends "base.html" %}
+
+{% block title %}Staff — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .staff-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    .staff-card-header {
+        background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+        padding: 1rem 1.5rem;
+        font-family: 'Playfair Display', serif;
+        color: white;
+    }
+
+    .staff-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid #2e2e2e;
+    }
+
+    .staff-row:last-child { border-bottom: none; }
+
+    .staff-avatar {
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Playfair Display', serif;
+        font-size: 1rem;
+        color: white;
+        margin-right: 1rem;
+        flex-shrink: 0;
+    }
+
+    .staff-name { font-weight: 500; color: var(--pearl); }
+    .staff-detail { font-size: 0.8rem; color: var(--muted); }
+</style>
+{% endblock %}
+
 {% block content %}
-<h2>Staff Members</h2>
-<a href="{% url 'add_staff' %}" class="btn btn-primary mb-3">Add New Staff</a>
-<table class="table">
-    <thead>
-        <tr>
-            <th>Username</th>
-            <th>Name</th>
-            <th>Email</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for profile in staff %}
-        <tr>
-            <td>{{ profile.user.username }}</td>
-            <td>{{ profile.user.get_full_name }}</td>
-            <td>{{ profile.user.email }}</td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="3">No staff members yet.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
+
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <span>Staff</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="page-title">👥 Staff Members</h2>
+    <div class="d-flex gap-2">
+        <a href="{% url 'add_staff' %}" class="btn btn-primary btn-sm">➕ Add Staff</a>
+        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+    </div>
+</div>
+
+<div class="staff-card">
+    <div class="staff-card-header">
+        Your Team — {{ staff|length }} member{{ staff|length|pluralize }}
+    </div>
+    {% for profile in staff %}
+    <div class="staff-row">
+        <div class="d-flex align-items-center">
+            <div class="staff-avatar">
+                {{ profile.user.username|slice:":1"|upper }}
+            </div>
+            <div>
+                <div class="staff-name">
+                    {{ profile.user.get_full_name|default:profile.user.username }}
+                </div>
+                <div class="staff-detail">
+                    @{{ profile.user.username }}
+                    {% if profile.user.email %} · {{ profile.user.email }}{% endif %}
+                </div>
+            </div>
+        </div>
+        <span style="font-size:0.75rem; color:var(--muted); text-transform:uppercase;
+                     letter-spacing:0.05em;">Staff</span>
+    </div>
+    {% empty %}
+    <div style="padding:2rem; text-align:center; color:var(--muted);">
+        No staff members yet.
+        <a href="{% url 'add_staff' %}" style="color:var(--gold)">Add your first staff member →</a>
+    </div>
+    {% endfor %}
+</div>
+
 {% endblock %}
