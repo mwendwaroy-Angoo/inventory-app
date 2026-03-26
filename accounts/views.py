@@ -7,6 +7,8 @@ from .forms import BusinessSignupForm, AddStaffForm
 from .models import Business, UserProfile
 from django.http import JsonResponse
 from core.models import SubCounty, Ward
+from django.shortcuts import get_object_or_404
+
 
 def signup(request):
     if request.method == 'POST':
@@ -119,3 +121,61 @@ def load_wards(request):
         sub_county_id=sub_county_id
     ).order_by('name').values('id', 'name')
     return JsonResponse(list(wards), safe=False)
+
+
+@login_required
+def edit_staff(request, user_id):
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        return redirect('home')
+
+    if not user_profile.is_owner:
+        messages.error(request, "Only business owners can edit staff.")
+        return redirect('home')
+
+    staff_profile = get_object_or_404(
+        UserProfile,
+        user__id=user_id,
+        business=user_profile.business,
+        role='staff'
+    )
+
+    if request.method == 'POST':
+        staff_profile.user.first_name = request.POST.get('first_name', '')
+        staff_profile.user.last_name = request.POST.get('last_name', '')
+        staff_profile.user.email = request.POST.get('email', '')
+        staff_profile.user.save()
+        staff_profile.phone = request.POST.get('phone', '')
+        staff_profile.save()
+        messages.success(request, f"'{staff_profile.user.username}' updated successfully.")
+        return redirect('staff_list')
+
+    return render(request, 'accounts/edit_staff.html', {'profile': staff_profile})
+
+
+@login_required
+def delete_staff(request, user_id):
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        return redirect('home')
+
+    if not user_profile.is_owner:
+        messages.error(request, "Only business owners can delete staff.")
+        return redirect('home')
+
+    staff_profile = get_object_or_404(
+        UserProfile,
+        user__id=user_id,
+        business=user_profile.business,
+        role='staff'
+    )
+
+    if request.method == 'POST':
+        username = staff_profile.user.username
+        staff_profile.user.delete()
+        messages.success(request, f"'{username}' removed successfully.")
+        return redirect('staff_list')
+
+    return render(request, 'accounts/delete_staff.html', {'profile': staff_profile})

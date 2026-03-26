@@ -70,30 +70,37 @@
         Your Team — {{ staff|length }} member{{ staff|length|pluralize }}
     </div>
     {% for profile in staff %}
-    <div class="staff-row">
-        <div class="d-flex align-items-center">
-            <div class="staff-avatar">
-                {{ profile.user.username|slice:":1"|upper }}
+<div class="staff-row">
+    <div class="d-flex align-items-center">
+        <div class="staff-avatar">
+            {{ profile.user.username|slice:":1"|upper }}
+        </div>
+        <div>
+            <div class="staff-name">
+                {{ profile.user.get_full_name|default:profile.user.username }}
             </div>
-            <div>
-                <div class="staff-name">
-                    {{ profile.user.get_full_name|default:profile.user.username }}
-                </div>
-                <div class="staff-detail">
-                    @{{ profile.user.username }}
-                    {% if profile.user.email %} · {{ profile.user.email }}{% endif %}
-                </div>
+            <div class="staff-detail">
+                @{{ profile.user.username }}
+                {% if profile.phone %} · {{ profile.phone }}{% endif %}
+                {% if profile.user.email %} · {{ profile.user.email }}{% endif %}
             </div>
         </div>
-        <span style="font-size:0.75rem; color:var(--muted); text-transform:uppercase;
-                     letter-spacing:0.05em;">Staff</span>
     </div>
-    {% empty %}
-    <div style="padding:2rem; text-align:center; color:var(--muted);">
-        No staff members yet.
-        <a href="{% url 'add_staff' %}" style="color:var(--gold)">Add your first staff member →</a>
+    <div class="d-flex gap-2 align-items-center">
+        <span style="font-size:0.75rem; color:var(--muted);
+                     text-transform:uppercase; letter-spacing:0.05em;">Staff</span>
+        <a href="{% url 'edit_staff' profile.user.id %}"
+           class="btn btn-sm btn-outline-primary">Edit</a>
+        <a href="{% url 'delete_staff' profile.user.id %}"
+           class="btn btn-sm btn-outline-danger">Remove</a>
     </div>
-    {% endfor %}
+</div>
+{% empty %}
+<div style="padding:2rem; text-align:center; color:var(--muted);">
+    No staff members yet.
+    <a href="{% url 'add_staff' %}" style="color:var(--gold)">Add your first staff member →</a>
+</div>
+{% endfor %}
 </div>
 
 {% endblock %}

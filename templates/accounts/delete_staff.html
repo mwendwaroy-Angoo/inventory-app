@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Remove Staff — Duka Mwecheche{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'staff_list' %}" style="color:var(--gold)">Staff</a>
+    <span class="mx-1">›</span>
+    <span>Remove Staff</span>
+</nav>
+
+<div class="row justify-content-center mt-4">
+    <div class="col-md-5">
+        <div class="card shadow border-0"
+             style="background:var(--onyx-card); border-top: 3px solid var(--danger) !important; border-radius:12px; overflow:hidden;">
+            <div class="card-header py-3"
+                 style="background: linear-gradient(135deg, #8b1a1a, var(--danger));">
+                <h4 class="mb-0" style="font-family:'Playfair Display',serif; color:white;">
+                    🗑️ Remove Staff Member
+                </h4>
+            </div>
+            <div class="card-body p-4 text-center">
+                <p style="color:var(--pearl)">Are you sure you want to remove:</p>
+                <h4 style="color:var(--danger)">
+                    {{ profile.user.get_full_name|default:profile.user.username }}
+                </h4>
+                <p style="color:var(--muted)">@{{ profile.user.username }}</p>
+                <p style="color:var(--warning); font-size:0.9rem;">
+                    ⚠️ This will permanently delete their account and access.
+                </p>
+                <form method="post" class="d-flex gap-2 justify-content-center mt-4">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger">Yes, Remove</button>
+                    <a href="{% url 'staff_list' %}" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
