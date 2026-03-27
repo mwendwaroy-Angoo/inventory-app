@@ -1,50 +1,73 @@
 from django.contrib import admin
-from .models import Store, Item, Transaction
+from .models import Store, Item, Transaction, Customer, BusinessType, County, SubCounty, Ward
 
-class ItemAdmin(admin.ModelAdmin):
-    list_display = ['material_no', 'description', 'store', 'current_balance_def', 'reorder_status']
-    list_filter = ['store']
-    search_fields = ['material_no', 'description']
-    list_editable = ['store']  # Quick edit store directly in list
+
 @admin.register(Store)
 class StoreAdmin(admin.ModelAdmin):
-    list_display = ('name', 'business')
+    list_display = ('name', 'business', 'item_count')
     list_filter = ('business',)
+    search_fields = ('name', 'business__name')
 
-    actions = ['assign_to_sf', 'assign_to_computer', 'assign_to_maintenance']
+    def item_count(self, obj):
+        return obj.items.count()
+    item_count.short_description = 'Items'
 
-    def current_balance_def(self, obj):
+
+@admin.register(Item)
+class ItemAdmin(admin.ModelAdmin):
+    list_display = ('material_no', 'description', 'store', 'business',
+                    'current_balance_display', 'selling_price', 'status_display')
+    list_filter = ('store', 'business')
+    search_fields = ('material_no', 'description')
+
+    def current_balance_display(self, obj):
         return obj.current_balance()
-    current_balance_def.short_description = 'Current Balance'
+    current_balance_display.short_description = 'Balance'
 
-    def reorder_status(self, obj):
+    def status_display(self, obj):
         if obj.current_balance() <= 0:
             return 'OUT OF STOCK'
         elif obj.needs_reorder():
             return 'REORDER'
         return 'AVAILABLE'
-    reorder_status.short_description = 'Status'
+    status_display.short_description = 'Status'
 
-    def assign_to_sf(self, request, queryset):
-        store = Store.objects.get(name='SF STORE')
-        updated = queryset.update(store=store)
-        self.message_user(request, f"{updated} items assigned to SF STORE.")
-    assign_to_sf.short_description = "Assign selected to SF STORE"
-
-    def assign_to_computer(self, request, queryset):
-        store = Store.objects.get(name='COMPUTER STORE')
-        updated = queryset.update(store=store)
-        self.message_user(request, f"{updated} items assigned to COMPUTER STORE.")
-    assign_to_computer.short_description = "Assign selected to COMPUTER STORE"
-
-    def assign_to_maintenance(self, request, queryset):
-        store = Store.objects.get(name='MAINTENANCE STORE')
-        updated = queryset.update(store=store)
-        self.message_user(request, f"{updated} items assigned to MAINTENANCE STORE.")
-    assign_to_maintenance.short_description = "Assign selected to MAINTENANCE STORE"
 
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
-    list_display = ('date', 'item', 'type', 'qty', 'recipient', 'invoice_no')
-    list_filter = ('type', 'date', 'recipient')
-    search_fields = ('item__description', 'invoice_no')
+    list_display = ('date', 'item', 'type', 'qty', 'recipient', 'invoice_no', 'business')
+    list_filter = ('type', 'date', 'business')
+    search_fields = ('item__description', 'invoice_no', 'recipient')
+
+
+@admin.register(Customer)
+class CustomerAdmin(admin.ModelAdmin):
+    list_display = ('name', 'phone', 'location', 'business')
+    list_filter = ('business',)
+    search_fields = ('name', 'phone')
+
+
+@admin.register(BusinessType)
+class BusinessTypeAdmin(admin.ModelAdmin):
+    list_display = ('name',)
+    search_fields = ('name',)
+
+
+@admin.register(County)
+class CountyAdmin(admin.ModelAdmin):
+    list_display = ('name',)
+    search_fields = ('name',)
+
+
+@admin.register(SubCounty)
+class SubCountyAdmin(admin.ModelAdmin):
+    list_display = ('name', 'county')
+    list_filter = ('county',)
+    search_fields = ('name',)
+
+
+@admin.register(Ward)
+class WardAdmin(admin.ModelAdmin):
+    list_display = ('name', 'sub_county')
+    list_filter = ('sub_county__county',)
+    search_fields = ('name',)
