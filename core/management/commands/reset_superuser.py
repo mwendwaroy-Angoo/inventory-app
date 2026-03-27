@@ -7,7 +7,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
         username = 'Roy'
-        password = '#Tabbynzuki88'
+        password = 'RoyAdmin2026'
 
         try:
             u = User.objects.get(username=username)
