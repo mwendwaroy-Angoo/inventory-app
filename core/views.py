@@ -454,7 +454,7 @@ def ajax_customers(request):
     return JsonResponse(list(customers), safe=False)
 
 
-    # ── SALES & P&L ───────────────────────────────────────────────────────────────
+# ── SALES & P&L ───────────────────────────────────────────────────────────────
 
 def get_date_range(period, date_from=None, date_to=None):
     """Returns (start_date, end_date) based on period filter."""
@@ -552,6 +552,8 @@ def sales_dashboard(request):
     sold_item_ids = set(t.item.id for t in sales)
     slow_items = all_items.exclude(id__in=sold_item_ids)[:10]
 
+    # Profit margin safe calculation
+    profit_margin = round((total_profit / total_revenue * 100), 1) if total_revenue > 0 else 0
     context = {
         'period': period,
         'date_from': start_date,
@@ -559,6 +561,7 @@ def sales_dashboard(request):
         'total_revenue': round(total_revenue, 2),
         'total_cost': round(total_cost, 2),
         'total_profit': round(total_profit, 2),
+        'profit_margin': profit_margin,
         'total_units_sold': total_units_sold,
         'stock_value': round(stock_value, 2),
         'item_sales_list': item_sales_list,
