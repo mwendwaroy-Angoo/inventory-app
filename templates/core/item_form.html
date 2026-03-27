@@ -86,6 +86,16 @@
             {% bootstrap_field form.store %}
             {% bootstrap_field form.selling_price %}
 
+            {% if form.cost_price %}
+           <div style="background:rgba(192,57,90,0.06); border:1px solid #333;
+                       border-left: 3px solid var(--raspberry); border-radius:8px;
+                       padding:1rem; margin-bottom:1rem;">
+             <p style="color:var(--raspberry); font-size:0.8rem; margin-bottom:0.5rem;">
+                 🔒 Cost price is only visible to you as the owner
+            </p>
+            {% bootstrap_field form.cost_price %}
+        </div>
+
             <div class="section-divider"><span>📋 Optional Fields</span></div>
             {% bootstrap_field form.material_no %}
             {% bootstrap_field form.unit %}

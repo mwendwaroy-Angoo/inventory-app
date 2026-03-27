@@ -5,7 +5,7 @@ from core.views import (
     transaction_history, export_stock_excel, export_transactions_excel,
     manage_items, add_item, edit_item, delete_item,
     manage_stores, customer_list, add_customer, delete_customer,
-    ajax_customers,
+    ajax_customers, sales_dashboard, export_sales_excel,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -30,6 +30,8 @@ urlpatterns = [
     path('customers/add/', add_customer, name='add_customer'),
     path('customers/delete/<int:customer_id>/', delete_customer, name='delete_customer'),
     path('ajax/customers/', ajax_customers, name='ajax_customers'),
+    path('sales/', sales_dashboard, name='sales_dashboard'),
+    path('export/sales/', export_sales_excel, name='export_sales'),
 ]
 
 if settings.DEBUG:

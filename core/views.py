@@ -7,7 +7,10 @@ from django.http import HttpResponse, JsonResponse
 from .models import Item, Transaction, Store, BusinessType, Customer
 from .forms import ItemForm
 import openpyxl
-
+from django.db.models import Sum, Count
+from decimal import Decimal
+from datetime import date, timedelta
+import json
 
 # ── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -293,7 +296,7 @@ def add_item(request):
     user_profile = request.user.userprofile
 
     if request.method == 'POST':
-        form = ItemForm(request.POST, business=user_profile.business)
+        form = ItemForm(request.POST, business=user_profile.business, show_cost_price=True)
         if form.is_valid():
             item = form.save(commit=False)
             item.business = user_profile.business
@@ -307,7 +310,7 @@ def add_item(request):
             messages.success(request, f"'{item.description}' added successfully.")
             return redirect('manage_items')
     else:
-        form = ItemForm(business=user_profile.business)
+        form = ItemForm(business=user_profile.business, show_cost_price=True)
 
     context = {
         'form': form,
@@ -324,13 +327,14 @@ def edit_item(request, item_id):
     item = get_object_or_404(Item, id=item_id, business=user_profile.business)
 
     if request.method == 'POST':
-        form = ItemForm(request.POST, instance=item, business=user_profile.business)
+        form = ItemForm(request.POST, instance=item,
+                       business=user_profile.business, show_cost_price=True)
         if form.is_valid():
             form.save()
             messages.success(request, f"'{item.description}' updated successfully.")
             return redirect('manage_items')
     else:
-        form = ItemForm(instance=item, business=user_profile.business)
+        form = ItemForm(instance=item, business=user_profile.business, show_cost_price=True)
 
     context = {
         'form': form,
@@ -339,7 +343,6 @@ def edit_item(request, item_id):
         'action': 'Edit',
     }
     return render(request, 'core/item_form.html', context)
-
 
 @login_required
 @owner_required
@@ -449,3 +452,171 @@ def ajax_customers(request):
         business=user_profile.business
     ).values('id', 'name', 'phone')
     return JsonResponse(list(customers), safe=False)
+
+
+    # ── SALES & P&L ───────────────────────────────────────────────────────────────
+
+def get_date_range(period, date_from=None, date_to=None):
+    """Returns (start_date, end_date) based on period filter."""
+    today = date.today()
+    if period == 'today':
+        return today, today
+    elif period == 'week':
+        return today - timedelta(days=today.weekday()), today
+    elif period == 'month':
+        return today.replace(day=1), today
+    elif period == 'year':
+        return today.replace(month=1, day=1), today
+    elif period == 'custom' and date_from and date_to:
+        try:
+            from datetime import datetime
+            return (datetime.strptime(date_from, '%Y-%m-%d').date(),
+                    datetime.strptime(date_to, '%Y-%m-%d').date())
+        except ValueError:
+            return today.replace(day=1), today
+    else:
+        return today.replace(day=1), today  # default to this month
+
+
+@login_required
+@owner_required
+def sales_dashboard(request):
+    user_profile = request.user.userprofile
+    business = user_profile.business
+
+    period = request.GET.get('period', 'month')
+    date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+    start_date, end_date = get_date_range(period, date_from, date_to)
+
+    # Get all issue transactions in period (sales)
+    sales = Transaction.objects.filter(
+        business=business,
+        type='Issue',
+        date__gte=start_date,
+        date__lte=end_date,
+    ).select_related('item')
+
+    # Summary calculations
+    total_revenue = sum(t.revenue() for t in sales)
+    total_cost = sum(t.cost() for t in sales)
+    total_profit = total_revenue - total_cost
+    total_units_sold = sum(abs(t.qty) for t in sales)
+
+    # Stock value
+    all_items = Item.objects.filter(business=business)
+    stock_value = sum(item.stock_value() for item in all_items)
+
+    # Daily sales data for bar chart
+    from collections import defaultdict
+    daily_revenue = defaultdict(float)
+    daily_profit = defaultdict(float)
+    for t in sales:
+        day_str = str(t.date)
+        daily_revenue[day_str] += t.revenue()
+        daily_profit[day_str] += t.profit()
+
+    # Sort by date
+    sorted_dates = sorted(daily_revenue.keys())
+    chart_labels = sorted_dates
+    chart_revenue = [round(daily_revenue[d], 2) for d in sorted_dates]
+    chart_profit = [round(daily_profit[d], 2) for d in sorted_dates]
+
+    # Per item breakdown
+    item_sales = defaultdict(lambda: {
+        'description': '',
+        'units_sold': 0,
+        'revenue': 0.0,
+        'cost': 0.0,
+        'profit': 0.0
+    })
+    for t in sales:
+        key = t.item.id
+        item_sales[key]['description'] = t.item.description
+        item_sales[key]['material_no'] = t.item.material_no
+        item_sales[key]['units_sold'] += abs(t.qty)
+        item_sales[key]['revenue'] += t.revenue()
+        item_sales[key]['cost'] += t.cost()
+        item_sales[key]['profit'] += t.profit()
+
+    item_sales_list = sorted(
+        item_sales.values(),
+        key=lambda x: x['revenue'],
+        reverse=True
+    )
+
+    # Top selling items (by units)
+    top_items = sorted(item_sales_list, key=lambda x: x['units_sold'], reverse=True)[:5]
+
+    # Slow moving items (items with no sales in period)
+    sold_item_ids = set(t.item.id for t in sales)
+    slow_items = all_items.exclude(id__in=sold_item_ids)[:10]
+
+    context = {
+        'period': period,
+        'date_from': start_date,
+        'date_to': end_date,
+        'total_revenue': round(total_revenue, 2),
+        'total_cost': round(total_cost, 2),
+        'total_profit': round(total_profit, 2),
+        'total_units_sold': total_units_sold,
+        'stock_value': round(stock_value, 2),
+        'item_sales_list': item_sales_list,
+        'top_items': top_items,
+        'slow_items': slow_items,
+        'chart_labels': json.dumps(chart_labels),
+        'chart_revenue': json.dumps(chart_revenue),
+        'chart_profit': json.dumps(chart_profit),
+        'today': timezone.now().strftime("%B %d, %Y"),
+    }
+    return render(request, 'core/sales_dashboard.html', context)
+
+
+@login_required
+@owner_required
+def export_sales_excel(request):
+    user_profile = request.user.userprofile
+    business = user_profile.business
+
+    period = request.GET.get('period', 'month')
+    date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+    start_date, end_date = get_date_range(period, date_from, date_to)
+
+    sales = Transaction.objects.filter(
+        business=business,
+        type='Issue',
+        date__gte=start_date,
+        date__lte=end_date,
+    ).select_related('item').order_by('date')
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sales Report"
+    ws.append([
+        'Date', 'Item', 'Material No', 'Units Sold',
+        'Selling Price', 'Cost Price', 'Revenue', 'Cost', 'Profit',
+        'Recipient', 'Invoice No'
+    ])
+
+    for t in sales:
+        ws.append([
+            str(t.date),
+            t.item.description,
+            t.item.material_no,
+            abs(t.qty),
+            float(t.item.selling_price) if t.item.selling_price else '',
+            float(t.item.cost_price) if t.item.cost_price else '',
+            round(t.revenue(), 2),
+            round(t.cost(), 2),
+            round(t.profit(), 2),
+            t.recipient or '—',
+            t.invoice_no or '—',
+        ])
+
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = 'attachment; filename=sales_report.xlsx'
+    wb.save(response)
+    return response

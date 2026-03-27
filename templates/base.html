@@ -309,7 +309,7 @@
         ::-webkit-scrollbar-track { background: var(--onyx); }
         ::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 3px; }
 
-        
+
 /* ── THEMED TABLE ROWS ── */
 .table tbody tr {
     background: var(--onyx-card) !important;
@@ -392,6 +392,7 @@
                     {% if user.userprofile.is_owner %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
+                            <li><a class="dropdown-item" href="{% url 'sales_dashboard' %}">📊 Sales & P&L</a></li>
                             Manage
                         </a>
                         <ul class="dropdown-menu">

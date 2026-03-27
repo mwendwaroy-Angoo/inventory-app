@@ -1,0 +1,410 @@
+{% extends "base.html" %}
+
+{% block title %}Sales Dashboard — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .period-btn {
+        padding: 0.4rem 1rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        letter-spacing: 0.05em;
+        text-decoration: none;
+        border: 1px solid #333;
+        color: var(--muted);
+        transition: all 0.2s;
+    }
+
+    .period-btn:hover, .period-btn.active {
+        background: var(--raspberry);
+        border-color: var(--raspberry);
+        color: white;
+    }
+
+    .summary-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.5rem;
+        text-align: center;
+        transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .summary-card:hover {
+        transform: translateY(-3px);
+        border-color: var(--gold);
+    }
+
+    .summary-label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+        margin-bottom: 0.6rem;
+    }
+
+    .summary-value {
+        font-family: 'Playfair Display', serif;
+        font-size: 1.8rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    .summary-sub {
+        font-size: 0.75rem;
+        color: var(--muted);
+        margin-top: 0.3rem;
+    }
+
+    .chart-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .chart-title {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .section-title {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1.2rem;
+        margin: 2rem 0 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .profit-positive { color: var(--success); }
+    .profit-negative { color: var(--danger); }
+
+    .custom-date-fields {
+        display: none;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .custom-date-fields.show { display: flex; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <span>Sales & P&L</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+    <h2 class="page-title">📊 Sales & Profit/Loss</h2>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+        <a href="{% url 'export_sales' %}?period={{ period }}&date_from={{ date_from }}&date_to={{ date_to }}"
+           class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <rect width="16" height="16" rx="2" fill="#1D6F42"/>
+                <rect x="8" width="8" height="16" rx="2" fill="#217346"/>
+                <path d="M2 4.5L5.5 8L2 11.5H4.5L6.75 9L9 11.5H11.5L8 8L11.5 4.5H9L6.75 7L4.5 4.5H2Z" fill="white"/>
+            </svg>
+            Export Excel
+        </a>
+        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+    </div>
+</div>
+
+<!-- Period Filter -->
+<div class="chart-card mb-4">
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Period:</span>
+        <a href="?period=today" class="period-btn {% if period == 'today' %}active{% endif %}">Today</a>
+        <a href="?period=week" class="period-btn {% if period == 'week' %}active{% endif %}">This Week</a>
+        <a href="?period=month" class="period-btn {% if period == 'month' %}active{% endif %}">This Month</a>
+        <a href="?period=year" class="period-btn {% if period == 'year' %}active{% endif %}">This Year</a>
+        <button onclick="toggleCustom()" class="period-btn {% if period == 'custom' %}active{% endif %}">
+            Custom Range
+        </button>
+
+        <div class="custom-date-fields {% if period == 'custom' %}show{% endif %}" id="customFields">
+            <form method="get" class="d-flex gap-2 align-items-center flex-wrap">
+                <input type="hidden" name="period" value="custom">
+                <input type="date" name="date_from" value="{{ date_from }}"
+                       class="form-control form-control-sm" style="width:auto">
+                <span style="color:var(--muted)">to</span>
+                <input type="date" name="date_to" value="{{ date_to }}"
+                       class="form-control form-control-sm" style="width:auto">
+                <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+            </form>
+        </div>
+    </div>
+
+    <div style="font-size:0.8rem; color:var(--muted); margin-top:0.8rem;">
+        Showing: <span style="color:var(--gold)">{{ date_from }} → {{ date_to }}</span>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="summary-card" style="border-top: 3px solid var(--gold);">
+            <div class="summary-label">Total Revenue</div>
+            <div class="summary-value" style="color:var(--gold)">
+                {{ total_revenue|floatformat:0 }}
+            </div>
+            <div class="summary-sub">KES</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="summary-card" style="border-top: 3px solid var(--raspberry);">
+            <div class="summary-label">Total Cost</div>
+            <div class="summary-value" style="color:var(--raspberry)">
+                {{ total_cost|floatformat:0 }}
+            </div>
+            <div class="summary-sub">KES</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="summary-card" style="border-top: 3px solid {% if total_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};">
+            <div class="summary-label">Gross Profit</div>
+            <div class="summary-value {% if total_profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                {{ total_profit|floatformat:0 }}
+            </div>
+            <div class="summary-sub">KES</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="summary-card" style="border-top: 3px solid #6c8ebf;">
+            <div class="summary-label">Stock Value</div>
+            <div class="summary-value" style="color:#6c8ebf">
+                {{ stock_value|floatformat:0 }}
+            </div>
+            <div class="summary-sub">KES (at cost)</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="summary-card">
+            <div class="summary-label">Units Sold</div>
+            <div class="summary-value" style="color:var(--pearl)">{{ total_units_sold }}</div>
+            <div class="summary-sub">items issued</div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="summary-card">
+            <div class="summary-label">Profit Margin</div>
+            <div class="summary-value {% if total_profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                {% if total_revenue > 0 %}
+                    {{ total_profit|floatformat:0 }}%
+                {% else %}
+                    —
+                {% endif %}
+            </div>
+            <div class="summary-sub">gross margin</div>
+        </div>
+    </div>
+</div>
+
+<hr class="gold-divider">
+
+<!-- Charts -->
+<div class="row g-4 mb-4">
+    <div class="col-md-8">
+        <div class="chart-card">
+            <div class="chart-title">📈 Daily Revenue vs Profit</div>
+            <canvas id="revenueChart" height="120"></canvas>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="chart-card">
+            <div class="chart-title">💰 Revenue Breakdown</div>
+            <canvas id="breakdownChart" height="200"></canvas>
+        </div>
+    </div>
+</div>
+
+<hr class="gold-divider">
+
+<!-- Per Item Breakdown -->
+<div class="section-title">📦 Sales by Item</div>
+{% if item_sales_list %}
+<div class="table-responsive mb-4">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Units Sold</th>
+                <th>Revenue (KES)</th>
+                <th>Cost (KES)</th>
+                <th>Profit (KES)</th>
+                <th>Margin</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in item_sales_list %}
+            <tr>
+                <td>
+                    <strong style="color:var(--pearl)">{{ item.description }}</strong>
+                    <br><small style="color:var(--muted)">{{ item.material_no }}</small>
+                </td>
+                <td>{{ item.units_sold }}</td>
+                <td style="color:var(--gold)">{{ item.revenue|floatformat:2 }}</td>
+                <td style="color:var(--raspberry)">{{ item.cost|floatformat:2 }}</td>
+                <td class="{% if item.profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                    {{ item.profit|floatformat:2 }}
+                </td>
+                <td>
+                    {% if item.revenue > 0 %}
+                        <span class="{% if item.profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                            {% widthratio item.profit item.revenue 100 %}%
+                        </span>
+                    {% else %}—{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="alert alert-info">No sales recorded in this period.</div>
+{% endif %}
+
+<!-- Top Selling Items -->
+{% if top_items %}
+<div class="section-title">🏆 Top Selling Items</div>
+<div class="row g-3 mb-4">
+    {% for item in top_items %}
+    <div class="col-md-4">
+        <div class="summary-card" style="text-align:left; border-left: 3px solid var(--gold);">
+            <div style="font-weight:600; color:var(--pearl); margin-bottom:0.3rem;">
+                {{ item.description }}
+            </div>
+            <div style="font-size:0.85rem; color:var(--muted);">
+                {{ item.units_sold }} units · KES {{ item.revenue|floatformat:0 }}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Slow Moving Items -->
+{% if slow_items %}
+<div class="section-title">🐢 Slow Moving Items</div>
+<div class="alert" style="background:rgba(243,156,18,0.08); border:1px solid var(--warning); border-radius:8px;">
+    <p style="color:var(--warning); font-size:0.85rem; margin-bottom:0.8rem;">
+        These items had no sales in the selected period:
+    </p>
+    <div class="d-flex flex-wrap gap-2">
+        {% for item in slow_items %}
+        <span style="background:#333; color:var(--pearl); padding:0.3rem 0.8rem;
+                     border-radius:20px; font-size:0.8rem;">
+            {{ item.description }}
+            <span style="color:var(--muted)">({{ item.current_balance }} {{ item.unit }})</span>
+        </span>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    const labels = {{ chart_labels|safe }};
+    const revenueData = {{ chart_revenue|safe }};
+    const profitData = {{ chart_profit|safe }};
+
+    // Revenue vs Profit Bar Chart
+    new Chart(document.getElementById('revenueChart'), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Revenue',
+                    data: revenueData,
+                    backgroundColor: 'rgba(201, 168, 76, 0.7)',
+                    borderColor: '#c9a84c',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                },
+                {
+                    label: 'Profit',
+                    data: profitData,
+                    backgroundColor: 'rgba(46, 204, 113, 0.7)',
+                    borderColor: '#2ecc71',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    type: 'line',
+                    tension: 0.4,
+                    fill: false,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    labels: { color: '#f0ece4', font: { size: 11 } }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888', font: { size: 10 } },
+                    grid: { color: '#2e2e2e' }
+                },
+                y: {
+                    ticks: { color: '#888', font: { size: 10 } },
+                    grid: { color: '#2e2e2e' }
+                }
+            }
+        }
+    });
+
+    // Revenue Breakdown Doughnut
+    const total = {{ total_revenue }};
+    const cost = {{ total_cost }};
+    const profit = {{ total_profit }};
+
+    new Chart(document.getElementById('breakdownChart'), {
+        type: 'doughnut',
+        data: {
+            labels: ['Cost', 'Profit'],
+            datasets: [{
+                data: [Math.max(cost, 0), Math.max(profit, 0)],
+                backgroundColor: [
+                    'rgba(192, 57, 90, 0.8)',
+                    'rgba(46, 204, 113, 0.8)',
+                ],
+                borderColor: ['#c0395a', '#2ecc71'],
+                borderWidth: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#f0ece4', font: { size: 11 } }
+                }
+            }
+        }
+    });
+
+    function toggleCustom() {
+        const el = document.getElementById('customFields');
+        el.classList.toggle('show');
+    }
+</script>
+{% endblock %}
