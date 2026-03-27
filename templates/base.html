@@ -392,12 +392,12 @@
                     {% if user.userprofile.is_owner %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                            <li><a class="dropdown-item" href="{% url 'sales_dashboard' %}">📊 Sales & P&L</a></li>
                             Manage
                         </a>
                         <ul class="dropdown-menu">
                             <li><a class="dropdown-item" href="{% url 'manage_stores' %}">🏪 Stores</a></li>
                             <li><a class="dropdown-item" href="{% url 'manage_items' %}">📦 Items</a></li>
+                            <li><a class="dropdown-item" href="{% url 'sales_dashboard' %}">📊 Sales & P&L</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 Staff</a></li>
                             <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ Add Staff</a></li>
