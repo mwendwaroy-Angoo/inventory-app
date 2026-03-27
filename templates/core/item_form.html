@@ -1,53 +1,109 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
 
-{% block title %}{{ action }} Item{% endblock %}
+{% block title %}{{ action }} Item — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .item-form-card {
+        max-width: 640px;
+        margin: 0 auto;
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-top: 3px solid var(--gold);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .item-form-header {
+        background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+        padding: 1.5rem 2rem;
+    }
+
+    .item-form-header h3 {
+        font-family: 'Playfair Display', serif;
+        color: white;
+        margin: 0;
+    }
+
+    .item-form-body { padding: 2rem; }
+
+    .section-divider {
+        display: flex;
+        align-items: center;
+        margin: 1.5rem 0 1rem;
+    }
+
+    .section-divider span {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 0.95rem;
+        font-weight: 600;
+        padding-right: 1rem;
+        white-space: nowrap;
+    }
+
+    .section-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--gold), transparent);
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-8">
-        <div class="card shadow mt-4 mb-5">
-            <div class="card-header bg-primary text-white py-3">
-                <h4 class="mb-0">
-                    {% if action == 'Add' %}➕{% else %}✏️{% endif %}
-                    {{ action }} Stock Item
-                </h4>
+
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'manage_stores' %}" style="color:var(--gold)">Stores</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'manage_items' %}" style="color:var(--gold)">Manage Items</a>
+    <span class="mx-1">›</span>
+    <span>{{ action }} Item</span>
+</nav>
+
+<div class="item-form-card">
+    <div class="item-form-header">
+        <h3>
+            {% if action == 'Add' %}➕{% else %}✏️{% endif %}
+            {{ action }} Stock Item
+        </h3>
+    </div>
+    <div class="item-form-body">
+
+        {% if form.errors %}
+        <div class="alert alert-danger">Please correct the errors below.</div>
+        {% endif %}
+
+        <form method="post">
+            {% csrf_token %}
+
+            <div class="section-divider"><span>⭐ Required Fields</span></div>
+            {% bootstrap_field form.description %}
+            {% bootstrap_field form.store %}
+            {% bootstrap_field form.selling_price %}
+
+            <div class="section-divider"><span>📋 Optional Fields</span></div>
+            {% bootstrap_field form.material_no %}
+            {% bootstrap_field form.unit %}
+            {% bootstrap_field form.opening_bin_balance %}
+            {% bootstrap_field form.opening_physical %}
+            {% bootstrap_field form.reorder_level %}
+            {% bootstrap_field form.reorder_quantity %}
+
+            <div class="d-flex gap-2 mt-4">
+                <button type="submit" class="btn btn-primary">
+                    {{ action }} Item
+                </button>
+                <a href="{% url 'manage_items' %}" class="btn btn-secondary">
+                    Cancel
+                </a>
             </div>
-            <div class="card-body p-4">
-
-                {% if form.errors %}
-                <div class="alert alert-danger">
-                    Please correct the errors below.
-                </div>
-                {% endif %}
-
-                <form method="post">
-                    {% csrf_token %}
-
-                    <h6 class="text-muted border-bottom pb-2 mb-3">Required Fields</h6>
-                    {% bootstrap_field form.description %}
-                    {% bootstrap_field form.store %}
-                    {% bootstrap_field form.selling_price %}
-
-                    <h6 class="text-muted border-bottom pb-2 mb-3 mt-4">Optional Fields</h6>
-                    {% bootstrap_field form.material_no %}
-                    {% bootstrap_field form.unit %}
-                    {% bootstrap_field form.opening_bin_balance %}
-                    {% bootstrap_field form.opening_physical %}
-                    {% bootstrap_field form.reorder_level %}
-                    {% bootstrap_field form.reorder_quantity %}
-
-                    <div class="d-flex gap-2 mt-4">
-                        <button type="submit" class="btn btn-primary">
-                            {{ action }} Item
-                        </button>
-                        <a href="{% url 'manage_items' %}" class="btn btn-secondary">
-                            Cancel
-                        </a>
-                    </div>
-                </form>
-            </div>
-        </div>
+        </form>
     </div>
 </div>
+
 {% endblock %}
