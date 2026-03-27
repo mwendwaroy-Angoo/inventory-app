@@ -3,11 +3,12 @@ from django.contrib.auth.models import User
 
 
 class Command(BaseCommand):
-    help = 'Resets the superuser password from environment variable'
+    help = 'Creates or resets the superuser password'
 
     def handle(self, *args, **kwargs):
         username = 'Roy'
-        password = 'RoyAdmin2026'
+        password = '#Tabbynzuki88'
+        email = 'mwendwaroy@gmail.com'
 
         try:
             u = User.objects.get(username=username)
@@ -15,4 +16,9 @@ class Command(BaseCommand):
             u.save()
             self.stdout.write(f'Password reset for {username}')
         except User.DoesNotExist:
-            self.stdout.write(f'User {username} not found')
+            User.objects.create_superuser(
+                username=username,
+                email=email,
+                password=password
+            )
+            self.stdout.write(f'Superuser {username} created successfully')
