@@ -308,6 +308,57 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: var(--onyx); }
         ::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 3px; }
+
+        
+/* ── THEMED TABLE ROWS ── */
+.table tbody tr {
+    background: var(--onyx-card) !important;
+    border-color: #2e2e2e !important;
+    transition: all 0.2s;
+}
+
+.table tbody tr:hover {
+    background: rgba(201, 168, 76, 0.08) !important;
+    border-left: 3px solid var(--gold);
+}
+
+.table tbody td {
+    color: var(--pearl) !important;
+    border-color: #2e2e2e !important;
+    vertical-align: middle;
+    padding: 0.9rem 0.75rem;
+}
+
+.table tbody tr.reorder {
+    background: rgba(243, 156, 18, 0.06) !important;
+    border-left: 3px solid var(--warning) !important;
+}
+
+.table tbody tr.out-of-stock {
+    background: rgba(231, 76, 60, 0.06) !important;
+    border-left: 3px solid var(--danger) !important;
+}
+
+/* Receipt/Issue row colors in history */
+.table tbody tr.receipt-row {
+    background: rgba(46, 204, 113, 0.04) !important;
+    border-left: 3px solid var(--success) !important;
+}
+
+.table tbody tr.issue-row {
+    background: rgba(192, 57, 90, 0.04) !important;
+    border-left: 3px solid var(--raspberry) !important;
+}
+
+/* Zebra striping that matches theme */
+.table-striped tbody tr:nth-of-type(odd) {
+    background: rgba(255,255,255,0.02) !important;
+}
+
+/* Remove Bootstrap's default white background */
+.table > :not(caption) > * > * {
+    background-color: transparent !important;
+}
     </style>
     {% block extra_css %}{% endblock %}
 </head>
