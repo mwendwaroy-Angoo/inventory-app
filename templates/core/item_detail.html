@@ -151,8 +151,8 @@
                 <th>Date</th>
                 <th>Type</th>
                 <th>Quantity</th>
-                <th>Department</th>
-                <th>Doc No</th>
+                <th>Recipient</th>
+                <th>Invoice No</th>
             </tr>
         </thead>
         <tbody>
@@ -171,8 +171,8 @@
                         {% if trans.qty > 0 %}+{% endif %}{{ trans.qty }} {{ item.unit }}
                     </strong>
                 </td>
-                <td>{{ trans.department|default:"—" }}</td>
-                <td>{{ trans.doc_no|default:"—" }}</td>
+                <td>{{ trans.recipient|default:"—" }}</td>
+                <td>{{ trans.invoice_no|default:"—" }}</td>
             </tr>
             {% endfor %}
         </tbody>
