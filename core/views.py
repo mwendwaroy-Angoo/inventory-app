@@ -121,7 +121,6 @@ def add_transaction(request):
         invoice_no = request.POST.get('invoice_no', '')
         recipient = request.POST.get('recipient', '')
 
-        # Handle new customer creation
         new_customer_name = request.POST.get('new_customer_name', '').strip()
         if new_customer_name and trans_type == 'Issue':
             customer, created = Customer.objects.get_or_create(
@@ -136,7 +135,7 @@ def add_transaction(request):
         if trans_type == 'Issue':
             quantity = -quantity
 
-        Transaction.objects.create(
+        transaction = Transaction.objects.create(
             item=item,
             type=trans_type,
             qty=quantity,
@@ -145,12 +144,25 @@ def add_transaction(request):
             business=user_profile.business,
         )
 
+        # Count today's transactions for SMS/WhatsApp decision
+        from datetime import date as date_obj
+        daily_count = Transaction.objects.filter(
+            business=user_profile.business,
+            date=date_obj.today()
+        ).count()
+
+        # Send notifications asynchronously
+        try:
+            from .notifications import notify_transaction
+            notify_transaction(transaction, user_profile.business, daily_count)
+        except Exception as e:
+            pass  # Never block transaction recording due to notification failure
+
         messages.success(
             request,
             f"{abs(quantity)} {item.unit} of {item.description} recorded as {trans_type.lower()}."
         )
         return redirect('add_transaction')
-
     items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
     context = {
         'items': items,
@@ -623,3 +635,46 @@ def export_sales_excel(request):
     response['Content-Disposition'] = 'attachment; filename=sales_report.xlsx'
     wb.save(response)
     return response
+
+    # ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+
+@login_required
+def notifications_list(request):
+    """Show all notifications for the logged in user."""
+    user_profile = get_user_profile(request)
+    notifications = request.user.notifications.all()[:50]
+    # Mark all as read
+    request.user.notifications.filter(is_read=False).update(is_read=True)
+    return render(request, 'core/notifications.html', {
+        'notifications': notifications
+    })
+
+
+@login_required
+def notifications_count(request):
+    """AJAX endpoint to get unread notification count."""
+    count = request.user.notifications.filter(is_read=False).count()
+    return JsonResponse({'count': count})
+
+
+def daily_summary_webhook(request):
+    """
+    Endpoint called by cron-job.org to trigger daily summaries.
+    Protected by a secret token.
+    """
+    token = request.GET.get('token')
+    expected = os.getenv('CRON_SECRET', 'duka-mwecheche-cron-2026')
+    if token != expected:
+        from django.http import HttpResponseForbidden
+        return HttpResponseForbidden('Invalid token')
+
+    from accounts.models import Business
+    from .notifications import send_daily_summary
+    businesses = Business.objects.all()
+    for business in businesses:
+        try:
+            send_daily_summary(business)
+        except Exception as e:
+            pass
+
+    return JsonResponse({'status': 'ok', 'businesses': businesses.count()})

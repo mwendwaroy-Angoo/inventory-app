@@ -5,7 +5,8 @@ from core.views import (
     transaction_history, export_stock_excel, export_transactions_excel,
     manage_items, add_item, edit_item, delete_item,
     manage_stores, customer_list, add_customer, delete_customer,
-    ajax_customers, sales_dashboard, export_sales_excel,
+    ajax_customers, sales_dashboard, export_sales_excel, notifications_list,
+    notifications_count, daily_summary_webhook,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -32,6 +33,9 @@ urlpatterns = [
     path('ajax/customers/', ajax_customers, name='ajax_customers'),
     path('sales/', sales_dashboard, name='sales_dashboard'),
     path('export/sales/', export_sales_excel, name='export_sales'),
+    path('notifications/', notifications_list, name='notifications_list'),
+    path('notifications/count/', notifications_count, name='notifications_count'),
+    path('cron/daily-summary/', daily_summary_webhook, name='daily_summary'),
 ]
 
 if settings.DEBUG:

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Notifications — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .notif-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1rem 1.5rem;
+        margin-bottom: 0.8rem;
+        border-left: 4px solid #333;
+        transition: border-color 0.2s;
+    }
+
+    .notif-card.transaction { border-left-color: var(--gold); }
+    .notif-card.warning     { border-left-color: var(--warning); }
+    .notif-card.staff       { border-left-color: #6c8ebf; }
+    .notif-card.report      { border-left-color: var(--success); }
+
+    .notif-title {
+        font-weight: 600;
+        color: var(--pearl);
+        margin-bottom: 0.2rem;
+    }
+
+    .notif-message {
+        font-size: 0.85rem;
+        color: var(--muted);
+    }
+
+    .notif-time {
+        font-size: 0.75rem;
+        color: #555;
+        margin-top: 0.3rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <span>Notifications</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="page-title">🔔 Notifications</h2>
+    <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+</div>
+
+{% if notifications %}
+    {% for notif in notifications %}
+    <div class="notif-card {{ notif.notification_type }}">
+        <div class="notif-title">{{ notif.title }}</div>
+        <div class="notif-message">{{ notif.message }}</div>
+        <div class="notif-time">{{ notif.created_at|timesince }} ago</div>
+    </div>
+    {% endfor %}
+{% else %}
+<div class="text-center py-5" style="color:var(--muted)">
+    <h5>No notifications yet</h5>
+    <p>Notifications will appear here when transactions are recorded.</p>
+</div>
+{% endif %}
+
+{% endblock %}

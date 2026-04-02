@@ -405,8 +405,24 @@
                     </li>
                     {% endif %}
                 </ul>
-
+                {% if user.is_authenticated %}
                 <ul class="navbar-nav ms-auto align-items-center gap-2">
+                    <!-- Bell notification icon -->
+                    <li class="nav-item">
+                        <a href="{% url 'notifications' %}" class="nav-link position-relative"
+                           style="padding: 0.4rem 0.6rem;">
+                            🔔
+                            <span id="notif-badge"
+                                  style="position:absolute; top:2px; right:2px;
+                                         background:var(--raspberry); color:white;
+                                         border-radius:50%; font-size:0.6rem;
+                                         width:16px; height:16px;
+                                         display:none; align-items:center;
+                                         justify-content:center; font-weight:700;">
+                                0
+                            </span>
+                         </a>
+                     </li>
                     <li class="nav-item">
                         <span class="nav-link">
                             {{ user.username }}
@@ -458,5 +474,28 @@
     </div>
 
     {% block extra_js %}{% endblock %}
+
+    <script>
+    // Poll for unread notifications every 30 seconds
+    function checkNotifications() {
+        fetch('/notifications/count/')
+            .then(r => r.json())
+            .then(data => {
+                const badge = document.getElementById('notif-badge');
+                if (badge) {
+                    if (data.count > 0) {
+                        badge.textContent = data.count > 99 ? '99+' : data.count;
+                        badge.style.display = 'flex';
+                    } else {
+                        badge.style.display = 'none';
+                    }
+                }
+            })
+            .catch(() => {});
+    }
+
+    checkNotifications();
+    setInterval(checkNotifications, 30000);
+</script>
 </body>
 </html>

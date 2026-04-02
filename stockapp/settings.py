@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     'django_bootstrap5',
     # 'django_select2',  # Remove if you're using CDN Select2 (recommended)
     'accounts',
+    'notifications',
 ]
 
 MIDDLEWARE = [
@@ -93,3 +94,23 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
 LOGIN_URL = '/accounts/login/'
+
+# ── EMAIL CONFIGURATION ──────────────────────────────────────────────────────
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.getenv('GMAIL_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('GMAIL_APP_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('GMAIL_USER', '')
+
+# ── AFRICA'S TALKING ─────────────────────────────────────────────────────────
+AT_USERNAME = os.getenv('AT_USERNAME', 'sandbox')
+AT_API_KEY = os.getenv('AT_API_KEY', '')
+
+# ── TWILIO ───────────────────────────────────────────────────────────────────
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN', '')
+
+# ── TIMEZONE (important for daily reports) ───────────────────────────────────
+TIME_ZONE = 'Africa/Nairobi'
