@@ -33,7 +33,7 @@ urlpatterns = [
     path('ajax/customers/', ajax_customers, name='ajax_customers'),
     path('sales/', sales_dashboard, name='sales_dashboard'),
     path('export/sales/', export_sales_excel, name='export_sales'),
-    path('notifications/', notifications_list, name='notifications_list'),
+    path('notifications/', notifications_list, name='notifications'),
     path('notifications/count/', notifications_count, name='notifications_count'),
     path('cron/daily-summary/', daily_summary_webhook, name='daily_summary'),
 ]
