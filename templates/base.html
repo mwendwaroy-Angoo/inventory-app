@@ -53,9 +53,7 @@
             text-decoration: none;
         }
 
-        .navbar-brand span {
-            color: var(--raspberry);
-        }
+        .navbar-brand span { color: var(--raspberry); }
 
         .nav-link {
             color: var(--pearl) !important;
@@ -108,9 +106,7 @@
             color: var(--muted);
         }
 
-        .navbar-toggler {
-            border-color: var(--gold);
-        }
+        .navbar-toggler { border-color: var(--gold); }
 
         .navbar-toggler-icon {
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(201, 168, 76, 1)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
@@ -243,16 +239,49 @@
         }
 
         .table tbody tr {
-            border-color: #2e2e2e;
-            transition: background 0.15s;
+            background: var(--onyx-card) !important;
+            border-color: #2e2e2e !important;
+            transition: all 0.2s;
         }
 
         .table tbody tr:hover {
-            background: rgba(201, 168, 76, 0.05) !important;
+            background: rgba(201, 168, 76, 0.08) !important;
+            border-left: 3px solid var(--gold);
+        }
+
+        .table tbody td {
+            color: var(--pearl) !important;
+            border-color: #2e2e2e !important;
+            vertical-align: middle;
+            padding: 0.9rem 0.75rem;
+        }
+
+        .table tbody tr.reorder {
+            background: rgba(243, 156, 18, 0.06) !important;
+            border-left: 3px solid var(--warning) !important;
+        }
+
+        .table tbody tr.out-of-stock {
+            background: rgba(231, 76, 60, 0.06) !important;
+            border-left: 3px solid var(--danger) !important;
+        }
+
+        .table tbody tr.receipt-row {
+            background: rgba(46, 204, 113, 0.04) !important;
+            border-left: 3px solid var(--success) !important;
+        }
+
+        .table tbody tr.issue-row {
+            background: rgba(192, 57, 90, 0.04) !important;
+            border-left: 3px solid var(--raspberry) !important;
         }
 
         .table-striped tbody tr:nth-of-type(odd) {
-            background: rgba(255,255,255,0.02);
+            background: rgba(255,255,255,0.02) !important;
+        }
+
+        .table > :not(caption) > * > * {
+            background-color: transparent !important;
         }
 
         /* ── FORMS ── */
@@ -285,9 +314,7 @@
         .badge.bg-danger  { background: rgba(231,76,60,0.2)  !important; color: #e74c3c; border: 1px solid #e74c3c; }
 
         /* ── MAIN CONTENT ── */
-        .main-content {
-            padding: 2rem 0 4rem;
-        }
+        .main-content { padding: 2rem 0 4rem; }
 
         /* ── GOLD DIVIDER ── */
         .gold-divider {
@@ -308,57 +335,6 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: var(--onyx); }
         ::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 3px; }
-
-
-/* ── THEMED TABLE ROWS ── */
-.table tbody tr {
-    background: var(--onyx-card) !important;
-    border-color: #2e2e2e !important;
-    transition: all 0.2s;
-}
-
-.table tbody tr:hover {
-    background: rgba(201, 168, 76, 0.08) !important;
-    border-left: 3px solid var(--gold);
-}
-
-.table tbody td {
-    color: var(--pearl) !important;
-    border-color: #2e2e2e !important;
-    vertical-align: middle;
-    padding: 0.9rem 0.75rem;
-}
-
-.table tbody tr.reorder {
-    background: rgba(243, 156, 18, 0.06) !important;
-    border-left: 3px solid var(--warning) !important;
-}
-
-.table tbody tr.out-of-stock {
-    background: rgba(231, 76, 60, 0.06) !important;
-    border-left: 3px solid var(--danger) !important;
-}
-
-/* Receipt/Issue row colors in history */
-.table tbody tr.receipt-row {
-    background: rgba(46, 204, 113, 0.04) !important;
-    border-left: 3px solid var(--success) !important;
-}
-
-.table tbody tr.issue-row {
-    background: rgba(192, 57, 90, 0.04) !important;
-    border-left: 3px solid var(--raspberry) !important;
-}
-
-/* Zebra striping that matches theme */
-.table-striped tbody tr:nth-of-type(odd) {
-    background: rgba(255,255,255,0.02) !important;
-}
-
-/* Remove Bootstrap's default white background */
-.table > :not(caption) > * > * {
-    background-color: transparent !important;
-}
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -378,6 +354,8 @@
 
             <div class="collapse navbar-collapse" id="navbarNav">
                 {% if user.is_authenticated %}
+
+                <!-- Left nav links -->
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'stock_list' %}">Stock List</a>
@@ -405,9 +383,9 @@
                     </li>
                     {% endif %}
                 </ul>
-                {% if user.is_authenticated %}
+
+                <!-- Right nav: bell + username + logout -->
                 <ul class="navbar-nav ms-auto align-items-center gap-2">
-                    <!-- Bell notification icon -->
                     <li class="nav-item">
                         <a href="{% url 'notifications' %}" class="nav-link position-relative"
                            style="padding: 0.4rem 0.6rem;">
@@ -421,8 +399,8 @@
                                          justify-content:center; font-weight:700;">
                                 0
                             </span>
-                         </a>
-                     </li>
+                        </a>
+                    </li>
                     <li class="nav-item">
                         <span class="nav-link">
                             {{ user.username }}
@@ -442,6 +420,7 @@
                 </ul>
 
                 {% else %}
+                <!-- Logged out links -->
                 <ul class="navbar-nav ms-auto gap-2">
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'login' %}">Login</a>
@@ -451,6 +430,7 @@
                     </li>
                 </ul>
                 {% endif %}
+
             </div>
         </div>
     </nav>
@@ -476,26 +456,25 @@
     {% block extra_js %}{% endblock %}
 
     <script>
-    // Poll for unread notifications every 30 seconds
-    function checkNotifications() {
-        fetch('/notifications/count/')
-            .then(r => r.json())
-            .then(data => {
-                const badge = document.getElementById('notif-badge');
-                if (badge) {
-                    if (data.count > 0) {
-                        badge.textContent = data.count > 99 ? '99+' : data.count;
-                        badge.style.display = 'flex';
-                    } else {
-                        badge.style.display = 'none';
+        function checkNotifications() {
+            fetch('/notifications/count/')
+                .then(r => r.json())
+                .then(data => {
+                    const badge = document.getElementById('notif-badge');
+                    if (badge) {
+                        if (data.count > 0) {
+                            badge.textContent = data.count > 99 ? '99+' : data.count;
+                            badge.style.display = 'flex';
+                        } else {
+                            badge.style.display = 'none';
+                        }
                     }
-                }
-            })
-            .catch(() => {});
-    }
+                })
+                .catch(() => {});
+        }
 
-    checkNotifications();
-    setInterval(checkNotifications, 30000);
-</script>
+        checkNotifications();
+        setInterval(checkNotifications, 30000);
+    </script>
 </body>
 </html>
