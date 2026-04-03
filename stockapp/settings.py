@@ -9,6 +9,9 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Add this near the top of settings.py after BASE_DIR
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
 # SECURITY WARNING: keep the secret key used in production secret!
 # In production, this should be set via environment variable on Render
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-#e-h-#sy&d7=%m2v$2g%&x_odbmwfi(%5zoeewt1(@y!$607ju')
