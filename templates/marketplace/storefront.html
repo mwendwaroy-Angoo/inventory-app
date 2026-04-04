@@ -358,7 +358,10 @@ function placeOrder() {
             items: items,
         }),
     })
-    .then(r => r.json())
+    .then(r => {
+        if (!r.ok) return r.json().then(d => { throw d; });
+        return r.json();
+    })
     .then(data => {
         btn.disabled = false;
         btn.textContent = 'Place Order';
@@ -380,10 +383,10 @@ function placeOrder() {
             alert(data.error || 'Something went wrong.');
         }
     })
-    .catch(() => {
+    .catch((err) => {
         btn.disabled = false;
         btn.textContent = 'Place Order';
-        alert('Network error. Please try again.');
+        alert(err.error || 'Network error. Please try again.');
     });
 }
 </script>

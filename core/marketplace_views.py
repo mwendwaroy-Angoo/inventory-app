@@ -15,6 +15,7 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db.models import Q
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 
 from accounts.models import Business
@@ -91,6 +92,7 @@ def storefront(request, business_id):
 
 # ── PLACE ORDER ──────────────────────────────────────────────────────────────
 
+@csrf_exempt
 @require_POST
 def place_order(request, business_id):
     """Create an order from a JSON cart.
@@ -202,6 +204,7 @@ def track_order(request, order_number):
 
 # ── PAY FOR ORDER (STK PUSH) ────────────────────────────────────────────────
 
+@csrf_exempt
 @require_POST
 def pay_order(request, order_number):
     """Initiate M-Pesa STK Push for an order.
