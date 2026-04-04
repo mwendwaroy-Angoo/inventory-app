@@ -139,6 +139,14 @@ def add_transaction(request):
         item = get_object_or_404(Item, id=item_id)
 
         if trans_type == 'Issue':
+            if item.current_balance() < quantity:
+                messages.error(
+                    request,
+                    f"Not enough stock for {item.description}. "
+                    f"Available: {item.current_balance()} {item.unit}, "
+                    f"requested: {quantity}."
+                )
+                return redirect('add_transaction')
             quantity = -quantity
 
         transaction = Transaction.objects.create(
@@ -711,6 +719,13 @@ def quick_sell(request):
 
             qty = int(entry.get('qty', 0))
             if qty < 1:
+                continue
+
+            if item.current_balance() < qty:
+                messages.warning(
+                    request,
+                    f"Skipped {item.description}: only {item.current_balance()} {item.unit} in stock."
+                )
                 continue
 
             last_transaction = Transaction.objects.create(

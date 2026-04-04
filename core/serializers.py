@@ -97,6 +97,17 @@ class TransactionWriteSerializer(serializers.ModelSerializer):
             data['qty'] = -data['qty']
         elif data['type'] == 'Receipt' and data['qty'] < 0:
             data['qty'] = abs(data['qty'])
+
+        # Stock check for issues
+        if data['type'] == 'Issue':
+            item = data['item']
+            requested = abs(data['qty'])
+            available = item.current_balance()
+            if available < requested:
+                raise serializers.ValidationError(
+                    f"Not enough stock for {item.description}. "
+                    f"Available: {available} {item.unit}, requested: {requested}."
+                )
         return data
 
 

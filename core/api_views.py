@@ -209,6 +209,13 @@ def quick_sell_api(request):
             results.append({'item_id': item_id, 'error': 'Quantity must be positive'})
             continue
 
+        if item.current_balance() < qty:
+            results.append({
+                'item_id': item_id,
+                'error': f'Not enough stock. Available: {item.current_balance()}'
+            })
+            continue
+
         txn = Transaction.objects.create(
             item=item,
             date=today,
