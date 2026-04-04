@@ -3,6 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#c9a84c">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Duka">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
     <title>{% block title %}Duka Mwecheche{% endblock %}</title>
     {% load django_bootstrap5 %}
     {% bootstrap_css %}
@@ -379,6 +385,7 @@
                             <li><a class="dropdown-item" href="{% url 'manage_stores' %}">🏪 Stores</a></li>
                             <li><a class="dropdown-item" href="{% url 'manage_items' %}">📦 Items</a></li>
                             <li><a class="dropdown-item" href="{% url 'sales_dashboard' %}">📊 Sales & P&L</a></li>
+                            <li><a class="dropdown-item" href="{% url 'analytics' %}">📈 Analytics</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 Staff</a></li>
                             <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ Add Staff</a></li>
@@ -469,7 +476,29 @@
 
     {% block extra_js %}{% endblock %}
 
+    <!-- PWA Install Banner -->
+    <div id="pwa-install-banner"
+         style="display:none; position:fixed; bottom:0; left:0; right:0; z-index:2000;
+                background:linear-gradient(135deg, #111 0%, #1a1a1a 50%, #1f1a14 100%);
+                border-top:2px solid var(--gold); padding:1rem 1.2rem;
+                box-shadow:0 -4px 20px rgba(0,0,0,0.5);">
+        <div class="d-flex align-items-center justify-content-between gap-3">
+            <div class="d-flex align-items-center gap-3">
+                <img src="/static/icons/icon-72.png" alt="Duka" width="40" height="40" style="border-radius:8px;">
+                <div>
+                    <div style="color:var(--gold);font-weight:600;font-size:0.9rem;">Install Duka Mwecheche</div>
+                    <div style="color:var(--muted);font-size:0.75rem;">Access offline · Faster · Home screen</div>
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <button onclick="dismissInstall()" class="btn btn-sm" style="color:var(--muted);font-size:0.8rem;">Later</button>
+                <button onclick="installPWA()" class="btn btn-gold btn-sm">Install</button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        // ── Notification polling ──
         function checkNotifications() {
             fetch('/notifications/count/')
                 .then(r => r.json())
@@ -489,6 +518,39 @@
 
         checkNotifications();
         setInterval(checkNotifications, 30000);
+
+        // ── Service Worker registration ──
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/sw.js', { scope: '/' })
+                .then(reg => console.log('SW registered:', reg.scope))
+                .catch(err => console.log('SW registration failed:', err));
+        }
+
+        // ── PWA Install prompt ──
+        let deferredPrompt = null;
+
+        window.addEventListener('beforeinstallprompt', e => {
+            e.preventDefault();
+            deferredPrompt = e;
+            // Show banner only if not dismissed recently
+            if (!sessionStorage.getItem('pwa-dismissed')) {
+                document.getElementById('pwa-install-banner').style.display = 'block';
+            }
+        });
+
+        function installPWA() {
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            deferredPrompt.userChoice.then(result => {
+                document.getElementById('pwa-install-banner').style.display = 'none';
+                deferredPrompt = null;
+            });
+        }
+
+        function dismissInstall() {
+            document.getElementById('pwa-install-banner').style.display = 'none';
+            sessionStorage.setItem('pwa-dismissed', '1');
+        }
     </script>
 </body>
 </html>

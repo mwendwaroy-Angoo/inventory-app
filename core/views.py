@@ -11,6 +11,8 @@ from django.db.models import Sum, Count
 from decimal import Decimal
 from datetime import date, timedelta
 import json
+import os
+
 
 # ── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +21,10 @@ def get_user_profile(request):
         return request.user.userprofile
     except Exception:
         return None
+
+
+def offline(request):
+    return render(request, 'offline.html')
 
 
 def owner_required(view_func):

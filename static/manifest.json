@@ -1,21 +1,82 @@
 {
-  "name": "Stock Made Simpler",
-  "short_name": "SMS Inventory",
+  "name": "Duka Mwecheche",
+  "short_name": "Duka",
+  "description": "Smart inventory, sales & customer management for Kenyan MSMEs",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#1976d2",
-  "description": "A web app for managing inventory.",
+  "orientation": "portrait",
+  "background_color": "#1a1a1a",
+  "theme_color": "#c9a84c",
+  "categories": ["business", "finance", "shopping"],
   "icons": [
     {
-      "src": "/staticfiles/admin/img/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
+      "src": "/static/icons/icon-72.png",
+      "sizes": "72x72",
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
-      "src": "/staticfiles/admin/img/icon-512.png",
+      "src": "/static/icons/icon-96.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icons/icon-128.png",
+      "sizes": "128x128",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icons/icon-144.png",
+      "sizes": "144x144",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icons/icon-152.png",
+      "sizes": "152x152",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icons/icon-384.png",
+      "sizes": "384x384",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Quick Sell",
+      "short_name": "Sell",
+      "url": "/quick-sell/",
+      "description": "Record a quick sale"
+    },
+    {
+      "name": "Stock List",
+      "short_name": "Stock",
+      "url": "/stock/",
+      "description": "View stock levels"
+    },
+    {
+      "name": "Marketplace",
+      "short_name": "Shop",
+      "url": "/shop/",
+      "description": "Browse businesses"
     }
   ]
 }

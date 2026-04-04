@@ -6,14 +6,17 @@ from core.views import (
     manage_items, add_item, edit_item, delete_item,
     manage_stores, customer_list, add_customer, delete_customer,
     ajax_customers, sales_dashboard, export_sales_excel, notifications_list,
-    notifications_count, daily_summary_webhook, quick_sell,
+    notifications_count, daily_summary_webhook, quick_sell, offline,
 )
 from core.ussd import ussd_callback
+from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import mpesa_callback, stk_push_view, payment_status
 from core.marketplace_views import (
     shop_home, storefront, place_order, track_order, pay_order,
     order_list, update_order_status,
 )
+from core.whatsapp_bot import whatsapp_webhook
+from core.analytics_views import analytics_dashboard, analytics_api
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -22,6 +25,7 @@ urlpatterns = [
     path('accounts/', include('django.contrib.auth.urls')),
     path('business/', include('accounts.urls')),
     path('', home, name='home'),
+    path('offline/', offline, name='offline'),
     path('stock/', stock_list, name='stock_list'),
     path('stock/manage/', manage_items, name='manage_items'),
     path('stock/add/', add_item, name='add_item'),
@@ -44,6 +48,7 @@ urlpatterns = [
     path('notifications/count/', notifications_count, name='notifications_count'),
     path('cron/daily-summary/', daily_summary_webhook, name='daily_summary'),
     path('ussd/callback/', ussd_callback, name='ussd_callback'),
+    path('ussd/customer/', customer_ussd_callback, name='customer_ussd'),
     path('api/v1/', include('core.api_urls')),
 
     # ── M-Pesa ──
@@ -61,6 +66,13 @@ urlpatterns = [
     # ── Owner: Order Management ──
     path('orders/', order_list, name='order_list'),
     path('orders/<int:order_id>/update-status/', update_order_status, name='update_order_status'),
+
+    # ── WhatsApp Bot ──
+    path('whatsapp/webhook/', whatsapp_webhook, name='whatsapp_webhook'),
+
+    # ── Analytics ──
+    path('analytics/', analytics_dashboard, name='analytics'),
+    path('api/v1/analytics/trends/', analytics_api, name='analytics_api'),
 ]
 
 if settings.DEBUG:

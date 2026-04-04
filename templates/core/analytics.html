@@ -1,0 +1,482 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .period-btn {
+        padding: 0.4rem 1rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        letter-spacing: 0.05em;
+        text-decoration: none;
+        border: 1px solid #333;
+        color: var(--muted);
+        transition: all 0.2s;
+        background: transparent;
+    }
+    .period-btn:hover, .period-btn.active {
+        background: var(--raspberry);
+        border-color: var(--raspberry);
+        color: white;
+    }
+    .stat-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.2rem;
+        transition: transform 0.2s, border-color 0.2s;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+        border-color: var(--gold);
+    }
+    .stat-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+        margin-bottom: 0.4rem;
+    }
+    .stat-value {
+        font-family: 'Playfair Display', serif;
+        font-size: 1.6rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .stat-change {
+        font-size: 0.75rem;
+        margin-top: 0.3rem;
+    }
+    .stat-change.up { color: var(--success); }
+    .stat-change.down { color: var(--danger); }
+    .chart-box {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .chart-box h3 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1rem;
+        margin-bottom: 1rem;
+    }
+    .insight-card {
+        background: var(--onyx-card);
+        border-left: 3px solid var(--gold);
+        border-radius: 0 8px 8px 0;
+        padding: 1rem 1.2rem;
+    }
+    .insight-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .insight-value { font-size: 1.1rem; color: var(--pearl); font-weight: 600; margin-top: 0.2rem; }
+    .health-bar {
+        height: 8px;
+        border-radius: 4px;
+        overflow: hidden;
+        background: #333;
+        display: flex;
+    }
+    .health-segment { height: 100%; transition: width 0.5s; }
+    .section-title {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1.2rem;
+        margin: 2rem 0 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <span>Analytics</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+    <h2 class="page-title">📊 Business Analytics</h2>
+    <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+</div>
+
+<!-- Period Filter -->
+<div class="d-flex flex-wrap gap-2 mb-4">
+    <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; align-self:center;">Period:</span>
+    <a href="?period=7" class="period-btn {% if period == 7 %}active{% endif %}">7 Days</a>
+    <a href="?period=14" class="period-btn {% if period == 14 %}active{% endif %}">14 Days</a>
+    <a href="?period=30" class="period-btn {% if period == 30 %}active{% endif %}">30 Days</a>
+    <a href="?period=90" class="period-btn {% if period == 90 %}active{% endif %}">90 Days</a>
+    <a href="?period=365" class="period-btn {% if period == 365 %}active{% endif %}">1 Year</a>
+</div>
+
+<div style="font-size:0.8rem; color:var(--muted); margin-bottom:1.5rem;">
+    Showing: <span style="color:var(--gold)">{{ start_date }} → {{ end_date }}</span>
+    · Compared to previous {{ period }} days
+</div>
+
+<!-- ═══ KEY METRICS ═══ -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="stat-card" style="border-top: 3px solid var(--gold);">
+            <div class="stat-label">Revenue</div>
+            <div class="stat-value" style="color:var(--gold)">{{ cur_revenue|floatformat:0 }}</div>
+            <div class="stat-change {% if revenue_change >= 0 %}up{% else %}down{% endif %}">
+                {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change }}% vs prev
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card" style="border-top: 3px solid {% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};">
+            <div class="stat-label">Gross Profit</div>
+            <div class="stat-value" style="color:{% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}">{{ cur_profit|floatformat:0 }}</div>
+            <div class="stat-change {% if profit_change >= 0 %}up{% else %}down{% endif %}">
+                {% if profit_change >= 0 %}↑{% else %}↓{% endif %} {{ profit_change }}% vs prev
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card" style="border-top: 3px solid var(--pearl);">
+            <div class="stat-label">Units Sold</div>
+            <div class="stat-value" style="color:var(--pearl)">{{ cur_units }}</div>
+            <div class="stat-change {% if units_change >= 0 %}up{% else %}down{% endif %}">
+                {% if units_change >= 0 %}↑{% else %}↓{% endif %} {{ units_change }}% vs prev
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card" style="border-top: 3px solid #6c8ebf;">
+            <div class="stat-label">Profit Margin</div>
+            <div class="stat-value" style="color:#6c8ebf">{{ profit_margin }}%</div>
+            <div class="stat-change" style="color:var(--muted)">{{ cur_txn_count }} transactions</div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ INSIGHTS ROW ═══ -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3 col-6">
+        <div class="insight-card">
+            <div class="insight-label">Avg Daily Revenue</div>
+            <div class="insight-value">KES {{ avg_daily_revenue|floatformat:0 }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="insight-card">
+            <div class="insight-label">Active Selling Days</div>
+            <div class="insight-value">{{ active_days }} / {{ period }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="insight-card">
+            <div class="insight-label">Best Day</div>
+            <div class="insight-value">{{ busiest_day }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="insight-card">
+            <div class="insight-label">Best Day Revenue</div>
+            <div class="insight-value">KES {{ busiest_day_rev|floatformat:0 }}</div>
+        </div>
+    </div>
+</div>
+
+<hr class="gold-divider">
+
+<!-- ═══ CHARTS ═══ -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-8">
+        <div class="chart-box">
+            <h3>📈 Revenue & Profit Trend</h3>
+            <canvas id="trendChart" height="130"></canvas>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="chart-box">
+            <h3>🏆 Top Products</h3>
+            <canvas id="topProductsChart" height="220"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-6">
+        <div class="chart-box">
+            <h3>📦 Daily Units Sold</h3>
+            <canvas id="unitsChart" height="150"></canvas>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="chart-box">
+            <h3>🏥 Stock Health</h3>
+            <div class="health-bar mb-3" style="height:12px;">
+                {% if total_items > 0 %}
+                <div class="health-segment" style="width:{% widthratio healthy_stock total_items 100 %}%; background:var(--success);"></div>
+                <div class="health-segment" style="width:{% widthratio low_stock total_items 100 %}%; background:var(--warning);"></div>
+                <div class="health-segment" style="width:{% widthratio out_of_stock total_items 100 %}%; background:var(--danger);"></div>
+                {% endif %}
+            </div>
+            <div class="row g-2 text-center">
+                <div class="col-4">
+                    <div style="font-size:1.5rem; font-weight:700; color:var(--success)">{{ healthy_stock }}</div>
+                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">Healthy</div>
+                </div>
+                <div class="col-4">
+                    <div style="font-size:1.5rem; font-weight:700; color:var(--warning)">{{ low_stock }}</div>
+                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">Low Stock</div>
+                </div>
+                <div class="col-4">
+                    <div style="font-size:1.5rem; font-weight:700; color:var(--danger)">{{ out_of_stock }}</div>
+                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">Out of Stock</div>
+                </div>
+            </div>
+            <div style="text-align:center; margin-top:1rem; color:var(--muted); font-size:0.85rem;">
+                Stock Value: <span style="color:var(--gold); font-weight:600;">KES {{ stock_value|floatformat:0 }}</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<hr class="gold-divider">
+
+<!-- ═══ ORDER & PAYMENT ANALYTICS ═══ -->
+<div class="section-title">📋 Orders & Payments</div>
+<div class="row g-3 mb-4">
+    <div class="col-md-3 col-6">
+        <div class="stat-card">
+            <div class="stat-label">Total Orders</div>
+            <div class="stat-value" style="color:var(--pearl)">{{ total_orders }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="stat-card">
+            <div class="stat-label">Pending</div>
+            <div class="stat-value" style="color:var(--warning)">{{ pending_orders }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="stat-card">
+            <div class="stat-label">Completed</div>
+            <div class="stat-value" style="color:var(--success)">{{ completed_orders }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="stat-card">
+            <div class="stat-label">Order Revenue</div>
+            <div class="stat-value" style="color:var(--gold)">{{ order_revenue|floatformat:0 }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="stat-card">
+            <div class="stat-label">M-Pesa Collected</div>
+            <div class="stat-value" style="color:#4CAF50">KES {{ mpesa_total|floatformat:0 }}</div>
+            <div style="color:var(--muted); font-size:0.8rem; margin-top:0.3rem;">{{ mpesa_count }} payments</div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="stat-card">
+            <div class="stat-label">Total Cost of Goods</div>
+            <div class="stat-value" style="color:var(--raspberry)">KES {{ cur_cost|floatformat:0 }}</div>
+        </div>
+    </div>
+</div>
+
+<hr class="gold-divider">
+
+<!-- ═══ STORE PERFORMANCE ═══ -->
+{% if store_list %}
+<div class="section-title">🏪 Store Performance</div>
+<div class="table-responsive mb-4">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>Store</th>
+                <th>Units Sold</th>
+                <th>Revenue (KES)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for store in store_list %}
+            <tr>
+                <td><strong style="color:var(--pearl)">{{ store.name }}</strong></td>
+                <td>{{ store.units }}</td>
+                <td style="color:var(--gold)">{{ store.revenue|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- ═══ TOP PRODUCTS TABLE ═══ -->
+{% if top_products %}
+<div class="section-title">🏆 Top 10 Products</div>
+<div class="table-responsive mb-4">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Units</th>
+                <th>Revenue</th>
+                <th>Profit</th>
+                <th>Margin</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in top_products %}
+            <tr>
+                <td><strong style="color:var(--pearl)">{{ p.name }}</strong></td>
+                <td>{{ p.units }}</td>
+                <td style="color:var(--gold)">{{ p.revenue|floatformat:0 }}</td>
+                <td class="{% if p.profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}" style="color:{% if p.profit >= 0 %}var(--success){% else %}var(--danger){% endif %}">{{ p.profit|floatformat:0 }}</td>
+                <td>
+                    {% if p.revenue > 0 %}
+                        <span style="color:{% if p.profit >= 0 %}var(--success){% else %}var(--danger){% endif %}">
+                            {{ p.profit|floatformat:0 }}
+                        </span>
+                    {% else %}—{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    const labels = {{ chart_labels|safe }};
+    const revenueData = {{ chart_revenue|safe }};
+    const profitData = {{ chart_profit|safe }};
+    const unitsData = {{ chart_units|safe }};
+    const topLabels = {{ top_product_labels|safe }};
+    const topRevenue = {{ top_product_revenue|safe }};
+
+    const chartFont = { family: "'DM Sans', sans-serif" };
+    const gridColor = '#2a2a2a';
+
+    // Revenue & Profit trend
+    new Chart(document.getElementById('trendChart'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Revenue',
+                    data: revenueData,
+                    borderColor: '#c9a84c',
+                    backgroundColor: 'rgba(201,168,76,0.08)',
+                    borderWidth: 2,
+                    pointRadius: labels.length > 60 ? 0 : 3,
+                    pointHoverRadius: 6,
+                    tension: 0.3,
+                    fill: true,
+                },
+                {
+                    label: 'Profit',
+                    data: profitData,
+                    borderColor: '#2ecc71',
+                    backgroundColor: 'rgba(46,204,113,0.05)',
+                    borderWidth: 2,
+                    pointRadius: labels.length > 60 ? 0 : 3,
+                    pointHoverRadius: 6,
+                    tension: 0.3,
+                    fill: true,
+                    borderDash: [5, 3],
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { labels: { color: '#f0ece4', font: chartFont, usePointStyle: true } },
+                tooltip: {
+                    backgroundColor: '#2a2a2a', borderColor: '#c9a84c', borderWidth: 1,
+                    titleColor: '#c9a84c', bodyColor: '#f0ece4', padding: 10,
+                    callbacks: { label: ctx => ` ${ctx.dataset.label}: KES ${ctx.parsed.y.toLocaleString()}` }
+                }
+            },
+            scales: {
+                x: { ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 15 }, grid: { color: gridColor } },
+                y: { ticks: { color: '#888', callback: v => 'KES ' + v.toLocaleString() }, grid: { color: gridColor } }
+            }
+        }
+    });
+
+    // Top products (horizontal bar)
+    new Chart(document.getElementById('topProductsChart'), {
+        type: 'bar',
+        data: {
+            labels: topLabels,
+            datasets: [{
+                label: 'Revenue',
+                data: topRevenue,
+                backgroundColor: [
+                    '#c9a84c', '#c0395a', '#2ecc71', '#6c8ebf', '#f39c12',
+                    '#9b59b6', '#1abc9c', '#e74c3c', '#3498db', '#e2c36e'
+                ],
+                borderRadius: 4,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#2a2a2a', borderColor: '#c9a84c', borderWidth: 1,
+                    titleColor: '#c9a84c', bodyColor: '#f0ece4',
+                    callbacks: { label: ctx => `KES ${ctx.parsed.x.toLocaleString()}` }
+                }
+            },
+            scales: {
+                x: { ticks: { color: '#888', callback: v => 'KES ' + v.toLocaleString() }, grid: { color: gridColor } },
+                y: { ticks: { color: '#f0ece4', font: { size: 10 } }, grid: { display: false } }
+            }
+        }
+    });
+
+    // Daily units bar chart
+    new Chart(document.getElementById('unitsChart'), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Units Sold',
+                data: unitsData,
+                backgroundColor: 'rgba(201,168,76,0.5)',
+                borderColor: '#c9a84c',
+                borderWidth: 1,
+                borderRadius: 3,
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { labels: { color: '#f0ece4', font: chartFont } },
+                tooltip: {
+                    backgroundColor: '#2a2a2a', borderColor: '#c9a84c', borderWidth: 1,
+                    titleColor: '#c9a84c', bodyColor: '#f0ece4',
+                }
+            },
+            scales: {
+                x: { ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 15 }, grid: { color: gridColor } },
+                y: { ticks: { color: '#888' }, grid: { color: gridColor } }
+            }
+        }
+    });
+</script>
+{% endblock %}
