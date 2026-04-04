@@ -3,7 +3,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .forms import BusinessSignupForm, AddStaffForm
+from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm
 from .models import Business, UserProfile
 from django.http import JsonResponse
 from core.models import SubCounty, Ward
@@ -179,3 +179,65 @@ def delete_staff(request, user_id):
         return redirect('staff_list')
 
     return render(request, 'accounts/delete_staff.html', {'profile': staff_profile})
+
+
+@login_required
+def edit_business(request):
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        return redirect('home')
+
+    if not user_profile.is_owner:
+        messages.error(request, "Only business owners can edit business details.")
+        return redirect('home')
+
+    business = user_profile.business
+    if not business:
+        messages.error(request, "No business found.")
+        return redirect('home')
+
+    if request.method == 'POST':
+        form = BusinessEditForm(request.POST, instance=business)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Business '{business.name}' updated successfully.")
+            return redirect('home')
+    else:
+        form = BusinessEditForm(instance=business)
+
+    return render(request, 'accounts/edit_business.html', {'form': form})
+
+
+@login_required
+def reset_staff_password(request, user_id):
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        return redirect('home')
+
+    if not user_profile.is_owner:
+        messages.error(request, "Only business owners can reset staff passwords.")
+        return redirect('home')
+
+    staff_profile = get_object_or_404(
+        UserProfile,
+        user__id=user_id,
+        business=user_profile.business,
+        role='staff'
+    )
+
+    if request.method == 'POST':
+        form = ResetStaffPasswordForm(request.POST)
+        if form.is_valid():
+            staff_profile.user.set_password(form.cleaned_data['password1'])
+            staff_profile.user.save()
+            messages.success(request, f"Password for '{staff_profile.user.username}' reset successfully.")
+            return redirect('staff_list')
+    else:
+        form = ResetStaffPasswordForm()
+
+    return render(request, 'accounts/reset_staff_password.html', {
+        'form': form,
+        'profile': staff_profile,
+    })

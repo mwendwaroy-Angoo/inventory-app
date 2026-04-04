@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% load django_bootstrap5 %}
+
+{% block title %}Edit Business — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .edit-card {
+        max-width: 640px;
+        margin: 2rem auto;
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-top: 3px solid var(--gold);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .edit-header {
+        background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+        padding: 1.5rem 2rem;
+    }
+
+    .edit-header h2 {
+        font-family: 'Playfair Display', serif;
+        color: var(--white);
+        margin: 0;
+        font-size: 1.5rem;
+    }
+
+    .edit-body { padding: 2rem; }
+
+    .section-label {
+        color: var(--gold);
+        font-family: 'Playfair Display', serif;
+        font-size: 1rem;
+        margin-bottom: 0.8rem;
+        padding-bottom: 0.3rem;
+        border-bottom: 1px solid #333;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="edit-card">
+    <div class="edit-header">
+        <h2>Edit Business Details</h2>
+    </div>
+    <div class="edit-body">
+        {% if form.errors %}
+        <div class="alert alert-danger">Please correct the errors below.</div>
+        {% endif %}
+
+        <form method="post">
+            {% csrf_token %}
+
+            <h5 class="section-label">Business Information</h5>
+            <div class="mb-3">
+                {% bootstrap_field form.name %}
+            </div>
+            <div class="mb-3">
+                {% bootstrap_field form.business_type %}
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">{% bootstrap_field form.phone %}</div>
+                <div class="col-md-6 mb-3">{% bootstrap_field form.email %}</div>
+            </div>
+            <div class="mb-3">
+                {% bootstrap_field form.address %}
+            </div>
+
+            <h5 class="section-label mt-4">Location</h5>
+            <div class="mb-3">{% bootstrap_field form.county %}</div>
+            <div class="mb-3">{% bootstrap_field form.sub_county %}</div>
+            <div class="mb-3">{% bootstrap_field form.ward %}</div>
+
+            <div class="d-flex gap-2 mt-4">
+                <button type="submit" class="btn btn-primary flex-fill py-2">Save Changes</button>
+                <a href="{% url 'home' %}" class="btn btn-secondary flex-fill py-2">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const countyField = document.querySelector('#id_county');
+    const subCountyField = document.querySelector('#id_sub_county');
+    const wardField = document.querySelector('#id_ward');
+
+    if (countyField) {
+        countyField.addEventListener('change', function () {
+            const countyId = this.value;
+            subCountyField.innerHTML = '<option value="">-- Select Sub County --</option>';
+            wardField.innerHTML = '<option value="">-- Select Ward --</option>';
+            if (countyId) {
+                fetch(`/business/ajax/subcounties/?county_id=${countyId}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        data.forEach(sc => {
+                            const opt = document.createElement('option');
+                            opt.value = sc.id;
+                            opt.textContent = sc.name;
+                            subCountyField.appendChild(opt);
+                        });
+                    });
+            }
+        });
+    }
+
+    if (subCountyField) {
+        subCountyField.addEventListener('change', function () {
+            const scId = this.value;
+            wardField.innerHTML = '<option value="">-- Select Ward --</option>';
+            if (scId) {
+                fetch(`/business/ajax/wards/?sub_county_id=${scId}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        data.forEach(w => {
+                            const opt = document.createElement('option');
+                            opt.value = w.id;
+                            opt.textContent = w.name;
+                            wardField.appendChild(opt);
+                        });
+                    });
+            }
+        });
+    }
+</script>
+{% endblock %}

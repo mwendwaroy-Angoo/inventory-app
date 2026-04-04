@@ -91,6 +91,8 @@
                      text-transform:uppercase; letter-spacing:0.05em;">Staff</span>
         <a href="{% url 'edit_staff' profile.user.id %}"
            class="btn btn-sm btn-outline-primary">Edit</a>
+        <a href="{% url 'reset_staff_password' profile.user.id %}"
+           class="btn btn-sm btn-secondary">🔑 Reset Password</a>
         <a href="{% url 'delete_staff' profile.user.id %}"
            class="btn btn-sm btn-outline-danger">Remove</a>
     </div>
