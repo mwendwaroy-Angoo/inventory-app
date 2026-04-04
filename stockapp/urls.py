@@ -8,6 +8,7 @@ from core.views import (
     ajax_customers, sales_dashboard, export_sales_excel, notifications_list,
     notifications_count, daily_summary_webhook, quick_sell,
 )
+from core.ussd import ussd_callback
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -37,6 +38,7 @@ urlpatterns = [
     path('notifications/', notifications_list, name='notifications'),
     path('notifications/count/', notifications_count, name='notifications_count'),
     path('cron/daily-summary/', daily_summary_webhook, name='daily_summary'),
+    path('ussd/callback/', ussd_callback, name='ussd_callback'),
 ]
 
 if settings.DEBUG:
