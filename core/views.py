@@ -673,3 +673,93 @@ def daily_summary_webhook(request):
             pass
 
     return JsonResponse({'status': 'ok', 'businesses': businesses.count()})
+
+
+# ── QUICK SELL ────────────────────────────────────────────────────────────────
+
+@login_required
+def quick_sell(request):
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+
+    success_data = None
+
+    if request.method == 'POST':
+        cart_json = request.POST.get('cart', '[]')
+        try:
+            cart = json.loads(cart_json)
+        except (json.JSONDecodeError, TypeError):
+            cart = []
+
+        recorded = []
+        last_transaction = None
+
+        for entry in cart:
+            item = Item.objects.filter(
+                id=entry.get('id'),
+                store__business=user_profile.business
+            ).first()
+            if not item:
+                continue
+
+            qty = int(entry.get('qty', 0))
+            if qty < 1:
+                continue
+
+            last_transaction = Transaction.objects.create(
+                item=item,
+                type='Issue',
+                qty=-qty,
+                business=user_profile.business,
+            )
+            recorded.append({
+                'name': item.description,
+                'qty': qty,
+                'subtotal': float(item.selling_price or 0) * qty,
+            })
+
+        if recorded and last_transaction:
+            total = sum(r['subtotal'] for r in recorded)
+
+            # Send notification for the sale batch
+            try:
+                from .notifications import notify_transaction
+                daily_count = Transaction.objects.filter(
+                    business=user_profile.business,
+                    date=date.today()
+                ).count()
+                notify_transaction(last_transaction, user_profile.business, daily_count, user=request.user)
+            except Exception:
+                pass
+
+            success_data = json.dumps({'items': recorded, 'total': total})
+            messages.success(
+                request,
+                f"Sale recorded: {len(recorded)} item{'s' if len(recorded) != 1 else ''}, KES {total:,.0f}"
+            )
+
+    # Build items with pre-calculated balance
+    items_qs = Item.objects.filter(
+        store__business=user_profile.business
+    ).select_related('store').order_by('description')
+
+    items = []
+    for item in items_qs:
+        items.append({
+            'id': item.id,
+            'description': item.description,
+            'selling_price': item.selling_price,
+            'balance': item.current_balance(),
+            'unit': item.unit,
+            'store_id': item.store_id,
+            'reorder_level': item.reorder_level,
+        })
+
+    stores = Store.objects.filter(business=user_profile.business)
+
+    return render(request, 'core/quick_sell.html', {
+        'items': items,
+        'stores': stores,
+        'success_data': success_data,
+    })

@@ -1,0 +1,703 @@
+{% extends "base.html" %}
+
+{% block title %}Quick Sell — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ── LAYOUT ── */
+    .qs-page { max-width: 800px; margin: 0 auto; }
+
+    .qs-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+
+    .qs-header h2 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1.4rem;
+        margin: 0;
+    }
+
+    /* ── SEARCH ── */
+    .qs-search {
+        position: relative;
+        margin-bottom: 1rem;
+    }
+
+    .qs-search input {
+        width: 100%;
+        padding: 0.8rem 1rem 0.8rem 2.5rem;
+        background: var(--onyx-card);
+        border: 1px solid #444;
+        border-radius: 10px;
+        color: var(--pearl);
+        font-size: 1rem;
+    }
+
+    .qs-search input:focus {
+        border-color: var(--gold);
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.15);
+    }
+
+    .qs-search input::placeholder { color: #666; }
+
+    .qs-search-icon {
+        position: absolute;
+        left: 0.9rem;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 1rem;
+    }
+
+    /* ── CATEGORY FILTERS ── */
+    .qs-stores {
+        display: flex;
+        gap: 0.5rem;
+        overflow-x: auto;
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .qs-stores::-webkit-scrollbar { height: 3px; }
+    .qs-stores::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 3px; }
+
+    .qs-store-btn {
+        flex-shrink: 0;
+        padding: 0.4rem 1rem;
+        border-radius: 20px;
+        border: 1px solid #444;
+        background: transparent;
+        color: var(--muted);
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .qs-store-btn.active {
+        background: var(--gold);
+        color: var(--onyx);
+        border-color: var(--gold);
+        font-weight: 600;
+    }
+
+    /* ── ITEM GRID ── */
+    .qs-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 0.8rem;
+        margin-bottom: 2rem;
+    }
+
+    .qs-item {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: center;
+        position: relative;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .qs-item:hover, .qs-item:active {
+        border-color: var(--gold);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(201, 168, 76, 0.15);
+    }
+
+    .qs-item-name {
+        font-weight: 500;
+        color: var(--pearl);
+        font-size: 0.85rem;
+        margin-bottom: 0.3rem;
+        line-height: 1.2;
+    }
+
+    .qs-item-price {
+        color: var(--gold);
+        font-weight: 600;
+        font-size: 1rem;
+    }
+
+    .qs-item-stock {
+        color: var(--muted);
+        font-size: 0.7rem;
+        margin-top: 0.3rem;
+    }
+
+    .qs-item-stock.low { color: var(--warning); }
+    .qs-item-stock.out { color: var(--danger); }
+
+    .qs-item.out-of-stock {
+        opacity: 0.4;
+        pointer-events: none;
+    }
+
+    /* ── CART BAR ── */
+    .qs-cart-bar {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: linear-gradient(135deg, #111, #1a1a1a);
+        border-top: 2px solid var(--gold);
+        padding: 0.8rem 1rem;
+        display: none;
+        z-index: 999;
+    }
+
+    .qs-cart-bar.active { display: block; }
+
+    .qs-cart-inner {
+        max-width: 800px;
+        margin: 0 auto;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .qs-cart-info { flex: 1; }
+
+    .qs-cart-count {
+        color: var(--pearl);
+        font-weight: 500;
+        font-size: 0.9rem;
+    }
+
+    .qs-cart-total {
+        color: var(--gold);
+        font-family: 'Playfair Display', serif;
+        font-size: 1.2rem;
+    }
+
+    .qs-cart-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .qs-sell-btn {
+        background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+        border: none;
+        color: white;
+        padding: 0.7rem 1.5rem;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.9rem;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .qs-sell-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 15px rgba(192, 57, 90, 0.4);
+    }
+
+    .qs-clear-btn {
+        background: #333;
+        border: 1px solid #444;
+        color: var(--muted);
+        padding: 0.7rem 1rem;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.85rem;
+    }
+
+    /* ── QTY MODAL ── */
+    .qs-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.7);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1001;
+    }
+
+    .qs-modal-overlay.active { display: flex; }
+
+    .qs-modal {
+        background: var(--onyx-card);
+        border: 1px solid var(--gold);
+        border-radius: 12px;
+        padding: 2rem;
+        width: 90%;
+        max-width: 340px;
+        text-align: center;
+    }
+
+    .qs-modal h4 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        margin-bottom: 0.3rem;
+        font-size: 1.2rem;
+    }
+
+    .qs-modal-price {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+    }
+
+    .qs-qty-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .qs-qty-btn {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        border: 2px solid var(--gold);
+        background: transparent;
+        color: var(--gold);
+        font-size: 1.5rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s;
+    }
+
+    .qs-qty-btn:active {
+        background: var(--gold);
+        color: var(--onyx);
+    }
+
+    .qs-qty-input {
+        width: 80px;
+        text-align: center;
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: var(--pearl);
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid #444;
+    }
+
+    .qs-qty-input:focus {
+        outline: none;
+        border-color: var(--gold);
+    }
+
+    .qs-modal-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .qs-modal-add {
+        flex: 1;
+        background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
+        border: none;
+        color: white;
+        padding: 0.7rem;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .qs-modal-cancel {
+        flex: 1;
+        background: #333;
+        border: 1px solid #444;
+        color: var(--muted);
+        padding: 0.7rem;
+        border-radius: 8px;
+        cursor: pointer;
+    }
+
+    /* ── CART ITEMS LIST ── */
+    .qs-cart-items {
+        max-width: 800px;
+        margin: 0 auto 6rem;
+    }
+
+    .qs-cart-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.6rem 0;
+        border-bottom: 1px solid #2e2e2e;
+        font-size: 0.85rem;
+    }
+
+    .qs-cart-item-name { color: var(--pearl); }
+    .qs-cart-item-qty { color: var(--muted); }
+    .qs-cart-item-subtotal { color: var(--gold); font-weight: 500; }
+
+    .qs-cart-item-remove {
+        color: var(--danger);
+        cursor: pointer;
+        font-size: 0.8rem;
+        margin-left: 0.5rem;
+    }
+
+    /* ── EMPTY STATE ── */
+    .qs-empty {
+        text-align: center;
+        padding: 3rem;
+        color: var(--muted);
+    }
+
+    /* ── RECEIPT ── */
+    .qs-receipt {
+        max-height: 60vh;
+        overflow-y: auto;
+        text-align: left;
+    }
+
+    .qs-receipt-line {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.3rem 0;
+        font-size: 0.85rem;
+        border-bottom: 1px dashed #333;
+    }
+
+    .qs-receipt-total {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.6rem 0;
+        font-weight: 700;
+        font-size: 1rem;
+        color: var(--gold);
+        border-top: 2px solid var(--gold);
+        margin-top: 0.5rem;
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 480px) {
+        .qs-grid {
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+        }
+        .qs-item { padding: 0.7rem 0.5rem; }
+        .qs-item-name { font-size: 0.75rem; }
+        .qs-item-price { font-size: 0.85rem; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="qs-page">
+    <!-- Header -->
+    <div class="qs-header">
+        <h2>⚡ Quick Sell</h2>
+        <a href="{% url 'add_transaction' %}" class="btn btn-sm btn-secondary">Full Form →</a>
+    </div>
+
+    <!-- Search -->
+    <div class="qs-search">
+        <span class="qs-search-icon">🔍</span>
+        <input type="text" id="qsSearch" placeholder="Search items...">
+    </div>
+
+    <!-- Store filters -->
+    <div class="qs-stores">
+        <button class="qs-store-btn active" data-store="all">All</button>
+        {% for store in stores %}
+        <button class="qs-store-btn" data-store="{{ store.id }}">{{ store.name }}</button>
+        {% endfor %}
+    </div>
+
+    <!-- Item grid -->
+    <div class="qs-grid" id="qsGrid">
+        {% for item in items %}
+        <div class="qs-item {% if item.balance <= 0 %}out-of-stock{% endif %}"
+             data-id="{{ item.id }}"
+             data-name="{{ item.description }}"
+             data-price="{{ item.selling_price|default:'0' }}"
+             data-balance="{{ item.balance }}"
+             data-unit="{{ item.unit }}"
+             data-store="{{ item.store_id }}">
+            <div class="qs-item-name">{{ item.description }}</div>
+            <div class="qs-item-price">
+                {% if item.selling_price %}
+                    KES {{ item.selling_price }}
+                {% else %}
+                    —
+                {% endif %}
+            </div>
+            <div class="qs-item-stock {% if item.balance <= 0 %}out{% elif item.balance <= item.reorder_level %}low{% endif %}">
+                {{ item.balance }} {{ item.unit }}
+            </div>
+        </div>
+        {% empty %}
+        <div class="qs-empty">No items found. Add items from the Manage page.</div>
+        {% endfor %}
+    </div>
+
+    <!-- Cart items display -->
+    <div class="qs-cart-items" id="qsCartItems"></div>
+</div>
+
+<!-- Quantity Modal -->
+<div class="qs-modal-overlay" id="qsModal">
+    <div class="qs-modal">
+        <h4 id="qsModalName">—</h4>
+        <div class="qs-modal-price" id="qsModalPrice">—</div>
+        <div class="qs-qty-row">
+            <button class="qs-qty-btn" id="qsQtyMinus">−</button>
+            <input type="number" class="qs-qty-input" id="qsQtyInput" value="1" min="1">
+            <button class="qs-qty-btn" id="qsQtyPlus">+</button>
+        </div>
+        <div style="color: var(--muted); font-size:0.8rem; margin-bottom:1rem;" id="qsModalSubtotal">
+            Subtotal: KES 0
+        </div>
+        <div class="qs-modal-actions">
+            <button class="qs-modal-cancel" id="qsModalCancel">Cancel</button>
+            <button class="qs-modal-add" id="qsModalAdd">Add to Sale</button>
+        </div>
+    </div>
+</div>
+
+<!-- Success Modal -->
+<div class="qs-modal-overlay" id="qsSuccessModal">
+    <div class="qs-modal">
+        <div style="font-size: 3rem; margin-bottom: 0.5rem;">✅</div>
+        <h4>Sale Recorded!</h4>
+        <div class="qs-receipt" id="qsReceipt"></div>
+        <button class="qs-modal-add w-100 mt-3" onclick="document.getElementById('qsSuccessModal').classList.remove('active')">
+            Continue Selling
+        </button>
+    </div>
+</div>
+
+<!-- Cart Bar -->
+<div class="qs-cart-bar" id="qsCartBar">
+    <div class="qs-cart-inner">
+        <div class="qs-cart-info">
+            <div class="qs-cart-count" id="qsCartCount">0 items</div>
+            <div class="qs-cart-total" id="qsCartTotal">KES 0</div>
+        </div>
+        <div class="qs-cart-actions">
+            <button class="qs-clear-btn" id="qsClear">Clear</button>
+            <button class="qs-sell-btn" id="qsSell">Complete Sale ➜</button>
+        </div>
+    </div>
+</div>
+
+<form id="qsForm" method="post" action="{% url 'quick_sell' %}" style="display:none;">
+    {% csrf_token %}
+    <input type="hidden" name="cart" id="qsCartData">
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const cart = [];
+    let currentItem = null;
+
+    const grid = document.getElementById('qsGrid');
+    const searchInput = document.getElementById('qsSearch');
+    const modal = document.getElementById('qsModal');
+    const modalName = document.getElementById('qsModalName');
+    const modalPrice = document.getElementById('qsModalPrice');
+    const modalSubtotal = document.getElementById('qsModalSubtotal');
+    const qtyInput = document.getElementById('qsQtyInput');
+    const cartBar = document.getElementById('qsCartBar');
+    const cartCount = document.getElementById('qsCartCount');
+    const cartTotal = document.getElementById('qsCartTotal');
+    const cartItemsEl = document.getElementById('qsCartItems');
+
+    // ── ITEM TAP ──
+    grid.addEventListener('click', function(e) {
+        const itemEl = e.target.closest('.qs-item');
+        if (!itemEl || itemEl.classList.contains('out-of-stock')) return;
+
+        currentItem = {
+            id: itemEl.dataset.id,
+            name: itemEl.dataset.name,
+            price: parseFloat(itemEl.dataset.price) || 0,
+            balance: parseInt(itemEl.dataset.balance) || 0,
+            unit: itemEl.dataset.unit,
+        };
+
+        modalName.textContent = currentItem.name;
+        modalPrice.textContent = currentItem.price
+            ? 'KES ' + currentItem.price + ' per ' + currentItem.unit + ' \u00B7 ' + currentItem.balance + ' in stock'
+            : currentItem.balance + ' ' + currentItem.unit + ' in stock';
+        qtyInput.value = 1;
+        updateModalSubtotal();
+        modal.classList.add('active');
+        qtyInput.focus();
+    });
+
+    // ── QUANTITY CONTROLS ──
+    document.getElementById('qsQtyMinus').addEventListener('click', function() {
+        var v = parseInt(qtyInput.value) || 1;
+        if (v > 1) qtyInput.value = v - 1;
+        updateModalSubtotal();
+    });
+
+    document.getElementById('qsQtyPlus').addEventListener('click', function() {
+        var v = parseInt(qtyInput.value) || 1;
+        if (currentItem && v < currentItem.balance) qtyInput.value = v + 1;
+        updateModalSubtotal();
+    });
+
+    qtyInput.addEventListener('input', updateModalSubtotal);
+
+    function updateModalSubtotal() {
+        var qty = parseInt(qtyInput.value) || 0;
+        var sub = qty * (currentItem ? currentItem.price : 0);
+        modalSubtotal.textContent = 'Subtotal: KES ' + sub.toLocaleString();
+    }
+
+    // ── ADD TO CART ──
+    document.getElementById('qsModalAdd').addEventListener('click', function() {
+        var qty = parseInt(qtyInput.value) || 0;
+        if (qty < 1 || !currentItem) return;
+        if (qty > currentItem.balance) {
+            alert('Only ' + currentItem.balance + ' ' + currentItem.unit + ' in stock.');
+            return;
+        }
+
+        var existing = cart.find(function(c) { return c.id === currentItem.id; });
+        if (existing) {
+            if (existing.qty + qty > currentItem.balance) {
+                alert('Only ' + currentItem.balance + ' ' + currentItem.unit + ' in stock. You already have ' + existing.qty + ' in the cart.');
+                return;
+            }
+            existing.qty += qty;
+        } else {
+            cart.push({
+                id: currentItem.id,
+                name: currentItem.name,
+                price: currentItem.price,
+                balance: currentItem.balance,
+                unit: currentItem.unit,
+                qty: qty
+            });
+        }
+
+        modal.classList.remove('active');
+        currentItem = null;
+        updateCart();
+    });
+
+    // ── MODAL CLOSE ──
+    document.getElementById('qsModalCancel').addEventListener('click', function() {
+        modal.classList.remove('active');
+        currentItem = null;
+    });
+
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            modal.classList.remove('active');
+            currentItem = null;
+        }
+    });
+
+    // ── CART RENDERING ──
+    function updateCart() {
+        var totalItems = cart.reduce(function(s, c) { return s + c.qty; }, 0);
+        var totalPrice = cart.reduce(function(s, c) { return s + c.qty * c.price; }, 0);
+
+        cartCount.textContent = totalItems + ' item' + (totalItems !== 1 ? 's' : '');
+        cartTotal.textContent = 'KES ' + totalPrice.toLocaleString();
+
+        if (cart.length > 0) {
+            cartBar.classList.add('active');
+        } else {
+            cartBar.classList.remove('active');
+        }
+
+        var html = '';
+        for (var i = 0; i < cart.length; i++) {
+            var c = cart[i];
+            html += '<div class="qs-cart-item">'
+                + '<span class="qs-cart-item-name">' + c.name + '</span>'
+                + '<span>'
+                + '<span class="qs-cart-item-qty">' + c.qty + ' ' + c.unit + '</span> '
+                + '<span class="qs-cart-item-subtotal">KES ' + (c.qty * c.price).toLocaleString() + '</span> '
+                + '<span class="qs-cart-item-remove" data-index="' + i + '">\u2715</span>'
+                + '</span></div>';
+        }
+        cartItemsEl.innerHTML = html;
+    }
+
+    // ── REMOVE FROM CART ──
+    cartItemsEl.addEventListener('click', function(e) {
+        if (e.target.classList.contains('qs-cart-item-remove')) {
+            var idx = parseInt(e.target.dataset.index);
+            cart.splice(idx, 1);
+            updateCart();
+        }
+    });
+
+    // ── CLEAR CART ──
+    document.getElementById('qsClear').addEventListener('click', function() {
+        cart.length = 0;
+        updateCart();
+    });
+
+    // ── COMPLETE SALE ──
+    document.getElementById('qsSell').addEventListener('click', function() {
+        if (cart.length === 0) return;
+        document.getElementById('qsCartData').value = JSON.stringify(cart);
+        document.getElementById('qsForm').submit();
+    });
+
+    // ── SEARCH ──
+    searchInput.addEventListener('input', function() {
+        var q = this.value.toLowerCase();
+        var items = document.querySelectorAll('.qs-item');
+        for (var i = 0; i < items.length; i++) {
+            var name = items[i].dataset.name.toLowerCase();
+            items[i].style.display = name.indexOf(q) !== -1 ? '' : 'none';
+        }
+    });
+
+    // ── STORE FILTER ──
+    var storeBtns = document.querySelectorAll('.qs-store-btn');
+    for (var i = 0; i < storeBtns.length; i++) {
+        storeBtns[i].addEventListener('click', function() {
+            for (var j = 0; j < storeBtns.length; j++) storeBtns[j].classList.remove('active');
+            this.classList.add('active');
+            var storeId = this.dataset.store;
+            var items = document.querySelectorAll('.qs-item');
+            for (var k = 0; k < items.length; k++) {
+                if (storeId === 'all' || items[k].dataset.store === storeId) {
+                    items[k].style.display = '';
+                } else {
+                    items[k].style.display = 'none';
+                }
+            }
+        });
+    }
+
+    // ── SUCCESS MODAL ──
+    {% if success_data %}
+    var successData = {{ success_data|safe }};
+    var receiptHtml = '';
+    for (var i = 0; i < successData.items.length; i++) {
+        var item = successData.items[i];
+        receiptHtml += '<div class="qs-receipt-line">'
+            + '<span>' + item.name + ' \u00D7 ' + item.qty + '</span>'
+            + '<span>KES ' + item.subtotal.toLocaleString() + '</span>'
+            + '</div>';
+    }
+    receiptHtml += '<div class="qs-receipt-total">'
+        + '<span>Total</span>'
+        + '<span>KES ' + successData.total.toLocaleString() + '</span>'
+        + '</div>';
+    document.getElementById('qsReceipt').innerHTML = receiptHtml;
+    document.getElementById('qsSuccessModal').classList.add('active');
+    {% endif %}
+})();
+</script>
+{% endblock %}

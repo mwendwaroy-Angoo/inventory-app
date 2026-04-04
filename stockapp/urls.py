@@ -6,7 +6,7 @@ from core.views import (
     manage_items, add_item, edit_item, delete_item,
     manage_stores, customer_list, add_customer, delete_customer,
     ajax_customers, sales_dashboard, export_sales_excel, notifications_list,
-    notifications_count, daily_summary_webhook,
+    notifications_count, daily_summary_webhook, quick_sell,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -23,6 +23,7 @@ urlpatterns = [
     path('stock/delete/<int:item_id>/', delete_item, name='delete_item'),
     path('stock/stores/', manage_stores, name='manage_stores'),
     path('add-transaction/', add_transaction, name='add_transaction'),
+    path('quick-sell/', quick_sell, name='quick_sell'),
     path('item/<int:item_id>/', item_detail, name='item_detail'),
     path('history/', transaction_history, name='transaction_history'),
     path('export/stock/', export_stock_excel, name='export_stock'),
