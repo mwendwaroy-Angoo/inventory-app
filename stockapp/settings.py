@@ -93,6 +93,7 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = os.getenv('GMAIL_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('GMAIL_APP_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('GMAIL_USER', '')
+EMAIL_TIMEOUT = 5  # seconds — fail fast instead of hanging
 
 # ── AFRICA'S TALKING ──────────────────────────────────────────────────────────
 AT_USERNAME = os.getenv('AT_USERNAME', 'sandbox')

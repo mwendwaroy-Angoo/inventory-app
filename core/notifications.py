@@ -15,7 +15,7 @@ def send_email_notification(subject, message, recipient_email):
             message=message,
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[recipient_email],
-            fail_silently=False,
+            fail_silently=True,
         )
         logger.info(f"Email sent to {recipient_email}: {subject}")
         return True
@@ -201,16 +201,13 @@ def notify_staff_login(user, business, action='logged in'):
         f"Business: {business.name}\n\n"
         f"— Duka Mwecheche"
     )
+    # Only in-app notification during login/logout — email/SMS would block
+    # the request and cause worker timeouts on Render's free tier
     create_in_app_notification(
         owner,
         f"{emoji} {user.username} {action}",
         f"Staff member {action} at {now}",
         notification_type='staff'
-    )
-    send_email_notification(subject, message, owner_email)
-    send_sms_notification(
-        f"[Duka Mwecheche] Staff: {user.username} {action} at {now}",
-        owner_phone
     )
 
 
