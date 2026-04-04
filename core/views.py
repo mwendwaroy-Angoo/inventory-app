@@ -640,22 +640,16 @@ def export_sales_excel(request):
 
 @login_required
 def notifications_list(request):
-    """Show all notifications for the logged in user and mark them as read."""
-    # Mark all notifications as read (correct field name is 'unread')
-    request.user.notifications.filter(unread=True).update(unread=False)
+    notifications = request.user.app_notifications.all()[:50]
+    request.user.app_notifications.filter(is_read=False).update(is_read=True)
+    return render(request, 'core/notifications.html', {
+        'notifications': notifications
+    })
 
-    notifications = request.user.notifications.all().order_by('-timestamp')[:50]
-
-    context = {
-        'notifications': notifications,
-        'today': timezone.now().strftime("%B %d, %Y"),
-    }
-    return render(request, 'core/notifications.html', context)
 
 @login_required
 def notifications_count(request):
-    """AJAX endpoint to get unread notification count."""
-    count = request.user.notifications.filter(unread=True).count()
+    count = request.user.app_notifications.filter(is_read=False).count()
     return JsonResponse({'count': count})
 
 def daily_summary_webhook(request):

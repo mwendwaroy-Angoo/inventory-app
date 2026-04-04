@@ -53,7 +53,7 @@ class Ward(models.Model):
 
 
 # ────────────────────────────────────────────────
-# CUSTOMER MODEL  ← now correctly at top level
+# CUSTOMER MODEL
 # ────────────────────────────────────────────────
 
 class Customer(models.Model):
@@ -69,326 +69,41 @@ class Customer(models.Model):
     class Meta:
         ordering = ['name']
 
-import os
-import logging
-from django.core.mail import send_mail
-from django.conf import settings
 
-logger = logging.getLogger(__name__)
+# ────────────────────────────────────────────────
+# NOTIFICATION MODEL
+# ────────────────────────────────────────────────
 
+class Notification(models.Model):
+    TYPE_CHOICES = [
+        ('transaction', 'Transaction'),
+        ('warning', 'Warning'),
+        ('staff', 'Staff'),
+        ('report', 'Report'),
+        ('info', 'Info'),
+    ]
 
-# ── EMAIL ─────────────────────────────────────────────────────────────────────
-
-def send_email_notification(subject, message, recipient_email):
-    """Send email notification to business owner."""
-    if not recipient_email:
-        return False
-    try:
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[recipient_email],
-            fail_silently=False,
-        )
-        logger.info(f"Email sent to {recipient_email}: {subject}")
-        return True
-    except Exception as e:
-        logger.error(f"Email failed to {recipient_email}: {e}")
-        return False
-
-
-# ── SMS VIA AFRICA'S TALKING ──────────────────────────────────────────────────
-
-def send_sms_notification(message, phone_number):
-    """Send SMS via Africa's Talking."""
-    if not phone_number:
-        return False
-    try:
-        import africastalking
-        africastalking.initialize(
-            username=settings.AT_USERNAME,
-            api_key=settings.AT_API_KEY
-        )
-        sms = africastalking.SMS
-        # Format phone number for Kenya
-        if phone_number.startswith('0'):
-            phone_number = '+254' + phone_number[1:]
-        elif not phone_number.startswith('+'):
-            phone_number = '+254' + phone_number
-
-        response = sms.send(message, [phone_number])
-        logger.info(f"SMS sent to {phone_number}: {response}")
-        return True
-    except Exception as e:
-        logger.error(f"SMS failed to {phone_number}: {e}")
-        return False
-
-
-# ── WHATSAPP VIA TWILIO ───────────────────────────────────────────────────────
-
-def send_whatsapp_notification(message, phone_number):
-    """Send WhatsApp message via Twilio."""
-    if not phone_number:
-        return False
-    try:
-        from twilio.rest import Client
-        client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-
-        # Format phone number
-        if phone_number.startswith('0'):
-            phone_number = '+254' + phone_number[1:]
-        elif not phone_number.startswith('+'):
-            phone_number = '+254' + phone_number
-
-        client.messages.create(
-            from_='whatsapp:+14155238886',  # Twilio sandbox number
-            to=f'whatsapp:{phone_number}',
-            body=message
-        )
-        logger.info(f"WhatsApp sent to {phone_number}")
-        return True
-    except Exception as e:
-        logger.error(f"WhatsApp failed to {phone_number}: {e}")
-        return False
-
-
-# ── IN-APP NOTIFICATION ───────────────────────────────────────────────────────
-
-def create_in_app_notification(user, title, message, notification_type='info'):
-    """Create an in-app notification for a user."""
-    from core.models import Notification
-    try:
-        Notification.objects.create(
-            user=user,
-            title=title,
-            message=message,
-            notification_type=notification_type,
-        )
-        return True
-    except Exception as e:
-        logger.error(f"In-app notification failed: {e}")
-        return False
-
-
-# ── TRANSACTION NOTIFICATION ──────────────────────────────────────────────────
-
-def notify_transaction(transaction, business, daily_count=0):
-    """Send notifications when a transaction is recorded."""
-    item = transaction.item
-    trans_type = transaction.type
-    qty = abs(transaction.qty)
-
-    # Get business owner
-    owner_profile = business.users.filter(role='owner').first()
-    if not owner_profile:
-        return
-
-    owner = owner_profile.user
-    owner_email = owner.email
-    owner_phone = owner_profile.phone or business.phone
-
-    # Build message
-    if trans_type == 'Issue':
-        emoji = '📤'
-        action = 'issued/sold'
-    else:
-        emoji = '📥'
-        action = 'received'
-
-    subject = f"{emoji} Transaction Alert — {business.name}"
-    message = (
-        f"Transaction recorded on Duka Mwecheche\n\n"
-        f"Business: {business.name}\n"
-        f"Item: {item.description} ({item.material_no})\n"
-        f"Type: {trans_type}\n"
-        f"Quantity: {qty} {item.unit} {action}\n"
-        f"Remaining Balance: {item.current_balance()} {item.unit}\n"
-        f"Recipient: {transaction.recipient or 'N/A'}\n"
-        f"Invoice No: {transaction.invoice_no or 'N/A'}\n"
-        f"Date: {transaction.date}\n\n"
-        f"— Duka Mwecheche"
+    user = models.ForeignKey(
+        'auth.User',
+        on_delete=models.CASCADE,
+        related_name='app_notifications'
     )
-
-    # In-app notification always
-    create_in_app_notification(
-        owner,
-        f"{emoji} {trans_type}: {item.description}",
-        f"{qty} {item.unit} {action}. Balance: {item.current_balance()}",
-        notification_type='transaction'
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    notification_type = models.CharField(
+        max_length=20,
+        choices=TYPE_CHOICES,
+        default='info'
     )
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
 
-    # Email always
-    send_email_notification(subject, message, owner_email)
+    class Meta:
+        ordering = ['-created_at']
 
-    # SMS if ≤15 transactions today, WhatsApp if >15
-    if daily_count <= 15:
-        sms_msg = (
-            f"[Duka Mwecheche] {trans_type}: {qty} {item.unit} "
-            f"of {item.description}. "
-            f"Balance: {item.current_balance()}. "
-            f"By: {transaction.recipient or 'N/A'}"
-        )
-        send_sms_notification(sms_msg, owner_phone)
-    else:
-        wa_msg = (
-            f"*Duka Mwecheche — Transaction Alert*\n\n"
-            f"*{trans_type}:* {qty} {item.unit} of {item.description}\n"
-            f"*Balance:* {item.current_balance()} {item.unit}\n"
-            f"*Recipient:* {transaction.recipient or 'N/A'}\n"
-            f"*Invoice:* {transaction.invoice_no or 'N/A'}"
-        )
-        send_whatsapp_notification(wa_msg, owner_phone)
+    def __str__(self):
+        return f"{self.title} — {self.user.username}"
 
-    # Reorder alert
-    if item.needs_reorder():
-        notify_reorder_alert(item, business, owner, owner_email, owner_phone)
-
-
-def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
-    """Send reorder alert when stock hits reorder level."""
-    subject = f"⚠️ Low Stock Alert — {item.description}"
-    message = (
-        f"Low stock alert from Duka Mwecheche\n\n"
-        f"Business: {business.name}\n"
-        f"Item: {item.description} ({item.material_no})\n"
-        f"Current Balance: {item.current_balance()} {item.unit}\n"
-        f"Reorder Level: {item.reorder_level} {item.unit}\n"
-        f"Reorder Quantity: {item.reorder_quantity} {item.unit}\n\n"
-        f"Please restock this item soon.\n\n"
-        f"— Duka Mwecheche"
-    )
-
-    create_in_app_notification(
-        owner,
-        f"⚠️ Low Stock: {item.description}",
-        f"Balance: {item.current_balance()} {item.unit}. Reorder level: {item.reorder_level}",
-        notification_type='warning'
-    )
-    send_email_notification(subject, message, owner_email)
-    send_sms_notification(
-        f"[Duka Mwecheche] LOW STOCK: {item.description}. "
-        f"Balance: {item.current_balance()} {item.unit}. "
-        f"Please reorder.",
-        owner_phone
-    )
-
-
-def notify_staff_login(user, business, action='logged in'):
-    """Notify owner when staff logs in or out."""
-    owner_profile = business.users.filter(role='owner').first()
-    if not owner_profile:
-        return
-
-    owner = owner_profile.user
-    owner_email = owner.email
-    owner_phone = owner_profile.phone or business.phone
-
-    from django.utils import timezone
-    now = timezone.now().strftime("%B %d, %Y at %I:%M %p")
-
-    emoji = '🟢' if action == 'logged in' else '🔴'
-    subject = f"{emoji} Staff {action.title()} — {business.name}"
-    message = (
-        f"Staff activity on Duka Mwecheche\n\n"
-        f"Staff member: {user.get_full_name() or user.username}\n"
-        f"Action: {action.title()}\n"
-        f"Time: {now}\n"
-        f"Business: {business.name}\n\n"
-        f"— Duka Mwecheche"
-    )
-
-    create_in_app_notification(
-        owner,
-        f"{emoji} {user.username} {action}",
-        f"Staff member {action} at {now}",
-        notification_type='staff'
-    )
-    send_email_notification(subject, message, owner_email)
-    send_sms_notification(
-        f"[Duka Mwecheche] Staff: {user.username} {action} at {now}",
-        owner_phone
-    )
-
-
-def send_daily_summary(business):
-    """Send daily sales summary to business owner."""
-    from datetime import date
-    from core.models import Transaction, Item
-
-    owner_profile = business.users.filter(role='owner').first()
-    if not owner_profile:
-        return
-
-    owner = owner_profile.user
-    owner_email = owner.email
-    owner_phone = owner_profile.phone or business.phone
-
-    today = date.today()
-    sales = Transaction.objects.filter(
-        business=business,
-        type='Issue',
-        date=today,
-    ).select_related('item')
-
-    total_revenue = sum(t.revenue() for t in sales)
-    total_cost = sum(t.cost() for t in sales)
-    total_profit = total_revenue - total_cost
-    total_transactions = sales.count()
-
-    receipts = Transaction.objects.filter(
-        business=business,
-        type='Receipt',
-        date=today,
-    ).count()
-
-    subject = f"📊 Daily Summary — {business.name} — {today}"
-    message = (
-        f"Daily Business Summary from Duka Mwecheche\n\n"
-        f"Business: {business.name}\n"
-        f"Date: {today}\n\n"
-        f"{'='*40}\n"
-        f"SALES SUMMARY\n"
-        f"{'='*40}\n"
-        f"Total Transactions: {total_transactions} sales, {receipts} receipts\n"
-        f"Total Revenue:  KES {total_revenue:,.2f}\n"
-        f"Total Cost:     KES {total_cost:,.2f}\n"
-        f"Gross Profit:   KES {total_profit:,.2f}\n"
-        f"Profit Margin:  "
-        f"{round(total_profit/total_revenue*100, 1) if total_revenue > 0 else 0}%\n\n"
-        f"{'='*40}\n"
-        f"TOP ITEMS SOLD TODAY\n"
-        f"{'='*40}\n"
-    )
-
-    # Add top items
-    from collections import defaultdict
-    item_sales = defaultdict(int)
-    for t in sales:
-        item_sales[t.item.description] += abs(t.qty)
-
-    top = sorted(item_sales.items(), key=lambda x: x[1], reverse=True)[:5]
-    for item_name, qty in top:
-        message += f"• {item_name}: {qty} units\n"
-
-    message += f"\n{'='*40}\n"
-    message += f"View full report at: https://stock-made-simpler-sms.onrender.com/sales/\n\n"
-    message += f"— Duka Mwecheche"
-
-    # Send email
-    send_email_notification(subject, message, owner_email)
-
-    # Send WhatsApp summary
-    wa_msg = (
-        f"*📊 Daily Summary — {business.name}*\n"
-        f"*Date:* {today}\n\n"
-        f"*Revenue:* KES {total_revenue:,.0f}\n"
-        f"*Cost:* KES {total_cost:,.0f}\n"
-        f"*Profit:* KES {total_profit:,.0f}\n"
-        f"*Transactions:* {total_transactions} sales\n\n"
-        f"View full report: https://stock-made-simpler-sms.onrender.com/sales/"
-    )
-    send_whatsapp_notification(wa_msg, owner_phone)
 
 # ────────────────────────────────────────────────
 # STORE, ITEM, TRANSACTION
@@ -436,15 +151,13 @@ class Item(models.Model):
         return self.current_balance() <= self.reorder_level
 
     def stock_value(self):
-        """Current stock value based on cost price."""
         if self.cost_price and self.current_balance() > 0:
-             return float(self.cost_price) * self.current_balance()
+            return float(self.cost_price) * self.current_balance()
         return 0
 
     def profit_per_unit(self):
-        """Profit per unit sold."""
         if self.selling_price and self.cost_price:
-             return float(self.selling_price) - float(self.cost_price)
+            return float(self.selling_price) - float(self.cost_price)
         return 0
 
     def __str__(self):
@@ -466,19 +179,16 @@ class Transaction(models.Model):
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='transactions', null=True, blank=True)
 
     def revenue(self):
-        """Revenue generated by this transaction (Issues only)."""
         if self.type == 'Issue' and self.item.selling_price:
-             return abs(self.qty) * float(self.item.selling_price)
+            return abs(self.qty) * float(self.item.selling_price)
         return 0
 
     def cost(self):
-        """Cost of goods for this transaction (Issues only)."""
         if self.type == 'Issue' and self.item.cost_price:
-             return abs(self.qty) * float(self.item.cost_price)
+            return abs(self.qty) * float(self.item.cost_price)
         return 0
 
     def profit(self):
-        """Profit from this transaction."""
         return self.revenue() - self.cost()
 
     def __str__(self):

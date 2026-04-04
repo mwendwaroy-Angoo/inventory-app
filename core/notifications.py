@@ -6,10 +6,7 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
-# ── EMAIL ─────────────────────────────────────────────────────────────────────
-
 def send_email_notification(subject, message, recipient_email):
-    """Send email notification to business owner."""
     if not recipient_email:
         return False
     try:
@@ -27,10 +24,7 @@ def send_email_notification(subject, message, recipient_email):
         return False
 
 
-# ── SMS VIA AFRICA'S TALKING ──────────────────────────────────────────────────
-
 def send_sms_notification(message, phone_number):
-    """Send SMS via Africa's Talking."""
     if not phone_number:
         return False
     try:
@@ -40,12 +34,10 @@ def send_sms_notification(message, phone_number):
             api_key=settings.AT_API_KEY
         )
         sms = africastalking.SMS
-        # Format phone number for Kenya
         if phone_number.startswith('0'):
             phone_number = '+254' + phone_number[1:]
         elif not phone_number.startswith('+'):
             phone_number = '+254' + phone_number
-
         response = sms.send(message, [phone_number])
         logger.info(f"SMS sent to {phone_number}: {response}")
         return True
@@ -54,24 +46,18 @@ def send_sms_notification(message, phone_number):
         return False
 
 
-# ── WHATSAPP VIA TWILIO ───────────────────────────────────────────────────────
-
 def send_whatsapp_notification(message, phone_number):
-    """Send WhatsApp message via Twilio."""
     if not phone_number:
         return False
     try:
         from twilio.rest import Client
         client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-
-        # Format phone number
         if phone_number.startswith('0'):
             phone_number = '+254' + phone_number[1:]
         elif not phone_number.startswith('+'):
             phone_number = '+254' + phone_number
-
         client.messages.create(
-            from_='whatsapp:+14155238886',  # Twilio sandbox number
+            from_='whatsapp:+14155238886',
             to=f'whatsapp:{phone_number}',
             body=message
         )
@@ -82,10 +68,7 @@ def send_whatsapp_notification(message, phone_number):
         return False
 
 
-# ── IN-APP NOTIFICATION ───────────────────────────────────────────────────────
-
 def create_in_app_notification(user, title, message, notification_type='info'):
-    """Create an in-app notification for a user."""
     from core.models import Notification
     try:
         Notification.objects.create(
@@ -94,30 +77,27 @@ def create_in_app_notification(user, title, message, notification_type='info'):
             message=message,
             notification_type=notification_type,
         )
+        logger.info(f"In-app notification created for {user.username}: {title}")
         return True
     except Exception as e:
         logger.error(f"In-app notification failed: {e}")
         return False
 
 
-# ── TRANSACTION NOTIFICATION ──────────────────────────────────────────────────
-
 def notify_transaction(transaction, business, daily_count=0):
-    """Send notifications when a transaction is recorded."""
     item = transaction.item
     trans_type = transaction.type
     qty = abs(transaction.qty)
 
-    # Get business owner
     owner_profile = business.users.filter(role='owner').first()
     if not owner_profile:
+        logger.warning(f"No owner found for business {business.name}")
         return
 
     owner = owner_profile.user
     owner_email = owner.email
     owner_phone = owner_profile.phone or business.phone
 
-    # Build message
     if trans_type == 'Issue':
         emoji = '📤'
         action = 'issued/sold'
@@ -169,13 +149,11 @@ def notify_transaction(transaction, business, daily_count=0):
         )
         send_whatsapp_notification(wa_msg, owner_phone)
 
-    # Reorder alert
     if item.needs_reorder():
         notify_reorder_alert(item, business, owner, owner_email, owner_phone)
 
 
 def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
-    """Send reorder alert when stock hits reorder level."""
     subject = f"⚠️ Low Stock Alert — {item.description}"
     message = (
         f"Low stock alert from Duka Mwecheche\n\n"
@@ -187,7 +165,6 @@ def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
         f"Please restock this item soon.\n\n"
         f"— Duka Mwecheche"
     )
-
     create_in_app_notification(
         owner,
         f"⚠️ Low Stock: {item.description}",
@@ -197,14 +174,12 @@ def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
     send_email_notification(subject, message, owner_email)
     send_sms_notification(
         f"[Duka Mwecheche] LOW STOCK: {item.description}. "
-        f"Balance: {item.current_balance()} {item.unit}. "
-        f"Please reorder.",
+        f"Balance: {item.current_balance()} {item.unit}. Please reorder.",
         owner_phone
     )
 
 
 def notify_staff_login(user, business, action='logged in'):
-    """Notify owner when staff logs in or out."""
     owner_profile = business.users.filter(role='owner').first()
     if not owner_profile:
         return
@@ -226,7 +201,6 @@ def notify_staff_login(user, business, action='logged in'):
         f"Business: {business.name}\n\n"
         f"— Duka Mwecheche"
     )
-
     create_in_app_notification(
         owner,
         f"{emoji} {user.username} {action}",
@@ -241,7 +215,6 @@ def notify_staff_login(user, business, action='logged in'):
 
 
 def send_daily_summary(business):
-    """Send daily sales summary to business owner."""
     from datetime import date
     from core.models import Transaction, Item
 
@@ -290,7 +263,6 @@ def send_daily_summary(business):
         f"{'='*40}\n"
     )
 
-    # Add top items
     from collections import defaultdict
     item_sales = defaultdict(int)
     for t in sales:
@@ -304,10 +276,8 @@ def send_daily_summary(business):
     message += f"View full report at: https://stock-made-simpler-sms.onrender.com/sales/\n\n"
     message += f"— Duka Mwecheche"
 
-    # Send email
     send_email_notification(subject, message, owner_email)
 
-    # Send WhatsApp summary
     wa_msg = (
         f"*📊 Daily Summary — {business.name}*\n"
         f"*Date:* {today}\n\n"
