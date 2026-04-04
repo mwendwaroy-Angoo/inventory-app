@@ -189,7 +189,7 @@ def notify_staff_login(user, business, action='logged in'):
     owner_phone = owner_profile.phone or business.phone
 
     from django.utils import timezone
-    now = timezone.now().strftime("%B %d, %Y at %I:%M %p")
+    now = timezone.localtime(timezone.now()).strftime("%B %d, %Y at %I:%M %p")
 
     emoji = '🟢' if action == 'logged in' else '🔴'
     subject = f"{emoji} Staff {action.title()} — {business.name}"

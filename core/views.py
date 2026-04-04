@@ -55,7 +55,7 @@ def home(request):
                 'reorder_count': reorder_count,
                 'reorder_items': sorted(reorder_items, key=lambda x: x.current_balance())[:20],
             })
-        except AttributeError:
+        except Exception:
             context['error'] = "Profile not found. Please contact support."
     else:
         context['guest'] = True

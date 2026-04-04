@@ -56,6 +56,9 @@ def save_user_profile(sender, instance, **kwargs):
 def on_user_login(sender, request, user, **kwargs):
     try:
         profile = user.userprofile
+    except UserProfile.DoesNotExist:
+        return
+    try:
         if profile.business and not profile.is_owner:
             from core.notifications import notify_staff_login
             notify_staff_login(user, profile.business, 'logged in')
@@ -64,11 +67,15 @@ def on_user_login(sender, request, user, **kwargs):
 
 @signal_receiver(user_logged_out)
 def on_user_logout(sender, request, user, **kwargs):
+    if not user:
+        return
     try:
-        if user:
-            profile = user.userprofile
-            if profile.business and not profile.is_owner:
-                from core.notifications import notify_staff_login
-                notify_staff_login(user, profile.business, 'logged out')
+        profile = user.userprofile
+    except UserProfile.DoesNotExist:
+        return
+    try:
+        if profile.business and not profile.is_owner:
+            from core.notifications import notify_staff_login
+            notify_staff_login(user, profile.business, 'logged out')
     except Exception:
         pass
