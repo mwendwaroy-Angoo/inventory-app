@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+{% block title %}Shop — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .shop-hero {
+        text-align: center;
+        padding: 3rem 0 2rem;
+    }
+    .shop-hero h1 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 2.2rem;
+        margin-bottom: 0.5rem;
+    }
+    .shop-hero p {
+        color: var(--muted);
+        font-size: 1rem;
+    }
+    .search-bar {
+        max-width: 600px;
+        margin: 1.5rem auto;
+    }
+    .business-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.5rem;
+        transition: all 0.3s;
+        text-decoration: none;
+        color: var(--pearl);
+        display: block;
+    }
+    .business-card:hover {
+        border-color: var(--gold);
+        transform: translateY(-3px);
+        box-shadow: 0 8px 25px rgba(201, 168, 76, 0.15);
+        color: var(--pearl);
+    }
+    .business-card h5 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        margin-bottom: 0.5rem;
+    }
+    .business-card .type-badge {
+        font-size: 0.7rem;
+        background: rgba(192, 57, 90, 0.2);
+        color: var(--raspberry);
+        border: 1px solid var(--raspberry);
+        padding: 0.2rem 0.6rem;
+        border-radius: 20px;
+    }
+    .business-card .location {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin-top: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="shop-hero">
+    <h1>🛒 Marketplace</h1>
+    <p>Discover local businesses and order directly</p>
+</div>
+
+<div class="search-bar">
+    <form method="get" class="d-flex gap-2">
+        <input type="text" name="q" class="form-control" placeholder="Search businesses..."
+               value="{{ query }}">
+        <select name="county" class="form-select" style="max-width: 200px;">
+            <option value="">All Counties</option>
+            {% for county in counties %}
+            <option value="{{ county.id }}" {% if selected_county == county.id|stringformat:"d" %}selected{% endif %}>
+                {{ county.name }}
+            </option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-gold">Search</button>
+    </form>
+</div>
+
+<hr class="gold-divider">
+
+{% if businesses %}
+<div class="row g-3">
+    {% for biz in businesses %}
+    <div class="col-md-4 col-sm-6">
+        <a href="{% url 'storefront' biz.id %}" class="business-card">
+            <h5>{{ biz.name }}</h5>
+            {% if biz.business_type %}
+                <span class="type-badge">{{ biz.business_type.name }}</span>
+            {% endif %}
+            <div class="location">
+                📍 {% if biz.ward %}{{ biz.ward.name }}, {% endif %}
+                {% if biz.sub_county %}{{ biz.sub_county.name }}, {% endif %}
+                {% if biz.county %}{{ biz.county.name }}{% endif %}
+            </div>
+            {% if biz.phone %}
+            <div class="location mt-1">📞 {{ biz.phone }}</div>
+            {% endif %}
+        </a>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-5">
+    <p style="color: var(--muted); font-size: 1.2rem;">No businesses found.</p>
+    <p style="color: var(--muted);">Try a different search or county.</p>
+</div>
+{% endif %}
+{% endblock %}

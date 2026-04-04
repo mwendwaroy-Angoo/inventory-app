@@ -193,3 +193,99 @@ class Transaction(models.Model):
 
     def __str__(self):
         return f"{self.type} {abs(self.qty)} {self.item.unit} - {self.item.description}"
+
+
+# ────────────────────────────────────────────────
+# ORDER MODEL (Customer Marketplace)
+# ────────────────────────────────────────────────
+
+class Order(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('confirmed', 'Confirmed'),
+        ('paid', 'Paid'),
+        ('ready', 'Ready for Pickup'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='orders')
+    customer_name = models.CharField(max_length=200)
+    customer_phone = models.CharField(max_length=20)
+    customer_location = models.CharField(max_length=200, blank=True)
+    order_number = models.CharField(max_length=30, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.order_number} — {self.customer_name}"
+
+    def save(self, *args, **kwargs):
+        if not self.order_number:
+            from django.utils.crypto import get_random_string
+            prefix = timezone.localtime(timezone.now()).strftime('%y%m%d')
+            self.order_number = f"ORD-{prefix}-{get_random_string(4, '0123456789ABCDEF')}"
+        super().save(*args, **kwargs)
+
+    def recalculate_total(self):
+        self.total_amount = sum(
+            line.line_total for line in self.lines.all()
+        )
+        self.save(update_fields=['total_amount'])
+
+
+class OrderLine(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='lines')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+
+    @property
+    def line_total(self):
+        return self.quantity * self.unit_price
+
+    def __str__(self):
+        return f"{self.item.description} x{self.quantity}"
+
+
+# ────────────────────────────────────────────────
+# PAYMENT MODEL (M-Pesa & Others)
+# ────────────────────────────────────────────────
+
+class Payment(models.Model):
+    METHOD_CHOICES = [
+        ('mpesa', 'M-Pesa'),
+        ('cash', 'Cash'),
+        ('bank', 'Bank Transfer'),
+    ]
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=10, choices=METHOD_CHOICES, default='mpesa')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    phone = models.CharField(max_length=20, blank=True)
+    mpesa_receipt = models.CharField(max_length=30, blank=True, db_index=True)
+    checkout_request_id = models.CharField(max_length=100, blank=True, db_index=True)
+    merchant_request_id = models.CharField(max_length=100, blank=True)
+    result_code = models.IntegerField(null=True, blank=True)
+    result_desc = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.method} {self.amount} KES — {self.status}"

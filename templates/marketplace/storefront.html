@@ -1,0 +1,391 @@
+{% extends 'base.html' %}
+{% block title %}{{ business.name }} — Shop{% endblock %}
+
+{% block extra_css %}
+<style>
+    .store-header {
+        text-align: center;
+        padding: 2rem 0 1rem;
+    }
+    .store-header h1 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 2rem;
+    }
+    .store-header .meta {
+        color: var(--muted);
+        font-size: 0.9rem;
+    }
+
+    /* Item grid */
+    .item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
+    .item-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.2rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        position: relative;
+    }
+    .item-card:hover { border-color: var(--gold); transform: translateY(-2px); }
+    .item-card.in-cart { border-color: var(--raspberry); background: rgba(192,57,90,0.08); }
+    .item-card .name {
+        font-weight: 500;
+        color: var(--pearl);
+        margin-bottom: 0.3rem;
+        font-size: 0.95rem;
+    }
+    .item-card .price {
+        color: var(--gold);
+        font-family: 'Playfair Display', serif;
+        font-size: 1.1rem;
+    }
+    .item-card .stock-info {
+        font-size: 0.75rem;
+        color: var(--muted);
+        margin-top: 0.3rem;
+    }
+    .item-card .qty-control {
+        display: none;
+        margin-top: 0.8rem;
+        align-items: center;
+        gap: 8px;
+    }
+    .item-card.in-cart .qty-control { display: flex; }
+    .qty-btn {
+        width: 32px; height: 32px;
+        border-radius: 50%;
+        border: 1px solid var(--gold);
+        background: transparent;
+        color: var(--gold);
+        font-size: 1.1rem;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+    }
+    .qty-btn:hover { background: var(--gold); color: var(--onyx); }
+    .qty-display {
+        font-size: 1.1rem;
+        color: var(--pearl);
+        min-width: 24px;
+        text-align: center;
+        font-weight: 600;
+    }
+
+    /* Cart bar */
+    .cart-bar {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        background: linear-gradient(135deg, #1a1a1a, #242424);
+        border-top: 2px solid var(--gold);
+        padding: 0.8rem 1rem;
+        z-index: 999;
+        display: none;
+    }
+    .cart-bar.active { display: flex; justify-content: space-between; align-items: center; }
+    .cart-bar .info { color: var(--pearl); font-size: 0.9rem; }
+    .cart-bar .info strong { color: var(--gold); }
+
+    /* Checkout modal */
+    .modal-content {
+        background: var(--onyx-card);
+        border: 1px solid var(--gold);
+        color: var(--pearl);
+    }
+    .modal-header { border-bottom: 1px solid #333; }
+    .modal-footer { border-top: 1px solid #333; }
+
+    /* Filters */
+    .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .filter-pill {
+        padding: 0.4rem 1rem;
+        border-radius: 20px;
+        border: 1px solid #444;
+        background: transparent;
+        color: var(--pearl);
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .filter-pill:hover, .filter-pill.active {
+        border-color: var(--gold);
+        color: var(--gold);
+        background: rgba(201,168,76,0.1);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="store-header">
+    <h1>{{ business.name }}</h1>
+    <div class="meta">
+        {% if business.business_type %}{{ business.business_type.name }} · {% endif %}
+        {% if business.county %}📍 {{ business.county.name }}{% endif %}
+        {% if business.phone %} · 📞 {{ business.phone }}{% endif %}
+    </div>
+    <a href="{% url 'shop_home' %}" class="btn btn-secondary btn-sm mt-2">← Back to Marketplace</a>
+</div>
+
+<hr class="gold-divider">
+
+<!-- Search & Filters -->
+<div class="mb-3">
+    <input type="text" id="searchInput" class="form-control" placeholder="Search items..."
+           value="{{ search }}" style="max-width: 400px;">
+</div>
+
+{% if stores %}
+<div class="filter-bar">
+    <button class="filter-pill active" data-store="all">All</button>
+    {% for store in stores %}
+    <button class="filter-pill" data-store="{{ store.id }}">{{ store.name }}</button>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Items Grid -->
+<div class="item-grid" id="itemGrid">
+    {% for item in items %}
+    <div class="item-card" data-id="{{ item.id }}" data-price="{{ item.selling_price }}"
+         data-name="{{ item.description }}" data-stock="{{ item.current_balance }}"
+         data-unit="{{ item.unit }}" data-store="{{ item.store_id }}">
+        <div class="name">{{ item.description }}</div>
+        <div class="price">KES {{ item.selling_price|floatformat:0 }}</div>
+        <div class="stock-info">{{ item.current_balance }} {{ item.unit }} available</div>
+        <div class="qty-control">
+            <button class="qty-btn" onclick="changeQty(this, -1)">−</button>
+            <span class="qty-display">1</span>
+            <button class="qty-btn" onclick="changeQty(this, 1)">+</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if not items %}
+<div class="text-center py-5">
+    <p style="color: var(--muted); font-size: 1.2rem;">No items available at the moment.</p>
+</div>
+{% endif %}
+
+<!-- Cart Bar -->
+<div class="cart-bar" id="cartBar">
+    <div class="info">
+        🛒 <span id="cartCount">0</span> items · <strong>KES <span id="cartTotal">0</span></strong>
+    </div>
+    <button class="btn btn-gold btn-sm" onclick="openCheckout()">Checkout →</button>
+</div>
+
+<!-- Checkout Modal -->
+<div class="modal fade" id="checkoutModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" style="font-family:'Playfair Display',serif; color:var(--gold);">
+                    Checkout
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="cartSummary" class="mb-3" style="font-size:0.85rem;"></div>
+                <hr style="border-color:#333;">
+                <div class="mb-3">
+                    <label class="form-label">Your Name *</label>
+                    <input type="text" id="custName" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Phone Number *</label>
+                    <input type="tel" id="custPhone" class="form-control" placeholder="0712345678" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Location</label>
+                    <input type="text" id="custLocation" class="form-control" placeholder="e.g. Westlands, Nairobi">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Notes</label>
+                    <textarea id="custNotes" class="form-control" rows="2" placeholder="Any special instructions..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-gold" id="placeOrderBtn" onclick="placeOrder()">
+                    Place Order
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Order Success Modal -->
+<div class="modal fade" id="successModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content text-center" style="padding: 2rem;">
+            <div style="font-size: 3rem;">✅</div>
+            <h4 style="font-family:'Playfair Display',serif; color:var(--gold); margin: 1rem 0;">Order Placed!</h4>
+            <p id="successMsg" style="color:var(--pearl);"></p>
+            <p style="color:var(--muted); font-size:0.85rem;">Order number: <strong id="orderNum" style="color:var(--gold);"></strong></p>
+            <div class="mt-3 d-flex gap-2 justify-content-center">
+                <a id="trackLink" href="#" class="btn btn-gold">Track Order</a>
+                <a id="payLink" href="#" class="btn btn-primary">Pay with M-Pesa</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+const BUSINESS_ID = {{ business.id }};
+let cart = {};  // {itemId: {name, price, qty, unit, maxStock}}
+
+// ── TAP TO ADD ──
+document.querySelectorAll('.item-card').forEach(card => {
+    card.addEventListener('click', function(e) {
+        if (e.target.closest('.qty-control')) return;
+        const id = this.dataset.id;
+        if (cart[id]) {
+            delete cart[id];
+            this.classList.remove('in-cart');
+        } else {
+            cart[id] = {
+                name: this.dataset.name,
+                price: parseFloat(this.dataset.price),
+                qty: 1,
+                unit: this.dataset.unit,
+                maxStock: parseInt(this.dataset.stock),
+            };
+            this.classList.add('in-cart');
+            this.querySelector('.qty-display').textContent = '1';
+        }
+        updateCartBar();
+    });
+});
+
+function changeQty(btn, delta) {
+    const card = btn.closest('.item-card');
+    const id = card.dataset.id;
+    if (!cart[id]) return;
+    const newQty = cart[id].qty + delta;
+    if (newQty < 1) {
+        delete cart[id];
+        card.classList.remove('in-cart');
+    } else if (newQty > cart[id].maxStock) {
+        return;
+    } else {
+        cart[id].qty = newQty;
+        card.querySelector('.qty-display').textContent = newQty;
+    }
+    updateCartBar();
+}
+
+function updateCartBar() {
+    const ids = Object.keys(cart);
+    const bar = document.getElementById('cartBar');
+    if (ids.length === 0) {
+        bar.classList.remove('active');
+        return;
+    }
+    bar.classList.add('active');
+    let total = 0, count = 0;
+    ids.forEach(id => {
+        total += cart[id].price * cart[id].qty;
+        count += cart[id].qty;
+    });
+    document.getElementById('cartCount').textContent = count;
+    document.getElementById('cartTotal').textContent = total.toLocaleString();
+}
+
+// ── SEARCH / FILTER ──
+document.getElementById('searchInput').addEventListener('input', function() {
+    const q = this.value.toLowerCase();
+    document.querySelectorAll('.item-card').forEach(card => {
+        card.style.display = card.dataset.name.toLowerCase().includes(q) ? '' : 'none';
+    });
+});
+
+document.querySelectorAll('.filter-pill').forEach(pill => {
+    pill.addEventListener('click', function() {
+        document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+        this.classList.add('active');
+        const store = this.dataset.store;
+        document.querySelectorAll('.item-card').forEach(card => {
+            card.style.display = (store === 'all' || card.dataset.store === store) ? '' : 'none';
+        });
+    });
+});
+
+// ── CHECKOUT ──
+function openCheckout() {
+    const ids = Object.keys(cart);
+    if (ids.length === 0) return;
+    let html = '<table style="width:100%;"><tbody>';
+    let total = 0;
+    ids.forEach(id => {
+        const c = cart[id];
+        const line = c.price * c.qty;
+        total += line;
+        html += `<tr><td>${c.name} x${c.qty}</td><td style="text-align:right;">KES ${line.toLocaleString()}</td></tr>`;
+    });
+    html += `</tbody><tfoot><tr style="border-top:1px solid #444;color:var(--gold);font-weight:600;">
+        <td>TOTAL</td><td style="text-align:right;">KES ${total.toLocaleString()}</td></tr></tfoot></table>`;
+    document.getElementById('cartSummary').innerHTML = html;
+    new bootstrap.Modal(document.getElementById('checkoutModal')).show();
+}
+
+function placeOrder() {
+    const name = document.getElementById('custName').value.trim();
+    const phone = document.getElementById('custPhone').value.trim();
+    if (!name || !phone) {
+        alert('Name and phone are required.');
+        return;
+    }
+
+    const btn = document.getElementById('placeOrderBtn');
+    btn.disabled = true;
+    btn.textContent = 'Placing...';
+
+    const items = Object.keys(cart).map(id => ({
+        item_id: parseInt(id),
+        qty: cart[id].qty,
+    }));
+
+    fetch(`/shop/${BUSINESS_ID}/order/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            customer_name: name,
+            customer_phone: phone,
+            customer_location: document.getElementById('custLocation').value.trim(),
+            notes: document.getElementById('custNotes').value.trim(),
+            items: items,
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        btn.textContent = 'Place Order';
+
+        if (data.success) {
+            bootstrap.Modal.getInstance(document.getElementById('checkoutModal')).hide();
+            document.getElementById('successMsg').textContent = data.message;
+            document.getElementById('orderNum').textContent = data.order_number;
+            document.getElementById('trackLink').href = `/shop/order/${data.order_number}/`;
+            document.getElementById('payLink').href = `/shop/order/${data.order_number}/#pay`;
+
+            // Clear cart
+            cart = {};
+            document.querySelectorAll('.item-card.in-cart').forEach(c => c.classList.remove('in-cart'));
+            updateCartBar();
+
+            new bootstrap.Modal(document.getElementById('successModal')).show();
+        } else {
+            alert(data.error || 'Something went wrong.');
+        }
+    })
+    .catch(() => {
+        btn.disabled = false;
+        btn.textContent = 'Place Order';
+        alert('Network error. Please try again.');
+    });
+}
+</script>
+{% endblock %}
+{% endblock %}

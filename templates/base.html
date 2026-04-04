@@ -383,6 +383,8 @@
                             <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 Staff</a></li>
                             <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ Add Staff</a></li>
                             <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 Orders</a></li>
+                            <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ Business Settings</a></li>
                         </ul>
                     </li>
@@ -431,6 +433,9 @@
                 {% else %}
                 <!-- Logged out links -->
                 <ul class="navbar-nav ms-auto gap-2">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'shop_home' %}">🛒 Shop</a>
+                    </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'login' %}">Login</a>
                     </li>

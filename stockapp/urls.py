@@ -9,6 +9,11 @@ from core.views import (
     notifications_count, daily_summary_webhook, quick_sell,
 )
 from core.ussd import ussd_callback
+from core.mpesa_views import mpesa_callback, stk_push_view, payment_status
+from core.marketplace_views import (
+    shop_home, storefront, place_order, track_order, pay_order,
+    order_list, update_order_status,
+)
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -40,6 +45,22 @@ urlpatterns = [
     path('cron/daily-summary/', daily_summary_webhook, name='daily_summary'),
     path('ussd/callback/', ussd_callback, name='ussd_callback'),
     path('api/v1/', include('core.api_urls')),
+
+    # ── M-Pesa ──
+    path('mpesa/callback/', mpesa_callback, name='mpesa_callback'),
+    path('mpesa/stk-push/', stk_push_view, name='stk_push'),
+    path('mpesa/status/<int:payment_id>/', payment_status, name='payment_status'),
+
+    # ── Customer Marketplace ──
+    path('shop/', shop_home, name='shop_home'),
+    path('shop/<int:business_id>/', storefront, name='storefront'),
+    path('shop/<int:business_id>/order/', place_order, name='place_order'),
+    path('shop/order/<str:order_number>/', track_order, name='track_order'),
+    path('shop/order/<str:order_number>/pay/', pay_order, name='pay_order'),
+
+    # ── Owner: Order Management ──
+    path('orders/', order_list, name='order_list'),
+    path('orders/<int:order_id>/update-status/', update_order_status, name='update_order_status'),
 ]
 
 if settings.DEBUG:

@@ -1,0 +1,331 @@
+{% extends 'base.html' %}
+{% block title %}Order {{ order.order_number }} — Track{% endblock %}
+
+{% block extra_css %}
+<style>
+    .order-header {
+        text-align: center;
+        padding: 2rem 0 1rem;
+    }
+    .order-header h1 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1.8rem;
+    }
+    .order-header .order-no {
+        color: var(--muted);
+        font-size: 0.9rem;
+    }
+
+    /* Status tracker */
+    .status-track {
+        display: flex;
+        justify-content: center;
+        gap: 0;
+        margin: 2rem 0;
+        flex-wrap: wrap;
+    }
+    .status-step {
+        text-align: center;
+        flex: 1;
+        min-width: 80px;
+        position: relative;
+        padding: 0 5px;
+    }
+    .status-step .dot {
+        width: 30px; height: 30px;
+        border-radius: 50%;
+        border: 2px solid #444;
+        background: var(--onyx);
+        margin: 0 auto 0.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.7rem;
+        color: #666;
+    }
+    .status-step.done .dot {
+        border-color: var(--success);
+        background: rgba(46,204,113,0.2);
+        color: var(--success);
+    }
+    .status-step.current .dot {
+        border-color: var(--gold);
+        background: rgba(201,168,76,0.2);
+        color: var(--gold);
+        animation: pulse 2s infinite;
+    }
+    .status-step.cancelled .dot {
+        border-color: var(--danger);
+        background: rgba(231,76,60,0.2);
+        color: var(--danger);
+    }
+    .status-step .label {
+        font-size: 0.7rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .status-step.done .label { color: var(--success); }
+    .status-step.current .label { color: var(--gold); font-weight: 600; }
+
+    @keyframes pulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(201,168,76,0.4); }
+        50% { box-shadow: 0 0 0 8px rgba(201,168,76,0); }
+    }
+
+    /* Order details */
+    .detail-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    .detail-card h6 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        margin-bottom: 1rem;
+    }
+    .line-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #2a2a2a;
+        font-size: 0.9rem;
+    }
+    .line-item:last-child { border-bottom: none; }
+    .total-line {
+        display: flex;
+        justify-content: space-between;
+        padding-top: 0.8rem;
+        font-weight: 600;
+        color: var(--gold);
+        font-size: 1.1rem;
+        border-top: 1px solid var(--gold);
+        margin-top: 0.5rem;
+    }
+
+    /* Pay section */
+    .pay-section {
+        background: var(--onyx-card);
+        border: 1px solid var(--gold);
+        border-radius: 10px;
+        padding: 1.5rem;
+        text-align: center;
+    }
+    .pay-section h6 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+    }
+    .mpesa-logo {
+        font-size: 2rem;
+        margin: 0.5rem 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="order-header">
+    <h1>📦 Order Tracking</h1>
+    <div class="order-no">{{ order.order_number }}</div>
+</div>
+
+<!-- Status Tracker -->
+<div class="status-track">
+    {% if order.status == 'cancelled' %}
+        <div class="status-step cancelled">
+            <div class="dot">✕</div>
+            <div class="label">Cancelled</div>
+        </div>
+    {% else %}
+        <div class="status-step {% if status_index >= 1 %}done{% endif %} {% if status_index == 1 %}current{% endif %}">
+            <div class="dot">{% if status_index >= 1 %}✓{% else %}○{% endif %}</div>
+            <div class="label">Pending</div>
+        </div>
+        <div class="status-step {% if status_index >= 2 %}done{% endif %} {% if status_index == 2 %}current{% endif %}">
+            <div class="dot">{% if status_index >= 2 %}✓{% else %}○{% endif %}</div>
+            <div class="label">Confirmed</div>
+        </div>
+        <div class="status-step {% if status_index >= 3 %}done{% endif %} {% if status_index == 3 %}current{% endif %}">
+            <div class="dot">{% if status_index >= 3 %}✓{% else %}○{% endif %}</div>
+            <div class="label">Paid</div>
+        </div>
+        <div class="status-step {% if status_index >= 4 %}done{% endif %} {% if status_index == 4 %}current{% endif %}">
+            <div class="dot">{% if status_index >= 4 %}✓{% else %}○{% endif %}</div>
+            <div class="label">Ready</div>
+        </div>
+        <div class="status-step {% if status_index >= 5 %}done{% endif %} {% if status_index == 5 %}current{% endif %}">
+            <div class="dot">{% if status_index >= 5 %}✓{% else %}○{% endif %}</div>
+            <div class="label">Completed</div>
+        </div>
+    {% endif %}
+</div>
+
+<div class="row g-3">
+    <!-- Order Details -->
+    <div class="col-md-7">
+        <div class="detail-card">
+            <h6>🧾 Order Items</h6>
+            {% for line in lines %}
+            <div class="line-item">
+                <span>{{ line.item.description }} × {{ line.quantity }}</span>
+                <span>KES {{ line.line_total|floatformat:0 }}</span>
+            </div>
+            {% endfor %}
+            <div class="total-line">
+                <span>Total</span>
+                <span>KES {{ order.total_amount|floatformat:0 }}</span>
+            </div>
+        </div>
+
+        <div class="detail-card">
+            <h6>👤 Customer</h6>
+            <p style="margin:0; font-size:0.9rem;">
+                {{ order.customer_name }}<br>
+                📞 {{ order.customer_phone }}<br>
+                {% if order.customer_location %}📍 {{ order.customer_location }}<br>{% endif %}
+                {% if order.notes %}<em style="color:var(--muted);">{{ order.notes }}</em>{% endif %}
+            </p>
+        </div>
+
+        {% if payments %}
+        <div class="detail-card">
+            <h6>💳 Payments</h6>
+            {% for p in payments %}
+            <div class="line-item">
+                <span>
+                    {{ p.get_method_display }} — {{ p.get_status_display }}
+                    {% if p.mpesa_receipt %}
+                        <small style="color:var(--success);">({{ p.mpesa_receipt }})</small>
+                    {% endif %}
+                </span>
+                <span>KES {{ p.amount|floatformat:0 }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Pay Section -->
+    <div class="col-md-5" id="pay">
+        {% if order.status == 'pending' or order.status == 'confirmed' %}
+        <div class="pay-section">
+            <h6>Pay with M-Pesa</h6>
+            <div class="mpesa-logo">📱💚</div>
+            <p style="color:var(--muted); font-size:0.85rem;">
+                Amount: <strong style="color:var(--gold);">KES {{ order.total_amount|floatformat:0 }}</strong>
+            </p>
+            <div class="mb-3">
+                <input type="tel" id="payPhone" class="form-control"
+                       placeholder="M-Pesa number (e.g. 0712345678)"
+                       value="{{ order.customer_phone }}">
+            </div>
+            <button class="btn btn-gold w-100" id="payBtn" onclick="payNow()">
+                Pay KES {{ order.total_amount|floatformat:0 }}
+            </button>
+            <div id="payStatus" class="mt-2" style="display:none;"></div>
+        </div>
+        {% elif order.status == 'paid' %}
+        <div class="pay-section" style="border-color: var(--success);">
+            <div style="font-size: 3rem;">✅</div>
+            <h6 style="color: var(--success);">Payment Received!</h6>
+            <p style="color:var(--muted); font-size:0.85rem;">Your order is being prepared.</p>
+        </div>
+        {% elif order.status == 'ready' %}
+        <div class="pay-section" style="border-color: var(--success);">
+            <div style="font-size: 3rem;">📦</div>
+            <h6 style="color: var(--success);">Ready for Pickup!</h6>
+            <p style="color:var(--muted); font-size:0.85rem;">Your order is ready. Head to the store to collect it.</p>
+        </div>
+        {% elif order.status == 'completed' %}
+        <div class="pay-section" style="border-color: var(--success);">
+            <div style="font-size: 3rem;">🎉</div>
+            <h6 style="color: var(--success);">Order Complete!</h6>
+            <p style="color:var(--muted); font-size:0.85rem;">Thank you for shopping with us.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="text-center mt-4">
+    <a href="{% url 'storefront' order.business_id %}" class="btn btn-secondary">← Continue Shopping</a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const ORDER_NUMBER = '{{ order.order_number }}';
+
+function payNow() {
+    const phone = document.getElementById('payPhone').value.trim();
+    if (!phone) {
+        alert('Enter your M-Pesa number');
+        return;
+    }
+
+    const btn = document.getElementById('payBtn');
+    const statusDiv = document.getElementById('payStatus');
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<span style="color:var(--gold);">⏳ Sending M-Pesa prompt to your phone...</span>';
+
+    fetch(`/shop/order/${ORDER_NUMBER}/pay/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({phone: phone}),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.innerHTML = '<span style="color:var(--success);">📱 Check your phone and enter M-Pesa PIN</span>';
+            // Poll for payment status
+            pollPayment(data.payment_id);
+        } else {
+            btn.disabled = false;
+            btn.textContent = 'Pay KES {{ order.total_amount|floatformat:0 }}';
+            statusDiv.innerHTML = `<span style="color:var(--danger);">❌ ${data.error}</span>`;
+        }
+    })
+    .catch(() => {
+        btn.disabled = false;
+        btn.textContent = 'Pay KES {{ order.total_amount|floatformat:0 }}';
+        statusDiv.innerHTML = '<span style="color:var(--danger);">❌ Network error. Try again.</span>';
+    });
+}
+
+function pollPayment(paymentId) {
+    const statusDiv = document.getElementById('payStatus');
+    let attempts = 0;
+    const interval = setInterval(() => {
+        attempts++;
+        fetch(`/mpesa/status/${paymentId}/`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'completed') {
+                    clearInterval(interval);
+                    statusDiv.innerHTML = `<span style="color:var(--success);">✅ Payment received! Receipt: ${data.mpesa_receipt}</span>`;
+                    setTimeout(() => location.reload(), 2000);
+                } else if (data.status === 'failed') {
+                    clearInterval(interval);
+                    const btn = document.getElementById('payBtn');
+                    btn.disabled = false;
+                    btn.textContent = 'Pay KES {{ order.total_amount|floatformat:0 }}';
+                    statusDiv.innerHTML = '<span style="color:var(--danger);">❌ Payment failed or cancelled. Try again.</span>';
+                }
+                // else still pending — keep polling
+            })
+            .catch(() => {});
+
+        if (attempts >= 30) {  // 60 seconds max
+            clearInterval(interval);
+            const btn = document.getElementById('payBtn');
+            btn.disabled = false;
+            btn.textContent = 'Pay KES {{ order.total_amount|floatformat:0 }}';
+            statusDiv.innerHTML = '<span style="color:var(--warning);">⏰ Timeout — if you paid, it will update shortly.</span>';
+        }
+    }, 2000);
+}
+</script>
+{% endblock %}

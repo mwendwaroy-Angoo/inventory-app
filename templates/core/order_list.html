@@ -1,0 +1,145 @@
+{% extends 'base.html' %}
+{% block title %}Orders — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .status-badge {
+        font-size: 0.7rem;
+        padding: 0.25rem 0.6rem;
+        border-radius: 20px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 500;
+    }
+    .status-pending   { background: rgba(243,156,18,0.2); color: #f39c12; border: 1px solid #f39c12; }
+    .status-confirmed { background: rgba(52,152,219,0.2); color: #3498db; border: 1px solid #3498db; }
+    .status-paid      { background: rgba(46,204,113,0.2); color: #2ecc71; border: 1px solid #2ecc71; }
+    .status-ready     { background: rgba(155,89,182,0.2); color: #9b59b6; border: 1px solid #9b59b6; }
+    .status-completed { background: rgba(46,204,113,0.15); color: #27ae60; border: 1px solid #27ae60; }
+    .status-cancelled { background: rgba(231,76,60,0.2); color: #e74c3c; border: 1px solid #e74c3c; }
+
+    .filter-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .filter-pills a {
+        padding: 0.35rem 0.8rem;
+        border-radius: 20px;
+        border: 1px solid #444;
+        color: var(--pearl);
+        font-size: 0.8rem;
+        text-decoration: none;
+        transition: all 0.2s;
+    }
+    .filter-pills a:hover, .filter-pills a.active {
+        border-color: var(--gold);
+        color: var(--gold);
+        background: rgba(201,168,76,0.1);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 class="page-title mb-3">📦 Customer Orders</h2>
+
+<div class="filter-pills">
+    <a href="{% url 'order_list' %}" class="{% if not status_filter %}active{% endif %}">All</a>
+    <a href="?status=pending" class="{% if status_filter == 'pending' %}active{% endif %}">Pending</a>
+    <a href="?status=confirmed" class="{% if status_filter == 'confirmed' %}active{% endif %}">Confirmed</a>
+    <a href="?status=paid" class="{% if status_filter == 'paid' %}active{% endif %}">Paid</a>
+    <a href="?status=ready" class="{% if status_filter == 'ready' %}active{% endif %}">Ready</a>
+    <a href="?status=completed" class="{% if status_filter == 'completed' %}active{% endif %}">Completed</a>
+    <a href="?status=cancelled" class="{% if status_filter == 'cancelled' %}active{% endif %}">Cancelled</a>
+</div>
+
+{% if orders %}
+<div class="table-responsive">
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Order #</th>
+                <th>Customer</th>
+                <th>Phone</th>
+                <th>Total</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for order in orders %}
+            <tr>
+                <td>
+                    <a href="{% url 'track_order' order.order_number %}"
+                       style="color:var(--gold); text-decoration:none;">
+                        {{ order.order_number }}
+                    </a>
+                </td>
+                <td>{{ order.customer_name }}</td>
+                <td>{{ order.customer_phone }}</td>
+                <td>KES {{ order.total_amount|floatformat:0 }}</td>
+                <td>
+                    <span class="status-badge status-{{ order.status }}">{{ order.get_status_display }}</span>
+                </td>
+                <td>{{ order.created_at|date:"M d, H:i" }}</td>
+                <td>
+                    {% if order.status != 'completed' and order.status != 'cancelled' %}
+                    <select class="form-select form-select-sm" style="width:auto; display:inline-block; background:#222; color:var(--pearl); border-color:#444; font-size:0.8rem;"
+                            onchange="updateStatus({{ order.id }}, this.value)">
+                        <option value="">Update...</option>
+                        {% if order.status == 'pending' %}
+                        <option value="confirmed">✓ Confirm</option>
+                        <option value="cancelled">✕ Cancel</option>
+                        {% endif %}
+                        {% if order.status == 'confirmed' or order.status == 'paid' %}
+                        <option value="ready">📦 Ready</option>
+                        <option value="cancelled">✕ Cancel</option>
+                        {% endif %}
+                        {% if order.status == 'ready' %}
+                        <option value="completed">✅ Complete</option>
+                        {% endif %}
+                    </select>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-center py-5">
+    <p style="color:var(--muted); font-size:1.2rem;">No orders yet.</p>
+    <p style="color:var(--muted);">Share your shop link with customers to start receiving orders!</p>
+    <div class="mt-2" style="background:var(--onyx-card); border:1px solid #333; border-radius:8px; padding:1rem; display:inline-block;">
+        <code style="color:var(--gold); font-size:0.9rem;">
+            {{ request.scheme }}://{{ request.get_host }}/shop/{{ request.user.userprofile.business.id }}/
+        </code>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function updateStatus(orderId, status) {
+    if (!status) return;
+    if (!confirm(`Update order status to "${status}"?`)) return;
+
+    const csrfToken = '{{ csrf_token }}';
+    const formData = new FormData();
+    formData.append('status', status);
+
+    fetch(`/orders/${orderId}/update-status/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken},
+        body: formData,
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to update.');
+        }
+    })
+    .catch(() => alert('Network error.'));
+}
+</script>
+{% endblock %}

@@ -108,6 +108,13 @@ TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN', '')
 # ── CRON ──────────────────────────────────────────────────────────────────────
 CRON_SECRET = os.getenv('CRON_SECRET', 'duka-mwecheche-cron-2026')
 
+# ── M-PESA DARAJA ─────────────────────────────────────────────────────────────
+MPESA_ENV = os.getenv('MPESA_ENV', 'sandbox')  # 'sandbox' or 'production'
+MPESA_CONSUMER_KEY = os.getenv('MPESA_CONSUMER_KEY', '')
+MPESA_CONSUMER_SECRET = os.getenv('MPESA_CONSUMER_SECRET', '')
+MPESA_SHORTCODE = os.getenv('MPESA_SHORTCODE', '')
+MPESA_PASSKEY = os.getenv('MPESA_PASSKEY', '')
+
 # ── REST FRAMEWORK ────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
