@@ -403,21 +403,25 @@
                             </span>
                         </a>
                     </li>
-                    <li class="nav-item">
-                        <span class="nav-link">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                             {{ user.username }}
                             {% if user.userprofile.is_owner %}
                                 <span class="badge-role badge-owner ms-1">Owner</span>
                             {% else %}
                                 <span class="badge-role badge-staff ms-1">Staff</span>
                             {% endif %}
-                        </span>
-                    </li>
-                    <li class="nav-item">
-                        <form method="post" action="{% url 'logout' %}" style="display:inline;">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-gold">Logout</button>
-                        </form>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{% url 'password_change' %}">🔑 Change Password</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form method="post" action="{% url 'logout' %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="dropdown-item">🚪 Logout</button>
+                                </form>
+                            </li>
+                        </ul>
                     </li>
                 </ul>
 
