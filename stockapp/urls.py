@@ -39,6 +39,7 @@ urlpatterns = [
     path('notifications/count/', notifications_count, name='notifications_count'),
     path('cron/daily-summary/', daily_summary_webhook, name='daily_summary'),
     path('ussd/callback/', ussd_callback, name='ussd_callback'),
+    path('api/v1/', include('core.api_urls')),
 ]
 
 if settings.DEBUG:
