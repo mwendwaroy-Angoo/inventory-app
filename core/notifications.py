@@ -84,10 +84,11 @@ def create_in_app_notification(user, title, message, notification_type='info'):
         return False
 
 
-def notify_transaction(transaction, business, daily_count=0):
+def notify_transaction(transaction, business, daily_count=0, user=None):
     item = transaction.item
     trans_type = transaction.type
     qty = abs(transaction.qty)
+    recorded_by = (user.get_full_name() or user.username) if user else 'N/A'
 
     owner_profile = business.users.filter(role='owner').first()
     if not owner_profile:
@@ -115,6 +116,7 @@ def notify_transaction(transaction, business, daily_count=0):
         f"Remaining Balance: {item.current_balance()} {item.unit}\n"
         f"Recipient: {transaction.recipient or 'N/A'}\n"
         f"Invoice No: {transaction.invoice_no or 'N/A'}\n"
+        f"Recorded by: {recorded_by}\n"
         f"Date: {transaction.date}\n\n"
         f"— Duka Mwecheche"
     )
@@ -123,7 +125,7 @@ def notify_transaction(transaction, business, daily_count=0):
     create_in_app_notification(
         owner,
         f"{emoji} {trans_type}: {item.description}",
-        f"{qty} {item.unit} {action}. Balance: {item.current_balance()}",
+        f"{qty} {item.unit} {action}. Balance: {item.current_balance()}. By: {recorded_by}",
         notification_type='transaction'
     )
 
@@ -136,7 +138,7 @@ def notify_transaction(transaction, business, daily_count=0):
             f"[Duka Mwecheche] {trans_type}: {qty} {item.unit} "
             f"of {item.description}. "
             f"Balance: {item.current_balance()}. "
-            f"By: {transaction.recipient or 'N/A'}"
+            f"By: {recorded_by}"
         )
         send_sms_notification(sms_msg, owner_phone)
     else:
@@ -145,6 +147,7 @@ def notify_transaction(transaction, business, daily_count=0):
             f"*{trans_type}:* {qty} {item.unit} of {item.description}\n"
             f"*Balance:* {item.current_balance()} {item.unit}\n"
             f"*Recipient:* {transaction.recipient or 'N/A'}\n"
+            f"*Recorded by:* {recorded_by}\n"
             f"*Invoice:* {transaction.invoice_no or 'N/A'}"
         )
         send_whatsapp_notification(wa_msg, owner_phone)

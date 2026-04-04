@@ -154,7 +154,7 @@ def add_transaction(request):
         # Send notifications asynchronously
         try:
             from .notifications import notify_transaction
-            notify_transaction(transaction, user_profile.business, daily_count)
+            notify_transaction(transaction, user_profile.business, daily_count, user=request.user)
         except Exception as e:
             pass  # Never block transaction recording due to notification failure
 
