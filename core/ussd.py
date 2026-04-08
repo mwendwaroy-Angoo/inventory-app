@@ -16,7 +16,7 @@ import logging
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from core.models import Item, Transaction, Store
+from core.models import Item, Transaction
 from accounts.models import UserProfile, Business
 from datetime import date
 
@@ -76,7 +76,7 @@ def get_item_list(business, page=1):
     return page_items, has_more, total
 
 
-def format_item_menu(items, page, has_more):
+def format_item_menu(items, _page, has_more):
     """Format items as a numbered USSD menu."""
     lines = []
     for i, item in enumerate(items, 1):
@@ -95,7 +95,7 @@ def format_item_menu(items, page, has_more):
 @require_POST
 def ussd_callback(request):
     """Handle USSD callback from Africa's Talking."""
-    session_id = request.POST.get('sessionId', '')
+    _session_id = request.POST.get('sessionId', '')
     phone_number = request.POST.get('phoneNumber', '')
     text = request.POST.get('text', '').strip()
 
@@ -142,9 +142,9 @@ def ussd_callback(request):
 
         # Level 1: Show item list (page 1)
         if level == 1:
-            items, has_more, total = get_item_list(business, page=1)
+            items, has_more, _total = get_item_list(business, page=1)
             if not items:
-                return HttpResponse(f"END No items found in your inventory.")
+                return HttpResponse("END No items found in your inventory.")
             menu = format_item_menu(items, 1, has_more)
             return HttpResponse(f"CON {action_label} — Select item:\n{menu}")
 
@@ -153,22 +153,21 @@ def ussd_callback(request):
             choice = parts[1]
 
             # Check for pagination
-            page = 1
-            items, has_more, total = get_item_list(business, page=1)
+            items, has_more, _total = get_item_list(business, page=1)
 
             if choice == '0':
                 return HttpResponse(
-                    f"CON Duka Mwecheche\n\n"
-                    f"1. Record Sale\n"
-                    f"2. Restock Item\n"
-                    f"3. Check Stock\n"
-                    f"4. Today's Summary"
+                    "CON Duka Mwecheche\n\n"
+                    "1. Record Sale\n"
+                    "2. Restock Item\n"
+                    "3. Check Stock\n"
+                    "4. Today's Summary"
                 )
 
             try:
                 idx = int(choice)
             except ValueError:
-                return HttpResponse(f"END Invalid selection.")
+                return HttpResponse("END Invalid selection.")
 
             # Pagination: if they selected the "More" option
             if has_more and idx == len(items) + 1:
@@ -177,7 +176,7 @@ def ussd_callback(request):
                 return HttpResponse(f"CON {action_label} — Select item:\n{menu}")
 
             if idx < 1 or idx > len(items):
-                return HttpResponse(f"END Invalid selection. Try again.")
+                return HttpResponse("END Invalid selection. Try again.")
 
             item = items[idx - 1]
             balance = item.current_balance()
@@ -201,14 +200,14 @@ def ussd_callback(request):
                 idx = int(choice)
                 qty = int(qty_str)
             except ValueError:
-                return HttpResponse(f"END Invalid input. Please enter a number.")
+                return HttpResponse("END Invalid input. Please enter a number.")
 
             if qty < 1:
-                return HttpResponse(f"END Quantity must be at least 1.")
+                return HttpResponse("END Quantity must be at least 1.")
 
             items, _, _ = get_item_list(business, page=1)
             if idx < 1 or idx > len(items):
-                return HttpResponse(f"END Invalid item. Try again.")
+                return HttpResponse("END Invalid item. Try again.")
 
             item = items[idx - 1]
             balance = item.current_balance()
@@ -235,24 +234,24 @@ def ussd_callback(request):
         if level == 4:
             confirm = parts[3]
             if confirm != '1':
-                return HttpResponse(f"END Transaction cancelled.")
+                return HttpResponse("END Transaction cancelled.")
 
             try:
                 idx = int(parts[1])
                 qty = int(parts[2])
             except ValueError:
-                return HttpResponse(f"END Error processing transaction.")
+                return HttpResponse("END Error processing transaction.")
 
             items, _, _ = get_item_list(business, page=1)
             if idx < 1 or idx > len(items):
-                return HttpResponse(f"END Error: item not found.")
+                return HttpResponse("END Error: item not found.")
 
             item = items[idx - 1]
             balance = item.current_balance()
 
             if trans_type == 'Issue':
                 if qty > balance:
-                    return HttpResponse(f"END Not enough stock.")
+                    return HttpResponse("END Not enough stock.")
                 qty_signed = -qty
             else:
                 qty_signed = qty
@@ -276,8 +275,8 @@ def ussd_callback(request):
                 ).count()
                 user = profile.user if profile else None
                 notify_transaction(transaction, business, daily_count, user=user)
-            except Exception as e:
-                logger.error(f"USSD notification error: {e}")
+            except (ImportError, RuntimeError) as e:
+                logger.error("USSD notification error: %s", e)
 
             if trans_type == 'Issue':
                 total_price = float(item.selling_price or 0) * qty
@@ -302,9 +301,9 @@ def ussd_callback(request):
     if action == '3':
         # Level 1: Show item list
         if level == 1:
-            items, has_more, total = get_item_list(business, page=1)
+            items, has_more, _total = get_item_list(business, page=1)
             if not items:
-                return HttpResponse(f"END No items in your inventory.")
+                return HttpResponse("END No items in your inventory.")
             menu = format_item_menu(items, 1, has_more)
             return HttpResponse(f"CON CHECK STOCK — Select item:\n{menu}")
 
@@ -313,17 +312,17 @@ def ussd_callback(request):
             choice = parts[1]
             if choice == '0':
                 return HttpResponse(
-                    f"CON Duka Mwecheche\n\n"
-                    f"1. Record Sale\n"
-                    f"2. Restock Item\n"
-                    f"3. Check Stock\n"
-                    f"4. Today's Summary"
+                    "CON Duka Mwecheche\n\n"
+                    "1. Record Sale\n"
+                    "2. Restock Item\n"
+                    "3. Check Stock\n"
+                    "4. Today's Summary"
                 )
 
             try:
                 idx = int(choice)
             except ValueError:
-                return HttpResponse(f"END Invalid selection.")
+                return HttpResponse("END Invalid selection.")
 
             items, has_more, _ = get_item_list(business, page=1)
 
@@ -334,7 +333,7 @@ def ussd_callback(request):
                 return HttpResponse(f"CON CHECK STOCK — Select item:\n{menu}")
 
             if idx < 1 or idx > len(items):
-                return HttpResponse(f"END Invalid selection.")
+                return HttpResponse("END Invalid selection.")
 
             item = items[idx - 1]
             balance = item.current_balance()
@@ -396,5 +395,5 @@ def ussd_callback(request):
 
     # ── FALLBACK ──
     return HttpResponse(
-        f"END Invalid option. Please try again."
+        "END Invalid option. Please try again."
     )
