@@ -10,8 +10,6 @@
     <!-- Status filter pills -->
     <div class="d-flex gap-2 mb-3 flex-wrap">
         <a href="{% url 'procurement_list_owner' %}" class="btn btn-sm {% if not status_filter %}btn-dark{% else %}btn-outline-secondary{% endif %}">All</a>
-        {% for val, label in "open:Open,evaluating:Evaluating,awarded:Awarded,closed:Closed"|make_list %}
-        {% endfor %}
         <a href="?status=open" class="btn btn-sm {% if status_filter == 'open' %}btn-success{% else %}btn-outline-success{% endif %}">Open</a>
         <a href="?status=evaluating" class="btn btn-sm {% if status_filter == 'evaluating' %}btn-warning{% else %}btn-outline-warning{% endif %}">Evaluating</a>
         <a href="?status=awarded" class="btn btn-sm {% if status_filter == 'awarded' %}btn-info{% else %}btn-outline-info{% endif %}">Awarded</a>
