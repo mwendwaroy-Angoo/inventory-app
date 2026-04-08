@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Reviews — {{ business.name }}{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width:800px;">
+    <h4 class="mb-1">⭐ Reviews for {{ business.name }}</h4>
+    <p class="text-muted">
+        {% if stats.avg_rating %}
+            {{ stats.avg_rating|floatformat:1 }}/5 average · {{ stats.total }} review{{ stats.total|pluralize }}
+        {% else %}
+            No reviews yet
+        {% endif %}
+    </p>
+
+    {% if stats.total %}
+    <!-- Rating breakdown -->
+    <div class="card bg-light mb-3">
+        <div class="card-body py-2">
+            {% for star in "54321" %}
+            {% with star_int=star|add:"0" %}
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <span class="small" style="width: 20px;">{{ star }}★</span>
+                <div class="progress flex-grow-1" style="height: 8px;">
+                    {% with count=breakdown|default_if_none:"{}"|dictsort:star_int %}
+                    <div class="progress-bar bg-warning" style="width: {% widthratio breakdown.star_int stats.total 100 %}%;"></div>
+                    {% endwith %}
+                </div>
+            </div>
+            {% endwith %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% for review in reviews %}
+    <div class="card mb-2 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <strong>{{ review.customer_name }}</strong>
+                    <span class="text-warning ms-1">
+                        {% for i in "12345" %}{% if forloop.counter <= review.rating %}★{% else %}☆{% endif %}{% endfor %}
+                    </span>
+                </div>
+                <span class="text-muted small">{{ review.created_at|timesince }} ago</span>
+            </div>
+            {% if review.comment %}
+            <p class="mt-1 mb-0">{{ review.comment }}</p>
+            {% endif %}
+        </div>
+    </div>
+    {% empty %}
+    <div class="text-center text-muted py-5">
+        <p class="display-6">📭</p>
+        <p>No reviews yet.</p>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

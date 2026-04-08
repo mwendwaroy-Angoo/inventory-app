@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Create Procurement Request{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width:650px;">
+    <h4 class="mb-3">📝 New Procurement Request</h4>
+    <p class="text-muted">Post what you need and let suppliers on the platform bid for it.</p>
+
+    <form method="post" class="card shadow-sm p-4">
+        {% csrf_token %}
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Title *</label>
+            <input type="text" name="title" class="form-control" required placeholder="e.g. 500kg Sugar Supply">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Description *</label>
+            <textarea name="description" class="form-control" rows="4" required
+                placeholder="Describe what you need, quality requirements, quantity, delivery preferences..."></textarea>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Category</label>
+            <select name="category" class="form-select">
+                <option value="">— Any type —</option>
+                {% for cat in categories %}
+                <option value="{{ cat.id }}">{{ cat.name }}</option>
+                {% endfor %}
+            </select>
+            <div class="form-text">Select the type of supplier best suited for this request.</div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-6">
+                <label class="form-label fw-bold">Budget Min (KES)</label>
+                <input type="number" name="budget_min" class="form-control" min="0" step="1" placeholder="e.g. 10000">
+            </div>
+            <div class="col-6">
+                <label class="form-label fw-bold">Budget Max (KES)</label>
+                <input type="number" name="budget_max" class="form-control" min="0" step="1" placeholder="e.g. 50000">
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Deadline *</label>
+            <input type="date" name="deadline" class="form-control" required>
+            <div class="form-text">Last day suppliers can submit bids.</div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">🚀 Post Request</button>
+            <a href="{% url 'procurement_list_owner' %}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

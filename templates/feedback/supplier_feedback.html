@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Rate Supplier — {{ link.supplier.name }}{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width:650px;">
+    <h4 class="mb-1">⭐ Rate Supplier</h4>
+    <p class="text-muted mb-3">{{ link.supplier.name }}
+        {% if link.supplier.business_type %}({{ link.supplier.business_type.name }}){% endif %}
+    </p>
+
+    <form method="post" class="card shadow-sm p-4 mb-3">
+        {% csrf_token %}
+
+        <!-- Star rating -->
+        <div class="mb-3 text-center">
+            <label class="form-label fw-bold d-block">Rating *</label>
+            <div class="star-rating d-inline-flex gap-1" style="font-size: 2rem; cursor: pointer;">
+                {% for i in "12345" %}
+                <span class="star text-muted" data-value="{{ i }}" onclick="setRating({{ i }})">☆</span>
+                {% endfor %}
+            </div>
+            <input type="hidden" name="rating" id="rating-input" required>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Comment</label>
+            <textarea name="comment" class="form-control" rows="3"
+                placeholder="How was the quality, timeliness, communication..."></textarea>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">📤 Submit Feedback</button>
+            <a href="{% url 'supplier_list' %}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+
+    {% if existing_feedback %}
+    <h6 class="mb-2">Previous Feedback</h6>
+    {% for fb in existing_feedback %}
+    <div class="card mb-2">
+        <div class="card-body py-2">
+            <span class="text-warning">
+                {% for i in "12345" %}{% if forloop.counter <= fb.rating %}★{% else %}☆{% endif %}{% endfor %}
+            </span>
+            <span class="text-muted small ms-2">{{ fb.created_at|date:"M d, Y" }}</span>
+            {% if fb.comment %}<p class="mt-1 mb-0 small">{{ fb.comment }}</p>{% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+</div>
+
+<script>
+function setRating(value) {
+    document.getElementById('rating-input').value = value;
+    document.querySelectorAll('.star-rating .star').forEach(function(star, idx) {
+        star.textContent = idx < value ? '★' : '☆';
+        star.classList.toggle('text-warning', idx < value);
+        star.classList.toggle('text-muted', idx >= value);
+    });
+}
+</script>
+{% endblock %}

@@ -50,6 +50,7 @@
         </div>
         <div class="d-flex gap-1">
             <a href="{% url 'storefront' link.supplier.id %}" class="btn btn-gold btn-sm" title="Order">🛒</a>
+            <a href="{% url 'supplier_feedback' link.id %}" class="btn btn-sm btn-outline-warning" title="Rate">⭐</a>
             <a href="{% url 'edit_supplier' link.id %}" class="btn btn-secondary btn-sm" title="Edit notes">✏️</a>
             <a href="{% url 'remove_supplier' link.id %}" class="btn btn-outline-danger btn-sm" title="Remove">✕</a>
         </div>

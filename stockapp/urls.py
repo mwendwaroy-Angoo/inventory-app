@@ -17,6 +17,16 @@ from core.marketplace_views import (
     fulfillment_list, assign_rider,
     supplier_list, add_supplier, edit_supplier, remove_supplier,
 )
+from core.procurement_views import (
+    procurement_list_owner, create_procurement, procurement_detail,
+    evaluate_bids, award_bid,
+    procurement_browse, submit_bid, my_bids,
+    apply_as_supplier, supplier_applications, review_application,
+)
+from core.feedback_views import (
+    leave_customer_feedback, business_reviews,
+    supplier_feedback, my_feedback,
+)
 from core.whatsapp_bot import whatsapp_webhook
 from core.analytics_views import analytics_dashboard, analytics_api
 from django.conf import settings
@@ -78,6 +88,25 @@ urlpatterns = [
     path('suppliers/add/', add_supplier, name='add_supplier'),
     path('suppliers/<int:link_id>/edit/', edit_supplier, name='edit_supplier'),
     path('suppliers/<int:link_id>/remove/', remove_supplier, name='remove_supplier'),
+
+    # ── Procurement System ──
+    path('procurement/', procurement_list_owner, name='procurement_list_owner'),
+    path('procurement/create/', create_procurement, name='create_procurement'),
+    path('procurement/<int:pk>/', procurement_detail, name='procurement_detail'),
+    path('procurement/<int:pk>/evaluate/', evaluate_bids, name='evaluate_bids'),
+    path('procurement/bid/<int:bid_id>/award/', award_bid, name='award_bid'),
+    path('procurement/browse/', procurement_browse, name='procurement_browse'),
+    path('procurement/<int:pk>/bid/', submit_bid, name='submit_bid'),
+    path('procurement/my-bids/', my_bids, name='my_bids'),
+    path('procurement/apply/<int:business_id>/', apply_as_supplier, name='apply_as_supplier'),
+    path('procurement/applications/', supplier_applications, name='supplier_applications'),
+    path('procurement/applications/<int:app_id>/review/', review_application, name='review_application'),
+
+    # ── Feedback & Reviews ──
+    path('feedback/order/<str:order_number>/', leave_customer_feedback, name='leave_customer_feedback'),
+    path('feedback/business/<int:business_id>/', business_reviews, name='business_reviews'),
+    path('feedback/supplier/<int:link_id>/', supplier_feedback, name='supplier_feedback'),
+    path('feedback/', my_feedback, name='my_feedback'),
 
     # ── WhatsApp Bot ──
     path('whatsapp/webhook/', whatsapp_webhook, name='whatsapp_webhook'),

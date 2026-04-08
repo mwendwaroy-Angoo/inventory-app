@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Review Application — {{ app.applicant.name }}{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width:700px;">
+    <h4 class="mb-3">📋 Review Supplier Application</h4>
+
+    <div class="card shadow-sm mb-3">
+        <div class="card-body">
+            <h5 class="mb-2">{{ app.applicant.name }}</h5>
+            <div class="row small text-muted mb-2">
+                {% if app.applicant.business_type %}
+                <div class="col-auto">🏷️ {{ app.applicant.business_type.name }}</div>
+                {% endif %}
+                {% if app.applicant.county %}
+                <div class="col-auto">📍 {{ app.applicant.county.name }}</div>
+                {% endif %}
+                {% if app.applicant.phone %}
+                <div class="col-auto">📞 {{ app.applicant.phone }}</div>
+                {% endif %}
+                {% if app.applicant.email %}
+                <div class="col-auto">📧 {{ app.applicant.email }}</div>
+                {% endif %}
+            </div>
+
+            {% if avg_rating %}
+            <p class="mb-2">
+                ⭐ Average Rating: <strong>{{ avg_rating|floatformat:1 }}/5</strong>
+            </p>
+            {% else %}
+            <p class="text-muted small mb-2">No ratings yet</p>
+            {% endif %}
+
+            <hr>
+            <h6>Services Offered</h6>
+            <p style="white-space:pre-line;">{{ app.services_offered }}</p>
+
+            <h6>Cover Letter</h6>
+            <p style="white-space:pre-line;">{{ app.cover_letter }}</p>
+
+            <p class="text-muted small">Applied {{ app.created_at|timesince }} ago</p>
+        </div>
+    </div>
+
+    {% if app.status == 'pending' %}
+    <div class="card shadow-sm p-3">
+        <form method="post" class="d-flex gap-2 justify-content-center">
+            {% csrf_token %}
+            <button type="submit" name="action" value="approve" class="btn btn-success">
+                ✅ Approve — Add as Supplier
+            </button>
+            <button type="submit" name="action" value="reject" class="btn btn-outline-danger">
+                ✕ Reject
+            </button>
+        </form>
+    </div>
+    {% else %}
+    <div class="alert {% if app.status == 'approved' %}alert-success{% else %}alert-danger{% endif %}">
+        This application has been <strong>{{ app.get_status_display }}</strong>
+        {% if app.reviewed_at %} on {{ app.reviewed_at|date:"M d, Y" }}{% endif %}.
+    </div>
+    {% endif %}
+
+    <a href="{% url 'supplier_applications' %}" class="btn btn-outline-secondary mt-3">← Back to Applications</a>
+</div>
+{% endblock %}

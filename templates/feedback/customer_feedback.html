@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Rate Your Order — {{ order.order_number }}{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width:600px;">
+    <div class="text-center mb-3">
+        <p class="display-4 mb-1">⭐</p>
+        <h4>How was your experience?</h4>
+        <p class="text-muted">Order {{ order.order_number }} from <strong>{{ order.business.name }}</strong></p>
+    </div>
+
+    <form method="post" class="card shadow-sm p-4">
+        {% csrf_token %}
+
+        <!-- Star rating -->
+        <div class="mb-3 text-center">
+            <label class="form-label fw-bold d-block">Your Rating *</label>
+            <div class="star-rating d-inline-flex gap-1" style="font-size: 2rem; cursor: pointer;">
+                {% for i in "12345" %}
+                <span class="star text-muted" data-value="{{ i }}" onclick="setRating({{ i }})">☆</span>
+                {% endfor %}
+            </div>
+            <input type="hidden" name="rating" id="rating-input" required>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Your Comment</label>
+            <textarea name="comment" class="form-control" rows="4"
+                placeholder="Tell us about your experience — product quality, delivery speed, customer service..."></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100">📤 Submit Feedback</button>
+    </form>
+</div>
+
+<script>
+function setRating(value) {
+    document.getElementById('rating-input').value = value;
+    document.querySelectorAll('.star-rating .star').forEach(function(star, idx) {
+        star.textContent = idx < value ? '★' : '☆';
+        star.classList.toggle('text-warning', idx < value);
+        star.classList.toggle('text-muted', idx >= value);
+    });
+}
+</script>
+{% endblock %}

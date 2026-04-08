@@ -290,6 +290,9 @@
 
 <div class="text-center mt-4">
     <a href="{% url 'storefront' order.business_id %}" class="btn btn-secondary">← Continue Shopping</a>
+    {% if order.status == 'completed' %}
+    <a href="{% url 'leave_customer_feedback' order_number=order.order_number %}" class="btn btn-outline-warning ms-2">⭐ Leave a Review</a>
+    {% endif %}
 </div>
 {% endblock %}
 

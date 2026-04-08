@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}My Feedback{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width:900px;">
+    <h4 class="mb-3">📊 Feedback Dashboard</h4>
+
+    <!-- Summary cards -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-6">
+            <div class="card bg-primary text-white shadow-sm">
+                <div class="card-body text-center">
+                    <h6 class="mb-0">Customer Reviews</h6>
+                    <div class="display-5">{% if customer_stats.avg %}{{ customer_stats.avg|floatformat:1 }}★{% else %}—{% endif %}</div>
+                    <small>{{ customer_stats.total }} review{{ customer_stats.total|pluralize }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card bg-success text-white shadow-sm">
+                <div class="card-body text-center">
+                    <h6 class="mb-0">Supplier Rating</h6>
+                    <div class="display-5">{% if supplier_stats.avg %}{{ supplier_stats.avg|floatformat:1 }}★{% else %}—{% endif %}</div>
+                    <small>{{ supplier_stats.total }} rating{{ supplier_stats.total|pluralize }}</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab toggle -->
+    <div class="d-flex gap-2 mb-3">
+        <a href="?tab=customer" class="btn btn-sm {% if tab == 'customer' %}btn-primary{% else %}btn-outline-primary{% endif %}">Customer Reviews</a>
+        <a href="?tab=supplier" class="btn btn-sm {% if tab == 'supplier' %}btn-success{% else %}btn-outline-success{% endif %}">Supplier Ratings</a>
+    </div>
+
+    {% if tab == 'customer' %}
+    <!-- Customer feedback -->
+    {% for fb in customer_feedback %}
+    <div class="card mb-2 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <strong>{{ fb.customer_name }}</strong>
+                    <span class="text-warning ms-1">
+                        {% for i in "12345" %}{% if forloop.counter <= fb.rating %}★{% else %}☆{% endif %}{% endfor %}
+                    </span>
+                    {% if fb.order %}
+                    <span class="text-muted small ms-1">Order #{{ fb.order.order_number }}</span>
+                    {% endif %}
+                </div>
+                <span class="text-muted small">{{ fb.created_at|timesince }} ago</span>
+            </div>
+            {% if fb.comment %}<p class="mt-1 mb-0">{{ fb.comment }}</p>{% endif %}
+        </div>
+    </div>
+    {% empty %}
+    <div class="text-center text-muted py-4">No customer reviews yet.</div>
+    {% endfor %}
+
+    {% else %}
+    <!-- Supplier feedback (ratings received from business partners) -->
+    {% for fb in supplier_feedback %}
+    <div class="card mb-2 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <strong>{{ fb.from_business.name }}</strong>
+                    <span class="text-warning ms-1">
+                        {% for i in "12345" %}{% if forloop.counter <= fb.rating %}★{% else %}☆{% endif %}{% endfor %}
+                    </span>
+                </div>
+                <span class="text-muted small">{{ fb.created_at|timesince }} ago</span>
+            </div>
+            {% if fb.comment %}<p class="mt-1 mb-0">{{ fb.comment }}</p>{% endif %}
+        </div>
+    </div>
+    {% empty %}
+    <div class="text-center text-muted py-4">No supplier ratings received yet.</div>
+    {% endfor %}
+    {% endif %}
+</div>
+{% endblock %}

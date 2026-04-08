@@ -2,6 +2,7 @@ from django.contrib import admin
 from .models import (
     Store, Item, Transaction, Customer, BusinessType, County, SubCounty, Ward,
     Order, OrderLine, Payment, RiderProfile, SupplierRelationship, Notification,
+    ProcurementRequest, SupplierBid, SupplierApplication, Feedback,
 )
 
 
@@ -114,3 +115,37 @@ class NotificationAdmin(admin.ModelAdmin):
     list_display = ('user', 'title', 'notification_type', 'is_read', 'created_at')
     list_filter = ('notification_type', 'is_read')
     search_fields = ('title', 'message', 'user__username')
+
+
+@admin.register(ProcurementRequest)
+class ProcurementRequestAdmin(admin.ModelAdmin):
+    list_display = ('title', 'business', 'category', 'status', 'deadline', 'created_at')
+    list_filter = ('status', 'category')
+    search_fields = ('title', 'description', 'business__name')
+
+
+class SupplierBidInline(admin.TabularInline):
+    model = SupplierBid
+    extra = 0
+    readonly_fields = ('score',)
+
+
+@admin.register(SupplierBid)
+class SupplierBidAdmin(admin.ModelAdmin):
+    list_display = ('supplier', 'procurement', 'amount', 'score', 'status', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('supplier__name', 'procurement__title')
+
+
+@admin.register(SupplierApplication)
+class SupplierApplicationAdmin(admin.ModelAdmin):
+    list_display = ('applicant', 'target_business', 'status', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('applicant__name', 'target_business__name')
+
+
+@admin.register(Feedback)
+class FeedbackAdmin(admin.ModelAdmin):
+    list_display = ('feedback_type', 'from_business', 'to_business', 'customer_name', 'rating', 'created_at')
+    list_filter = ('feedback_type', 'rating')
+    search_fields = ('customer_name', 'comment')

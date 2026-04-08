@@ -428,8 +428,21 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'transaction_history' %}">History</a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'supplier_list' %}">📦 Suppliers</a>
+
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
+                            📦 Supply Chain
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="{% url 'supplier_list' %}">👥 My Suppliers</a></li>
+                            <li><a class="dropdown-item" href="{% url 'supplier_applications' %}">📨 Supplier Applications</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{% url 'procurement_list_owner' %}">📋 My Procurement</a></li>
+                            <li><a class="dropdown-item" href="{% url 'create_procurement' %}">➕ New Procurement</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{% url 'procurement_browse' %}">🔍 Browse Requests</a></li>
+                            <li><a class="dropdown-item" href="{% url 'my_bids' %}">📤 My Bids</a></li>
+                        </ul>
                     </li>
 
                     <li class="nav-item dropdown">
@@ -447,6 +460,7 @@
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 Orders</a></li>
                             <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 Fulfillment</a></li>
+                            <li><a class="dropdown-item" href="{% url 'my_feedback' %}">⭐ Feedback</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ Business Settings</a></li>
                         </ul>

@@ -349,3 +349,126 @@ class SupplierRelationship(models.Model):
 
     def __str__(self):
         return f"{self.business.name} → {self.supplier.name}"
+
+
+# ────────────────────────────────────────────────
+# PROCUREMENT SYSTEM
+# ────────────────────────────────────────────────
+
+class ProcurementRequest(models.Model):
+    """A business owner posts what they need to procure."""
+    STATUS_CHOICES = [
+        ('open', 'Open for Bids'),
+        ('evaluating', 'Evaluating'),
+        ('awarded', 'Awarded'),
+        ('closed', 'Closed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='procurement_requests')
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    category = models.ForeignKey(BusinessType, on_delete=models.SET_NULL, null=True, blank=True,
+                                 help_text='Type of supplier needed')
+    budget_min = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    budget_max = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    deadline = models.DateField(help_text='Last day to submit bids')
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='open')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.title} — {self.business.name}"
+
+    @property
+    def is_accepting_bids(self):
+        return self.status == 'open' and self.deadline >= timezone.now().date()
+
+
+class SupplierBid(models.Model):
+    """A supplier's bid on a procurement request."""
+    STATUS_CHOICES = [
+        ('submitted', 'Submitted'),
+        ('shortlisted', 'Shortlisted'),
+        ('accepted', 'Accepted'),
+        ('rejected', 'Rejected'),
+    ]
+
+    procurement = models.ForeignKey(ProcurementRequest, on_delete=models.CASCADE, related_name='bids')
+    supplier = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='submitted_bids')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    delivery_timeline = models.CharField(max_length=100, help_text='e.g. 3 days, 1 week')
+    proposal = models.TextField(help_text='Why you are the best fit')
+    score = models.DecimalField(max_digits=5, decimal_places=2, default=0,
+                                help_text='Auto-calculated composite score (0-100)')
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='submitted')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['procurement', 'supplier']
+        ordering = ['-score', 'amount']
+
+    def __str__(self):
+        return f"Bid by {self.supplier.name} — KES {self.amount:,.0f}"
+
+
+class SupplierApplication(models.Model):
+    """A business applies to become a supplier to another business."""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+
+    applicant = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='supplier_applications_sent')
+    target_business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='supplier_applications_received')
+    services_offered = models.TextField(help_text='What products/services can you supply?')
+    cover_letter = models.TextField(help_text='Why should this business choose you?')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['applicant', 'target_business']
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.applicant.name} → {self.target_business.name} ({self.status})"
+
+
+# ────────────────────────────────────────────────
+# FEEDBACK & REVIEWS
+# ────────────────────────────────────────────────
+
+class Feedback(models.Model):
+    """Feedback from customer→business or business→supplier."""
+    TYPE_CHOICES = [
+        ('customer_to_business', 'Customer → Business'),
+        ('business_to_supplier', 'Business → Supplier'),
+    ]
+
+    feedback_type = models.CharField(max_length=25, choices=TYPE_CHOICES)
+    # Customer → Business
+    order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True, blank=True, related_name='feedbacks')
+    customer_name = models.CharField(max_length=200, blank=True)
+    customer_phone = models.CharField(max_length=20, blank=True)
+    # Business → Supplier
+    from_business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE,
+                                      null=True, blank=True, related_name='feedback_given')
+    to_business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE,
+                                    null=True, blank=True, related_name='feedback_received')
+    # Common fields
+    rating = models.PositiveSmallIntegerField(help_text='1-5 stars')
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        if self.feedback_type == 'customer_to_business':
+            return f"{self.customer_name} → {self.to_business} ({self.rating}★)"
+        return f"{self.from_business} → {self.to_business} ({self.rating}★)"

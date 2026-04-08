@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Already Reviewed{% endblock %}
+{% block content %}
+<div class="container-fluid text-center" style="max-width:500px;">
+    <p class="display-4 mb-2">✅</p>
+    <h4>You've already submitted feedback for this order.</h4>
+    <p class="text-muted">Order {{ order.order_number }}</p>
+    <a href="{% url 'track_order' order_number=order.order_number %}" class="btn btn-outline-primary mt-2">← Back to Order</a>
+</div>
+{% endblock %}

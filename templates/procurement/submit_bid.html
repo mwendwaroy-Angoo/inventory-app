@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Submit Bid — {{ procurement.title }}{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width:650px;">
+    <h4 class="mb-1">📤 Submit Your Bid</h4>
+    <p class="text-muted mb-3">{{ procurement.title }} — {{ procurement.business.name }}</p>
+
+    <!-- Request summary -->
+    <div class="card bg-light mb-3">
+        <div class="card-body">
+            <p class="mb-1" style="white-space:pre-line;">{{ procurement.description|truncatewords:60 }}</p>
+            <div class="row small text-muted mt-2">
+                {% if procurement.budget_min or procurement.budget_max %}
+                <div class="col-auto">
+                    💰 Budget: {% if procurement.budget_min %}KES {{ procurement.budget_min|floatformat:0 }}{% endif %}
+                    {% if procurement.budget_min and procurement.budget_max %} — {% endif %}
+                    {% if procurement.budget_max %}KES {{ procurement.budget_max|floatformat:0 }}{% endif %}
+                </div>
+                {% endif %}
+                <div class="col-auto">📅 Deadline: {{ procurement.deadline|date:"M d, Y" }}</div>
+            </div>
+        </div>
+    </div>
+
+    <form method="post" class="card shadow-sm p-4">
+        {% csrf_token %}
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Bid Amount (KES) *</label>
+            <input type="number" name="amount" class="form-control" required min="1" step="1"
+                placeholder="Your total price for this request">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Delivery Timeline *</label>
+            <input type="text" name="delivery_timeline" class="form-control" required
+                placeholder="e.g. 3 days, 1 week, Immediate">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Proposal *</label>
+            <textarea name="proposal" class="form-control" rows="5" required
+                placeholder="Explain why you are the best fit: your experience, quality assurance, delivery capabilities..."></textarea>
+        </div>
+
+        <div class="alert alert-info small">
+            💡 <strong>Tip:</strong> Bids are scored based on price (40%), proximity (25%), supplier rating (20%),
+            service relevance (10%), and response speed (5%). Competitive pricing and a strong track record help!
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-success">📤 Submit Bid</button>
+            <a href="{% url 'procurement_detail' pk=procurement.pk %}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

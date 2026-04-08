@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Thank You{% endblock %}
+{% block content %}
+<div class="container-fluid text-center" style="max-width:500px;">
+    <p class="display-1 mb-2">🎉</p>
+    <h3>Thank you for your feedback!</h3>
+    <p class="text-muted">Your review for <strong>{{ order.business.name }}</strong> has been submitted.</p>
+    <a href="{% url 'track_order' order_number=order.order_number %}" class="btn btn-primary mt-2">← Back to Order</a>
+</div>
+{% endblock %}

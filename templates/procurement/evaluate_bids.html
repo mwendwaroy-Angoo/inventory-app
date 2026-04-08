@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Evaluate Bids — {{ procurement.title }}{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width:900px;">
+    <h4 class="mb-1">⚡ Bid Evaluation</h4>
+    <p class="text-muted">{{ procurement.title }} · {{ bids.count }} bid{{ bids.count|pluralize }}</p>
+
+    <!-- Scoring legend -->
+    <div class="card bg-light mb-3">
+        <div class="card-body py-2">
+            <h6 class="mb-1">Scoring Criteria</h6>
+            <div class="row small text-muted">
+                <div class="col-auto">💰 Price: 40%</div>
+                <div class="col-auto">📍 Proximity: 25%</div>
+                <div class="col-auto">⭐ Rating: 20%</div>
+                <div class="col-auto">🎯 Relevance: 10%</div>
+                <div class="col-auto">⚡ Speed: 5%</div>
+            </div>
+        </div>
+    </div>
+
+    {% if bids %}
+    <div class="alert alert-info small">
+        ℹ️ Top 3 bids are auto-shortlisted. Review and award the best supplier.
+    </div>
+
+    {% for bid in bids %}
+    <div class="card mb-3 shadow-sm" style="border-left: 4px solid {% if forloop.counter <= 3 %}#ffc107{% elif bid.status == 'accepted' %}#28a745{% else %}#6c757d{% endif %};">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h5 class="mb-1">
+                        #{{ forloop.counter }} {{ bid.supplier.name }}
+                        {% if bid.status == 'shortlisted' %}<span class="badge bg-warning text-dark ms-1">Shortlisted</span>{% endif %}
+                        {% if bid.status == 'accepted' %}<span class="badge bg-success ms-1">Awarded</span>{% endif %}
+                    </h5>
+                    <p class="text-muted small mb-0">
+                        {% if bid.supplier.business_type %}{{ bid.supplier.business_type.name }} · {% endif %}
+                        {% if bid.supplier.county %}📍 {{ bid.supplier.county.name }} · {% endif %}
+                        ⏱️ {{ bid.delivery_timeline }}
+                    </p>
+                </div>
+                <div class="text-end">
+                    <div class="fw-bold fs-4 text-primary">{{ bid.score }}<span class="fs-6 text-muted">/100</span></div>
+                    <div class="fw-bold">KES {{ bid.amount|floatformat:0 }}</div>
+                </div>
+            </div>
+
+            <!-- Score bar -->
+            <div class="progress mt-2" style="height: 8px;">
+                <div class="progress-bar {% if bid.score >= 70 %}bg-success{% elif bid.score >= 40 %}bg-warning{% else %}bg-danger{% endif %}"
+                     style="width: {{ bid.score }}%;"></div>
+            </div>
+
+            <p class="mt-2 mb-1" style="white-space:pre-line;">{{ bid.proposal }}</p>
+
+            {% if bid.status != 'accepted' and procurement.status != 'awarded' %}
+            <a href="{% url 'award_bid' bid_id=bid.pk %}" class="btn btn-success btn-sm mt-2">✅ Award This Bid</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-center text-muted py-5">
+        <p class="display-6">📭</p>
+        <p>No bids have been submitted yet.</p>
+    </div>
+    {% endif %}
+
+    <a href="{% url 'procurement_detail' pk=procurement.pk %}" class="btn btn-outline-secondary mt-2">← Back to Details</a>
+</div>
+{% endblock %}
