@@ -81,6 +81,7 @@ class Notification(models.Model):
         ('staff', 'Staff'),
         ('report', 'Report'),
         ('info', 'Info'),
+        ('order', 'Order'),
     ]
 
     user = models.ForeignKey(
@@ -209,6 +210,17 @@ class Order(models.Model):
         ('cancelled', 'Cancelled'),
     ]
 
+    DELIVERY_CHOICES = [
+        ('pickup', 'Pickup'),
+        ('delivery', 'Delivery'),
+    ]
+
+    PAYMENT_METHOD_CHOICES = [
+        ('mpesa', 'M-Pesa'),
+        ('cash', 'Cash on Delivery'),
+        ('pickup_pay', 'Pay at Pickup'),
+    ]
+
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='orders')
     customer_name = models.CharField(max_length=200)
     customer_phone = models.CharField(max_length=20)
@@ -217,6 +229,9 @@ class Order(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     notes = models.TextField(blank=True)
+    delivery_mode = models.CharField(max_length=10, choices=DELIVERY_CHOICES, default='pickup')
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    payment_method = models.CharField(max_length=15, choices=PAYMENT_METHOD_CHOICES, default='mpesa')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -234,9 +249,8 @@ class Order(models.Model):
         super().save(*args, **kwargs)
 
     def recalculate_total(self):
-        self.total_amount = sum(
-            line.line_total for line in self.lines.all()
-        )
+        subtotal = sum(line.line_total for line in self.lines.all())
+        self.total_amount = subtotal + self.delivery_fee
         self.save(update_fields=['total_amount'])
 
 

@@ -128,6 +128,7 @@ def place_order(request, business_id):
 
     # Validate items and stock
     order_lines = []
+    subtotal = 0
     for entry in cart:
         item_id = entry.get('item_id')
         qty = entry.get('qty', 1)
@@ -150,7 +151,27 @@ def place_order(request, business_id):
                 'error': f'{item.description} has no price set'
             }, status=400)
 
+        subtotal += item.selling_price * qty
         order_lines.append((item, qty))
+
+    # Delivery & payment fields
+    delivery_mode = data.get('delivery_mode', 'pickup')
+    if delivery_mode not in ('pickup', 'delivery'):
+        delivery_mode = 'pickup'
+
+    payment_method = data.get('payment_method', 'mpesa')
+    if payment_method not in ('mpesa', 'cash', 'pickup_pay'):
+        payment_method = 'mpesa'
+
+    delivery_fee = 0
+    if delivery_mode == 'delivery' and business.offers_delivery:
+        delivery_fee = float(business.delivery_fee or 0)
+
+    # Minimum order check
+    if business.min_order_amount and subtotal < float(business.min_order_amount):
+        return JsonResponse({
+            'error': f'Minimum order amount is KES {business.min_order_amount:,.0f}'
+        }, status=400)
 
     # Create order
     order = Order.objects.create(
@@ -159,6 +180,9 @@ def place_order(request, business_id):
         customer_phone=format_phone_ke(customer_phone),
         customer_location=data.get('customer_location', ''),
         notes=data.get('notes', ''),
+        delivery_mode=delivery_mode,
+        payment_method=payment_method,
+        delivery_fee=delivery_fee,
     )
 
     for item, qty in order_lines:
@@ -170,6 +194,10 @@ def place_order(request, business_id):
         )
 
     order.recalculate_total()
+
+    # Notify business about the new order
+    from .notifications import notify_new_order
+    notify_new_order(order)
 
     return JsonResponse({
         'success': True,

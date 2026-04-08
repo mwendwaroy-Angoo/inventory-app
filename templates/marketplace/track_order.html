@@ -173,6 +173,12 @@
                 <span>KES {{ line.line_total|floatformat:0 }}</span>
             </div>
             {% endfor %}
+            {% if order.delivery_fee %}
+            <div class="line-item" style="color:var(--muted);">
+                <span>🚚 Delivery fee</span>
+                <span>KES {{ order.delivery_fee|floatformat:0 }}</span>
+            </div>
+            {% endif %}
             <div class="total-line">
                 <span>Total</span>
                 <span>KES {{ order.total_amount|floatformat:0 }}</span>
@@ -186,6 +192,14 @@
                 📞 {{ order.customer_phone }}<br>
                 {% if order.customer_location %}📍 {{ order.customer_location }}<br>{% endif %}
                 {% if order.notes %}<em style="color:var(--muted);">{{ order.notes }}</em>{% endif %}
+            </p>
+        </div>
+
+        <div class="detail-card">
+            <h6>📋 Order Info</h6>
+            <p style="margin:0; font-size:0.9rem;">
+                {% if order.delivery_mode == 'delivery' %}🚚 Delivery{% else %}🏪 Pickup{% endif %}
+                · {% if order.payment_method == 'mpesa' %}💳 M-Pesa{% elif order.payment_method == 'cash' %}💵 Cash{% else %}🏪 Pay at Pickup{% endif %}
             </p>
         </div>
 
@@ -209,41 +223,67 @@
 
     <!-- Pay Section -->
     <div class="col-md-5" id="pay">
-        {% if order.status == 'pending' or order.status == 'confirmed' %}
-        <div class="pay-section">
-            <h6>Pay with M-Pesa</h6>
-            <div class="mpesa-logo">📱💚</div>
-            <p style="color:var(--muted); font-size:0.85rem;">
-                Amount: <strong style="color:var(--gold);">KES {{ order.total_amount|floatformat:0 }}</strong>
-            </p>
-            <div class="mb-3">
-                <input type="tel" id="payPhone" class="form-control"
-                       placeholder="M-Pesa number (e.g. 0712345678)"
-                       value="{{ order.customer_phone }}">
+        {% if order.payment_method == 'mpesa' %}
+            {% if order.status == 'pending' or order.status == 'confirmed' %}
+            <div class="pay-section">
+                <h6>Pay with M-Pesa</h6>
+                <div class="mpesa-logo">📱💚</div>
+                <p style="color:var(--muted); font-size:0.85rem;">
+                    Amount: <strong style="color:var(--gold);">KES {{ order.total_amount|floatformat:0 }}</strong>
+                </p>
+                <div class="mb-3">
+                    <input type="tel" id="payPhone" class="form-control"
+                           placeholder="M-Pesa number (e.g. 0712345678)"
+                           value="{{ order.customer_phone }}">
+                </div>
+                <button class="btn btn-gold w-100" id="payBtn" onclick="payNow()">
+                    Pay KES {{ order.total_amount|floatformat:0 }}
+                </button>
+                <div id="payStatus" class="mt-2" style="display:none;"></div>
             </div>
-            <button class="btn btn-gold w-100" id="payBtn" onclick="payNow()">
-                Pay KES {{ order.total_amount|floatformat:0 }}
-            </button>
-            <div id="payStatus" class="mt-2" style="display:none;"></div>
-        </div>
-        {% elif order.status == 'paid' %}
-        <div class="pay-section" style="border-color: var(--success);">
-            <div style="font-size: 3rem;">✅</div>
-            <h6 style="color: var(--success);">Payment Received!</h6>
-            <p style="color:var(--muted); font-size:0.85rem;">Your order is being prepared.</p>
-        </div>
-        {% elif order.status == 'ready' %}
-        <div class="pay-section" style="border-color: var(--success);">
-            <div style="font-size: 3rem;">📦</div>
-            <h6 style="color: var(--success);">Ready for Pickup!</h6>
-            <p style="color:var(--muted); font-size:0.85rem;">Your order is ready. Head to the store to collect it.</p>
-        </div>
-        {% elif order.status == 'completed' %}
-        <div class="pay-section" style="border-color: var(--success);">
-            <div style="font-size: 3rem;">🎉</div>
-            <h6 style="color: var(--success);">Order Complete!</h6>
-            <p style="color:var(--muted); font-size:0.85rem;">Thank you for shopping with us.</p>
-        </div>
+            {% elif order.status == 'paid' %}
+            <div class="pay-section" style="border-color: var(--success);">
+                <div style="font-size: 3rem;">✅</div>
+                <h6 style="color: var(--success);">Payment Received!</h6>
+                <p style="color:var(--muted); font-size:0.85rem;">Your order is being prepared.</p>
+            </div>
+            {% elif order.status == 'ready' %}
+            <div class="pay-section" style="border-color: var(--success);">
+                <div style="font-size: 3rem;">📦</div>
+                <h6 style="color: var(--success);">Ready for Pickup!</h6>
+                <p style="color:var(--muted); font-size:0.85rem;">Your order is ready. Head to the store to collect it.</p>
+            </div>
+            {% elif order.status == 'completed' %}
+            <div class="pay-section" style="border-color: var(--success);">
+                <div style="font-size: 3rem;">🎉</div>
+                <h6 style="color: var(--success);">Order Complete!</h6>
+                <p style="color:var(--muted); font-size:0.85rem;">Thank you for shopping with us.</p>
+            </div>
+            {% endif %}
+        {% else %}
+            {# Cash / Pay at Pickup orders #}
+            {% if order.status == 'pending' or order.status == 'confirmed' %}
+            <div class="pay-section">
+                <div style="font-size: 3rem;">{% if order.payment_method == 'cash' %}💵{% else %}🏪{% endif %}</div>
+                <h6>{% if order.payment_method == 'cash' %}Cash on Delivery{% else %}Pay at Pickup{% endif %}</h6>
+                <p style="color:var(--muted); font-size:0.85rem;">
+                    Amount: <strong style="color:var(--gold);">KES {{ order.total_amount|floatformat:0 }}</strong><br>
+                    Please have exact change ready.
+                </p>
+            </div>
+            {% elif order.status == 'ready' %}
+            <div class="pay-section" style="border-color: var(--success);">
+                <div style="font-size: 3rem;">📦</div>
+                <h6 style="color: var(--success);">Ready!</h6>
+                <p style="color:var(--muted); font-size:0.85rem;">Your order is ready. Pay KES {{ order.total_amount|floatformat:0 }} {% if order.payment_method == 'cash' %}on delivery{% else %}at pickup{% endif %}.</p>
+            </div>
+            {% elif order.status == 'completed' %}
+            <div class="pay-section" style="border-color: var(--success);">
+                <div style="font-size: 3rem;">🎉</div>
+                <h6 style="color: var(--success);">Order Complete!</h6>
+                <p style="color:var(--muted); font-size:0.85rem;">Thank you for shopping with us.</p>
+            </div>
+            {% endif %}
         {% endif %}
     </div>
 </div>

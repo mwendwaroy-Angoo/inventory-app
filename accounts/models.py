@@ -5,6 +5,10 @@ from django.dispatch import receiver
 from core.models import BusinessType, County, SubCounty, Ward  # updated
 from django.contrib.auth.signals import user_logged_in, user_logged_out
 from django.dispatch import receiver as signal_receiver
+import math
+from django.utils import timezone
+
+
 class Business(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='owned_businesses', null=True, blank=True)
     name = models.CharField(max_length=255, unique=True)
@@ -17,8 +21,49 @@ class Business(models.Model):
     address = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # ── Operating Hours ──
+    opening_time = models.TimeField(null=True, blank=True, help_text='e.g. 08:00')
+    closing_time = models.TimeField(null=True, blank=True, help_text='e.g. 18:00')
+    is_open_override = models.BooleanField(null=True, blank=True, default=None,
+        help_text='Manual override: True=force open, False=force closed, None=use hours')
+
+    # ── GPS Coordinates ──
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+
+    # ── Delivery Settings ──
+    offers_delivery = models.BooleanField(default=False)
+    delivery_radius_km = models.DecimalField(max_digits=5, decimal_places=1, default=5, help_text='Max delivery distance in km')
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Flat delivery fee in KES')
+    min_order_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Minimum order value in KES')
+
     def __str__(self):
         return self.name
+
+    def is_open(self):
+        """Check if business is currently open based on Nairobi time."""
+        if self.is_open_override is not None:
+            return self.is_open_override
+        if not self.opening_time or not self.closing_time:
+            return True  # No hours set = always open
+        now = timezone.localtime(timezone.now()).time()
+        if self.opening_time <= self.closing_time:
+            return self.opening_time <= now <= self.closing_time
+        else:
+            # Overnight hours (e.g. 22:00 - 06:00)
+            return now >= self.opening_time or now <= self.closing_time
+
+    def distance_to(self, lat, lng):
+        """Haversine distance in km to a given lat/lng."""
+        if not self.latitude or not self.longitude or not lat or not lng:
+            return None
+        R = 6371  # Earth radius in km
+        lat1, lon1 = math.radians(float(self.latitude)), math.radians(float(self.longitude))
+        lat2, lon2 = math.radians(float(lat)), math.radians(float(lng))
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+        return R * 2 * math.asin(math.sqrt(a))
 
 
 class UserProfile(models.Model):

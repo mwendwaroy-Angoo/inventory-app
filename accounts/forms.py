@@ -105,12 +105,26 @@ class BusinessSignupForm(forms.Form):
 class BusinessEditForm(forms.ModelForm):
     class Meta:
         model = Business
-        fields = ['name', 'business_type', 'phone', 'email', 'address', 'county', 'sub_county', 'ward']
+        fields = [
+            'name', 'business_type', 'phone', 'email', 'address',
+            'county', 'sub_county', 'ward',
+            'opening_time', 'closing_time', 'is_open_override',
+            'latitude', 'longitude',
+            'offers_delivery', 'delivery_radius_km', 'delivery_fee', 'min_order_amount',
+        ]
         widgets = {
             'name': forms.TextInput(attrs={'placeholder': 'Business name'}),
             'phone': forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'}),
             'email': forms.EmailInput(attrs={'placeholder': 'business@email.com'}),
             'address': forms.Textarea(attrs={'rows': 2, 'placeholder': 'Physical address'}),
+            'opening_time': forms.TimeInput(attrs={'type': 'time'}),
+            'closing_time': forms.TimeInput(attrs={'type': 'time'}),
+            'is_open_override': forms.Select(choices=[(None, 'Use operating hours'), (True, 'Force Open'), (False, 'Force Closed')]),
+            'latitude': forms.NumberInput(attrs={'step': '0.000001', 'placeholder': 'e.g. -1.2921'}),
+            'longitude': forms.NumberInput(attrs={'step': '0.000001', 'placeholder': 'e.g. 36.8219'}),
+            'delivery_radius_km': forms.NumberInput(attrs={'step': '0.5', 'placeholder': 'e.g. 5'}),
+            'delivery_fee': forms.NumberInput(attrs={'step': '1', 'placeholder': 'e.g. 100'}),
+            'min_order_amount': forms.NumberInput(attrs={'step': '1', 'placeholder': 'e.g. 200'}),
         }
 
     def __init__(self, *args, **kwargs):

@@ -214,6 +214,68 @@ def notify_staff_login(user, business, action='logged in'):
     )
 
 
+def notify_new_order(order):
+    """Notify the business owner (and staff) about a new customer order."""
+    business = order.business
+    owner_profile = business.users.filter(role='owner').first()
+    if not owner_profile:
+        return
+
+    owner = owner_profile.user
+    owner_email = owner.email
+    owner_phone = owner_profile.phone or business.phone
+
+    delivery_label = '🚚 Delivery' if order.delivery_mode == 'delivery' else '🏪 Pickup'
+    pay_labels = {'mpesa': '💳 M-Pesa', 'cash': '💵 Cash', 'pickup_pay': '🏪 Pay at Pickup'}
+    pay_label = pay_labels.get(order.payment_method, order.payment_method)
+
+    items_text = ', '.join(
+        f"{l.item.description} x{l.quantity}" for l in order.lines.select_related('item')
+    )
+
+    subject = f"🛒 New Order #{order.order_number} — {business.name}"
+    message = (
+        f"New order on Duka Mwecheche\n\n"
+        f"Order: {order.order_number}\n"
+        f"Customer: {order.customer_name} ({order.customer_phone})\n"
+        f"Location: {order.customer_location or 'N/A'}\n"
+        f"Items: {items_text}\n"
+        f"Total: KES {order.total_amount:,.0f}\n"
+        f"Delivery: {delivery_label}\n"
+        f"Payment: {pay_label}\n"
+        f"Notes: {order.notes or 'None'}\n\n"
+        f"— Duka Mwecheche"
+    )
+
+    # In-app notification for owner
+    create_in_app_notification(
+        owner,
+        f"🛒 New Order #{order.order_number}",
+        f"{order.customer_name} — KES {order.total_amount:,.0f} ({delivery_label}, {pay_label})",
+        notification_type='order'
+    )
+
+    # In-app notification for all staff
+    for staff_profile in business.users.filter(role='staff'):
+        create_in_app_notification(
+            staff_profile.user,
+            f"🛒 New Order #{order.order_number}",
+            f"{order.customer_name} — KES {order.total_amount:,.0f} ({delivery_label})",
+            notification_type='order'
+        )
+
+    # Email to owner
+    send_email_notification(subject, message, owner_email)
+
+    # SMS to owner
+    sms_msg = (
+        f"[Duka Mwecheche] New Order #{order.order_number}: "
+        f"{order.customer_name}, KES {order.total_amount:,.0f}. "
+        f"{delivery_label}."
+    )
+    send_sms_notification(sms_msg, owner_phone)
+
+
 def send_daily_summary(business):
     from datetime import date
     from core.models import Transaction, Item

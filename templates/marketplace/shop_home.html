@@ -55,6 +55,11 @@
         font-size: 0.85rem;
         margin-top: 0.5rem;
     }
+    .open-badge { font-size:0.7rem; padding:0.15rem 0.5rem; border-radius:20px; font-weight:600; }
+    .open-badge.open { background:rgba(46,204,113,0.15); color:#2ecc71; border:1px solid #2ecc71; }
+    .open-badge.closed { background:rgba(231,76,60,0.15); color:#e74c3c; border:1px solid #e74c3c; }
+    .delivery-info { font-size:0.75rem; color:var(--muted); margin-top:0.4rem; }
+    .delivery-info .delivers { color:var(--success); }
 </style>
 {% endblock %}
 
@@ -87,7 +92,14 @@
     {% for biz in businesses %}
     <div class="col-md-4 col-sm-6">
         <a href="{% url 'storefront' biz.id %}" class="business-card">
-            <h5>{{ biz.name }}</h5>
+            <div class="d-flex justify-content-between align-items-start mb-1">
+                <h5 class="mb-0">{{ biz.name }}</h5>
+                {% if biz.is_open %}
+                    <span class="open-badge open">🟢 Open</span>
+                {% else %}
+                    <span class="open-badge closed">🔴 Closed</span>
+                {% endif %}
+            </div>
             {% if biz.business_type %}
                 <span class="type-badge">{{ biz.business_type.name }}</span>
             {% endif %}
@@ -98,6 +110,15 @@
             </div>
             {% if biz.phone %}
             <div class="location mt-1">📞 {{ biz.phone }}</div>
+            {% endif %}
+            {% if biz.opening_time and biz.closing_time %}
+            <div class="delivery-info">🕐 {{ biz.opening_time|time:"g:i A" }} – {{ biz.closing_time|time:"g:i A" }}</div>
+            {% endif %}
+            {% if biz.offers_delivery %}
+            <div class="delivery-info delivers">🚚 Delivers within {{ biz.delivery_radius_km }}km · KES {{ biz.delivery_fee|floatformat:0 }} fee</div>
+            {% endif %}
+            {% if biz.min_order_amount > 0 %}
+            <div class="delivery-info">📦 Min order: KES {{ biz.min_order_amount|floatformat:0 }}</div>
             {% endif %}
         </a>
     </div>

@@ -362,8 +362,13 @@
 
             {% if user.is_authenticated %}
             <!-- Shop link always visible on mobile (outside collapse) -->
+            {% if user.userprofile.is_owner %}
+            <a href="{% url 'shop_home' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
+               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📦 Suppliers</a>
+            {% else %}
             <a href="{% url 'shop_home' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
                style="font-size:0.85rem; padding:0.35rem 0.9rem;">🛒 Shop</a>
+            {% endif %}
             {% endif %}
 
             <div class="collapse navbar-collapse" id="navbarNav">
@@ -384,7 +389,11 @@
                         <a class="nav-link" href="{% url 'transaction_history' %}">History</a>
                     </li>
                     <li class="nav-item">
+                        {% if user.userprofile.is_owner %}
+                        <a class="nav-link" href="{% url 'shop_home' %}">📦 Order from Suppliers</a>
+                        {% else %}
                         <a class="nav-link" href="{% url 'shop_home' %}">🛒 Shop</a>
+                        {% endif %}
                     </li>
 
                     {% if user.userprofile.is_owner %}

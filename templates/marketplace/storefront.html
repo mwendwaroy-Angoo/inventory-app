@@ -122,7 +122,11 @@
         {% if business.business_type %}{{ business.business_type.name }} · {% endif %}
         {% if business.county %}📍 {{ business.county.name }}{% endif %}
         {% if business.phone %} · 📞 {{ business.phone }}{% endif %}
+         · {% if business.is_open %}<span style="color:#2ecc71; font-weight:600;">🟢 Open</span>{% else %}<span style="color:#e74c3c; font-weight:600;">🔴 Closed</span>{% endif %}
     </div>
+    {% if business.opening_time and business.closing_time %}
+    <div style="color:var(--muted); font-size:0.8rem; margin-top:0.3rem;">🕐 {{ business.opening_time|time:"g:i A" }} – {{ business.closing_time|time:"g:i A" }}</div>
+    {% endif %}
     <a href="{% url 'shop_home' %}" class="btn btn-secondary btn-sm mt-2">← Back to Marketplace</a>
 </div>
 
@@ -187,6 +191,47 @@
             </div>
             <div class="modal-body">
                 <div id="cartSummary" class="mb-3" style="font-size:0.85rem;"></div>
+
+                <!-- Delivery Mode -->
+                <div class="mb-3">
+                    <label class="form-label" style="color:var(--gold);">Delivery Mode *</label>
+                    <div class="d-flex gap-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="deliveryMode" id="modePickup" value="pickup" checked onchange="updateDelivery()">
+                            <label class="form-check-label" for="modePickup">🏪 Pickup</label>
+                        </div>
+                        {% if business.offers_delivery %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="deliveryMode" id="modeDelivery" value="delivery" onchange="updateDelivery()">
+                            <label class="form-check-label" for="modeDelivery">🚚 Delivery (KES {{ business.delivery_fee|floatformat:0 }})</label>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div id="deliveryInfo" style="display:none; margin-top:0.5rem;">
+                        <small style="color:var(--muted);">Delivery within {{ business.delivery_radius_km }}km. Fee: KES {{ business.delivery_fee|floatformat:0 }}</small>
+                        <div id="distanceMsg" style="margin-top:0.3rem; font-size:0.8rem;"></div>
+                    </div>
+                </div>
+
+                <!-- Payment Method -->
+                <div class="mb-3">
+                    <label class="form-label" style="color:var(--gold);">Payment Method *</label>
+                    <div>
+                        <div class="form-check mb-1">
+                            <input class="form-check-input" type="radio" name="payMethod" id="payMpesa" value="mpesa" checked>
+                            <label class="form-check-label" for="payMpesa">💳 M-Pesa</label>
+                        </div>
+                        <div class="form-check mb-1">
+                            <input class="form-check-input" type="radio" name="payMethod" id="payCash" value="cash">
+                            <label class="form-check-label" for="payCash">💵 Cash on Delivery</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="payMethod" id="payPickup" value="pickup_pay">
+                            <label class="form-check-label" for="payPickup">🏪 Pay at Pickup</label>
+                        </div>
+                    </div>
+                </div>
+
                 <hr style="border-color:#333;">
                 <div class="mb-3">
                     <label class="form-label">Your Name *</label>
@@ -203,6 +248,10 @@
                 <div class="mb-3">
                     <label class="form-label">Notes</label>
                     <textarea id="custNotes" class="form-control" rows="2" placeholder="Any special instructions..."></textarea>
+                </div>
+
+                <!-- Order total summary -->
+                <div id="orderTotalSummary" style="background:rgba(201,168,76,0.08); border:1px solid #444; border-radius:8px; padding:0.8rem; font-size:0.9rem;">
                 </div>
             </div>
             <div class="modal-footer">
@@ -225,7 +274,7 @@
             <p style="color:var(--muted); font-size:0.85rem;">Order number: <strong id="orderNum" style="color:var(--gold);"></strong></p>
             <div class="mt-3 d-flex gap-2 justify-content-center">
                 <a id="trackLink" href="#" class="btn btn-gold">Track Order</a>
-                <a id="payLink" href="#" class="btn btn-primary">Pay with M-Pesa</a>
+                <a id="payLink" href="#" class="btn btn-primary" style="display:none;">Pay with M-Pesa</a>
             </div>
         </div>
     </div>
@@ -234,7 +283,13 @@
 {% block extra_js %}
 <script>
 const BUSINESS_ID = {{ business.id }};
+const BIZ_DELIVERY_FEE = {{ business.delivery_fee|default:"0" }};
+const BIZ_DELIVERY_RADIUS = {{ business.delivery_radius_km|default:"5" }};
+const BIZ_MIN_ORDER = {{ business.min_order_amount|default:"0" }};
+const BIZ_LAT = {{ business.latitude|default:"null" }};
+const BIZ_LNG = {{ business.longitude|default:"null" }};
 let cart = {};  // {itemId: {name, price, qty, unit, maxStock}}
+let customerCoords = null;
 
 // ── TAP TO ADD ──
 document.querySelectorAll('.item-card').forEach(card => {
@@ -312,21 +367,99 @@ document.querySelectorAll('.filter-pill').forEach(pill => {
     });
 });
 
+// ── DELIVERY HELPERS ──
+function getSubtotal() {
+    let total = 0;
+    Object.keys(cart).forEach(id => { total += cart[id].price * cart[id].qty; });
+    return total;
+}
+
+function getDeliveryMode() {
+    const el = document.querySelector('input[name="deliveryMode"]:checked');
+    return el ? el.value : 'pickup';
+}
+
+function getPaymentMethod() {
+    const el = document.querySelector('input[name="payMethod"]:checked');
+    return el ? el.value : 'mpesa';
+}
+
+function getDeliveryFee() {
+    return getDeliveryMode() === 'delivery' ? BIZ_DELIVERY_FEE : 0;
+}
+
+function updateOrderSummary() {
+    const subtotal = getSubtotal();
+    const delFee = getDeliveryFee();
+    const total = subtotal + delFee;
+    let html = `<div class="d-flex justify-content-between"><span>Subtotal</span><span>KES ${subtotal.toLocaleString()}</span></div>`;
+    if (getDeliveryMode() === 'delivery') {
+        html += `<div class="d-flex justify-content-between" style="color:var(--muted);"><span>Delivery fee</span><span>KES ${delFee.toLocaleString()}</span></div>`;
+    }
+    html += `<div class="d-flex justify-content-between mt-1" style="color:var(--gold);font-weight:600;border-top:1px solid #444;padding-top:0.5rem;"><span>Total</span><span>KES ${total.toLocaleString()}</span></div>`;
+    document.getElementById('orderTotalSummary').innerHTML = html;
+}
+
+function updateDelivery() {
+    const infoDiv = document.getElementById('deliveryInfo');
+    const distMsg = document.getElementById('distanceMsg');
+    if (getDeliveryMode() === 'delivery') {
+        infoDiv.style.display = 'block';
+        // Try to get customer location for distance check
+        if (BIZ_LAT && BIZ_LNG && navigator.geolocation && !customerCoords) {
+            distMsg.innerHTML = '<span style="color:var(--gold);">📍 Checking your location...</span>';
+            navigator.geolocation.getCurrentPosition(
+                pos => {
+                    customerCoords = {lat: pos.coords.latitude, lng: pos.coords.longitude};
+                    const dist = haversine(BIZ_LAT, BIZ_LNG, customerCoords.lat, customerCoords.lng);
+                    if (dist > BIZ_DELIVERY_RADIUS) {
+                        distMsg.innerHTML = `<span style="color:var(--danger);">⚠️ You are ${dist.toFixed(1)}km away (max ${BIZ_DELIVERY_RADIUS}km). Delivery may not be available.</span>`;
+                    } else {
+                        distMsg.innerHTML = `<span style="color:var(--success);">✅ You are ${dist.toFixed(1)}km away — within delivery range!</span>`;
+                    }
+                },
+                () => {
+                    distMsg.innerHTML = '<span style="color:var(--muted);">Could not determine your location.</span>';
+                },
+                {timeout: 10000}
+            );
+        } else if (customerCoords && BIZ_LAT && BIZ_LNG) {
+            const dist = haversine(BIZ_LAT, BIZ_LNG, customerCoords.lat, customerCoords.lng);
+            if (dist > BIZ_DELIVERY_RADIUS) {
+                distMsg.innerHTML = `<span style="color:var(--danger);">⚠️ You are ${dist.toFixed(1)}km away (max ${BIZ_DELIVERY_RADIUS}km). Delivery may not be available.</span>`;
+            } else {
+                distMsg.innerHTML = `<span style="color:var(--success);">✅ You are ${dist.toFixed(1)}km away — within delivery range!</span>`;
+            }
+        }
+    } else {
+        infoDiv.style.display = 'none';
+    }
+    updateOrderSummary();
+}
+
+function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
 // ── CHECKOUT ──
 function openCheckout() {
     const ids = Object.keys(cart);
     if (ids.length === 0) return;
     let html = '<table style="width:100%;"><tbody>';
-    let total = 0;
     ids.forEach(id => {
         const c = cart[id];
         const line = c.price * c.qty;
-        total += line;
         html += `<tr><td>${c.name} x${c.qty}</td><td style="text-align:right;">KES ${line.toLocaleString()}</td></tr>`;
     });
-    html += `</tbody><tfoot><tr style="border-top:1px solid #444;color:var(--gold);font-weight:600;">
-        <td>TOTAL</td><td style="text-align:right;">KES ${total.toLocaleString()}</td></tr></tfoot></table>`;
+    html += '</tbody></table>';
     document.getElementById('cartSummary').innerHTML = html;
+    updateOrderSummary();
     new bootstrap.Modal(document.getElementById('checkoutModal')).show();
 }
 
@@ -338,6 +471,16 @@ function placeOrder() {
         return;
     }
 
+    const subtotal = getSubtotal();
+    if (BIZ_MIN_ORDER > 0 && subtotal < BIZ_MIN_ORDER) {
+        alert(`Minimum order amount is KES ${BIZ_MIN_ORDER.toLocaleString()}.`);
+        return;
+    }
+
+    const deliveryMode = getDeliveryMode();
+    const paymentMethod = getPaymentMethod();
+    const deliveryFee = getDeliveryFee();
+
     const btn = document.getElementById('placeOrderBtn');
     btn.disabled = true;
     btn.textContent = 'Placing...';
@@ -347,16 +490,21 @@ function placeOrder() {
         qty: cart[id].qty,
     }));
 
+    const payload = {
+        customer_name: name,
+        customer_phone: phone,
+        customer_location: document.getElementById('custLocation').value.trim(),
+        notes: document.getElementById('custNotes').value.trim(),
+        items: items,
+        delivery_mode: deliveryMode,
+        payment_method: paymentMethod,
+        delivery_fee: deliveryFee,
+    };
+
     fetch(`/shop/${BUSINESS_ID}/order/`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            customer_name: name,
-            customer_phone: phone,
-            customer_location: document.getElementById('custLocation').value.trim(),
-            notes: document.getElementById('custNotes').value.trim(),
-            items: items,
-        }),
+        body: JSON.stringify(payload),
     })
     .then(r => {
         if (!r.ok) return r.json().then(d => { throw d; });
@@ -371,7 +519,15 @@ function placeOrder() {
             document.getElementById('successMsg').textContent = data.message;
             document.getElementById('orderNum').textContent = data.order_number;
             document.getElementById('trackLink').href = `/shop/order/${data.order_number}/`;
-            document.getElementById('payLink').href = `/shop/order/${data.order_number}/#pay`;
+
+            // Show M-Pesa pay link only for mpesa payment method
+            const payLink = document.getElementById('payLink');
+            if (paymentMethod === 'mpesa') {
+                payLink.href = `/shop/order/${data.order_number}/#pay`;
+                payLink.style.display = 'inline-block';
+            } else {
+                payLink.style.display = 'none';
+            }
 
             // Clear cart
             cart = {};
