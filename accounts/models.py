@@ -4,7 +4,6 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from core.models import BusinessType, County, SubCounty, Ward  # updated
 from django.contrib.auth.signals import user_logged_in, user_logged_out
-from django.dispatch import receiver as signal_receiver
 import math
 from django.utils import timezone
 
@@ -102,7 +101,7 @@ def save_user_profile(sender, instance, **kwargs):
     except UserProfile.DoesNotExist:
         pass
 
-@signal_receiver(user_logged_in)
+@receiver(user_logged_in)
 def on_user_login(sender, request, user, **kwargs):
     try:
         profile = user.userprofile
@@ -115,7 +114,7 @@ def on_user_login(sender, request, user, **kwargs):
     except Exception:
         pass
 
-@signal_receiver(user_logged_out)
+@receiver(user_logged_out)
 def on_user_logout(sender, request, user, **kwargs):
     if not user:
         return

@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib.auth.models import User
-from .models import Business, UserProfile
+from .models import Business
 from core.models import BusinessType, County, SubCounty, Ward
 
 

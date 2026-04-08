@@ -1,14 +1,11 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth import login
 from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
-from .models import Item, Transaction, Store, BusinessType, Customer
+from .models import Item, Transaction, Store, Customer
 from .forms import ItemForm
 import openpyxl
-from django.db.models import Sum, Count
-from decimal import Decimal
 from datetime import date, timedelta
 import json
 import os
@@ -145,7 +142,7 @@ def add_transaction(request):
 
         new_customer_name = request.POST.get('new_customer_name', '').strip()
         if new_customer_name and trans_type == 'Issue':
-            customer, created = Customer.objects.get_or_create(
+            customer, _created = Customer.objects.get_or_create(
                 business=user_profile.business,
                 name=new_customer_name,
                 defaults={'phone': request.POST.get('new_customer_phone', '')}
@@ -175,17 +172,16 @@ def add_transaction(request):
         )
 
         # Count today's transactions for SMS/WhatsApp decision
-        from datetime import date as date_obj
         daily_count = Transaction.objects.filter(
             business=user_profile.business,
-            date=date_obj.today()
+            date=date.today()
         ).count()
 
         # Send notifications asynchronously
         try:
             from .notifications import notify_transaction
             notify_transaction(transaction, user_profile.business, daily_count, user=request.user)
-        except Exception as e:
+        except Exception:
             pass  # Never block transaction recording due to notification failure
 
         messages.success(
@@ -699,7 +695,7 @@ def daily_summary_webhook(request):
     for business in businesses:
         try:
             send_daily_summary(business)
-        except Exception as e:
+        except Exception:
             pass
 
     return JsonResponse({'status': 'ok', 'businesses': businesses.count()})

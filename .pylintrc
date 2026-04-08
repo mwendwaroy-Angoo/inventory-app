@@ -1,6 +1,4 @@
 [MASTER]
-load-plugins=pylint_django
-django-settings-module=stockapp.settings
 
 [MESSAGES CONTROL]
 disable=
@@ -9,5 +7,6 @@ disable=
     missing-function-docstring,
     too-few-public-methods,
     no-member,
-    imported-auth-user,
-    broad-exception-caught
+    broad-exception-caught,
+    unused-argument,
+    logging-fstring-interpolation
