@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Rider Performance — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .perf-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.5rem;
+    }
+    .score-bar {
+        height: 8px;
+        border-radius: 4px;
+        background: #333;
+        overflow: hidden;
+    }
+    .score-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.5s;
+    }
+    .metric { margin-bottom: 1rem; }
+    .metric-label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem; }
+    .metric-value { font-size: 1.1rem; font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:750px;">
+    <div class="d-flex align-items-center gap-3 mb-3">
+        <div style="font-size:2.5rem;">🏍️</div>
+        <div>
+            <h4 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0;">
+                {{ rider.user.get_full_name|default:rider.user.username }}
+            </h4>
+            <span style="color:var(--muted); font-size:0.85rem;">{{ rider.get_vehicle_type_display }} · {{ rider.county|default:"—" }}</span>
+        </div>
+    </div>
+
+    <!-- Score Overview -->
+    <div class="perf-card mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 style="color:var(--pearl); margin:0;">Performance Score</h5>
+            <div style="font-family:'Playfair Display',serif; font-size:2rem; color:{% if performance.total >= 70 %}#2ecc71{% elif performance.total >= 40 %}#f1c40f{% else %}#e74c3c{% endif %};">
+                {{ performance.total }}<small style="font-size:0.8rem; color:var(--muted);">/100</small>
+            </div>
+        </div>
+
+        <!-- Breakdown -->
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">⭐ Average Rating (35%)</span>
+                <span class="metric-value" style="color:var(--gold);">{{ performance.rating }}/35</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ performance.rating|floatformat:0 }}%; max-width:100%; background:var(--gold);"></div></div>
+        </div>
+
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">⏱️ On-Time Rate (25%)</span>
+                <span class="metric-value" style="color:#2ecc71;">{{ performance.on_time }}/25</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ performance.on_time|floatformat:0 }}%; max-width:100%; background:#2ecc71;"></div></div>
+        </div>
+
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">📦 Item Condition (15%)</span>
+                <span class="metric-value" style="color:#3498db;">{{ performance.condition }}/15</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ performance.condition|floatformat:0 }}%; max-width:100%; background:#3498db;"></div></div>
+        </div>
+
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">🚀 Experience (15%)</span>
+                <span class="metric-value" style="color:#9b59b6;">{{ performance.experience }}/15</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ performance.experience|floatformat:0 }}%; max-width:100%; background:#9b59b6;"></div></div>
+        </div>
+
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">✅ Availability (10%)</span>
+                <span class="metric-value" style="color:{% if performance.availability == 10 %}#2ecc71{% else %}#e74c3c{% endif %};">{{ performance.availability }}/10</span>
+            </div>
+        </div>
+
+        <hr style="border-color:#444;">
+        <div class="d-flex gap-4" style="font-size:0.85rem; color:var(--muted);">
+            <span>📊 {{ performance.total_deliveries }} deliveries</span>
+            <span>⭐ {{ performance.total_ratings }} ratings</span>
+            {% if performance.avg_rating %}<span>Avg: {{ performance.avg_rating }}★</span>{% endif %}
+        </div>
+    </div>
+
+    <!-- Recent Ratings -->
+    {% if recent_ratings %}
+    <h5 style="color:var(--pearl); font-family:'Playfair Display',serif;" class="mb-2">Recent Ratings</h5>
+    {% for r in recent_ratings %}
+    <div class="perf-card mb-2">
+        <div class="d-flex justify-content-between">
+            <div>
+                <strong style="color:var(--pearl);">{{ r.rated_by }}</strong>
+                <span style="color:var(--muted); font-size:0.8rem;"> · {{ r.created_at|timesince }} ago</span>
+            </div>
+            <div style="color:#f1c40f;">{{ r.rating }}★</div>
+        </div>
+        <div class="mt-1" style="font-size:0.85rem; color:var(--muted);">
+            {% if r.on_time %}⏱️ On time{% else %}⏱️ Late{% endif %} ·
+            📦 Condition: {{ r.item_condition }}/5
+        </div>
+        {% if r.comment %}<div class="mt-1" style="color:var(--pearl); font-size:0.85rem; font-style:italic;">"{{ r.comment }}"</div>{% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+</div>
+{% endblock %}

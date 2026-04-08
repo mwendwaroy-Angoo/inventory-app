@@ -15,7 +15,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages as django_messages
 from django.db.models import Avg, Count
 
-from .models import Feedback, Order, SupplierRelationship
+from .models import Feedback, Order, SupplierRelationship, DeliveryRating, RiderProfile
 
 
 # ── CUSTOMER → BUSINESS FEEDBACK ─────────────────────────────────────────────
@@ -155,4 +155,86 @@ def my_feedback(request):
         'customer_stats': customer_stats,
         'supplier_stats': supplier_stats,
         'tab': tab,
+    })
+
+
+# ── RIDER DELIVERY RATING ────────────────────────────────────────────────────
+
+def rate_rider(request, order_number):
+    """Rate a rider after a delivery order is completed (public, no login required)."""
+    order = get_object_or_404(Order, order_number=order_number)
+
+    if not order.rider:
+        django_messages.error(request, 'This order has no assigned rider.')
+        return redirect('track_order', order_number=order_number)
+
+    if DeliveryRating.objects.filter(order=order).exists():
+        return render(request, 'feedback/rider_already_rated.html', {'order': order})
+
+    if request.method == 'POST':
+        rating = request.POST.get('rating', '')
+        on_time = request.POST.get('on_time', '') == 'yes'
+        item_condition = request.POST.get('item_condition', '5')
+        comment = request.POST.get('comment', '').strip()
+
+        try:
+            rating_val = int(rating)
+            condition_val = int(item_condition)
+            if not 1 <= rating_val <= 5 or not 1 <= condition_val <= 5:
+                raise ValueError
+        except (ValueError, TypeError):
+            django_messages.error(request, 'Please provide valid ratings (1-5).')
+            return redirect('rate_rider', order_number=order_number)
+
+        DeliveryRating.objects.create(
+            order=order,
+            rider=order.rider,
+            rated_by=order.customer_name or 'Customer',
+            rating=rating_val,
+            on_time=on_time,
+            item_condition=condition_val,
+            comment=comment,
+        )
+        return render(request, 'feedback/rider_rating_thanks.html', {'order': order})
+
+    return render(request, 'feedback/rate_rider.html', {'order': order})
+
+
+@login_required
+def rider_performance_view(request, rider_id):
+    """View a rider's performance breakdown (owner/staff)."""
+    from .performance import score_rider
+    rider = get_object_or_404(RiderProfile, pk=rider_id)
+
+    performance = score_rider(rider)
+    recent_ratings = DeliveryRating.objects.filter(rider=rider)[:15]
+
+    return render(request, 'feedback/rider_performance.html', {
+        'rider': rider,
+        'performance': performance,
+        'recent_ratings': recent_ratings,
+    })
+
+
+@login_required
+def supplier_performance_view(request, business_id):
+    """View a supplier business's performance breakdown (owner)."""
+    from accounts.models import Business
+    from .performance import score_supplier
+
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.is_owner or not profile.business:
+        return redirect('home')
+
+    supplier = get_object_or_404(Business, pk=business_id)
+    performance = score_supplier(supplier, buyer_business=profile.business)
+
+    reviews = Feedback.objects.filter(
+        to_business=supplier, feedback_type='business_to_supplier'
+    )[:15]
+
+    return render(request, 'feedback/supplier_performance.html', {
+        'supplier': supplier,
+        'performance': performance,
+        'reviews': reviews,
     })

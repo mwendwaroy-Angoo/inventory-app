@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Thank You — Duka Mwecheche{% endblock %}
+{% block content %}
+<div style="max-width:500px; margin:3rem auto; text-align:center;">
+    <div style="font-size:4rem;">🎉</div>
+    <h4 style="color:var(--gold); font-family:'Playfair Display',serif;">Thank You!</h4>
+    <p style="color:var(--pearl);">Your delivery rating has been submitted. This helps businesses choose the best delivery partners.</p>
+    <a href="{% url 'track_order' order.order_number %}" class="btn btn-gold mt-2">Back to Order</a>
+</div>
+{% endblock %}

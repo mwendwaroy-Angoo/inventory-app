@@ -259,7 +259,11 @@
                 <a href="{% url 'shop_home' %}" class="btn btn-gold px-4 py-2" style="font-size:1rem;">🛒 Browse Shop</a>
                 <a href="{% url 'login' %}" class="btn btn-primary px-4 py-2">Login</a>
                 <a href="{% url 'signup' %}" class="btn btn-secondary px-4 py-2">Register Your Business</a>
+                <a href="{% url 'rider_signup' %}" class="btn px-4 py-2" style="background:linear-gradient(135deg,#27ae60,#2ecc71);color:white;">🚶 Join as Rider</a>
             </div>
+            <p style="color:var(--muted); margin-top:1.5rem; font-size:0.85rem;">
+                Already a business? <a href="{% url 'login' %}" style="color:var(--gold);">Log in</a> to apply as a supplier, browse procurement requests, and bid for contracts.
+            </p>
         </div>
     </section>
 
@@ -344,6 +348,41 @@
                 <div style="width:60px; height:60px; border-radius:50%; background:var(--success); color:white; font-family:'Playfair Display',serif; font-size:1.5rem; font-weight:700; display:flex; align-items:center; justify-content:center; margin:0 auto 1rem;">3</div>
                 <h5 style="color:var(--pearl);">Start Selling</h5>
                 <p style="color:var(--muted); font-size:0.85rem;">Your shop goes live. Customers browse, order, and pay via M-Pesa. Track everything in real time.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- BECOME A SUPPLIER / RIDER -->
+    <section id="join" style="padding:3rem 0;">
+        <div class="text-center mb-4">
+            <h2 style="font-family:'Playfair Display',serif; color:var(--gold); font-size:1.8rem;">Join Our Ecosystem</h2>
+            <hr class="gold-divider" style="max-width:120px; margin:1rem auto;">
+            <p style="color:var(--muted); max-width:600px; margin:0 auto;">Whether you supply goods or deliver them, Duka Mwecheche connects you with businesses across Kenya.</p>
+        </div>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div style="background:var(--onyx-card); border:1px solid #333; border-top:3px solid var(--gold); border-radius:10px; padding:2rem; text-align:center; height:100%;">
+                    <div style="font-size:2.5rem; margin-bottom:1rem;">📦</div>
+                    <h5 style="color:var(--gold); font-family:'Playfair Display',serif;">Become a Supplier</h5>
+                    <p style="color:var(--muted); font-size:0.85rem;">Register your business and apply to supply other businesses. Browse open procurement requests and submit competitive bids.</p>
+                    <a href="{% url 'signup' %}" class="btn btn-gold btn-sm mt-2">Register Business</a>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div style="background:var(--onyx-card); border:1px solid #333; border-top:3px solid #2ecc71; border-radius:10px; padding:2rem; text-align:center; height:100%;">
+                    <div style="font-size:2.5rem; margin-bottom:1rem;">🏍️</div>
+                    <h5 style="color:#2ecc71; font-family:'Playfair Display',serif;">Ride with Us</h5>
+                    <p style="color:var(--muted); font-size:0.85rem;">Motorcycle, bicycle, car, or Footsubishi (Miguu Niponye) — earn money delivering orders. Get rated and build your reputation.</p>
+                    <a href="{% url 'rider_signup' %}" class="btn btn-sm mt-2" style="background:#2ecc71; color:white;">Join as Rider</a>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div style="background:var(--onyx-card); border:1px solid #333; border-top:3px solid var(--raspberry); border-radius:10px; padding:2rem; text-align:center; height:100%;">
+                    <div style="font-size:2.5rem; margin-bottom:1rem;">⭐</div>
+                    <h5 style="color:var(--raspberry); font-family:'Playfair Display',serif;">Performance-Based</h5>
+                    <p style="color:var(--muted); font-size:0.85rem;">Our smart scoring system ranks suppliers and riders by rating, reliability, proximity, and speed. The best performers get recommended first.</p>
+                    <a href="{% url 'signup' %}" class="btn btn-sm mt-2" style="background:var(--raspberry); color:white;">Get Started</a>
+                </div>
             </div>
         </div>
     </section>

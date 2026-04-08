@@ -271,10 +271,10 @@ class RiderSignupForm(forms.Form):
     )
     vehicle_type = forms.ChoiceField(
         choices=[
-            ('motorcycle', 'Motorcycle'),
-            ('bicycle', 'Bicycle'),
-            ('car', 'Car'),
-            ('foot', 'On Foot'),
+            ('motorcycle', 'Motorcycle 🏍️'),
+            ('bicycle', 'Bicycle 🚲'),
+            ('car', 'Car 🚗'),
+            ('footsubishi', 'Footsubishi (Miguu Niponye) 🚶'),
         ],
     )
     password1 = forms.CharField(

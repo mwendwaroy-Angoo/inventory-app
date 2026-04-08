@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     Store, Item, Transaction, Customer, BusinessType, County, SubCounty, Ward,
     Order, OrderLine, Payment, RiderProfile, SupplierRelationship, Notification,
-    ProcurementRequest, SupplierBid, SupplierApplication, Feedback,
+    ProcurementRequest, SupplierBid, SupplierApplication, Feedback, DeliveryRating,
 )
 
 
@@ -149,3 +149,10 @@ class FeedbackAdmin(admin.ModelAdmin):
     list_display = ('feedback_type', 'from_business', 'to_business', 'customer_name', 'rating', 'created_at')
     list_filter = ('feedback_type', 'rating')
     search_fields = ('customer_name', 'comment')
+
+
+@admin.register(DeliveryRating)
+class DeliveryRatingAdmin(admin.ModelAdmin):
+    list_display = ('rider', 'order', 'rating', 'on_time', 'item_condition', 'created_at')
+    list_filter = ('on_time', 'rating')
+    search_fields = ('rated_by', 'comment')

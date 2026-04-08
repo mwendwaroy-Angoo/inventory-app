@@ -311,15 +311,17 @@ class Payment(models.Model):
 # ────────────────────────────────────────────────
 
 class RiderProfile(models.Model):
+    VEHICLE_CHOICES = [
+        ('motorcycle', 'Motorcycle 🏍️'),
+        ('bicycle', 'Bicycle 🚲'),
+        ('car', 'Car 🚗'),
+        ('footsubishi', 'Footsubishi (Miguu Niponye) 🚶'),
+    ]
+
     user = models.OneToOneField('auth.User', on_delete=models.CASCADE, related_name='rider_profile')
     phone = models.CharField(max_length=20)
     county = models.ForeignKey(County, on_delete=models.SET_NULL, null=True, blank=True)
-    vehicle_type = models.CharField(max_length=30, choices=[
-        ('motorcycle', 'Motorcycle'),
-        ('bicycle', 'Bicycle'),
-        ('car', 'Car'),
-        ('foot', 'On Foot'),
-    ], default='motorcycle')
+    vehicle_type = models.CharField(max_length=30, choices=VEHICLE_CHOICES, default='motorcycle')
     is_available = models.BooleanField(default=True)
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
@@ -472,3 +474,26 @@ class Feedback(models.Model):
         if self.feedback_type == 'customer_to_business':
             return f"{self.customer_name} → {self.to_business} ({self.rating}★)"
         return f"{self.from_business} → {self.to_business} ({self.rating}★)"
+
+
+# ────────────────────────────────────────────────
+# DELIVERY RATING (per-delivery rider feedback)
+# ────────────────────────────────────────────────
+
+class DeliveryRating(models.Model):
+    """Rating for a rider on a specific delivery."""
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='delivery_rating')
+    rider = models.ForeignKey(RiderProfile, on_delete=models.CASCADE, related_name='ratings')
+    rated_by = models.CharField(max_length=200, help_text='Customer name or business owner')
+    rating = models.PositiveSmallIntegerField(help_text='1-5 stars')
+    on_time = models.BooleanField(default=True, help_text='Was delivery on time?')
+    item_condition = models.PositiveSmallIntegerField(
+        default=5, help_text='1-5 condition of items on arrival')
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.rider} — {self.rating}★ (Order {self.order.order_number})"

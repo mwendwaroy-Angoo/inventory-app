@@ -520,7 +520,10 @@ def review_application(request, app_id):
             django_messages.info(request, f'{app.applicant.name} application rejected.')
         return redirect('supplier_applications')
 
-    # Calculate applicant's average rating
+    # Calculate applicant's performance score
+    from .performance import score_supplier
+    supplier_perf = score_supplier(app.applicant, buyer_business=profile.business)
+
     avg_rating = Feedback.objects.filter(
         to_business=app.applicant,
         feedback_type='business_to_supplier',
@@ -529,4 +532,63 @@ def review_application(request, app_id):
     return render(request, 'procurement/review_application.html', {
         'app': app,
         'avg_rating': avg_rating,
+        'supplier_perf': supplier_perf,
+    })
+
+
+# ── SUPPLIER: BROWSE BUSINESSES TO SUPPLY ────────────────────────────────────
+
+@login_required
+def browse_businesses(request):
+    """
+    A registered business can browse other businesses on the platform
+    and apply to become their supplier.
+    """
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.business:
+        return redirect('home')
+
+    businesses = Business.objects.exclude(pk=profile.business.pk).select_related(
+        'business_type', 'county'
+    )
+
+    query = request.GET.get('q', '').strip()
+    category_id = request.GET.get('category', '')
+    county_id = request.GET.get('county', '')
+
+    if query:
+        businesses = businesses.filter(
+            Q(name__icontains=query) | Q(business_type__name__icontains=query)
+        )
+    if category_id:
+        businesses = businesses.filter(business_type_id=category_id)
+    if county_id:
+        businesses = businesses.filter(county_id=county_id)
+
+    # Mark which businesses the user has already applied to
+    applied_ids = set(
+        SupplierApplication.objects.filter(
+            applicant=profile.business
+        ).values_list('target_business_id', flat=True)
+    )
+    # Mark which are already supplier relationships
+    supplier_ids = set(
+        SupplierRelationship.objects.filter(
+            supplier=profile.business
+        ).values_list('business_id', flat=True)
+    )
+
+    from core.models import County
+    categories = BusinessType.objects.all()
+    counties = County.objects.all()
+
+    return render(request, 'procurement/browse_businesses.html', {
+        'businesses': businesses,
+        'categories': categories,
+        'counties': counties,
+        'query': query,
+        'selected_category': category_id,
+        'selected_county': county_id,
+        'applied_ids': applied_ids,
+        'supplier_ids': supplier_ids,
     })

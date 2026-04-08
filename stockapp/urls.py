@@ -22,10 +22,12 @@ from core.procurement_views import (
     evaluate_bids, award_bid,
     procurement_browse, submit_bid, my_bids,
     apply_as_supplier, supplier_applications, review_application,
+    browse_businesses,
 )
 from core.feedback_views import (
     leave_customer_feedback, business_reviews,
     supplier_feedback, my_feedback,
+    rate_rider, rider_performance_view, supplier_performance_view,
 )
 from core.whatsapp_bot import whatsapp_webhook
 from core.analytics_views import analytics_dashboard, analytics_api
@@ -101,12 +103,16 @@ urlpatterns = [
     path('procurement/apply/<int:business_id>/', apply_as_supplier, name='apply_as_supplier'),
     path('procurement/applications/', supplier_applications, name='supplier_applications'),
     path('procurement/applications/<int:app_id>/review/', review_application, name='review_application'),
+    path('procurement/businesses/', browse_businesses, name='browse_businesses'),
 
     # ── Feedback & Reviews ──
     path('feedback/order/<str:order_number>/', leave_customer_feedback, name='leave_customer_feedback'),
     path('feedback/business/<int:business_id>/', business_reviews, name='business_reviews'),
     path('feedback/supplier/<int:link_id>/', supplier_feedback, name='supplier_feedback'),
     path('feedback/', my_feedback, name='my_feedback'),
+    path('feedback/rider/<str:order_number>/', rate_rider, name='rate_rider'),
+    path('feedback/rider-performance/<int:rider_id>/', rider_performance_view, name='rider_performance'),
+    path('feedback/supplier-performance/<int:business_id>/', supplier_performance_view, name='supplier_performance'),
 
     # ── WhatsApp Bot ──
     path('whatsapp/webhook/', whatsapp_webhook, name='whatsapp_webhook'),

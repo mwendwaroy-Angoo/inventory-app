@@ -379,13 +379,14 @@ def fulfillment_list(request):
         orders = orders.filter(delivery_mode=delivery_filter)
 
     from .models import RiderProfile
-    available_riders = RiderProfile.objects.filter(is_available=True)
+    from .performance import get_ranked_riders
+    ranked_riders = get_ranked_riders(business=profile.business)
 
     return render(request, 'core/fulfillment_list.html', {
         'orders': orders,
         'status_filter': status_filter,
         'delivery_filter': delivery_filter,
-        'riders': available_riders,
+        'ranked_riders': ranked_riders,
     })
 
 

@@ -287,6 +287,8 @@ def rider_dashboard(request):
         return redirect('home')
 
     from core.models import Order
+    from core.performance import score_rider
+
     active_orders = Order.objects.filter(
         rider=rider,
         status__in=['confirmed', 'paid', 'ready'],
@@ -298,10 +300,13 @@ def rider_dashboard(request):
         delivery_mode='delivery',
     )[:20]
 
+    performance = score_rider(rider)
+
     return render(request, 'accounts/rider_dashboard.html', {
         'rider': rider,
         'active_orders': active_orders,
         'completed_orders': completed_orders,
+        'performance': performance,
     })
 
 

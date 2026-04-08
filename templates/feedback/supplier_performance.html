@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Supplier Performance — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .perf-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.5rem;
+    }
+    .score-bar {
+        height: 8px;
+        border-radius: 4px;
+        background: #333;
+        overflow: hidden;
+    }
+    .score-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.5s;
+    }
+    .metric { margin-bottom: 1rem; }
+    .metric-label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem; }
+    .metric-value { font-size: 1.1rem; font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:750px;">
+    <div class="d-flex align-items-center gap-3 mb-3">
+        <div style="font-size:2.5rem;">📦</div>
+        <div>
+            <h4 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0;">
+                {{ supplier.name }}
+            </h4>
+            <span style="color:var(--muted); font-size:0.85rem;">{{ supplier.business_type|default:"General" }} · {{ supplier.county|default:"—" }}</span>
+        </div>
+    </div>
+
+    <!-- Score Overview -->
+    <div class="perf-card mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 style="color:var(--pearl); margin:0;">Supplier Performance Score</h5>
+            <div style="font-family:'Playfair Display',serif; font-size:2rem; color:{% if performance.total >= 70 %}#2ecc71{% elif performance.total >= 40 %}#f1c40f{% else %}#e74c3c{% endif %};">
+                {{ performance.total }}<small style="font-size:0.8rem; color:var(--muted);">/100</small>
+            </div>
+        </div>
+
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">⭐ Feedback Rating (30%)</span>
+                <span class="metric-value" style="color:var(--gold);">{{ performance.rating }}/30</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ performance.rating|floatformat:0 }}%; max-width:100%; background:var(--gold);"></div></div>
+        </div>
+
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">🏆 Bid Win Rate (20%)</span>
+                <span class="metric-value" style="color:#2ecc71;">{{ performance.bid_win_rate }}/20</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ performance.bid_win_rate|floatformat:0 }}%; max-width:100%; background:#2ecc71;"></div></div>
+        </div>
+
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">💰 Price Competitiveness (20%)</span>
+                <span class="metric-value" style="color:#3498db;">{{ performance.price_competitiveness }}/20</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ performance.price_competitiveness|floatformat:0 }}%; max-width:100%; background:#3498db;"></div></div>
+        </div>
+
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">📍 Proximity (15%)</span>
+                <span class="metric-value" style="color:#9b59b6;">{{ performance.proximity }}/15</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ performance.proximity|floatformat:0 }}%; max-width:100%; background:#9b59b6;"></div></div>
+        </div>
+
+        <div class="metric">
+            <div class="d-flex justify-content-between">
+                <span class="metric-label">⚡ Response Speed (15%)</span>
+                <span class="metric-value" style="color:#e67e22;">{{ performance.response_speed }}/15</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ performance.response_speed|floatformat:0 }}%; max-width:100%; background:#e67e22;"></div></div>
+        </div>
+
+        <hr style="border-color:#444;">
+        <div class="d-flex gap-4" style="font-size:0.85rem; color:var(--muted);">
+            <span>📊 {{ performance.total_bids }} bids submitted</span>
+            <span>🏆 {{ performance.won_bids }} won</span>
+            <span>⭐ {{ performance.total_reviews }} reviews</span>
+            {% if performance.avg_rating %}<span>Avg: {{ performance.avg_rating }}★</span>{% endif %}
+        </div>
+    </div>
+
+    <!-- Recent Reviews -->
+    {% if reviews %}
+    <h5 style="color:var(--pearl); font-family:'Playfair Display',serif;" class="mb-2">Recent Reviews</h5>
+    {% for r in reviews %}
+    <div class="perf-card mb-2">
+        <div class="d-flex justify-content-between">
+            <strong style="color:var(--pearl);">{{ r.from_business|default:"Anonymous" }}</strong>
+            <span style="color:#f1c40f;">{{ r.rating }}★</span>
+        </div>
+        {% if r.comment %}<div class="mt-1" style="color:var(--pearl); font-size:0.85rem; font-style:italic;">"{{ r.comment }}"</div>{% endif %}
+        <div class="mt-1" style="font-size:0.75rem; color:var(--muted);">{{ r.created_at|timesince }} ago</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <div class="mt-3">
+        <a href="{% url 'supplier_list' %}" class="btn btn-secondary btn-sm">← Back to Suppliers</a>
+    </div>
+</div>
+{% endblock %}

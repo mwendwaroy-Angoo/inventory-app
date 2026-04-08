@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Already Rated — Duka Mwecheche{% endblock %}
+{% block content %}
+<div style="max-width:500px; margin:3rem auto; text-align:center;">
+    <div style="font-size:3rem;">✅</div>
+    <h5 style="color:var(--pearl);">You've already rated this delivery.</h5>
+    <a href="{% url 'track_order' order.order_number %}" class="btn btn-secondary mt-2">Back to Order</a>
+</div>
+{% endblock %}

@@ -102,18 +102,19 @@
         </select>
 
         {% if order.delivery_mode == 'delivery' %}
-        <!-- Rider assignment -->
+        <!-- Rider assignment (ranked by performance) -->
         <select class="form-select form-select-sm" style="width:auto; font-size:0.8rem;"
                 onchange="assignRider({{ order.id }}, this.value)" id="riderSel{{ order.id }}">
             <option value="">Assign rider...</option>
-            {% for r in riders %}
-            <option value="{{ r.id }}" {% if order.rider_id == r.id %}selected{% endif %}>
-                {{ r.user.get_full_name|default:r.user.username }} ({{ r.get_vehicle_type_display }})
+            {% for entry in ranked_riders %}
+            <option value="{{ entry.rider.id }}" {% if order.rider_id == entry.rider.id %}selected{% endif %}>
+                ⭐{{ entry.score }} {{ entry.rider.user.get_full_name|default:entry.rider.user.username }} ({{ entry.rider.get_vehicle_type_display }})
             </option>
             {% endfor %}
         </select>
         {% if order.rider %}
         <small style="color:#2ecc71;">🏍️ {{ order.rider }}</small>
+        <a href="{% url 'rider_performance' order.rider.id %}" style="font-size:0.75rem; color:var(--gold); text-decoration:none;" class="ms-1">📊 Stats</a>
         {% endif %}
         {% endif %}
     </div>

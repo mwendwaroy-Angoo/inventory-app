@@ -89,6 +89,32 @@
     </div>
 </div>
 
+<!-- Performance Score -->
+{% if performance %}
+<div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.2rem; margin-bottom:1.5rem;">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 style="color:var(--pearl); margin:0;">📊 Your Performance Score</h6>
+        <span style="font-family:'Playfair Display',serif; font-size:1.5rem; color:{% if performance.total >= 70 %}#2ecc71{% elif performance.total >= 40 %}#f1c40f{% else %}#e74c3c{% endif %};">
+            {{ performance.total }}<small style="font-size:0.7rem; color:var(--muted);">/100</small>
+        </span>
+    </div>
+    <div class="d-flex gap-3 flex-wrap" style="font-size:0.8rem; color:var(--muted);">
+        <span>⭐ Rating: {{ performance.rating }}/35</span>
+        <span>⏱️ On-time: {{ performance.on_time }}/25</span>
+        <span>📦 Condition: {{ performance.condition }}/15</span>
+        <span>🚀 Experience: {{ performance.experience }}/15</span>
+    </div>
+    {% if performance.total_ratings > 0 %}
+    <div class="mt-1" style="font-size:0.75rem; color:var(--muted);">
+        Based on {{ performance.total_ratings }} ratings · {{ performance.total_deliveries }} total deliveries
+        {% if performance.avg_rating %} · Avg: {{ performance.avg_rating }}★{% endif %}
+    </div>
+    {% else %}
+    <div class="mt-1" style="font-size:0.75rem; color:var(--muted);">Complete deliveries and get rated to build your score!</div>
+    {% endif %}
+</div>
+{% endif %}
+
 <!-- Active Orders -->
 <h5 style="font-family:'Playfair Display',serif; color:var(--gold);">📦 Active Deliveries</h5>
 {% if active_orders %}
