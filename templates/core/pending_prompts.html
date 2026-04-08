@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block title %}Payment Prompts — Duka Mwecheche{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h2 class="page-title mb-0">💰 Payment Prompts</h2>
+                <p class="text-muted mb-0">Confirm what was sold when M-Pesa payments come in</p>
+            </div>
+            <span class="badge bg-warning" style="font-size:0.9rem;" id="pending-count">
+                {{ prompts|length }} pending
+            </span>
+        </div>
+
+        {% if prompts %}
+        <div class="row" id="prompts-container">
+            {% for p in prompts %}
+            <div class="col-md-6 mb-3" id="prompt-card-{{ p.id }}">
+                <div class="card" style="border-left: 3px solid var(--gold);">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <h5 style="color:var(--gold); margin-bottom:0.2rem;">
+                                    KES {{ p.amount|floatformat:0 }}
+                                </h5>
+                                <small class="text-muted">
+                                    📞 {{ p.phone|default:"Unknown" }}
+                                    {% if p.payment_channel %}
+                                        · via {{ p.payment_channel|upper }}
+                                    {% endif %}
+                                </small>
+                            </div>
+                            <small class="text-muted">{{ p.created_at|timesince }} ago</small>
+                        </div>
+
+                        {% if p.mpesa_receipt %}
+                        <div class="mb-2">
+                            <small style="color:#888;">Receipt: <code style="color:var(--gold-light);">{{ p.mpesa_receipt }}</code></small>
+                        </div>
+                        {% endif %}
+
+                        <!-- Confirm Form -->
+                        <form class="confirm-form" data-prompt-id="{{ p.id }}">
+                            {% csrf_token %}
+                            <div class="mb-2">
+                                <label class="form-label" style="font-size:0.8rem;">What was sold?</label>
+                                <select name="item_id" class="form-select form-select-sm" required>
+                                    <option value="">-- Select Item --</option>
+                                    {% for item in items %}
+                                    <option value="{{ item.id }}"
+                                            data-price="{{ item.selling_price|default:0 }}">
+                                        {{ item.description }}
+                                        {% if item.selling_price %}(KES {{ item.selling_price|floatformat:0 }}){% endif %}
+                                        — Stock: {{ item.current_balance }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="mb-2">
+                                <label class="form-label" style="font-size:0.8rem;">Quantity</label>
+                                <input type="number" name="qty" value="1" min="1" class="form-control form-control-sm"
+                                       style="width:80px;" required>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-gold btn-sm flex-grow-1">
+                                    ✅ Confirm Sale
+                                </button>
+                                <button type="button" class="btn btn-outline-danger btn-sm dismiss-btn"
+                                        data-prompt-id="{{ p.id }}">
+                                    ✕ Not a Sale
+                                </button>
+                            </div>
+                        </form>
+
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <div style="font-size:3rem; margin-bottom:1rem;">✨</div>
+                <h5 style="color:var(--gold);">No Pending Payments</h5>
+                <p class="text-muted">When customers pay via your Till, Paybill, or Pochi la Biashara,<br>
+                payment prompts will appear here for you to log the sale.</p>
+                <a href="{% url 'payment_settings' %}" class="btn btn-gold btn-sm mt-2">⚙️ Payment Settings</a>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if confirmed %}
+        <hr class="gold-divider">
+        <h5 style="color:var(--gold-light);">✅ Recently Confirmed</h5>
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Amount</th>
+                        <th>From</th>
+                        <th>Item Sold</th>
+                        <th>Confirmed By</th>
+                        <th>When</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in confirmed %}
+                    <tr>
+                        <td style="color:var(--success);">KES {{ c.amount|floatformat:0 }}</td>
+                        <td>{{ c.phone|default:"-" }}</td>
+                        <td>{{ c.transaction.item.description|default:"-" }}</td>
+                        <td>{{ c.confirmed_by.get_full_name|default:c.confirmed_by.username }}</td>
+                        <td><small class="text-muted">{{ c.confirmed_at|timesince }} ago</small></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ── Auto-calculate quantity from amount ──
+document.querySelectorAll('.confirm-form select[name="item_id"]').forEach(sel => {
+    sel.addEventListener('change', function() {
+        const opt = this.options[this.selectedIndex];
+        const price = parseFloat(opt.dataset.price || 0);
+        const form = this.closest('form');
+        const amountText = form.closest('.card-body').querySelector('h5').textContent;
+        const amount = parseFloat(amountText.replace(/[^0-9.]/g, ''));
+        const qtyInput = form.querySelector('input[name="qty"]');
+        if (price > 0 && amount > 0) {
+            qtyInput.value = Math.max(1, Math.round(amount / price));
+        }
+    });
+});
+
+// ── Confirm a prompt via AJAX ──
+document.querySelectorAll('.confirm-form').forEach(form => {
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const promptId = this.dataset.promptId;
+        const formData = new FormData(this);
+
+        fetch(`/mpesa/prompt/${promptId}/confirm/`, {
+            method: 'POST',
+            body: formData,
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                const card = document.getElementById(`prompt-card-${promptId}`);
+                card.innerHTML = `<div class="card" style="border-left:3px solid var(--success);">
+                    <div class="card-body text-center py-3">
+                        <span style="color:var(--success); font-size:1.5rem;">✅</span><br>
+                        <small style="color:var(--success);">${data.message}</small>
+                    </div></div>`;
+                updatePendingCount();
+            } else {
+                alert(data.error || 'Something went wrong.');
+            }
+        })
+        .catch(() => alert('Network error. Try again.'));
+    });
+});
+
+// ── Dismiss a prompt via AJAX ──
+document.querySelectorAll('.dismiss-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        if (!confirm('Dismiss this payment? (It was not a sale)')) return;
+        const promptId = this.dataset.promptId;
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+        fetch(`/mpesa/prompt/${promptId}/dismiss/`, {
+            method: 'POST',
+            headers: {'X-CSRFToken': csrfToken, 'Content-Type': 'application/json'},
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById(`prompt-card-${promptId}`).remove();
+                updatePendingCount();
+            } else {
+                alert(data.error || 'Something went wrong.');
+            }
+        })
+        .catch(() => alert('Network error. Try again.'));
+    });
+});
+
+function updatePendingCount() {
+    const remaining = document.querySelectorAll('.confirm-form').length;
+    document.getElementById('pending-count').textContent = remaining + ' pending';
+}
+
+// ── Auto-refresh every 30s to catch new payments ──
+setInterval(() => { location.reload(); }, 30000);
+</script>
+{% endblock %}

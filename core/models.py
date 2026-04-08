@@ -320,6 +320,7 @@ class RiderProfile(models.Model):
 
     user = models.OneToOneField('auth.User', on_delete=models.CASCADE, related_name='rider_profile')
     phone = models.CharField(max_length=20)
+    mpesa_phone = models.CharField(max_length=20, blank=True, help_text='M-Pesa phone number for receiving delivery payments')
     county = models.ForeignKey(County, on_delete=models.SET_NULL, null=True, blank=True)
     vehicle_type = models.CharField(max_length=30, choices=VEHICLE_CHOICES, default='motorcycle')
     is_available = models.BooleanField(default=True)
@@ -497,3 +498,36 @@ class DeliveryRating(models.Model):
 
     def __str__(self):
         return f"{self.rider} — {self.rating}★ (Order {self.order.order_number})"
+
+
+# ────────────────────────────────────────────────
+# PENDING TRANSACTION PROMPT (auto-created on incoming payment)
+# ────────────────────────────────────────────────
+
+class PendingTransactionPrompt(models.Model):
+    """When a customer pays via Till/Paybill/Pochi, this prompt
+    asks the staff/owner to log what was sold."""
+    STATUS_CHOICES = [
+        ('pending', 'Pending — Awaiting Confirmation'),
+        ('confirmed', 'Confirmed — Transaction Logged'),
+        ('dismissed', 'Dismissed'),
+    ]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='transaction_prompts')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    phone = models.CharField(max_length=20, blank=True, help_text='Payer phone number')
+    mpesa_receipt = models.CharField(max_length=30, blank=True, db_index=True)
+    payment_channel = models.CharField(max_length=15, blank=True, help_text='till, paybill, pochi, phone')
+    transaction = models.ForeignKey(Transaction, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name='prompt', help_text='Linked transaction once confirmed')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='pending')
+    confirmed_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name='confirmed_prompts')
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"KES {self.amount:,.0f} from {self.phone} — {self.status}"

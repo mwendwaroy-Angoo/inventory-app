@@ -3,6 +3,7 @@ from .models import (
     Store, Item, Transaction, Customer, BusinessType, County, SubCounty, Ward,
     Order, OrderLine, Payment, RiderProfile, SupplierRelationship, Notification,
     ProcurementRequest, SupplierBid, SupplierApplication, Feedback, DeliveryRating,
+    PendingTransactionPrompt,
 )
 
 
@@ -156,3 +157,10 @@ class DeliveryRatingAdmin(admin.ModelAdmin):
     list_display = ('rider', 'order', 'rating', 'on_time', 'item_condition', 'created_at')
     list_filter = ('on_time', 'rating')
     search_fields = ('rated_by', 'comment')
+
+
+@admin.register(PendingTransactionPrompt)
+class PendingTransactionPromptAdmin(admin.ModelAdmin):
+    list_display = ('business', 'amount', 'phone', 'payment_channel', 'status', 'mpesa_receipt', 'created_at')
+    list_filter = ('status', 'payment_channel')
+    search_fields = ('phone', 'mpesa_receipt', 'business__name')

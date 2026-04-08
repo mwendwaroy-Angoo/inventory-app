@@ -36,6 +36,22 @@ class Business(models.Model):
     delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Flat delivery fee in KES')
     min_order_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Minimum order value in KES')
 
+    # ── Payment Receiving Settings ──
+    PAYMENT_CHANNEL_CHOICES = [
+        ('till', 'Till Number (Buy Goods)'),
+        ('paybill', 'Paybill'),
+        ('pochi', 'Pochi la Biashara'),
+        ('phone', 'Personal M-Pesa'),
+    ]
+    mpesa_till = models.CharField(max_length=20, blank=True, help_text='Lipa Na M-Pesa Till Number (Buy Goods)')
+    mpesa_paybill = models.CharField(max_length=20, blank=True, help_text='Paybill Business Number')
+    mpesa_paybill_account = models.CharField(max_length=50, blank=True, help_text='Paybill Account Number')
+    mpesa_pochi = models.CharField(max_length=20, blank=True, help_text='Pochi la Biashara phone number')
+    mpesa_phone = models.CharField(max_length=20, blank=True, help_text='Personal M-Pesa phone number for receiving')
+    preferred_payment_channel = models.CharField(
+        max_length=10, choices=PAYMENT_CHANNEL_CHOICES, blank=True,
+        help_text='Default payment channel customers should use')
+
     def __str__(self):
         return self.name
 

@@ -3,7 +3,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm, RiderSignupForm
+from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm, RiderSignupForm, PaymentSettingsForm
 from .models import Business, UserProfile
 from django.http import JsonResponse
 from core.models import SubCounty, Ward
@@ -318,3 +318,35 @@ def rider_toggle_availability(request):
     rider.is_available = not rider.is_available
     rider.save(update_fields=['is_available'])
     return JsonResponse({'is_available': rider.is_available})
+
+
+@login_required
+def payment_settings(request):
+    """Business owner configures M-Pesa receiving channels (Till/Paybill/Pochi/Phone)."""
+    try:
+        user_profile = request.user.userprofile
+    except UserProfile.DoesNotExist:
+        return redirect('home')
+
+    if not user_profile.is_owner:
+        messages.error(request, "Only business owners can manage payment settings.")
+        return redirect('home')
+
+    business = user_profile.business
+    if not business:
+        messages.error(request, "No business found.")
+        return redirect('home')
+
+    if request.method == 'POST':
+        form = PaymentSettingsForm(request.POST, instance=business)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Payment settings updated successfully.")
+            return redirect('payment_settings')
+    else:
+        form = PaymentSettingsForm(instance=business)
+
+    return render(request, 'accounts/payment_settings.html', {
+        'form': form,
+        'business': business,
+    })

@@ -176,6 +176,42 @@ class BusinessEditForm(forms.ModelForm):
         return name
 
 
+class PaymentSettingsForm(forms.ModelForm):
+    """Form for business owners to configure their M-Pesa payment receiving details."""
+    class Meta:
+        model = Business
+        fields = [
+            'mpesa_till', 'mpesa_paybill', 'mpesa_paybill_account',
+            'mpesa_pochi', 'mpesa_phone', 'preferred_payment_channel',
+        ]
+        widgets = {
+            'mpesa_till': forms.TextInput(attrs={'placeholder': 'e.g. 5XXXXXX'}),
+            'mpesa_paybill': forms.TextInput(attrs={'placeholder': 'e.g. 4XXXXXX'}),
+            'mpesa_paybill_account': forms.TextInput(attrs={'placeholder': 'e.g. Account Name'}),
+            'mpesa_pochi': forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'}),
+            'mpesa_phone': forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            field.widget.attrs['class'] = 'form-control'
+        self.fields['preferred_payment_channel'].empty_label = '-- Select Preferred Channel --'
+
+    def clean(self):
+        cleaned_data = super().clean()
+        channel = cleaned_data.get('preferred_payment_channel')
+        if channel == 'till' and not cleaned_data.get('mpesa_till'):
+            self.add_error('mpesa_till', 'Till number is required for this channel.')
+        elif channel == 'paybill' and not cleaned_data.get('mpesa_paybill'):
+            self.add_error('mpesa_paybill', 'Paybill number is required for this channel.')
+        elif channel == 'pochi' and not cleaned_data.get('mpesa_pochi'):
+            self.add_error('mpesa_pochi', 'Pochi la Biashara phone is required for this channel.')
+        elif channel == 'phone' and not cleaned_data.get('mpesa_phone'):
+            self.add_error('mpesa_phone', 'M-Pesa phone number is required for this channel.')
+        return cleaned_data
+
+
 class ResetStaffPasswordForm(forms.Form):
     password1 = forms.CharField(
         widget=forms.PasswordInput(attrs={'placeholder': 'New password'}),

@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% load django_bootstrap5 %}
+
+{% block title %}Payment Settings — {{ business.name }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <h2 class="page-title mb-1">💳 Payment Settings</h2>
+        <p class="text-muted mb-4">Configure how customers can pay your business via M-Pesa</p>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">{{ business.name }} — Receiving Channels</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+
+                    <!-- Preferred Channel -->
+                    <div class="mb-4">
+                        <label class="form-label">📌 Preferred Payment Channel</label>
+                        {{ form.preferred_payment_channel }}
+                        {% if form.preferred_payment_channel.errors %}
+                            <div class="text-danger small mt-1">{{ form.preferred_payment_channel.errors.0 }}</div>
+                        {% endif %}
+                        <small class="text-muted d-block mt-1">This is what customers will see as the default way to pay you.</small>
+                    </div>
+
+                    <hr class="gold-divider">
+
+                    <!-- Till Number -->
+                    <div class="mb-3">
+                        <label class="form-label">🏪 Till Number (Buy Goods)</label>
+                        {{ form.mpesa_till }}
+                        {% if form.mpesa_till.errors %}
+                            <div class="text-danger small mt-1">{{ form.mpesa_till.errors.0 }}</div>
+                        {% endif %}
+                        <small class="text-muted d-block mt-1">Customer selects "Lipa Na M-Pesa" → "Buy Goods" and enters this number.</small>
+                    </div>
+
+                    <hr style="border-color:#333;">
+
+                    <!-- Paybill -->
+                    <div class="mb-3">
+                        <label class="form-label">🏦 Paybill Number</label>
+                        {{ form.mpesa_paybill }}
+                        {% if form.mpesa_paybill.errors %}
+                            <div class="text-danger small mt-1">{{ form.mpesa_paybill.errors.0 }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">🔢 Paybill Account Number</label>
+                        {{ form.mpesa_paybill_account }}
+                        {% if form.mpesa_paybill_account.errors %}
+                            <div class="text-danger small mt-1">{{ form.mpesa_paybill_account.errors.0 }}</div>
+                        {% endif %}
+                        <small class="text-muted d-block mt-1">Customer enters this as the Account Number when paying to your Paybill.</small>
+                    </div>
+
+                    <hr style="border-color:#333;">
+
+                    <!-- Pochi la Biashara -->
+                    <div class="mb-3">
+                        <label class="form-label">📱 Pochi la Biashara</label>
+                        {{ form.mpesa_pochi }}
+                        {% if form.mpesa_pochi.errors %}
+                            <div class="text-danger small mt-1">{{ form.mpesa_pochi.errors.0 }}</div>
+                        {% endif %}
+                        <small class="text-muted d-block mt-1">Your Pochi la Biashara phone number. Customers pay by sending money to this number.</small>
+                    </div>
+
+                    <hr style="border-color:#333;">
+
+                    <!-- Personal M-Pesa Phone -->
+                    <div class="mb-3">
+                        <label class="form-label">📞 Personal M-Pesa Phone</label>
+                        {{ form.mpesa_phone }}
+                        {% if form.mpesa_phone.errors %}
+                            <div class="text-danger small mt-1">{{ form.mpesa_phone.errors.0 }}</div>
+                        {% endif %}
+                        <small class="text-muted d-block mt-1">Fallback personal number. Customers can "Send Money" to this number.</small>
+                    </div>
+
+                    <hr class="gold-divider">
+
+                    <div class="d-flex justify-content-between align-items-center">
+                        <a href="{% url 'edit_business' %}" class="btn btn-secondary">← Back to Settings</a>
+                        <button type="submit" class="btn btn-gold px-4">💾 Save Payment Settings</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Current Status Summary -->
+        <div class="card">
+            <div class="card-body">
+                <h6 style="color:var(--gold);">📊 Current Payment Channels</h6>
+                <div class="row mt-3">
+                    <div class="col-6 col-md-3 mb-3">
+                        <div class="text-center p-2" style="background:#222; border-radius:8px;">
+                            <div style="font-size:1.5rem;">🏪</div>
+                            <small class="text-muted">Till</small><br>
+                            {% if business.mpesa_till %}
+                                <span class="badge bg-success">{{ business.mpesa_till }}</span>
+                            {% else %}
+                                <span class="badge bg-danger">Not Set</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3 mb-3">
+                        <div class="text-center p-2" style="background:#222; border-radius:8px;">
+                            <div style="font-size:1.5rem;">🏦</div>
+                            <small class="text-muted">Paybill</small><br>
+                            {% if business.mpesa_paybill %}
+                                <span class="badge bg-success">{{ business.mpesa_paybill }}</span>
+                            {% else %}
+                                <span class="badge bg-danger">Not Set</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3 mb-3">
+                        <div class="text-center p-2" style="background:#222; border-radius:8px;">
+                            <div style="font-size:1.5rem;">📱</div>
+                            <small class="text-muted">Pochi</small><br>
+                            {% if business.mpesa_pochi %}
+                                <span class="badge bg-success">{{ business.mpesa_pochi }}</span>
+                            {% else %}
+                                <span class="badge bg-danger">Not Set</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3 mb-3">
+                        <div class="text-center p-2" style="background:#222; border-radius:8px;">
+                            <div style="font-size:1.5rem;">📞</div>
+                            <small class="text-muted">Phone</small><br>
+                            {% if business.mpesa_phone %}
+                                <span class="badge bg-success">{{ business.mpesa_phone }}</span>
+                            {% else %}
+                                <span class="badge bg-danger">Not Set</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% if business.preferred_payment_channel %}
+                    <p class="mb-0 mt-2"><small>📌 Preferred: <strong>{{ business.get_preferred_payment_channel_display }}</strong></small></p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

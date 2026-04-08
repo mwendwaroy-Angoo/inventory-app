@@ -7,6 +7,7 @@ urlpatterns = [
     path('rider/dashboard/', views.rider_dashboard, name='rider_dashboard'),
     path('rider/toggle-availability/', views.rider_toggle_availability, name='rider_toggle_availability'),
     path('edit/', views.edit_business, name='edit_business'),
+    path('payment-settings/', views.payment_settings, name='payment_settings'),
     path('staff/', views.staff_list, name='staff_list'),
     path('staff/add/', views.add_staff, name='add_staff'),
     path('staff/edit/<int:user_id>/', views.edit_staff, name='edit_staff'),

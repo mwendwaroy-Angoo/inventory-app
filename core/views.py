@@ -676,7 +676,14 @@ def notifications_list(request):
 @login_required
 def notifications_count(request):
     count = request.user.app_notifications.filter(is_read=False).count()
-    return JsonResponse({'count': count})
+    prompts_count = 0
+    profile = getattr(request.user, 'userprofile', None)
+    if profile and profile.business:
+        from .models import PendingTransactionPrompt
+        prompts_count = PendingTransactionPrompt.objects.filter(
+            business=profile.business, status='pending'
+        ).count()
+    return JsonResponse({'count': count, 'prompts_count': prompts_count})
 
 def daily_summary_webhook(request):
     """

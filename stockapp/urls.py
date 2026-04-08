@@ -10,7 +10,11 @@ from core.views import (
 )
 from core.ussd import ussd_callback
 from core.customer_ussd import customer_ussd_callback
-from core.mpesa_views import mpesa_callback, stk_push_view, payment_status
+from core.mpesa_views import (
+    mpesa_callback, stk_push_view, payment_status,
+    c2b_validation, c2b_confirmation,
+    pending_prompts, confirm_prompt, dismiss_prompt,
+)
 from core.marketplace_views import (
     shop_home, storefront, place_order, track_order, pay_order,
     order_list, update_order_status,
@@ -69,6 +73,11 @@ urlpatterns = [
     path('mpesa/callback/', mpesa_callback, name='mpesa_callback'),
     path('mpesa/stk-push/', stk_push_view, name='stk_push'),
     path('mpesa/status/<int:payment_id>/', payment_status, name='payment_status'),
+    path('mpesa/c2b/validation/', c2b_validation, name='c2b_validation'),
+    path('mpesa/c2b/confirmation/', c2b_confirmation, name='c2b_confirmation'),
+    path('mpesa/prompts/', pending_prompts, name='pending_prompts'),
+    path('mpesa/prompt/<int:prompt_id>/confirm/', confirm_prompt, name='confirm_prompt'),
+    path('mpesa/prompt/<int:prompt_id>/dismiss/', dismiss_prompt, name='dismiss_prompt'),
 
     # ── Customer Marketplace ──
     path('shop/', shop_home, name='shop_home'),

@@ -411,6 +411,19 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'fulfillment_list' %}">📋 Order Fulfillment</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link position-relative" href="{% url 'pending_prompts' %}">💰 Payments
+                            <span id="prompts-badge"
+                                  style="position:absolute; top:2px; right:-2px;
+                                         background:var(--gold); color:var(--onyx);
+                                         border-radius:50%; font-size:0.6rem;
+                                         width:16px; height:16px;
+                                         display:none; align-items:center;
+                                         justify-content:center; font-weight:700;">
+                                0
+                            </span>
+                        </a>
+                    </li>
                 </ul>
 
                 {% else %}
@@ -464,6 +477,8 @@
                             <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 Fulfillment</a></li>
                             <li><a class="dropdown-item" href="{% url 'my_feedback' %}">⭐ Feedback</a></li>
                             <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{% url 'pending_prompts' %}">💰 Payment Prompts</a></li>
+                            <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 Payment Settings</a></li>
                             <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ Business Settings</a></li>
                         </ul>
                     </li>
@@ -593,6 +608,15 @@
                             badge.style.display = 'flex';
                         } else {
                             badge.style.display = 'none';
+                        }
+                    }
+                    const promptsBadge = document.getElementById('prompts-badge');
+                    if (promptsBadge && data.prompts_count !== undefined) {
+                        if (data.prompts_count > 0) {
+                            promptsBadge.textContent = data.prompts_count > 99 ? '99+' : data.prompts_count;
+                            promptsBadge.style.display = 'flex';
+                        } else {
+                            promptsBadge.style.display = 'none';
                         }
                     }
                 })
