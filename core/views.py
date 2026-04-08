@@ -65,6 +65,22 @@ def home(request):
             context['error'] = "Profile not found. Please contact support."
     else:
         context['guest'] = True
+        context['services'] = [
+            ('📦', 'Inventory Management', 'Track stock levels, costs, and reorder points in real time. Never run out of stock again.'),
+            ('🛒', 'Online Marketplace', 'Your own storefront where customers browse and order directly. No middleman.'),
+            ('💳', 'M-Pesa Payments', 'Accept payments via Lipa Na M-Pesa. Instant STK Push to your customers\' phones.'),
+            ('📱', 'USSD Access', 'Record sales and check stock via USSD — works on any phone, no internet needed.'),
+            ('📊', 'Analytics Dashboard', 'See your top products, revenue trends, and profit margins at a glance.'),
+            ('👥', 'Staff Management', 'Add staff, assign roles, and get notified when they log in or record transactions.'),
+        ]
+        context['faqs'] = [
+            ('Is Duka Mwecheche free?', 'Yes! The platform is completely free for all businesses. You only pay standard M-Pesa transaction fees when accepting payments.'),
+            ('Do I need a smartphone?', 'No. You can manage your stock via USSD on any basic phone. The web app works on smartphones and computers too.'),
+            ('How do customers find my shop?', 'Once you register and add items with prices, your business appears on the Marketplace. Customers can search by location and product.'),
+            ('Is my data safe?', 'Absolutely. Your data is stored securely on cloud servers with regular backups. Only you and your staff can access your business data.'),
+            ('Can I accept M-Pesa payments?', 'Yes. We integrate with Safaricom\'s Daraja API. You\'ll need a Till or Paybill number from Safaricom to receive funds directly.'),
+            ('How do I add staff?', 'Go to Manage → Staff → Add Staff. Staff members can record transactions but cannot access business settings or financial reports.'),
+        ]
 
     return render(request, 'core/home.html', context)
 

@@ -116,6 +116,10 @@ MPESA_CONSUMER_SECRET = os.getenv('MPESA_CONSUMER_SECRET', '')
 MPESA_SHORTCODE = os.getenv('MPESA_SHORTCODE', '')
 MPESA_PASSKEY = os.getenv('MPESA_PASSKEY', '')
 
+# ── SESSION ───────────────────────────────────────────────────────────────────
+SESSION_COOKIE_AGE = 7200  # 2 hours in seconds
+SESSION_SAVE_EVERY_REQUEST = True  # Reset timer on every request
+
 # ── REST FRAMEWORK ────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
