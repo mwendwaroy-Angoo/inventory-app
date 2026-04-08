@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import Store, Item, Transaction, Customer, BusinessType, County, SubCounty, Ward
+from .models import (
+    Store, Item, Transaction, Customer, BusinessType, County, SubCounty, Ward,
+    Order, OrderLine, Payment, RiderProfile, SupplierRelationship, Notification,
+)
 
 
 @admin.register(Store)
@@ -71,3 +74,43 @@ class WardAdmin(admin.ModelAdmin):
     list_display = ('name', 'sub_county')
     list_filter = ('sub_county__county',)
     search_fields = ('name',)
+
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ('order_number', 'business', 'customer_name', 'status', 'total_amount', 'delivery_mode', 'created_at')
+    list_filter = ('status', 'delivery_mode', 'business')
+    search_fields = ('order_number', 'customer_name', 'customer_phone')
+
+
+class OrderLineInline(admin.TabularInline):
+    model = OrderLine
+    extra = 0
+
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ('business', 'amount', 'method', 'status', 'mpesa_receipt', 'created_at')
+    list_filter = ('status', 'method', 'business')
+    search_fields = ('mpesa_receipt', 'phone')
+
+
+@admin.register(RiderProfile)
+class RiderProfileAdmin(admin.ModelAdmin):
+    list_display = ('user', 'phone', 'county', 'vehicle_type', 'is_available')
+    list_filter = ('vehicle_type', 'is_available', 'county')
+    search_fields = ('user__username', 'user__first_name', 'phone')
+
+
+@admin.register(SupplierRelationship)
+class SupplierRelationshipAdmin(admin.ModelAdmin):
+    list_display = ('business', 'supplier', 'created_at')
+    list_filter = ('business',)
+    search_fields = ('business__name', 'supplier__name')
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ('user', 'title', 'notification_type', 'is_read', 'created_at')
+    list_filter = ('notification_type', 'is_read')
+    search_fields = ('title', 'message', 'user__username')

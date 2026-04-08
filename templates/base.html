@@ -114,6 +114,11 @@
             color: var(--muted);
         }
 
+        .badge-rider {
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: white;
+        }
+
         .navbar-toggler { border-color: var(--gold); }
 
         .navbar-toggler-icon {
@@ -361,20 +366,35 @@
             </button>
 
             {% if user.is_authenticated %}
-            <!-- Shop link always visible on mobile (outside collapse) -->
-            {% if user.userprofile.is_owner %}
-            <a href="{% url 'shop_home' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
+            <!-- Mobile quick-action button (outside collapse) -->
+            {% if user.userprofile.is_rider %}
+            <a href="{% url 'rider_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
+               style="font-size:0.85rem; padding:0.35rem 0.9rem;">🏍️ Dashboard</a>
+            {% elif user.userprofile.is_owner %}
+            <a href="{% url 'supplier_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
                style="font-size:0.85rem; padding:0.35rem 0.9rem;">📦 Suppliers</a>
             {% else %}
-            <a href="{% url 'shop_home' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-               style="font-size:0.85rem; padding:0.35rem 0.9rem;">🛒 Shop</a>
+            <a href="{% url 'fulfillment_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
+               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📋 Fulfillment</a>
             {% endif %}
             {% endif %}
 
             <div class="collapse navbar-collapse" id="navbarNav">
                 {% if user.is_authenticated %}
 
-                <!-- Left nav links -->
+                {% if user.userprofile.is_rider %}
+                <!-- ═══ RIDER NAV ═══ -->
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'rider_dashboard' %}">🏍️ Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'notifications' %}">🔔 Notifications</a>
+                    </li>
+                </ul>
+
+                {% elif user.userprofile.is_staff_member %}
+                <!-- ═══ STAFF NAV ═══ -->
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'stock_list' %}">Stock List</a>
@@ -389,14 +409,29 @@
                         <a class="nav-link" href="{% url 'transaction_history' %}">History</a>
                     </li>
                     <li class="nav-item">
-                        {% if user.userprofile.is_owner %}
-                        <a class="nav-link" href="{% url 'shop_home' %}">📦 Order from Suppliers</a>
-                        {% else %}
-                        <a class="nav-link" href="{% url 'shop_home' %}">🛒 Shop</a>
-                        {% endif %}
+                        <a class="nav-link" href="{% url 'fulfillment_list' %}">📋 Order Fulfillment</a>
+                    </li>
+                </ul>
+
+                {% else %}
+                <!-- ═══ OWNER NAV ═══ -->
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'stock_list' %}">Stock List</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'add_transaction' %}">Add Transaction</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'quick_sell' %}">⚡ Quick Sell</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'transaction_history' %}">History</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'supplier_list' %}">📦 Suppliers</a>
                     </li>
 
-                    {% if user.userprofile.is_owner %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                             Manage
@@ -411,12 +446,13 @@
                             <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ Add Staff</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 Orders</a></li>
+                            <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 Fulfillment</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ Business Settings</a></li>
                         </ul>
                     </li>
-                    {% endif %}
                 </ul>
+                {% endif %}
 
                 <!-- Right nav: bell + username + logout -->
                 <ul class="navbar-nav ms-auto align-items-center gap-2">
@@ -440,6 +476,8 @@
                             {{ user.username }}
                             {% if user.userprofile.is_owner %}
                                 <span class="badge-role badge-owner ms-1">Owner</span>
+                            {% elif user.userprofile.is_rider %}
+                                <span class="badge-role badge-rider ms-1">Rider</span>
                             {% else %}
                                 <span class="badge-role badge-staff ms-1">Staff</span>
                             {% endif %}
@@ -472,7 +510,10 @@
                         <a class="nav-link" href="{% url 'login' %}">Login</a>
                     </li>
                     <li class="nav-item">
-                        <a class="btn btn-primary btn-sm px-3" href="{% url 'signup' %}">Register</a>
+                        <a class="btn btn-primary btn-sm px-3" href="{% url 'signup' %}">Register Business</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="btn btn-outline-light btn-sm px-3" href="{% url 'rider_signup' %}">🏍️ Join as Rider</a>
                     </li>
                 </ul>
                 {% endif %}

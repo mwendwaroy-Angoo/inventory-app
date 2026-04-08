@@ -19,7 +19,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 
 from accounts.models import Business
-from .models import Item, Order, OrderLine, Payment, Store, County, Transaction
+from .models import Item, Order, OrderLine, Payment, Store, County, Transaction, SupplierRelationship
 from .mpesa import initiate_stk_push, format_phone_ke
 
 
@@ -354,3 +354,168 @@ def update_order_status(request, order_id):
         _fulfill_order(order)
 
     return JsonResponse({'success': True, 'status': order.status})
+
+
+# ── STAFF: ORDER FULFILLMENT ─────────────────────────────────────────────────
+
+@login_required
+def fulfillment_list(request):
+    """Staff view: orders that need fulfillment (confirmed/paid/ready)."""
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.business:
+        return redirect('home')
+
+    orders = Order.objects.filter(
+        business=profile.business,
+        status__in=['pending', 'confirmed', 'paid', 'ready'],
+    ).prefetch_related('lines__item')
+
+    status_filter = request.GET.get('status', '')
+    if status_filter:
+        orders = orders.filter(status=status_filter)
+
+    delivery_filter = request.GET.get('delivery', '')
+    if delivery_filter:
+        orders = orders.filter(delivery_mode=delivery_filter)
+
+    from .models import RiderProfile
+    available_riders = RiderProfile.objects.filter(is_available=True)
+
+    return render(request, 'core/fulfillment_list.html', {
+        'orders': orders,
+        'status_filter': status_filter,
+        'delivery_filter': delivery_filter,
+        'riders': available_riders,
+    })
+
+
+@login_required
+@require_POST
+def assign_rider(request, order_id):
+    """Assign a rider to a delivery order."""
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.business:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+
+    order = get_object_or_404(Order, id=order_id, business=profile.business)
+
+    if order.delivery_mode != 'delivery':
+        return JsonResponse({'error': 'Not a delivery order'}, status=400)
+
+    rider_id = request.POST.get('rider_id')
+    if not rider_id:
+        return JsonResponse({'error': 'Rider ID required'}, status=400)
+
+    from .models import RiderProfile
+    rider = get_object_or_404(RiderProfile, id=rider_id)
+    order.rider = rider
+    order.save(update_fields=['rider'])
+
+    return JsonResponse({
+        'success': True,
+        'rider_name': str(rider),
+    })
+
+
+# ── OWNER: SUPPLIER MANAGEMENT ──────────────────────────────────────────────
+
+from django.contrib import messages as django_messages
+
+
+@login_required
+def supplier_list(request):
+    """Owner view: manage list of preferred suppliers."""
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.is_owner or not profile.business:
+        return redirect('home')
+
+    links = SupplierRelationship.objects.filter(
+        business=profile.business
+    ).select_related('supplier__business_type', 'supplier__county')
+
+    return render(request, 'marketplace/supplier_list.html', {
+        'links': links,
+    })
+
+
+@login_required
+def add_supplier(request):
+    """Owner: add a business from the platform as a supplier."""
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.is_owner or not profile.business:
+        return redirect('home')
+
+    my_business = profile.business
+
+    if request.method == 'POST':
+        supplier_id = request.POST.get('supplier_id')
+        notes = request.POST.get('notes', '')
+        if supplier_id:
+            supplier = get_object_or_404(Business, id=supplier_id)
+            if supplier == my_business:
+                django_messages.error(request, "You can't add your own business as a supplier.")
+            elif SupplierRelationship.objects.filter(business=my_business, supplier=supplier).exists():
+                django_messages.warning(request, f"{supplier.name} is already in your supplier list.")
+            else:
+                SupplierRelationship.objects.create(
+                    business=my_business,
+                    supplier=supplier,
+                    notes=notes,
+                )
+                django_messages.success(request, f"{supplier.name} added as a supplier.")
+        return redirect('supplier_list')
+
+    # Show businesses on the platform (excluding own)
+    query = request.GET.get('q', '').strip()
+    businesses = Business.objects.exclude(id=my_business.id).select_related('business_type', 'county')
+    if query:
+        businesses = businesses.filter(
+            Q(name__icontains=query) | Q(address__icontains=query)
+        )
+
+    # Exclude already-added suppliers
+    existing_ids = SupplierRelationship.objects.filter(
+        business=my_business
+    ).values_list('supplier_id', flat=True)
+    businesses = businesses.exclude(id__in=existing_ids)
+
+    return render(request, 'marketplace/add_supplier.html', {
+        'businesses': businesses,
+        'query': query,
+    })
+
+
+@login_required
+def edit_supplier(request, link_id):
+    """Owner: edit notes on a supplier relationship."""
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.is_owner:
+        return redirect('home')
+
+    link = get_object_or_404(SupplierRelationship, id=link_id, business=profile.business)
+
+    if request.method == 'POST':
+        link.notes = request.POST.get('notes', '')
+        link.save(update_fields=['notes'])
+        django_messages.success(request, f"Notes updated for {link.supplier.name}.")
+        return redirect('supplier_list')
+
+    return render(request, 'marketplace/edit_supplier.html', {'link': link})
+
+
+@login_required
+def remove_supplier(request, link_id):
+    """Owner: remove a supplier from the list."""
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.is_owner:
+        return redirect('home')
+
+    link = get_object_or_404(SupplierRelationship, id=link_id, business=profile.business)
+
+    if request.method == 'POST':
+        name = link.supplier.name
+        link.delete()
+        django_messages.success(request, f"{name} removed from your suppliers.")
+        return redirect('supplier_list')
+
+    return render(request, 'marketplace/remove_supplier.html', {'link': link})

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Add Supplier — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header { text-align: center; padding: 1.5rem 0 1rem; }
+    .page-header h1 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold); font-size: 1.8rem;
+    }
+    .biz-card {
+        background: var(--onyx-card); border: 1px solid #333;
+        border-radius: 10px; padding: 1rem; margin-bottom: 0.8rem;
+        display: flex; justify-content: space-between; align-items: center;
+    }
+    .biz-card:hover { border-color: var(--gold); }
+    .biz-name {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold); font-size: 1rem;
+    }
+    .biz-meta { font-size: 0.8rem; color: var(--muted); margin-top: 0.2rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>➕ Add Supplier</h1>
+    <p style="color:var(--muted);">Find businesses on the platform to add as your supplier</p>
+    <a href="{% url 'supplier_list' %}" class="btn btn-secondary btn-sm mt-2">← Back to Suppliers</a>
+</div>
+
+<hr class="gold-divider">
+
+<!-- Search -->
+<form method="get" class="mb-3">
+    <div class="input-group" style="max-width:400px; margin:0 auto;">
+        <input type="text" name="q" class="form-control" placeholder="Search businesses..."
+               value="{{ query }}">
+        <button class="btn btn-gold" type="submit">🔍</button>
+    </div>
+</form>
+
+{% for biz in businesses %}
+<div class="biz-card">
+    <div>
+        <div class="biz-name">{{ biz.name }}</div>
+        <div class="biz-meta">
+            {% if biz.business_type %}{{ biz.business_type.name }} · {% endif %}
+            {% if biz.county %}📍 {{ biz.county.name }}{% endif %}
+            {% if biz.phone %} · 📞 {{ biz.phone }}{% endif %}
+        </div>
+    </div>
+    <form method="post" style="display:inline;">
+        {% csrf_token %}
+        <input type="hidden" name="supplier_id" value="{{ biz.id }}">
+        <button type="submit" class="btn btn-gold btn-sm">➕ Add</button>
+    </form>
+</div>
+{% empty %}
+<div class="text-center py-4">
+    <p style="color:var(--muted);">
+        {% if query %}No businesses found matching "{{ query }}".{% else %}No more businesses available to add.{% endif %}
+    </p>
+</div>
+{% endfor %}
+
+{% endblock %}

@@ -14,6 +14,8 @@ from core.mpesa_views import mpesa_callback, stk_push_view, payment_status
 from core.marketplace_views import (
     shop_home, storefront, place_order, track_order, pay_order,
     order_list, update_order_status,
+    fulfillment_list, assign_rider,
+    supplier_list, add_supplier, edit_supplier, remove_supplier,
 )
 from core.whatsapp_bot import whatsapp_webhook
 from core.analytics_views import analytics_dashboard, analytics_api
@@ -66,6 +68,16 @@ urlpatterns = [
     # ── Owner: Order Management ──
     path('orders/', order_list, name='order_list'),
     path('orders/<int:order_id>/update-status/', update_order_status, name='update_order_status'),
+
+    # ── Staff: Order Fulfillment ──
+    path('fulfillment/', fulfillment_list, name='fulfillment_list'),
+    path('fulfillment/<int:order_id>/assign-rider/', assign_rider, name='assign_rider'),
+
+    # ── Owner: Supplier Management ──
+    path('suppliers/', supplier_list, name='supplier_list'),
+    path('suppliers/add/', add_supplier, name='add_supplier'),
+    path('suppliers/<int:link_id>/edit/', edit_supplier, name='edit_supplier'),
+    path('suppliers/<int:link_id>/remove/', remove_supplier, name='remove_supplier'),
 
     # ── WhatsApp Bot ──
     path('whatsapp/webhook/', whatsapp_webhook, name='whatsapp_webhook'),

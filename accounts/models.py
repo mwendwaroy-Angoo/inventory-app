@@ -70,6 +70,7 @@ class UserProfile(models.Model):
     ROLE_CHOICES = [
         ('owner', 'Owner'),
         ('staff', 'Staff'),
+        ('rider', 'Rider'),
     ]
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     business = models.ForeignKey(Business, on_delete=models.CASCADE,
@@ -87,6 +88,10 @@ class UserProfile(models.Model):
     @property
     def is_staff_member(self):
         return self.role == 'staff'
+
+    @property
+    def is_rider(self):
+        return self.role == 'rider'
 
 
 # Safely save profile if it exists — does NOT auto-create

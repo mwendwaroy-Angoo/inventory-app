@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}Rider Dashboard — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .rider-header { text-align: center; padding: 2rem 0 1rem; }
+    .rider-header h1 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold); font-size: 2rem;
+    }
+    .status-toggle {
+        display: inline-flex; align-items: center; gap: 10px;
+        padding: 0.6rem 1.2rem; border-radius: 30px;
+        background: var(--onyx-card); border: 1px solid #333;
+        cursor: pointer; user-select: none;
+    }
+    .status-toggle .dot {
+        width: 14px; height: 14px; border-radius: 50%;
+        transition: background 0.3s;
+    }
+    .status-toggle.available .dot { background: #2ecc71; }
+    .status-toggle.unavailable .dot { background: #e74c3c; }
+    .stat-card {
+        background: var(--onyx-card); border: 1px solid #333;
+        border-radius: 10px; padding: 1.2rem; text-align: center;
+    }
+    .stat-card .num {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold); font-size: 2rem;
+    }
+    .stat-card .label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; }
+    .order-card {
+        background: var(--onyx-card); border: 1px solid #333;
+        border-radius: 10px; padding: 1rem; margin-bottom: 0.8rem;
+    }
+    .order-card .order-no {
+        color: var(--gold); font-weight: 600;
+        font-family: 'Playfair Display', serif;
+    }
+    .badge-status {
+        padding: 0.25rem 0.6rem; border-radius: 15px;
+        font-size: 0.7rem; text-transform: uppercase; font-weight: 600;
+    }
+    .badge-pending { background: rgba(241,196,15,0.15); color: #f1c40f; }
+    .badge-confirmed { background: rgba(52,152,219,0.15); color: #3498db; }
+    .badge-paid { background: rgba(46,204,113,0.15); color: #2ecc71; }
+    .badge-ready { background: rgba(155,89,182,0.15); color: #9b59b6; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="rider-header">
+    <h1>🏍️ Rider Dashboard</h1>
+    <p style="color:var(--muted);">{{ rider.user.get_full_name }} · {{ rider.get_vehicle_type_display }}</p>
+
+    <div class="mt-3">
+        <div class="status-toggle {% if rider.is_available %}available{% else %}unavailable{% endif %}"
+             id="availToggle" onclick="toggleAvailability()">
+            <div class="dot"></div>
+            <span id="availText" style="color:var(--pearl); font-size:0.9rem;">
+                {% if rider.is_available %}Available{% else %}Unavailable{% endif %}
+            </span>
+        </div>
+    </div>
+</div>
+
+<hr class="gold-divider">
+
+<!-- Stats -->
+<div class="row g-3 mb-4">
+    <div class="col-4">
+        <div class="stat-card">
+            <div class="num">{{ active_orders.count }}</div>
+            <div class="label">Active</div>
+        </div>
+    </div>
+    <div class="col-4">
+        <div class="stat-card">
+            <div class="num">{{ completed_orders.count }}</div>
+            <div class="label">Completed</div>
+        </div>
+    </div>
+    <div class="col-4">
+        <div class="stat-card">
+            <div class="num">{% if rider.is_available %}🟢{% else %}🔴{% endif %}</div>
+            <div class="label">Status</div>
+        </div>
+    </div>
+</div>
+
+<!-- Active Orders -->
+<h5 style="font-family:'Playfair Display',serif; color:var(--gold);">📦 Active Deliveries</h5>
+{% if active_orders %}
+    {% for order in active_orders %}
+    <div class="order-card">
+        <div class="d-flex justify-content-between align-items-center">
+            <span class="order-no">{{ order.order_number }}</span>
+            <span class="badge-status badge-{{ order.status }}">{{ order.get_status_display }}</span>
+        </div>
+        <div style="font-size:0.85rem; color:var(--pearl); margin-top:0.4rem;">
+            👤 {{ order.customer_name }} · 📞 {{ order.customer_phone }}<br>
+            📍 {{ order.customer_location|default:"No location" }}<br>
+            💰 KES {{ order.total_amount|floatformat:0 }}
+            · {{ order.get_payment_method_display }}
+        </div>
+        <div class="mt-2">
+            <a href="{% url 'track_order' order.order_number %}" class="btn btn-gold btn-sm">View Details</a>
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <p style="color:var(--muted); text-align:center; padding:2rem 0;">No active deliveries right now.</p>
+{% endif %}
+
+{% if completed_orders %}
+<h5 class="mt-4" style="font-family:'Playfair Display',serif; color:var(--gold);">✅ Recent Completions</h5>
+{% for order in completed_orders %}
+<div class="order-card" style="opacity:0.7;">
+    <div class="d-flex justify-content-between">
+        <span class="order-no">{{ order.order_number }}</span>
+        <span style="color:var(--muted); font-size:0.8rem;">{{ order.created_at|timesince }} ago</span>
+    </div>
+    <div style="font-size:0.85rem; color:var(--muted);">
+        {{ order.customer_name }} · KES {{ order.total_amount|floatformat:0 }}
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleAvailability() {
+    fetch('{% url "rider_toggle_availability" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+        },
+    })
+    .then(r => r.json())
+    .then(data => {
+        const toggle = document.getElementById('availToggle');
+        const text = document.getElementById('availText');
+        if (data.is_available) {
+            toggle.className = 'status-toggle available';
+            text.textContent = 'Available';
+        } else {
+            toggle.className = 'status-toggle unavailable';
+            text.textContent = 'Unavailable';
+        }
+    });
+}
+</script>
+{% endblock %}

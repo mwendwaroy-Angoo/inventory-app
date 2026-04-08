@@ -232,6 +232,7 @@ class Order(models.Model):
     delivery_mode = models.CharField(max_length=10, choices=DELIVERY_CHOICES, default='pickup')
     delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     payment_method = models.CharField(max_length=15, choices=PAYMENT_METHOD_CHOICES, default='mpesa')
+    rider = models.ForeignKey('RiderProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_orders')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -303,3 +304,48 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.method} {self.amount} KES — {self.status}"
+
+
+# ────────────────────────────────────────────────
+# RIDER PROFILE
+# ────────────────────────────────────────────────
+
+class RiderProfile(models.Model):
+    user = models.OneToOneField('auth.User', on_delete=models.CASCADE, related_name='rider_profile')
+    phone = models.CharField(max_length=20)
+    county = models.ForeignKey(County, on_delete=models.SET_NULL, null=True, blank=True)
+    vehicle_type = models.CharField(max_length=30, choices=[
+        ('motorcycle', 'Motorcycle'),
+        ('bicycle', 'Bicycle'),
+        ('car', 'Car'),
+        ('foot', 'On Foot'),
+    ], default='motorcycle')
+    is_available = models.BooleanField(default=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['user__first_name']
+
+    def __str__(self):
+        return f"{self.user.get_full_name() or self.user.username} ({self.get_vehicle_type_display()})"
+
+
+# ────────────────────────────────────────────────
+# SUPPLIER RELATIONSHIP
+# ────────────────────────────────────────────────
+
+class SupplierRelationship(models.Model):
+    """Links a business owner to their preferred suppliers (other businesses on the platform)."""
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='supplier_links')
+    supplier = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='customer_links')
+    notes = models.TextField(blank=True, help_text='e.g. payment terms, contact person')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['business', 'supplier']
+        ordering = ['supplier__name']
+
+    def __str__(self):
+        return f"{self.business.name} → {self.supplier.name}"

@@ -3,7 +3,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm
+from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm, RiderSignupForm
 from .models import Business, UserProfile
 from django.http import JsonResponse
 from core.models import SubCounty, Ward
@@ -241,3 +241,75 @@ def reset_staff_password(request, user_id):
         'form': form,
         'profile': staff_profile,
     })
+
+
+# ── RIDER REGISTRATION ──────────────────────────────────────────────────────
+
+def rider_signup(request):
+    if request.method == 'POST':
+        form = RiderSignupForm(request.POST)
+        if form.is_valid():
+            user = User.objects.create_user(
+                username=form.cleaned_data['username'],
+                email=form.cleaned_data.get('email', ''),
+                password=form.cleaned_data['password1'],
+                first_name=form.cleaned_data['first_name'],
+                last_name=form.cleaned_data['last_name'],
+            )
+            UserProfile.objects.create(
+                user=user,
+                role='rider',
+                phone=form.cleaned_data['phone'],
+            )
+            from core.models import RiderProfile
+            RiderProfile.objects.create(
+                user=user,
+                phone=form.cleaned_data['phone'],
+                county=form.cleaned_data.get('county'),
+                vehicle_type=form.cleaned_data['vehicle_type'],
+            )
+            login(request, user)
+            messages.success(request, "Welcome! You're registered as a rider.")
+            return redirect('rider_dashboard')
+    else:
+        form = RiderSignupForm()
+    return render(request, 'registration/rider_signup.html', {'form': form})
+
+
+@login_required
+def rider_dashboard(request):
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or profile.role != 'rider':
+        return redirect('home')
+
+    rider = getattr(request.user, 'rider_profile', None)
+    if not rider:
+        return redirect('home')
+
+    from core.models import Order
+    active_orders = Order.objects.filter(
+        rider=rider,
+        status__in=['confirmed', 'paid', 'ready'],
+        delivery_mode='delivery',
+    )
+    completed_orders = Order.objects.filter(
+        rider=rider,
+        status='completed',
+        delivery_mode='delivery',
+    )[:20]
+
+    return render(request, 'accounts/rider_dashboard.html', {
+        'rider': rider,
+        'active_orders': active_orders,
+        'completed_orders': completed_orders,
+    })
+
+
+@login_required
+def rider_toggle_availability(request):
+    rider = getattr(request.user, 'rider_profile', None)
+    if not rider:
+        return JsonResponse({'error': 'Not a rider'}, status=403)
+    rider.is_available = not rider.is_available
+    rider.save(update_fields=['is_available'])
+    return JsonResponse({'is_available': rider.is_available})

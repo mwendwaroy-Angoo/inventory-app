@@ -241,3 +241,61 @@ class AddStaffForm(forms.Form):
         if p1 and p2 and p1 != p2:
             raise forms.ValidationError("Passwords do not match.")
         return cleaned_data
+
+
+class RiderSignupForm(forms.Form):
+    username = forms.CharField(
+        max_length=150,
+        widget=forms.TextInput(attrs={'placeholder': 'Choose a username'})
+    )
+    email = forms.EmailField(
+        required=False,
+        widget=forms.EmailInput(attrs={'placeholder': 'your@email.com'})
+    )
+    first_name = forms.CharField(
+        max_length=100,
+        widget=forms.TextInput(attrs={'placeholder': 'First name'})
+    )
+    last_name = forms.CharField(
+        max_length=100,
+        widget=forms.TextInput(attrs={'placeholder': 'Last name'})
+    )
+    phone = forms.CharField(
+        max_length=20,
+        widget=forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'})
+    )
+    county = forms.ModelChoiceField(
+        queryset=County.objects.all(),
+        empty_label='-- Select County --',
+        required=False,
+    )
+    vehicle_type = forms.ChoiceField(
+        choices=[
+            ('motorcycle', 'Motorcycle'),
+            ('bicycle', 'Bicycle'),
+            ('car', 'Car'),
+            ('foot', 'On Foot'),
+        ],
+    )
+    password1 = forms.CharField(
+        widget=forms.PasswordInput(attrs={'placeholder': 'Create a password'}),
+        label='Password'
+    )
+    password2 = forms.CharField(
+        widget=forms.PasswordInput(attrs={'placeholder': 'Confirm password'}),
+        label='Confirm Password'
+    )
+
+    def clean_username(self):
+        username = self.cleaned_data['username']
+        if User.objects.filter(username=username).exists():
+            raise forms.ValidationError("Username already taken.")
+        return username
+
+    def clean(self):
+        cleaned_data = super().clean()
+        p1 = cleaned_data.get('password1')
+        p2 = cleaned_data.get('password2')
+        if p1 and p2 and p1 != p2:
+            raise forms.ValidationError("Passwords do not match.")
+        return cleaned_data

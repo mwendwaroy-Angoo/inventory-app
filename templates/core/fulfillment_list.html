@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}Order Fulfillment — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header { text-align: center; padding: 1.5rem 0 1rem; }
+    .page-header h1 {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold); font-size: 1.8rem;
+    }
+    .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1rem; }
+    .filter-pill {
+        padding: 0.3rem 0.8rem; border-radius: 20px;
+        border: 1px solid #444; background: transparent;
+        color: var(--pearl); font-size: 0.8rem; cursor: pointer;
+    }
+    .filter-pill:hover, .filter-pill.active {
+        border-color: var(--gold); color: var(--gold);
+        background: rgba(201,168,76,0.1);
+    }
+    .order-card {
+        background: var(--onyx-card); border: 1px solid #333;
+        border-radius: 10px; padding: 1rem; margin-bottom: 0.8rem;
+    }
+    .order-card.delivery { border-left: 3px solid #3498db; }
+    .order-card.pickup { border-left: 3px solid #2ecc71; }
+    .badge-status {
+        padding: 0.2rem 0.5rem; border-radius: 12px;
+        font-size: 0.7rem; text-transform: uppercase; font-weight: 600;
+    }
+    .badge-pending { background: rgba(241,196,15,0.15); color: #f1c40f; }
+    .badge-confirmed { background: rgba(52,152,219,0.15); color: #3498db; }
+    .badge-paid { background: rgba(46,204,113,0.15); color: #2ecc71; }
+    .badge-ready { background: rgba(155,89,182,0.15); color: #9b59b6; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📋 Order Fulfillment</h1>
+    <p style="color:var(--muted);">Pending orders that need attention</p>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar">
+    <a href="{% url 'fulfillment_list' %}" class="filter-pill {% if not status_filter and not delivery_filter %}active{% endif %}">All</a>
+    <a href="?status=pending" class="filter-pill {% if status_filter == 'pending' %}active{% endif %}">Pending</a>
+    <a href="?status=confirmed" class="filter-pill {% if status_filter == 'confirmed' %}active{% endif %}">Confirmed</a>
+    <a href="?status=paid" class="filter-pill {% if status_filter == 'paid' %}active{% endif %}">Paid</a>
+    <a href="?status=ready" class="filter-pill {% if status_filter == 'ready' %}active{% endif %}">Ready</a>
+    <a href="?delivery=delivery" class="filter-pill {% if delivery_filter == 'delivery' %}active{% endif %}">🚚 Deliveries</a>
+    <a href="?delivery=pickup" class="filter-pill {% if delivery_filter == 'pickup' %}active{% endif %}">🏪 Pickups</a>
+</div>
+
+{% for order in orders %}
+<div class="order-card {{ order.delivery_mode }}">
+    <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+            <strong style="color:var(--gold); font-family:'Playfair Display',serif;">{{ order.order_number }}</strong>
+            <span class="badge-status badge-{{ order.status }} ms-2">{{ order.get_status_display }}</span>
+            {% if order.delivery_mode == 'delivery' %}
+                <span class="badge-status ms-1" style="background:rgba(52,152,219,0.15); color:#3498db;">🚚 Delivery</span>
+            {% else %}
+                <span class="badge-status ms-1" style="background:rgba(46,204,113,0.15); color:#2ecc71;">🏪 Pickup</span>
+            {% endif %}
+        </div>
+        <small style="color:var(--muted);">{{ order.created_at|timesince }} ago</small>
+    </div>
+
+    <div style="font-size:0.85rem; color:var(--pearl);">
+        👤 {{ order.customer_name }} · 📞 {{ order.customer_phone }}<br>
+        {% if order.customer_location %}📍 {{ order.customer_location }}<br>{% endif %}
+        💰 KES {{ order.total_amount|floatformat:0 }}
+        · {% if order.payment_method == 'mpesa' %}💳 M-Pesa{% elif order.payment_method == 'cash' %}💵 Cash{% else %}🏪 Pay at Pickup{% endif %}
+    </div>
+
+    <!-- Items -->
+    <div style="margin-top:0.6rem; font-size:0.8rem; color:var(--muted);">
+        {% for line in order.lines.all %}
+            {{ line.item.description }} ×{{ line.quantity }}{% if not forloop.last %}, {% endif %}
+        {% endfor %}
+    </div>
+
+    {% if order.notes %}
+    <div style="margin-top:0.4rem; font-size:0.8rem; color:var(--raspberry); font-style:italic;">
+        📝 {{ order.notes }}
+    </div>
+    {% endif %}
+
+    <!-- Actions -->
+    <div class="d-flex gap-2 mt-2 flex-wrap align-items-center">
+        <!-- Status update -->
+        <select class="form-select form-select-sm" style="width:auto; font-size:0.8rem;"
+                onchange="updateStatus({{ order.id }}, this.value)" id="statusSel{{ order.id }}">
+            <option value="">Update status...</option>
+            <option value="confirmed">✅ Confirm</option>
+            <option value="paid">💰 Mark Paid</option>
+            <option value="ready">📦 Ready</option>
+            <option value="completed">🎉 Complete</option>
+            <option value="cancelled">❌ Cancel</option>
+        </select>
+
+        {% if order.delivery_mode == 'delivery' %}
+        <!-- Rider assignment -->
+        <select class="form-select form-select-sm" style="width:auto; font-size:0.8rem;"
+                onchange="assignRider({{ order.id }}, this.value)" id="riderSel{{ order.id }}">
+            <option value="">Assign rider...</option>
+            {% for r in riders %}
+            <option value="{{ r.id }}" {% if order.rider_id == r.id %}selected{% endif %}>
+                {{ r.user.get_full_name|default:r.user.username }} ({{ r.get_vehicle_type_display }})
+            </option>
+            {% endfor %}
+        </select>
+        {% if order.rider %}
+        <small style="color:#2ecc71;">🏍️ {{ order.rider }}</small>
+        {% endif %}
+        {% endif %}
+    </div>
+</div>
+{% empty %}
+<div class="text-center py-4">
+    <p style="color:var(--muted); font-size:1.1rem;">🎉 No pending orders!</p>
+</div>
+{% endfor %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function updateStatus(orderId, status) {
+    if (!status) return;
+    const formData = new FormData();
+    formData.append('status', status);
+
+    fetch(`/orders/${orderId}/update-status/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'},
+        body: formData,
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) location.reload();
+        else alert(data.error || 'Failed');
+    });
+}
+
+function assignRider(orderId, riderId) {
+    if (!riderId) return;
+    const formData = new FormData();
+    formData.append('rider_id', riderId);
+
+    fetch(`/fulfillment/${orderId}/assign-rider/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'},
+        body: formData,
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) location.reload();
+        else alert(data.error || 'Failed');
+    });
+}
+</script>
+{% endblock %}

@@ -1,4 +1,3 @@
-import os
 import logging
 from django.core.mail import send_mail
 from django.conf import settings
@@ -188,22 +187,11 @@ def notify_staff_login(user, business, action='logged in'):
         return
 
     owner = owner_profile.user
-    owner_email = owner.email
-    owner_phone = owner_profile.phone or business.phone
 
     from django.utils import timezone
     now = timezone.localtime(timezone.now()).strftime("%B %d, %Y at %I:%M %p")
 
     emoji = '🟢' if action == 'logged in' else '🔴'
-    subject = f"{emoji} Staff {action.title()} — {business.name}"
-    message = (
-        f"Staff activity on Duka Mwecheche\n\n"
-        f"Staff member: {user.get_full_name() or user.username}\n"
-        f"Action: {action.title()}\n"
-        f"Time: {now}\n"
-        f"Business: {business.name}\n\n"
-        f"— Duka Mwecheche"
-    )
     # Only in-app notification during login/logout — email/SMS would block
     # the request and cause worker timeouts on Render's free tier
     create_in_app_notification(
@@ -278,7 +266,7 @@ def notify_new_order(order):
 
 def send_daily_summary(business):
     from datetime import date
-    from core.models import Transaction, Item
+    from core.models import Transaction
 
     owner_profile = business.users.filter(role='owner').first()
     if not owner_profile:
@@ -335,8 +323,8 @@ def send_daily_summary(business):
         message += f"• {item_name}: {qty} units\n"
 
     message += f"\n{'='*40}\n"
-    message += f"View full report at: https://stock-made-simpler-sms.onrender.com/sales/\n\n"
-    message += f"— Duka Mwecheche"
+    message += "View full report at: https://stock-made-simpler-sms.onrender.com/sales/\n\n"
+    message += "— Duka Mwecheche"
 
     send_email_notification(subject, message, owner_email)
 

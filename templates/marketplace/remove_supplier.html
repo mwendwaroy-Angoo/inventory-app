@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Remove Supplier — Duka Mwecheche{% endblock %}
+
+{% block content %}
+<div style="max-width:500px; margin:2rem auto; text-align:center;">
+    <div style="font-size:3rem; margin-bottom:1rem;">⚠️</div>
+    <h3 style="font-family:'Playfair Display',serif; color:var(--gold);">Remove Supplier</h3>
+    <p style="color:var(--pearl);">
+        Are you sure you want to remove <strong style="color:var(--gold);">{{ link.supplier.name }}</strong>
+        from your supplier list?
+    </p>
+    <p style="color:var(--muted); font-size:0.85rem;">
+        This won't delete the business — you can always add them back later.
+    </p>
+    <form method="post">
+        {% csrf_token %}
+        <div class="d-flex gap-2 justify-content-center">
+            <button type="submit" class="btn btn-danger">Yes, Remove</button>
+            <a href="{% url 'supplier_list' %}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
