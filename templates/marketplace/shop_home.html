@@ -91,7 +91,9 @@
 <div class="row g-3">
     {% for biz in businesses %}
     <div class="col-md-4 col-sm-6">
-        <a href="{% url 'storefront' biz.id %}" class="business-card">
+        <a href="{% url 'storefront' biz.id %}" class="business-card"
+               data-lat="{{ biz.latitude|default:'' }}" data-lng="{{ biz.longitude|default:'' }}"
+               data-radius="{{ biz.delivery_radius_km|default:'0' }}">
             <div class="d-flex justify-content-between align-items-start mb-1">
                 <h5 class="mb-0">{{ biz.name }}</h5>
                 {% if biz.is_open %}
@@ -120,6 +122,7 @@
             {% if biz.min_order_amount > 0 %}
             <div class="delivery-info">📦 Min order: KES {{ biz.min_order_amount|floatformat:0 }}</div>
             {% endif %}
+            <div class="delivery-info distance-info" style="display:none;"></div>
         </a>
     </div>
     {% endfor %}
@@ -130,4 +133,67 @@
     <p style="color: var(--muted);">Try a different search or county.</p>
 </div>
 {% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Request geolocation on page load
+if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(function(pos) {
+        const custLat = pos.coords.latitude;
+        const custLng = pos.coords.longitude;
+        const cards = document.querySelectorAll('.business-card');
+        const container = document.querySelector('.row.g-3');
+        const columns = Array.from(container ? container.children : []);
+        const distances = [];
+
+        cards.forEach(function(card, i) {
+            const lat = parseFloat(card.dataset.lat);
+            const lng = parseFloat(card.dataset.lng);
+            const distDiv = card.querySelector('.distance-info');
+            if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+                const dist = haversine(custLat, custLng, lat, lng);
+                distDiv.style.display = 'block';
+                if (dist < 1) {
+                    distDiv.innerHTML = '📍 ' + (dist * 1000).toFixed(0) + 'm away';
+                    distDiv.style.color = 'var(--success)';
+                } else {
+                    distDiv.innerHTML = '📍 ' + dist.toFixed(1) + 'km away';
+                    const radius = parseFloat(card.dataset.radius);
+                    if (radius > 0 && dist <= radius) {
+                        distDiv.style.color = 'var(--success)';
+                    } else if (radius > 0) {
+                        distDiv.style.color = '#e74c3c';
+                        distDiv.innerHTML += ' (outside delivery area)';
+                    }
+                }
+                distances.push({col: columns[i], dist: dist});
+            } else {
+                distances.push({col: columns[i], dist: 99999});
+            }
+        });
+
+        // Sort business cards by distance (nearest first)
+        if (container && distances.length > 0) {
+            distances.sort(function(a, b) { return a.dist - b.dist; });
+            distances.forEach(function(d) {
+                container.appendChild(d.col);
+            });
+        }
+    }, function() {
+        // Geolocation denied or failed — silently continue
+    }, {timeout: 10000, enableHighAccuracy: false});
+}
+</script>
 {% endblock %}

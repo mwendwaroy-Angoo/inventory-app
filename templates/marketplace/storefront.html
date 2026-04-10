@@ -294,6 +294,33 @@ const BIZ_LNG = {{ business.longitude|default:"null" }};
 let cart = {};  // {itemId: {name, price, qty, unit, maxStock}}
 let customerCoords = null;
 
+// ── PROACTIVE GEOLOCATION ──
+if (navigator.geolocation && BIZ_LAT && BIZ_LNG) {
+    navigator.geolocation.getCurrentPosition(
+        function(pos) {
+            customerCoords = {lat: pos.coords.latitude, lng: pos.coords.longitude};
+            const dist = haversine(BIZ_LAT, BIZ_LNG, customerCoords.lat, customerCoords.lng);
+            const deliveryRadio = document.getElementById('modeDelivery');
+            if (deliveryRadio) {
+                if (dist > BIZ_DELIVERY_RADIUS) {
+                    deliveryRadio.disabled = true;
+                    deliveryRadio.parentElement.innerHTML =
+                        '<input class="form-check-input" type="radio" name="deliveryMode" id="modeDelivery" value="delivery" disabled>' +
+                        '<label class="form-check-label" for="modeDelivery" style="color:#999;">🚚 Delivery — ' +
+                        dist.toFixed(1) + 'km away (max ' + BIZ_DELIVERY_RADIUS + 'km)</label>';
+                    // If delivery was selected, switch to pickup
+                    if (getDeliveryMode() === 'delivery') {
+                        document.getElementById('modePickup').checked = true;
+                        updateDelivery();
+                    }
+                }
+            }
+        },
+        function() { /* denied — delivery option stays available */ },
+        {timeout: 10000, enableHighAccuracy: false}
+    );
+}
+
 // ── TAP TO ADD ──
 document.querySelectorAll('.item-card').forEach(card => {
     card.addEventListener('click', function(e) {
@@ -499,6 +526,8 @@ function placeOrder() {
         delivery_mode: deliveryMode,
         payment_method: paymentMethod,
         delivery_fee: deliveryFee,
+        customer_lat: customerCoords ? customerCoords.lat : null,
+        customer_lng: customerCoords ? customerCoords.lng : null,
     };
 
     fetch(`/shop/${BUSINESS_ID}/order/`, {

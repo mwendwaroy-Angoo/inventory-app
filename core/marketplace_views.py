@@ -174,6 +174,19 @@ def place_order(request, business_id):
     if delivery_mode == 'delivery' and business.offers_delivery:
         delivery_fee = float(business.delivery_fee or 0)
 
+        # Proximity validation for delivery orders
+        customer_lat = data.get('customer_lat')
+        customer_lng = data.get('customer_lng')
+        if customer_lat and customer_lng and business.latitude and business.longitude:
+            distance = business.distance_to(customer_lat, customer_lng)
+            if distance is not None and business.delivery_radius_km:
+                if distance > float(business.delivery_radius_km):
+                    return JsonResponse({
+                        'error': f'Delivery is not available to your location ({distance:.1f}km away). '
+                                 f'Maximum delivery distance is {business.delivery_radius_km}km. '
+                                 f'Please choose Pickup instead.'
+                    }, status=400)
+
     # Minimum order check
     if business.min_order_amount and subtotal < float(business.min_order_amount):
         return JsonResponse({
