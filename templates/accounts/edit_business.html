@@ -115,11 +115,62 @@
 
             <h5 class="section-label mt-4">🚚 Delivery Settings</h5>
             <div class="mb-3">{% bootstrap_field form.offers_delivery %}</div>
+            <div class="mb-3">{% bootstrap_field form.delivery_radius_km %}</div>
+
+            <h6 style="color:var(--pearl); margin-top:1rem;">💰 Base Pricing</h6>
+            <small class="text-muted d-block mb-2">Base fee + per-km rate. Example: KES 50 base + KES 30/km → 3km delivery costs KES 140</small>
             <div class="row">
-                <div class="col-md-4 mb-3">{% bootstrap_field form.delivery_radius_km %}</div>
-                <div class="col-md-4 mb-3">{% bootstrap_field form.delivery_fee %}</div>
-                <div class="col-md-4 mb-3">{% bootstrap_field form.min_order_amount %}</div>
+                <div class="col-md-6 mb-3">{% bootstrap_field form.delivery_fee %}</div>
+                <div class="col-md-6 mb-3">{% bootstrap_field form.delivery_fee_per_km %}</div>
             </div>
+
+            <h6 style="color:var(--pearl); margin-top:0.5rem;">📦 Minimum Order (distance-based)</h6>
+            <small class="text-muted d-block mb-2">Base minimum + per-km increase. Example: KES 200 base + KES 50/km → 3km away needs KES 350 minimum</small>
+            <div class="row">
+                <div class="col-md-6 mb-3">{% bootstrap_field form.min_order_amount %}</div>
+                <div class="col-md-6 mb-3">{% bootstrap_field form.min_order_per_km %}</div>
+            </div>
+
+            <h6 style="color:var(--pearl); margin-top:1rem;">🚶 Delivery Modes by Distance</h6>
+            <small class="text-muted d-block mb-2">Set which delivery modes are available and their max range. The system will recommend the best mode based on customer distance.</small>
+
+            <div id="tierContainer">
+                {% for tier in delivery_tiers %}
+                <div class="tier-row" data-index="{{ forloop.counter0 }}">
+                    <input type="hidden" name="tier_id_{{ forloop.counter0 }}" value="{{ tier.id }}">
+                    <div class="row g-2 mb-2 align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label form-label-sm">Mode</label>
+                            <select name="tier_mode_{{ forloop.counter0 }}" class="form-select form-select-sm">
+                                <option value="foot" {% if tier.mode == 'foot' %}selected{% endif %}>🚶 On Foot</option>
+                                <option value="bicycle" {% if tier.mode == 'bicycle' %}selected{% endif %}>🚲 Bicycle</option>
+                                <option value="boda" {% if tier.mode == 'boda' %}selected{% endif %}>🏍️ Boda Boda</option>
+                                <option value="vehicle" {% if tier.mode == 'vehicle' %}selected{% endif %}>🚗 Vehicle</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label form-label-sm">Max km</label>
+                            <input type="number" name="tier_max_km_{{ forloop.counter0 }}" class="form-control form-control-sm" step="0.5" value="{{ tier.max_distance_km }}" placeholder="e.g. 2">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label form-label-sm">Base fee</label>
+                            <input type="number" name="tier_base_fee_{{ forloop.counter0 }}" class="form-control form-control-sm" step="1" value="{{ tier.base_fee|floatformat:0 }}" placeholder="0">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label form-label-sm">Per km</label>
+                            <input type="number" name="tier_fee_per_km_{{ forloop.counter0 }}" class="form-control form-control-sm" step="1" value="{{ tier.fee_per_km|floatformat:0 }}" placeholder="0">
+                        </div>
+                        <div class="col-md-3 d-flex gap-1">
+                            <div class="form-check mt-2">
+                                <input type="checkbox" name="tier_delete_{{ forloop.counter0 }}" class="form-check-input" id="delTier{{ forloop.counter0 }}">
+                                <label class="form-check-label text-danger" for="delTier{{ forloop.counter0 }}" style="font-size:0.8rem;">Remove</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-warning mt-1 mb-3" onclick="addTierRow()">+ Add Delivery Mode</button>
 
             <div class="d-flex gap-2 mt-4">
                 <button type="submit" class="btn btn-primary flex-fill py-2">Save Changes</button>
@@ -222,6 +273,46 @@
                     });
             }
         });
+    }
+
+    // ── DELIVERY TIER ROWS ──
+    let tierIndex = document.querySelectorAll('.tier-row').length;
+    function addTierRow() {
+        const container = document.getElementById('tierContainer');
+        const html = `
+        <div class="tier-row" data-index="${tierIndex}">
+            <div class="row g-2 mb-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label form-label-sm">Mode</label>
+                    <select name="tier_mode_${tierIndex}" class="form-select form-select-sm">
+                        <option value="foot">🚶 On Foot</option>
+                        <option value="bicycle">🚲 Bicycle</option>
+                        <option value="boda">🏍️ Boda Boda</option>
+                        <option value="vehicle">🚗 Vehicle</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label form-label-sm">Max km</label>
+                    <input type="number" name="tier_max_km_${tierIndex}" class="form-control form-control-sm" step="0.5" placeholder="e.g. 2">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label form-label-sm">Base fee</label>
+                    <input type="number" name="tier_base_fee_${tierIndex}" class="form-control form-control-sm" step="1" placeholder="0" value="0">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label form-label-sm">Per km</label>
+                    <input type="number" name="tier_fee_per_km_${tierIndex}" class="form-control form-control-sm" step="1" placeholder="0" value="0">
+                </div>
+                <div class="col-md-3 d-flex gap-1">
+                    <div class="form-check mt-2">
+                        <input type="checkbox" name="tier_delete_${tierIndex}" class="form-check-input" id="delTier${tierIndex}">
+                        <label class="form-check-label text-danger" for="delTier${tierIndex}" style="font-size:0.8rem;">Remove</label>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        container.insertAdjacentHTML('beforeend', html);
+        tierIndex++;
     }
 </script>
 {% endblock %}

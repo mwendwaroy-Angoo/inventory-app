@@ -201,12 +201,55 @@ def edit_business(request):
         form = BusinessEditForm(request.POST, instance=business)
         if form.is_valid():
             form.save()
+            # Handle delivery tiers
+            _save_delivery_tiers(request, business)
             messages.success(request, f"Business '{business.name}' updated successfully.")
             return redirect('home')
     else:
         form = BusinessEditForm(instance=business)
 
-    return render(request, 'accounts/edit_business.html', {'form': form})
+    delivery_tiers = business.delivery_tiers.all()
+    return render(request, 'accounts/edit_business.html', {
+        'form': form,
+        'delivery_tiers': delivery_tiers,
+    })
+
+
+def _save_delivery_tiers(request, business):
+    """Process delivery tier inline forms from POST data."""
+    from .models import DeliveryTier
+    # Delete removed tiers
+    existing_ids = []
+    i = 0
+    while True:
+        mode = request.POST.get(f'tier_mode_{i}')
+        if mode is None:
+            break
+        tier_id = request.POST.get(f'tier_id_{i}', '').strip()
+        max_dist = request.POST.get(f'tier_max_km_{i}', '').strip()
+        base_fee = request.POST.get(f'tier_base_fee_{i}', '').strip()
+        fee_km = request.POST.get(f'tier_fee_per_km_{i}', '').strip()
+        delete = request.POST.get(f'tier_delete_{i}')
+
+        if delete:
+            if tier_id:
+                DeliveryTier.objects.filter(id=tier_id, business=business).delete()
+            i += 1
+            continue
+
+        if mode and max_dist:
+            defaults = {
+                'max_distance_km': max_dist,
+                'base_fee': base_fee or 0,
+                'fee_per_km': fee_km or 0,
+            }
+            if tier_id:
+                DeliveryTier.objects.filter(id=tier_id, business=business).update(mode=mode, **defaults)
+                existing_ids.append(int(tier_id))
+            else:
+                tier = DeliveryTier.objects.create(business=business, mode=mode, **defaults)
+                existing_ids.append(tier.id)
+        i += 1
 
 
 @login_required

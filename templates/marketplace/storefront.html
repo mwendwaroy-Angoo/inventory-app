@@ -112,6 +112,43 @@
         color: var(--gold);
         background: rgba(201,168,76,0.1);
     }
+    .location-bar {
+        background: rgba(201,168,76,0.08);
+        border: 1px solid #444;
+        border-radius: 8px;
+        padding: 0.6rem 1rem;
+        margin-bottom: 1rem;
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    .location-bar .loc-status { color: var(--muted); }
+    .location-bar .loc-detected { color: var(--success); }
+    .location-bar .loc-btn {
+        background: var(--gold);
+        color: var(--onyx);
+        border: none;
+        padding: 0.25rem 0.8rem;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+    .location-bar .loc-btn:hover { opacity: 0.85; }
+    .manual-loc-form {
+        display: none;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 0.4rem;
+        width: 100%;
+    }
+    .manual-loc-form input {
+        max-width: 150px;
+        font-size: 0.8rem;
+        padding: 0.25rem 0.5rem;
+    }
 </style>
 {% endblock %}
 
@@ -135,6 +172,19 @@
 </div>
 
 <hr class="gold-divider">
+
+<!-- Location Bar -->
+<div class="location-bar" id="locationBar">
+    <span id="locStatus" class="loc-status">📍 Detecting your location...</span>
+    <button type="button" class="loc-btn" id="locAutoBtn" onclick="requestLocation()" style="display:none;">📍 Detect My Location</button>
+    <button type="button" class="loc-btn" id="locManualToggle" onclick="toggleManualLoc()" style="display:none;">📝 Enter Manually</button>
+    <div class="manual-loc-form" id="manualLocForm">
+        <input type="number" id="manualLat" class="form-control" step="0.0001" placeholder="Latitude e.g. -1.2921">
+        <input type="number" id="manualLng" class="form-control" step="0.0001" placeholder="Longitude e.g. 36.8219">
+        <button type="button" class="loc-btn" onclick="applyManualLocation()">Set</button>
+        <small style="color:var(--muted);">Tip: Open Google Maps, long-press your location, and copy the coordinates</small>
+    </div>
+</div>
 
 <!-- Search & Filters -->
 <div class="mb-3">
@@ -198,21 +248,22 @@
                 <!-- Delivery Mode -->
                 <div class="mb-3">
                     <label class="form-label" style="color:var(--gold);">Delivery Mode *</label>
-                    <div class="d-flex gap-3">
+                    <div id="deliveryModeOptions">
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="deliveryMode" id="modePickup" value="pickup" checked onchange="updateDelivery()">
-                            <label class="form-check-label" for="modePickup">🏪 Pickup</label>
+                            <label class="form-check-label" for="modePickup">🏪 Pickup (Free)</label>
                         </div>
                         {% if business.offers_delivery %}
-                        <div class="form-check">
+                        <div class="form-check" id="deliveryOption">
                             <input class="form-check-input" type="radio" name="deliveryMode" id="modeDelivery" value="delivery" onchange="updateDelivery()">
-                            <label class="form-check-label" for="modeDelivery">🚚 Delivery (KES {{ business.delivery_fee|floatformat:0 }})</label>
+                            <label class="form-check-label" for="modeDelivery" id="deliveryLabel">🚚 Delivery</label>
                         </div>
                         {% endif %}
                     </div>
                     <div id="deliveryInfo" style="display:none; margin-top:0.5rem;">
-                        <small style="color:var(--muted);">Delivery within {{ business.delivery_radius_km }}km. Fee: KES {{ business.delivery_fee|floatformat:0 }}</small>
+                        <div id="deliveryTierInfo"></div>
                         <div id="distanceMsg" style="margin-top:0.3rem; font-size:0.8rem;"></div>
+                        <div id="minOrderMsg" style="margin-top:0.3rem; font-size:0.8rem;"></div>
                     </div>
                 </div>
 
@@ -286,39 +337,133 @@
 {% block extra_js %}
 <script>
 const BUSINESS_ID = {{ business.id }};
-const BIZ_DELIVERY_FEE = {{ business.delivery_fee|default:"0" }};
-const BIZ_DELIVERY_RADIUS = {{ business.delivery_radius_km|default:"5" }};
-const BIZ_MIN_ORDER = {{ business.min_order_amount|default:"0" }};
+const BIZ_DELIVERY_FEE = parseFloat({{ business.delivery_fee|default:"0" }});
+const BIZ_FEE_PER_KM = parseFloat({{ business.delivery_fee_per_km|default:"0" }});
+const BIZ_DELIVERY_RADIUS = parseFloat({{ business.delivery_radius_km|default:"5" }});
+const BIZ_MIN_ORDER = parseFloat({{ business.min_order_amount|default:"0" }});
+const BIZ_MIN_ORDER_PER_KM = parseFloat({{ business.min_order_per_km|default:"0" }});
 const BIZ_LAT = {{ business.latitude|default:"null" }};
 const BIZ_LNG = {{ business.longitude|default:"null" }};
-let cart = {};  // {itemId: {name, price, qty, unit, maxStock}}
+const DELIVERY_TIERS = JSON.parse('{{ delivery_tiers_json|escapejs }}');
+let cart = {};
 let customerCoords = null;
+let customerDistance = null;
+let recommendedTier = null;
 
 // ── PROACTIVE GEOLOCATION ──
+function updateLocationBar(status, isDetected) {
+    const statusEl = document.getElementById('locStatus');
+    const autoBtn = document.getElementById('locAutoBtn');
+    const manualToggle = document.getElementById('locManualToggle');
+    statusEl.textContent = status;
+    statusEl.className = isDetected ? 'loc-detected' : 'loc-status';
+    autoBtn.style.display = isDetected ? 'none' : 'inline-block';
+    manualToggle.style.display = 'inline-block';
+}
+
+function onLocationObtained() {
+    customerDistance = haversine(BIZ_LAT, BIZ_LNG, customerCoords.lat, customerCoords.lng);
+    const distText = customerDistance < 1
+        ? (customerDistance * 1000).toFixed(0) + 'm'
+        : customerDistance.toFixed(1) + 'km';
+    updateLocationBar('📍 Location set — ' + distText + ' from this business', true);
+    applyDeliveryRecommendation();
+}
+
+function requestLocation() {
+    if (!navigator.geolocation) {
+        updateLocationBar('📍 Geolocation not supported — enter manually', false);
+        return;
+    }
+    updateLocationBar('📍 Detecting your location...', false);
+    navigator.geolocation.getCurrentPosition(
+        function(pos) {
+            customerCoords = {lat: pos.coords.latitude, lng: pos.coords.longitude};
+            if (BIZ_LAT && BIZ_LNG) onLocationObtained();
+        },
+        function() {
+            updateLocationBar('📍 Could not detect location — enter manually or allow access', false);
+        },
+        {timeout: 10000, enableHighAccuracy: false}
+    );
+}
+
+function toggleManualLoc() {
+    const form = document.getElementById('manualLocForm');
+    form.style.display = form.style.display === 'flex' ? 'none' : 'flex';
+}
+
+function applyManualLocation() {
+    const lat = parseFloat(document.getElementById('manualLat').value);
+    const lng = parseFloat(document.getElementById('manualLng').value);
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        alert('Please enter valid coordinates.\nLatitude: -90 to 90\nLongitude: -180 to 180');
+        return;
+    }
+    customerCoords = {lat: lat, lng: lng};
+    document.getElementById('manualLocForm').style.display = 'none';
+    if (BIZ_LAT && BIZ_LNG) onLocationObtained();
+}
+
+// Auto-detect on page load
 if (navigator.geolocation && BIZ_LAT && BIZ_LNG) {
     navigator.geolocation.getCurrentPosition(
         function(pos) {
             customerCoords = {lat: pos.coords.latitude, lng: pos.coords.longitude};
-            const dist = haversine(BIZ_LAT, BIZ_LNG, customerCoords.lat, customerCoords.lng);
-            const deliveryRadio = document.getElementById('modeDelivery');
-            if (deliveryRadio) {
-                if (dist > BIZ_DELIVERY_RADIUS) {
-                    deliveryRadio.disabled = true;
-                    deliveryRadio.parentElement.innerHTML =
-                        '<input class="form-check-input" type="radio" name="deliveryMode" id="modeDelivery" value="delivery" disabled>' +
-                        '<label class="form-check-label" for="modeDelivery" style="color:#999;">🚚 Delivery — ' +
-                        dist.toFixed(1) + 'km away (max ' + BIZ_DELIVERY_RADIUS + 'km)</label>';
-                    // If delivery was selected, switch to pickup
-                    if (getDeliveryMode() === 'delivery') {
-                        document.getElementById('modePickup').checked = true;
-                        updateDelivery();
-                    }
-                }
-            }
+            onLocationObtained();
         },
-        function() { /* denied — delivery option stays available */ },
+        function() {
+            updateLocationBar('📍 Location not detected — detect or enter manually', false);
+        },
         {timeout: 10000, enableHighAccuracy: false}
     );
+} else if (!navigator.geolocation) {
+    updateLocationBar('📍 Geolocation not available — enter your location manually', false);
+} else {
+    updateLocationBar('📍 Business has no GPS set — location features unavailable', false);
+    document.getElementById('locManualToggle').style.display = 'none';
+    document.getElementById('locAutoBtn').style.display = 'none';
+}
+
+function applyDeliveryRecommendation() {
+    const dist = customerDistance;
+    if (dist === null) return;
+
+    const deliveryRadio = document.getElementById('modeDelivery');
+    const deliveryLabel = document.getElementById('deliveryLabel');
+    if (!deliveryRadio) return;
+
+    // Check if within delivery radius at all
+    if (dist > BIZ_DELIVERY_RADIUS) {
+        deliveryRadio.disabled = true;
+        deliveryLabel.innerHTML = '🚚 Delivery — ' + dist.toFixed(1) + 'km away (max ' + BIZ_DELIVERY_RADIUS + 'km)';
+        deliveryLabel.style.color = '#999';
+        if (getDeliveryMode() === 'delivery') {
+            document.getElementById('modePickup').checked = true;
+            updateDelivery();
+        }
+        return;
+    }
+
+    // Find best tier for this distance
+    recommendedTier = null;
+    if (DELIVERY_TIERS.length > 0) {
+        for (let t of DELIVERY_TIERS) {
+            if (dist <= parseFloat(t.max_distance_km)) {
+                recommendedTier = t;
+                break;
+            }
+        }
+    }
+
+    // Update delivery label with dynamic fee
+    const fee = calcDeliveryFee(dist);
+    deliveryLabel.innerHTML = '🚚 Delivery (KES ' + Math.round(fee).toLocaleString() + ')';
+    if (recommendedTier) {
+        const modeLabels = {foot: '🚶 On Foot', bicycle: '🚲 Bicycle', boda: '🏍️ Boda Boda', vehicle: '🚗 Vehicle'};
+        const label = modeLabels[recommendedTier.mode] || recommendedTier.mode;
+        deliveryLabel.innerHTML += ' — ' + label + ' recommended';
+    }
 }
 
 // ── TAP TO ADD ──
@@ -411,8 +556,33 @@ function getPaymentMethod() {
     return el ? el.value : 'mpesa';
 }
 
+function calcDeliveryFee(dist) {
+    // If there's a recommended tier, use its pricing
+    if (recommendedTier && dist !== null) {
+        return parseFloat(recommendedTier.base_fee) + parseFloat(recommendedTier.fee_per_km) * dist;
+    }
+    // Fallback to business-level pricing
+    if (dist !== null) {
+        return BIZ_DELIVERY_FEE + BIZ_FEE_PER_KM * dist;
+    }
+    return BIZ_DELIVERY_FEE;
+}
+
+function calcMinOrder(dist) {
+    if (dist !== null) {
+        return BIZ_MIN_ORDER + BIZ_MIN_ORDER_PER_KM * dist;
+    }
+    return BIZ_MIN_ORDER;
+}
+
 function getDeliveryFee() {
-    return getDeliveryMode() === 'delivery' ? BIZ_DELIVERY_FEE : 0;
+    if (getDeliveryMode() !== 'delivery') return 0;
+    return calcDeliveryFee(customerDistance);
+}
+
+function getMinOrder() {
+    if (getDeliveryMode() !== 'delivery') return BIZ_MIN_ORDER;
+    return calcMinOrder(customerDistance);
 }
 
 function updateOrderSummary() {
@@ -421,45 +591,82 @@ function updateOrderSummary() {
     const total = subtotal + delFee;
     let html = `<div class="d-flex justify-content-between"><span>Subtotal</span><span>KES ${subtotal.toLocaleString()}</span></div>`;
     if (getDeliveryMode() === 'delivery') {
-        html += `<div class="d-flex justify-content-between" style="color:var(--muted);"><span>Delivery fee</span><span>KES ${delFee.toLocaleString()}</span></div>`;
+        html += `<div class="d-flex justify-content-between" style="color:var(--muted);"><span>Delivery fee</span><span>KES ${Math.round(delFee).toLocaleString()}</span></div>`;
     }
-    html += `<div class="d-flex justify-content-between mt-1" style="color:var(--gold);font-weight:600;border-top:1px solid #444;padding-top:0.5rem;"><span>Total</span><span>KES ${total.toLocaleString()}</span></div>`;
+    html += `<div class="d-flex justify-content-between mt-1" style="color:var(--gold);font-weight:600;border-top:1px solid #444;padding-top:0.5rem;"><span>Total</span><span>KES ${Math.round(total).toLocaleString()}</span></div>`;
     document.getElementById('orderTotalSummary').innerHTML = html;
 }
 
 function updateDelivery() {
     const infoDiv = document.getElementById('deliveryInfo');
     const distMsg = document.getElementById('distanceMsg');
+    const minMsg = document.getElementById('minOrderMsg');
+    const tierInfo = document.getElementById('deliveryTierInfo');
+
     if (getDeliveryMode() === 'delivery') {
         infoDiv.style.display = 'block';
-        // Try to get customer location for distance check
+
         if (BIZ_LAT && BIZ_LNG && navigator.geolocation && !customerCoords) {
             distMsg.innerHTML = '<span style="color:var(--gold);">📍 Checking your location...</span>';
             navigator.geolocation.getCurrentPosition(
                 pos => {
                     customerCoords = {lat: pos.coords.latitude, lng: pos.coords.longitude};
-                    const dist = haversine(BIZ_LAT, BIZ_LNG, customerCoords.lat, customerCoords.lng);
-                    if (dist > BIZ_DELIVERY_RADIUS) {
-                        distMsg.innerHTML = `<span style="color:var(--danger);">⚠️ You are ${dist.toFixed(1)}km away (max ${BIZ_DELIVERY_RADIUS}km). Delivery may not be available.</span>`;
-                    } else {
-                        distMsg.innerHTML = `<span style="color:var(--success);">✅ You are ${dist.toFixed(1)}km away — within delivery range!</span>`;
-                    }
+                    customerDistance = haversine(BIZ_LAT, BIZ_LNG, customerCoords.lat, customerCoords.lng);
+                    applyDeliveryRecommendation();
+                    showDeliveryDetails();
                 },
                 () => {
-                    distMsg.innerHTML = '<span style="color:var(--muted);">Could not determine your location.</span>';
+                    distMsg.innerHTML = '<span style="color:var(--muted);">Could not determine your location. Using base pricing.</span>';
                 },
                 {timeout: 10000}
             );
-        } else if (customerCoords && BIZ_LAT && BIZ_LNG) {
-            const dist = haversine(BIZ_LAT, BIZ_LNG, customerCoords.lat, customerCoords.lng);
-            if (dist > BIZ_DELIVERY_RADIUS) {
-                distMsg.innerHTML = `<span style="color:var(--danger);">⚠️ You are ${dist.toFixed(1)}km away (max ${BIZ_DELIVERY_RADIUS}km). Delivery may not be available.</span>`;
-            } else {
-                distMsg.innerHTML = `<span style="color:var(--success);">✅ You are ${dist.toFixed(1)}km away — within delivery range!</span>`;
-            }
+        } else {
+            showDeliveryDetails();
         }
     } else {
         infoDiv.style.display = 'none';
+    }
+    updateOrderSummary();
+}
+
+function showDeliveryDetails() {
+    const distMsg = document.getElementById('distanceMsg');
+    const minMsg = document.getElementById('minOrderMsg');
+    const tierInfo = document.getElementById('deliveryTierInfo');
+    const dist = customerDistance;
+
+    if (dist !== null) {
+        // Distance message
+        if (dist < 1) {
+            distMsg.innerHTML = `<span style="color:var(--success);">📍 ${(dist * 1000).toFixed(0)}m away — within delivery range!</span>`;
+        } else {
+            distMsg.innerHTML = `<span style="color:var(--success);">📍 ${dist.toFixed(1)}km away — within delivery range!</span>`;
+        }
+
+        // Delivery mode recommendation
+        if (recommendedTier) {
+            const modeLabels = {foot: '🚶 On Foot', bicycle: '🚲 Bicycle', boda: '🏍️ Boda Boda', vehicle: '🚗 Vehicle'};
+            const label = modeLabels[recommendedTier.mode] || recommendedTier.mode;
+            const fee = calcDeliveryFee(dist);
+            tierInfo.innerHTML = `<small style="color:var(--gold);">Recommended: <strong>${label}</strong> · Fee: KES ${Math.round(fee).toLocaleString()}</small>`;
+        } else {
+            const fee = calcDeliveryFee(dist);
+            tierInfo.innerHTML = `<small style="color:var(--muted);">Delivery fee: KES ${Math.round(fee).toLocaleString()}</small>`;
+        }
+
+        // Dynamic minimum order
+        const minOrder = calcMinOrder(dist);
+        if (minOrder > 0) {
+            minMsg.innerHTML = `<small style="color:var(--muted);">📦 Minimum order for your distance: <strong style="color:var(--gold);">KES ${Math.round(minOrder).toLocaleString()}</strong></small>`;
+        } else {
+            minMsg.innerHTML = '';
+        }
+    } else {
+        distMsg.innerHTML = '';
+        tierInfo.innerHTML = `<small style="color:var(--muted);">Delivery within ${BIZ_DELIVERY_RADIUS}km. Base fee: KES ${BIZ_DELIVERY_FEE.toLocaleString()}</small>`;
+        if (BIZ_MIN_ORDER > 0) {
+            minMsg.innerHTML = `<small style="color:var(--muted);">📦 Min order: KES ${BIZ_MIN_ORDER.toLocaleString()}</small>`;
+        }
     }
     updateOrderSummary();
 }
@@ -499,8 +706,9 @@ function placeOrder() {
     }
 
     const subtotal = getSubtotal();
-    if (BIZ_MIN_ORDER > 0 && subtotal < BIZ_MIN_ORDER) {
-        alert(`Minimum order amount is KES ${BIZ_MIN_ORDER.toLocaleString()}.`);
+    const minOrder = getMinOrder();
+    if (minOrder > 0 && subtotal < minOrder) {
+        alert(`Minimum order amount is KES ${Math.round(minOrder).toLocaleString()}.`);
         return;
     }
 
@@ -525,8 +733,12 @@ function placeOrder() {
         items: items,
         delivery_mode: deliveryMode,
         payment_method: paymentMethod,
-        delivery_fee: deliveryFee,
+        delivery_fee: Math.round(deliveryFee),
         customer_lat: customerCoords ? customerCoords.lat : null,
+        customer_lng: customerCoords ? customerCoords.lng : null,
+        customer_distance: customerDistance,
+        delivery_tier_mode: recommendedTier ? recommendedTier.mode : null,
+    };
         customer_lng: customerCoords ? customerCoords.lng : null,
     };
 

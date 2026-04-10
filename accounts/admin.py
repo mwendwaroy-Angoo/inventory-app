@@ -1,5 +1,10 @@
 from django.contrib import admin
-from .models import Business, UserProfile
+from .models import Business, UserProfile, DeliveryTier
+
+
+class DeliveryTierInline(admin.TabularInline):
+    model = DeliveryTier
+    extra = 0
 
 
 @admin.register(Business)
@@ -8,6 +13,7 @@ class BusinessAdmin(admin.ModelAdmin):
     search_fields = ('name', 'owner__username')
     list_filter = ('business_type', 'county', 'created_at')
     readonly_fields = ('created_at',)
+    inlines = [DeliveryTierInline]
 
     def get_owner_username(self, obj):
         return obj.owner.username if obj.owner else '-'

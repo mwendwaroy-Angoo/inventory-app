@@ -60,6 +60,46 @@
     .open-badge.closed { background:rgba(231,76,60,0.15); color:#e74c3c; border:1px solid #e74c3c; }
     .delivery-info { font-size:0.75rem; color:var(--muted); margin-top:0.4rem; }
     .delivery-info .delivers { color:var(--success); }
+    .location-bar {
+        background: rgba(201,168,76,0.08);
+        border: 1px solid #444;
+        border-radius: 8px;
+        padding: 0.6rem 1rem;
+        margin-bottom: 1rem;
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        max-width: 600px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    .location-bar .loc-status { color: var(--muted); }
+    .location-bar .loc-detected { color: var(--success); }
+    .location-bar .loc-btn {
+        background: var(--gold);
+        color: var(--onyx);
+        border: none;
+        padding: 0.25rem 0.8rem;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+    .location-bar .loc-btn:hover { opacity: 0.85; }
+    .manual-loc-form {
+        display: none;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 0.4rem;
+        width: 100%;
+    }
+    .manual-loc-form input {
+        max-width: 150px;
+        font-size: 0.8rem;
+        padding: 0.25rem 0.5rem;
+    }
 </style>
 {% endblock %}
 
@@ -83,6 +123,19 @@
         </select>
         <button type="submit" class="btn btn-gold">Search</button>
     </form>
+</div>
+
+<!-- Location Bar -->
+<div class="location-bar" id="locationBar">
+    <span id="locStatus" class="loc-status">📍 Detecting your location...</span>
+    <button type="button" class="loc-btn" id="locAutoBtn" onclick="requestLocation()" style="display:none;">📍 Detect</button>
+    <button type="button" class="loc-btn" id="locManualToggle" onclick="toggleManualLoc()" style="display:none;">📝 Enter Manually</button>
+    <div class="manual-loc-form" id="manualLocForm">
+        <input type="number" id="manualLat" class="form-control" step="0.0001" placeholder="Latitude e.g. -1.2921">
+        <input type="number" id="manualLng" class="form-control" step="0.0001" placeholder="Longitude e.g. 36.8219">
+        <button type="button" class="loc-btn" onclick="applyManualLocation()">Set</button>
+        <small style="color:var(--muted);">Tip: Open Google Maps, long-press your spot, copy coordinates</small>
+    </div>
 </div>
 
 <hr class="gold-divider">
@@ -148,52 +201,92 @@ function haversine(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// Request geolocation on page load
+function updateLocationBar(status, isDetected) {
+    document.getElementById('locStatus').textContent = status;
+    document.getElementById('locStatus').className = isDetected ? 'loc-detected' : 'loc-status';
+    document.getElementById('locAutoBtn').style.display = isDetected ? 'none' : 'inline-block';
+    document.getElementById('locManualToggle').style.display = 'inline-block';
+}
+
+function applyDistances(custLat, custLng) {
+    const cards = document.querySelectorAll('.business-card');
+    const container = document.querySelector('.row.g-3');
+    const columns = Array.from(container ? container.children : []);
+    const distances = [];
+
+    cards.forEach(function(card, i) {
+        const lat = parseFloat(card.dataset.lat);
+        const lng = parseFloat(card.dataset.lng);
+        const distDiv = card.querySelector('.distance-info');
+        if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+            const dist = haversine(custLat, custLng, lat, lng);
+            distDiv.style.display = 'block';
+            if (dist < 1) {
+                distDiv.innerHTML = '📍 ' + (dist * 1000).toFixed(0) + 'm away';
+                distDiv.style.color = 'var(--success)';
+            } else {
+                distDiv.innerHTML = '📍 ' + dist.toFixed(1) + 'km away';
+                const radius = parseFloat(card.dataset.radius);
+                if (radius > 0 && dist <= radius) {
+                    distDiv.style.color = 'var(--success)';
+                } else if (radius > 0) {
+                    distDiv.style.color = '#e74c3c';
+                    distDiv.innerHTML += ' (outside delivery area)';
+                }
+            }
+            distances.push({col: columns[i], dist: dist});
+        } else {
+            distances.push({col: columns[i], dist: 99999});
+        }
+    });
+
+    if (container && distances.length > 0) {
+        distances.sort(function(a, b) { return a.dist - b.dist; });
+        distances.forEach(function(d) { container.appendChild(d.col); });
+    }
+}
+
+function requestLocation() {
+    if (!navigator.geolocation) {
+        updateLocationBar('📍 Geolocation not supported — enter manually', false);
+        return;
+    }
+    updateLocationBar('📍 Detecting...', false);
+    navigator.geolocation.getCurrentPosition(function(pos) {
+        updateLocationBar('📍 Location detected — sorting by distance', true);
+        applyDistances(pos.coords.latitude, pos.coords.longitude);
+    }, function() {
+        updateLocationBar('📍 Could not detect — enter manually or allow access', false);
+    }, {timeout: 10000, enableHighAccuracy: false});
+}
+
+function toggleManualLoc() {
+    const form = document.getElementById('manualLocForm');
+    form.style.display = form.style.display === 'flex' ? 'none' : 'flex';
+}
+
+function applyManualLocation() {
+    const lat = parseFloat(document.getElementById('manualLat').value);
+    const lng = parseFloat(document.getElementById('manualLng').value);
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        alert('Please enter valid coordinates.\nLatitude: -90 to 90\nLongitude: -180 to 180');
+        return;
+    }
+    document.getElementById('manualLocForm').style.display = 'none';
+    updateLocationBar('📍 Location set — sorting by distance', true);
+    applyDistances(lat, lng);
+}
+
+// Auto-detect on page load
 if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(function(pos) {
-        const custLat = pos.coords.latitude;
-        const custLng = pos.coords.longitude;
-        const cards = document.querySelectorAll('.business-card');
-        const container = document.querySelector('.row.g-3');
-        const columns = Array.from(container ? container.children : []);
-        const distances = [];
-
-        cards.forEach(function(card, i) {
-            const lat = parseFloat(card.dataset.lat);
-            const lng = parseFloat(card.dataset.lng);
-            const distDiv = card.querySelector('.distance-info');
-            if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
-                const dist = haversine(custLat, custLng, lat, lng);
-                distDiv.style.display = 'block';
-                if (dist < 1) {
-                    distDiv.innerHTML = '📍 ' + (dist * 1000).toFixed(0) + 'm away';
-                    distDiv.style.color = 'var(--success)';
-                } else {
-                    distDiv.innerHTML = '📍 ' + dist.toFixed(1) + 'km away';
-                    const radius = parseFloat(card.dataset.radius);
-                    if (radius > 0 && dist <= radius) {
-                        distDiv.style.color = 'var(--success)';
-                    } else if (radius > 0) {
-                        distDiv.style.color = '#e74c3c';
-                        distDiv.innerHTML += ' (outside delivery area)';
-                    }
-                }
-                distances.push({col: columns[i], dist: dist});
-            } else {
-                distances.push({col: columns[i], dist: 99999});
-            }
-        });
-
-        // Sort business cards by distance (nearest first)
-        if (container && distances.length > 0) {
-            distances.sort(function(a, b) { return a.dist - b.dist; });
-            distances.forEach(function(d) {
-                container.appendChild(d.col);
-            });
-        }
+        updateLocationBar('📍 Location detected — sorted by nearest', true);
+        applyDistances(pos.coords.latitude, pos.coords.longitude);
     }, function() {
-        // Geolocation denied or failed — silently continue
+        updateLocationBar('📍 Location not detected — detect or enter manually', false);
     }, {timeout: 10000, enableHighAccuracy: false});
+} else {
+    updateLocationBar('📍 Geolocation not available — enter your location manually', false);
 }
 </script>
 {% endblock %}

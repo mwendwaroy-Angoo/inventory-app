@@ -33,8 +33,10 @@ class Business(models.Model):
     # ── Delivery Settings ──
     offers_delivery = models.BooleanField(default=False)
     delivery_radius_km = models.DecimalField(max_digits=5, decimal_places=1, default=5, help_text='Max delivery distance in km')
-    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Flat delivery fee in KES')
-    min_order_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Minimum order value in KES')
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Base delivery fee in KES')
+    delivery_fee_per_km = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Additional fee per km')
+    min_order_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Base minimum order in KES')
+    min_order_per_km = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Additional minimum per km of distance')
 
     # ── Payment Receiving Settings ──
     PAYMENT_CHANNEL_CHOICES = [
@@ -79,6 +81,45 @@ class Business(models.Model):
         dlon = lon2 - lon1
         a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
         return R * 2 * math.asin(math.sqrt(a))
+
+    def calc_delivery_fee(self, distance_km):
+        """Calculate delivery fee based on distance."""
+        return float(self.delivery_fee or 0) + float(self.delivery_fee_per_km or 0) * distance_km
+
+    def calc_min_order(self, distance_km):
+        """Calculate minimum order amount based on distance."""
+        return float(self.min_order_amount or 0) + float(self.min_order_per_km or 0) * distance_km
+
+    def recommend_delivery_tier(self, distance_km):
+        """Return the best delivery tier for the given distance, or None."""
+        tiers = self.delivery_tiers.filter(
+            max_distance_km__gte=distance_km
+        ).order_by('max_distance_km')
+        return tiers.first()
+
+
+class DeliveryTier(models.Model):
+    MODE_CHOICES = [
+        ('foot', '🚶 On Foot'),
+        ('bicycle', '🚲 Bicycle'),
+        ('boda', '🏍️ Boda Boda'),
+        ('vehicle', '🚗 Vehicle'),
+    ]
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='delivery_tiers')
+    mode = models.CharField(max_length=15, choices=MODE_CHOICES)
+    max_distance_km = models.DecimalField(max_digits=5, decimal_places=1, help_text='Max range for this mode in km')
+    base_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Base fee for this mode')
+    fee_per_km = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Additional fee per km')
+
+    class Meta:
+        ordering = ['max_distance_km']
+        unique_together = ['business', 'mode']
+
+    def __str__(self):
+        return f"{self.get_mode_display()} — up to {self.max_distance_km}km"
+
+    def calc_fee(self, distance_km):
+        return float(self.base_fee) + float(self.fee_per_km) * distance_km
 
 
 class UserProfile(models.Model):

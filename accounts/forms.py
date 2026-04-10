@@ -110,7 +110,8 @@ class BusinessEditForm(forms.ModelForm):
             'county', 'sub_county', 'ward',
             'opening_time', 'closing_time', 'is_open_override',
             'latitude', 'longitude',
-            'offers_delivery', 'delivery_radius_km', 'delivery_fee', 'min_order_amount',
+            'offers_delivery', 'delivery_radius_km', 'delivery_fee', 'delivery_fee_per_km',
+            'min_order_amount', 'min_order_per_km',
         ]
         widgets = {
             'name': forms.TextInput(attrs={'placeholder': 'Business name'}),
@@ -123,8 +124,10 @@ class BusinessEditForm(forms.ModelForm):
             'latitude': forms.NumberInput(attrs={'step': '0.000001', 'placeholder': 'e.g. -1.2921'}),
             'longitude': forms.NumberInput(attrs={'step': '0.000001', 'placeholder': 'e.g. 36.8219'}),
             'delivery_radius_km': forms.NumberInput(attrs={'step': '0.5', 'placeholder': 'e.g. 5'}),
-            'delivery_fee': forms.NumberInput(attrs={'step': '1', 'placeholder': 'e.g. 100'}),
-            'min_order_amount': forms.NumberInput(attrs={'step': '1', 'placeholder': 'e.g. 200'}),
+            'delivery_fee': forms.NumberInput(attrs={'step': '1', 'placeholder': 'Base fee e.g. 50'}),
+            'delivery_fee_per_km': forms.NumberInput(attrs={'step': '1', 'placeholder': 'Per km e.g. 30'}),
+            'min_order_amount': forms.NumberInput(attrs={'step': '1', 'placeholder': 'Base min e.g. 200'}),
+            'min_order_per_km': forms.NumberInput(attrs={'step': '1', 'placeholder': 'Per km e.g. 50'}),
         }
 
     def __init__(self, *args, **kwargs):

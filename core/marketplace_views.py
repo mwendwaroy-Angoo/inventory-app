@@ -81,12 +81,18 @@ def storefront(request, business_id):
     if search:
         available_items = [i for i in available_items if search.lower() in i.description.lower()]
 
+    # Delivery tiers as JSON for frontend
+    delivery_tiers_data = list(business.delivery_tiers.values(
+        'mode', 'max_distance_km', 'base_fee', 'fee_per_km'
+    ))
+
     return render(request, 'marketplace/storefront.html', {
         'business': business,
         'items': available_items,
         'stores': stores,
         'store_filter': store_filter,
         'search': search,
+        'delivery_tiers_json': json.dumps(delivery_tiers_data, default=str),
     })
 
 
@@ -171,10 +177,10 @@ def place_order(request, business_id):
         payment_method = 'mpesa'
 
     delivery_fee = 0
+    delivery_tier_mode = None
+    distance = None
     if delivery_mode == 'delivery' and business.offers_delivery:
-        delivery_fee = float(business.delivery_fee or 0)
-
-        # Proximity validation for delivery orders
+        # Calculate distance if customer sent coordinates
         customer_lat = data.get('customer_lat')
         customer_lng = data.get('customer_lng')
         if customer_lat and customer_lng and business.latitude and business.longitude:
@@ -187,11 +193,36 @@ def place_order(request, business_id):
                                  f'Please choose Pickup instead.'
                     }, status=400)
 
-    # Minimum order check
-    if business.min_order_amount and subtotal < float(business.min_order_amount):
+        # Calculate distance-based delivery fee
+        if distance is not None:
+            # Check for delivery tier
+            tier = business.recommend_delivery_tier(distance)
+            if tier:
+                delivery_fee = tier.calc_fee(distance)
+                delivery_tier_mode = tier.mode
+            else:
+                delivery_fee = business.calc_delivery_fee(distance)
+        else:
+            delivery_fee = float(business.delivery_fee or 0)
+
+    # Minimum order check (distance-based if distance known)
+    if delivery_mode == 'delivery' and distance is not None:
+        min_order = business.calc_min_order(distance)
+    else:
+        min_order = float(business.min_order_amount or 0)
+
+    if min_order > 0 and subtotal < min_order:
         return JsonResponse({
-            'error': f'Minimum order amount is KES {business.min_order_amount:,.0f}'
+            'error': f'Minimum order amount is KES {min_order:,.0f}'
         }, status=400)
+
+    # Build notes with delivery tier info
+    order_notes = data.get('notes', '')
+    if delivery_tier_mode:
+        mode_labels = {'foot': 'On Foot', 'bicycle': 'Bicycle', 'boda': 'Boda Boda', 'vehicle': 'Vehicle'}
+        tier_label = mode_labels.get(delivery_tier_mode, delivery_tier_mode)
+        if distance is not None:
+            order_notes += f'\n[Delivery: {tier_label}, {distance:.1f}km]'
 
     # Create order
     order = Order.objects.create(
@@ -199,7 +230,7 @@ def place_order(request, business_id):
         customer_name=customer_name,
         customer_phone=format_phone_ke(customer_phone),
         customer_location=data.get('customer_location', ''),
-        notes=data.get('notes', ''),
+        notes=order_notes.strip(),
         delivery_mode=delivery_mode,
         payment_method=payment_method,
         delivery_fee=delivery_fee,
