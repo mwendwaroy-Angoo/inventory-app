@@ -155,11 +155,10 @@
 <div class="item-grid" id="itemGrid">
     {% for item in items %}
     <div class="item-card" data-id="{{ item.id }}" data-price="{{ item.selling_price }}"
-         data-name="{{ item.description }}" data-stock="{{ item.current_balance }}"
+         data-name="{{ item.description }}"
          data-unit="{{ item.unit }}" data-store="{{ item.store_id }}">
         <div class="name">{{ item.description }}</div>
         <div class="price">KES {{ item.selling_price|floatformat:0 }}</div>
-        <div class="stock-info">{{ item.current_balance }} {{ item.unit }} available</div>
         <div class="qty-control">
             <button class="qty-btn" onclick="changeQty(this, -1)">−</button>
             <span class="qty-display">1</span>
@@ -309,7 +308,6 @@ document.querySelectorAll('.item-card').forEach(card => {
                 price: parseFloat(this.dataset.price),
                 qty: 1,
                 unit: this.dataset.unit,
-                maxStock: parseInt(this.dataset.stock),
             };
             this.classList.add('in-cart');
             this.querySelector('.qty-display').textContent = '1';
@@ -326,8 +324,6 @@ function changeQty(btn, delta) {
     if (newQty < 1) {
         delete cart[id];
         card.classList.remove('in-cart');
-    } else if (newQty > cart[id].maxStock) {
-        return;
     } else {
         cart[id].qty = newQty;
         card.querySelector('.qty-display').textContent = newQty;
@@ -520,7 +516,13 @@ function placeOrder() {
 
         if (data.success) {
             bootstrap.Modal.getInstance(document.getElementById('checkoutModal')).hide();
-            document.getElementById('successMsg').textContent = data.message;
+
+            // Show adjustments if any quantities were changed
+            let msg = data.message;
+            if (data.adjustments && data.adjustments.length > 0) {
+                msg += '\n\nNote: ' + data.adjustments.join('; ');
+            }
+            document.getElementById('successMsg').textContent = msg;
             document.getElementById('orderNum').textContent = data.order_number;
             document.getElementById('trackLink').href = `/shop/order/${data.order_number}/`;
 

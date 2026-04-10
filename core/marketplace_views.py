@@ -129,6 +129,7 @@ def place_order(request, business_id):
     # Validate items and stock
     order_lines = []
     subtotal = 0
+    adjustments = []
     for entry in cart:
         item_id = entry.get('item_id')
         qty = entry.get('qty', 1)
@@ -141,10 +142,13 @@ def place_order(request, business_id):
         if qty < 1:
             return JsonResponse({'error': 'Quantity must be at least 1'}, status=400)
 
-        if item.current_balance() < qty:
-            return JsonResponse({
-                'error': f'Not enough stock for {item.description}. Available: {item.current_balance()}'
-            }, status=400)
+        available = item.current_balance()
+        if available <= 0:
+            adjustments.append(f'{item.description} is out of stock — removed')
+            continue
+        if qty > available:
+            adjustments.append(f'{item.description}: adjusted to {available} (only {available} available)')
+            qty = available
 
         if not item.selling_price:
             return JsonResponse({
@@ -153,6 +157,9 @@ def place_order(request, business_id):
 
         subtotal += item.selling_price * qty
         order_lines.append((item, qty))
+
+    if not order_lines:
+        return JsonResponse({'error': 'No items available for your order'}, status=400)
 
     # Delivery & payment fields
     delivery_mode = data.get('delivery_mode', 'pickup')
@@ -199,12 +206,16 @@ def place_order(request, business_id):
     from .notifications import notify_new_order
     notify_new_order(order)
 
-    return JsonResponse({
+    response_data = {
         'success': True,
         'order_number': order.order_number,
         'total': float(order.total_amount),
         'message': f'Order {order.order_number} placed! Total: KES {order.total_amount:,.0f}',
-    }, status=201)
+    }
+    if adjustments:
+        response_data['adjustments'] = adjustments
+
+    return JsonResponse(response_data, status=201)
 
 
 # ── ORDER TRACKING ───────────────────────────────────────────────────────────
