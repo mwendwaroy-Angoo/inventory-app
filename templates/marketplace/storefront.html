@@ -457,13 +457,16 @@ function searchLocation() {
     const resultsDiv = document.getElementById('locSearchResults');
     resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Searching...</div>';
     resultsDiv.style.display = 'block';
-    const url = 'https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=5&countrycodes=ke&email=app@dukamwecheche.com';
-    fetch(url, {headers: {'Accept': 'application/json'}})
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=5&addressdetails=1&email=app@dukamwecheche.com';
+    fetch(url)
         .then(r => {
             if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
+            return r.text();
         })
-        .then(data => {
+        .then(text => {
+            console.log('Nominatim raw response:', text);
+            let data;
+            try { data = JSON.parse(text); } catch(e) { throw new Error('Invalid JSON: ' + text.substring(0, 200)); }
             if (!Array.isArray(data) || !data.length) {
                 resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">No results found — try a different search term</div>';
                 return;
