@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.db import transaction
 from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm, RiderSignupForm, PaymentSettingsForm, SupplierSignupForm
 from .models import Business, UserProfile
 from django.http import JsonResponse
@@ -50,32 +51,28 @@ def signup(request):
     if request.method == 'POST':
         form = BusinessSignupForm(request.POST)
         if form.is_valid():
-            # Create the user
-            user = User.objects.create_user(
-                username=form.cleaned_data['username'],
-                email=form.cleaned_data['email'],
-                password=form.cleaned_data['password1'],
-            )
-
-            # Create the business
-            business = Business.objects.create(
-            owner=user,
-            name=form.cleaned_data['business_name'],
-            business_type=form.cleaned_data['business_type'],
-            county=form.cleaned_data['county'],
-            sub_county=form.cleaned_data.get('sub_county'),  # ← updated
-            ward=form.cleaned_data.get('ward'),              # ← added
-            phone=form.cleaned_data.get('phone', ''),
-            email=form.cleaned_data.get('email_business', ''),
-            address=form.cleaned_data.get('address', ''),
-            )
-
-            # Create the profile as owner
-            UserProfile.objects.create(
-                user=user,
-                business=business,
-                role='owner',
-            )
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    username=form.cleaned_data['username'],
+                    email=form.cleaned_data['email'],
+                    password=form.cleaned_data['password1'],
+                )
+                business = Business.objects.create(
+                    owner=user,
+                    name=form.cleaned_data['business_name'],
+                    business_type=form.cleaned_data['business_type'],
+                    county=form.cleaned_data['county'],
+                    sub_county=form.cleaned_data.get('sub_county'),
+                    ward=form.cleaned_data.get('ward'),
+                    phone=form.cleaned_data.get('phone', ''),
+                    email=form.cleaned_data.get('email_business', ''),
+                    address=form.cleaned_data.get('address', ''),
+                )
+                UserProfile.objects.create(
+                    user=user,
+                    business=business,
+                    role='owner',
+                )
 
             login(request, user)
             messages.success(request, f"Welcome! Your business '{business.name}' has been created.")
@@ -328,25 +325,26 @@ def rider_signup(request):
     if request.method == 'POST':
         form = RiderSignupForm(request.POST)
         if form.is_valid():
-            user = User.objects.create_user(
-                username=form.cleaned_data['username'],
-                email=form.cleaned_data.get('email', ''),
-                password=form.cleaned_data['password1'],
-                first_name=form.cleaned_data['first_name'],
-                last_name=form.cleaned_data['last_name'],
-            )
-            UserProfile.objects.create(
-                user=user,
-                role='rider',
-                phone=form.cleaned_data['phone'],
-            )
             from core.models import RiderProfile
-            RiderProfile.objects.create(
-                user=user,
-                phone=form.cleaned_data['phone'],
-                county=form.cleaned_data.get('county'),
-                vehicle_type=form.cleaned_data['vehicle_type'],
-            )
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    username=form.cleaned_data['username'],
+                    email=form.cleaned_data.get('email', ''),
+                    password=form.cleaned_data['password1'],
+                    first_name=form.cleaned_data['first_name'],
+                    last_name=form.cleaned_data['last_name'],
+                )
+                UserProfile.objects.create(
+                    user=user,
+                    role='rider',
+                    phone=form.cleaned_data['phone'],
+                )
+                RiderProfile.objects.create(
+                    user=user,
+                    phone=form.cleaned_data['phone'],
+                    county=form.cleaned_data.get('county'),
+                    vehicle_type=form.cleaned_data['vehicle_type'],
+                )
             login(request, user)
             messages.success(request, "Welcome! You're registered as a rider.")
             return redirect('rider_dashboard')
@@ -476,27 +474,28 @@ def supplier_signup(request):
     if request.method == 'POST':
         form = SupplierSignupForm(request.POST)
         if form.is_valid():
-            user = User.objects.create_user(
-                username=form.cleaned_data['username'],
-                email=form.cleaned_data['email'],
-                password=form.cleaned_data['password1'],
-            )
-            business = Business.objects.create(
-                owner=user,
-                name=form.cleaned_data['business_name'],
-                business_type=form.cleaned_data['business_type'],
-                county=form.cleaned_data['county'],
-                sub_county=form.cleaned_data.get('sub_county'),
-                ward=form.cleaned_data.get('ward'),
-                phone=form.cleaned_data.get('phone', ''),
-                email=form.cleaned_data.get('email_business', ''),
-            )
-            UserProfile.objects.create(
-                user=user,
-                business=business,
-                role='supplier',
-                phone=form.cleaned_data.get('phone', ''),
-            )
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    username=form.cleaned_data['username'],
+                    email=form.cleaned_data['email'],
+                    password=form.cleaned_data['password1'],
+                )
+                business = Business.objects.create(
+                    owner=user,
+                    name=form.cleaned_data['business_name'],
+                    business_type=form.cleaned_data['business_type'],
+                    county=form.cleaned_data['county'],
+                    sub_county=form.cleaned_data.get('sub_county'),
+                    ward=form.cleaned_data.get('ward'),
+                    phone=form.cleaned_data.get('phone', ''),
+                    email=form.cleaned_data.get('email_business', ''),
+                )
+                UserProfile.objects.create(
+                    user=user,
+                    business=business,
+                    role='supplier',
+                    phone=form.cleaned_data.get('phone', ''),
+                )
             login(request, user)
             messages.success(request, f"Welcome! Your supply business '{business.name}' has been registered.")
             return redirect('supplier_dashboard')

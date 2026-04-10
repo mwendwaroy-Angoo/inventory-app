@@ -1,5 +1,42 @@
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.models import User
 from .models import Business, UserProfile, DeliveryTier
+
+
+# ── Inline UserProfile on the User admin page ──
+class UserProfileInline(admin.StackedInline):
+    model = UserProfile
+    can_delete = True
+    verbose_name_plural = 'Profile'
+    fk_name = 'user'
+    fields = ('business', 'role', 'phone', 'has_seen_tutorial')
+
+
+# Extend the default User admin to show profile inline
+class UserAdmin(BaseUserAdmin):
+    inlines = [UserProfileInline]
+    list_display = ('username', 'email', 'first_name', 'last_name', 'get_role', 'get_business', 'is_active')
+    list_filter = BaseUserAdmin.list_filter + ('userprofile__role',)
+
+    def get_role(self, obj):
+        try:
+            return obj.userprofile.get_role_display()
+        except UserProfile.DoesNotExist:
+            return '-'
+    get_role.short_description = 'Role'
+
+    def get_business(self, obj):
+        try:
+            return obj.userprofile.business.name if obj.userprofile.business else '-'
+        except UserProfile.DoesNotExist:
+            return '-'
+    get_business.short_description = 'Business'
+
+
+# Unregister the default User admin and register our enhanced one
+admin.site.unregister(User)
+admin.site.register(User, UserAdmin)
 
 
 class DeliveryTierInline(admin.TabularInline):
@@ -9,8 +46,8 @@ class DeliveryTierInline(admin.TabularInline):
 
 @admin.register(Business)
 class BusinessAdmin(admin.ModelAdmin):
-    list_display = ('name', 'get_owner_username', 'get_business_type', 'get_county', 'get_sub_county', 'created_at')
-    search_fields = ('name', 'owner__username')
+    list_display = ('name', 'get_owner_username', 'get_business_type', 'get_county', 'get_sub_county', 'phone', 'created_at')
+    search_fields = ('name', 'owner__username', 'phone')
     list_filter = ('business_type', 'county', 'created_at')
     readonly_fields = ('created_at',)
     inlines = [DeliveryTierInline]
@@ -35,6 +72,13 @@ class BusinessAdmin(admin.ModelAdmin):
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'business', 'role')
-    search_fields = ('user__username', 'business__name')
-    list_filter = ('business', 'role')
+    list_display = ('user', 'get_email', 'business', 'role', 'phone', 'has_seen_tutorial')
+    list_editable = ('role',)
+    search_fields = ('user__username', 'user__email', 'business__name', 'phone')
+    list_filter = ('role', 'business')
+    raw_id_fields = ('user', 'business')
+
+    def get_email(self, obj):
+        return obj.user.email
+    get_email.short_description = 'Email'
+    get_email.admin_order_field = 'user__email'
