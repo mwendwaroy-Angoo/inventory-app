@@ -60,6 +60,33 @@
         margin-bottom: 0.8rem;
     }
     .locate-btn:hover { opacity: 0.85; }
+    .map-search-row {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    .map-search-row input {
+        flex: 1;
+        font-size: 0.85rem;
+        padding: 0.3rem 0.6rem;
+    }
+    .map-search-results {
+        max-height: 150px;
+        overflow-y: auto;
+        background: var(--onyx-card);
+        border: 1px solid #444;
+        border-radius: 6px;
+        margin-bottom: 0.5rem;
+    }
+    .map-search-results .result-item {
+        padding: 0.4rem 0.6rem;
+        cursor: pointer;
+        font-size: 0.8rem;
+        color: var(--pearl);
+        border-bottom: 1px solid #333;
+    }
+    .map-search-results .result-item:hover { background: rgba(201,168,76,0.15); }
+    .map-search-results .result-item:last-child { border-bottom: none; }
 </style>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 {% endblock %}
@@ -105,9 +132,14 @@
             </div>
 
             <h5 class="section-label mt-4">📍 GPS Coordinates</h5>
+            <div class="map-search-row">
+                <input type="text" id="mapSearchInput" class="form-control" placeholder="Search for your business location e.g. Mama Ngina Street, Nairobi">
+                <button type="button" class="locate-btn" onclick="searchBusinessLocation()">Search</button>
+            </div>
+            <div class="map-search-results" id="mapSearchResults" style="display:none;"></div>
             <button type="button" class="locate-btn" onclick="locateMe()">📍 Use My Current Location</button>
             <div id="mapPicker"></div>
-            <p class="map-hint">Click on the map or drag the marker to set your business location.</p>
+            <p class="map-hint">Search above, click the map, or drag the marker to set your business location.</p>
             <div class="row">
                 <div class="col-md-6 mb-3">{% bootstrap_field form.latitude %}</div>
                 <div class="col-md-6 mb-3">{% bootstrap_field form.longitude %}</div>
@@ -231,6 +263,44 @@
 
     // Fix map rendering in case the container was hidden initially
     setTimeout(function() { map.invalidateSize(); }, 200);
+
+    // ── LOCATION SEARCH (Nominatim) ──
+    function searchBusinessLocation() {
+        const q = document.getElementById('mapSearchInput').value.trim();
+        if (!q) return;
+        const resultsDiv = document.getElementById('mapSearchResults');
+        resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Searching...</div>';
+        resultsDiv.style.display = 'block';
+        fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=5&countrycodes=ke')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.length) {
+                    resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">No results found</div>';
+                    return;
+                }
+                resultsDiv.innerHTML = '';
+                data.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'result-item';
+                    div.textContent = item.display_name;
+                    div.onclick = function() {
+                        const lat = parseFloat(item.lat);
+                        const lng = parseFloat(item.lon);
+                        setCoords(lat, lng);
+                        map.setView([lat, lng], 16);
+                        resultsDiv.style.display = 'none';
+                        document.getElementById('mapSearchInput').value = item.display_name;
+                    };
+                    resultsDiv.appendChild(div);
+                });
+            })
+            .catch(() => {
+                resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Search failed — try again</div>';
+            });
+    }
+    document.getElementById('mapSearchInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); searchBusinessLocation(); }
+    });
 
     const countyField = document.querySelector('#id_county');
     const subCountyField = document.querySelector('#id_sub_county');

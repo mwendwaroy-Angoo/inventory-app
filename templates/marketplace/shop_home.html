@@ -67,10 +67,6 @@
         padding: 0.6rem 1rem;
         margin-bottom: 1rem;
         font-size: 0.85rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        flex-wrap: wrap;
         max-width: 600px;
         margin-left: auto;
         margin-right: auto;
@@ -87,19 +83,46 @@
         cursor: pointer;
     }
     .location-bar .loc-btn:hover { opacity: 0.85; }
-    .manual-loc-form {
+    .loc-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.4rem; }
+    .loc-search-wrap {
         display: none;
+        margin-top: 0.5rem;
+    }
+    .loc-search-wrap .search-row {
+        display: flex;
         gap: 0.5rem;
-        align-items: center;
-        flex-wrap: wrap;
-        margin-top: 0.4rem;
-        width: 100%;
+        margin-bottom: 0.5rem;
     }
-    .manual-loc-form input {
-        max-width: 150px;
+    .loc-search-wrap input {
+        flex: 1;
+        font-size: 0.85rem;
+        padding: 0.3rem 0.6rem;
+    }
+    #custMapPicker {
+        height: 200px;
+        border-radius: 8px;
+        border: 1px solid #444;
+        z-index: 0;
+    }
+    .search-results {
+        max-height: 150px;
+        overflow-y: auto;
+        background: var(--onyx-card);
+        border: 1px solid #444;
+        border-radius: 6px;
+        margin-bottom: 0.5rem;
+    }
+    .search-results .result-item {
+        padding: 0.4rem 0.6rem;
+        cursor: pointer;
         font-size: 0.8rem;
-        padding: 0.25rem 0.5rem;
+        color: var(--pearl);
+        border-bottom: 1px solid #333;
     }
+    .search-results .result-item:hover { background: rgba(201,168,76,0.15); }
+    .search-results .result-item:last-child { border-bottom: none; }
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 </style>
 {% endblock %}
 
@@ -128,13 +151,18 @@
 <!-- Location Bar -->
 <div class="location-bar" id="locationBar">
     <span id="locStatus" class="loc-status">📍 Detecting your location...</span>
-    <button type="button" class="loc-btn" id="locAutoBtn" onclick="requestLocation()" style="display:none;">📍 Detect</button>
-    <button type="button" class="loc-btn" id="locManualToggle" onclick="toggleManualLoc()" style="display:none;">📝 Enter Manually</button>
-    <div class="manual-loc-form" id="manualLocForm">
-        <input type="number" id="manualLat" class="form-control" step="0.0001" placeholder="Latitude e.g. -1.2921">
-        <input type="number" id="manualLng" class="form-control" step="0.0001" placeholder="Longitude e.g. 36.8219">
-        <button type="button" class="loc-btn" onclick="applyManualLocation()">Set</button>
-        <small style="color:var(--muted);">Tip: Open Google Maps, long-press your spot, copy coordinates</small>
+    <div class="loc-actions" id="locActions" style="display:none;">
+        <button type="button" class="loc-btn" id="locAutoBtn" onclick="requestLocation()">📍 Detect My Location</button>
+        <button type="button" class="loc-btn" id="locManualToggle" onclick="toggleSearchMap()">📍 Search Location</button>
+    </div>
+    <div class="loc-search-wrap" id="locSearchWrap">
+        <div class="search-row">
+            <input type="text" id="locSearchInput" class="form-control" placeholder="Search for your location e.g. Westlands, Nairobi">
+            <button type="button" class="loc-btn" onclick="searchLocation()">Search</button>
+        </div>
+        <div class="search-results" id="locSearchResults" style="display:none;"></div>
+        <div id="custMapPicker"></div>
+        <small style="color:var(--muted); margin-top:0.3rem; display:block;">Click the map or search above to set your location</small>
     </div>
 </div>
 
@@ -190,7 +218,11 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+let custMap = null;
+let custMarker = null;
+
 function haversine(lat1, lon1, lat2, lon2) {
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -204,8 +236,7 @@ function haversine(lat1, lon1, lat2, lon2) {
 function updateLocationBar(status, isDetected) {
     document.getElementById('locStatus').textContent = status;
     document.getElementById('locStatus').className = isDetected ? 'loc-detected' : 'loc-status';
-    document.getElementById('locAutoBtn').style.display = isDetected ? 'none' : 'inline-block';
-    document.getElementById('locManualToggle').style.display = 'inline-block';
+    document.getElementById('locActions').style.display = 'flex';
 }
 
 function applyDistances(custLat, custLng) {
@@ -246,47 +277,113 @@ function applyDistances(custLat, custLng) {
     }
 }
 
+function onLocationSet(lat, lng) {
+    updateLocationBar('📍 Location set — sorted by nearest', true);
+    applyDistances(lat, lng);
+    if (custMap && custMarker) {
+        custMarker.setLatLng([lat, lng]);
+        custMap.setView([lat, lng], 14);
+    }
+}
+
 function requestLocation() {
     if (!navigator.geolocation) {
-        updateLocationBar('📍 Geolocation not supported — enter manually', false);
+        updateLocationBar('📍 Geolocation not supported — search for your location', false);
         return;
     }
     updateLocationBar('📍 Detecting...', false);
     navigator.geolocation.getCurrentPosition(function(pos) {
-        updateLocationBar('📍 Location detected — sorting by distance', true);
-        applyDistances(pos.coords.latitude, pos.coords.longitude);
+        onLocationSet(pos.coords.latitude, pos.coords.longitude);
     }, function() {
-        updateLocationBar('📍 Could not detect — enter manually or allow access', false);
+        updateLocationBar('📍 Could not detect — search for your location', false);
     }, {timeout: 10000, enableHighAccuracy: false});
 }
 
-function toggleManualLoc() {
-    const form = document.getElementById('manualLocForm');
-    form.style.display = form.style.display === 'flex' ? 'none' : 'flex';
-}
-
-function applyManualLocation() {
-    const lat = parseFloat(document.getElementById('manualLat').value);
-    const lng = parseFloat(document.getElementById('manualLng').value);
-    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        alert('Please enter valid coordinates.\nLatitude: -90 to 90\nLongitude: -180 to 180');
-        return;
+function toggleSearchMap() {
+    const wrap = document.getElementById('locSearchWrap');
+    const isVisible = wrap.style.display === 'block';
+    wrap.style.display = isVisible ? 'none' : 'block';
+    if (!isVisible && !custMap) {
+        setTimeout(function() { initCustMap(); }, 100);
     }
-    document.getElementById('manualLocForm').style.display = 'none';
-    updateLocationBar('📍 Location set — sorting by distance', true);
-    applyDistances(lat, lng);
 }
 
-// Auto-detect on page load
-if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(function(pos) {
-        updateLocationBar('📍 Location detected — sorted by nearest', true);
-        applyDistances(pos.coords.latitude, pos.coords.longitude);
-    }, function() {
-        updateLocationBar('📍 Location not detected — detect or enter manually', false);
-    }, {timeout: 10000, enableHighAccuracy: false});
-} else {
-    updateLocationBar('📍 Geolocation not available — enter your location manually', false);
+function initCustMap() {
+    custMap = L.map('custMapPicker').setView([-1.2921, 36.8219], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap', maxZoom: 19
+    }).addTo(custMap);
+    custMarker = L.marker([-1.2921, 36.8219], {draggable: true}).addTo(custMap);
+    custMarker.on('dragend', function() {
+        const pos = custMarker.getLatLng();
+        onLocationSet(pos.lat, pos.lng);
+    });
+    custMap.on('click', function(e) {
+        custMarker.setLatLng(e.latlng);
+        onLocationSet(e.latlng.lat, e.latlng.lng);
+    });
 }
+
+function searchLocation() {
+    const q = document.getElementById('locSearchInput').value.trim();
+    if (!q) return;
+    const resultsDiv = document.getElementById('locSearchResults');
+    resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Searching...</div>';
+    resultsDiv.style.display = 'block';
+    fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=5&countrycodes=ke')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.length) {
+                resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">No results found</div>';
+                return;
+            }
+            resultsDiv.innerHTML = '';
+            data.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'result-item';
+                div.textContent = item.display_name;
+                div.onclick = function() {
+                    const lat = parseFloat(item.lat);
+                    const lng = parseFloat(item.lon);
+                    resultsDiv.style.display = 'none';
+                    document.getElementById('locSearchInput').value = item.display_name;
+                    onLocationSet(lat, lng);
+                };
+                resultsDiv.appendChild(div);
+            });
+        })
+        .catch(() => {
+            resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Search failed — try again</div>';
+        });
+}
+
+document.getElementById('locSearchInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); searchLocation(); }
+});
+
+// Auto-detect on page load with safety timeout
+(function() {
+    let detected = false;
+    const fallbackTimeout = setTimeout(function() {
+        if (!detected) {
+            updateLocationBar('📍 Location not detected — search or detect manually', false);
+        }
+    }, 6000);
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(pos) {
+            detected = true;
+            clearTimeout(fallbackTimeout);
+            onLocationSet(pos.coords.latitude, pos.coords.longitude);
+        }, function() {
+            detected = true;
+            clearTimeout(fallbackTimeout);
+            updateLocationBar('📍 Location not detected — search or detect manually', false);
+        }, {timeout: 10000, enableHighAccuracy: false});
+    } else {
+        detected = true;
+        clearTimeout(fallbackTimeout);
+        updateLocationBar('📍 Geolocation not available — search for your location', false);
+    }
+})();
 </script>
 {% endblock %}
