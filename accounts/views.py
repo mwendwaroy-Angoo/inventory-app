@@ -524,7 +524,7 @@ def supplier_dashboard(request):
 
     # Stats
     clients = SupplierRelationship.objects.filter(
-        supplier_business=business, status='approved'
+        supplier=business
     ).count()
     active_bids = SupplierBid.objects.filter(
         supplier=business, status='pending'
@@ -560,7 +560,7 @@ def supplier_clients(request):
 
     from core.models import SupplierRelationship
     relationships = SupplierRelationship.objects.filter(
-        supplier_business=profile.business, status='approved'
+        supplier=profile.business
     ).select_related('business')
 
     return render(request, 'supplier/clients.html', {
