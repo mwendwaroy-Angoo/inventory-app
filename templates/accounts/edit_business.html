@@ -37,7 +37,31 @@
         padding-bottom: 0.3rem;
         border-bottom: 1px solid #333;
     }
+    #mapPicker {
+        height: 300px;
+        border-radius: 8px;
+        border: 1px solid #444;
+        margin-bottom: 0.5rem;
+        z-index: 0;
+    }
+    .map-hint {
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin-bottom: 0.8rem;
+    }
+    .locate-btn {
+        background: var(--gold);
+        color: var(--onyx);
+        border: none;
+        padding: 0.4rem 1rem;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        cursor: pointer;
+        margin-bottom: 0.8rem;
+    }
+    .locate-btn:hover { opacity: 0.85; }
 </style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 {% endblock %}
 
 {% block content %}
@@ -81,11 +105,13 @@
             </div>
 
             <h5 class="section-label mt-4">📍 GPS Coordinates</h5>
+            <button type="button" class="locate-btn" onclick="locateMe()">📍 Use My Current Location</button>
+            <div id="mapPicker"></div>
+            <p class="map-hint">Click on the map or drag the marker to set your business location.</p>
             <div class="row">
                 <div class="col-md-6 mb-3">{% bootstrap_field form.latitude %}</div>
                 <div class="col-md-6 mb-3">{% bootstrap_field form.longitude %}</div>
             </div>
-            <small class="text-muted d-block mb-3">Used for delivery distance calculations. You can get these from Google Maps.</small>
 
             <h5 class="section-label mt-4">🚚 Delivery Settings</h5>
             <div class="mb-3">{% bootstrap_field form.offers_delivery %}</div>
@@ -105,7 +131,56 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+    // ── MAP PICKER ──
+    const latField = document.getElementById('id_latitude');
+    const lngField = document.getElementById('id_longitude');
+    const initLat = parseFloat(latField.value) || -1.2921;   // Default: Nairobi
+    const initLng = parseFloat(lngField.value) || 36.8219;
+    const initZoom = (latField.value && lngField.value) ? 15 : 7;
+
+    const map = L.map('mapPicker').setView([initLat, initLng], initZoom);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap',
+        maxZoom: 19
+    }).addTo(map);
+
+    const marker = L.marker([initLat, initLng], {draggable: true}).addTo(map);
+
+    function setCoords(lat, lng) {
+        latField.value = lat.toFixed(6);
+        lngField.value = lng.toFixed(6);
+        marker.setLatLng([lat, lng]);
+    }
+
+    marker.on('dragend', function() {
+        const pos = marker.getLatLng();
+        setCoords(pos.lat, pos.lng);
+    });
+
+    map.on('click', function(e) {
+        setCoords(e.latlng.lat, e.latlng.lng);
+    });
+
+    function locateMe() {
+        if (!navigator.geolocation) {
+            alert('Geolocation is not supported by your browser.');
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(function(pos) {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            setCoords(lat, lng);
+            map.setView([lat, lng], 16);
+        }, function() {
+            alert('Could not get your location. Please allow location access and try again.');
+        }, {timeout: 10000, enableHighAccuracy: true});
+    }
+
+    // Fix map rendering in case the container was hidden initially
+    setTimeout(function() { map.invalidateSize(); }, 200);
+
     const countyField = document.querySelector('#id_county');
     const subCountyField = document.querySelector('#id_sub_county');
     const wardField = document.querySelector('#id_ward');
