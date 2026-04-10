@@ -527,10 +527,10 @@ def supplier_dashboard(request):
         supplier=business
     ).count()
     active_bids = SupplierBid.objects.filter(
-        supplier=business, status='pending'
+        supplier=business, status='submitted'
     ).count()
     won_bids = SupplierBid.objects.filter(
-        supplier=business, status='awarded'
+        supplier=business, status='accepted'
     ).count()
     open_requests = ProcurementRequest.objects.filter(
         status='open'
@@ -539,7 +539,7 @@ def supplier_dashboard(request):
     # Recent bids
     recent_bids = SupplierBid.objects.filter(
         supplier=business
-    ).select_related('procurement_request').order_by('-submitted_at')[:10]
+    ).select_related('procurement').order_by('-created_at')[:10]
 
     return render(request, 'supplier/dashboard.html', {
         'business': business,

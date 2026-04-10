@@ -86,16 +86,16 @@
                 {% for bid in recent_bids %}
                 <tr>
                     <td>
-                        <a href="{% url 'procurement_detail' bid.procurement_request.pk %}" style="color:#4da6ff;">
-                            {{ bid.procurement_request.title|truncatechars:30 }}
+                        <a href="{% url 'procurement_detail' bid.procurement.pk %}" style="color:#4da6ff;">
+                            {{ bid.procurement.title|truncatechars:30 }}
                         </a>
                     </td>
-                    <td>{{ bid.procurement_request.business.name|truncatechars:20 }}</td>
+                    <td>{{ bid.procurement.business.name|truncatechars:20 }}</td>
                     <td style="color:#2ecc71;">KSh {{ bid.amount|floatformat:0 }}</td>
                     <td>
-                        {% if bid.status == 'pending' %}
+                        {% if bid.status == 'submitted' %}
                             <span class="badge bg-warning text-dark">Pending</span>
-                        {% elif bid.status == 'awarded' %}
+                        {% elif bid.status == 'accepted' %}
                             <span class="badge bg-success">Won</span>
                         {% elif bid.status == 'rejected' %}
                             <span class="badge bg-danger">Rejected</span>
@@ -103,7 +103,7 @@
                             <span class="badge bg-secondary">{{ bid.status|title }}</span>
                         {% endif %}
                     </td>
-                    <td style="color:var(--muted);">{{ bid.submitted_at|date:"d M" }}</td>
+                    <td style="color:var(--muted);">{{ bid.created_at|date:"d M" }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
