@@ -2,11 +2,11 @@
 {% block title %}My Bids{% endblock %}
 {% block content %}
 <div class="container-fluid" style="max-width:900px;">
-    <h4 class="mb-3">📤 My Submitted Bids</h4>
+    <h4 class="mb-3" style="color:var(--gold); font-family:'Playfair Display',serif;">📤 My Submitted Bids</h4>
 
     <!-- Status filter -->
     <div class="d-flex gap-2 mb-3 flex-wrap">
-        <a href="{% url 'my_bids' %}" class="btn btn-sm {% if not status_filter %}btn-dark{% else %}btn-outline-secondary{% endif %}">All</a>
+        <a href="{% url 'my_bids' %}" class="btn btn-sm {% if not status_filter %}btn-gold{% else %}btn-outline-secondary{% endif %}">All</a>
         <a href="?status=submitted" class="btn btn-sm {% if status_filter == 'submitted' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">Submitted</a>
         <a href="?status=shortlisted" class="btn btn-sm {% if status_filter == 'shortlisted' %}btn-warning{% else %}btn-outline-warning{% endif %}">Shortlisted</a>
         <a href="?status=accepted" class="btn btn-sm {% if status_filter == 'accepted' %}btn-success{% else %}btn-outline-success{% endif %}">Accepted</a>
@@ -15,33 +15,31 @@
 
     {% if bids %}
     {% for bid in bids %}
-    <div class="card mb-2 shadow-sm" style="border-left: 4px solid {% if bid.status == 'accepted' %}#28a745{% elif bid.status == 'shortlisted' %}#ffc107{% elif bid.status == 'rejected' %}#dc3545{% else %}#6c757d{% endif %};">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <h6 class="mb-1">{{ bid.procurement.title }}</h6>
-                    <p class="text-muted small mb-0">
-                        🏢 {{ bid.procurement.business.name }}
-                        {% if bid.procurement.category %} · {{ bid.procurement.category.name }}{% endif %}
-                    </p>
-                </div>
-                <div class="text-end">
-                    <div class="fw-bold">KES {{ bid.amount|floatformat:0 }}</div>
-                    <span class="badge {% if bid.status == 'submitted' %}bg-secondary{% elif bid.status == 'shortlisted' %}bg-warning text-dark{% elif bid.status == 'accepted' %}bg-success{% else %}bg-danger{% endif %}">
-                        {{ bid.get_status_display }}
-                    </span>
-                </div>
+    <div style="background:var(--onyx-card); border:1px solid #333; border-left:4px solid {% if bid.status == 'accepted' %}#2ecc71{% elif bid.status == 'shortlisted' %}#f39c12{% elif bid.status == 'rejected' %}#e74c3c{% else %}#666{% endif %}; border-radius:10px; padding:1.2rem; margin-bottom:0.6rem;">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h6 class="mb-1" style="color:var(--pearl);">{{ bid.procurement.title }}</h6>
+                <p style="color:var(--muted); font-size:0.8rem; margin-bottom:0;">
+                    🏢 {{ bid.procurement.business.name }}
+                    {% if bid.procurement.category %} · {{ bid.procurement.category.name }}{% endif %}
+                </p>
             </div>
-            <p class="text-muted small mt-1 mb-0">⏱️ {{ bid.delivery_timeline }} · Submitted {{ bid.created_at|timesince }} ago</p>
-            <a href="{% url 'procurement_detail' pk=bid.procurement.pk %}" class="btn btn-outline-primary btn-sm mt-2">View Request</a>
+            <div class="text-end">
+                <div class="fw-bold" style="color:var(--gold);">KES {{ bid.amount|floatformat:0 }}</div>
+                <span class="badge {% if bid.status == 'submitted' %}bg-secondary{% elif bid.status == 'shortlisted' %}bg-warning text-dark{% elif bid.status == 'accepted' %}bg-success{% else %}bg-danger{% endif %}">
+                    {{ bid.get_status_display }}
+                </span>
+            </div>
         </div>
+        <p style="color:var(--muted); font-size:0.8rem; margin-top:0.4rem; margin-bottom:0;">⏱️ {{ bid.delivery_timeline }} · Submitted {{ bid.created_at|timesince }} ago</p>
+        <a href="{% url 'procurement_detail' pk=bid.procurement.pk %}" class="btn btn-outline-primary btn-sm mt-2">View Request</a>
     </div>
     {% endfor %}
     {% else %}
-    <div class="text-center text-muted py-5">
-        <p class="display-6">📭</p>
+    <div class="text-center py-5" style="color:var(--muted);">
+        <p style="font-size:3rem;">📭</p>
         <p>You haven't submitted any bids yet.</p>
-        <a href="{% url 'procurement_browse' %}" class="btn btn-primary">Browse Open Requests</a>
+        <a href="{% url 'procurement_browse' %}" class="btn btn-gold">Browse Open Requests</a>
     </div>
     {% endif %}
 </div>

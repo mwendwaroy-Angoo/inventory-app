@@ -3,44 +3,42 @@
 {% block content %}
 <div class="container-fluid" style="max-width:900px;">
     <!-- Header -->
-    <div class="card shadow-sm mb-3">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <h4 class="mb-1">{{ procurement.title }}</h4>
-                    <p class="text-muted small mb-0">
-                        By <strong>{{ procurement.business.name }}</strong>
-                        {% if procurement.business.county %} · {{ procurement.business.county.name }}{% endif %}
-                        {% if procurement.category %} · {{ procurement.category.name }}{% endif %}
-                    </p>
-                </div>
-                <span class="badge {% if procurement.status == 'open' %}bg-success{% elif procurement.status == 'evaluating' %}bg-warning text-dark{% elif procurement.status == 'awarded' %}bg-info{% else %}bg-secondary{% endif %} fs-6">
-                    {{ procurement.get_status_display }}
-                </span>
+    <div style="background:var(--onyx-card); border:1px solid #333; border-top:3px solid var(--gold); border-radius:10px; padding:1.5rem; margin-bottom:1rem;">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h4 class="mb-1" style="color:var(--pearl);">{{ procurement.title }}</h4>
+                <p style="color:var(--muted); font-size:0.85rem; margin-bottom:0;">
+                    By <strong style="color:var(--pearl);">{{ procurement.business.name }}</strong>
+                    {% if procurement.business.county %} · {{ procurement.business.county.name }}{% endif %}
+                    {% if procurement.category %} · {{ procurement.category.name }}{% endif %}
+                </p>
             </div>
+            <span class="badge {% if procurement.status == 'open' %}bg-success{% elif procurement.status == 'evaluating' %}bg-warning text-dark{% elif procurement.status == 'awarded' %}bg-info{% else %}bg-secondary{% endif %}" style="font-size:0.85rem;">
+                {{ procurement.get_status_display }}
+            </span>
+        </div>
 
-            <hr>
-            <p style="white-space:pre-line;">{{ procurement.description }}</p>
+        <hr style="border-color:#333;">
+        <p style="color:var(--pearl); white-space:pre-line;">{{ procurement.description }}</p>
 
-            <div class="row text-muted small">
-                <div class="col-auto">📅 Deadline: <strong>{{ procurement.deadline|date:"M d, Y" }}</strong></div>
-                {% if procurement.budget_min or procurement.budget_max %}
-                <div class="col-auto">
-                    💰 Budget:
-                    {% if procurement.budget_min %}KES {{ procurement.budget_min|floatformat:0 }}{% endif %}
-                    {% if procurement.budget_min and procurement.budget_max %} — {% endif %}
-                    {% if procurement.budget_max %}KES {{ procurement.budget_max|floatformat:0 }}{% endif %}
-                </div>
-                {% endif %}
-                <div class="col-auto">🏷️ {{ bids.count }} bid{{ bids.count|pluralize }}</div>
-            </div>
+        <div class="d-flex flex-wrap gap-3" style="font-size:0.85rem; color:var(--muted);">
+            <span>📅 Deadline: <strong style="color:var(--pearl);">{{ procurement.deadline|date:"M d, Y" }}</strong></span>
+            {% if procurement.budget_min or procurement.budget_max %}
+            <span>
+                💰 Budget:
+                {% if procurement.budget_min %}KES {{ procurement.budget_min|floatformat:0 }}{% endif %}
+                {% if procurement.budget_min and procurement.budget_max %} — {% endif %}
+                {% if procurement.budget_max %}KES {{ procurement.budget_max|floatformat:0 }}{% endif %}
+            </span>
+            {% endif %}
+            <span>🏷️ {{ bids.count }} bid{{ bids.count|pluralize }}</span>
         </div>
     </div>
 
     <!-- Actions -->
     {% if not is_owner and procurement.is_accepting_bids and not already_bid %}
     <div class="mb-3">
-        <a href="{% url 'submit_bid' pk=procurement.pk %}" class="btn btn-success">📤 Submit a Bid</a>
+        <a href="{% url 'submit_bid' pk=procurement.pk %}" class="btn" style="background:#2ecc71; color:white;">📤 Submit a Bid</a>
     </div>
     {% elif already_bid and not is_owner %}
     <div class="alert alert-info">✅ You have already submitted a bid for this request.</div>
@@ -48,54 +46,53 @@
 
     {% if is_owner and procurement.status == 'open' %}
     <div class="mb-3">
-        <a href="{% url 'evaluate_bids' pk=procurement.pk %}" class="btn btn-warning">⚡ Evaluate & Score Bids</a>
+        <a href="{% url 'evaluate_bids' pk=procurement.pk %}" class="btn btn-outline-warning">⚡ Evaluate & Score Bids</a>
     </div>
     {% endif %}
 
     <!-- Bids list -->
-    <h5 class="mb-3">
+    <h5 class="mb-3" style="color:var(--gold); font-family:'Playfair Display',serif;">
         {% if is_owner %}All Bids (Ranked by Score){% else %}Your Bid{% endif %}
     </h5>
 
     {% if bids %}
     {% for bid in bids %}
-    <div class="card mb-2 {% if bid.status == 'accepted' %}border-success{% elif bid.status == 'shortlisted' %}border-warning{% elif bid.status == 'rejected' %}border-danger{% endif %}" style="border-left: 4px solid;">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <h6 class="mb-1">
-                        {{ bid.supplier.name }}
-                        {% if bid.supplier.business_type %}<span class="text-muted small">({{ bid.supplier.business_type.name }})</span>{% endif %}
-                    </h6>
-                    <p class="text-muted small mb-0">
-                        {% if bid.supplier.county %}📍 {{ bid.supplier.county.name }}{% endif %}
-                        · ⏱️ {{ bid.delivery_timeline }}
-                    </p>
-                </div>
-                <div class="text-end">
-                    <div class="fw-bold fs-5">KES {{ bid.amount|floatformat:0 }}</div>
-                    {% if is_owner %}
-                    <span class="badge bg-dark">Score: {{ bid.score }}/100</span>
-                    {% endif %}
-                    <span class="badge {% if bid.status == 'submitted' %}bg-secondary{% elif bid.status == 'shortlisted' %}bg-warning text-dark{% elif bid.status == 'accepted' %}bg-success{% else %}bg-danger{% endif %}">
-                        {{ bid.get_status_display }}
-                    </span>
-                </div>
+    <div style="background:var(--onyx-card); border:1px solid #333; border-left:4px solid {% if bid.status == 'accepted' %}#2ecc71{% elif bid.status == 'shortlisted' %}#f39c12{% elif bid.status == 'rejected' %}#e74c3c{% else %}#666{% endif %}; border-radius:10px; padding:1.2rem; margin-bottom:0.6rem;">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h6 class="mb-1" style="color:var(--pearl);">
+                    {{ bid.supplier.name }}
+                    {% if bid.supplier.business_type %}<span style="color:var(--muted); font-size:0.8rem;">({{ bid.supplier.business_type.name }})</span>{% endif %}
+                </h6>
+                <p style="color:var(--muted); font-size:0.8rem; margin-bottom:0;">
+                    {% if bid.supplier.county %}📍 {{ bid.supplier.county.name }}{% endif %}
+                    · ⏱️ {{ bid.delivery_timeline }}
+                </p>
             </div>
-            <p class="mt-2 mb-1" style="white-space:pre-line;">{{ bid.proposal|truncatewords:60 }}</p>
-
-            {% if is_owner and bid.status != 'accepted' and procurement.status != 'awarded' %}
-            <a href="{% url 'award_bid' bid_id=bid.pk %}" class="btn btn-sm btn-outline-success mt-2">✅ Award This Bid</a>
-            {% endif %}
+            <div class="text-end">
+                <div class="fw-bold" style="font-size:1.2rem; color:var(--gold);">KES {{ bid.amount|floatformat:0 }}</div>
+                {% if is_owner %}
+                <span class="badge" style="background:#333; color:var(--pearl);">Score: {{ bid.score }}/100</span>
+                {% endif %}
+                <span class="badge {% if bid.status == 'submitted' %}bg-secondary{% elif bid.status == 'shortlisted' %}bg-warning text-dark{% elif bid.status == 'accepted' %}bg-success{% else %}bg-danger{% endif %}">
+                    {{ bid.get_status_display }}
+                </span>
+            </div>
         </div>
+        <p style="color:var(--pearl); margin-top:0.5rem; margin-bottom:0.3rem; white-space:pre-line;">{{ bid.proposal|truncatewords:60 }}</p>
+
+        {% if is_owner and bid.status != 'accepted' and procurement.status != 'awarded' %}
+        <a href="{% url 'award_bid' bid_id=bid.pk %}" class="btn btn-sm btn-outline-success mt-2">✅ Award This Bid</a>
+        {% endif %}
     </div>
     {% endfor %}
     {% else %}
-    <div class="text-center text-muted py-4">
+    <div class="text-center py-4" style="color:var(--muted);">
         <p>No bids yet.</p>
     </div>
     {% endif %}
 
     <a href="{% if is_owner %}{% url 'procurement_list_owner' %}{% else %}{% url 'procurement_browse' %}{% endif %}" class="btn btn-outline-secondary mt-3">← Back</a>
 </div>
+{% endblock %}
 {% endblock %}

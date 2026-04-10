@@ -2,37 +2,35 @@
 {% block title %}Apply as Supplier — {{ target.name }}{% endblock %}
 {% block content %}
 <div class="container-fluid" style="max-width:650px;">
-    <h4 class="mb-1">🤝 Apply as Supplier</h4>
-    <p class="text-muted mb-3">Apply to supply products/services to <strong>{{ target.name }}</strong></p>
+    <h4 class="mb-1" style="color:var(--gold); font-family:'Playfair Display',serif;">🤝 Apply as Supplier</h4>
+    <p style="color:var(--muted); margin-bottom:1rem;">Apply to supply products/services to <strong style="color:var(--pearl);">{{ target.name }}</strong></p>
 
-    <div class="card bg-light mb-3">
-        <div class="card-body">
-            <h6>{{ target.name }}</h6>
-            <p class="text-muted small mb-0">
-                {% if target.business_type %}{{ target.business_type.name }} · {% endif %}
-                {% if target.county %}📍 {{ target.county.name }}{% endif %}
-            </p>
-        </div>
+    <div style="background:var(--onyx-card); border:1px solid #333; border-left:3px solid var(--gold); border-radius:10px; padding:1.2rem; margin-bottom:1rem;">
+        <h6 style="color:var(--pearl); margin-bottom:0.3rem;">{{ target.name }}</h6>
+        <p style="color:var(--muted); font-size:0.8rem; margin-bottom:0;">
+            {% if target.business_type %}{{ target.business_type.name }} · {% endif %}
+            {% if target.county %}📍 {{ target.county.name }}{% endif %}
+        </p>
     </div>
 
-    <form method="post" class="card shadow-sm p-4">
+    <form method="post" style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem;">
         {% csrf_token %}
 
         <div class="mb-3">
-            <label class="form-label fw-bold">Services / Products You Can Supply *</label>
+            <label class="form-label">Services / Products You Can Supply *</label>
             <textarea name="services_offered" class="form-control" rows="3" required
                 placeholder="e.g. Fresh produce, dairy products, packaging materials..."></textarea>
         </div>
 
         <div class="mb-3">
-            <label class="form-label fw-bold">Cover Letter *</label>
+            <label class="form-label">Cover Letter *</label>
             <textarea name="cover_letter" class="form-control" rows="5" required
                 placeholder="Why should this business choose you as a supplier? Describe your experience, reliability, pricing, location advantages..."></textarea>
         </div>
 
         <div class="d-flex gap-2">
             <button type="submit" class="btn btn-primary">📤 Submit Application</button>
-            <a href="{% url 'shop_home' %}" class="btn btn-outline-secondary">Cancel</a>
+            <a href="{% url 'browse_businesses' %}" class="btn btn-outline-secondary">Cancel</a>
         </div>
     </form>
 </div>

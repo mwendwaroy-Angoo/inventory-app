@@ -2,50 +2,48 @@
 {% block title %}Review Application — {{ app.applicant.name }}{% endblock %}
 {% block content %}
 <div class="container-fluid" style="max-width:700px;">
-    <h4 class="mb-3">📋 Review Supplier Application</h4>
+    <h4 class="mb-3" style="color:var(--gold); font-family:'Playfair Display',serif;">📋 Review Supplier Application</h4>
 
-    <div class="card shadow-sm mb-3">
-        <div class="card-body">
-            <h5 class="mb-2">{{ app.applicant.name }}</h5>
-            <div class="row small text-muted mb-2">
-                {% if app.applicant.business_type %}
-                <div class="col-auto">🏷️ {{ app.applicant.business_type.name }}</div>
-                {% endif %}
-                {% if app.applicant.county %}
-                <div class="col-auto">📍 {{ app.applicant.county.name }}</div>
-                {% endif %}
-                {% if app.applicant.phone %}
-                <div class="col-auto">📞 {{ app.applicant.phone }}</div>
-                {% endif %}
-                {% if app.applicant.email %}
-                <div class="col-auto">📧 {{ app.applicant.email }}</div>
-                {% endif %}
-            </div>
-
-            {% if avg_rating %}
-            <p class="mb-2">
-                ⭐ Average Rating: <strong>{{ avg_rating|floatformat:1 }}/5</strong>
-            </p>
-            {% else %}
-            <p class="text-muted small mb-2">No ratings yet</p>
+    <div style="background:var(--onyx-card); border:1px solid #333; border-top:3px solid var(--gold); border-radius:10px; padding:1.5rem; margin-bottom:1rem;">
+        <h5 style="color:var(--pearl); margin-bottom:0.5rem;">{{ app.applicant.name }}</h5>
+        <div class="d-flex flex-wrap gap-3" style="font-size:0.85rem; color:var(--muted); margin-bottom:0.8rem;">
+            {% if app.applicant.business_type %}
+            <span>🏷️ {{ app.applicant.business_type.name }}</span>
             {% endif %}
-
-            <hr>
-            <h6>Services Offered</h6>
-            <p style="white-space:pre-line;">{{ app.services_offered }}</p>
-
-            <h6>Cover Letter</h6>
-            <p style="white-space:pre-line;">{{ app.cover_letter }}</p>
-
-            <p class="text-muted small">Applied {{ app.created_at|timesince }} ago</p>
+            {% if app.applicant.county %}
+            <span>📍 {{ app.applicant.county.name }}</span>
+            {% endif %}
+            {% if app.applicant.phone %}
+            <span>📞 {{ app.applicant.phone }}</span>
+            {% endif %}
+            {% if app.applicant.email %}
+            <span>📧 {{ app.applicant.email }}</span>
+            {% endif %}
         </div>
+
+        {% if avg_rating %}
+        <p style="color:var(--pearl); margin-bottom:0.5rem;">
+            ⭐ Average Rating: <strong style="color:var(--gold);">{{ avg_rating|floatformat:1 }}/5</strong>
+        </p>
+        {% else %}
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:0.5rem;">No ratings yet</p>
+        {% endif %}
+
+        <hr style="border-color:#333;">
+        <h6 style="color:var(--gold-light);">Services Offered</h6>
+        <p style="color:var(--pearl); white-space:pre-line;">{{ app.services_offered }}</p>
+
+        <h6 style="color:var(--gold-light);">Cover Letter</h6>
+        <p style="color:var(--pearl); white-space:pre-line;">{{ app.cover_letter }}</p>
+
+        <p style="color:var(--muted); font-size:0.8rem;">Applied {{ app.created_at|timesince }} ago</p>
     </div>
 
     {% if app.status == 'pending' %}
-    <div class="card shadow-sm p-3">
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.2rem;">
         <form method="post" class="d-flex gap-2 justify-content-center">
             {% csrf_token %}
-            <button type="submit" name="action" value="approve" class="btn btn-success">
+            <button type="submit" name="action" value="approve" class="btn" style="background:#2ecc71; color:white;">
                 ✅ Approve — Add as Supplier
             </button>
             <button type="submit" name="action" value="reject" class="btn btn-outline-danger">

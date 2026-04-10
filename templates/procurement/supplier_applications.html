@@ -2,12 +2,12 @@
 {% block title %}Supplier Applications{% endblock %}
 {% block content %}
 <div class="container-fluid" style="max-width:900px;">
-    <h4 class="mb-3">📨 Supplier Applications</h4>
-    <p class="text-muted">Businesses that want to become your supplier.</p>
+    <h4 class="mb-1" style="color:var(--gold); font-family:'Playfair Display',serif;">📨 Supplier Applications</h4>
+    <p style="color:var(--muted); margin-bottom:1rem;">Businesses that want to become your supplier.</p>
 
     <!-- Status filter -->
     <div class="d-flex gap-2 mb-3 flex-wrap">
-        <a href="{% url 'supplier_applications' %}" class="btn btn-sm {% if not status_filter %}btn-dark{% else %}btn-outline-secondary{% endif %}">All</a>
+        <a href="{% url 'supplier_applications' %}" class="btn btn-sm {% if not status_filter %}btn-gold{% else %}btn-outline-secondary{% endif %}">All</a>
         <a href="?status=pending" class="btn btn-sm {% if status_filter == 'pending' %}btn-warning{% else %}btn-outline-warning{% endif %}">Pending</a>
         <a href="?status=approved" class="btn btn-sm {% if status_filter == 'approved' %}btn-success{% else %}btn-outline-success{% endif %}">Approved</a>
         <a href="?status=rejected" class="btn btn-sm {% if status_filter == 'rejected' %}btn-danger{% else %}btn-outline-danger{% endif %}">Rejected</a>
@@ -15,33 +15,31 @@
 
     {% if applications %}
     {% for app in applications %}
-    <div class="card mb-2 shadow-sm" style="border-left: 4px solid {% if app.status == 'pending' %}#ffc107{% elif app.status == 'approved' %}#28a745{% else %}#dc3545{% endif %};">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <h6 class="mb-1">{{ app.applicant.name }}</h6>
-                    <p class="text-muted small mb-0">
-                        {% if app.applicant.business_type %}{{ app.applicant.business_type.name }} · {% endif %}
-                        {% if app.applicant.county %}📍 {{ app.applicant.county.name }}{% endif %}
-                        {% if app.applicant.phone %} · 📞 {{ app.applicant.phone }}{% endif %}
-                    </p>
-                </div>
-                <span class="badge {% if app.status == 'pending' %}bg-warning text-dark{% elif app.status == 'approved' %}bg-success{% else %}bg-danger{% endif %}">
-                    {{ app.get_status_display }}
-                </span>
+    <div style="background:var(--onyx-card); border:1px solid #333; border-left:4px solid {% if app.status == 'pending' %}#f39c12{% elif app.status == 'approved' %}#2ecc71{% else %}#e74c3c{% endif %}; border-radius:10px; padding:1.2rem; margin-bottom:0.6rem;">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h6 class="mb-1" style="color:var(--pearl);">{{ app.applicant.name }}</h6>
+                <p style="color:var(--muted); font-size:0.8rem; margin-bottom:0;">
+                    {% if app.applicant.business_type %}{{ app.applicant.business_type.name }} · {% endif %}
+                    {% if app.applicant.county %}📍 {{ app.applicant.county.name }}{% endif %}
+                    {% if app.applicant.phone %} · 📞 {{ app.applicant.phone }}{% endif %}
+                </p>
             </div>
-            <p class="mt-2 mb-1"><strong>Services:</strong> {{ app.services_offered|truncatewords:30 }}</p>
-            <p class="text-muted small mb-1">Applied {{ app.created_at|timesince }} ago</p>
-
-            {% if app.status == 'pending' %}
-            <a href="{% url 'review_application' app_id=app.pk %}" class="btn btn-outline-primary btn-sm mt-1">Review Application</a>
-            {% endif %}
+            <span class="badge {% if app.status == 'pending' %}bg-warning text-dark{% elif app.status == 'approved' %}bg-success{% else %}bg-danger{% endif %}">
+                {{ app.get_status_display }}
+            </span>
         </div>
+        <p style="color:var(--pearl); margin-top:0.5rem; margin-bottom:0.3rem;"><strong>Services:</strong> {{ app.services_offered|truncatewords:30 }}</p>
+        <p style="color:var(--muted); font-size:0.8rem; margin-bottom:0.3rem;">Applied {{ app.created_at|timesince }} ago</p>
+
+        {% if app.status == 'pending' %}
+        <a href="{% url 'review_application' app_id=app.pk %}" class="btn btn-outline-primary btn-sm mt-1">Review Application</a>
+        {% endif %}
     </div>
     {% endfor %}
     {% else %}
-    <div class="text-center text-muted py-5">
-        <p class="display-6">📭</p>
+    <div class="text-center py-5" style="color:var(--muted);">
+        <p style="font-size:3rem;">📭</p>
         <p>No supplier applications received yet.</p>
     </div>
     {% endif %}
