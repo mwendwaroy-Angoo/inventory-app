@@ -271,7 +271,7 @@
         const resultsDiv = document.getElementById('mapSearchResults');
         resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Searching...</div>';
         resultsDiv.style.display = 'block';
-        const url = 'https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=5&addressdetails=1&email=app@dukamwecheche.com';
+        const url = 'https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=5&addressdetails=1&countrycodes=ke&email=app@dukamwecheche.com';
         fetch(url)
             .then(r => {
                 if (!r.ok) throw new Error('HTTP ' + r.status);
