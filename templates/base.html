@@ -544,6 +544,7 @@
                             {% endif %}
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="#" onclick="showTutorial(); return false;">📖 View Tutorial</a></li>
                             <li><a class="dropdown-item" href="{% url 'password_change' %}">🔑 Change Password</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li>
@@ -692,5 +693,156 @@
             sessionStorage.setItem('pwa-dismissed', '1');
         }
     </script>
+
+    {% if user.is_authenticated %}
+    <!-- ═══ ONBOARDING TUTORIAL OVERLAY ═══ -->
+    <div id="tutorial-overlay" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.85); backdrop-filter:blur(4px);">
+        <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:92%; max-width:520px;">
+            <!-- Progress bar -->
+            <div style="margin-bottom:0.8rem; display:flex; gap:4px;" id="tutorial-progress"></div>
+
+            <!-- Card -->
+            <div style="background:linear-gradient(135deg,#1a1a1a,#242424); border:1px solid var(--gold); border-radius:14px; overflow:hidden;">
+                <!-- Header with icon -->
+                <div id="tutorial-header" style="padding:2rem 2rem 1rem; text-align:center;">
+                    <div id="tutorial-icon" style="font-size:3rem; margin-bottom:0.5rem;"></div>
+                    <h4 id="tutorial-title" style="font-family:'Playfair Display',serif; color:var(--gold); margin:0; font-size:1.3rem;"></h4>
+                </div>
+                <!-- Body -->
+                <div id="tutorial-body" style="padding:0 2rem 1.5rem; color:var(--pearl); font-size:0.9rem; line-height:1.6; text-align:center;"></div>
+                <!-- Footer -->
+                <div style="padding:1rem 2rem; border-top:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
+                    <button id="tutorial-skip" onclick="dismissTutorial()" style="background:none; border:none; color:var(--muted); font-size:0.8rem; cursor:pointer;">Skip Tutorial</button>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button id="tutorial-prev" onclick="tutorialNav(-1)" class="btn btn-sm" style="background:#333; color:var(--pearl); border:none; display:none;">← Back</button>
+                        <button id="tutorial-next" onclick="tutorialNav(1)" class="btn btn-sm btn-gold">Next →</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        const role = '{{ user.userprofile.role }}';
+        const hasSeen = {{ user.userprofile.has_seen_tutorial|yesno:"true,false" }};
+        const csrfToken = '{{ csrf_token }}';
+
+        // ── Role-specific tutorial steps ──
+        const commonWelcome = {
+            icon: '👋',
+            title: 'Welcome to Duka Mwecheche!',
+            body: 'This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username.'
+        };
+
+        const ownerSteps = [
+            commonWelcome,
+            { icon: '📦', title: 'Stock Management', body: 'Go to <strong>Stock List</strong> to view your inventory. Use <strong>Manage → Items</strong> to add, edit, or delete products. Set cost prices to track profit margins.' },
+            { icon: '⚡', title: 'Quick Sell', body: 'Hit <strong>Quick Sell</strong> for a fast point-of-sale checkout. Select items, set quantities, choose payment method, and record the sale in seconds.' },
+            { icon: '📊', title: 'Sales & Analytics', body: 'Under <strong>Manage → Sales & P&L</strong> see your daily/weekly/monthly revenue and profit. The <strong>Analytics</strong> page shows trends and visual charts.' },
+            { icon: '📦', title: 'Order Management', body: 'View customer orders under <strong>Manage → Orders</strong>. Assign riders from the <strong>Fulfillment</strong> page and track delivery status.' },
+            { icon: '🤝', title: 'Supply Chain', body: 'Under <strong>Supply Chain</strong>, manage your suppliers, create procurement requests, and evaluate bids. Browse other businesses to expand your network.' },
+            { icon: '👥', title: 'Staff & Settings', body: 'Add staff accounts under <strong>Manage → Staff</strong>. Configure your business details, operating hours, delivery zones, and payment settings under <strong>Manage</strong>.' },
+            { icon: '🏪', title: 'Your Online Shop', body: 'Customers can browse your shop at <strong>/shop/</strong> and place orders directly. Share your shop link to start receiving online orders!' },
+            { icon: '🎉', title: 'You\'re All Set!', body: 'That\'s the basics! Explore each section at your pace. If you need this tutorial again, click your username → <strong>View Tutorial</strong>.' }
+        ];
+
+        const staffSteps = [
+            commonWelcome,
+            { icon: '📦', title: 'Stock List', body: 'View the current inventory under <strong>Stock List</strong>. Check quantities, prices, and which store each item belongs to.' },
+            { icon: '⚡', title: 'Quick Sell & Transactions', body: 'Use <strong>Quick Sell</strong> for fast sales or <strong>Add Transaction</strong> for detailed entries. All transactions are recorded under <strong>History</strong>.' },
+            { icon: '📋', title: 'Order Fulfillment', body: 'Go to <strong>Order Fulfillment</strong> to view and process customer orders. Pack items and assign riders for delivery.' },
+            { icon: '💰', title: 'Payment Prompts', body: 'Under <strong>Payments</strong>, confirm or dismiss M-Pesa payment notifications for customer orders.' },
+            { icon: '🎉', title: 'You\'re All Set!', body: 'Those are the key areas for your day-to-day work. Click your username → <strong>View Tutorial</strong> to replay anytime.' }
+        ];
+
+        const supplierSteps = [
+            commonWelcome,
+            { icon: '📊', title: 'Your Dashboard', body: 'Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests.' },
+            { icon: '🔍', title: 'Browse Requests', body: 'Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts.' },
+            { icon: '📋', title: 'Track Your Bids', body: 'Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected.' },
+            { icon: '🏢', title: 'Connect with Businesses', body: 'Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier.' },
+            { icon: '🤝', title: 'Client Relationships', body: 'Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement.' },
+            { icon: '🎉', title: 'You\'re All Set!', body: 'Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime.' }
+        ];
+
+        const riderSteps = [
+            commonWelcome,
+            { icon: '🏍️', title: 'Your Dashboard', body: 'Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score.' },
+            { icon: '🔄', title: 'Availability Toggle', body: 'Toggle your <strong>availability</strong> status so businesses know when you\'re ready to accept deliveries.' },
+            { icon: '🚴', title: 'Active Deliveries', body: 'View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts.' },
+            { icon: '📜', title: 'Delivery History', body: 'Check <strong>Delivery History</strong> for a complete record of all your past deliveries.' },
+            { icon: '💰', title: 'Earnings', body: 'Track your total earnings and delivery count under <strong>My Earnings</strong>.' },
+            { icon: '🎉', title: 'You\'re All Set!', body: 'Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime.' }
+        ];
+
+        // Pick the right steps for the role
+        let steps;
+        switch(role) {
+            case 'supplier': steps = supplierSteps; break;
+            case 'rider': steps = riderSteps; break;
+            case 'staff': steps = staffSteps; break;
+            default: steps = ownerSteps;
+        }
+
+        let currentStep = 0;
+
+        function renderStep() {
+            const step = steps[currentStep];
+            document.getElementById('tutorial-icon').textContent = step.icon;
+            document.getElementById('tutorial-title').textContent = step.title;
+            document.getElementById('tutorial-body').innerHTML = step.body;
+
+            // Progress dots
+            const prog = document.getElementById('tutorial-progress');
+            prog.innerHTML = '';
+            for (let i = 0; i < steps.length; i++) {
+                const dot = document.createElement('div');
+                dot.style.cssText = `flex:1; height:3px; border-radius:2px; transition:background 0.3s;`;
+                dot.style.background = i <= currentStep ? 'var(--gold)' : '#333';
+                prog.appendChild(dot);
+            }
+
+            // Nav buttons
+            document.getElementById('tutorial-prev').style.display = currentStep > 0 ? 'inline-block' : 'none';
+            const nextBtn = document.getElementById('tutorial-next');
+            if (currentStep === steps.length - 1) {
+                nextBtn.textContent = 'Get Started! 🚀';
+                nextBtn.onclick = function() { dismissTutorial(); };
+            } else {
+                nextBtn.textContent = 'Next →';
+                nextBtn.onclick = function() { tutorialNav(1); };
+            }
+        }
+
+        window.tutorialNav = function(dir) {
+            currentStep = Math.max(0, Math.min(steps.length - 1, currentStep + dir));
+            renderStep();
+        };
+
+        window.showTutorial = function() {
+            currentStep = 0;
+            renderStep();
+            document.getElementById('tutorial-overlay').style.display = 'block';
+        };
+
+        window.dismissTutorial = function() {
+            document.getElementById('tutorial-overlay').style.display = 'none';
+            // Persist dismissal to server
+            fetch('{% url "tutorial_dismiss" %}', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrfToken },
+            }).catch(() => {});
+        };
+
+        // Auto-show for first-time users
+        if (!hasSeen) {
+            document.addEventListener('DOMContentLoaded', function() {
+                showTutorial();
+            });
+        }
+    })();
+    </script>
+    {% endif %}
 </body>
 </html>

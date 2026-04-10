@@ -22,6 +22,30 @@ def role_redirect(request):
     return redirect('home')
 
 
+@login_required
+def tutorial_dismiss(request):
+    """Mark the tutorial as seen for the current user."""
+    if request.method == 'POST':
+        profile = getattr(request.user, 'userprofile', None)
+        if profile:
+            profile.has_seen_tutorial = True
+            profile.save(update_fields=['has_seen_tutorial'])
+        return JsonResponse({'ok': True})
+    return JsonResponse({'error': 'POST required'}, status=405)
+
+
+@login_required
+def tutorial_reset(request):
+    """Reset the tutorial so it shows again."""
+    if request.method == 'POST':
+        profile = getattr(request.user, 'userprofile', None)
+        if profile:
+            profile.has_seen_tutorial = False
+            profile.save(update_fields=['has_seen_tutorial'])
+        return JsonResponse({'ok': True, 'show': True})
+    return JsonResponse({'error': 'POST required'}, status=405)
+
+
 def signup(request):
     if request.method == 'POST':
         form = BusinessSignupForm(request.POST)

@@ -134,6 +134,7 @@ class UserProfile(models.Model):
                                   related_name='users', null=True, blank=True)
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='staff')
     phone = models.CharField(max_length=20, blank=True)  # ← add this
+    has_seen_tutorial = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.user.username} ({self.business.name if self.business else 'No Business'}) - {self.role}"

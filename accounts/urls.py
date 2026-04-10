@@ -22,4 +22,6 @@ urlpatterns = [
     path('staff/reset-password/<int:user_id>/', views.reset_staff_password, name='reset_staff_password'),
     path('ajax/subcounties/', views.load_subcounties, name='load_subcounties'),
     path('ajax/wards/', views.load_wards, name='load_wards'),
+    path('tutorial/dismiss/', views.tutorial_dismiss, name='tutorial_dismiss'),
+    path('tutorial/reset/', views.tutorial_reset, name='tutorial_reset'),
 ]
