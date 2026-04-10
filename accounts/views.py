@@ -48,6 +48,8 @@ def tutorial_reset(request):
 
 
 def signup(request):
+    if request.user.is_authenticated:
+        return redirect('role_redirect')
     if request.method == 'POST':
         form = BusinessSignupForm(request.POST)
         if form.is_valid():
@@ -322,6 +324,8 @@ def reset_staff_password(request, user_id):
 # ── RIDER REGISTRATION ──────────────────────────────────────────────────────
 
 def rider_signup(request):
+    if request.user.is_authenticated:
+        return redirect('role_redirect')
     if request.method == 'POST':
         form = RiderSignupForm(request.POST)
         if form.is_valid():
@@ -471,6 +475,8 @@ def rider_earnings(request):
 # ── SUPPLIER REGISTRATION ────────────────────────────────────────────────────
 
 def supplier_signup(request):
+    if request.user.is_authenticated:
+        return redirect('role_redirect')
     if request.method == 'POST':
         form = SupplierSignupForm(request.POST)
         if form.is_valid():

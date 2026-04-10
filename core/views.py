@@ -44,6 +44,13 @@ def home(request):
     context = {'today': timezone.now().strftime("%B %d, %Y")}
 
     if request.user.is_authenticated:
+        # Route riders and suppliers to their dedicated dashboards
+        profile = getattr(request.user, 'userprofile', None)
+        if profile and profile.role == 'rider':
+            return redirect('rider_dashboard')
+        if profile and profile.role == 'supplier':
+            return redirect('supplier_dashboard')
+
         try:
             user_profile = request.user.userprofile
             business = user_profile.business
