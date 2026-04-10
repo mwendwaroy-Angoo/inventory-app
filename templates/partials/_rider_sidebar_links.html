@@ -1,0 +1,31 @@
+<!-- Rider Sidebar Navigation -->
+<div class="sidebar-section">
+    <div class="sidebar-section-title">Dashboard</div>
+    <a href="{% url 'rider_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'rider_dashboard' %}active{% endif %}">
+        <span class="icon">🏠</span> Overview
+    </a>
+</div>
+
+<div class="sidebar-section">
+    <div class="sidebar-section-title">Deliveries</div>
+    <a href="{% url 'rider_active_deliveries' %}" class="sidebar-link {% if request.resolver_match.url_name == 'rider_active_deliveries' %}active{% endif %}">
+        <span class="icon">🚴</span> Active Deliveries
+    </a>
+    <a href="{% url 'rider_delivery_history' %}" class="sidebar-link {% if request.resolver_match.url_name == 'rider_delivery_history' %}active{% endif %}">
+        <span class="icon">📜</span> Delivery History
+    </a>
+</div>
+
+<div class="sidebar-section">
+    <div class="sidebar-section-title">Earnings</div>
+    <a href="{% url 'rider_earnings' %}" class="sidebar-link {% if request.resolver_match.url_name == 'rider_earnings' %}active{% endif %}">
+        <span class="icon">💰</span> My Earnings
+    </a>
+</div>
+
+<div class="sidebar-section">
+    <div class="sidebar-section-title">Profile</div>
+    <a href="{% url 'rider_toggle_availability' %}" class="sidebar-link">
+        <span class="icon">🔄</span> Toggle Availability
+    </a>
+</div>

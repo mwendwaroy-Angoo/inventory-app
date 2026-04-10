@@ -3,11 +3,23 @@ from django.contrib.auth.models import User
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm, RiderSignupForm, PaymentSettingsForm
+from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm, RiderSignupForm, PaymentSettingsForm, SupplierSignupForm
 from .models import Business, UserProfile
 from django.http import JsonResponse
 from core.models import SubCounty, Ward
 from django.shortcuts import get_object_or_404
+
+
+@login_required
+def role_redirect(request):
+    """Route users to their role-specific dashboard after login."""
+    profile = getattr(request.user, 'userprofile', None)
+    if profile:
+        if profile.role == 'rider':
+            return redirect('rider_dashboard')
+        if profile.role == 'supplier':
+            return redirect('supplier_dashboard')
+    return redirect('home')
 
 
 def signup(request):
@@ -361,6 +373,170 @@ def rider_toggle_availability(request):
     rider.is_available = not rider.is_available
     rider.save(update_fields=['is_available'])
     return JsonResponse({'is_available': rider.is_available})
+
+
+@login_required
+def rider_active_deliveries(request):
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or profile.role != 'rider':
+        return redirect('home')
+    rider = getattr(request.user, 'rider_profile', None)
+    if not rider:
+        return redirect('home')
+
+    from core.models import Order
+    active_orders = Order.objects.filter(
+        rider=rider,
+        status__in=['confirmed', 'paid', 'ready'],
+        delivery_mode='delivery',
+    ).select_related('business', 'customer').order_by('-created_at')
+
+    return render(request, 'rider/active_deliveries.html', {
+        'rider': rider,
+        'active_orders': active_orders,
+    })
+
+
+@login_required
+def rider_delivery_history(request):
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or profile.role != 'rider':
+        return redirect('home')
+    rider = getattr(request.user, 'rider_profile', None)
+    if not rider:
+        return redirect('home')
+
+    from core.models import Order
+    completed_orders = Order.objects.filter(
+        rider=rider,
+        status='completed',
+        delivery_mode='delivery',
+    ).select_related('business', 'customer').order_by('-created_at')[:50]
+
+    return render(request, 'rider/delivery_history.html', {
+        'rider': rider,
+        'completed_orders': completed_orders,
+    })
+
+
+@login_required
+def rider_earnings(request):
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or profile.role != 'rider':
+        return redirect('home')
+    rider = getattr(request.user, 'rider_profile', None)
+    if not rider:
+        return redirect('home')
+
+    from core.models import Order
+    from django.db.models import Sum, Count
+
+    completed = Order.objects.filter(
+        rider=rider, status='completed', delivery_mode='delivery',
+    )
+    total_deliveries = completed.count()
+    total_earnings = completed.aggregate(
+        total=Sum('delivery_fee')
+    )['total'] or 0
+
+    return render(request, 'rider/earnings.html', {
+        'rider': rider,
+        'total_deliveries': total_deliveries,
+        'total_earnings': total_earnings,
+    })
+
+
+# ── SUPPLIER REGISTRATION ────────────────────────────────────────────────────
+
+def supplier_signup(request):
+    if request.method == 'POST':
+        form = SupplierSignupForm(request.POST)
+        if form.is_valid():
+            user = User.objects.create_user(
+                username=form.cleaned_data['username'],
+                email=form.cleaned_data['email'],
+                password=form.cleaned_data['password1'],
+            )
+            business = Business.objects.create(
+                owner=user,
+                name=form.cleaned_data['business_name'],
+                business_type=form.cleaned_data['business_type'],
+                county=form.cleaned_data['county'],
+                sub_county=form.cleaned_data.get('sub_county'),
+                ward=form.cleaned_data.get('ward'),
+                phone=form.cleaned_data.get('phone', ''),
+                email=form.cleaned_data.get('email_business', ''),
+            )
+            UserProfile.objects.create(
+                user=user,
+                business=business,
+                role='supplier',
+                phone=form.cleaned_data.get('phone', ''),
+            )
+            login(request, user)
+            messages.success(request, f"Welcome! Your supply business '{business.name}' has been registered.")
+            return redirect('supplier_dashboard')
+    else:
+        form = SupplierSignupForm()
+    return render(request, 'registration/supplier_signup.html', {'form': form})
+
+
+@login_required
+def supplier_dashboard(request):
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or profile.role != 'supplier':
+        return redirect('home')
+
+    business = profile.business
+    if not business:
+        return redirect('home')
+
+    from core.models import SupplierRelationship, SupplierBid, ProcurementRequest
+
+    # Stats
+    clients = SupplierRelationship.objects.filter(
+        supplier_business=business, status='approved'
+    ).count()
+    active_bids = SupplierBid.objects.filter(
+        supplier=business, status='pending'
+    ).count()
+    won_bids = SupplierBid.objects.filter(
+        supplier=business, status='awarded'
+    ).count()
+    open_requests = ProcurementRequest.objects.filter(
+        status='open'
+    ).exclude(business=business).count()
+
+    # Recent bids
+    recent_bids = SupplierBid.objects.filter(
+        supplier=business
+    ).select_related('procurement_request').order_by('-submitted_at')[:10]
+
+    return render(request, 'supplier/dashboard.html', {
+        'business': business,
+        'clients': clients,
+        'active_bids': active_bids,
+        'won_bids': won_bids,
+        'open_requests': open_requests,
+        'recent_bids': recent_bids,
+    })
+
+
+@login_required
+def supplier_clients(request):
+    """List businesses this supplier is approved to supply."""
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or profile.role != 'supplier':
+        return redirect('home')
+
+    from core.models import SupplierRelationship
+    relationships = SupplierRelationship.objects.filter(
+        supplier_business=profile.business, status='approved'
+    ).select_related('business')
+
+    return render(request, 'supplier/clients.html', {
+        'relationships': relationships,
+    })
 
 
 @login_required

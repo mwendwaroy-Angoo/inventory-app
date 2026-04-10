@@ -127,6 +127,7 @@ class UserProfile(models.Model):
         ('owner', 'Owner'),
         ('staff', 'Staff'),
         ('rider', 'Rider'),
+        ('supplier', 'Supplier'),
     ]
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     business = models.ForeignKey(Business, on_delete=models.CASCADE,
@@ -148,6 +149,10 @@ class UserProfile(models.Model):
     @property
     def is_rider(self):
         return self.role == 'rider'
+
+    @property
+    def is_supplier(self):
+        return self.role == 'supplier'
 
 
 # Safely save profile if it exists — does NOT auto-create

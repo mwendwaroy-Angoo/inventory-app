@@ -119,6 +119,11 @@
             color: white;
         }
 
+        .badge-supplier {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+        }
+
         .navbar-toggler { border-color: var(--gold); }
 
         .navbar-toggler-icon {
@@ -370,6 +375,9 @@
             {% if user.userprofile.is_rider %}
             <a href="{% url 'rider_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
                style="font-size:0.85rem; padding:0.35rem 0.9rem;">🏍️ Dashboard</a>
+            {% elif user.userprofile.is_supplier %}
+            <a href="{% url 'supplier_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
+               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📊 Dashboard</a>
             {% elif user.userprofile.is_owner %}
             <a href="{% url 'supplier_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
                style="font-size:0.85rem; padding:0.35rem 0.9rem;">📦 Suppliers</a>
@@ -387,6 +395,26 @@
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'rider_dashboard' %}">🏍️ Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'notifications' %}">🔔 Notifications</a>
+                    </li>
+                </ul>
+
+                {% elif user.userprofile.is_supplier %}
+                <!-- ═══ SUPPLIER NAV ═══ -->
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'supplier_dashboard' %}">📊 Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'procurement_browse' %}">🔍 Browse Requests</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'my_bids' %}">📤 My Bids</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'browse_businesses' %}">🏢 Businesses</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'notifications' %}">🔔 Notifications</a>
@@ -509,6 +537,8 @@
                                 <span class="badge-role badge-owner ms-1">Owner</span>
                             {% elif user.userprofile.is_rider %}
                                 <span class="badge-role badge-rider ms-1">Rider</span>
+                            {% elif user.userprofile.is_supplier %}
+                                <span class="badge-role badge-supplier ms-1">Supplier</span>
                             {% else %}
                                 <span class="badge-role badge-staff ms-1">Staff</span>
                             {% endif %}
@@ -546,6 +576,9 @@
                     </li>
                     <li class="nav-item">
                         <a class="btn btn-outline-light btn-sm px-3" href="{% url 'rider_signup' %}">🏍️ Join as Rider</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="btn btn-outline-info btn-sm px-3" href="{% url 'supplier_signup' %}">📦 Join as Supplier</a>
                     </li>
                 </ul>
                 {% endif %}

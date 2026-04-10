@@ -84,7 +84,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
-LOGIN_REDIRECT_URL = '/'
+LOGIN_REDIRECT_URL = '/business/role-redirect/'
 LOGOUT_REDIRECT_URL = '/'
 LOGIN_URL = '/accounts/login/'
 

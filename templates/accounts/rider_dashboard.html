@@ -1,14 +1,9 @@
-{% extends "base.html" %}
+{% extends "base_rider.html" %}
 
 {% block title %}Rider Dashboard — Duka Mwecheche{% endblock %}
 
-{% block extra_css %}
+{% block portal_css %}
 <style>
-    .rider-header { text-align: center; padding: 2rem 0 1rem; }
-    .rider-header h1 {
-        font-family: 'Playfair Display', serif;
-        color: var(--gold); font-size: 2rem;
-    }
     .status-toggle {
         display: inline-flex; align-items: center; gap: 10px;
         padding: 0.6rem 1.2rem; border-radius: 30px;
@@ -22,12 +17,12 @@
     .status-toggle.available .dot { background: #2ecc71; }
     .status-toggle.unavailable .dot { background: #e74c3c; }
     .stat-card {
-        background: var(--onyx-card); border: 1px solid #333;
+        background: var(--onyx-card); border: 1px solid #1e5631;
         border-radius: 10px; padding: 1.2rem; text-align: center;
     }
     .stat-card .num {
         font-family: 'Playfair Display', serif;
-        color: var(--gold); font-size: 2rem;
+        color: #4caf50; font-size: 2rem;
     }
     .stat-card .label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; }
     .order-card {
@@ -35,7 +30,7 @@
         border-radius: 10px; padding: 1rem; margin-bottom: 0.8rem;
     }
     .order-card .order-no {
-        color: var(--gold); font-weight: 600;
+        color: #4caf50; font-weight: 600;
         font-family: 'Playfair Display', serif;
     }
     .badge-status {
@@ -49,12 +44,17 @@
 </style>
 {% endblock %}
 
-{% block content %}
-<div class="rider-header">
-    <h1>🏍️ Rider Dashboard</h1>
-    <p style="color:var(--muted);">{{ rider.user.get_full_name }} · {{ rider.get_vehicle_type_display }}</p>
-
-    <div class="mt-3">
+{% block portal_content %}
+<div class="mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h4 style="font-family:'Playfair Display',serif; color:#4caf50; margin:0;">
+                🏍️ Rider Dashboard
+            </h4>
+            <p style="color:var(--muted); font-size:0.9rem; margin:0;">
+                {{ rider.user.get_full_name }} · {{ rider.get_vehicle_type_display }}
+            </p>
+        </div>
         <div class="status-toggle {% if rider.is_available %}available{% else %}unavailable{% endif %}"
              id="availToggle" onclick="toggleAvailability()">
             <div class="dot"></div>
@@ -64,8 +64,6 @@
         </div>
     </div>
 </div>
-
-<hr class="gold-divider">
 
 <!-- Stats -->
 <div class="row g-3 mb-4">

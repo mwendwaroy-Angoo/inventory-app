@@ -1,0 +1,44 @@
+<!-- Supplier Sidebar Navigation -->
+<div class="sidebar-section">
+    <div class="sidebar-section-title">Dashboard</div>
+    <a href="{% url 'supplier_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'supplier_dashboard' %}active{% endif %}">
+        <span class="icon">🏠</span> Overview
+    </a>
+</div>
+
+<div class="sidebar-section">
+    <div class="sidebar-section-title">Procurement</div>
+    <a href="{% url 'procurement_browse' %}" class="sidebar-link {% if request.resolver_match.url_name == 'procurement_browse' %}active{% endif %}">
+        <span class="icon">🔍</span> Browse Requests
+    </a>
+    <a href="{% url 'my_bids' %}" class="sidebar-link {% if request.resolver_match.url_name == 'my_bids' %}active{% endif %}">
+        <span class="icon">📋</span> My Bids
+    </a>
+</div>
+
+<div class="sidebar-section">
+    <div class="sidebar-section-title">Clients</div>
+    <a href="{% url 'browse_businesses' %}" class="sidebar-link {% if request.resolver_match.url_name == 'browse_businesses' %}active{% endif %}">
+        <span class="icon">🏢</span> Browse Businesses
+    </a>
+    <a href="{% url 'supplier_clients' %}" class="sidebar-link {% if request.resolver_match.url_name == 'supplier_clients' %}active{% endif %}">
+        <span class="icon">🤝</span> My Clients
+    </a>
+</div>
+
+<div class="sidebar-section">
+    <div class="sidebar-section-title">Catalog</div>
+    <a href="{% url 'manage_items' %}" class="sidebar-link {% if request.resolver_match.url_name == 'manage_items' %}active{% endif %}">
+        <span class="icon">📦</span> My Products
+    </a>
+</div>
+
+<div class="sidebar-section">
+    <div class="sidebar-section-title">Settings</div>
+    <a href="{% url 'edit_business' %}" class="sidebar-link {% if request.resolver_match.url_name == 'edit_business' %}active{% endif %}">
+        <span class="icon">⚙️</span> Business Settings
+    </a>
+    <a href="{% url 'payment_settings' %}" class="sidebar-link {% if request.resolver_match.url_name == 'payment_settings' %}active{% endif %}">
+        <span class="icon">💳</span> Payment Settings
+    </a>
+</div>

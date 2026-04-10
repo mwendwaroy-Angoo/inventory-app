@@ -102,6 +102,101 @@ class BusinessSignupForm(forms.Form):
         return cleaned_data
 
 
+class SupplierSignupForm(forms.Form):
+    # Account fields
+    username = forms.CharField(
+        max_length=150,
+        widget=forms.TextInput(attrs={'placeholder': 'Choose a username'})
+    )
+    email = forms.EmailField(
+        widget=forms.EmailInput(attrs={'placeholder': 'your@email.com'})
+    )
+    password1 = forms.CharField(
+        widget=forms.PasswordInput(attrs={'placeholder': 'Create a password'}),
+        label='Password'
+    )
+    password2 = forms.CharField(
+        widget=forms.PasswordInput(attrs={'placeholder': 'Confirm your password'}),
+        label='Confirm Password'
+    )
+
+    # Business fields
+    business_name = forms.CharField(
+        max_length=255,
+        label='Supply Business Name',
+        widget=forms.TextInput(attrs={'placeholder': 'e.g. MaziwaFresh Supplies'})
+    )
+    business_type = forms.ModelChoiceField(
+        queryset=BusinessType.objects.all(),
+        empty_label='-- Select Business Type --'
+    )
+    phone = forms.CharField(
+        max_length=20,
+        required=True,
+        widget=forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'})
+    )
+    email_business = forms.EmailField(
+        required=False,
+        label='Business Email',
+        widget=forms.EmailInput(attrs={'placeholder': 'business@email.com'})
+    )
+
+    # Location fields
+    county = forms.ModelChoiceField(
+        queryset=County.objects.all(),
+        empty_label='-- Select County --'
+    )
+    sub_county = forms.ModelChoiceField(
+        queryset=SubCounty.objects.none(),
+        empty_label='-- Select Sub County --',
+        required=True
+    )
+    ward = forms.ModelChoiceField(
+        queryset=Ward.objects.none(),
+        empty_label='-- Select Ward --',
+        required=False
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if 'county' in self.data:
+            try:
+                county_id = int(self.data.get('county'))
+                self.fields['sub_county'].queryset = SubCounty.objects.filter(
+                    county_id=county_id
+                ).order_by('name')
+            except (ValueError, TypeError):
+                pass
+        if 'sub_county' in self.data:
+            try:
+                sub_county_id = int(self.data.get('sub_county'))
+                self.fields['ward'].queryset = Ward.objects.filter(
+                    sub_county_id=sub_county_id
+                ).order_by('name')
+            except (ValueError, TypeError):
+                pass
+
+    def clean_username(self):
+        username = self.cleaned_data['username']
+        if User.objects.filter(username=username).exists():
+            raise forms.ValidationError("Username already taken.")
+        return username
+
+    def clean_business_name(self):
+        name = self.cleaned_data['business_name']
+        if Business.objects.filter(name=name).exists():
+            raise forms.ValidationError("A business with this name already exists.")
+        return name
+
+    def clean(self):
+        cleaned_data = super().clean()
+        p1 = cleaned_data.get('password1')
+        p2 = cleaned_data.get('password2')
+        if p1 and p2 and p1 != p2:
+            raise forms.ValidationError("Passwords do not match.")
+        return cleaned_data
+
+
 class BusinessEditForm(forms.ModelForm):
     class Meta:
         model = Business

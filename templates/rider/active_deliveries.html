@@ -1,0 +1,43 @@
+{% extends "base_rider.html" %}
+
+{% block title %}Active Deliveries — Duka Mwecheche{% endblock %}
+
+{% block portal_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 style="font-family:'Playfair Display',serif; color:#4caf50; margin:0;">🚴 Active Deliveries</h4>
+    <span class="badge" style="background:rgba(76,175,80,0.15); color:#4caf50; font-size:0.9rem;">
+        {{ active_orders.count }} active
+    </span>
+</div>
+
+{% if active_orders %}
+    {% for order in active_orders %}
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1rem; margin-bottom:0.8rem;">
+        <div class="d-flex justify-content-between align-items-center">
+            <span style="color:#4caf50; font-weight:600; font-family:'Playfair Display',serif;">
+                {{ order.order_number }}
+            </span>
+            <span class="badge" style="background:rgba(241,196,15,0.15); color:#f1c40f; font-size:0.7rem; text-transform:uppercase;">
+                {{ order.get_status_display }}
+            </span>
+        </div>
+        <div style="font-size:0.85rem; color:var(--pearl); margin-top:0.4rem;">
+            👤 {{ order.customer_name }} · 📞 {{ order.customer_phone }}<br>
+            📍 {{ order.customer_location|default:"No location" }}<br>
+            🏪 {{ order.business.name }}<br>
+            💰 KES {{ order.total_amount|floatformat:0 }}
+        </div>
+        <div class="mt-2">
+            <a href="{% url 'track_order' order.order_number %}" class="btn btn-sm" style="background:#4caf50; color:#fff;">
+                View Details
+            </a>
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:3rem; text-align:center;">
+        <div style="font-size:3rem; margin-bottom:1rem;">🚴</div>
+        <p style="color:var(--muted);">No active deliveries right now. Stay available to receive new orders!</p>
+    </div>
+{% endif %}
+{% endblock %}
