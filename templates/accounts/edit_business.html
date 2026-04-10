@@ -271,11 +271,15 @@
         const resultsDiv = document.getElementById('mapSearchResults');
         resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Searching...</div>';
         resultsDiv.style.display = 'block';
-        fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=5&countrycodes=ke')
-            .then(r => r.json())
+        const url = 'https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=5&countrycodes=ke&email=app@dukamwecheche.com';
+        fetch(url, {headers: {'Accept': 'application/json'}})
+            .then(r => {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
             .then(data => {
-                if (!data.length) {
-                    resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">No results found</div>';
+                if (!Array.isArray(data) || !data.length) {
+                    resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">No results found — try a different search term</div>';
                     return;
                 }
                 resultsDiv.innerHTML = '';
@@ -294,8 +298,9 @@
                     resultsDiv.appendChild(div);
                 });
             })
-            .catch(() => {
-                resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Search failed — try again</div>';
+            .catch(err => {
+                console.error('Nominatim search error:', err);
+                resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Search failed — check your connection and try again</div>';
             });
     }
     document.getElementById('mapSearchInput').addEventListener('keydown', function(e) {
