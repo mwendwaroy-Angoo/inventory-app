@@ -73,6 +73,28 @@
             <div class="mb-3">{% bootstrap_field form.sub_county %}</div>
             <div class="mb-3">{% bootstrap_field form.ward %}</div>
 
+            <h5 class="section-label mt-4">🕐 Operating Hours</h5>
+            <div class="row">
+                <div class="col-md-4 mb-3">{% bootstrap_field form.opening_time %}</div>
+                <div class="col-md-4 mb-3">{% bootstrap_field form.closing_time %}</div>
+                <div class="col-md-4 mb-3">{% bootstrap_field form.is_open_override %}</div>
+            </div>
+
+            <h5 class="section-label mt-4">📍 GPS Coordinates</h5>
+            <div class="row">
+                <div class="col-md-6 mb-3">{% bootstrap_field form.latitude %}</div>
+                <div class="col-md-6 mb-3">{% bootstrap_field form.longitude %}</div>
+            </div>
+            <small class="text-muted d-block mb-3">Used for delivery distance calculations. You can get these from Google Maps.</small>
+
+            <h5 class="section-label mt-4">🚚 Delivery Settings</h5>
+            <div class="mb-3">{% bootstrap_field form.offers_delivery %}</div>
+            <div class="row">
+                <div class="col-md-4 mb-3">{% bootstrap_field form.delivery_radius_km %}</div>
+                <div class="col-md-4 mb-3">{% bootstrap_field form.delivery_fee %}</div>
+                <div class="col-md-4 mb-3">{% bootstrap_field form.min_order_amount %}</div>
+            </div>
+
             <div class="d-flex gap-2 mt-4">
                 <button type="submit" class="btn btn-primary flex-fill py-2">Save Changes</button>
                 <a href="{% url 'home' %}" class="btn btn-secondary flex-fill py-2">Cancel</a>
