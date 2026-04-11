@@ -41,8 +41,12 @@ def compile_po(po_path, mo_path):
     if msgid is not None and msgstr is not None:
         messages.append((msgid, msgstr))
 
-    # Filter: only entries with non-empty msgid, skip header
-    entries = [(k.encode('utf-8'), v.encode('utf-8')) for k, v in messages if k]
+    # Unescape backslash sequences in parsed strings
+    def unescape(s):
+        return s.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\')
+
+    # Include header (empty msgid) so gettext knows charset=UTF-8
+    entries = [(unescape(k).encode('utf-8'), unescape(v).encode('utf-8')) for k, v in messages if v]
     entries.sort()
 
     # Build MO binary
