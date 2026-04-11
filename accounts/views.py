@@ -5,12 +5,29 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
 from django.utils import translation
+from django.utils.translation import gettext as _
 from django.conf import settings as django_settings
+from django.views.decorators.http import require_POST
 from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm, RiderSignupForm, PaymentSettingsForm, SupplierSignupForm
 from .models import Business, UserProfile
 from django.http import JsonResponse
 from core.models import SubCounty, Ward
 from django.shortcuts import get_object_or_404
+
+
+def _remember_language_on_device(response, lang_code):
+    max_age = 365 * 24 * 60 * 60
+    response.set_cookie(
+        django_settings.LANGUAGE_COOKIE_NAME,
+        lang_code,
+        max_age=max_age,
+    )
+    response.set_cookie(
+        django_settings.DEVICE_LANGUAGE_COOKIE_NAME,
+        '1',
+        max_age=max_age,
+    )
+    return response
 
 
 @login_required
@@ -65,12 +82,20 @@ def change_language(request):
 
         translation.activate(lang_code)
         response = redirect(request.POST.get('next', '/'))
-        response.set_cookie(
-            django_settings.LANGUAGE_COOKIE_NAME, lang_code,
-            max_age=365 * 24 * 60 * 60,
-        )
-        return response
+        return _remember_language_on_device(response, lang_code)
     return redirect('home')
+
+
+@require_POST
+def logout_view(request):
+    """Log the user out while preserving only explicit device language choices."""
+    remember_language = request.COOKIES.get(django_settings.DEVICE_LANGUAGE_COOKIE_NAME) == '1'
+    auth_logout(request)
+    response = redirect('home')
+    if not remember_language:
+        response.delete_cookie(django_settings.LANGUAGE_COOKIE_NAME)
+        response.delete_cookie(django_settings.DEVICE_LANGUAGE_COOKIE_NAME)
+    return response
 
 
 def signup(request):
@@ -104,8 +129,16 @@ def signup(request):
                 )
 
             login(request, user)
-            messages.success(request, f"Welcome! Your business '{business.name}' has been created.")
-            return redirect('home')
+            messages.success(
+                request,
+                _("Welcome! Your business '%(business_name)s' has been created.")
+                % {'business_name': business.name},
+            )
+            response = redirect('home')
+            return _remember_language_on_device(
+                response,
+                form.cleaned_data.get('preferred_language', 'en'),
+            )
     else:
         form = BusinessSignupForm()
 
@@ -120,7 +153,7 @@ def add_staff(request):
         return redirect('home')
 
     if not user_profile.is_owner:
-        messages.error(request, "Only business owners can add staff.")
+        messages.error(request, _("Only business owners can add staff."))
         return redirect('home')
 
     if request.method == 'POST':
@@ -143,7 +176,8 @@ def add_staff(request):
 
             messages.success(
                 request,
-                f"Staff member '{staff_user.username}' added successfully."
+                _("Staff member '%(username)s' added successfully.")
+                % {'username': staff_user.username},
             )
             return redirect('staff_list')
     else:
@@ -159,7 +193,7 @@ def staff_list(request):
         return redirect('home')
 
     if not user_profile.is_owner:
-        messages.error(request, "Only business owners can view staff.")
+        messages.error(request, _("Only business owners can view staff."))
         return redirect('home')
 
     staff = UserProfile.objects.filter(
@@ -193,7 +227,7 @@ def edit_staff(request, user_id):
         return redirect('home')
 
     if not user_profile.is_owner:
-        messages.error(request, "Only business owners can edit staff.")
+        messages.error(request, _("Only business owners can edit staff."))
         return redirect('home')
 
     staff_profile = get_object_or_404(
@@ -210,7 +244,11 @@ def edit_staff(request, user_id):
         staff_profile.user.save()
         staff_profile.phone = request.POST.get('phone', '')
         staff_profile.save()
-        messages.success(request, f"'{staff_profile.user.username}' updated successfully.")
+        messages.success(
+            request,
+            _("'%(username)s' updated successfully.")
+            % {'username': staff_profile.user.username},
+        )
         return redirect('staff_list')
 
     return render(request, 'accounts/edit_staff.html', {'profile': staff_profile})
@@ -224,7 +262,7 @@ def delete_staff(request, user_id):
         return redirect('home')
 
     if not user_profile.is_owner:
-        messages.error(request, "Only business owners can delete staff.")
+        messages.error(request, _("Only business owners can delete staff."))
         return redirect('home')
 
     staff_profile = get_object_or_404(
@@ -237,7 +275,10 @@ def delete_staff(request, user_id):
     if request.method == 'POST':
         username = staff_profile.user.username
         staff_profile.user.delete()
-        messages.success(request, f"'{username}' removed successfully.")
+        messages.success(
+            request,
+            _("'%(username)s' removed successfully.") % {'username': username},
+        )
         return redirect('staff_list')
 
     return render(request, 'accounts/delete_staff.html', {'profile': staff_profile})
@@ -251,12 +292,12 @@ def edit_business(request):
         return redirect('home')
 
     if not user_profile.is_owner:
-        messages.error(request, "Only business owners can edit business details.")
+        messages.error(request, _("Only business owners can edit business details."))
         return redirect('home')
 
     business = user_profile.business
     if not business:
-        messages.error(request, "No business found.")
+        messages.error(request, _("No business found."))
         return redirect('home')
 
     if request.method == 'POST':
@@ -265,7 +306,11 @@ def edit_business(request):
             form.save()
             # Handle delivery tiers
             _save_delivery_tiers(request, business)
-            messages.success(request, f"Business '{business.name}' updated successfully.")
+            messages.success(
+                request,
+                _("Business '%(business_name)s' updated successfully.")
+                % {'business_name': business.name},
+            )
             return redirect('home')
     else:
         form = BusinessEditForm(instance=business)
@@ -322,7 +367,7 @@ def reset_staff_password(request, user_id):
         return redirect('home')
 
     if not user_profile.is_owner:
-        messages.error(request, "Only business owners can reset staff passwords.")
+        messages.error(request, _("Only business owners can reset staff passwords."))
         return redirect('home')
 
     staff_profile = get_object_or_404(
@@ -337,7 +382,11 @@ def reset_staff_password(request, user_id):
         if form.is_valid():
             staff_profile.user.set_password(form.cleaned_data['password1'])
             staff_profile.user.save()
-            messages.success(request, f"Password for '{staff_profile.user.username}' reset successfully.")
+            messages.success(
+                request,
+                _("Password for '%(username)s' reset successfully.")
+                % {'username': staff_profile.user.username},
+            )
             return redirect('staff_list')
     else:
         form = ResetStaffPasswordForm()
@@ -378,8 +427,12 @@ def rider_signup(request):
                     vehicle_type=form.cleaned_data['vehicle_type'],
                 )
             login(request, user)
-            messages.success(request, "Welcome! You're registered as a rider.")
-            return redirect('rider_dashboard')
+            messages.success(request, _("Welcome! You're registered as a rider."))
+            response = redirect('rider_dashboard')
+            return _remember_language_on_device(
+                response,
+                form.cleaned_data.get('preferred_language', 'en'),
+            )
     else:
         form = RiderSignupForm()
     return render(request, 'registration/rider_signup.html', {'form': form})
@@ -536,8 +589,16 @@ def supplier_signup(request):
                     preferred_language=form.cleaned_data.get('preferred_language', 'en'),
                 )
             login(request, user)
-            messages.success(request, f"Welcome! Your supply business '{business.name}' has been registered.")
-            return redirect('supplier_dashboard')
+            messages.success(
+                request,
+                _("Welcome! Your supply business '%(business_name)s' has been registered.")
+                % {'business_name': business.name},
+            )
+            response = redirect('supplier_dashboard')
+            return _remember_language_on_device(
+                response,
+                form.cleaned_data.get('preferred_language', 'en'),
+            )
     else:
         form = SupplierSignupForm()
     return render(request, 'registration/supplier_signup.html', {'form': form})
@@ -610,19 +671,19 @@ def payment_settings(request):
         return redirect('home')
 
     if not user_profile.is_owner:
-        messages.error(request, "Only business owners can manage payment settings.")
+        messages.error(request, _("Only business owners can manage payment settings."))
         return redirect('home')
 
     business = user_profile.business
     if not business:
-        messages.error(request, "No business found.")
+        messages.error(request, _("No business found."))
         return redirect('home')
 
     if request.method == 'POST':
         form = PaymentSettingsForm(request.POST, instance=business)
         if form.is_valid():
             form.save()
-            messages.success(request, "Payment settings updated successfully.")
+            messages.success(request, _("Payment settings updated successfully."))
             return redirect('payment_settings')
     else:
         form = PaymentSettingsForm(instance=business)
@@ -643,12 +704,12 @@ def delete_account(request):
     if request.method == 'POST':
         confirm_text = request.POST.get('confirm_text', '').strip()
         if confirm_text != 'DELETE MY ACCOUNT':
-            messages.error(request, 'Please type "DELETE MY ACCOUNT" exactly to confirm.')
+            messages.error(request, _('Please type "DELETE MY ACCOUNT" exactly to confirm.'))
             return redirect('delete_account')
 
         reason = request.POST.get('reason', '').strip()
         if not reason:
-            messages.error(request, 'Please select a reason for deleting your account.')
+            messages.error(request, _('Please select a reason for deleting your account.'))
             return redirect('delete_account')
 
         user = request.user
@@ -684,9 +745,9 @@ def delete_account(request):
 
         messages.success(
             request,
-            'Your account has been deleted. We\'re sad to see you go, '
-            'but the door is always open — you\'re welcome back anytime. '
-            'Thank you for being part of the Duka Mwecheche community. 💛'
+            _(
+                "Your account has been deleted. We're sad to see you go, but the door is always open. You're welcome back anytime. Thank you for being part of the Duka Mwecheche community."
+            ),
         )
         return redirect('login')
 

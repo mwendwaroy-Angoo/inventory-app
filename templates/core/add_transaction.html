@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
+{% load i18n %}
 
-{% block title %}Add Transaction — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Add Transaction' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet"/>
@@ -108,14 +109,14 @@
 
 <!-- Breadcrumb -->
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <span>Add Transaction</span>
+    <span>{% trans 'Add Transaction' %}</span>
 </nav>
 
 <div class="form-card">
     <div class="form-card-header">
-        <h3>➕ Add Transaction</h3>
+        <h3>➕ {% trans 'Add Transaction' %}</h3>
         <p>{{ today }}</p>
     </div>
     <div class="form-card-body">
@@ -134,45 +135,45 @@
             {% csrf_token %}
 
             <!-- Item & Type -->
-            <div class="section-divider"><span>📦 Item Details</span></div>
+            <div class="section-divider"><span>📦 {% trans 'Item Details' %}</span></div>
 
             <div class="mb-4">
-                <label class="form-label">Item</label>
+                <label class="form-label">{% trans 'Item' %}</label>
                 <select name="item" id="item" class="form-select select2"
                         required style="width:100%">
-                    <option value="">Type to search item...</option>
+                    <option value="">{% trans 'Type to search item...' %}</option>
                     {% for item in items %}
                     <option value="{{ item.id }}">
                         {{ item.material_no }} — {{ item.description }}
-                        (Balance: {{ item.current_balance }} {{ item.unit }})
+                        ({% trans 'Balance' %}: {{ item.current_balance }} {{ item.unit }})
                     </option>
                     {% endfor %}
                 </select>
             </div>
 
             <div class="mb-4">
-                <label class="form-label">Transaction Type</label>
+                <label class="form-label">{% trans 'Transaction Type' %}</label>
                 <select name="type" id="transType" class="form-select" required>
-                    <option value="Receipt">Receipt — Receiving Stock</option>
-                    <option value="Issue">Issue — Issuing / Selling Stock</option>
+                    <option value="Receipt">{% trans 'Receipt — Receiving Stock' %}</option>
+                    <option value="Issue">{% trans 'Issue — Issuing / Selling Stock' %}</option>
                 </select>
             </div>
 
             <div class="mb-4">
-                <label class="form-label">Quantity</label>
+                <label class="form-label">{% trans 'Quantity' %}</label>
                 <input type="number" name="quantity" id="quantity"
                        class="form-control" min="1" required
-                       placeholder="Enter quantity">
+                       placeholder="{% trans 'Enter quantity' %}">
             </div>
 
             <!-- Recipient Section -->
-            <div class="section-divider"><span id="recipientLabel">📍 Recipient / Destination</span></div>
+            <div class="section-divider"><span id="recipientLabel">📍 {% trans 'Recipient / Destination' %}</span></div>
 
             <!-- Receipt → Store dropdown -->
             <div id="storeField" class="mb-4">
-                <label class="form-label">Receiving Store</label>
+                <label class="form-label">{% trans 'Receiving Store' %}</label>
                 <select name="recipient" id="storeSelect" class="form-select">
-                    <option value="">-- Select Store --</option>
+                    <option value="">{% trans '-- Select Store --' %}</option>
                     {% for store in stores %}
                     <option value="{{ store.name }}">{{ store.name }}</option>
                     {% endfor %}
@@ -181,44 +182,44 @@
 
             <!-- Issue → Customer dropdown -->
             <div id="customerField" class="mb-4" style="display:none">
-                <label class="form-label">Customer / Recipient</label>
+                <label class="form-label">{% trans 'Customer / Recipient' %}</label>
                 <select name="recipient" id="customerSelect" class="form-select select2-customer"
                         style="width:100%">
-                    <option value="">-- Select or type customer --</option>
+                    <option value="">{% trans '-- Select or type customer --' %}</option>
                     {% for customer in customers %}
                     <option value="{{ customer.name }}">
                         {{ customer.name }}{% if customer.phone %} — {{ customer.phone }}{% endif %}
                     </option>
                     {% endfor %}
-                    <option value="__new__">➕ Add New Customer...</option>
+                    <option value="__new__">➕ {% trans 'Add New Customer...' %}</option>
                 </select>
 
                 <!-- New customer quick-add -->
                 <div id="new-customer-fields">
                     <p style="color:var(--gold); font-size:0.85rem; margin-bottom:0.8rem;">
-                        New Customer Details
+                        {% trans 'New Customer Details' %}
                     </p>
                     <input type="text" name="new_customer_name" id="newCustomerName"
-                           class="form-control mb-2" placeholder="Customer name *">
+                           class="form-control mb-2" placeholder="{% trans 'Customer name *' %}">
                     <input type="text" name="new_customer_phone"
-                           class="form-control" placeholder="Phone (optional)">
+                           class="form-control" placeholder="{% trans 'Phone (optional)' %}">
                 </div>
             </div>
 
             <!-- Invoice / Receipt No -->
-            <div class="section-divider"><span>🧾 Document</span></div>
+            <div class="section-divider"><span>🧾 {% trans 'Document' %}</span></div>
 
             <div class="mb-4">
                 <label class="form-label" id="invoiceLabel">
-                    Invoice No / Receipt No
-                    <span style="color:var(--muted); font-size:0.8rem">(optional)</span>
+                    {% trans 'Invoice No / Receipt No' %}
+                    <span style="color:var(--muted); font-size:0.8rem">({% trans 'optional' %})</span>
                 </label>
                 <input type="text" name="invoice_no" class="form-control"
-                       placeholder="e.g. INV-001 or REC-2026-001">
+                       placeholder="{% trans 'e.g. INV-001 or REC-2026-001' %}">
             </div>
 
             <button type="submit" class="btn btn-primary w-100 py-2">
-                Submit Transaction
+                {% trans 'Submit Transaction' %}
             </button>
         </form>
     </div>
@@ -231,16 +232,19 @@
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
 $(document).ready(function () {
+    const receivingStoreLabel = "📍 {% trans 'Receiving Store' %}";
+    const customerRecipientLabel = "👤 {% trans 'Customer / Recipient' %}";
+
     // Item search select2
     $('#item').select2({
-        placeholder: "Type to search item...",
+        placeholder: "{% trans 'Type to search item...' %}",
         allowClear: true,
         width: '100%'
     });
 
     // Customer select2
     $('.select2-customer').select2({
-        placeholder: "Select or type customer name...",
+        placeholder: "{% trans 'Select or type customer name...' %}",
         allowClear: true,
         width: '100%',
         tags: true,  // allows typing new values
@@ -254,13 +258,13 @@ $(document).ready(function () {
             $('#customerField').hide();
             $('#storeField select').attr('name', 'recipient');
             $('#customerSelect').attr('name', '');
-            $('#recipientLabel').text('📍 Receiving Store');
+            $('#recipientLabel').text(receivingStoreLabel);
         } else {
             $('#storeField').hide();
             $('#customerField').show();
             $('#storeField select').attr('name', '');
             $('#customerSelect').attr('name', 'recipient');
-            $('#recipientLabel').text('👤 Customer / Recipient');
+            $('#recipientLabel').text(customerRecipientLabel);
         }
     }
 

@@ -1,16 +1,17 @@
 {% extends "base.html" %}
-{% block title %}My Bids{% endblock %}
+{% load i18n %}
+{% block title %}{% trans 'My Bids' %}{% endblock %}
 {% block content %}
 <div class="container-fluid" style="max-width:900px;">
-    <h4 class="mb-3" style="color:var(--gold); font-family:'Playfair Display',serif;">📤 My Submitted Bids</h4>
+    <h4 class="mb-3" style="color:var(--gold); font-family:'Playfair Display',serif;">📤 {% trans 'My Submitted Bids' %}</h4>
 
     <!-- Status filter -->
     <div class="d-flex gap-2 mb-3 flex-wrap">
-        <a href="{% url 'my_bids' %}" class="btn btn-sm {% if not status_filter %}btn-gold{% else %}btn-outline-secondary{% endif %}">All</a>
-        <a href="?status=submitted" class="btn btn-sm {% if status_filter == 'submitted' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">Submitted</a>
-        <a href="?status=shortlisted" class="btn btn-sm {% if status_filter == 'shortlisted' %}btn-warning{% else %}btn-outline-warning{% endif %}">Shortlisted</a>
-        <a href="?status=accepted" class="btn btn-sm {% if status_filter == 'accepted' %}btn-success{% else %}btn-outline-success{% endif %}">Accepted</a>
-        <a href="?status=rejected" class="btn btn-sm {% if status_filter == 'rejected' %}btn-danger{% else %}btn-outline-danger{% endif %}">Rejected</a>
+        <a href="{% url 'my_bids' %}" class="btn btn-sm {% if not status_filter %}btn-gold{% else %}btn-outline-secondary{% endif %}">{% trans 'All' %}</a>
+        <a href="?status=submitted" class="btn btn-sm {% if status_filter == 'submitted' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">{% trans 'Submitted' %}</a>
+        <a href="?status=shortlisted" class="btn btn-sm {% if status_filter == 'shortlisted' %}btn-warning{% else %}btn-outline-warning{% endif %}">{% trans 'Shortlisted' %}</a>
+        <a href="?status=accepted" class="btn btn-sm {% if status_filter == 'accepted' %}btn-success{% else %}btn-outline-success{% endif %}">{% trans 'Accepted' %}</a>
+        <a href="?status=rejected" class="btn btn-sm {% if status_filter == 'rejected' %}btn-danger{% else %}btn-outline-danger{% endif %}">{% trans 'Rejected' %}</a>
     </div>
 
     {% if bids %}
@@ -31,15 +32,15 @@
                 </span>
             </div>
         </div>
-        <p style="color:var(--muted); font-size:0.8rem; margin-top:0.4rem; margin-bottom:0;">⏱️ {{ bid.delivery_timeline }} · Submitted {{ bid.created_at|timesince }} ago</p>
-        <a href="{% url 'procurement_detail' pk=bid.procurement.pk %}" class="btn btn-outline-primary btn-sm mt-2">View Request</a>
+        <p style="color:var(--muted); font-size:0.8rem; margin-top:0.4rem; margin-bottom:0;">⏱️ {{ bid.delivery_timeline }} · {% trans 'Submitted' %} {{ bid.created_at|timesince }} {% trans 'ago' %}</p>
+        <a href="{% url 'procurement_detail' pk=bid.procurement.pk %}" class="btn btn-outline-primary btn-sm mt-2">{% trans 'View Request' %}</a>
     </div>
     {% endfor %}
     {% else %}
     <div class="text-center py-5" style="color:var(--muted);">
         <p style="font-size:3rem;">📭</p>
-        <p>You haven't submitted any bids yet.</p>
-        <a href="{% url 'procurement_browse' %}" class="btn btn-gold">Browse Open Requests</a>
+        <p>{% trans "You haven't submitted any bids yet." %}</p>
+        <a href="{% url 'procurement_browse' %}" class="btn btn-gold">{% trans 'Browse Open Requests' %}</a>
     </div>
     {% endif %}
 </div>

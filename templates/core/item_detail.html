@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load i18n %}
 
 {% block title %}{{ item.description }} — Duka Mwecheche{% endblock %}
 
@@ -88,27 +89,27 @@
     <div>
         <div class="item-title">{{ item.description }}</div>
         <div class="item-meta">
-            Material No: <span>{{ item.material_no }}</span>
+            {% trans 'Material No' %}: <span>{{ item.material_no }}</span>
         </div>
         <div class="item-meta">
-            Store: <span>{{ item.store.name }}</span>
+            {% trans 'Store' %}: <span>{{ item.store.name }}</span>
         </div>
         <div class="item-meta">
-            Unit: <span>{{ item.unit }}</span>
+            {% trans 'Unit' %}: <span>{{ item.unit }}</span>
         </div>
         {% if item.selling_price and user.userprofile.is_owner %}
         <div class="item-meta">
-            Price: <span style="color:var(--gold)">KES {{ item.selling_price }}</span>
+            {% trans 'Price' %}: <span style="color:var(--gold)">KES {{ item.selling_price }}</span>
         </div>
         {% endif %}
 
         <div class="mt-3 d-flex gap-2 flex-wrap">
             <a href="{% url 'stock_list' %}" class="btn btn-sm btn-secondary">
-                ← Stock List
+                ← {% trans 'Stock List' %}
             </a>
             {% if user.userprofile.is_owner %}
             <a href="{% url 'edit_item' item.id %}" class="btn btn-sm btn-gold">
-                ✏️ Edit Item
+                ✏️ {% trans 'Edit Item' %}
             </a>
             {% endif %}
         </div>
@@ -117,22 +118,22 @@
     <div class="d-flex gap-2 flex-wrap">
         <div class="balance-pill">
             <div class="balance-value">{{ item.current_balance }}</div>
-            <div class="balance-label">Bin Balance</div>
+            <div class="balance-label">{% trans 'Bin Balance' %}</div>
         </div>
         <div class="balance-pill">
             <div class="balance-value">{{ item.physical_balance }}</div>
-            <div class="balance-label">Physical</div>
+            <div class="balance-label">{% trans 'Physical' %}</div>
         </div>
         {% if item.deficit > 0 %}
         <div class="balance-pill" style="border-color: var(--danger);">
             <div class="balance-value" style="color:var(--danger)">{{ item.deficit }}</div>
-            <div class="balance-label">Deficit</div>
+            <div class="balance-label">{% trans 'Deficit' %}</div>
         </div>
         {% endif %}
         {% if item.surplus > 0 %}
         <div class="balance-pill" style="border-color: var(--success);">
             <div class="balance-value" style="color:var(--success)">{{ item.surplus }}</div>
-            <div class="balance-label">Surplus</div>
+            <div class="balance-label">{% trans 'Surplus' %}</div>
         </div>
         {% endif %}
     </div>
@@ -141,18 +142,18 @@
 <hr class="gold-divider">
 
 <!-- Transaction History -->
-<h4 class="page-title mb-3">Transaction History</h4>
+<h4 class="page-title mb-3">{% trans 'Transaction History' %}</h4>
 
 {% if transactions %}
 <div class="table-responsive">
     <table class="table table-hover">
         <thead>
             <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Quantity</th>
-                <th>Recipient</th>
-                <th>Invoice No</th>
+                <th>{% trans 'Date' %}</th>
+                <th>{% trans 'Type' %}</th>
+                <th>{% trans 'Quantity' %}</th>
+                <th>{% trans 'Recipient' %}</th>
+                <th>{% trans 'Invoice No' %}</th>
             </tr>
         </thead>
         <tbody>
@@ -162,7 +163,7 @@
                 <td>
                     <span class="type-pill
                         {% if trans.type == 'Receipt' %}type-receipt{% else %}type-issue{% endif %}">
-                        {{ trans.type }}
+                        {{ trans.get_type_display }}
                     </span>
                 </td>
                 <td>
@@ -179,7 +180,7 @@
     </table>
 </div>
 {% else %}
-<div class="alert alert-info">No transactions recorded for this item yet.</div>
+<div class="alert alert-info">{% trans 'No transactions recorded for this item yet.' %}</div>
 {% endif %}
 
 {% endblock %}

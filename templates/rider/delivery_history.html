@@ -1,11 +1,12 @@
 {% extends "base_rider.html" %}
+{% load i18n %}
 
-{% block title %}Delivery History — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Delivery History' %} — Duka Mwecheche{% endblock %}
 
 {% block portal_content %}
 <div class="mb-4">
-    <h4 style="font-family:'Playfair Display',serif; color:#4caf50; margin:0;">📜 Delivery History</h4>
-    <p style="color:var(--muted); font-size:0.85rem;">Your last 50 completed deliveries</p>
+    <h4 style="font-family:'Playfair Display',serif; color:#4caf50; margin:0;">📜 {% trans 'Delivery History' %}</h4>
+    <p style="color:var(--muted); font-size:0.85rem;">{% trans 'Your last 50 completed deliveries' %}</p>
 </div>
 
 {% if completed_orders %}
@@ -14,11 +15,11 @@
         <table class="table table-dark table-hover mb-0" style="font-size:0.85rem;">
             <thead>
                 <tr style="color:var(--muted);">
-                    <th>Order</th>
-                    <th>Customer</th>
-                    <th>Business</th>
-                    <th>Amount</th>
-                    <th>Date</th>
+                    <th>{% trans 'Order' %}</th>
+                    <th>{% trans 'Customer' %}</th>
+                    <th>{% trans 'Business' %}</th>
+                    <th>{% trans 'Amount' %}</th>
+                    <th>{% trans 'Date' %}</th>
                 </tr>
             </thead>
             <tbody>
@@ -42,7 +43,7 @@
 {% else %}
 <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:3rem; text-align:center;">
     <div style="font-size:3rem; margin-bottom:1rem;">📜</div>
-    <p style="color:var(--muted);">No completed deliveries yet. Start delivering to build your history!</p>
+    <p style="color:var(--muted);">{% trans 'No completed deliveries yet. Start delivering to build your history!' %}</p>
 </div>
 {% endif %}
 {% endblock %}

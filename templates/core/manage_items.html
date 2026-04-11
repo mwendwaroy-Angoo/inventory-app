@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% load i18n %}
 
-{% block title %}Manage Items — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Manage Items' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -33,26 +34,26 @@
 
 <!-- Breadcrumb -->
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <a href="{% url 'manage_stores' %}" style="color:var(--gold)">Stores</a>
+    <a href="{% url 'manage_stores' %}" style="color:var(--gold)">{% trans 'Stores' %}</a>
     <span class="mx-1">›</span>
-    <span>Manage Items</span>
+    <span>{% trans 'Manage Items' %}</span>
 </nav>
 
 <div class="manage-header">
-    <h2 class="page-title">📦 Manage Items</h2>
+    <h2 class="page-title">📦 {% trans 'Manage Items' %}</h2>
     <div class="d-flex gap-2 flex-wrap">
-        <a href="{% url 'add_item' %}" class="btn btn-primary btn-sm">➕ Add Item</a>
+        <a href="{% url 'add_item' %}" class="btn btn-primary btn-sm">➕ {% trans 'Add Item' %}</a>
         <a href="{% url 'export_stock' %}" class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <rect width="16" height="16" rx="2" fill="#1D6F42"/>
                 <rect x="8" width="8" height="16" rx="2" fill="#217346"/>
                 <path d="M2 4.5L5.5 8L2 11.5H4.5L6.75 9L9 11.5H11.5L8 8L11.5 4.5H9L6.75 7L4.5 4.5H2Z" fill="white"/>
             </svg>
-            Export Excel
+            {% trans 'Export Excel' %}
         </a>
-        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← {% trans 'Dashboard' %}</a>
     </div>
 </div>
 
@@ -63,13 +64,13 @@
             <tr>
                 <th>Material No</th>
                 <th>Description</th>
-                <th>Store</th>
-                <th>Unit</th>
-                <th>Price (KES)</th>
-                <th>Balance</th>
-                <th>Reorder Lvl</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th>{% trans 'Store' %}</th>
+                <th>{% trans 'Unit' %}</th>
+                <th>{% trans 'Price (KES)' %}</th>
+                <th>{% trans 'Balance' %}</th>
+                <th>{% trans 'Reorder Lvl' %}</th>
+                <th>{% trans 'Status' %}</th>
+                <th>{% trans 'Actions' %}</th>
             </tr>
         </thead>
         <tbody>
@@ -87,19 +88,19 @@
                 <td>{{ item.reorder_level }}</td>
                 <td>
                     {% if item.current_balance <= 0 %}
-                        <span class="badge bg-danger">Out of Stock</span>
+                        <span class="badge bg-danger">{% trans 'Out of Stock' %}</span>
                     {% elif item.needs_reorder %}
-                        <span class="badge bg-warning">Reorder</span>
+                        <span class="badge bg-warning">{% trans 'Reorder' %}</span>
                     {% else %}
-                        <span class="badge bg-success">Available</span>
+                        <span class="badge bg-success">{% trans 'Available' %}</span>
                     {% endif %}
                 </td>
                 <td>
                     <div class="d-flex gap-1">
                         <a href="{% url 'edit_item' item.id %}"
-                           class="btn btn-sm btn-outline-primary">Edit</a>
+                           class="btn btn-sm btn-outline-primary">{% trans 'Edit' %}</a>
                         <a href="{% url 'delete_item' item.id %}"
-                           class="btn btn-sm btn-outline-danger">Delete</a>
+                           class="btn btn-sm btn-outline-danger">{% trans 'Delete' %}</a>
                     </div>
                 </td>
             </tr>
@@ -109,9 +110,9 @@
 </div>
 {% else %}
 <div class="empty-state">
-    <h5>No items yet</h5>
-    <p>Start by adding your first stock item</p>
-    <a href="{% url 'add_item' %}" class="btn btn-primary mt-2">➕ Add First Item</a>
+    <h5>{% trans 'No items yet' %}</h5>
+    <p>{% trans 'Start by adding your first stock item' %}</p>
+    <a href="{% url 'add_item' %}" class="btn btn-primary mt-2">➕ {% trans 'Add First Item' %}</a>
 </div>
 {% endif %}
 

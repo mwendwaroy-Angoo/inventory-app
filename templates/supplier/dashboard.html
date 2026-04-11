@@ -1,14 +1,15 @@
 {% extends "base_supplier.html" %}
+{% load i18n %}
 
-{% block title %}Supplier Dashboard — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Supplier Dashboard' %} — Duka Mwecheche{% endblock %}
 
 {% block portal_content %}
 <div class="mb-4">
     <h4 style="font-family:'Playfair Display',serif; color:var(--gold);">
-        Welcome back, {{ user.get_full_name|default:user.username }}
+        {% trans 'Welcome back,' %} {{ user.get_full_name|default:user.username }}
     </h4>
     <p style="color:var(--muted); font-size:0.9rem;">
-        {{ business.name }} — Supplier Dashboard
+        {{ business.name }} — {% trans 'Supplier Dashboard' %}
     </p>
 </div>
 
@@ -17,25 +18,25 @@
     <div class="col-6 col-md-3">
         <div style="background:var(--onyx-card); border:1px solid #234; border-radius:10px; padding:1.2rem; text-align:center;">
             <div style="font-size:1.8rem; font-weight:700; color:#4da6ff;">{{ clients }}</div>
-            <div style="color:var(--muted); font-size:0.8rem;">Active Clients</div>
+            <div style="color:var(--muted); font-size:0.8rem;">{% trans 'Active Clients' %}</div>
         </div>
     </div>
     <div class="col-6 col-md-3">
         <div style="background:var(--onyx-card); border:1px solid #234; border-radius:10px; padding:1.2rem; text-align:center;">
             <div style="font-size:1.8rem; font-weight:700; color:#f39c12;">{{ active_bids }}</div>
-            <div style="color:var(--muted); font-size:0.8rem;">Active Bids</div>
+            <div style="color:var(--muted); font-size:0.8rem;">{% trans 'Active Bids' %}</div>
         </div>
     </div>
     <div class="col-6 col-md-3">
         <div style="background:var(--onyx-card); border:1px solid #234; border-radius:10px; padding:1.2rem; text-align:center;">
             <div style="font-size:1.8rem; font-weight:700; color:#2ecc71;">{{ won_bids }}</div>
-            <div style="color:var(--muted); font-size:0.8rem;">Won Bids</div>
+            <div style="color:var(--muted); font-size:0.8rem;">{% trans 'Won Bids' %}</div>
         </div>
     </div>
     <div class="col-6 col-md-3">
         <div style="background:var(--onyx-card); border:1px solid #234; border-radius:10px; padding:1.2rem; text-align:center;">
             <div style="font-size:1.8rem; font-weight:700; color:#e74c3c;">{{ open_requests }}</div>
-            <div style="color:var(--muted); font-size:0.8rem;">Open Requests</div>
+            <div style="color:var(--muted); font-size:0.8rem;">{% trans 'Open Requests' %}</div>
         </div>
     </div>
 </div>
@@ -45,22 +46,22 @@
     <div class="col-md-4">
         <a href="{% url 'procurement_browse' %}" class="d-block text-decoration-none" style="background:linear-gradient(135deg,#2980d9,#4da6ff); border-radius:10px; padding:1.2rem; text-align:center; color:#fff;">
             <div style="font-size:1.5rem;">🔍</div>
-            <div style="font-weight:600;">Browse Requests</div>
-            <small>Find new procurement opportunities</small>
+            <div style="font-weight:600;">{% trans 'Browse Requests' %}</div>
+            <small>{% trans 'Find new procurement opportunities' %}</small>
         </a>
     </div>
     <div class="col-md-4">
         <a href="{% url 'my_bids' %}" class="d-block text-decoration-none" style="background:linear-gradient(135deg,#f39c12,#f1c40f); border-radius:10px; padding:1.2rem; text-align:center; color:#333;">
             <div style="font-size:1.5rem;">📋</div>
-            <div style="font-weight:600;">My Bids</div>
-            <small>Track your submitted bids</small>
+            <div style="font-weight:600;">{% trans 'My Bids' %}</div>
+            <small>{% trans 'Track your submitted bids' %}</small>
         </a>
     </div>
     <div class="col-md-4">
         <a href="{% url 'browse_businesses' %}" class="d-block text-decoration-none" style="background:linear-gradient(135deg,#27ae60,#2ecc71); border-radius:10px; padding:1.2rem; text-align:center; color:#fff;">
             <div style="font-size:1.5rem;">🏢</div>
-            <div style="font-weight:600;">Browse Businesses</div>
-            <small>Connect with potential clients</small>
+            <div style="font-weight:600;">{% trans 'Browse Businesses' %}</div>
+            <small>{% trans 'Connect with potential clients' %}</small>
         </a>
     </div>
 </div>
@@ -68,18 +69,18 @@
 <!-- Recent Bids -->
 <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; overflow:hidden;">
     <div style="padding:1rem 1.2rem; border-bottom:1px solid #333;">
-        <h6 style="margin:0; color:var(--pearl); font-family:'Playfair Display',serif;">Recent Bids</h6>
+        <h6 style="margin:0; color:var(--pearl); font-family:'Playfair Display',serif;">{% trans 'Recent Bids' %}</h6>
     </div>
     {% if recent_bids %}
     <div class="table-responsive">
         <table class="table table-dark table-hover mb-0" style="font-size:0.85rem;">
             <thead>
                 <tr style="color:var(--muted);">
-                    <th>Request</th>
-                    <th>Business</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                    <th>Date</th>
+                    <th>{% trans 'Request' %}</th>
+                    <th>{% trans 'Business' %}</th>
+                    <th>{% trans 'Amount' %}</th>
+                    <th>{% trans 'Status' %}</th>
+                    <th>{% trans 'Date' %}</th>
                 </tr>
             </thead>
             <tbody>
@@ -94,11 +95,11 @@
                     <td style="color:#2ecc71;">KSh {{ bid.amount|floatformat:0 }}</td>
                     <td>
                         {% if bid.status == 'submitted' %}
-                            <span class="badge bg-warning text-dark">Pending</span>
+                            <span class="badge bg-warning text-dark">{% trans 'Pending' %}</span>
                         {% elif bid.status == 'accepted' %}
-                            <span class="badge bg-success">Won</span>
+                            <span class="badge bg-success">{% trans 'Won' %}</span>
                         {% elif bid.status == 'rejected' %}
-                            <span class="badge bg-danger">Rejected</span>
+                            <span class="badge bg-danger">{% trans 'Rejected' %}</span>
                         {% else %}
                             <span class="badge bg-secondary">{{ bid.status|title }}</span>
                         {% endif %}
@@ -112,7 +113,7 @@
     {% else %}
     <div style="padding:2rem; text-align:center; color:var(--muted);">
         <div style="font-size:2rem; margin-bottom:0.5rem;">📋</div>
-        <p>No bids yet. <a href="{% url 'procurement_browse' %}" style="color:#4da6ff;">Browse procurement requests</a> to get started.</p>
+        <p>{% trans 'No bids yet.' %} <a href="{% url 'procurement_browse' %}" style="color:#4da6ff;">{% trans 'Browse procurement requests' %}</a> {% trans 'to get started.' %}</p>
     </div>
     {% endif %}
 </div>

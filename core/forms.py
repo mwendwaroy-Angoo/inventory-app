@@ -1,4 +1,5 @@
 from django import forms
+from django.utils.translation import gettext_lazy as _
 from .models import Item, Store
 
 
@@ -18,9 +19,9 @@ class ItemForm(forms.ModelForm):
             'reorder_quantity',
         ]
         widgets = {
-            'description': forms.TextInput(attrs={'placeholder': 'e.g. Cement 50kg'}),
-            'material_no': forms.TextInput(attrs={'placeholder': 'e.g. MAT-001'}),
-            'unit': forms.TextInput(attrs={'placeholder': 'e.g. Bags, Litres, Pcs'}),
+            'description': forms.TextInput(attrs={'placeholder': _('e.g. Cement 50kg')}),
+            'material_no': forms.TextInput(attrs={'placeholder': _('e.g. MAT-001')}),
+            'unit': forms.TextInput(attrs={'placeholder': _('e.g. Bags, Litres, Pcs')}),
             'selling_price': forms.NumberInput(attrs={'placeholder': '0.00'}),
             'cost_price': forms.NumberInput(attrs={'placeholder': '0.00'}),
             'opening_bin_balance': forms.NumberInput(attrs={'placeholder': '0'}),
@@ -31,6 +32,17 @@ class ItemForm(forms.ModelForm):
 
     def __init__(self, *args, business=None, show_cost_price=False, **kwargs):
         super().__init__(*args, **kwargs)
+
+        self.fields['description'].label = _('Description')
+        self.fields['material_no'].label = _('Material No')
+        self.fields['unit'].label = _('Unit')
+        self.fields['store'].label = _('Store')
+        self.fields['selling_price'].label = _('Selling Price')
+        self.fields['cost_price'].label = _('Cost Price')
+        self.fields['opening_bin_balance'].label = _('Opening Bin Balance')
+        self.fields['opening_physical'].label = _('Opening Physical')
+        self.fields['reorder_level'].label = _('Reorder Level')
+        self.fields['reorder_quantity'].label = _('Reorder Quantity')
 
         if business:
             self.fields['store'].queryset = Store.objects.filter(business=business)

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% load i18n %}
 
-{% block title %}Manage Stores — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Manage Stores' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -62,27 +63,27 @@
 
 <!-- Breadcrumb -->
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <span>Manage Stores</span>
+    <span>{% trans 'Manage Stores' %}</span>
 </nav>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2 class="page-title">🏪 Manage Stores</h2>
-    <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+    <h2 class="page-title">🏪 {% trans 'Manage Stores' %}</h2>
+    <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← {% trans 'Dashboard' %}</a>
 </div>
 
 <div class="row g-4">
     <div class="col-md-5">
         <!-- Add Store -->
         <div class="store-card">
-            <div class="store-card-header">Add New Store</div>
+            <div class="store-card-header">{% trans 'Add New Store' %}</div>
             <div class="store-card-body">
                 <form method="post" class="d-flex gap-2">
                     {% csrf_token %}
                     <input type="text" name="name" class="form-control"
-                           placeholder="e.g. Main Store, Warehouse A" required>
-                    <button type="submit" class="btn btn-primary">Add</button>
+                           placeholder="{% trans 'e.g. Main Store, Warehouse A' %}" required>
+                    <button type="submit" class="btn btn-primary">{% trans 'Add' %}</button>
                 </form>
             </div>
         </div>
@@ -90,10 +91,10 @@
         <!-- Next Steps -->
         <div class="d-flex flex-column gap-2">
             <a href="{% url 'manage_items' %}" class="btn btn-gold">
-                📦 Go to Manage Items →
+                📦 {% trans 'Go to Manage Items' %} →
             </a>
             <a href="{% url 'add_item' %}" class="btn btn-outline-primary">
-                ➕ Add Item Directly
+                ➕ {% trans 'Add Item Directly' %}
             </a>
         </div>
     </div>
@@ -101,17 +102,17 @@
     <div class="col-md-7">
         <!-- Store List -->
         <div class="store-card">
-            <div class="store-card-header">Your Stores</div>
+            <div class="store-card-header">{% trans 'Your Stores' %}</div>
             <div>
                 {% for store in stores %}
                 <a href="{% url 'stock_list' %}?store={{ store.id }}"
                    class="store-item">
                     <span class="store-name">{{ store.name }}</span>
-                    <span class="store-count">{{ store.items.count }} items</span>
+                    <span class="store-count">{{ store.items.count }} {% trans 'items' %}</span>
                 </a>
                 {% empty %}
                 <div style="padding:2rem; text-align:center; color:var(--muted);">
-                    No stores yet. Add your first store above.
+                    {% trans 'No stores yet. Add your first store above.' %}
                 </div>
                 {% endfor %}
             </div>

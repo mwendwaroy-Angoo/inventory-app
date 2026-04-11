@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 
 # ────────────────────────────────────────────────
@@ -76,12 +77,12 @@ class Customer(models.Model):
 
 class Notification(models.Model):
     TYPE_CHOICES = [
-        ('transaction', 'Transaction'),
-        ('warning', 'Warning'),
-        ('staff', 'Staff'),
-        ('report', 'Report'),
-        ('info', 'Info'),
-        ('order', 'Order'),
+        ('transaction', _('Transaction')),
+        ('warning', _('Warning')),
+        ('staff', _('Staff')),
+        ('report', _('Report')),
+        ('info', _('Info')),
+        ('order', _('Order')),
     ]
 
     user = models.ForeignKey(
@@ -167,8 +168,8 @@ class Item(models.Model):
 
 class Transaction(models.Model):
     TYPE_CHOICES = [
-        ('Receipt', 'Receipt'),
-        ('Issue', 'Issue'),
+        ('Receipt', _('Receipt')),
+        ('Issue', _('Issue')),
     ]
 
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='transactions')
@@ -202,23 +203,23 @@ class Transaction(models.Model):
 
 class Order(models.Model):
     STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('confirmed', 'Confirmed'),
-        ('paid', 'Paid'),
-        ('ready', 'Ready for Pickup'),
-        ('completed', 'Completed'),
-        ('cancelled', 'Cancelled'),
+        ('pending', _('Pending')),
+        ('confirmed', _('Confirmed')),
+        ('paid', _('Paid')),
+        ('ready', _('Ready for Pickup')),
+        ('completed', _('Completed')),
+        ('cancelled', _('Cancelled')),
     ]
 
     DELIVERY_CHOICES = [
-        ('pickup', 'Pickup'),
-        ('delivery', 'Delivery'),
+        ('pickup', _('Pickup')),
+        ('delivery', _('Delivery')),
     ]
 
     PAYMENT_METHOD_CHOICES = [
-        ('mpesa', 'M-Pesa'),
-        ('cash', 'Cash on Delivery'),
-        ('pickup_pay', 'Pay at Pickup'),
+        ('mpesa', _('M-Pesa')),
+        ('cash', _('Cash on Delivery')),
+        ('pickup_pay', _('Pay at Pickup')),
     ]
 
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='orders')
@@ -275,14 +276,14 @@ class OrderLine(models.Model):
 
 class Payment(models.Model):
     METHOD_CHOICES = [
-        ('mpesa', 'M-Pesa'),
-        ('cash', 'Cash'),
-        ('bank', 'Bank Transfer'),
+        ('mpesa', _('M-Pesa')),
+        ('cash', _('Cash')),
+        ('bank', _('Bank Transfer')),
     ]
     STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('completed', 'Completed'),
-        ('failed', 'Failed'),
+        ('pending', _('Pending')),
+        ('completed', _('Completed')),
+        ('failed', _('Failed')),
     ]
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
@@ -312,10 +313,10 @@ class Payment(models.Model):
 
 class RiderProfile(models.Model):
     VEHICLE_CHOICES = [
-        ('motorcycle', 'Motorcycle 🏍️'),
-        ('bicycle', 'Bicycle 🚲'),
-        ('car', 'Car 🚗'),
-        ('footsubishi', 'Footsubishi (Miguu Niponye) 🚶'),
+        ('motorcycle', _('Motorcycle 🏍️')),
+        ('bicycle', _('Bicycle 🚲')),
+        ('car', _('Car 🚗')),
+        ('footsubishi', _('Footsubishi (Miguu Niponye) 🚶')),
     ]
 
     user = models.OneToOneField('auth.User', on_delete=models.CASCADE, related_name='rider_profile')
@@ -361,11 +362,11 @@ class SupplierRelationship(models.Model):
 class ProcurementRequest(models.Model):
     """A business owner posts what they need to procure."""
     STATUS_CHOICES = [
-        ('open', 'Open for Bids'),
-        ('evaluating', 'Evaluating'),
-        ('awarded', 'Awarded'),
-        ('closed', 'Closed'),
-        ('cancelled', 'Cancelled'),
+        ('open', _('Open for Bids')),
+        ('evaluating', _('Evaluating')),
+        ('awarded', _('Awarded')),
+        ('closed', _('Closed')),
+        ('cancelled', _('Cancelled')),
     ]
 
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='procurement_requests')
@@ -394,10 +395,10 @@ class ProcurementRequest(models.Model):
 class SupplierBid(models.Model):
     """A supplier's bid on a procurement request."""
     STATUS_CHOICES = [
-        ('submitted', 'Submitted'),
-        ('shortlisted', 'Shortlisted'),
-        ('accepted', 'Accepted'),
-        ('rejected', 'Rejected'),
+        ('submitted', _('Submitted')),
+        ('shortlisted', _('Shortlisted')),
+        ('accepted', _('Accepted')),
+        ('rejected', _('Rejected')),
     ]
 
     procurement = models.ForeignKey(ProcurementRequest, on_delete=models.CASCADE, related_name='bids')

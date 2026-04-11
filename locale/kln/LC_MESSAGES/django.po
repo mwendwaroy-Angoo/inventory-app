@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 08:19\n"
-"PO-Revision-Date: 2026-04-11 08:19\n"
+"POT-Creation-Date: 2026-04-11 10:53\n"
+"PO-Revision-Date: 2026-04-11 10:53\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kalenjin\n"
 "Language: kln\n"
@@ -274,6 +274,78 @@ msgstr "Join as Rider"
 msgid "Join as Supplier"
 msgstr "Join as Supplier"
 
+msgid "Skip Tutorial"
+msgstr "Skip Tutorial"
+
+msgid "Back"
+msgstr "Back"
+
+msgid "Next"
+msgstr "Next"
+
+msgid "Welcome to Duka Mwecheche!"
+msgstr "Welcome to Duka Mwecheche!"
+
+msgid "This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username."
+msgstr "This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username."
+
+msgid "Your Dashboard"
+msgstr "Your Dashboard"
+
+msgid "Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests."
+msgstr "Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests."
+
+msgid "Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts."
+msgstr "Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts."
+
+msgid "Track Your Bids"
+msgstr "Track Your Bids"
+
+msgid "Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected."
+msgstr "Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected."
+
+msgid "Connect with Businesses"
+msgstr "Connect with Businesses"
+
+msgid "Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier."
+msgstr "Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier."
+
+msgid "Client Relationships"
+msgstr "Client Relationships"
+
+msgid "Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement."
+msgstr "Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement."
+
+msgid "You're All Set!"
+msgstr "You're All Set!"
+
+msgid "Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime."
+msgstr "Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime."
+
+msgid "Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score."
+msgstr "Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score."
+
+msgid "Availability Toggle"
+msgstr "Availability Toggle"
+
+msgid "Toggle your <strong>availability</strong> status so businesses know when you are ready to accept deliveries."
+msgstr "Toggle your <strong>availability</strong> status so businesses know when you are ready to accept deliveries."
+
+msgid "View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts."
+msgstr "View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts."
+
+msgid "Check <strong>Delivery History</strong> for a complete record of all your past deliveries."
+msgstr "Check <strong>Delivery History</strong> for a complete record of all your past deliveries."
+
+msgid "Track your total earnings and delivery count under <strong>My Earnings</strong>."
+msgstr "Track your total earnings and delivery count under <strong>My Earnings</strong>."
+
+msgid "Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime."
+msgstr "Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime."
+
+msgid "Get Started!"
+msgstr "Get Started!"
+
 msgid "Add Staff Member"
 msgstr "Add Staff Member"
 
@@ -331,6 +403,69 @@ msgstr "Reset Password"
 msgid "Set New Password"
 msgstr "Set New Password"
 
+msgid "Rider Dashboard"
+msgstr "Rider Dashboard"
+
+msgid "Available"
+msgstr "Available"
+
+msgid "Unavailable"
+msgstr "Unavailable"
+
+msgid "Active"
+msgstr "Active"
+
+msgid "Completed"
+msgstr "Completed"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "Your Performance Score"
+msgstr "Your Performance Score"
+
+msgid "Rating"
+msgstr "Rating"
+
+msgid "On-time"
+msgstr "On-time"
+
+msgid "Condition"
+msgstr "Condition"
+
+msgid "Experience"
+msgstr "Experience"
+
+msgid "Based on"
+msgstr "Based on"
+
+msgid "ratings and"
+msgstr "ratings and"
+
+msgid "total deliveries"
+msgstr "total deliveries"
+
+msgid "Avg"
+msgstr "Avg"
+
+msgid "Complete deliveries and get rated to build your score!"
+msgstr "Complete deliveries and get rated to build your score!"
+
+msgid "No location"
+msgstr "No location"
+
+msgid "View Details"
+msgstr "View Details"
+
+msgid "No active deliveries right now."
+msgstr "No active deliveries right now."
+
+msgid "Recent Completions"
+msgstr "Recent Completions"
+
+msgid "ago"
+msgstr "ago"
+
 msgid "Staff Members"
 msgstr "Staff Members"
 
@@ -354,6 +489,90 @@ msgstr "No staff members yet."
 
 msgid "Add your first staff member"
 msgstr "Add your first staff member"
+
+msgid "Item Details"
+msgstr "Item Details"
+
+msgid "Item"
+msgstr "Item"
+
+msgid "Type to search item..."
+msgstr "Type to search item..."
+
+msgid "Balance"
+msgstr "Balance"
+
+msgid "Transaction Type"
+msgstr "Transaction Type"
+
+msgid "Receipt — Receiving Stock"
+msgstr "Receipt — Receiving Stock"
+
+msgid "Issue — Issuing / Selling Stock"
+msgstr "Issue — Issuing / Selling Stock"
+
+msgid "Quantity"
+msgstr "Quantity"
+
+msgid "Enter quantity"
+msgstr "Enter quantity"
+
+msgid "Recipient / Destination"
+msgstr "Recipient / Destination"
+
+msgid "Receiving Store"
+msgstr "Receiving Store"
+
+msgid "-- Select Store --"
+msgstr "-- Select Store --"
+
+msgid "Customer / Recipient"
+msgstr "Customer / Recipient"
+
+msgid "-- Select or type customer --"
+msgstr "-- Select or type customer --"
+
+msgid "Add New Customer..."
+msgstr "Add New Customer..."
+
+msgid "New Customer Details"
+msgstr "New Customer Details"
+
+msgid "Customer name *"
+msgstr "Customer name *"
+
+msgid "Phone (optional)"
+msgstr "Phone (optional)"
+
+msgid "Document"
+msgstr "Document"
+
+msgid "Invoice No / Receipt No"
+msgstr "Invoice No / Receipt No"
+
+msgid "optional"
+msgstr "optional"
+
+msgid "e.g. INV-001 or REC-2026-001"
+msgstr "e.g. INV-001 or REC-2026-001"
+
+msgid "Submit Transaction"
+msgstr "Submit Transaction"
+
+msgid "Select or type customer name..."
+msgstr "Select or type customer name..."
+
+msgid "Delete Item"
+msgstr "Delete Item"
+
+msgid "Are you sure you want to delete:"
+msgstr "Are you sure you want to delete:"
+
+msgid "This will also delete all transaction history for this item."
+msgstr "This will also delete all transaction history for this item."
+
+msgid "Yes, Delete"
+msgstr "Yes, Delete"
 
 msgid "Owner Quick Actions"
 msgstr "Owner Quick Actions"
@@ -391,14 +610,8 @@ msgstr "Description"
 msgid "Unit"
 msgstr "Unit"
 
-msgid "Balance"
-msgstr "Balance"
-
 msgid "Reorder Level"
 msgstr "Reorder Level"
-
-msgid "Status"
-msgstr "Status"
 
 msgid "Out of Stock"
 msgstr "Out of Stock"
@@ -427,14 +640,332 @@ msgstr "Log in"
 msgid "to apply as a supplier, browse procurement requests, and bid for contracts."
 msgstr "to apply as a supplier, browse procurement requests, and bid for contracts."
 
-msgid "ago"
-msgstr "ago"
+msgid "About Us"
+msgstr "About Us"
+
+msgid "is a Kenyan-built platform designed specifically for micro, small and medium enterprises. We understand the hustle of running a business — tracking stock on paper, missing sales, and losing money to poor records."
+msgstr "is a Kenyan-built platform designed specifically for micro, small and medium enterprises. We understand the hustle of running a business — tracking stock on paper, missing sales, and losing money to poor records."
+
+msgid "Our mission is simple:"
+msgstr "Our mission is simple:"
+
+msgid "give every duka the digital tools that big retailers use"
+msgstr "give every duka the digital tools that big retailers use"
+
+msgid "— inventory management, an online storefront, mobile payments, and real-time analytics — at zero cost."
+msgstr "— inventory management, an online storefront, mobile payments, and real-time analytics — at zero cost."
+
+msgid "Free"
+msgstr "Free"
+
+msgid "Access"
+msgstr "Access"
+
+msgid "Mobile First"
+msgstr "Mobile First"
+
+msgid "Our Services"
+msgstr "Our Services"
+
+msgid "Sign up in seconds. Add your business name, location, and you're in."
+msgstr "Sign up in seconds. Add your business name, location, and you're in."
+
+msgid "Add Your Stock"
+msgstr "Add Your Stock"
+
+msgid "Create stores, add items with prices and quantities. Import or enter them manually."
+msgstr "Create stores, add items with prices and quantities. Import or enter them manually."
+
+msgid "Start Selling"
+msgstr "Start Selling"
+
+msgid "Your shop goes live. Customers browse, order, and pay via M-Pesa. Track everything in real time."
+msgstr "Your shop goes live. Customers browse, order, and pay via M-Pesa. Track everything in real time."
+
+msgid "Join Our Ecosystem"
+msgstr "Join Our Ecosystem"
+
+msgid "Whether you supply goods or deliver them, Duka Mwecheche connects you with businesses across Kenya."
+msgstr "Whether you supply goods or deliver them, Duka Mwecheche connects you with businesses across Kenya."
+
+msgid "Become a Supplier"
+msgstr "Become a Supplier"
+
+msgid "Register your business and apply to supply other businesses. Browse open procurement requests and submit competitive bids."
+msgstr "Register your business and apply to supply other businesses. Browse open procurement requests and submit competitive bids."
+
+msgid "Ride with Us"
+msgstr "Ride with Us"
+
+msgid "Motorcycle, bicycle, car, or Footsubishi (Miguu Niponye) — earn money delivering orders. Get rated and build your reputation."
+msgstr "Motorcycle, bicycle, car, or Footsubishi (Miguu Niponye) — earn money delivering orders. Get rated and build your reputation."
+
+msgid "Performance-Based"
+msgstr "Performance-Based"
+
+msgid "Our smart scoring system ranks suppliers and riders by rating, reliability, proximity, and speed. The best performers get recommended first."
+msgstr "Our smart scoring system ranks suppliers and riders by rating, reliability, proximity, and speed. The best performers get recommended first."
+
+msgid "Get Started"
+msgstr "Get Started"
+
+msgid "What Businesses Say"
+msgstr "What Businesses Say"
+
+msgid "I used to track everything in a notebook. Now I know exactly what I have in stock and my customers order online. My sales have grown!"
+msgstr "I used to track everything in a notebook. Now I know exactly what I have in stock and my customers order online. My sales have grown!"
+
+msgid "The quick sell feature is a game changer. I serve customers faster and I can see my profits at the end of each day."
+msgstr "The quick sell feature is a game changer. I serve customers faster and I can see my profits at the end of each day."
+
+msgid "My staff can record transactions from their phones. I get notifications in real time even when I'm not at the shop."
+msgstr "My staff can record transactions from their phones. I get notifications in real time even when I'm not at the shop."
+
+msgid "Frequently Asked Questions"
+msgstr "Frequently Asked Questions"
+
+msgid "Contact Us"
+msgstr "Contact Us"
+
+msgid "Location"
+msgstr "Location"
+
+msgid "Get Started — It's Free"
+msgstr "Get Started — It's Free"
+
+msgid "Store"
+msgstr "Store"
+
+msgid "Price"
+msgstr "Price"
+
+msgid "Edit Item"
+msgstr "Edit Item"
+
+msgid "Bin Balance"
+msgstr "Bin Balance"
+
+msgid "Physical"
+msgstr "Physical"
+
+msgid "Deficit"
+msgstr "Deficit"
+
+msgid "Surplus"
+msgstr "Surplus"
+
+msgid "Date"
+msgstr "Date"
+
+msgid "Type"
+msgstr "Type"
+
+msgid "Recipient"
+msgstr "Recipient"
+
+msgid "Invoice No"
+msgstr "Invoice No"
+
+msgid "No transactions recorded for this item yet."
+msgstr "No transactions recorded for this item yet."
+
+msgid "Stock Item"
+msgstr "Stock Item"
+
+msgid "Required Fields"
+msgstr "Required Fields"
+
+msgid "Cost price is only visible to you as the owner"
+msgstr "Cost price is only visible to you as the owner"
+
+msgid "Optional Fields"
+msgstr "Optional Fields"
+
+msgid "Price (KES)"
+msgstr "Price (KES)"
+
+msgid "Reorder Lvl"
+msgstr "Reorder Lvl"
+
+msgid "Actions"
+msgstr "Actions"
+
+msgid "Reorder"
+msgstr "Reorder"
+
+msgid "Delete"
+msgstr "Delete"
+
+msgid "No items yet"
+msgstr "No items yet"
+
+msgid "Start by adding your first stock item"
+msgstr "Start by adding your first stock item"
+
+msgid "Add First Item"
+msgstr "Add First Item"
+
+msgid "Add New Store"
+msgstr "Add New Store"
+
+msgid "e.g. Main Store, Warehouse A"
+msgstr "e.g. Main Store, Warehouse A"
+
+msgid "Add"
+msgstr "Add"
+
+msgid "Go to Manage Items"
+msgstr "Go to Manage Items"
+
+msgid "Add Item Directly"
+msgstr "Add Item Directly"
+
+msgid "Your Stores"
+msgstr "Your Stores"
+
+msgid "items"
+msgstr "items"
+
+msgid "No stores yet. Add your first store above."
+msgstr "No stores yet. Add your first store above."
 
 msgid "No notifications yet"
 msgstr "No notifications yet"
 
 msgid "Notifications will appear here when transactions are recorded."
 msgstr "Notifications will appear here when transactions are recorded."
+
+msgid "Filter Store:"
+msgstr "Filter Store:"
+
+msgid "All Stores"
+msgstr "All Stores"
+
+msgid "Filter"
+msgstr "Filter"
+
+msgid "Search items..."
+msgstr "Search items..."
+
+msgid "Reorder Qty"
+msgstr "Reorder Qty"
+
+msgid "No items found."
+msgstr "No items found."
+
+msgid "Add your first item"
+msgstr "Add your first item"
+
+msgid "Search by item, type, date, recipient..."
+msgstr "Search by item, type, date, recipient..."
+
+msgid "Qty"
+msgstr "Qty"
+
+msgid "No transactions yet."
+msgstr "No transactions yet."
+
+msgid "Apply as Supplier"
+msgstr "Apply as Supplier"
+
+msgid "Apply to supply products or services to"
+msgstr "Apply to supply products or services to"
+
+msgid "Services / Products You Can Supply *"
+msgstr "Services / Products You Can Supply *"
+
+msgid "e.g. Fresh produce, dairy products, packaging materials..."
+msgstr "e.g. Fresh produce, dairy products, packaging materials..."
+
+msgid "Cover Letter *"
+msgstr "Cover Letter *"
+
+msgid "Why should this business choose you as a supplier? Describe your experience, reliability, pricing, location advantages..."
+msgstr "Why should this business choose you as a supplier? Describe your experience, reliability, pricing, location advantages..."
+
+msgid "Submit Application"
+msgstr "Submit Application"
+
+msgid "Browse Procurement Requests"
+msgstr "Browse Procurement Requests"
+
+msgid "Open Procurement Requests"
+msgstr "Open Procurement Requests"
+
+msgid "Find businesses looking for suppliers and submit your bid."
+msgstr "Find businesses looking for suppliers and submit your bid."
+
+msgid "Search requests..."
+msgstr "Search requests..."
+
+msgid "All Categories"
+msgstr "All Categories"
+
+msgid "Search"
+msgstr "Search"
+
+msgid "Open"
+msgstr "Open"
+
+msgid "Deadline"
+msgstr "Deadline"
+
+msgid "bids"
+msgstr "bids"
+
+msgid "Bid Now"
+msgstr "Bid Now"
+
+msgid "No open procurement requests at the moment."
+msgstr "No open procurement requests at the moment."
+
+msgid "Find businesses on the platform and apply to become their supplier."
+msgstr "Find businesses on the platform and apply to become their supplier."
+
+msgid "Search by name..."
+msgstr "Search by name..."
+
+msgid "All Counties"
+msgstr "All Counties"
+
+msgid "General"
+msgstr "General"
+
+msgid "Applied"
+msgstr "Applied"
+
+msgid "Apply"
+msgstr "Apply"
+
+msgid "No businesses found matching your criteria."
+msgstr "No businesses found matching your criteria."
+
+msgid "My Submitted Bids"
+msgstr "My Submitted Bids"
+
+msgid "All"
+msgstr "All"
+
+msgid "Submitted"
+msgstr "Submitted"
+
+msgid "Shortlisted"
+msgstr "Shortlisted"
+
+msgid "Accepted"
+msgstr "Accepted"
+
+msgid "Rejected"
+msgstr "Rejected"
+
+msgid "View Request"
+msgstr "View Request"
+
+msgid "You haven't submitted any bids yet."
+msgstr "You haven't submitted any bids yet."
+
+msgid "Browse Open Requests"
+msgstr "Browse Open Requests"
 
 msgid "Logged Out"
 msgstr "Logged Out"
@@ -478,9 +1009,6 @@ msgstr "Account Details"
 msgid "Business Details"
 msgstr "Business Details"
 
-msgid "Location"
-msgstr "Location"
-
 msgid "Create Account & Business"
 msgstr "Create Account & Business"
 
@@ -516,6 +1044,78 @@ msgstr "Join as a rider?"
 
 msgid "Register Rider"
 msgstr "Register Rider"
+
+msgid "active deliveries"
+msgstr "active deliveries"
+
+msgid "No active deliveries right now. Stay available to receive new orders!"
+msgstr "No active deliveries right now. Stay available to receive new orders!"
+
+msgid "Your last 50 completed deliveries"
+msgstr "Your last 50 completed deliveries"
+
+msgid "Order"
+msgstr "Order"
+
+msgid "Customer"
+msgstr "Customer"
+
+msgid "Business"
+msgstr "Business"
+
+msgid "Amount"
+msgstr "Amount"
+
+msgid "No completed deliveries yet. Start delivering to build your history!"
+msgstr "No completed deliveries yet. Start delivering to build your history!"
+
+msgid "Supplier Dashboard"
+msgstr "Supplier Dashboard"
+
+msgid "Welcome back,"
+msgstr "Welcome back,"
+
+msgid "Active Clients"
+msgstr "Active Clients"
+
+msgid "Active Bids"
+msgstr "Active Bids"
+
+msgid "Won Bids"
+msgstr "Won Bids"
+
+msgid "Open Requests"
+msgstr "Open Requests"
+
+msgid "Find new procurement opportunities"
+msgstr "Find new procurement opportunities"
+
+msgid "Track your submitted bids"
+msgstr "Track your submitted bids"
+
+msgid "Connect with potential clients"
+msgstr "Connect with potential clients"
+
+msgid "Recent Bids"
+msgstr "Recent Bids"
+
+msgid "Request"
+msgstr "Request"
+
+msgid "Pending"
+msgstr "Pending"
+
+msgid "Won"
+msgstr "Won"
+
+msgid "No bids yet."
+msgstr "No bids yet."
+
+msgid "Browse procurement requests"
+msgstr "Browse procurement requests"
+
+msgid "to get started."
+msgstr "to get started."
 
 msgid "Username"
 msgstr "Username"
@@ -621,3 +1221,315 @@ msgstr "Footsubishi (Miguu Niponye) 🚶"
 
 msgid "Confirm password"
 msgstr "Confirm password"
+
+msgid "Till Number (Buy Goods)"
+msgstr "Till Number (Buy Goods)"
+
+msgid "Paybill"
+msgstr "Paybill"
+
+msgid "Pochi la Biashara"
+msgstr "Pochi la Biashara"
+
+msgid "Personal M-Pesa"
+msgstr "Personal M-Pesa"
+
+msgid "🚶 On Foot"
+msgstr "🚶 On Foot"
+
+msgid "🚲 Bicycle"
+msgstr "🚲 Bicycle"
+
+msgid "🏍️ Boda Boda"
+msgstr "🏍️ Boda Boda"
+
+msgid "🚗 Vehicle"
+msgstr "🚗 Vehicle"
+
+msgid "The platform is not useful for my business"
+msgstr "The platform is not useful for my business"
+
+msgid "Too complex / hard to use"
+msgstr "Too complex / hard to use"
+
+msgid "Found a better alternative"
+msgstr "Found a better alternative"
+
+msgid "Closing my business"
+msgstr "Closing my business"
+
+msgid "Privacy / data concerns"
+msgstr "Privacy / data concerns"
+
+msgid "Just taking a break"
+msgstr "Just taking a break"
+
+msgid "Other"
+msgstr "Other"
+
+msgid "Welcome! Your business '%(business_name)s' has been created."
+msgstr "Welcome! Your business '%(business_name)s' has been created."
+
+msgid "Only business owners can add staff."
+msgstr "Only business owners can add staff."
+
+msgid "Staff member '%(username)s' added successfully."
+msgstr "Staff member '%(username)s' added successfully."
+
+msgid "Only business owners can view staff."
+msgstr "Only business owners can view staff."
+
+msgid "Only business owners can edit staff."
+msgstr "Only business owners can edit staff."
+
+msgid "'%(username)s' updated successfully."
+msgstr "'%(username)s' updated successfully."
+
+msgid "Only business owners can delete staff."
+msgstr "Only business owners can delete staff."
+
+msgid "'%(username)s' removed successfully."
+msgstr "'%(username)s' removed successfully."
+
+msgid "Only business owners can edit business details."
+msgstr "Only business owners can edit business details."
+
+msgid "No business found."
+msgstr "No business found."
+
+msgid "Business '%(business_name)s' updated successfully."
+msgstr "Business '%(business_name)s' updated successfully."
+
+msgid "Only business owners can reset staff passwords."
+msgstr "Only business owners can reset staff passwords."
+
+msgid "Password for '%(username)s' reset successfully."
+msgstr "Password for '%(username)s' reset successfully."
+
+msgid "Welcome! You're registered as a rider."
+msgstr "Welcome! You're registered as a rider."
+
+msgid "Welcome! Your supply business '%(business_name)s' has been registered."
+msgstr "Welcome! Your supply business '%(business_name)s' has been registered."
+
+msgid "Only business owners can manage payment settings."
+msgstr "Only business owners can manage payment settings."
+
+msgid "Payment settings updated successfully."
+msgstr "Payment settings updated successfully."
+
+msgid "Please type \"DELETE MY ACCOUNT\" exactly to confirm."
+msgstr "Please type \"DELETE MY ACCOUNT\" exactly to confirm."
+
+msgid "Please select a reason for deleting your account."
+msgstr "Please select a reason for deleting your account."
+
+msgid "Your account has been deleted. We're sad to see you go, but the door is always open. You're welcome back anytime. Thank you for being part of the Duka Mwecheche community."
+msgstr "Your account has been deleted. We're sad to see you go, but the door is always open. You're welcome back anytime. Thank you for being part of the Duka Mwecheche community."
+
+msgid "e.g. Cement 50kg"
+msgstr "e.g. Cement 50kg"
+
+msgid "e.g. MAT-001"
+msgstr "e.g. MAT-001"
+
+msgid "e.g. Bags, Litres, Pcs"
+msgstr "e.g. Bags, Litres, Pcs"
+
+msgid "Selling Price"
+msgstr "Selling Price"
+
+msgid "Cost Price"
+msgstr "Cost Price"
+
+msgid "Opening Bin Balance"
+msgstr "Opening Bin Balance"
+
+msgid "Opening Physical"
+msgstr "Opening Physical"
+
+msgid "Reorder Quantity"
+msgstr "Reorder Quantity"
+
+msgid "Transaction"
+msgstr "Transaction"
+
+msgid "Warning"
+msgstr "Warning"
+
+msgid "Report"
+msgstr "Report"
+
+msgid "Info"
+msgstr "Info"
+
+msgid "Receipt"
+msgstr "Receipt"
+
+msgid "Issue"
+msgstr "Issue"
+
+msgid "Confirmed"
+msgstr "Confirmed"
+
+msgid "Paid"
+msgstr "Paid"
+
+msgid "Ready for Pickup"
+msgstr "Ready for Pickup"
+
+msgid "Cancelled"
+msgstr "Cancelled"
+
+msgid "Pickup"
+msgstr "Pickup"
+
+msgid "Delivery"
+msgstr "Delivery"
+
+msgid "M-Pesa"
+msgstr "M-Pesa"
+
+msgid "Cash on Delivery"
+msgstr "Cash on Delivery"
+
+msgid "Pay at Pickup"
+msgstr "Pay at Pickup"
+
+msgid "Cash"
+msgstr "Cash"
+
+msgid "Bank Transfer"
+msgstr "Bank Transfer"
+
+msgid "Failed"
+msgstr "Failed"
+
+msgid "Open for Bids"
+msgstr "Open for Bids"
+
+msgid "Evaluating"
+msgstr "Evaluating"
+
+msgid "Awarded"
+msgstr "Awarded"
+
+msgid "Closed"
+msgstr "Closed"
+
+msgid "Only business owners can access this page."
+msgstr "Only business owners can access this page."
+
+msgid "Profile not found. Please contact support."
+msgstr "Profile not found. Please contact support."
+
+msgid "Inventory Management"
+msgstr "Inventory Management"
+
+msgid "Track stock levels, costs, and reorder points in real time. Never run out of stock again."
+msgstr "Track stock levels, costs, and reorder points in real time. Never run out of stock again."
+
+msgid "Online Marketplace"
+msgstr "Online Marketplace"
+
+msgid "Your own storefront where customers browse and order directly. No middleman."
+msgstr "Your own storefront where customers browse and order directly. No middleman."
+
+msgid "M-Pesa Payments"
+msgstr "M-Pesa Payments"
+
+msgid "Accept payments via Lipa Na M-Pesa. Instant STK Push to your customers' phones."
+msgstr "Accept payments via Lipa Na M-Pesa. Instant STK Push to your customers' phones."
+
+msgid "USSD Access"
+msgstr "USSD Access"
+
+msgid "Record sales and check stock via USSD. Works on any phone, no internet needed."
+msgstr "Record sales and check stock via USSD. Works on any phone, no internet needed."
+
+msgid "Analytics Dashboard"
+msgstr "Analytics Dashboard"
+
+msgid "See your top products, revenue trends, and profit margins at a glance."
+msgstr "See your top products, revenue trends, and profit margins at a glance."
+
+msgid "Staff Management"
+msgstr "Staff Management"
+
+msgid "Add staff, assign roles, and get notified when they log in or record transactions."
+msgstr "Add staff, assign roles, and get notified when they log in or record transactions."
+
+msgid "Is Duka Mwecheche free?"
+msgstr "Is Duka Mwecheche free?"
+
+msgid "Yes! The platform is completely free for all businesses. You only pay standard M-Pesa transaction fees when accepting payments."
+msgstr "Yes! The platform is completely free for all businesses. You only pay standard M-Pesa transaction fees when accepting payments."
+
+msgid "Do I need a smartphone?"
+msgstr "Do I need a smartphone?"
+
+msgid "No. You can manage your stock via USSD on any basic phone. The web app works on smartphones and computers too."
+msgstr "No. You can manage your stock via USSD on any basic phone. The web app works on smartphones and computers too."
+
+msgid "How do customers find my shop?"
+msgstr "How do customers find my shop?"
+
+msgid "Once you register and add items with prices, your business appears on the Marketplace. Customers can search by location and product."
+msgstr "Once you register and add items with prices, your business appears on the Marketplace. Customers can search by location and product."
+
+msgid "Is my data safe?"
+msgstr "Is my data safe?"
+
+msgid "Absolutely. Your data is stored securely on cloud servers with regular backups. Only you and your staff can access your business data."
+msgstr "Absolutely. Your data is stored securely on cloud servers with regular backups. Only you and your staff can access your business data."
+
+msgid "Can I accept M-Pesa payments?"
+msgstr "Can I accept M-Pesa payments?"
+
+msgid "Yes. We integrate with Safaricom's Daraja API. You'll need a Till or Paybill number from Safaricom to receive funds directly."
+msgstr "Yes. We integrate with Safaricom's Daraja API. You'll need a Till or Paybill number from Safaricom to receive funds directly."
+
+msgid "How do I add staff?"
+msgstr "How do I add staff?"
+
+msgid "Go to Manage -> Staff -> Add Staff. Staff members can record transactions but cannot access business settings or financial reports."
+msgstr "Go to Manage -> Staff -> Add Staff. Staff members can record transactions but cannot access business settings or financial reports."
+
+msgid "No business profile found."
+msgstr "No business profile found."
+
+msgid "Not enough stock for %(item_description)s. Available: %(available)s %(unit)s, requested: %(requested)s."
+msgstr "Not enough stock for %(item_description)s. Available: %(available)s %(unit)s, requested: %(requested)s."
+
+msgid "%(quantity)s %(unit)s of %(item_description)s recorded as %(transaction_type)s."
+msgstr "%(quantity)s %(unit)s of %(item_description)s recorded as %(transaction_type)s."
+
+msgid "'%(item_description)s' added successfully."
+msgstr "'%(item_description)s' added successfully."
+
+msgid "'%(item_description)s' updated successfully."
+msgstr "'%(item_description)s' updated successfully."
+
+msgid "'%(item_name)s' deleted successfully."
+msgstr "'%(item_name)s' deleted successfully."
+
+msgid "Store '%(store_name)s' created successfully."
+msgstr "Store '%(store_name)s' created successfully."
+
+msgid "Store name cannot be empty."
+msgstr "Store name cannot be empty."
+
+msgid "Customer '%(customer_name)s' added."
+msgstr "Customer '%(customer_name)s' added."
+
+msgid "Customer name is required."
+msgstr "Customer name is required."
+
+msgid "Customer deleted."
+msgstr "Customer deleted."
+
+msgid "Skipped %(item_description)s: only %(available)s %(unit)s in stock."
+msgstr "Skipped %(item_description)s: only %(available)s %(unit)s in stock."
+
+msgid "Sale recorded: %(item_count)s item(s), KES %(total)s"
+msgstr "Sale recorded: %(item_count)s item(s), KES %(total)s"

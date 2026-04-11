@@ -143,38 +143,79 @@
             }
         }
 
-        .navbar-guest .navbar-nav {
-            row-gap: 0.35rem;
+        .navbar-auth-translated .navbar-collapse {
+            row-gap: 0.6rem;
         }
 
-        .navbar-guest .navbar-collapse {
+        .navbar-guest-translated .navbar-collapse {
             row-gap: 0.75rem;
             align-items: flex-start;
         }
 
-        .navbar-guest .navbar-nav.me-auto,
-        .navbar-guest .navbar-nav.ms-auto {
+        .navbar-guest-translated .navbar-nav {
+            row-gap: 0.35rem;
+        }
+
+        .navbar-guest-translated .navbar-nav.me-auto,
+        .navbar-guest-translated .navbar-nav.ms-auto {
             flex-wrap: wrap;
             gap: 0.4rem 0.2rem;
         }
 
-        .navbar-guest .navbar-nav.ms-auto {
+        .navbar-guest-translated .navbar-nav.ms-auto {
             justify-content: flex-end;
         }
 
-        .navbar-guest .btn,
-        .navbar-guest .nav-link {
+        .navbar-guest-translated .btn,
+        .navbar-guest-translated .nav-link {
             white-space: nowrap;
         }
 
+        .navbar-auth-translated .navbar-nav.me-auto,
+        .navbar-auth-translated .navbar-nav.ms-auto {
+            flex-wrap: wrap;
+            gap: 0.25rem 0.15rem;
+        }
+
+        .navbar-auth-translated .navbar-nav.ms-auto {
+            justify-content: flex-end;
+        }
+
+        .navbar-auth-translated .dropdown-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            flex-wrap: wrap;
+        }
+
+        .navbar-auth-translated .badge-role {
+            font-size: 0.58rem;
+            padding: 0.15rem 0.35rem;
+        }
+
         @media (max-width: 1599.98px) {
-            .navbar-guest .nav-link {
+            .navbar-auth-translated .nav-link {
                 font-size: 0.78rem;
                 letter-spacing: 0.03em;
                 padding: 0.35rem 0.55rem !important;
             }
 
-            .navbar-guest .btn {
+            .navbar-auth-translated .btn {
+                font-size: 0.78rem;
+                padding: 0.35rem 0.8rem;
+            }
+
+            .navbar-auth-translated .navbar-brand {
+                font-size: 1.2rem;
+            }
+
+            .navbar-guest-translated .nav-link {
+                font-size: 0.78rem;
+                letter-spacing: 0.03em;
+                padding: 0.35rem 0.55rem !important;
+            }
+
+            .navbar-guest-translated .btn {
                 font-size: 0.78rem;
                 padding: 0.35rem 0.8rem;
             }
@@ -406,9 +447,9 @@
     </style>
     {% block extra_css %}{% endblock %}
 </head>
-<body>
+<body class="{% if user.is_authenticated and LANGUAGE_CODE != 'en' %}lang-translated auth-language{% elif user.is_authenticated %}auth-language{% elif LANGUAGE_CODE != 'en' %}lang-translated guest-language{% endif %}">
     <!-- NAVBAR -->
-    <nav class="navbar {% if user.is_authenticated %}navbar-expand-xl navbar-auth{% else %}navbar-expand-xxl navbar-guest{% endif %}">
+    <nav class="navbar {% if user.is_authenticated %}{% if LANGUAGE_CODE == 'en' %}navbar-expand-xl{% else %}navbar-expand-xxl navbar-auth-translated{% endif %} navbar-auth{% else %}navbar-expand-xxl navbar-guest{% if LANGUAGE_CODE != 'en' %} navbar-guest-translated{% endif %}{% endif %}">
         <div class="container">
             <a class="navbar-brand" href="{% if user.is_authenticated %}{% if user.userprofile.is_rider %}{% url 'rider_dashboard' %}{% elif user.userprofile.is_supplier %}{% url 'supplier_dashboard' %}{% else %}{% url 'home' %}{% endif %}{% else %}{% url 'home' %}{% endif %}">
                 Duka <span>Mwecheche</span>
@@ -772,10 +813,10 @@
                 <div id="tutorial-body" style="padding:0 2rem 1.5rem; color:var(--pearl); font-size:0.9rem; line-height:1.6; text-align:center;"></div>
                 <!-- Footer -->
                 <div style="padding:1rem 2rem; border-top:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
-                    <button id="tutorial-skip" onclick="dismissTutorial()" style="background:none; border:none; color:var(--muted); font-size:0.8rem; cursor:pointer;">Skip Tutorial</button>
+                    <button id="tutorial-skip" onclick="dismissTutorial()" style="background:none; border:none; color:var(--muted); font-size:0.8rem; cursor:pointer;">{% trans 'Skip Tutorial' %}</button>
                     <div style="display:flex; gap:0.5rem;">
-                        <button id="tutorial-prev" onclick="tutorialNav(-1)" class="btn btn-sm" style="background:#333; color:var(--pearl); border:none; display:none;">← Back</button>
-                        <button id="tutorial-next" onclick="tutorialNav(1)" class="btn btn-sm btn-gold">Next →</button>
+                        <button id="tutorial-prev" onclick="tutorialNav(-1)" class="btn btn-sm" style="background:#333; color:var(--pearl); border:none; display:none;">← {% trans 'Back' %}</button>
+                        <button id="tutorial-next" onclick="tutorialNav(1)" class="btn btn-sm btn-gold">{% trans 'Next' %} →</button>
                     </div>
                 </div>
             </div>
@@ -791,8 +832,8 @@
         // ── Role-specific tutorial steps ──
         const commonWelcome = {
             icon: '👋',
-            title: 'Welcome to Duka Mwecheche!',
-            body: 'This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username.'
+            title: "{% trans 'Welcome to Duka Mwecheche!' %}",
+            body: "{% trans 'This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username.' %}"
         };
 
         const ownerSteps = [
@@ -818,22 +859,22 @@
 
         const supplierSteps = [
             commonWelcome,
-            { icon: '📊', title: 'Your Dashboard', body: 'Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests.' },
-            { icon: '🔍', title: 'Browse Requests', body: 'Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts.' },
-            { icon: '📋', title: 'Track Your Bids', body: 'Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected.' },
-            { icon: '🏢', title: 'Connect with Businesses', body: 'Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier.' },
-            { icon: '🤝', title: 'Client Relationships', body: 'Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement.' },
-            { icon: '🎉', title: 'You\'re All Set!', body: 'Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime.' }
+            { icon: '📊', title: "{% trans 'Your Dashboard' %}", body: "{% trans 'Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests.' %}" },
+            { icon: '🔍', title: "{% trans 'Browse Requests' %}", body: "{% trans 'Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts.' %}" },
+            { icon: '📋', title: "{% trans 'Track Your Bids' %}", body: "{% trans 'Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected.' %}" },
+            { icon: '🏢', title: "{% trans 'Connect with Businesses' %}", body: "{% trans 'Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier.' %}" },
+            { icon: '🤝', title: "{% trans 'Client Relationships' %}", body: "{% trans 'Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement.' %}" },
+            { icon: '🎉', title: "{% trans "You're All Set!" %}", body: "{% trans 'Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime.' %}" }
         ];
 
         const riderSteps = [
             commonWelcome,
-            { icon: '🏍️', title: 'Your Dashboard', body: 'Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score.' },
-            { icon: '🔄', title: 'Availability Toggle', body: 'Toggle your <strong>availability</strong> status so businesses know when you\'re ready to accept deliveries.' },
-            { icon: '🚴', title: 'Active Deliveries', body: 'View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts.' },
-            { icon: '📜', title: 'Delivery History', body: 'Check <strong>Delivery History</strong> for a complete record of all your past deliveries.' },
-            { icon: '💰', title: 'Earnings', body: 'Track your total earnings and delivery count under <strong>My Earnings</strong>.' },
-            { icon: '🎉', title: 'You\'re All Set!', body: 'Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime.' }
+            { icon: '🏍️', title: "{% trans 'Your Dashboard' %}", body: "{% trans 'Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score.' %}" },
+            { icon: '🔄', title: "{% trans 'Availability Toggle' %}", body: "{% trans 'Toggle your <strong>availability</strong> status so businesses know when you are ready to accept deliveries.' %}" },
+            { icon: '🚴', title: "{% trans 'Active Deliveries' %}", body: "{% trans 'View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts.' %}" },
+            { icon: '📜', title: "{% trans 'Delivery History' %}", body: "{% trans 'Check <strong>Delivery History</strong> for a complete record of all your past deliveries.' %}" },
+            { icon: '💰', title: "{% trans 'Earnings' %}", body: "{% trans 'Track your total earnings and delivery count under <strong>My Earnings</strong>.' %}" },
+            { icon: '🎉', title: "{% trans "You're All Set!" %}", body: "{% trans 'Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime.' %}" }
         ];
 
         // Pick the right steps for the role
@@ -867,10 +908,10 @@
             document.getElementById('tutorial-prev').style.display = currentStep > 0 ? 'inline-block' : 'none';
             const nextBtn = document.getElementById('tutorial-next');
             if (currentStep === steps.length - 1) {
-                nextBtn.textContent = 'Get Started! 🚀';
+                nextBtn.textContent = "{% trans 'Get Started!' %} 🚀";
                 nextBtn.onclick = function() { dismissTutorial(); };
             } else {
-                nextBtn.textContent = 'Next →';
+                nextBtn.textContent = "{% trans 'Next' %} →";
                 nextBtn.onclick = function() { tutorialNav(1); };
             }
         }

@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
+{% load i18n %}
 
-{% block title %}{{ action }} Item — Duka Mwecheche{% endblock %}
+{% block title %}{{ action }} {% trans 'Item' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -56,32 +57,32 @@
 
 <!-- Breadcrumb -->
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <a href="{% url 'manage_stores' %}" style="color:var(--gold)">Stores</a>
+    <a href="{% url 'manage_stores' %}" style="color:var(--gold)">{% trans 'Stores' %}</a>
     <span class="mx-1">›</span>
-    <a href="{% url 'manage_items' %}" style="color:var(--gold)">Manage Items</a>
+    <a href="{% url 'manage_items' %}" style="color:var(--gold)">{% trans 'Manage Items' %}</a>
     <span class="mx-1">›</span>
-    <span>{{ action }} Item</span>
+    <span>{{ action }} {% trans 'Item' %}</span>
 </nav>
 
 <div class="item-form-card">
     <div class="item-form-header">
         <h3>
-            {% if action == 'Add' %}➕{% else %}✏️{% endif %}
-            {{ action }} Stock Item
+            {% if is_add %}➕{% else %}✏️{% endif %}
+            {{ action }} {% trans 'Stock Item' %}
         </h3>
     </div>
     <div class="item-form-body">
 
         {% if form.errors %}
-        <div class="alert alert-danger">Please correct the errors below.</div>
+        <div class="alert alert-danger">{% trans 'Please correct the errors below.' %}</div>
         {% endif %}
 
         <form method="post">
             {% csrf_token %}
 
-            <div class="section-divider"><span>⭐ Required Fields</span></div>
+            <div class="section-divider"><span>⭐ {% trans 'Required Fields' %}</span></div>
             {% bootstrap_field form.description %}
             {% bootstrap_field form.store %}
             {% bootstrap_field form.selling_price %}
@@ -91,13 +92,13 @@
                        border-left: 3px solid var(--raspberry); border-radius:8px;
                        padding:1rem; margin-bottom:1rem;">
              <p style="color:var(--raspberry); font-size:0.8rem; margin-bottom:0.5rem;">
-                 🔒 Cost price is only visible to you as the owner
+                 🔒 {% trans 'Cost price is only visible to you as the owner' %}
             </p>
             {% bootstrap_field form.cost_price %}
         </div>
         {% endif %}
         
-            <div class="section-divider"><span>📋 Optional Fields</span></div>
+            <div class="section-divider"><span>📋 {% trans 'Optional Fields' %}</span></div>
             {% bootstrap_field form.material_no %}
             {% bootstrap_field form.unit %}
             {% bootstrap_field form.opening_bin_balance %}
@@ -107,10 +108,10 @@
 
             <div class="d-flex gap-2 mt-4">
                 <button type="submit" class="btn btn-primary">
-                    {{ action }} Item
+                    {{ action }} {% trans 'Item' %}
                 </button>
                 <a href="{% url 'manage_items' %}" class="btn btn-secondary">
-                    Cancel
+                    {% trans 'Cancel' %}
                 </a>
             </div>
         </form>

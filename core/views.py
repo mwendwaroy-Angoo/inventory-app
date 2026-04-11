@@ -3,6 +3,7 @@ from django.utils import timezone
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
+from django.utils.translation import gettext as _
 from .models import Item, Transaction, Store, Customer
 from .forms import ItemForm
 import openpyxl
@@ -30,7 +31,7 @@ def owner_required(view_func):
     def wrapper(request, *args, **kwargs):
         try:
             if not request.user.userprofile.is_owner:
-                messages.error(request, "Only business owners can access this page.")
+                messages.error(request, _("Only business owners can access this page."))
                 return redirect('stock_list')
         except Exception:
             return redirect('home')
@@ -66,24 +67,24 @@ def home(request):
                 'reorder_items': sorted(reorder_items, key=lambda x: x.current_balance())[:20],
             })
         except Exception:
-            context['error'] = "Profile not found. Please contact support."
+            context['error'] = _("Profile not found. Please contact support.")
     else:
         context['guest'] = True
         context['services'] = [
-            ('📦', 'Inventory Management', 'Track stock levels, costs, and reorder points in real time. Never run out of stock again.'),
-            ('🛒', 'Online Marketplace', 'Your own storefront where customers browse and order directly. No middleman.'),
-            ('💳', 'M-Pesa Payments', 'Accept payments via Lipa Na M-Pesa. Instant STK Push to your customers\' phones.'),
-            ('📱', 'USSD Access', 'Record sales and check stock via USSD — works on any phone, no internet needed.'),
-            ('📊', 'Analytics Dashboard', 'See your top products, revenue trends, and profit margins at a glance.'),
-            ('👥', 'Staff Management', 'Add staff, assign roles, and get notified when they log in or record transactions.'),
+            ('📦', _('Inventory Management'), _('Track stock levels, costs, and reorder points in real time. Never run out of stock again.')),
+            ('🛒', _('Online Marketplace'), _('Your own storefront where customers browse and order directly. No middleman.')),
+            ('💳', _('M-Pesa Payments'), _("Accept payments via Lipa Na M-Pesa. Instant STK Push to your customers' phones.")),
+            ('📱', _('USSD Access'), _('Record sales and check stock via USSD. Works on any phone, no internet needed.')),
+            ('📊', _('Analytics Dashboard'), _('See your top products, revenue trends, and profit margins at a glance.')),
+            ('👥', _('Staff Management'), _('Add staff, assign roles, and get notified when they log in or record transactions.')),
         ]
         context['faqs'] = [
-            ('Is Duka Mwecheche free?', 'Yes! The platform is completely free for all businesses. You only pay standard M-Pesa transaction fees when accepting payments.'),
-            ('Do I need a smartphone?', 'No. You can manage your stock via USSD on any basic phone. The web app works on smartphones and computers too.'),
-            ('How do customers find my shop?', 'Once you register and add items with prices, your business appears on the Marketplace. Customers can search by location and product.'),
-            ('Is my data safe?', 'Absolutely. Your data is stored securely on cloud servers with regular backups. Only you and your staff can access your business data.'),
-            ('Can I accept M-Pesa payments?', 'Yes. We integrate with Safaricom\'s Daraja API. You\'ll need a Till or Paybill number from Safaricom to receive funds directly.'),
-            ('How do I add staff?', 'Go to Manage → Staff → Add Staff. Staff members can record transactions but cannot access business settings or financial reports.'),
+            (_('Is Duka Mwecheche free?'), _('Yes! The platform is completely free for all businesses. You only pay standard M-Pesa transaction fees when accepting payments.')),
+            (_('Do I need a smartphone?'), _('No. You can manage your stock via USSD on any basic phone. The web app works on smartphones and computers too.')),
+            (_('How do customers find my shop?'), _('Once you register and add items with prices, your business appears on the Marketplace. Customers can search by location and product.')),
+            (_('Is my data safe?'), _('Absolutely. Your data is stored securely on cloud servers with regular backups. Only you and your staff can access your business data.')),
+            (_('Can I accept M-Pesa payments?'), _("Yes. We integrate with Safaricom's Daraja API. You'll need a Till or Paybill number from Safaricom to receive funds directly.")),
+            (_('How do I add staff?'), _('Go to Manage -> Staff -> Add Staff. Staff members can record transactions but cannot access business settings or financial reports.')),
         ]
 
     return render(request, 'core/home.html', context)
@@ -95,7 +96,7 @@ def home(request):
 def stock_list(request):
     user_profile = get_user_profile(request)
     if not user_profile:
-        messages.error(request, "No business profile found.")
+        messages.error(request, _("No business profile found."))
         return redirect('home')
 
     stores = Store.objects.filter(business=user_profile.business)
@@ -162,9 +163,15 @@ def add_transaction(request):
             if item.current_balance() < quantity:
                 messages.error(
                     request,
-                    f"Not enough stock for {item.description}. "
-                    f"Available: {item.current_balance()} {item.unit}, "
-                    f"requested: {quantity}."
+                    _(
+                        "Not enough stock for %(item_description)s. Available: %(available)s %(unit)s, requested: %(requested)s."
+                    )
+                    % {
+                        'item_description': item.description,
+                        'available': item.current_balance(),
+                        'unit': item.unit,
+                        'requested': quantity,
+                    }
                 )
                 return redirect('add_transaction')
             quantity = -quantity
@@ -193,7 +200,13 @@ def add_transaction(request):
 
         messages.success(
             request,
-            f"{abs(quantity)} {item.unit} of {item.description} recorded as {trans_type.lower()}."
+            _("%(quantity)s %(unit)s of %(item_description)s recorded as %(transaction_type)s.")
+            % {
+                'quantity': abs(quantity),
+                'unit': item.unit,
+                'item_description': item.description,
+                'transaction_type': trans_type.lower(),
+            }
         )
         return redirect('add_transaction')
     items = Item.objects.filter(store__business=user_profile.business).order_by('material_no')
@@ -352,7 +365,11 @@ def add_item(request):
                 next_id = (last_item.id + 1) if last_item else 1
                 item.material_no = f"MAT-{next_id:04d}"
             item.save()
-            messages.success(request, f"'{item.description}' added successfully.")
+            messages.success(
+                request,
+                _("'%(item_description)s' added successfully.")
+                % {'item_description': item.description},
+            )
             return redirect('manage_items')
     else:
         form = ItemForm(business=user_profile.business, show_cost_price=True)
@@ -360,7 +377,8 @@ def add_item(request):
     context = {
         'form': form,
         'today': timezone.now().strftime("%B %d, %Y"),
-        'action': 'Add',
+        'action': _('Add'),
+        'is_add': True,
     }
     return render(request, 'core/item_form.html', context)
 
@@ -376,7 +394,11 @@ def edit_item(request, item_id):
                        business=user_profile.business, show_cost_price=True)
         if form.is_valid():
             form.save()
-            messages.success(request, f"'{item.description}' updated successfully.")
+            messages.success(
+                request,
+                _("'%(item_description)s' updated successfully.")
+                % {'item_description': item.description},
+            )
             return redirect('manage_items')
     else:
         form = ItemForm(instance=item, business=user_profile.business, show_cost_price=True)
@@ -385,7 +407,8 @@ def edit_item(request, item_id):
         'form': form,
         'item': item,
         'today': timezone.now().strftime("%B %d, %Y"),
-        'action': 'Edit',
+        'action': _('Edit'),
+        'is_add': False,
     }
     return render(request, 'core/item_form.html', context)
 
@@ -398,7 +421,10 @@ def delete_item(request, item_id):
     if request.method == 'POST':
         item_name = item.description
         item.delete()
-        messages.success(request, f"'{item_name}' deleted successfully.")
+        messages.success(
+            request,
+            _("'%(item_name)s' deleted successfully.") % {'item_name': item_name},
+        )
         return redirect('manage_items')
 
     context = {
@@ -420,10 +446,14 @@ def manage_stores(request):
         store_name = request.POST.get('name', '').strip()
         if store_name:
             Store.objects.create(name=store_name, business=user_profile.business)
-            messages.success(request, f"Store '{store_name}' created successfully.")
+            messages.success(
+                request,
+                _("Store '%(store_name)s' created successfully.")
+                % {'store_name': store_name},
+            )
             return redirect('manage_stores')
         else:
-            messages.error(request, "Store name cannot be empty.")
+            messages.error(request, _("Store name cannot be empty."))
 
     context = {
         'stores': stores,
@@ -463,10 +493,10 @@ def add_customer(request):
                 phone=phone,
                 location=location,
             )
-            messages.success(request, f"Customer '{name}' added.")
+            messages.success(request, _("Customer '%(customer_name)s' added.") % {'customer_name': name})
             return redirect('customer_list')
         else:
-            messages.error(request, "Customer name is required.")
+            messages.error(request, _("Customer name is required."))
 
     return render(request, 'core/customer_list.html',
                   {'customers': Customer.objects.filter(business=user_profile.business)})
@@ -480,7 +510,7 @@ def delete_customer(request, customer_id):
 
     if request.method == 'POST':
         customer.delete()
-        messages.success(request, "Customer deleted.")
+        messages.success(request, _("Customer deleted."))
     return redirect('customer_list')
 
 
@@ -750,7 +780,12 @@ def quick_sell(request):
             if item.current_balance() < qty:
                 messages.warning(
                     request,
-                    f"Skipped {item.description}: only {item.current_balance()} {item.unit} in stock."
+                    _("Skipped %(item_description)s: only %(available)s %(unit)s in stock.")
+                    % {
+                        'item_description': item.description,
+                        'available': item.current_balance(),
+                        'unit': item.unit,
+                    }
                 )
                 continue
 
@@ -783,7 +818,11 @@ def quick_sell(request):
             success_data = json.dumps({'items': recorded, 'total': total})
             messages.success(
                 request,
-                f"Sale recorded: {len(recorded)} item{'s' if len(recorded) != 1 else ''}, KES {total:,.0f}"
+                _("Sale recorded: %(item_count)s item(s), KES %(total)s")
+                % {
+                    'item_count': len(recorded),
+                    'total': f'{total:,.0f}',
+                }
             )
 
     # Build items with pre-calculated balance

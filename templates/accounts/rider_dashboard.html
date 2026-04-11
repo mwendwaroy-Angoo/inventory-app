@@ -1,6 +1,7 @@
 {% extends "base_rider.html" %}
+{% load i18n %}
 
-{% block title %}Rider Dashboard — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Rider Dashboard' %} — Duka Mwecheche{% endblock %}
 
 {% block portal_css %}
 <style>
@@ -49,7 +50,7 @@
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
             <h4 style="font-family:'Playfair Display',serif; color:#4caf50; margin:0;">
-                🏍️ Rider Dashboard
+                🏍️ {% trans 'Rider Dashboard' %}
             </h4>
             <p style="color:var(--muted); font-size:0.9rem; margin:0;">
                 {{ rider.user.get_full_name }} · {{ rider.get_vehicle_type_display }}
@@ -59,7 +60,7 @@
              id="availToggle" onclick="toggleAvailability()">
             <div class="dot"></div>
             <span id="availText" style="color:var(--pearl); font-size:0.9rem;">
-                {% if rider.is_available %}Available{% else %}Unavailable{% endif %}
+                {% if rider.is_available %}{% trans 'Available' %}{% else %}{% trans 'Unavailable' %}{% endif %}
             </span>
         </div>
     </div>
@@ -70,19 +71,19 @@
     <div class="col-4">
         <div class="stat-card">
             <div class="num">{{ active_orders.count }}</div>
-            <div class="label">Active</div>
+            <div class="label">{% trans 'Active' %}</div>
         </div>
     </div>
     <div class="col-4">
         <div class="stat-card">
             <div class="num">{{ completed_orders.count }}</div>
-            <div class="label">Completed</div>
+            <div class="label">{% trans 'Completed' %}</div>
         </div>
     </div>
     <div class="col-4">
         <div class="stat-card">
             <div class="num">{% if rider.is_available %}🟢{% else %}🔴{% endif %}</div>
-            <div class="label">Status</div>
+            <div class="label">{% trans 'Status' %}</div>
         </div>
     </div>
 </div>
@@ -91,30 +92,30 @@
 {% if performance %}
 <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.2rem; margin-bottom:1.5rem;">
     <div class="d-flex justify-content-between align-items-center mb-2">
-        <h6 style="color:var(--pearl); margin:0;">📊 Your Performance Score</h6>
+        <h6 style="color:var(--pearl); margin:0;">📊 {% trans 'Your Performance Score' %}</h6>
         <span style="font-family:'Playfair Display',serif; font-size:1.5rem; color:{% if performance.total >= 70 %}#2ecc71{% elif performance.total >= 40 %}#f1c40f{% else %}#e74c3c{% endif %};">
             {{ performance.total }}<small style="font-size:0.7rem; color:var(--muted);">/100</small>
         </span>
     </div>
     <div class="d-flex gap-3 flex-wrap" style="font-size:0.8rem; color:var(--muted);">
-        <span>⭐ Rating: {{ performance.rating }}/35</span>
-        <span>⏱️ On-time: {{ performance.on_time }}/25</span>
-        <span>📦 Condition: {{ performance.condition }}/15</span>
-        <span>🚀 Experience: {{ performance.experience }}/15</span>
+        <span>⭐ {% trans 'Rating' %}: {{ performance.rating }}/35</span>
+        <span>⏱️ {% trans 'On-time' %}: {{ performance.on_time }}/25</span>
+        <span>📦 {% trans 'Condition' %}: {{ performance.condition }}/15</span>
+        <span>🚀 {% trans 'Experience' %}: {{ performance.experience }}/15</span>
     </div>
     {% if performance.total_ratings > 0 %}
     <div class="mt-1" style="font-size:0.75rem; color:var(--muted);">
-        Based on {{ performance.total_ratings }} ratings · {{ performance.total_deliveries }} total deliveries
-        {% if performance.avg_rating %} · Avg: {{ performance.avg_rating }}★{% endif %}
+        {% trans 'Based on' %} {{ performance.total_ratings }} {% trans 'ratings and' %} {{ performance.total_deliveries }} {% trans 'total deliveries' %}
+        {% if performance.avg_rating %} · {% trans 'Avg' %}: {{ performance.avg_rating }}★{% endif %}
     </div>
     {% else %}
-    <div class="mt-1" style="font-size:0.75rem; color:var(--muted);">Complete deliveries and get rated to build your score!</div>
+    <div class="mt-1" style="font-size:0.75rem; color:var(--muted);">{% trans 'Complete deliveries and get rated to build your score!' %}</div>
     {% endif %}
 </div>
 {% endif %}
 
 <!-- Active Orders -->
-<h5 style="font-family:'Playfair Display',serif; color:var(--gold);">📦 Active Deliveries</h5>
+<h5 style="font-family:'Playfair Display',serif; color:var(--gold);">📦 {% trans 'Active Deliveries' %}</h5>
 {% if active_orders %}
     {% for order in active_orders %}
     <div class="order-card">
@@ -124,26 +125,26 @@
         </div>
         <div style="font-size:0.85rem; color:var(--pearl); margin-top:0.4rem;">
             👤 {{ order.customer_name }} · 📞 {{ order.customer_phone }}<br>
-            📍 {{ order.customer_location|default:"No location" }}<br>
+            {% if order.customer_location %}📍 {{ order.customer_location }}{% else %}📍 {% trans 'No location' %}{% endif %}<br>
             💰 KES {{ order.total_amount|floatformat:0 }}
             · {{ order.get_payment_method_display }}
         </div>
         <div class="mt-2">
-            <a href="{% url 'track_order' order.order_number %}" class="btn btn-gold btn-sm">View Details</a>
+            <a href="{% url 'track_order' order.order_number %}" class="btn btn-gold btn-sm">{% trans 'View Details' %}</a>
         </div>
     </div>
     {% endfor %}
 {% else %}
-    <p style="color:var(--muted); text-align:center; padding:2rem 0;">No active deliveries right now.</p>
+    <p style="color:var(--muted); text-align:center; padding:2rem 0;">{% trans 'No active deliveries right now.' %}</p>
 {% endif %}
 
 {% if completed_orders %}
-<h5 class="mt-4" style="font-family:'Playfair Display',serif; color:var(--gold);">✅ Recent Completions</h5>
+<h5 class="mt-4" style="font-family:'Playfair Display',serif; color:var(--gold);">✅ {% trans 'Recent Completions' %}</h5>
 {% for order in completed_orders %}
 <div class="order-card" style="opacity:0.7;">
     <div class="d-flex justify-content-between">
         <span class="order-no">{{ order.order_number }}</span>
-        <span style="color:var(--muted); font-size:0.8rem;">{{ order.created_at|timesince }} ago</span>
+        <span style="color:var(--muted); font-size:0.8rem;">{{ order.created_at|timesince }} {% trans 'ago' %}</span>
     </div>
     <div style="font-size:0.85rem; color:var(--muted);">
         {{ order.customer_name }} · KES {{ order.total_amount|floatformat:0 }}
@@ -170,10 +171,10 @@ function toggleAvailability() {
         const text = document.getElementById('availText');
         if (data.is_available) {
             toggle.className = 'status-toggle available';
-            text.textContent = 'Available';
+            text.textContent = '{% trans 'Available' %}';
         } else {
             toggle.className = 'status-toggle unavailable';
-            text.textContent = 'Unavailable';
+            text.textContent = '{% trans 'Unavailable' %}';
         }
     });
 }

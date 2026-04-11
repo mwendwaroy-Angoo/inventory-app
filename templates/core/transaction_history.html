@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% load i18n %}
 
-{% block title %}Transaction History — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Transaction History' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -102,20 +103,20 @@
 
 <!-- Breadcrumb -->
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <span>Transaction History</span>
+    <span>{% trans 'Transaction History' %}</span>
 </nav>
 
 <div class="history-toolbar">
-    <h2 class="page-title">🕒 Transaction History</h2>
+    <h2 class="page-title">🕒 {% trans 'Transaction History' %}</h2>
     <div class="d-flex gap-2 align-items-center flex-wrap">
         <!-- Search -->
         <div class="search-wrapper">
             <span class="search-icon">🔍</span>
             <input type="text" id="searchInput"
                    class="form-control form-control-sm"
-                   placeholder="Search by item, type, date, recipient..."
+                     placeholder="{% trans 'Search by item, type, date, recipient...' %}"
                    autocomplete="off">
             <div class="suggestions-box" id="suggestionsBox"></div>
         </div>
@@ -128,10 +129,10 @@
                 <rect x="8" width="8" height="16" rx="2" fill="#217346"/>
                 <path d="M2 4.5L5.5 8L2 11.5H4.5L6.75 9L9 11.5H11.5L8 8L11.5 4.5H9L6.75 7L4.5 4.5H2Z" fill="white"/>
             </svg>
-            Export Excel
+            {% trans 'Export Excel' %}
         </a>
 
-        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← {% trans 'Dashboard' %}</a>
     </div>
 </div>
 
@@ -139,18 +140,18 @@
     <table class="table table-hover" id="historyTable">
         <thead>
             <tr>
-                <th>Date</th>
-                <th>Item</th>
-                <th>Store</th>
-                <th>Type</th>
-                <th>Qty</th>
-                <th>Recipient</th>
-                <th>Invoice No</th>
+                <th>{% trans 'Date' %}</th>
+                <th>{% trans 'Item' %}</th>
+                <th>{% trans 'Store' %}</th>
+                <th>{% trans 'Type' %}</th>
+                <th>{% trans 'Qty' %}</th>
+                <th>{% trans 'Recipient' %}</th>
+                <th>{% trans 'Invoice No' %}</th>
             </tr>
         </thead>
         <tbody id="tableBody">
             {% for trans in transactions %}
-            <tr data-search="{{ trans.date }} {{ trans.item.description }} {{ trans.item.material_no }} {{ trans.item.store.name }} {{ trans.type }} {{ trans.qty }} {{ trans.recipient }} {{ trans.invoice_no }}">
+            <tr data-search="{{ trans.date }} {{ trans.item.description }} {{ trans.item.material_no }} {{ trans.item.store.name }} {{ trans.get_type_display }} {{ trans.qty }} {{ trans.recipient }} {{ trans.invoice_no }}">
                 <td>{{ trans.date }}</td>
                 <td>
                     <strong>{{ trans.item.description }}</strong>
@@ -160,7 +161,7 @@
                 <td>{{ trans.item.store.name }}</td>
                 <td>
                     <span class="type-pill {% if trans.type == 'Receipt' %}type-receipt{% else %}type-issue{% endif %}">
-                        {{ trans.type }}
+                        {{ trans.get_type_display }}
                     </span>
                 </td>
                 <td>
@@ -173,7 +174,7 @@
             </tr>
             {% empty %}
             <tr>
-                <td colspan="7" class="no-results">No transactions yet.</td>
+                <td colspan="7" class="no-results">{% trans 'No transactions yet.' %}</td>
             </tr>
             {% endfor %}
         </tbody>

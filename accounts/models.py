@@ -6,6 +6,7 @@ from core.models import BusinessType, County, SubCounty, Ward  # updated
 from django.contrib.auth.signals import user_logged_in, user_logged_out
 import math
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 
 class Business(models.Model):
@@ -40,10 +41,10 @@ class Business(models.Model):
 
     # ── Payment Receiving Settings ──
     PAYMENT_CHANNEL_CHOICES = [
-        ('till', 'Till Number (Buy Goods)'),
-        ('paybill', 'Paybill'),
-        ('pochi', 'Pochi la Biashara'),
-        ('phone', 'Personal M-Pesa'),
+        ('till', _('Till Number (Buy Goods)')),
+        ('paybill', _('Paybill')),
+        ('pochi', _('Pochi la Biashara')),
+        ('phone', _('Personal M-Pesa')),
     ]
     mpesa_till = models.CharField(max_length=20, blank=True, help_text='Lipa Na M-Pesa Till Number (Buy Goods)')
     mpesa_paybill = models.CharField(max_length=20, blank=True, help_text='Paybill Business Number')
@@ -100,10 +101,10 @@ class Business(models.Model):
 
 class DeliveryTier(models.Model):
     MODE_CHOICES = [
-        ('foot', '🚶 On Foot'),
-        ('bicycle', '🚲 Bicycle'),
-        ('boda', '🏍️ Boda Boda'),
-        ('vehicle', '🚗 Vehicle'),
+        ('foot', _('🚶 On Foot')),
+        ('bicycle', _('🚲 Bicycle')),
+        ('boda', _('🏍️ Boda Boda')),
+        ('vehicle', _('🚗 Vehicle')),
     ]
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='delivery_tiers')
     mode = models.CharField(max_length=15, choices=MODE_CHOICES)
@@ -124,10 +125,10 @@ class DeliveryTier(models.Model):
 
 class UserProfile(models.Model):
     ROLE_CHOICES = [
-        ('owner', 'Owner'),
-        ('staff', 'Staff'),
-        ('rider', 'Rider'),
-        ('supplier', 'Supplier'),
+        ('owner', _('Owner')),
+        ('staff', _('Staff')),
+        ('rider', _('Rider')),
+        ('supplier', _('Supplier')),
     ]
     LANGUAGE_CHOICES = [
         ('en', 'English'),
@@ -179,13 +180,13 @@ class UserProfile(models.Model):
 class AccountDeletionLog(models.Model):
     """Records why users chose to delete their accounts (user is deleted after this is saved)."""
     REASON_CHOICES = [
-        ('not_useful', 'The platform is not useful for my business'),
-        ('too_complex', 'Too complex / hard to use'),
-        ('found_alternative', 'Found a better alternative'),
-        ('closing_business', 'Closing my business'),
-        ('privacy', 'Privacy / data concerns'),
-        ('temporary', 'Just taking a break'),
-        ('other', 'Other'),
+        ('not_useful', _('The platform is not useful for my business')),
+        ('too_complex', _('Too complex / hard to use')),
+        ('found_alternative', _('Found a better alternative')),
+        ('closing_business', _('Closing my business')),
+        ('privacy', _('Privacy / data concerns')),
+        ('temporary', _('Just taking a break')),
+        ('other', _('Other')),
     ]
 
     username = models.CharField(max_length=150)

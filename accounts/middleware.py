@@ -14,21 +14,13 @@ class UserLanguageMiddleware:
             profile = getattr(request.user, 'userprofile', None)
             if profile and profile.preferred_language:
                 preferred_language = profile.preferred_language
-                translation.activate(preferred_language)
-                request.LANGUAGE_CODE = preferred_language
+
+        if preferred_language:
+            translation.activate(preferred_language)
+            request.LANGUAGE_CODE = preferred_language
+        else:
+            request.LANGUAGE_CODE = translation.get_language() or settings.LANGUAGE_CODE
 
         response = self.get_response(request)
-
-        if request.user.is_authenticated:
-            profile = getattr(request.user, 'userprofile', None)
-            if profile and profile.preferred_language:
-                preferred_language = profile.preferred_language
-
-        if preferred_language and request.COOKIES.get(settings.LANGUAGE_COOKIE_NAME) != preferred_language:
-            response.set_cookie(
-                settings.LANGUAGE_COOKIE_NAME,
-                preferred_language,
-                max_age=365 * 24 * 60 * 60,
-            )
 
         return response

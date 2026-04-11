@@ -1,26 +1,27 @@
 {% extends "base.html" %}
-{% block title %}Browse Procurement Requests{% endblock %}
+{% load i18n %}
+{% block title %}{% trans 'Browse Procurement Requests' %}{% endblock %}
 {% block content %}
 <div class="container-fluid" style="max-width:900px;">
-    <h4 class="mb-1" style="color:var(--gold); font-family:'Playfair Display',serif;">🔍 Open Procurement Requests</h4>
-    <p style="color:var(--muted); font-size:0.9rem;">Find businesses looking for suppliers and submit your bid.</p>
+    <h4 class="mb-1" style="color:var(--gold); font-family:'Playfair Display',serif;">🔍 {% trans 'Open Procurement Requests' %}</h4>
+    <p style="color:var(--muted); font-size:0.9rem;">{% trans 'Find businesses looking for suppliers and submit your bid.' %}</p>
 
     <!-- Search & filter -->
     <form method="get" style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1rem;" class="mb-3">
         <div class="row g-2">
             <div class="col-md-6">
-                <input type="text" name="q" class="form-control" placeholder="Search requests..." value="{{ query }}">
+                <input type="text" name="q" class="form-control" placeholder="{% trans 'Search requests...' %}" value="{{ query }}">
             </div>
             <div class="col-md-4">
                 <select name="category" class="form-select">
-                    <option value="">All Categories</option>
+                    <option value="">{% trans 'All Categories' %}</option>
                     {% for cat in categories %}
                     <option value="{{ cat.id }}" {% if selected_category == cat.id|stringformat:"d" %}selected{% endif %}>{{ cat.name }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div class="col-md-2">
-                <button type="submit" class="btn btn-gold w-100">🔍 Search</button>
+                <button type="submit" class="btn btn-gold w-100">🔍 {% trans 'Search' %}</button>
             </div>
         </div>
     </form>
@@ -37,7 +38,7 @@
                     {% if pr.category %} · 🏷️ {{ pr.category.name }}{% endif %}
                 </p>
             </div>
-            <span class="badge bg-success">Open</span>
+            <span class="badge bg-success">{% trans 'Open' %}</span>
         </div>
         <p style="color:var(--pearl); margin-top:0.5rem; font-size:0.9rem;">{{ pr.description|truncatewords:30 }}</p>
         <div class="d-flex flex-wrap gap-3" style="font-size:0.8rem; color:var(--muted);">
@@ -48,19 +49,19 @@
                 {% if pr.budget_max %}KES {{ pr.budget_max|floatformat:0 }}{% endif %}
             </span>
             {% endif %}
-            <span>📅 Deadline: {{ pr.deadline|date:"M d, Y" }}</span>
-            <span>🏷️ {{ pr.bids.count }} bid{{ pr.bids.count|pluralize }}</span>
+            <span>📅 {% trans 'Deadline' %}: {{ pr.deadline|date:"M d, Y" }}</span>
+            <span>🏷️ {{ pr.bids.count }} {% trans 'bids' %}</span>
         </div>
         <div class="mt-2 d-flex gap-2">
-            <a href="{% url 'procurement_detail' pk=pr.pk %}" class="btn btn-outline-primary btn-sm">View Details</a>
-            <a href="{% url 'submit_bid' pk=pr.pk %}" class="btn btn-sm" style="background:#2ecc71; color:white;">📤 Bid Now</a>
+            <a href="{% url 'procurement_detail' pk=pr.pk %}" class="btn btn-outline-primary btn-sm">{% trans 'View Details' %}</a>
+            <a href="{% url 'submit_bid' pk=pr.pk %}" class="btn btn-sm" style="background:#2ecc71; color:white;">📤 {% trans 'Bid Now' %}</a>
         </div>
     </div>
     {% endfor %}
     {% else %}
     <div class="text-center py-5" style="color:var(--muted);">
         <p style="font-size:3rem;">📭</p>
-        <p>No open procurement requests at the moment.</p>
+        <p>{% trans 'No open procurement requests at the moment.' %}</p>
     </div>
     {% endif %}
 </div>

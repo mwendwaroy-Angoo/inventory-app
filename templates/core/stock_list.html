@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
+{% load i18n %}
 
-{% block title %}Stock List — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Stock List' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -84,11 +85,11 @@
 {% block content %}
 
 <div class="stock-header">
-    <h2 class="page-title">📋 Stock List</h2>
+    <h2 class="page-title">📋 {% trans 'Stock List' %}</h2>
     <div class="d-flex gap-2 flex-wrap">
         {% if user.userprofile.is_owner %}
-        <a href="{% url 'add_item' %}" class="btn btn-primary btn-sm">➕ Add Item</a>
-        <a href="{% url 'manage_items' %}" class="btn btn-gold btn-sm">⚙️ Manage Items</a>
+        <a href="{% url 'add_item' %}" class="btn btn-primary btn-sm">➕ {% trans 'Add Item' %}</a>
+        <a href="{% url 'manage_items' %}" class="btn btn-gold btn-sm">⚙️ {% trans 'Manage Items' %}</a>
         {% endif %}
         <a href="{% url 'export_stock' %}?store={{ request.GET.store }}"
    class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
@@ -102,23 +103,23 @@
         <rect x="11" y="4" width="1" height="8" fill="white" opacity="0.6"/>
         <rect x="9" y="7.5" width="3" height="1" fill="white" opacity="0.6"/>
     </svg>
-    Export Excel
+    {% trans 'Export Excel' %}
 </a>
     </div>
 </div>
 
 <!-- Stats strip -->
 <div class="stats-strip">
-    <div class="strip-stat">Total Items <span>{{ items|length }}</span></div>
+    <div class="strip-stat">{% trans 'Total Items' %} <span>{{ items|length }}</span></div>
 </div>
 
 <!-- Filter & Search bar -->
 <div class="filter-bar">
-    <span class="filter-label">Filter Store:</span>
+    <span class="filter-label">{% trans 'Filter Store:' %}</span>
     <form method="get" class="d-flex align-items-center gap-2 flex-wrap">
         <select name="store" id="store" class="form-select form-select-sm"
                 style="width: auto;" onchange="this.form.submit()">
-            <option value="">All Stores</option>
+            <option value="">{% trans 'All Stores' %}</option>
             {% for store in stores %}
                 {% if store.items.exists %}
                 <option value="{{ store.id }}"
@@ -128,13 +129,13 @@
                 {% endif %}
             {% endfor %}
         </select>
-        <button type="submit" class="btn btn-sm btn-secondary">Filter</button>
+        <button type="submit" class="btn btn-sm btn-secondary">{% trans 'Filter' %}</button>
     </form>
 
     <div class="search-bar ms-auto">
         <span class="search-icon">🔍</span>
         <input type="text" id="searchInput" class="form-control form-control-sm"
-               placeholder="Search items...">
+               placeholder="{% trans 'Search items...' %}">
     </div>
 </div>
 
@@ -150,11 +151,11 @@
                 <th>Physical</th>
                 <th>Deficit</th>
                 <th>Surplus</th>
-                <th>Reorder Lvl</th>
-                <th>Reorder Qty</th>
-                {% if user.userprofile.is_owner %}<th>Price (KES)</th>{% endif %}
-                <th>Status</th>
-                <th>Store</th>
+                <th>{% trans 'Reorder Lvl' %}</th>
+                <th>{% trans 'Reorder Qty' %}</th>
+                {% if user.userprofile.is_owner %}<th>{% trans 'Price (KES)' %}</th>{% endif %}
+                <th>{% trans 'Status' %}</th>
+                <th>{% trans 'Store' %}</th>
                 {% if user.userprofile.is_owner %}<th></th>{% endif %}
             </tr>
         </thead>
@@ -178,27 +179,27 @@
                 {% endif %}
                 <td>
                     {% if item.current_balance <= 0 %}
-                        <span class="badge bg-danger">Out of Stock</span>
+                        <span class="badge bg-danger">{% trans 'Out of Stock' %}</span>
                     {% elif item.needs_reorder %}
-                        <span class="badge bg-warning">Reorder</span>
+                        <span class="badge bg-warning">{% trans 'Reorder' %}</span>
                     {% else %}
-                        <span class="badge bg-success">Available</span>
+                        <span class="badge bg-success">{% trans 'Available' %}</span>
                     {% endif %}
                 </td>
                 <td>{{ item.store.name }}</td>
                 {% if user.userprofile.is_owner %}
                 <td onclick="event.stopPropagation()">
                     <a href="{% url 'edit_item' item.id %}"
-                       class="btn btn-sm btn-outline-primary">Edit</a>
+                       class="btn btn-sm btn-outline-primary">{% trans 'Edit' %}</a>
                 </td>
                 {% endif %}
             </tr>
             {% empty %}
             <tr>
                 <td colspan="13" class="text-center py-4" style="color: var(--muted);">
-                    No items found.
+                    {% trans 'No items found.' %}
                     {% if user.userprofile.is_owner %}
-                        <a href="{% url 'add_item' %}">Add your first item →</a>
+                        <a href="{% url 'add_item' %}">{% trans 'Add your first item' %} →</a>
                     {% endif %}
                 </td>
             </tr>
