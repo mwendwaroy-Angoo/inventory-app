@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 05:46\n"
-"PO-Revision-Date: 2026-04-11 05:46\n"
+"POT-Creation-Date: 2026-04-11 06:34\n"
+"PO-Revision-Date: 2026-04-11 06:34\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Dholuo\n"
 "Language: luo\n"
@@ -178,3 +178,107 @@ msgstr "Ionge gi akaunti?"
 
 msgid "Register your business"
 msgstr "Ndik ohala mari"
+
+#  TODO: Translate to Dholuo
+msgid "Overview"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Inventory"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Sales"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "All Orders"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Customers"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Transaction History"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Manage Items"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Deliveries"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Active Deliveries"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Delivery History"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Earnings"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "My Earnings"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Toggle Availability"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Profile"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Procurement"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Clients"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "My Clients"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Catalog"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "My Products"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Applications"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Management"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Supplier Portal"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Rider Portal"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Owner Portal"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "My Supply Business"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "My Business"
+msgstr ""

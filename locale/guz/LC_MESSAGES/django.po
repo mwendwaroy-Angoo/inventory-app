@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 05:46\n"
-"PO-Revision-Date: 2026-04-11 05:46\n"
+"POT-Creation-Date: 2026-04-11 06:34\n"
+"PO-Revision-Date: 2026-04-11 06:34\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Ekegusii\n"
 "Language: guz\n"
@@ -188,4 +188,108 @@ msgstr ""
 
 #  TODO: Translate to Ekegusii
 msgid "Register your business"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Overview"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Inventory"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Sales"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "All Orders"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Customers"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Transaction History"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Manage Items"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Deliveries"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Active Deliveries"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Delivery History"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Earnings"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "My Earnings"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Toggle Availability"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Profile"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Procurement"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Clients"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "My Clients"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Catalog"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "My Products"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Applications"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Management"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Supplier Portal"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Rider Portal"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Owner Portal"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "My Supply Business"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "My Business"
 msgstr ""

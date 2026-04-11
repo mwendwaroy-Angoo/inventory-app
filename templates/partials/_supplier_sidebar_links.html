@@ -1,44 +1,45 @@
+﻿{% load i18n %}
 <!-- Supplier Sidebar Navigation -->
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Dashboard</div>
+    <div class="sidebar-section-title">{% trans 'Dashboard' %}</div>
     <a href="{% url 'supplier_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'supplier_dashboard' %}active{% endif %}">
-        <span class="icon">🏠</span> Overview
+        <span class="icon">&#127968;</span> {% trans 'Overview' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Procurement</div>
+    <div class="sidebar-section-title">{% trans 'Procurement' %}</div>
     <a href="{% url 'procurement_browse' %}" class="sidebar-link {% if request.resolver_match.url_name == 'procurement_browse' %}active{% endif %}">
-        <span class="icon">🔍</span> Browse Requests
+        <span class="icon">&#128269;</span> {% trans 'Browse Requests' %}
     </a>
     <a href="{% url 'my_bids' %}" class="sidebar-link {% if request.resolver_match.url_name == 'my_bids' %}active{% endif %}">
-        <span class="icon">📋</span> My Bids
+        <span class="icon">&#128203;</span> {% trans 'My Bids' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Clients</div>
+    <div class="sidebar-section-title">{% trans 'Clients' %}</div>
     <a href="{% url 'browse_businesses' %}" class="sidebar-link {% if request.resolver_match.url_name == 'browse_businesses' %}active{% endif %}">
-        <span class="icon">🏢</span> Browse Businesses
+        <span class="icon">&#127970;</span> {% trans 'Browse Businesses' %}
     </a>
     <a href="{% url 'supplier_clients' %}" class="sidebar-link {% if request.resolver_match.url_name == 'supplier_clients' %}active{% endif %}">
-        <span class="icon">🤝</span> My Clients
+        <span class="icon">&#129309;</span> {% trans 'My Clients' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Catalog</div>
+    <div class="sidebar-section-title">{% trans 'Catalog' %}</div>
     <a href="{% url 'manage_items' %}" class="sidebar-link {% if request.resolver_match.url_name == 'manage_items' %}active{% endif %}">
-        <span class="icon">📦</span> My Products
+        <span class="icon">&#128230;</span> {% trans 'My Products' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Settings</div>
+    <div class="sidebar-section-title">{% trans 'Settings' %}</div>
     <a href="{% url 'edit_business' %}" class="sidebar-link {% if request.resolver_match.url_name == 'edit_business' %}active{% endif %}">
-        <span class="icon">⚙️</span> Business Settings
+        <span class="icon">&#9881;&#65039;</span> {% trans 'Business Settings' %}
     </a>
     <a href="{% url 'payment_settings' %}" class="sidebar-link {% if request.resolver_match.url_name == 'payment_settings' %}active{% endif %}">
-        <span class="icon">💳</span> Payment Settings
+        <span class="icon">&#128179;</span> {% trans 'Payment Settings' %}
     </a>
 </div>

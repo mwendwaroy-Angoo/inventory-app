@@ -1,103 +1,104 @@
+﻿{% load i18n %}
 <!-- Owner/Staff Sidebar Navigation -->
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Dashboard</div>
+    <div class="sidebar-section-title">{% trans 'Dashboard' %}</div>
     <a href="{% url 'home' %}" class="sidebar-link {% if request.resolver_match.url_name == 'home' %}active{% endif %}">
-        <span class="icon">🏠</span> Overview
+        <span class="icon">&#127968;</span> {% trans 'Overview' %}
     </a>
     <a href="{% url 'notifications' %}" class="sidebar-link {% if request.resolver_match.url_name == 'notifications' %}active{% endif %}">
-        <span class="icon">🔔</span> Notifications
+        <span class="icon">&#128276;</span> {% trans 'Notifications' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Inventory</div>
+    <div class="sidebar-section-title">{% trans 'Inventory' %}</div>
     <a href="{% url 'stock_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'stock_list' %}active{% endif %}">
-        <span class="icon">📋</span> Stock List
+        <span class="icon">&#128203;</span> {% trans 'Stock List' %}
     </a>
     {% if user.userprofile.is_owner %}
     <a href="{% url 'manage_items' %}" class="sidebar-link {% if request.resolver_match.url_name == 'manage_items' %}active{% endif %}">
-        <span class="icon">📦</span> Manage Items
+        <span class="icon">&#128230;</span> {% trans 'Manage Items' %}
     </a>
     <a href="{% url 'manage_stores' %}" class="sidebar-link {% if request.resolver_match.url_name == 'manage_stores' %}active{% endif %}">
-        <span class="icon">🏪</span> Stores
+        <span class="icon">&#127978;</span> {% trans 'Stores' %}
     </a>
     {% endif %}
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Sales</div>
+    <div class="sidebar-section-title">{% trans 'Sales' %}</div>
     <a href="{% url 'add_transaction' %}" class="sidebar-link {% if request.resolver_match.url_name == 'add_transaction' %}active{% endif %}">
-        <span class="icon">➕</span> Add Transaction
+        <span class="icon">&#10133;</span> {% trans 'Add Transaction' %}
     </a>
     <a href="{% url 'quick_sell' %}" class="sidebar-link {% if request.resolver_match.url_name == 'quick_sell' %}active{% endif %}">
-        <span class="icon">⚡</span> Quick Sell
+        <span class="icon">&#9889;</span> {% trans 'Quick Sell' %}
     </a>
     <a href="{% url 'transaction_history' %}" class="sidebar-link {% if request.resolver_match.url_name == 'transaction_history' %}active{% endif %}">
-        <span class="icon">📜</span> Transaction History
+        <span class="icon">&#128220;</span> {% trans 'Transaction History' %}
     </a>
     {% if user.userprofile.is_owner %}
     <a href="{% url 'sales_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'sales_dashboard' %}active{% endif %}">
-        <span class="icon">📊</span> Sales & P&L
+        <span class="icon">&#128202;</span> {% trans 'Sales & P&L' %}
     </a>
     {% endif %}
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Orders</div>
+    <div class="sidebar-section-title">{% trans 'Orders' %}</div>
     <a href="{% url 'order_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'order_list' %}active{% endif %}">
-        <span class="icon">📦</span> All Orders
+        <span class="icon">&#128230;</span> {% trans 'All Orders' %}
     </a>
     <a href="{% url 'fulfillment_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'fulfillment_list' %}active{% endif %}">
-        <span class="icon">📋</span> Fulfillment
+        <span class="icon">&#128203;</span> {% trans 'Fulfillment' %}
     </a>
     <a href="{% url 'customer_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'customer_list' %}active{% endif %}">
-        <span class="icon">👥</span> Customers
+        <span class="icon">&#128101;</span> {% trans 'Customers' %}
     </a>
 </div>
 
 {% if user.userprofile.is_owner %}
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Supply Chain</div>
+    <div class="sidebar-section-title">{% trans 'Supply Chain' %}</div>
     <a href="{% url 'supplier_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'supplier_list' %}active{% endif %}">
-        <span class="icon">🤝</span> My Suppliers
+        <span class="icon">&#129309;</span> {% trans 'My Suppliers' %}
     </a>
     <a href="{% url 'supplier_applications' %}" class="sidebar-link {% if request.resolver_match.url_name == 'supplier_applications' %}active{% endif %}">
-        <span class="icon">📨</span> Applications
+        <span class="icon">&#128232;</span> {% trans 'Applications' %}
     </a>
     <a href="{% url 'procurement_list_owner' %}" class="sidebar-link {% if request.resolver_match.url_name == 'procurement_list_owner' %}active{% endif %}">
-        <span class="icon">📋</span> My Procurement
+        <span class="icon">&#128203;</span> {% trans 'My Procurement' %}
     </a>
     <a href="{% url 'create_procurement' %}" class="sidebar-link {% if request.resolver_match.url_name == 'create_procurement' %}active{% endif %}">
-        <span class="icon">➕</span> New Procurement
+        <span class="icon">&#10133;</span> {% trans 'New Procurement' %}
     </a>
     <a href="{% url 'procurement_browse' %}" class="sidebar-link {% if request.resolver_match.url_name == 'procurement_browse' %}active{% endif %}">
-        <span class="icon">🔍</span> Browse Requests
+        <span class="icon">&#128269;</span> {% trans 'Browse Requests' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Management</div>
+    <div class="sidebar-section-title">{% trans 'Management' %}</div>
     <a href="{% url 'staff_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'staff_list' %}active{% endif %}">
-        <span class="icon">👥</span> Staff
+        <span class="icon">&#128101;</span> {% trans 'Staff' %}
     </a>
     <a href="{% url 'analytics' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics' %}active{% endif %}">
-        <span class="icon">📈</span> Analytics
+        <span class="icon">&#128200;</span> {% trans 'Analytics' %}
     </a>
     <a href="{% url 'my_feedback' %}" class="sidebar-link {% if request.resolver_match.url_name == 'my_feedback' %}active{% endif %}">
-        <span class="icon">⭐</span> Feedback
+        <span class="icon">&#11088;</span> {% trans 'Feedback' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Settings</div>
+    <div class="sidebar-section-title">{% trans 'Settings' %}</div>
     <a href="{% url 'pending_prompts' %}" class="sidebar-link {% if request.resolver_match.url_name == 'pending_prompts' %}active{% endif %}">
-        <span class="icon">💰</span> Payment Prompts
+        <span class="icon">&#128176;</span> {% trans 'Payment Prompts' %}
     </a>
     <a href="{% url 'payment_settings' %}" class="sidebar-link {% if request.resolver_match.url_name == 'payment_settings' %}active{% endif %}">
-        <span class="icon">💳</span> Payment Settings
+        <span class="icon">&#128179;</span> {% trans 'Payment Settings' %}
     </a>
     <a href="{% url 'edit_business' %}" class="sidebar-link {% if request.resolver_match.url_name == 'edit_business' %}active{% endif %}">
-        <span class="icon">⚙️</span> Business Settings
+        <span class="icon">&#9881;&#65039;</span> {% trans 'Business Settings' %}
     </a>
 </div>
 {% endif %}

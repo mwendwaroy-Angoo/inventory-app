@@ -1,3 +1,4 @@
+﻿{% load i18n %}
 {% extends "base.html" %}
 
 {% block extra_css %}
@@ -136,7 +137,7 @@
 <div class="offcanvas offcanvas-start offcanvas-sidebar d-lg-none" id="supplierSidebar">
     <div class="offcanvas-header">
         <h6 style="color:#4da6ff; font-family:'Playfair Display',serif;">
-            {% if user.userprofile.business %}{{ user.userprofile.business.name }}{% else %}My Supply Business{% endif %}
+            {% if user.userprofile.business %}{{ user.userprofile.business.name }}{% else %}{% trans 'My Supply Business' %}{% endif %}
         </h6>
         <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
     </div>
@@ -149,8 +150,8 @@
     <!-- Desktop sidebar -->
     <aside class="sidebar d-none d-lg-block">
         <div class="sidebar-header">
-            <h6>{% if user.userprofile.business %}{{ user.userprofile.business.name }}{% else %}My Supply Business{% endif %}</h6>
-            <small>Supplier Portal</small>
+            <h6>{% if user.userprofile.business %}{{ user.userprofile.business.name }}{% else %}{% trans 'My Supply Business' %}{% endif %}</h6>
+            <small>{% trans 'Supplier Portal' %}</small>
         </div>
         {% include "partials/_supplier_sidebar_links.html" %}
     </aside>

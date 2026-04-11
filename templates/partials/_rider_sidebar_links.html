@@ -1,32 +1,33 @@
+﻿{% load i18n %}
 <!-- Rider Sidebar Navigation -->
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Dashboard</div>
+    <div class="sidebar-section-title">{% trans 'Dashboard' %}</div>
     <a href="{% url 'rider_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'rider_dashboard' %}active{% endif %}">
-        <span class="icon">🏠</span> Overview
+        <span class="icon">&#127968;</span> {% trans 'Overview' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Deliveries</div>
+    <div class="sidebar-section-title">{% trans 'Deliveries' %}</div>
     <a href="{% url 'rider_active_deliveries' %}" class="sidebar-link {% if request.resolver_match.url_name == 'rider_active_deliveries' %}active{% endif %}">
-        <span class="icon">🚴</span> Active Deliveries
+        <span class="icon">&#128692;</span> {% trans 'Active Deliveries' %}
     </a>
     <a href="{% url 'rider_delivery_history' %}" class="sidebar-link {% if request.resolver_match.url_name == 'rider_delivery_history' %}active{% endif %}">
-        <span class="icon">📜</span> Delivery History
+        <span class="icon">&#128220;</span> {% trans 'Delivery History' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Earnings</div>
+    <div class="sidebar-section-title">{% trans 'Earnings' %}</div>
     <a href="{% url 'rider_earnings' %}" class="sidebar-link {% if request.resolver_match.url_name == 'rider_earnings' %}active{% endif %}">
-        <span class="icon">💰</span> My Earnings
+        <span class="icon">&#128176;</span> {% trans 'My Earnings' %}
     </a>
 </div>
 
 <div class="sidebar-section">
-    <div class="sidebar-section-title">Profile</div>
+    <div class="sidebar-section-title">{% trans 'Profile' %}</div>
     <a href="#" class="sidebar-link" id="sidebarToggleAvail" onclick="event.preventDefault(); sidebarToggleAvailability();">
-        <span class="icon">🔄</span> Toggle Availability
+        <span class="icon">&#128260;</span> {% trans 'Toggle Availability' %}
     </a>
 </div>
 
@@ -42,8 +43,8 @@ function sidebarToggleAvailability() {
     })
     .then(r => r.json())
     .then(data => {
-        const status = data.is_available ? '🟢 Available' : '🔴 Unavailable';
-        link.innerHTML = '<span class="icon">🔄</span> ' + status;
+        const status = data.is_available ? '&#128994; Available' : '&#128308; Unavailable';
+        link.innerHTML = '<span class="icon">&#128260;</span> ' + status;
         /* Also update dashboard toggle if on that page */
         const toggle = document.getElementById('availToggle');
         const text = document.getElementById('availText');

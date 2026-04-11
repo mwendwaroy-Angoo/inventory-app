@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 05:46\n"
-"PO-Revision-Date: 2026-04-11 05:46\n"
+"POT-Creation-Date: 2026-04-11 06:34\n"
+"PO-Revision-Date: 2026-04-11 06:34\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kiswahili\n"
 "Language: sw\n"
@@ -153,3 +153,81 @@ msgstr "Huna akaunti?"
 
 msgid "Register your business"
 msgstr "Sajili biashara yako"
+
+msgid "Overview"
+msgstr "Muhtasari"
+
+msgid "Inventory"
+msgstr "Hisa"
+
+msgid "Sales"
+msgstr "Mauzo"
+
+msgid "All Orders"
+msgstr "Maagizo Yote"
+
+msgid "Customers"
+msgstr "Wateja"
+
+msgid "Transaction History"
+msgstr "Historia ya Miamala"
+
+msgid "Manage Items"
+msgstr "Simamia Bidhaa"
+
+msgid "Deliveries"
+msgstr "Usafirishaji"
+
+msgid "Active Deliveries"
+msgstr "Usafirishaji Unaoendelea"
+
+msgid "Delivery History"
+msgstr "Historia ya Usafirishaji"
+
+msgid "Earnings"
+msgstr "Mapato"
+
+msgid "My Earnings"
+msgstr "Mapato Yangu"
+
+msgid "Toggle Availability"
+msgstr "Badilisha Upatikanaji"
+
+msgid "Profile"
+msgstr "Wasifu"
+
+msgid "Procurement"
+msgstr "Ununuzi"
+
+msgid "Clients"
+msgstr "Wateja"
+
+msgid "My Clients"
+msgstr "Wateja Wangu"
+
+msgid "Catalog"
+msgstr "Katalogi"
+
+msgid "My Products"
+msgstr "Bidhaa Zangu"
+
+msgid "Applications"
+msgstr "Maombi"
+
+msgid "Management"
+msgstr "Usimamizi"
+
+msgid "Supplier Portal"
+msgstr "Lango la Msambazaji"
+
+msgid "Rider Portal"
+msgstr "Lango la Mpanda Baiskeli"
+
+msgid "Owner Portal"
+msgstr "Lango la Mmiliki"
+
+msgid "My Supply Business"
+msgstr "Biashara Yangu ya Usambazaji"
+
+msgid "My Business"
+msgstr "Biashara Yangu"

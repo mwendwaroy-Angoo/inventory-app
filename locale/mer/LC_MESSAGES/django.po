@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 05:46\n"
-"PO-Revision-Date: 2026-04-11 05:46\n"
+"POT-Creation-Date: 2026-04-11 06:34\n"
+"PO-Revision-Date: 2026-04-11 06:34\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kĩmĩrũ\n"
 "Language: mer\n"
@@ -188,4 +188,108 @@ msgstr ""
 
 #  TODO: Translate to Kĩmĩrũ
 msgid "Register your business"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Overview"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Inventory"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Sales"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "All Orders"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Customers"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Transaction History"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Manage Items"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Deliveries"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Active Deliveries"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Delivery History"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Earnings"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "My Earnings"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Toggle Availability"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Profile"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Procurement"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Clients"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "My Clients"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Catalog"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "My Products"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Applications"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Management"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Supplier Portal"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Rider Portal"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Owner Portal"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "My Supply Business"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "My Business"
 msgstr ""

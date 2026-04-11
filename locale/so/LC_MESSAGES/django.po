@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 05:46\n"
-"PO-Revision-Date: 2026-04-11 05:46\n"
+"POT-Creation-Date: 2026-04-11 06:34\n"
+"PO-Revision-Date: 2026-04-11 06:34\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Soomaali\n"
 "Language: so\n"
@@ -181,3 +181,107 @@ msgstr "Ma lihid akoonti?"
 
 msgid "Register your business"
 msgstr "Diiwaan geli ganacsigaaga"
+
+#  TODO: Translate to Soomaali
+msgid "Overview"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Inventory"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Sales"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "All Orders"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Customers"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Transaction History"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Manage Items"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Deliveries"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Active Deliveries"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Delivery History"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Earnings"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "My Earnings"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Toggle Availability"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Profile"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Procurement"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Clients"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "My Clients"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Catalog"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "My Products"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Applications"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Management"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Supplier Portal"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Rider Portal"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Owner Portal"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "My Supply Business"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "My Business"
+msgstr ""

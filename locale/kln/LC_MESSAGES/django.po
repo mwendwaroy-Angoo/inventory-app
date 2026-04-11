@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 05:46\n"
-"PO-Revision-Date: 2026-04-11 05:46\n"
+"POT-Creation-Date: 2026-04-11 06:34\n"
+"PO-Revision-Date: 2026-04-11 06:34\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kalenjin\n"
 "Language: kln\n"
@@ -186,3 +186,107 @@ msgstr "Momi akaunti?"
 
 msgid "Register your business"
 msgstr "Ndike biashara"
+
+#  TODO: Translate to Kalenjin
+msgid "Overview"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Inventory"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Sales"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "All Orders"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Customers"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Transaction History"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Manage Items"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Deliveries"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Active Deliveries"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Delivery History"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Earnings"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "My Earnings"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Toggle Availability"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Profile"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Procurement"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Clients"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "My Clients"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Catalog"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "My Products"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Applications"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Management"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Supplier Portal"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Rider Portal"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Owner Portal"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "My Supply Business"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "My Business"
+msgstr ""

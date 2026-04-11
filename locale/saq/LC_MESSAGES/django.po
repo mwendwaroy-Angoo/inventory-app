@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 05:46\n"
-"PO-Revision-Date: 2026-04-11 05:46\n"
+"POT-Creation-Date: 2026-04-11 06:34\n"
+"PO-Revision-Date: 2026-04-11 06:34\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Samburu\n"
 "Language: saq\n"
@@ -192,4 +192,108 @@ msgstr ""
 
 #  TODO: Translate to Samburu
 msgid "Register your business"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Overview"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Inventory"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Sales"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "All Orders"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Customers"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Transaction History"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Manage Items"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Deliveries"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Active Deliveries"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Delivery History"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Earnings"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "My Earnings"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Toggle Availability"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Profile"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Procurement"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Clients"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "My Clients"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Catalog"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "My Products"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Applications"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Management"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Supplier Portal"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Rider Portal"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Owner Portal"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "My Supply Business"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "My Business"
 msgstr ""

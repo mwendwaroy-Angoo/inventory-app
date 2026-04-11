@@ -1,3 +1,4 @@
+﻿{% load i18n %}
 {% extends "base.html" %}
 
 {% block extra_css %}
@@ -150,7 +151,7 @@
     <aside class="sidebar d-none d-lg-block">
         <div class="sidebar-header">
             <h6>{{ user.get_full_name|default:user.username }}</h6>
-            <small>Rider Portal</small>
+            <small>{% trans 'Rider Portal' %}</small>
         </div>
         {% include "partials/_rider_sidebar_links.html" %}
     </aside>

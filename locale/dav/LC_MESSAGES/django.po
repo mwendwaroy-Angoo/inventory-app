@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 05:46\n"
-"PO-Revision-Date: 2026-04-11 05:46\n"
+"POT-Creation-Date: 2026-04-11 06:34\n"
+"PO-Revision-Date: 2026-04-11 06:34\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kitaita\n"
 "Language: dav\n"
@@ -192,4 +192,108 @@ msgstr ""
 
 #  TODO: Translate to Kitaita
 msgid "Register your business"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Overview"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Inventory"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Sales"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "All Orders"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Customers"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Transaction History"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Manage Items"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Deliveries"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Active Deliveries"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Delivery History"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Earnings"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "My Earnings"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Toggle Availability"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Profile"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Procurement"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Clients"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "My Clients"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Catalog"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "My Products"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Applications"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Management"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Supplier Portal"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Rider Portal"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "Owner Portal"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "My Supply Business"
+msgstr ""
+
+#  TODO: Translate to Kitaita
+msgid "My Business"
 msgstr ""
