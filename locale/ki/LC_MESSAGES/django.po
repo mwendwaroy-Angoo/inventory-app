@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 10:53\n"
-"PO-Revision-Date: 2026-04-11 10:53\n"
+"POT-Creation-Date: 2026-04-11 11:37\n"
+"PO-Revision-Date: 2026-04-11 11:37\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Gĩkũyũ\n"
 "Language: ki\n"
@@ -275,76 +275,76 @@ msgid "Join as Supplier"
 msgstr "Injira ta Mũheani"
 
 msgid "Skip Tutorial"
-msgstr "Skip Tutorial"
+msgstr "Rĩga Mũrutani"
 
 msgid "Back"
-msgstr "Back"
+msgstr "Ĩtina"
 
 msgid "Next"
-msgstr "Next"
+msgstr "Ĩthia"
 
 msgid "Welcome to Duka Mwecheche!"
-msgstr "Welcome to Duka Mwecheche!"
+msgstr "Ũkaribũ Kũ Duka Mwecheche!"
 
 msgid "This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username."
-msgstr "This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username."
+msgstr "Mũrutani ũno wa haraka nĩũkũlongoria kũhuhũka maũndũ ma mũsingi ma dashibodi yaku. Ũngĩwurora tena ihinda o na rĩngĩ kuuma menũ ya nthĩ ya rĩĩtwa rĩaku."
 
 msgid "Your Dashboard"
-msgstr "Your Dashboard"
+msgstr "Dashibodi Yaku"
 
 msgid "Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests."
-msgstr "Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests."
+msgstr "<strong>Dashibodi ya Mũheani</strong> yaku ĩonesya takwimu cia mũsingi: ateja arĩ mbere, mabĩdi ĩkĩethĩire, mabĩdi amacĩhĩtĩtwo, na maũhĩro ma ũgũrani matwĩkĩte."
 
 msgid "Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts."
-msgstr "Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts."
+msgstr "Finya <strong>Rora Maũhĩro</strong> gũnenga mawĩra ya ũgũrani kuuma maciarwa. Tũma mabĩdi ya ũgwĩtana gũcĩhĩtia mikataba ya ũheani."
 
 msgid "Track Your Bids"
-msgstr "Track Your Bids"
+msgstr "Taara Mabĩdi Mako"
 
 msgid "Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected."
-msgstr "Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected."
+msgstr "Nthĩinĩ wa <strong>Mabĩdi Makwa</strong>, taara hali ya mabĩdi mako mothe ĩhĩtwo — ĩkĩethĩire, amacĩhĩtĩtwo, kana akanĩtwo."
 
 msgid "Connect with Businesses"
-msgstr "Connect with Businesses"
+msgstr "Hũrĩrana na Maciarwa"
 
 msgid "Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier."
-msgstr "Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier."
+msgstr "Thĩmia <strong>Rora Maciarwa</strong> gũnenga ateja ala makĩhĩtĩko. Hĩra wĩ mũheani wao ũkwĩtĩkĩtwo."
 
 msgid "Client Relationships"
-msgstr "Client Relationships"
+msgstr "Ũhũrĩrano na Ateja"
 
 msgid "Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement."
-msgstr "Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement."
+msgstr "Ũkĩkwĩtĩkĩtwo, rora mũkusayo wa ateja waku nthĩinĩ wa <strong>Ateja Akwa</strong>. Tung'a ũhũrĩrano wa nguvu kũrĩ ũgũrani wĩũke."
 
 msgid "You're All Set!"
-msgstr "You're All Set!"
+msgstr "Ũhaarĩire Wega!"
 
 msgid "Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime."
-msgstr "Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime."
+msgstr "Ambĩrĩria kurora maũhĩro ma ũgũrani gũkua mũnyororo waku wa ũheani! Urora mũrutani ũno tena kuuma menũ ya rĩĩtwa rĩaku ihinda o na rĩngĩ."
 
 msgid "Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score."
-msgstr "Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score."
+msgstr "<strong>Dashibodi ya Mũtwarĩ wa Boda</strong> yaku ĩonesya ũheanio ĩrĩ mbere, maodha ĩmalĩire, na alama yaku ya utendaji."
 
 msgid "Availability Toggle"
-msgstr "Availability Toggle"
+msgstr "Garũra Ũkwatĩkana"
 
 msgid "Toggle your <strong>availability</strong> status so businesses know when you are ready to accept deliveries."
-msgstr "Toggle your <strong>availability</strong> status so businesses know when you are ready to accept deliveries."
+msgstr "Garũra hali yaku ya <strong>ũkwatĩkana</strong> nĩguo maciarwa maĩve ihinda ũkwĩhaarĩiria gũkĩria ũheanio."
 
 msgid "View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts."
-msgstr "View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts."
+msgstr "Rora mĩvango yaku ya ũheanio ya hĩnĩ nthĩinĩ wa <strong>Ũheanio Ĩrĩ Mbere</strong>. Ona ũhoro wa mteja, kũrĩa, na wingi wa odha."
 
 msgid "Check <strong>Delivery History</strong> for a complete record of all your past deliveries."
-msgstr "Check <strong>Delivery History</strong> for a complete record of all your past deliveries."
+msgstr "Angalia <strong>Ũhoro wa Ũheanio</strong> kũrĩ rekodi ya ũhoro wothe wa ũheanio wako wa tene."
 
 msgid "Track your total earnings and delivery count under <strong>My Earnings</strong>."
-msgstr "Track your total earnings and delivery count under <strong>My Earnings</strong>."
+msgstr "Taara mapato mako mothe na wingi wa ũheanio nthĩinĩ wa <strong>Mapato Makwa</strong>."
 
 msgid "Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime."
-msgstr "Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime."
+msgstr "Ikala ũkwatĩkana gũkĩria mĩvango ya ũheanio! Urora mũrutani ũno tena kuuma menũ ya rĩĩtwa rĩaku ihinda o na rĩngĩ."
 
 msgid "Get Started!"
-msgstr "Get Started!"
+msgstr "Ambĩrĩria!"
 
 msgid "Add Staff Member"
 msgstr "Add Staff Member"
@@ -404,67 +404,67 @@ msgid "Set New Password"
 msgstr "Set New Password"
 
 msgid "Rider Dashboard"
-msgstr "Rider Dashboard"
+msgstr "Dashibodi ya Mũtwarĩ wa Boda"
 
 msgid "Available"
-msgstr "Available"
+msgstr "Ũkwatĩkana"
 
 msgid "Unavailable"
-msgstr "Unavailable"
+msgstr "Ũtĩũkwatĩkana"
 
 msgid "Active"
-msgstr "Active"
+msgstr "Ĩrĩ Mbere"
 
 msgid "Completed"
-msgstr "Completed"
+msgstr "Ĩmalĩire"
 
 msgid "Status"
-msgstr "Status"
+msgstr "Hali"
 
 msgid "Your Performance Score"
-msgstr "Your Performance Score"
+msgstr "Alama Yaku ya Utendaji"
 
 msgid "Rating"
-msgstr "Rating"
+msgstr "Kĩhĩngio"
 
 msgid "On-time"
-msgstr "On-time"
+msgstr "Ĩsaa Rĩa"
 
 msgid "Condition"
-msgstr "Condition"
+msgstr "Hali"
 
 msgid "Experience"
-msgstr "Experience"
+msgstr "Ũhotu"
 
 msgid "Based on"
-msgstr "Based on"
+msgstr "Kũrĩngĩra"
 
 msgid "ratings and"
-msgstr "ratings and"
+msgstr "kĩhĩngio na"
 
 msgid "total deliveries"
-msgstr "total deliveries"
+msgstr "ũheanio wothe"
 
 msgid "Avg"
-msgstr "Avg"
+msgstr "Kawaida"
 
 msgid "Complete deliveries and get rated to build your score!"
-msgstr "Complete deliveries and get rated to build your score!"
+msgstr "Malĩria ũheanio na ũkĩhĩngĩwo gũtung'a alama yaku!"
 
 msgid "No location"
-msgstr "No location"
+msgstr "Gũtĩkorwo na Kũrĩa"
 
 msgid "View Details"
-msgstr "View Details"
+msgstr "Rora Ũhoro"
 
 msgid "No active deliveries right now."
-msgstr "No active deliveries right now."
+msgstr "Gũtĩkorwo na Ũheanio Ĩrĩ Mbere hĩnĩ."
 
 msgid "Recent Completions"
-msgstr "Recent Completions"
+msgstr "Ũheanio Ĩmalĩire wa Hĩnĩ"
 
 msgid "ago"
-msgstr "ago"
+msgstr "ĩhĩndĩni rĩu"
 
 msgid "Staff Members"
 msgstr "Andũ a Wĩra"
@@ -500,7 +500,7 @@ msgid "Type to search item..."
 msgstr "Type to search item..."
 
 msgid "Balance"
-msgstr "Balance"
+msgstr "Ũtonyi"
 
 msgid "Transaction Type"
 msgstr "Transaction Type"
@@ -575,397 +575,397 @@ msgid "Yes, Delete"
 msgstr "Yes, Delete"
 
 msgid "Owner Quick Actions"
-msgstr "Owner Quick Actions"
+msgstr "Itura ya Noke ya Mwene"
 
 msgid "Manage Stores"
-msgstr "Manage Stores"
+msgstr "Taara Nduka"
 
 msgid "Add Item"
-msgstr "Add Item"
+msgstr "Ongera Kĩndũ"
 
 msgid "Total Items"
-msgstr "Total Items"
+msgstr "Indo Ciothe"
 
 msgid "Low Stock"
-msgstr "Low Stock"
+msgstr "Hisa Nini"
 
 msgid "Needs Reorder"
-msgstr "Needs Reorder"
+msgstr "Ĩhĩtĩkĩtie Gũrũrwa"
 
 msgid "View Stock List"
-msgstr "View Stock List"
+msgstr "Rora Mũrangio wa Hisa"
 
 msgid "Export Excel"
-msgstr "Export Excel"
+msgstr "Tũma Excel"
 
 msgid "Items Needing Urgent Reorder"
-msgstr "Items Needing Urgent Reorder"
+msgstr "Indo Ĩhĩtĩkĩtie Gũrũrwo Noke"
 
 msgid "Material No"
-msgstr "Material No"
+msgstr "Namba ya Kĩndũ"
 
 msgid "Description"
-msgstr "Description"
+msgstr "Ũhoro"
 
 msgid "Unit"
-msgstr "Unit"
+msgstr "Ũhĩĩ"
 
 msgid "Reorder Level"
-msgstr "Reorder Level"
+msgstr "Kĩhingo kĩa Gũrũra"
 
 msgid "Out of Stock"
-msgstr "Out of Stock"
+msgstr "Gũtĩkorwo na Hisa"
 
 msgid "All items are above reorder level. Great job!"
-msgstr "All items are above reorder level. Great job!"
+msgstr "Indo ciothe cĩrĩ hĩ ya kĩhingo kĩa gũrũra. Wĩkĩte wega!"
 
 msgid "Welcome to"
-msgstr "Welcome to"
+msgstr "Ũkaribũ Kũ"
 
 msgid "The smart platform that empowers Kenyan businesses to manage inventory, sell online, and grow — all from one place."
-msgstr "The smart platform that empowers Kenyan businesses to manage inventory, sell online, and grow — all from one place."
+msgstr "Jukwaa ya ũhotu ĩa gũthuriria maciarwa ma Kenya gũtaara hisa, gũthia online, na gũkua — ciothe kuuma kũrĩa kũmwe."
 
 msgid "Browse Shop"
-msgstr "Browse Shop"
+msgstr "Tambera Nduka"
 
 msgid "Register Your Business"
 msgstr "Andĩkĩsa Biashara Yaku"
 
 msgid "Already a business?"
-msgstr "Already a business?"
+msgstr "Ũrĩ na Biashara kare?"
 
 msgid "Log in"
-msgstr "Log in"
+msgstr "Toonya"
 
 msgid "to apply as a supplier, browse procurement requests, and bid for contracts."
-msgstr "to apply as a supplier, browse procurement requests, and bid for contracts."
+msgstr "gũhĩra ta mũheani, rora maũhĩro ma ũgũrani, na hĩra mabĩdi."
 
 msgid "About Us"
-msgstr "About Us"
+msgstr "Ũhoro wa Ithui"
 
 msgid "is a Kenyan-built platform designed specifically for micro, small and medium enterprises. We understand the hustle of running a business — tracking stock on paper, missing sales, and losing money to poor records."
-msgstr "is a Kenyan-built platform designed specifically for micro, small and medium enterprises. We understand the hustle of running a business — tracking stock on paper, missing sales, and losing money to poor records."
+msgstr "nĩ jukwaa ĩrĩ thĩinĩ wa Kenya ĩhaaririrwo kwa mũhundo kũrĩ maciarwa manene, manini, na marokore. Nĩ mĩrĩru wa kwenda biashara — gũtaara hisa karatasi, gũhinga mauzo, na gũthũhũka mbeca nĩ ũhoro mĩbi."
 
 msgid "Our mission is simple:"
-msgstr "Our mission is simple:"
+msgstr "Ũtumĩkĩ witũ nĩ mũhũndũkũ:"
 
 msgid "give every duka the digital tools that big retailers use"
-msgstr "give every duka the digital tools that big retailers use"
+msgstr "hea nduka yothe ĩũhĩ ya dijitali ĩrĩa maciarwa manene ĩthĩmaga"
 
 msgid "— inventory management, an online storefront, mobile payments, and real-time analytics — at zero cost."
-msgstr "— inventory management, an online storefront, mobile payments, and real-time analytics — at zero cost."
+msgstr "— gũtaara hisa, nduka online, marĩba ya simu, na takwimu ya ĩsaa rĩrĩa rĩa — harĩ wĩra."
 
 msgid "Free"
-msgstr "Free"
+msgstr "Bũre"
 
 msgid "Access"
-msgstr "Access"
+msgstr "Ũtũhũka"
 
 msgid "Mobile First"
-msgstr "Mobile First"
+msgstr "Simu Kwanza"
 
 msgid "Our Services"
-msgstr "Our Services"
+msgstr "Wĩra wa Ithui"
 
 msgid "Sign up in seconds. Add your business name, location, and you're in."
-msgstr "Sign up in seconds. Add your business name, location, and you're in."
+msgstr "Andĩkĩra haraka. Ongera rĩĩtwa rĩa biashara yaku, kũrĩa, ukĩ thĩinĩ."
 
 msgid "Add Your Stock"
-msgstr "Add Your Stock"
+msgstr "Ongera Hisa Yako"
 
 msgid "Create stores, add items with prices and quantities. Import or enter them manually."
-msgstr "Create stores, add items with prices and quantities. Import or enter them manually."
+msgstr "Andaa nduka, ongera indo na ngeca na wingi. Ingĩra kana andĩka na guoko."
 
 msgid "Start Selling"
-msgstr "Start Selling"
+msgstr "Ambĩrĩria Gũthia"
 
 msgid "Your shop goes live. Customers browse, order, and pay via M-Pesa. Track everything in real time."
-msgstr "Your shop goes live. Customers browse, order, and pay via M-Pesa. Track everything in real time."
+msgstr "Nduka yaku ĩthomeka. Ateja tambera, odha, na rĩba na M-Pesa. Taara indo ciothe ĩsaa rĩrĩa rĩa."
 
 msgid "Join Our Ecosystem"
-msgstr "Join Our Ecosystem"
+msgstr "Injira Ndũrika Yitũ"
 
 msgid "Whether you supply goods or deliver them, Duka Mwecheche connects you with businesses across Kenya."
-msgstr "Whether you supply goods or deliver them, Duka Mwecheche connects you with businesses across Kenya."
+msgstr "Ũheane indo kana ũcĩtwarĩrie, Duka Mwecheche ĩkũhũrĩrana na maciarwa thĩinĩ wa Kenya yothe."
 
 msgid "Become a Supplier"
-msgstr "Become a Supplier"
+msgstr "Wĩ Mũheani"
 
 msgid "Register your business and apply to supply other businesses. Browse open procurement requests and submit competitive bids."
-msgstr "Register your business and apply to supply other businesses. Browse open procurement requests and submit competitive bids."
+msgstr "Andĩkĩsa biashara yaku na hĩra gũheana maciarwa magetha. Rora maũhĩro ma ũgũrani matwĩkĩte na tũma mabĩdi."
 
 msgid "Ride with Us"
-msgstr "Ride with Us"
+msgstr "Twarĩtha na Ithui"
 
 msgid "Motorcycle, bicycle, car, or Footsubishi (Miguu Niponye) — earn money delivering orders. Get rated and build your reputation."
 msgstr "Motorcycle, bicycle, car, or Footsubishi (Miguu Niponye) — earn money delivering orders. Get rated and build your reputation."
 
 msgid "Performance-Based"
-msgstr "Performance-Based"
+msgstr "Kũrĩngĩra Utendaji"
 
 msgid "Our smart scoring system ranks suppliers and riders by rating, reliability, proximity, and speed. The best performers get recommended first."
-msgstr "Our smart scoring system ranks suppliers and riders by rating, reliability, proximity, and speed. The best performers get recommended first."
+msgstr "Njĩra yitũ ya ũhĩĩngo wa alama ĩhĩingia aheani na atwarĩ a boda kũrĩngĩra kĩhĩngio, ũkwatĩkano, kũrĩhĩ, na mwendo. Arĩa arũmi nĩ ao arĩa aarĩrĩwo wa mbere."
 
 msgid "Get Started"
-msgstr "Get Started"
+msgstr "Ambĩrĩria"
 
 msgid "What Businesses Say"
-msgstr "What Businesses Say"
+msgstr "Maciarwa Ĩtĩ Atĩa"
 
 msgid "I used to track everything in a notebook. Now I know exactly what I have in stock and my customers order online. My sales have grown!"
-msgstr "I used to track everything in a notebook. Now I know exactly what I have in stock and my customers order online. My sales have grown!"
+msgstr "Twagura ndĩathiaga ciothe gitabu. Sasa hivi nĩgũĩ wega nĩkĩ kĩrĩ hisa na ateja akwa maodha online. Mauzo makwa makũĩte!"
 
 msgid "The quick sell feature is a game changer. I serve customers faster and I can see my profits at the end of each day."
-msgstr "The quick sell feature is a game changer. I serve customers faster and I can see my profits at the end of each day."
+msgstr "Kĩheo kĩa ũthia wa haraka nĩ kĩhindũkĩthia wĩra. Nĩhũriria ateja haraka na nĩnoona faida yakwa mũthia wa mũthenya wothe."
 
 msgid "My staff can record transactions from their phones. I get notifications in real time even when I'm not at the shop."
-msgstr "My staff can record transactions from their phones. I get notifications in real time even when I'm not at the shop."
+msgstr "Andũ a wĩra akwa matingĩra mĩciaro kuuma simu ciao. Nĩngĩkĩria ĩla ĩsaa rĩrĩa rĩa nawe nitĩrĩ ndukĩinĩ."
 
 msgid "Frequently Asked Questions"
-msgstr "Frequently Asked Questions"
+msgstr "Mawĩria Maakulikaga Mahinda Mothe"
 
 msgid "Contact Us"
-msgstr "Contact Us"
+msgstr "Tũmĩrĩrana na Ithui"
 
 msgid "Location"
 msgstr "Kũrĩa"
 
 msgid "Get Started — It's Free"
-msgstr "Get Started — It's Free"
+msgstr "Ambĩrĩria — Nĩ Bũre"
 
 msgid "Store"
-msgstr "Store"
+msgstr "Nduka"
 
 msgid "Price"
-msgstr "Price"
+msgstr "Ngeca"
 
 msgid "Edit Item"
-msgstr "Edit Item"
+msgstr "Cenjia Kĩndũ"
 
 msgid "Bin Balance"
-msgstr "Bin Balance"
+msgstr "Ũtonyi wa Boksi"
 
 msgid "Physical"
-msgstr "Physical"
+msgstr "Ĩheo"
 
 msgid "Deficit"
-msgstr "Deficit"
+msgstr "Gitũ"
 
 msgid "Surplus"
-msgstr "Surplus"
+msgstr "Githaaro"
 
 msgid "Date"
-msgstr "Date"
+msgstr "Mũthenya"
 
 msgid "Type"
-msgstr "Type"
+msgstr "Mũthemba"
 
 msgid "Recipient"
-msgstr "Recipient"
+msgstr "Mpokeaji"
 
 msgid "Invoice No"
-msgstr "Invoice No"
+msgstr "Namba ya Bili"
 
 msgid "No transactions recorded for this item yet."
-msgstr "No transactions recorded for this item yet."
+msgstr "Gũtĩkorwo na mĩciaro yandĩkĩtwo ya kĩndũ kĩno."
 
 msgid "Stock Item"
-msgstr "Stock Item"
+msgstr "Kĩndũ kĩa Hisa"
 
 msgid "Required Fields"
-msgstr "Required Fields"
+msgstr "Mahĩtio"
 
 msgid "Cost price is only visible to you as the owner"
-msgstr "Cost price is only visible to you as the owner"
+msgstr "Ngeca ya gũrũra ĩonekaga nawe o wĩwe ta mwene"
 
 msgid "Optional Fields"
-msgstr "Optional Fields"
+msgstr "Mahĩtio Mataagĩrĩke"
 
 msgid "Price (KES)"
-msgstr "Price (KES)"
+msgstr "Ngeca (KES)"
 
 msgid "Reorder Lvl"
-msgstr "Reorder Lvl"
+msgstr "Kĩhingo kĩa Gũrũra"
 
 msgid "Actions"
-msgstr "Actions"
+msgstr "Itura"
 
 msgid "Reorder"
-msgstr "Reorder"
+msgstr "Gũrũra"
 
 msgid "Delete"
-msgstr "Delete"
+msgstr "Thiira"
 
 msgid "No items yet"
-msgstr "No items yet"
+msgstr "Gũtĩkorwo na Indo"
 
 msgid "Start by adding your first stock item"
-msgstr "Start by adding your first stock item"
+msgstr "Ambĩrĩria na gũongera kĩndũ kĩaku kĩa mbere kĩa hisa"
 
 msgid "Add First Item"
-msgstr "Add First Item"
+msgstr "Ongera Kĩndũ kĩa Mbere"
 
 msgid "Add New Store"
-msgstr "Add New Store"
+msgstr "Ongera Nduka Ĩhĩ"
 
 msgid "e.g. Main Store, Warehouse A"
-msgstr "e.g. Main Store, Warehouse A"
+msgstr "ta Nduka ya Mbere, Ghala A"
 
 msgid "Add"
-msgstr "Add"
+msgstr "Ongera"
 
 msgid "Go to Manage Items"
-msgstr "Go to Manage Items"
+msgstr "Enda Taara Indo"
 
 msgid "Add Item Directly"
-msgstr "Add Item Directly"
+msgstr "Ongera Kĩndũ Thĩinĩ"
 
 msgid "Your Stores"
-msgstr "Your Stores"
+msgstr "Nduka Ciau"
 
 msgid "items"
-msgstr "items"
+msgstr "indo"
 
 msgid "No stores yet. Add your first store above."
-msgstr "No stores yet. Add your first store above."
+msgstr "Gũtĩkorwo na nduka. Ongera nduka yaku ya mbere thĩ ya hĩ."
 
 msgid "No notifications yet"
-msgstr "No notifications yet"
+msgstr "Gũtĩkorwo na Ĩla"
 
 msgid "Notifications will appear here when transactions are recorded."
-msgstr "Notifications will appear here when transactions are recorded."
+msgstr "Ĩla ĩgakorwo haha mĩciaro ĩandĩkĩtwe."
 
 msgid "Filter Store:"
-msgstr "Filter Store:"
+msgstr "Chagua Nduka:"
 
 msgid "All Stores"
-msgstr "All Stores"
+msgstr "Nduka Ciothe"
 
 msgid "Filter"
-msgstr "Filter"
+msgstr "Chagua"
 
 msgid "Search items..."
-msgstr "Search items..."
+msgstr "Taagia Indo..."
 
 msgid "Reorder Qty"
-msgstr "Reorder Qty"
+msgstr "Wingi wa Gũrũra"
 
 msgid "No items found."
-msgstr "No items found."
+msgstr "Gũtĩkorwo na Indo Ĩnongekĩtwo."
 
 msgid "Add your first item"
-msgstr "Add your first item"
+msgstr "Ongera Kĩndũ kĩaku kĩa Mbere"
 
 msgid "Search by item, type, date, recipient..."
-msgstr "Search by item, type, date, recipient..."
+msgstr "Taagia na Kĩndũ, Mũthemba, Mũthenya, Mpokeaji..."
 
 msgid "Qty"
-msgstr "Qty"
+msgstr "Wingi"
 
 msgid "No transactions yet."
-msgstr "No transactions yet."
+msgstr "Gũtĩkorwo na Mĩciaro."
 
 msgid "Apply as Supplier"
-msgstr "Apply as Supplier"
+msgstr "Hĩra ta Mũheani"
 
 msgid "Apply to supply products or services to"
-msgstr "Apply to supply products or services to"
+msgstr "Hĩra gũheana Indo kana Wĩra kũrĩ"
 
 msgid "Services / Products You Can Supply *"
-msgstr "Services / Products You Can Supply *"
+msgstr "Wĩra / Indo Ĩrĩa Ũngĩheana *"
 
 msgid "e.g. Fresh produce, dairy products, packaging materials..."
-msgstr "e.g. Fresh produce, dairy products, packaging materials..."
+msgstr "ta indo nkũ, marigu, indo cia gũkandĩrĩria..."
 
 msgid "Cover Letter *"
-msgstr "Cover Letter *"
+msgstr "Barua ya Ũhoro *"
 
 msgid "Why should this business choose you as a supplier? Describe your experience, reliability, pricing, location advantages..."
-msgstr "Why should this business choose you as a supplier? Describe your experience, reliability, pricing, location advantages..."
+msgstr "Nĩkĩ biashara ĩno ĩgũthagũra nawe ta mũheani? Ũhoro wa ũhotu waku, ũkwatĩkano, ngeca, na wega wa kũrĩa..."
 
 msgid "Submit Application"
-msgstr "Submit Application"
+msgstr "Tũma Ũhĩro"
 
 msgid "Browse Procurement Requests"
-msgstr "Browse Procurement Requests"
+msgstr "Rora Maũhĩro ma Ũgũrani"
 
 msgid "Open Procurement Requests"
-msgstr "Open Procurement Requests"
+msgstr "Maũhĩro ma Ũgũrani Matwĩkĩte"
 
 msgid "Find businesses looking for suppliers and submit your bid."
-msgstr "Find businesses looking for suppliers and submit your bid."
+msgstr "Nenga Maciarwa Ĩhakĩ Aheani na Tũma Mũbĩdi Waku."
 
 msgid "Search requests..."
-msgstr "Search requests..."
+msgstr "Taagia Maũhĩro..."
 
 msgid "All Categories"
-msgstr "All Categories"
+msgstr "Mĩthemba Yothe"
 
 msgid "Search"
-msgstr "Search"
+msgstr "Nenga"
 
 msgid "Open"
-msgstr "Open"
+msgstr "Twĩkĩte"
 
 msgid "Deadline"
-msgstr "Deadline"
+msgstr "Mũthenya wa Mũtukũ"
 
 msgid "bids"
-msgstr "bids"
+msgstr "mabĩdi"
 
 msgid "Bid Now"
-msgstr "Bid Now"
+msgstr "Hĩra Mũbĩdi Hĩnĩ"
 
 msgid "No open procurement requests at the moment."
-msgstr "No open procurement requests at the moment."
+msgstr "Gũtĩkorwo na Maũhĩro ma Ũgũrani Matwĩkĩte hĩnĩ."
 
 msgid "Find businesses on the platform and apply to become their supplier."
-msgstr "Find businesses on the platform and apply to become their supplier."
+msgstr "Nenga Maciarwa Ĩ Jukwaani na Hĩra Wĩ Mũheani Wao."
 
 msgid "Search by name..."
-msgstr "Search by name..."
+msgstr "Taagia na Rĩĩtwa..."
 
 msgid "All Counties"
-msgstr "All Counties"
+msgstr "Kaunti Ciothe"
 
 msgid "General"
-msgstr "General"
+msgstr "Kawaida"
 
 msgid "Applied"
-msgstr "Applied"
+msgstr "Ĩhĩtwo"
 
 msgid "Apply"
-msgstr "Apply"
+msgstr "Hĩra"
 
 msgid "No businesses found matching your criteria."
-msgstr "No businesses found matching your criteria."
+msgstr "Gũtĩkorwo na Maciarwa Ĩnongekĩtwo na Ũhoro Waku."
 
 msgid "My Submitted Bids"
-msgstr "My Submitted Bids"
+msgstr "Mabĩdi Makwa Ĩhĩtwo"
 
 msgid "All"
-msgstr "All"
+msgstr "Ciothe"
 
 msgid "Submitted"
-msgstr "Submitted"
+msgstr "Ĩhĩtwo"
 
 msgid "Shortlisted"
-msgstr "Shortlisted"
+msgstr "Athagũrwo"
 
 msgid "Accepted"
-msgstr "Accepted"
+msgstr "Akwĩtĩkĩtwo"
 
 msgid "Rejected"
-msgstr "Rejected"
+msgstr "Akanĩtwo"
 
 msgid "View Request"
-msgstr "View Request"
+msgstr "Rora Ũhĩro"
 
 msgid "You haven't submitted any bids yet."
-msgstr "You haven't submitted any bids yet."
+msgstr "Ndũhĩtĩte Mabĩdi Gĩthũ."
 
 msgid "Browse Open Requests"
-msgstr "Browse Open Requests"
+msgstr "Rora Maũhĩro Matwĩkĩte"
 
 msgid "Logged Out"
 msgstr "Ũma"
@@ -1046,76 +1046,76 @@ msgid "Register Rider"
 msgstr "Andĩkĩsa Mũtwarĩ wa Boda"
 
 msgid "active deliveries"
-msgstr "active deliveries"
+msgstr "ũheanio ĩrĩ mbere"
 
 msgid "No active deliveries right now. Stay available to receive new orders!"
-msgstr "No active deliveries right now. Stay available to receive new orders!"
+msgstr "Gũtĩkorwo na Ũheanio Ĩrĩ Mbere hĩnĩ. Ikala Ũkwatĩkana kũkĩria Maodha Mau!"
 
 msgid "Your last 50 completed deliveries"
-msgstr "Your last 50 completed deliveries"
+msgstr "Ũheanio waku wa mũthia 50 ĩmalĩire"
 
 msgid "Order"
-msgstr "Order"
+msgstr "Odha"
 
 msgid "Customer"
-msgstr "Customer"
+msgstr "Mteja"
 
 msgid "Business"
 msgstr "Business"
 
 msgid "Amount"
-msgstr "Amount"
+msgstr "Ũthero"
 
 msgid "No completed deliveries yet. Start delivering to build your history!"
-msgstr "No completed deliveries yet. Start delivering to build your history!"
+msgstr "Gũtĩkorwo na Ũheanio Ĩmalĩire. Ambĩrĩria Ũheanio gũtung'a Ũhoro waku wa Tene!"
 
 msgid "Supplier Dashboard"
-msgstr "Supplier Dashboard"
+msgstr "Dashibodi ya Mũheani"
 
 msgid "Welcome back,"
-msgstr "Welcome back,"
+msgstr "Ũkaribũ Tena,"
 
 msgid "Active Clients"
-msgstr "Active Clients"
+msgstr "Ateja Arĩ Mbere"
 
 msgid "Active Bids"
-msgstr "Active Bids"
+msgstr "Mabĩdi Arĩ Mbere"
 
 msgid "Won Bids"
-msgstr "Won Bids"
+msgstr "Mabĩdi Amacĩhĩtĩtwo"
 
 msgid "Open Requests"
-msgstr "Open Requests"
+msgstr "Maũhĩro Matwĩkĩte"
 
 msgid "Find new procurement opportunities"
-msgstr "Find new procurement opportunities"
+msgstr "Nenga Mawĩra Mau ya Ũgũrani"
 
 msgid "Track your submitted bids"
-msgstr "Track your submitted bids"
+msgstr "Taara Mabĩdi Mako Ĩhĩtwo"
 
 msgid "Connect with potential clients"
-msgstr "Connect with potential clients"
+msgstr "Hũrĩrana na Ateja Ala Makĩhĩtĩko"
 
 msgid "Recent Bids"
-msgstr "Recent Bids"
+msgstr "Mabĩdi ya Ũhĩtu"
 
 msgid "Request"
-msgstr "Request"
+msgstr "Ũhĩro"
 
 msgid "Pending"
-msgstr "Pending"
+msgstr "Ĩkĩethĩire"
 
 msgid "Won"
-msgstr "Won"
+msgstr "Acĩhĩtĩtwo"
 
 msgid "No bids yet."
-msgstr "No bids yet."
+msgstr "Gũtĩkorwo na Mabĩdi."
 
 msgid "Browse procurement requests"
-msgstr "Browse procurement requests"
+msgstr "Rora Maũhĩro ma Ũgũrani"
 
 msgid "to get started."
-msgstr "to get started."
+msgstr "gũambĩrĩria."
 
 msgid "Username"
 msgstr "Rĩĩtwa rĩa mũtumiaji"
@@ -1223,7 +1223,7 @@ msgid "Confirm password"
 msgstr "Thibitisha nenosiri"
 
 msgid "Till Number (Buy Goods)"
-msgstr "Till Number (Buy Goods)"
+msgstr "Namba ya Till (Gũrũra Indo)"
 
 msgid "Paybill"
 msgstr "Paybill"
@@ -1232,271 +1232,271 @@ msgid "Pochi la Biashara"
 msgstr "Pochi la Biashara"
 
 msgid "Personal M-Pesa"
-msgstr "Personal M-Pesa"
+msgstr "M-Pesa ya Mũndũ"
 
 msgid "🚶 On Foot"
-msgstr "🚶 On Foot"
+msgstr "🚶 Na Magũrũ"
 
 msgid "🚲 Bicycle"
-msgstr "🚲 Bicycle"
+msgstr "🚲 Baiskeli"
 
 msgid "🏍️ Boda Boda"
 msgstr "🏍️ Boda Boda"
 
 msgid "🚗 Vehicle"
-msgstr "🚗 Vehicle"
+msgstr "🚗 Ngari"
 
 msgid "The platform is not useful for my business"
-msgstr "The platform is not useful for my business"
+msgstr "Jukwaa ĩtĩhũũhĩ kũrĩ biashara yakwa"
 
 msgid "Too complex / hard to use"
-msgstr "Too complex / hard to use"
+msgstr "Ĩkĩranaine / ĩhĩthĩ gũthĩmia"
 
 msgid "Found a better alternative"
-msgstr "Found a better alternative"
+msgstr "Nĩnongete ũhoro mũrũmu"
 
 msgid "Closing my business"
-msgstr "Closing my business"
+msgstr "Nĩhinga biashara yakwa"
 
 msgid "Privacy / data concerns"
-msgstr "Privacy / data concerns"
+msgstr "Ũhoro wa usiri / data"
 
 msgid "Just taking a break"
-msgstr "Just taking a break"
+msgstr "Nĩhoya rĩhĩko"
 
 msgid "Other"
-msgstr "Other"
+msgstr "Kĩngĩ"
 
 msgid "Welcome! Your business '%(business_name)s' has been created."
-msgstr "Welcome! Your business '%(business_name)s' has been created."
+msgstr "Ũkaribũ! Biashara yaku '%(business_name)s' ĩandĩkĩtwo."
 
 msgid "Only business owners can add staff."
-msgstr "Only business owners can add staff."
+msgstr "Mwene Biashara e yene nĩwe ũngĩongera Andũ a Wĩra."
 
 msgid "Staff member '%(username)s' added successfully."
-msgstr "Staff member '%(username)s' added successfully."
+msgstr "Mũndũ wa wĩra '%(username)s' ongerwĩtwo o wega."
 
 msgid "Only business owners can view staff."
-msgstr "Only business owners can view staff."
+msgstr "Mwene Biashara e yene nĩwe ũngĩrora Andũ a Wĩra."
 
 msgid "Only business owners can edit staff."
-msgstr "Only business owners can edit staff."
+msgstr "Mwene Biashara e yene nĩwe ũngĩcenjia Andũ a Wĩra."
 
 msgid "'%(username)s' updated successfully."
-msgstr "'%(username)s' updated successfully."
+msgstr "'%(username)s' ĩrĩte o wega."
 
 msgid "Only business owners can delete staff."
-msgstr "Only business owners can delete staff."
+msgstr "Mwene Biashara e yene nĩwe ũngĩthiira Andũ a Wĩra."
 
 msgid "'%(username)s' removed successfully."
-msgstr "'%(username)s' removed successfully."
+msgstr "'%(username)s' nĩnĩtwo o wega."
 
 msgid "Only business owners can edit business details."
-msgstr "Only business owners can edit business details."
+msgstr "Mwene Biashara e yene nĩwe ũngĩcenjia Ũhoro wa Biashara."
 
 msgid "No business found."
-msgstr "No business found."
+msgstr "Gũtĩkorwo na Biashara Ĩnongekĩtwo."
 
 msgid "Business '%(business_name)s' updated successfully."
-msgstr "Business '%(business_name)s' updated successfully."
+msgstr "Biashara '%(business_name)s' ĩrĩte o wega."
 
 msgid "Only business owners can reset staff passwords."
-msgstr "Only business owners can reset staff passwords."
+msgstr "Mwene Biashara e yene nĩwe ũngĩgarũra Nenosiri cia Andũ a Wĩra."
 
 msgid "Password for '%(username)s' reset successfully."
-msgstr "Password for '%(username)s' reset successfully."
+msgstr "Nenosiri ya '%(username)s' ĩgarũriirwo o wega."
 
 msgid "Welcome! You're registered as a rider."
-msgstr "Welcome! You're registered as a rider."
+msgstr "Ũkaribũ! Ũandĩkĩtwo ta Mũtwarĩ wa Boda."
 
 msgid "Welcome! Your supply business '%(business_name)s' has been registered."
-msgstr "Welcome! Your supply business '%(business_name)s' has been registered."
+msgstr "Ũkaribũ! Biashara yaku ya ũheani '%(business_name)s' ĩandĩkĩtwo."
 
 msgid "Only business owners can manage payment settings."
-msgstr "Only business owners can manage payment settings."
+msgstr "Mwene Biashara e yene nĩwe ũngĩtaara Mĩtugo ya Marĩba."
 
 msgid "Payment settings updated successfully."
-msgstr "Payment settings updated successfully."
+msgstr "Mĩtugo ya Marĩba ĩrĩte o wega."
 
 msgid "Please type \"DELETE MY ACCOUNT\" exactly to confirm."
-msgstr "Please type \"DELETE MY ACCOUNT\" exactly to confirm."
+msgstr "Andĩka \"DELETE MY ACCOUNT\" thĩinĩ gũkĩrika."
 
 msgid "Please select a reason for deleting your account."
-msgstr "Please select a reason for deleting your account."
+msgstr "Thagũra ũhoro wa gũthiira akaunti yaku."
 
 msgid "Your account has been deleted. We're sad to see you go, but the door is always open. You're welcome back anytime. Thank you for being part of the Duka Mwecheche community."
-msgstr "Your account has been deleted. We're sad to see you go, but the door is always open. You're welcome back anytime. Thank you for being part of the Duka Mwecheche community."
+msgstr "Akaunti yaku ĩthiĩrĩtwo. Nĩ ũmoneki wa kĩeha kũona ũndũhĩ, no mũrango ũgakĩtha. Ũkaribũ tena ihinda wothe. Tũkũĩhokera kwa kwĩ kĩama kĩa Duka Mwecheche."
 
 msgid "e.g. Cement 50kg"
-msgstr "e.g. Cement 50kg"
+msgstr "ta Simenti 50kg"
 
 msgid "e.g. MAT-001"
-msgstr "e.g. MAT-001"
+msgstr "ta MAT-001"
 
 msgid "e.g. Bags, Litres, Pcs"
-msgstr "e.g. Bags, Litres, Pcs"
+msgstr "ta Mĩfuko, Lita, Vĩpande"
 
 msgid "Selling Price"
-msgstr "Selling Price"
+msgstr "Ngeca ya Gũthia"
 
 msgid "Cost Price"
-msgstr "Cost Price"
+msgstr "Ngeca ya Gũrũra"
 
 msgid "Opening Bin Balance"
-msgstr "Opening Bin Balance"
+msgstr "Ũtonyi wa Boksi wa Kũambĩrĩria"
 
 msgid "Opening Physical"
-msgstr "Opening Physical"
+msgstr "Ĩheo ya Kũambĩrĩria"
 
 msgid "Reorder Quantity"
-msgstr "Reorder Quantity"
+msgstr "Wingi wa Gũrũra"
 
 msgid "Transaction"
-msgstr "Transaction"
+msgstr "Mũciaro"
 
 msgid "Warning"
-msgstr "Warning"
+msgstr "Ũhĩĩrio"
 
 msgid "Report"
-msgstr "Report"
+msgstr "Ripoti"
 
 msgid "Info"
-msgstr "Info"
+msgstr "Ũhoro"
 
 msgid "Receipt"
-msgstr "Receipt"
+msgstr "Risiti"
 
 msgid "Issue"
-msgstr "Issue"
+msgstr "Ũtoro"
 
 msgid "Confirmed"
-msgstr "Confirmed"
+msgstr "Ĩkĩritwo"
 
 msgid "Paid"
-msgstr "Paid"
+msgstr "Ĩrĩbĩtwo"
 
 msgid "Ready for Pickup"
-msgstr "Ready for Pickup"
+msgstr "Ĩhaarĩire Gũkorwo"
 
 msgid "Cancelled"
-msgstr "Cancelled"
+msgstr "Ĩcanĩrwo"
 
 msgid "Pickup"
-msgstr "Pickup"
+msgstr "Gũkorwo"
 
 msgid "Delivery"
-msgstr "Delivery"
+msgstr "Ũheanio"
 
 msgid "M-Pesa"
 msgstr "M-Pesa"
 
 msgid "Cash on Delivery"
-msgstr "Cash on Delivery"
+msgstr "Mbeca Agĩheanio"
 
 msgid "Pay at Pickup"
-msgstr "Pay at Pickup"
+msgstr "Rĩba Gũkorwo"
 
 msgid "Cash"
-msgstr "Cash"
+msgstr "Mbeca"
 
 msgid "Bank Transfer"
-msgstr "Bank Transfer"
+msgstr "Ũheanio wa Bengi"
 
 msgid "Failed"
-msgstr "Failed"
+msgstr "Ĩhĩngĩire"
 
 msgid "Open for Bids"
-msgstr "Open for Bids"
+msgstr "Twĩkĩte kũrĩ Mabĩdi"
 
 msgid "Evaluating"
-msgstr "Evaluating"
+msgstr "Ĩtaariririrĩka"
 
 msgid "Awarded"
-msgstr "Awarded"
+msgstr "Ĩheaniire"
 
 msgid "Closed"
-msgstr "Closed"
+msgstr "Ĩhingĩire"
 
 msgid "Only business owners can access this page."
-msgstr "Only business owners can access this page."
+msgstr "Mwene Biashara e yene nĩwe ũngĩhũka peji ino."
 
 msgid "Profile not found. Please contact support."
-msgstr "Profile not found. Please contact support."
+msgstr "Wasifu ũtĩonekeire. Hoya Ũtetehe."
 
 msgid "Inventory Management"
-msgstr "Inventory Management"
+msgstr "Ũtaari wa Hisa"
 
 msgid "Track stock levels, costs, and reorder points in real time. Never run out of stock again."
-msgstr "Track stock levels, costs, and reorder points in real time. Never run out of stock again."
+msgstr "Taara kĩhingo kĩa hisa, ngeca, na kĩhingo kĩa gũrũra ĩsaa rĩrĩa rĩa. Ũtigwe hisa gĩthũ."
 
 msgid "Online Marketplace"
-msgstr "Online Marketplace"
+msgstr "Soko Online"
 
 msgid "Your own storefront where customers browse and order directly. No middleman."
-msgstr "Your own storefront where customers browse and order directly. No middleman."
+msgstr "Nduka yaku cio cio ĩrĩa ateja tambera na odha thĩinĩ. Gũtĩkorwo na mũhũthĩrĩri."
 
 msgid "M-Pesa Payments"
-msgstr "M-Pesa Payments"
+msgstr "Marĩba ya M-Pesa"
 
 msgid "Accept payments via Lipa Na M-Pesa. Instant STK Push to your customers' phones."
-msgstr "Accept payments via Lipa Na M-Pesa. Instant STK Push to your customers' phones."
+msgstr "Kĩria marĩba na Lipa Na M-Pesa. STK Push ĩĩngĩira simu cia ateja akwa haraka."
 
 msgid "USSD Access"
-msgstr "USSD Access"
+msgstr "Ũtũhũka wa USSD"
 
 msgid "Record sales and check stock via USSD. Works on any phone, no internet needed."
-msgstr "Record sales and check stock via USSD. Works on any phone, no internet needed."
+msgstr "Andĩka mauzo na angalia hisa na USSD. Ĩgakĩra simu yothe, ĩtahitĩkie intaneti."
 
 msgid "Analytics Dashboard"
-msgstr "Analytics Dashboard"
+msgstr "Dashibodi ya Takwimu"
 
 msgid "See your top products, revenue trends, and profit margins at a glance."
-msgstr "See your top products, revenue trends, and profit margins at a glance."
+msgstr "Rora indo ciau nzuri, mwelekeo wa mapato, na faida kwa mũthethanio."
 
 msgid "Staff Management"
-msgstr "Staff Management"
+msgstr "Ũtaari wa Andũ a Wĩra"
 
 msgid "Add staff, assign roles, and get notified when they log in or record transactions."
-msgstr "Add staff, assign roles, and get notified when they log in or record transactions."
+msgstr "Ongera andũ a wĩra, hea miima, na ũkĩriwo ĩla arĩkĩa kũtoonya kana gũtagwa mĩciaro."
 
 msgid "Is Duka Mwecheche free?"
-msgstr "Is Duka Mwecheche free?"
+msgstr "Duka Mwecheche nĩ ya bũre?"
 
 msgid "Yes! The platform is completely free for all businesses. You only pay standard M-Pesa transaction fees when accepting payments."
-msgstr "Yes! The platform is completely free for all businesses. You only pay standard M-Pesa transaction fees when accepting payments."
+msgstr "Ĩĩ! Jukwaa nĩ ya bũre wega kũrĩ maciarwa mothe. Ũrĩbia tũ ngeca cia M-Pesa cia kawaida ĩĩkiria marĩba."
 
 msgid "Do I need a smartphone?"
-msgstr "Do I need a smartphone?"
+msgstr "Nĩhĩtĩkĩte simu ya ũhotu?"
 
 msgid "No. You can manage your stock via USSD on any basic phone. The web app works on smartphones and computers too."
-msgstr "No. You can manage your stock via USSD on any basic phone. The web app works on smartphones and computers too."
+msgstr "Aaa. Ũngĩtaara hisa yaku na USSD simu yothe ya kawaida. App ya wavuti ĩgakĩra simu za ũhotu na kompyuta pia."
 
 msgid "How do customers find my shop?"
-msgstr "How do customers find my shop?"
+msgstr "Ateja akwa meheanga nduka yakwa atĩa?"
 
 msgid "Once you register and add items with prices, your business appears on the Marketplace. Customers can search by location and product."
-msgstr "Once you register and add items with prices, your business appears on the Marketplace. Customers can search by location and product."
+msgstr "Ũkĩandĩkĩsa na ũkĩongera indo na ngeca, biashara yaku ĩonekaga Soko. Ateja mĩngĩtaagia na kũrĩa na kĩndũ."
 
 msgid "Is my data safe?"
-msgstr "Is my data safe?"
+msgstr "Data yakwa nĩ hĩ?"
 
 msgid "Absolutely. Your data is stored securely on cloud servers with regular backups. Only you and your staff can access your business data."
-msgstr "Absolutely. Your data is stored securely on cloud servers with regular backups. Only you and your staff can access your business data."
+msgstr "Ĩĩ na ũhotu wothe. Data yaku ĩhĩthiĩka wega seva cia cloud na nakopi cia mara kwa mara. Nawe o wĩwe na andũ a wĩra akwa nĩo mĩngĩhũka data ya biashara yaku."
 
 msgid "Can I accept M-Pesa payments?"
-msgstr "Can I accept M-Pesa payments?"
+msgstr "Nĩwĩka kĩria marĩba ya M-Pesa?"
 
 msgid "Yes. We integrate with Safaricom's Daraja API. You'll need a Till or Paybill number from Safaricom to receive funds directly."
-msgstr "Yes. We integrate with Safaricom's Daraja API. You'll need a Till or Paybill number from Safaricom to receive funds directly."
+msgstr "Ĩĩ. Nĩtũhũrĩrana na API ya Daraja ya Safaricom. Nĩũhĩtĩkie namba ya Till kana Paybill kuuma Safaricom gũkĩria mbeca thĩinĩ."
 
 msgid "How do I add staff?"
-msgstr "How do I add staff?"
+msgstr "Nĩongereraga andũ a wĩra atĩa?"
 
 msgid "Go to Manage -> Staff -> Add Staff. Staff members can record transactions but cannot access business settings or financial reports."
-msgstr "Go to Manage -> Staff -> Add Staff. Staff members can record transactions but cannot access business settings or financial reports."
+msgstr "Enda Taara -> Andũ a Wĩra -> Ongera Mũndũ wa Wĩra. Andũ a wĩra mĩngĩtagwa mĩciaro no mĩtĩũhũka mĩtugo ya biashara kana ripoti cia mbeca."
 
 msgid "No business profile found."
-msgstr "No business profile found."
+msgstr "Gũtĩkorwo na Wasifu wa Biashara Ĩnongekĩtwo."
 
 msgid "Not enough stock for %(item_description)s. Available: %(available)s %(unit)s, requested: %(requested)s."
 msgstr "Not enough stock for %(item_description)s. Available: %(available)s %(unit)s, requested: %(requested)s."
