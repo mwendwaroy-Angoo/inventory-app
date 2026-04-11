@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 07:44\n"
-"PO-Revision-Date: 2026-04-11 07:44\n"
+"POT-Creation-Date: 2026-04-11 08:19\n"
+"PO-Revision-Date: 2026-04-11 08:19\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Gĩkũyũ\n"
 "Language: ki\n"
@@ -274,6 +274,63 @@ msgstr "Injira ta Mũtwarĩ wa Boda"
 msgid "Join as Supplier"
 msgstr "Injira ta Mũheani"
 
+msgid "Add Staff Member"
+msgstr "Add Staff Member"
+
+msgid "Please correct the errors below."
+msgstr "Tafadhali corregia mahĩtia aria marĩ thĩ."
+
+msgid "Personal Details"
+msgstr "Personal Details"
+
+msgid "Login Credentials"
+msgstr "Login Credentials"
+
+msgid "Cancel"
+msgstr "Cancel"
+
+msgid "Remove Staff"
+msgstr "Remove Staff"
+
+msgid "Remove Staff Member"
+msgstr "Remove Staff Member"
+
+msgid "Are you sure you want to remove:"
+msgstr "Are you sure you want to remove:"
+
+msgid "This will permanently delete their account and access."
+msgstr "This will permanently delete their account and access."
+
+msgid "Yes, Remove"
+msgstr "Yes, Remove"
+
+msgid "Edit Staff"
+msgstr "Edit Staff"
+
+msgid "First Name"
+msgstr "Rĩĩtwa rĩa Mbere"
+
+msgid "Last Name"
+msgstr "Rĩĩtwa rĩa Mũthia"
+
+msgid "Phone"
+msgstr "Phone"
+
+msgid "Email"
+msgstr "Barua pepe"
+
+msgid "Save Changes"
+msgstr "Save Changes"
+
+msgid "Reset Password for"
+msgstr "Reset Password for"
+
+msgid "Reset Password"
+msgstr "Garũra Nenosiri"
+
+msgid "Set New Password"
+msgstr "Set New Password"
+
 msgid "Staff Members"
 msgstr "Andũ a Wĩra"
 
@@ -289,9 +346,6 @@ msgstr "andũ"
 msgid "Edit"
 msgstr "Cenjia"
 
-msgid "Reset Password"
-msgstr "Garũra Nenosiri"
-
 msgid "Remove"
 msgstr "Nina"
 
@@ -300,6 +354,87 @@ msgstr "Gũtirĩ andũ a wĩra hana."
 
 msgid "Add your first staff member"
 msgstr "Ongera mũndũ wa mbere wa wĩra"
+
+msgid "Owner Quick Actions"
+msgstr "Owner Quick Actions"
+
+msgid "Manage Stores"
+msgstr "Manage Stores"
+
+msgid "Add Item"
+msgstr "Add Item"
+
+msgid "Total Items"
+msgstr "Total Items"
+
+msgid "Low Stock"
+msgstr "Low Stock"
+
+msgid "Needs Reorder"
+msgstr "Needs Reorder"
+
+msgid "View Stock List"
+msgstr "View Stock List"
+
+msgid "Export Excel"
+msgstr "Export Excel"
+
+msgid "Items Needing Urgent Reorder"
+msgstr "Items Needing Urgent Reorder"
+
+msgid "Material No"
+msgstr "Material No"
+
+msgid "Description"
+msgstr "Description"
+
+msgid "Unit"
+msgstr "Unit"
+
+msgid "Balance"
+msgstr "Balance"
+
+msgid "Reorder Level"
+msgstr "Reorder Level"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "Out of Stock"
+msgstr "Out of Stock"
+
+msgid "All items are above reorder level. Great job!"
+msgstr "All items are above reorder level. Great job!"
+
+msgid "Welcome to"
+msgstr "Welcome to"
+
+msgid "The smart platform that empowers Kenyan businesses to manage inventory, sell online, and grow — all from one place."
+msgstr "The smart platform that empowers Kenyan businesses to manage inventory, sell online, and grow — all from one place."
+
+msgid "Browse Shop"
+msgstr "Browse Shop"
+
+msgid "Register Your Business"
+msgstr "Andĩkĩsa Biashara Yaku"
+
+msgid "Already a business?"
+msgstr "Already a business?"
+
+msgid "Log in"
+msgstr "Log in"
+
+msgid "to apply as a supplier, browse procurement requests, and bid for contracts."
+msgstr "to apply as a supplier, browse procurement requests, and bid for contracts."
+
+msgid "ago"
+msgstr "ago"
+
+msgid "No notifications yet"
+msgstr "No notifications yet"
+
+msgid "Notifications will appear here when transactions are recorded."
+msgstr "Notifications will appear here when transactions are recorded."
 
 msgid "Logged Out"
 msgstr "Ũma"
@@ -315,9 +450,6 @@ msgstr "Injira ta Mũhũthĩrĩri wa Ũheanio"
 
 msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
 msgstr "Pikipiki, Baiskeli, Ngari, kana Footsubishi (Miguu Niponye) — endia mbeca na gũtwarithia maodha"
-
-msgid "Please correct the errors below."
-msgstr "Tafadhali corregia mahĩtia aria marĩ thĩ."
 
 msgid "Account"
 msgstr "Akaunti"
@@ -336,9 +468,6 @@ msgstr "Ũrĩ na akaunti kare?"
 
 msgid "Want to register a business?"
 msgstr "Ũkwenda kwandĩkĩsa biashara?"
-
-msgid "Register Your Business"
-msgstr "Andĩkĩsa Biashara Yaku"
 
 msgid "Create your account and get started"
 msgstr "Andaa akaunti yaku na ũambĩrĩrie"
@@ -396,9 +525,6 @@ msgstr "Thagũra rĩĩtwa rĩa mũtumiaji"
 
 msgid "Password"
 msgstr "Nenosiri"
-
-msgid "Email"
-msgstr "Barua pepe"
 
 msgid "your@email.com"
 msgstr "your@email.com"
@@ -472,14 +598,8 @@ msgstr "Rĩĩtwa rĩa Biashara ya Ũheani"
 msgid "e.g. MaziwaFresh Supplies"
 msgstr "ta MaziwaFresh Supplies"
 
-msgid "First Name"
-msgstr "Rĩĩtwa rĩa Mbere"
-
 msgid "First name"
 msgstr "Rĩĩtwa rĩa mbere"
-
-msgid "Last Name"
-msgstr "Rĩĩtwa rĩa Mũthia"
 
 msgid "Last name"
 msgstr "Rĩĩtwa rĩa mũthia"

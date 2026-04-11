@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
+{% load i18n %}
 
-{% block title %}Duka Mwecheche — Dashboard{% endblock %}
+{% block title %}Duka Mwecheche — {% trans 'Dashboard' %}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -130,12 +131,12 @@
     <!-- Owner Quick Actions -->
     {% if user.userprofile.is_owner %}
     <div class="owner-actions">
-        <div class="section-title">⚙️ Owner Quick Actions</div>
+        <div class="section-title">⚙️ {% trans 'Owner Quick Actions' %}</div>
         <div class="d-flex flex-wrap gap-2">
-            <a href="{% url 'manage_stores' %}" class="btn btn-sm btn-gold">🏪 Manage Stores</a>
-            <a href="{% url 'manage_items' %}" class="btn btn-sm btn-primary">📦 Manage Items</a>
-            <a href="{% url 'add_item' %}" class="btn btn-sm btn-outline-primary">➕ Add Item</a>
-            <a href="{% url 'staff_list' %}" class="btn btn-sm btn-secondary">👥 Staff</a>
+            <a href="{% url 'manage_stores' %}" class="btn btn-sm btn-gold">🏪 {% trans 'Manage Stores' %}</a>
+            <a href="{% url 'manage_items' %}" class="btn btn-sm btn-primary">📦 {% trans 'Manage Items' %}</a>
+            <a href="{% url 'add_item' %}" class="btn btn-sm btn-outline-primary">➕ {% trans 'Add Item' %}</a>
+            <a href="{% url 'staff_list' %}" class="btn btn-sm btn-secondary">👥 {% trans 'Staff' %}</a>
         </div>
     </div>
     {% endif %}
@@ -156,7 +157,7 @@
     <div class="col-4">
         <a href="{% url 'stock_list' %}" style="text-decoration:none">
             <div class="stat-card stat-total">
-                <div class="stat-label">Total Items</div>
+                <div class="stat-label">{% trans 'Total Items' %}</div>
                 <div class="stat-value">{{ total_items|default:"0" }}</div>
             </div>
         </a>
@@ -164,7 +165,7 @@
     <div class="col-4">
         <a href="{% url 'stock_list' %}?status=low_stock" style="text-decoration:none">
             <div class="stat-card stat-low">
-                <div class="stat-label">Low Stock</div>
+                <div class="stat-label">{% trans 'Low Stock' %}</div>
                 <div class="stat-value">{{ low_stock_count|default:"0" }}</div>
             </div>
         </a>
@@ -172,7 +173,7 @@
     <div class="col-4">
         <a href="{% url 'stock_list' %}?status=reorder" style="text-decoration:none">
             <div class="stat-card stat-reorder">
-                <div class="stat-label">Needs Reorder</div>
+                <div class="stat-label">{% trans 'Needs Reorder' %}</div>
                 <div class="stat-value">{{ reorder_count|default:"0" }}</div>
             </div>
         </a>
@@ -182,16 +183,16 @@
     <!-- Action Buttons -->
     <div class="d-flex flex-wrap gap-2 mb-4">
         <a href="{% url 'stock_list' %}" class="btn btn-gold action-btn">
-            📋 View Stock List
+            📋 {% trans 'View Stock List' %}
         </a>
         <a href="{% url 'transaction_history' %}" class="btn btn-secondary action-btn">
-            🕒 Transaction History
+            🕒 {% trans 'Transaction History' %}
         </a>
         <a href="{% url 'add_transaction' %}" class="btn btn-primary action-btn">
-            ➕ Add Transaction
+            ➕ {% trans 'Add Transaction' %}
         </a>
         <a href="{% url 'export_stock' %}" class="btn btn-secondary action-btn">
-            📥 Export Excel
+            📥 {% trans 'Export Excel' %}
         </a>
     </div>
 
@@ -199,17 +200,17 @@
 
     <!-- Reorder Table -->
     {% if reorder_items %}
-    <div class="section-title">🚨 Items Needing Urgent Reorder</div>
+    <div class="section-title">🚨 {% trans 'Items Needing Urgent Reorder' %}</div>
     <div class="table-responsive">
         <table class="table reorder-table">
             <thead>
                 <tr>
-                    <th>Material No</th>
-                    <th>Description</th>
-                    <th>Unit</th>
-                    <th>Balance</th>
-                    <th>Reorder Level</th>
-                    <th>Status</th>
+                    <th>{% trans 'Material No' %}</th>
+                    <th>{% trans 'Description' %}</th>
+                    <th>{% trans 'Unit' %}</th>
+                    <th>{% trans 'Balance' %}</th>
+                    <th>{% trans 'Reorder Level' %}</th>
+                    <th>{% trans 'Status' %}</th>
                 </tr>
             </thead>
             <tbody>
@@ -224,9 +225,9 @@
                     <td>{{ item.reorder_level }}</td>
                     <td>
                         {% if item.current_balance <= 0 %}
-                            <span class="badge bg-danger">Out of Stock</span>
+                            <span class="badge bg-danger">{% trans 'Out of Stock' %}</span>
                         {% else %}
-                            <span class="badge bg-warning">Low Stock</span>
+                            <span class="badge bg-warning">{% trans 'Low Stock' %}</span>
                         {% endif %}
                     </td>
                 </tr>
@@ -236,7 +237,7 @@
     </div>
     {% else %}
     <div class="alert alert-success">
-        ✅ All items are above reorder level. Great job!
+        ✅ {% trans 'All items are above reorder level. Great job!' %}
     </div>
     {% endif %}
 
@@ -248,21 +249,20 @@
     <!-- HERO -->
     <section id="hero" style="margin-top:2rem;">
         <div class="hero" style="padding:4rem 2rem;">
-            <p class="hero-subtitle">Welcome to</p>
+            <p class="hero-subtitle">{% trans 'Welcome to' %}</p>
             <h1 class="hero-title" style="font-size:clamp(2.5rem,6vw,4rem);">Duka Mwecheche</h1>
             <hr class="gold-divider" style="max-width:200px; margin:1.5rem auto;">
             <p style="color:var(--pearl); margin-bottom:2rem; max-width:500px; margin-left:auto; margin-right:auto; font-size:1.05rem; line-height:1.7;">
-                The smart platform that empowers Kenyan businesses to manage inventory,
-                sell online, and grow — all from one place.
+                {% trans 'The smart platform that empowers Kenyan businesses to manage inventory, sell online, and grow — all from one place.' %}
             </p>
             <div class="d-flex gap-3 justify-content-center flex-wrap">
-                <a href="{% url 'shop_home' %}" class="btn btn-gold px-4 py-2" style="font-size:1rem;">🛒 Browse Shop</a>
-                <a href="{% url 'login' %}" class="btn btn-primary px-4 py-2">Login</a>
-                <a href="{% url 'signup' %}" class="btn btn-secondary px-4 py-2">Register Your Business</a>
-                <a href="{% url 'rider_signup' %}" class="btn px-4 py-2" style="background:linear-gradient(135deg,#27ae60,#2ecc71);color:white;">🚶 Join as Rider</a>
+                <a href="{% url 'shop_home' %}" class="btn btn-gold px-4 py-2" style="font-size:1rem;">🛒 {% trans 'Browse Shop' %}</a>
+                <a href="{% url 'login' %}" class="btn btn-primary px-4 py-2">{% trans 'Login' %}</a>
+                <a href="{% url 'signup' %}" class="btn btn-secondary px-4 py-2">{% trans 'Register Your Business' %}</a>
+                <a href="{% url 'rider_signup' %}" class="btn px-4 py-2" style="background:linear-gradient(135deg,#27ae60,#2ecc71);color:white;">🚶 {% trans 'Join as Rider' %}</a>
             </div>
             <p style="color:var(--muted); margin-top:1.5rem; font-size:0.85rem;">
-                Already a business? <a href="{% url 'login' %}" style="color:var(--gold);">Log in</a> to apply as a supplier, browse procurement requests, and bid for contracts.
+                {% trans 'Already a business?' %} <a href="{% url 'login' %}" style="color:var(--gold);">{% trans 'Log in' %}</a> {% trans 'to apply as a supplier, browse procurement requests, and bid for contracts.' %}
             </p>
         </div>
     </section>

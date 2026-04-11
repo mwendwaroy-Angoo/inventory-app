@@ -102,6 +102,7 @@ MESSAGES = [
 
 TEMPLATE_TRANS_PATTERN = re.compile(r"\{\%\s*trans\s+['\"](.+?)['\"]\s*%\}")
 PYTHON_GETTEXT_PATTERN = re.compile(r"_\(\s*['\"](.+?)['\"]\s*\)")
+FALLBACK_LANGUAGE = None
 
 # Languages and their translations
 # sw = Kiswahili (complete translations)
@@ -263,6 +264,29 @@ TRANSLATIONS = {
         "Ward": "Wadi",
         "You have been successfully logged out.": "Umetoka kwenye akaunti yako kwa mafanikio.",
         "Your Team": "Timu Yako",
+        "Owner Quick Actions": "Vitendo vya Haraka vya Mmiliki",
+        "Manage Stores": "Simamia Maduka",
+        "Add Item": "Ongeza Bidhaa",
+        "Total Items": "Jumla ya Bidhaa",
+        "Low Stock": "Hisa Chini",
+        "Needs Reorder": "Inahitaji Kuagizwa Tena",
+        "View Stock List": "Tazama Orodha ya Hisa",
+        "Export Excel": "Hamisha Excel",
+        "Items Needing Urgent Reorder": "Bidhaa Zinazohitaji Kuagizwa Tena Haraka",
+        "Material No": "Nambari ya Bidhaa",
+        "Description": "Maelezo",
+        "Unit": "Kipimo",
+        "Balance": "Salio",
+        "Reorder Level": "Kiwango cha Kuagiza Tena",
+        "Status": "Hali",
+        "Out of Stock": "Hisa Imeisha",
+        "All items are above reorder level. Great job!": "Bidhaa zote ziko juu ya kiwango cha kuagiza tena. Hongera!",
+        "Welcome to": "Karibu",
+        "Browse Shop": "Tazama Duka",
+        "The smart platform that empowers Kenyan businesses to manage inventory, sell online, and grow — all from one place.": "Jukwaa hili linawezesha biashara za Kenya kusimamia hesabu, kuuza mtandaoni, na kukua — yote kutoka sehemu moja.",
+        "Already a business?": "Tayari una biashara?",
+        "Log in": "Ingia",
+        "to apply as a supplier, browse procurement requests, and bid for contracts.": "kuomba kuwa msambazaji, kutazama maombi ya ununuzi, na kutoa zabuni za mikataba.",
         "business@email.com": "business@email.com",
         "e.g. 0712345678": "k.m. 0712345678",
         "e.g. MaziwaFresh Supplies": "k.m. MaziwaFresh Supplies",
@@ -480,17 +504,17 @@ TRANSLATIONS = {
         "Browse Requests": "Tala Maombi",
         "My Bids": "Zabuni Syakwa",
         "Businesses": "Biashara",
-        "Stock List": "Orodha ya Hisa",
-        "Add Transaction": "Ongeza Muamala",
-        "Quick Sell": "Uza Noke",
+        "Stock List": "Mũkusany'o wa Indo",
+        "Add Transaction": "Ongela Mũamala",
+        "Quick Sell": "Thengisa Noke",
         "Order Fulfillment": "Utimanisyo wa Oda",
-        "Supply Chain": "Mnyororo wa Usambazaji",
+        "Supply Chain": "Nthangũ ya Kũheana",
         "My Suppliers": "Asambazaji Makwa",
         "Supplier Applications": "Maombi ma Asambazaji",
         "My Procurement": "Ununuzi Wakwa",
         "New Procurement": "Ununuzi Mweu",
         "Browse Businesses": "Tala Biashara",
-        "Manage": "Simamia",
+        "Manage": "Sũvĩa",
         "Sales & P&L": "Mauzo na Faida/Hasara",
         "Analytics": "Takwimu",
         "Add Staff": "Ongeza Mundu wa Wĩa",
@@ -526,7 +550,7 @@ TRANSLATIONS = {
         "All Orders": "Oda Syonthe",
         "Customers": "Ateja",
         "Transaction History": "Mbaĩtu ya Miamala",
-        "Manage Items": "Simamia Indo",
+        "Manage Items": "Sũvĩa Indo",
         "Deliveries": "Usafirishaji",
         "Active Deliveries": "Usafirishaji Ũtũũlũ",
         "Delivery History": "Mbaĩtu ya Usafirishaji",
@@ -629,6 +653,29 @@ TRANSLATIONS = {
         "Ward": "Wadi",
         "You have been successfully logged out.": "Ũmeuma kwa mafanikio.",
         "Your Team": "Kikundi Kyaku",
+        "Owner Quick Actions": "Mavango ma Mwene ma Noke",
+        "Manage Stores": "Sũvĩa Nduka",
+        "Add Item": "Ongeza Kĩndũ",
+        "Total Items": "Indo Syonthe",
+        "Low Stock": "Indo Nini",
+        "Needs Reorder": "Nĩ Syendeka Kũndikwo Tena",
+        "View Stock List": "Tala Mũkusany'o wa Indo",
+        "Export Excel": "Tũma Excel",
+        "Items Needing Urgent Reorder": "Indo Syendeka Kũndikwo Tena Noke",
+        "Material No": "Namba ya Kĩndũ",
+        "Description": "Maelezo",
+        "Unit": "Kipimo",
+        "Balance": "Ũtonyi",
+        "Reorder Level": "Kiwango kya Kũndikwo Tena",
+        "Status": "Hali",
+        "Out of Stock": "Hisa Mĩthii",
+        "All items are above reorder level. Great job!": "Indo syothe nĩ syĩ mbee wa kiwango kya kũndikwo tena. Wĩkĩte wega!",
+        "Welcome to": "Mwaĩngĩrĩrwo va",
+        "Browse Shop": "Tala Duka",
+        "The smart platform that empowers Kenyan businesses to manage inventory, sell online, and grow — all from one place.": "Jukwaa ino ya wĩa nĩyũmĩsya biashara sya Kenya kũsũvĩa indo, kũthengisa online, na kũkũa — syonthe kuuma va hamwe.",
+        "Already a business?": "Wĩ biashara tayari?",
+        "Log in": "Ĩngĩa",
+        "to apply as a supplier, browse procurement requests, and bid for contracts.": "ũtonye ndeto ya kwĩandĩkĩa ta msambazaji, kutala maombi ma ununuzi, na kũheana zabuni.",
         "business@email.com": "business@email.com",
         "e.g. 0712345678": "k.m. 0712345678",
         "e.g. MaziwaFresh Supplies": "k.m. MaziwaFresh Supplies",
@@ -794,6 +841,20 @@ def collect_messages():
 
     return messages
 
+
+def resolve_translation(lang_code, translations, message):
+    """Return the best available translation for a message."""
+    if message in translations:
+        return translations[message]
+
+    if FALLBACK_LANGUAGE:
+        fallback_translations = TRANSLATIONS.get(FALLBACK_LANGUAGE, {})
+        if message in fallback_translations:
+            return fallback_translations[message]
+
+    # Final fallback keeps unfinished languages readable without forcing a different local language.
+    return message
+
 # Language display names
 LANG_NAMES = {
     'sw': 'Kiswahili',
@@ -841,15 +902,12 @@ msgstr ""
 
     entries = []
     for msg in messages:
-        trans = translations.get(msg, '')
+        trans = resolve_translation(lang_code, translations, msg)
         # Escape special characters
         escaped_msg = msg.replace('\\', '\\\\').replace('"', '\\"')
         escaped_trans = trans.replace('\\', '\\\\').replace('"', '\\"') if trans else ''
 
-        if not trans:
-            entry = f'#  TODO: Translate to {lang_name}\nmsgid "{escaped_msg}"\nmsgstr ""\n'
-        else:
-            entry = f'msgid "{escaped_msg}"\nmsgstr "{escaped_trans}"\n'
+        entry = f'msgid "{escaped_msg}"\nmsgstr "{escaped_trans}"\n'
         entries.append(entry)
 
     return header + '\n'.join(entries)
@@ -869,11 +927,13 @@ def main():
         with open(po_path, 'w', encoding='utf-8') as f:
             f.write(po_content)
 
-        print(f'✓ Created {lang_code}/LC_MESSAGES/django.po ({len([m for m in messages if m in translations])}/{len(messages)} translated)')
+        native_count = len([m for m in messages if m in translations])
+        effective_count = len([m for m in messages if resolve_translation(lang_code, translations, m)])
+        print(f'✓ Created {lang_code}/LC_MESSAGES/django.po ({native_count}/{len(messages)} native, {effective_count}/{len(messages)} effective)')
 
     print(f'\nDone! Created .po files for {len(LANG_NAMES)} languages.')
-    print('Swahili (sw) has complete translations.')
-    print('Other languages have starter translations - community contributions welcome!')
+    print('Swahili (sw) has complete translations for the current extracted UI strings.')
+    print('Other languages preserve native entries and fall back to English where extracted UI strings are still being completed.')
 
 
 if __name__ == '__main__':

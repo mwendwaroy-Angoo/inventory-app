@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
+{% load i18n %}
 
-{% block title %}Add Staff — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Add Staff' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -55,40 +56,40 @@
 
 <!-- Breadcrumb -->
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <a href="{% url 'staff_list' %}" style="color:var(--gold)">Staff</a>
+    <a href="{% url 'staff_list' %}" style="color:var(--gold)">{% trans 'Staff' %}</a>
     <span class="mx-1">›</span>
-    <span>Add Staff</span>
+    <span>{% trans 'Add Staff' %}</span>
 </nav>
 
 <div class="staff-form-card">
     <div class="staff-form-header">
-        <h3>➕ Add Staff Member</h3>
+        <h3>➕ {% trans 'Add Staff Member' %}</h3>
     </div>
     <div class="staff-form-body">
 
         {% if form.errors %}
-        <div class="alert alert-danger">Please correct the errors below.</div>
+        <div class="alert alert-danger">{% trans 'Please correct the errors below.' %}</div>
         {% endif %}
 
         <form method="post">
             {% csrf_token %}
 
-            <div class="section-divider"><span>👤 Personal Details</span></div>
+            <div class="section-divider"><span>👤 {% trans 'Personal Details' %}</span></div>
             {% bootstrap_field form.first_name %}
             {% bootstrap_field form.last_name %}
             {% bootstrap_field form.phone %}
             {% bootstrap_field form.email %}
 
-            <div class="section-divider"><span>🔐 Login Credentials</span></div>
+            <div class="section-divider"><span>🔐 {% trans 'Login Credentials' %}</span></div>
             {% bootstrap_field form.username %}
             {% bootstrap_field form.password1 %}
             {% bootstrap_field form.password2 %}
 
             <div class="d-flex gap-2 mt-4">
-                <button type="submit" class="btn btn-primary">Add Staff Member</button>
-                <a href="{% url 'staff_list' %}" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn btn-primary">{% trans 'Add Staff Member' %}</button>
+                <a href="{% url 'staff_list' %}" class="btn btn-secondary">{% trans 'Cancel' %}</a>
             </div>
         </form>
     </div>

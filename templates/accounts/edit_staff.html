@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% load i18n %}
 
-{% block title %}Edit Staff — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Edit Staff' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -53,47 +54,47 @@
 {% block content %}
 
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <a href="{% url 'staff_list' %}" style="color:var(--gold)">Staff</a>
+    <a href="{% url 'staff_list' %}" style="color:var(--gold)">{% trans 'Staff' %}</a>
     <span class="mx-1">›</span>
-    <span>Edit Staff</span>
+    <span>{% trans 'Edit Staff' %}</span>
 </nav>
 
 <div class="staff-form-card">
     <div class="staff-form-header">
-        <h3>✏️ Edit Staff — {{ profile.user.username }}</h3>
+        <h3>✏️ {% trans 'Edit Staff' %} — {{ profile.user.username }}</h3>
     </div>
     <div class="staff-form-body">
         <form method="post">
             {% csrf_token %}
 
-            <div class="section-divider"><span>👤 Personal Details</span></div>
+            <div class="section-divider"><span>👤 {% trans 'Personal Details' %}</span></div>
 
             <div class="mb-3">
-                <label class="form-label">First Name</label>
+                <label class="form-label">{% trans 'First Name' %}</label>
                 <input type="text" name="first_name" class="form-control"
                        value="{{ profile.user.first_name }}">
             </div>
             <div class="mb-3">
-                <label class="form-label">Last Name</label>
+                <label class="form-label">{% trans 'Last Name' %}</label>
                 <input type="text" name="last_name" class="form-control"
                        value="{{ profile.user.last_name }}">
             </div>
             <div class="mb-3">
-                <label class="form-label">Phone</label>
+                <label class="form-label">{% trans 'Phone' %}</label>
                 <input type="text" name="phone" class="form-control"
                        value="{{ profile.phone }}">
             </div>
             <div class="mb-3">
-                <label class="form-label">Email</label>
+                <label class="form-label">{% trans 'Email' %}</label>
                 <input type="email" name="email" class="form-control"
                        value="{{ profile.user.email }}">
             </div>
 
             <div class="d-flex gap-2 mt-4">
-                <button type="submit" class="btn btn-primary">Save Changes</button>
-                <a href="{% url 'staff_list' %}" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn btn-primary">{% trans 'Save Changes' %}</button>
+                <a href="{% url 'staff_list' %}" class="btn btn-secondary">{% trans 'Cancel' %}</a>
             </div>
         </form>
     </div>
