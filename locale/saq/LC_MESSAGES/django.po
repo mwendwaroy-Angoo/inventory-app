@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:59\n"
-"PO-Revision-Date: 2026-04-11 06:59\n"
+"POT-Creation-Date: 2026-04-11 07:38\n"
+"PO-Revision-Date: 2026-04-11 07:38\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Samburu\n"
 "Language: saq\n"
@@ -352,4 +352,308 @@ msgstr ""
 
 #  TODO: Translate to Samburu
 msgid "Join as Supplier"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Staff Members"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Your Team"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "member"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "members"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Edit"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Reset Password"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Remove"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "No staff members yet."
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Add your first staff member"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Logged Out"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "You have been successfully logged out."
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Login Again"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Join as a Delivery Partner"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Please correct the errors below."
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Account"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Rider Details"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Preferences"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Register as Rider"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Already have an account?"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Want to register a business?"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Register Your Business"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Create your account and get started"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Account Details"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Business Details"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Location"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Create Account & Business"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Login here"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "-- Select Sub County --"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "-- Select Ward --"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "-- Loading Sub Counties... --"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "-- Error loading --"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "-- Loading Wards... --"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Join as a Supplier"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Register as Supplier"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Join as a rider?"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Register Rider"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Username"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Choose a username"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Password"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Email"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "your@email.com"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Create a password"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Confirm your password"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Confirm Password"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Preferred Language"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Business Name"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "e.g. The Royal Farm"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Business Type"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "-- Select Business Type --"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Phone Number"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "e.g. 0712345678"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Business Email"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "business@email.com"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Address"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Physical address"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "County"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "-- Select County --"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Sub County"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Ward"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Username already taken."
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "A business with this name already exists."
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Passwords do not match."
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Supply Business Name"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "e.g. MaziwaFresh Supplies"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "First Name"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "First name"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Last Name"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Last name"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Vehicle Type"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Motorcycle 🏍️"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Bicycle 🚲"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Car 🚗"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Footsubishi (Miguu Niponye) 🚶"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Confirm password"
 msgstr ""

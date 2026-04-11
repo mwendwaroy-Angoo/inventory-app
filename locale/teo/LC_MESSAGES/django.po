@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:59\n"
-"PO-Revision-Date: 2026-04-11 06:59\n"
+"POT-Creation-Date: 2026-04-11 07:38\n"
+"PO-Revision-Date: 2026-04-11 07:38\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Ateso\n"
 "Language: teo\n"
@@ -352,4 +352,308 @@ msgstr ""
 
 #  TODO: Translate to Ateso
 msgid "Join as Supplier"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Staff Members"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Your Team"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "member"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "members"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Edit"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Reset Password"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Remove"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "No staff members yet."
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Add your first staff member"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Logged Out"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "You have been successfully logged out."
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Login Again"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Join as a Delivery Partner"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Please correct the errors below."
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Account"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Rider Details"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Preferences"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Register as Rider"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Already have an account?"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Want to register a business?"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Register Your Business"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Create your account and get started"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Account Details"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Business Details"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Location"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Create Account & Business"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Login here"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "-- Select Sub County --"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "-- Select Ward --"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "-- Loading Sub Counties... --"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "-- Error loading --"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "-- Loading Wards... --"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Join as a Supplier"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Register as Supplier"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Join as a rider?"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Register Rider"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Username"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Choose a username"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Password"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Email"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "your@email.com"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Create a password"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Confirm your password"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Confirm Password"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Preferred Language"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Business Name"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "e.g. The Royal Farm"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Business Type"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "-- Select Business Type --"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Phone Number"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "e.g. 0712345678"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Business Email"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "business@email.com"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Address"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Physical address"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "County"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "-- Select County --"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Sub County"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Ward"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Username already taken."
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "A business with this name already exists."
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Passwords do not match."
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Supply Business Name"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "e.g. MaziwaFresh Supplies"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "First Name"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "First name"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Last Name"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Last name"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Vehicle Type"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Motorcycle 🏍️"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Bicycle 🚲"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Car 🚗"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Footsubishi (Miguu Niponye) 🚶"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Confirm password"
 msgstr ""

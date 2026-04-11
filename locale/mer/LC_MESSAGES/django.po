@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:59\n"
-"PO-Revision-Date: 2026-04-11 06:59\n"
+"POT-Creation-Date: 2026-04-11 07:38\n"
+"PO-Revision-Date: 2026-04-11 07:38\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kĩmĩrũ\n"
 "Language: mer\n"
@@ -348,4 +348,308 @@ msgstr ""
 
 #  TODO: Translate to Kĩmĩrũ
 msgid "Join as Supplier"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Staff Members"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Your Team"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "member"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "members"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Edit"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Reset Password"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Remove"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "No staff members yet."
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Add your first staff member"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Logged Out"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "You have been successfully logged out."
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Login Again"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Join as a Delivery Partner"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Please correct the errors below."
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Account"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Rider Details"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Preferences"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Register as Rider"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Already have an account?"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Want to register a business?"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Register Your Business"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Create your account and get started"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Account Details"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Business Details"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Location"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Create Account & Business"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Login here"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "-- Select Sub County --"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "-- Select Ward --"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "-- Loading Sub Counties... --"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "-- Error loading --"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "-- Loading Wards... --"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Join as a Supplier"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Register as Supplier"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Join as a rider?"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Register Rider"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Username"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Choose a username"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Password"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Email"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "your@email.com"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Create a password"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Confirm your password"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Confirm Password"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Preferred Language"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Business Name"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "e.g. The Royal Farm"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Business Type"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "-- Select Business Type --"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Phone Number"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "e.g. 0712345678"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Business Email"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "business@email.com"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Address"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Physical address"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "County"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "-- Select County --"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Sub County"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Ward"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Username already taken."
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "A business with this name already exists."
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Passwords do not match."
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Supply Business Name"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "e.g. MaziwaFresh Supplies"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "First Name"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "First name"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Last Name"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Last name"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Vehicle Type"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Motorcycle 🏍️"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Bicycle 🚲"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Car 🚗"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Footsubishi (Miguu Niponye) 🚶"
+msgstr ""
+
+#  TODO: Translate to Kĩmĩrũ
+msgid "Confirm password"
 msgstr ""

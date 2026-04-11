@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:59\n"
-"PO-Revision-Date: 2026-04-11 06:59\n"
+"POT-Creation-Date: 2026-04-11 07:38\n"
+"PO-Revision-Date: 2026-04-11 07:38\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Pokot\n"
 "Language: pko\n"
@@ -352,4 +352,308 @@ msgstr ""
 
 #  TODO: Translate to Pokot
 msgid "Join as Supplier"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Staff Members"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Your Team"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "member"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "members"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Edit"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Reset Password"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Remove"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "No staff members yet."
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Add your first staff member"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Logged Out"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "You have been successfully logged out."
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Login Again"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Join as a Delivery Partner"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Please correct the errors below."
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Account"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Rider Details"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Preferences"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Register as Rider"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Already have an account?"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Want to register a business?"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Register Your Business"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Create your account and get started"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Account Details"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Business Details"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Location"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Create Account & Business"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Login here"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "-- Select Sub County --"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "-- Select Ward --"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "-- Loading Sub Counties... --"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "-- Error loading --"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "-- Loading Wards... --"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Join as a Supplier"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Register as Supplier"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Join as a rider?"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Register Rider"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Username"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Choose a username"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Password"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Email"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "your@email.com"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Create a password"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Confirm your password"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Confirm Password"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Preferred Language"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Business Name"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "e.g. The Royal Farm"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Business Type"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "-- Select Business Type --"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Phone Number"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "e.g. 0712345678"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Business Email"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "business@email.com"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Address"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Physical address"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "County"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "-- Select County --"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Sub County"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Ward"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Username already taken."
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "A business with this name already exists."
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Passwords do not match."
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Supply Business Name"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "e.g. MaziwaFresh Supplies"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "First Name"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "First name"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Last Name"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Last name"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Vehicle Type"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Motorcycle 🏍️"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Bicycle 🚲"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Car 🚗"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Footsubishi (Miguu Niponye) 🚶"
+msgstr ""
+
+#  TODO: Translate to Pokot
+msgid "Confirm password"
 msgstr ""

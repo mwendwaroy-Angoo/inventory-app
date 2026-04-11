@@ -4,11 +4,13 @@ Hybrid approach: Swahili gets full translations, other languages get starter pla
 """
 import os
 import datetime
+import re
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCALE_DIR = os.path.join(BASE_DIR, 'locale')
 
-# All translatable strings extracted from templates
+# Seed list of translatable strings. Additional strings are discovered
+# automatically from templates and translatable Python form labels/placeholders.
 MESSAGES = [
     "Dashboard",
     "Suppliers",
@@ -97,6 +99,9 @@ MESSAGES = [
     "Join as Rider",
     "Join as Supplier",
 ]
+
+TEMPLATE_TRANS_PATTERN = re.compile(r"\{\%\s*trans\s+['\"](.+?)['\"]\s*%\}")
+PYTHON_GETTEXT_PATTERN = re.compile(r"_\(\s*['\"](.+?)['\"]\s*\)")
 
 # Languages and their translations
 # sw = Kiswahili (complete translations)
@@ -189,6 +194,82 @@ TRANSLATIONS = {
         "Register Business": "Sajili Biashara",
         "Join as Rider": "Jiunge kama Mpanda Baiskeli",
         "Join as Supplier": "Jiunge kama Msambazaji",
+        "-- Error loading --": "-- Hitilafu ya kupakia --",
+        "-- Loading Sub Counties... --": "-- Inapakia Kaunti Ndogo... --",
+        "-- Loading Wards... --": "-- Inapakia Wadi... --",
+        "-- Select Business Type --": "-- Chagua Aina ya Biashara --",
+        "-- Select County --": "-- Chagua Kaunti --",
+        "-- Select Sub County --": "-- Chagua Kaunti Ndogo --",
+        "-- Select Ward --": "-- Chagua Wadi --",
+        "A business with this name already exists.": "Biashara yenye jina hili tayari ipo.",
+        "Account": "Akaunti",
+        "Account Details": "Maelezo ya Akaunti",
+        "Add your first staff member": "Ongeza mfanyakazi wako wa kwanza",
+        "Address": "Anwani",
+        "Already have an account?": "Tayari una akaunti?",
+        "Bicycle 🚲": "Baiskeli 🚲",
+        "Business Details": "Maelezo ya Biashara",
+        "Business Email": "Barua Pepe ya Biashara",
+        "Business Name": "Jina la Biashara",
+        "Business Type": "Aina ya Biashara",
+        "Car 🚗": "Gari 🚗",
+        "Choose a username": "Chagua jina la mtumiaji",
+        "Confirm Password": "Thibitisha Nenosiri",
+        "Confirm password": "Thibitisha nenosiri",
+        "Confirm your password": "Thibitisha nenosiri lako",
+        "County": "Kaunti",
+        "Create Account & Business": "Fungua Akaunti na Biashara",
+        "Create a password": "Unda nenosiri",
+        "Create your account and get started": "Fungua akaunti yako na uanze",
+        "Edit": "Hariri",
+        "Email": "Barua Pepe",
+        "First Name": "Jina la Kwanza",
+        "First name": "Jina la kwanza",
+        "Footsubishi (Miguu Niponye) 🚶": "Footsubishi (Miguu Niponye) 🚶",
+        "Join as a Delivery Partner": "Jiunge kama Mshirika wa Usafirishaji",
+        "Join as a Supplier": "Jiunge kama Msambazaji",
+        "Join as a rider?": "Jiunge kama mpanda boda?",
+        "Last Name": "Jina la Mwisho",
+        "Last name": "Jina la mwisho",
+        "Location": "Mahali",
+        "Logged Out": "Umetoka",
+        "Login Again": "Ingia Tena",
+        "Login here": "Ingia hapa",
+        "Motorcycle 🏍️": "Pikipiki 🏍️",
+        "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders": "Pikipiki, Baiskeli, Gari, au Footsubishi (Miguu Niponye) — pata pesa kwa kupeleka oda",
+        "No staff members yet.": "Bado hakuna wafanyakazi.",
+        "Password": "Nenosiri",
+        "Passwords do not match.": "Manenosiri hayalingani.",
+        "Phone Number": "Nambari ya Simu",
+        "Physical address": "Anwani ya mahali",
+        "Please correct the errors below.": "Tafadhali sahihisha makosa hapa chini.",
+        "Preferences": "Mapendeleo",
+        "Preferred Language": "Lugha Unayopendelea",
+        "Register Rider": "Sajili Mpanda Boda",
+        "Register Your Business": "Sajili Biashara Yako",
+        "Register as Rider": "Sajili kama Mpanda Boda",
+        "Register as Supplier": "Sajili kama Msambazaji",
+        "Remove": "Ondoa",
+        "Reset Password": "Weka upya Nenosiri",
+        "Rider Details": "Maelezo ya Mpanda Boda",
+        "Staff Members": "Wafanyakazi",
+        "Sub County": "Kaunti Ndogo",
+        "Supply Business Name": "Jina la Biashara ya Usambazaji",
+        "Supply goods to businesses across Kenya — bid on procurement requests and grow your network": "Sambaza bidhaa kwa biashara kote Kenya — toa zabuni kwa maombi ya ununuzi na panua mtandao wako",
+        "Username": "Jina la mtumiaji",
+        "Username already taken.": "Jina la mtumiaji tayari limetumika.",
+        "Vehicle Type": "Aina ya Chombo cha Usafiri",
+        "Want to register a business?": "Unataka kusajili biashara?",
+        "Ward": "Wadi",
+        "You have been successfully logged out.": "Umetoka kwenye akaunti yako kwa mafanikio.",
+        "Your Team": "Timu Yako",
+        "business@email.com": "business@email.com",
+        "e.g. 0712345678": "k.m. 0712345678",
+        "e.g. MaziwaFresh Supplies": "k.m. MaziwaFresh Supplies",
+        "e.g. The Royal Farm": "k.m. The Royal Farm",
+        "member": "mfanyakazi",
+        "members": "wafanyakazi",
+        "your@email.com": "your@email.com",
     },
     'ki': {  # Gĩkũyũ
         "Dashboard": "Dashibodi",
@@ -349,6 +430,82 @@ TRANSLATIONS = {
         "Register Business": "Andĩkĩthya Biashara",
         "Join as Rider": "Ĩungana ta Mũtumia wa Boda",
         "Join as Supplier": "Ĩungana ta Msambazaji",
+        "-- Error loading --": "-- Kosa wakati wa kupakia --",
+        "-- Loading Sub Counties... --": "-- Inapakia Kaunti Ndogo... --",
+        "-- Loading Wards... --": "-- Inapakia Wadi... --",
+        "-- Select Business Type --": "-- Sũa Aina ya Biashara --",
+        "-- Select County --": "-- Sũa Kaunti --",
+        "-- Select Sub County --": "-- Sũa Kaunti Ndogo --",
+        "-- Select Ward --": "-- Sũa Wadi --",
+        "A business with this name already exists.": "Biashara yenye jina indi ĩyĩ yĩkwo tayari.",
+        "Account": "Akaunti",
+        "Account Details": "Maelezo ma Akaunti",
+        "Add your first staff member": "Ongeza mundu wa wĩa wa kwanda",
+        "Address": "Anwani",
+        "Already have an account?": "Wĩ na akaunti tayari?",
+        "Bicycle 🚲": "Baiskeli 🚲",
+        "Business Details": "Maelezo ma Biashara",
+        "Business Email": "Barua pepe ya biashara",
+        "Business Name": "Jina ria Biashara",
+        "Business Type": "Aina ya Biashara",
+        "Car 🚗": "Ngari 🚗",
+        "Choose a username": "Sũa jina ria mtumiaji",
+        "Confirm Password": "Thibitisha Nenosiri",
+        "Confirm password": "Thibitisha nenosiri",
+        "Confirm your password": "Thibitisha nenosiri yaku",
+        "County": "Kaunti",
+        "Create Account & Business": "Unda Akaunti na Biashara",
+        "Create a password": "Unda nenosiri",
+        "Create your account and get started": "Unda akaunti yaku na wĩthĩwe",
+        "Edit": "Hariri",
+        "Email": "Barua pepe",
+        "First Name": "Jina ria kwanda",
+        "First name": "Jina ria kwanda",
+        "Footsubishi (Miguu Niponye) 🚶": "Footsubishi (Miguu Niponye) 🚶",
+        "Join as a Delivery Partner": "Ĩungana ta mũsyanĩ wa usafirishaji",
+        "Join as a Supplier": "Ĩungana ta msambazaji",
+        "Join as a rider?": "Ĩungana ta mũtumia wa boda?",
+        "Last Name": "Jina ria mbee",
+        "Last name": "Jina ria mbee",
+        "Location": "Vatũ",
+        "Logged Out": "Ũma",
+        "Login Again": "Ĩngĩa Tena",
+        "Login here": "Ĩngĩa vaa",
+        "Motorcycle 🏍️": "Pikipiki 🏍️",
+        "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders": "Pikipiki, Baiskeli, Ngari, kana Footsubishi (Miguu Niponye) — pata mbesa kwa kusafirisha oda",
+        "No staff members yet.": "Vai ndũ andu a wĩa vandũ.",
+        "Password": "Nenosiri",
+        "Passwords do not match.": "Nenosiri tiimene.",
+        "Phone Number": "Namba ya simu",
+        "Physical address": "Anwani ya kũvika",
+        "Please correct the errors below.": "Tafadhali syoa makosa ala me vau nthĩ.",
+        "Preferences": "Mapendeleo",
+        "Preferred Language": "Lũkha yaku yĩthokete",
+        "Register Rider": "Andĩkĩthya Mũtumia wa Boda",
+        "Register Your Business": "Andĩkĩthya Biashara Yaku",
+        "Register as Rider": "Andĩkĩthya ta Mũtumia wa Boda",
+        "Register as Supplier": "Andĩkĩthya ta Msambazaji",
+        "Remove": "Ondoa",
+        "Reset Password": "Cenjia Nenosiri",
+        "Rider Details": "Maelezo ma Mũtumia wa Boda",
+        "Staff Members": "Andu a Wĩa",
+        "Sub County": "Kaunti Ndogo",
+        "Supply Business Name": "Jina ria Biashara ya Usambazaji",
+        "Supply goods to businesses across Kenya — bid on procurement requests and grow your network": "Sambaza indo kwa biashara syothe Kenya — toa zabuni kwa maombi ma ununuzi na ukũe mtandao waku",
+        "Username": "Jina ria mtumiaji",
+        "Username already taken.": "Jina ria mtumiaji nĩ rĩtumĩtwe tayari.",
+        "Vehicle Type": "Aina ya gĩndũ kya ũsafiri",
+        "Want to register a business?": "Wenda kwandĩkĩthya biashara?",
+        "Ward": "Wadi",
+        "You have been successfully logged out.": "Ũmeuma kwa mafanikio.",
+        "Your Team": "Kikundi Kyaku",
+        "business@email.com": "business@email.com",
+        "e.g. 0712345678": "k.m. 0712345678",
+        "e.g. MaziwaFresh Supplies": "k.m. MaziwaFresh Supplies",
+        "e.g. The Royal Farm": "k.m. The Royal Farm",
+        "member": "mundu",
+        "members": "andu",
+        "your@email.com": "your@email.com",
     },
     'luy': {  # Luhya
         "Dashboard": "Dashboard",
@@ -476,6 +633,37 @@ TRANSLATIONS = {
     },
 }
 
+
+def collect_messages():
+    """Return translatable strings from the seed list plus tagged templates/forms."""
+    messages = list(MESSAGES)
+    seen = set(messages)
+
+    templates_dir = os.path.join(BASE_DIR, 'templates')
+    for root, dirnames, filenames in os.walk(templates_dir):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            if not filename.endswith('.html'):
+                continue
+            path = os.path.join(root, filename)
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            for message in TEMPLATE_TRANS_PATTERN.findall(content):
+                if message not in seen:
+                    messages.append(message)
+                    seen.add(message)
+
+    form_paths = [os.path.join(BASE_DIR, 'accounts', 'forms.py')]
+    for path in form_paths:
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        for message in PYTHON_GETTEXT_PATTERN.findall(content):
+            if message not in seen:
+                messages.append(message)
+                seen.add(message)
+
+    return messages
+
 # Language display names
 LANG_NAMES = {
     'sw': 'Kiswahili',
@@ -497,7 +685,7 @@ LANG_NAMES = {
 }
 
 
-def generate_po_file(lang_code, lang_name, translations):
+def generate_po_file(lang_code, lang_name, translations, messages):
     """Generate a .po file for a given language."""
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M%z')
 
@@ -522,7 +710,7 @@ msgstr ""
 '''
 
     entries = []
-    for msg in MESSAGES:
+    for msg in messages:
         trans = translations.get(msg, '')
         # Escape special characters
         escaped_msg = msg.replace('\\', '\\\\').replace('"', '\\"')
@@ -538,18 +726,20 @@ msgstr ""
 
 
 def main():
+    messages = collect_messages()
+
     for lang_code, lang_name in LANG_NAMES.items():
         lang_dir = os.path.join(LOCALE_DIR, lang_code, 'LC_MESSAGES')
         os.makedirs(lang_dir, exist_ok=True)
 
         translations = TRANSLATIONS.get(lang_code, {})
-        po_content = generate_po_file(lang_code, lang_name, translations)
+        po_content = generate_po_file(lang_code, lang_name, translations, messages)
 
         po_path = os.path.join(lang_dir, 'django.po')
         with open(po_path, 'w', encoding='utf-8') as f:
             f.write(po_content)
 
-        print(f'✓ Created {lang_code}/LC_MESSAGES/django.po ({len([m for m in MESSAGES if m in translations])}/{len(MESSAGES)} translated)')
+        print(f'✓ Created {lang_code}/LC_MESSAGES/django.po ({len([m for m in messages if m in translations])}/{len(messages)} translated)')
 
     print(f'\nDone! Created .po files for {len(LANG_NAMES)} languages.')
     print('Swahili (sw) has complete translations.')

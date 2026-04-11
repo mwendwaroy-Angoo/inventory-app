@@ -1,70 +1,94 @@
 from django import forms
+from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.models import User
 from django.conf import settings
-from .models import Business, UserProfile
+from django.utils.translation import gettext_lazy as _
+from .models import Business
 from core.models import BusinessType, County, SubCounty, Ward
+
+
+class LocalizedAuthenticationForm(AuthenticationForm):
+    username = forms.CharField(
+        label=_("Username"),
+        max_length=150,
+        widget=forms.TextInput(attrs={'placeholder': _('Choose a username')}),
+    )
+    password = forms.CharField(
+        label=_("Password"),
+        strip=False,
+        widget=forms.PasswordInput(attrs={'placeholder': _('Password')}),
+    )
 
 
 class BusinessSignupForm(forms.Form):
     # Account fields
     username = forms.CharField(
         max_length=150,
-        widget=forms.TextInput(attrs={'placeholder': 'Choose a username'})
+        label=_("Username"),
+        widget=forms.TextInput(attrs={'placeholder': _('Choose a username')})
     )
     email = forms.EmailField(
-        widget=forms.EmailInput(attrs={'placeholder': 'your@email.com'})
+        label=_("Email"),
+        widget=forms.EmailInput(attrs={'placeholder': _('your@email.com')})
     )
     password1 = forms.CharField(
-        widget=forms.PasswordInput(attrs={'placeholder': 'Create a password'}),
-        label='Password'
+        widget=forms.PasswordInput(attrs={'placeholder': _('Create a password')}),
+        label=_("Password")
     )
     password2 = forms.CharField(
-        widget=forms.PasswordInput(attrs={'placeholder': 'Confirm your password'}),
-        label='Confirm Password'
+        widget=forms.PasswordInput(attrs={'placeholder': _('Confirm your password')}),
+        label=_("Confirm Password")
     )
     preferred_language = forms.ChoiceField(
         choices=settings.LANGUAGES,
         initial='en',
-        label='Preferred Language',
+        label=_("Preferred Language"),
     )
 
     # Business fields
     business_name = forms.CharField(
         max_length=255,
-        widget=forms.TextInput(attrs={'placeholder': 'e.g. The Royal Farm'})
+        label=_("Business Name"),
+        widget=forms.TextInput(attrs={'placeholder': _('e.g. The Royal Farm')})
     )
     business_type = forms.ModelChoiceField(
         queryset=BusinessType.objects.all(),
-        empty_label='-- Select Business Type --'
+        label=_("Business Type"),
+        empty_label=_("-- Select Business Type --")
     )
     phone = forms.CharField(
         max_length=20,
         required=True,
-        widget=forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'})
+        label=_("Phone Number"),
+        widget=forms.TextInput(attrs={'placeholder': _('e.g. 0712345678')})
     )
     email_business = forms.EmailField(
         required=False,
-        label='Business Email',
-        widget=forms.EmailInput(attrs={'placeholder': 'business@email.com'})
+        label=_("Business Email"),
+        widget=forms.EmailInput(attrs={'placeholder': _('business@email.com')})
     )
     address = forms.CharField(
         required=False,
-        widget=forms.Textarea(attrs={'rows': 2, 'placeholder': 'Physical address'})
+        label=_("Address"),
+        widget=forms.Textarea(attrs={'rows': 2, 'placeholder': _('Physical address')})
     )
 
     # Location fields
     county = forms.ModelChoiceField(
         queryset=County.objects.all(),
-        empty_label='-- Select County --'
+        label=_("County"),
+        empty_label=_("-- Select County --")
     )
     sub_county = forms.ModelChoiceField(
         queryset=SubCounty.objects.none(),
-        empty_label='-- Select Sub County --',
+        label=_("Sub County"),
+        empty_label=_("-- Select Sub County --"),
         required=True
     )
     ward = forms.ModelChoiceField(
         queryset=Ward.objects.none(),
-        empty_label='-- Select Ward --',
+        label=_("Ward"),
+        empty_label=_("-- Select Ward --"),
         required=False
     )
 
@@ -90,13 +114,13 @@ class BusinessSignupForm(forms.Form):
     def clean_username(self):
         username = self.cleaned_data['username']
         if User.objects.filter(username=username).exists():
-            raise forms.ValidationError("Username already taken.")
+            raise forms.ValidationError(_("Username already taken."))
         return username
 
     def clean_business_name(self):
         name = self.cleaned_data['business_name']
         if Business.objects.filter(name=name).exists():
-            raise forms.ValidationError("A business with this name already exists.")
+            raise forms.ValidationError(_("A business with this name already exists."))
         return name
 
     def clean(self):
@@ -104,7 +128,7 @@ class BusinessSignupForm(forms.Form):
         p1 = cleaned_data.get('password1')
         p2 = cleaned_data.get('password2')
         if p1 and p2 and p1 != p2:
-            raise forms.ValidationError("Passwords do not match.")
+            raise forms.ValidationError(_("Passwords do not match."))
         return cleaned_data
 
 
@@ -112,59 +136,66 @@ class SupplierSignupForm(forms.Form):
     # Account fields
     username = forms.CharField(
         max_length=150,
-        widget=forms.TextInput(attrs={'placeholder': 'Choose a username'})
+        label=_("Username"),
+        widget=forms.TextInput(attrs={'placeholder': _('Choose a username')})
     )
     email = forms.EmailField(
-        widget=forms.EmailInput(attrs={'placeholder': 'your@email.com'})
+        label=_("Email"),
+        widget=forms.EmailInput(attrs={'placeholder': _('your@email.com')})
     )
     password1 = forms.CharField(
-        widget=forms.PasswordInput(attrs={'placeholder': 'Create a password'}),
-        label='Password'
+        widget=forms.PasswordInput(attrs={'placeholder': _('Create a password')}),
+        label=_("Password")
     )
     password2 = forms.CharField(
-        widget=forms.PasswordInput(attrs={'placeholder': 'Confirm your password'}),
-        label='Confirm Password'
+        widget=forms.PasswordInput(attrs={'placeholder': _('Confirm your password')}),
+        label=_("Confirm Password")
     )
     preferred_language = forms.ChoiceField(
         choices=settings.LANGUAGES,
         initial='en',
-        label='Preferred Language',
+        label=_("Preferred Language"),
     )
 
     # Business fields
     business_name = forms.CharField(
         max_length=255,
-        label='Supply Business Name',
-        widget=forms.TextInput(attrs={'placeholder': 'e.g. MaziwaFresh Supplies'})
+        label=_("Supply Business Name"),
+        widget=forms.TextInput(attrs={'placeholder': _('e.g. MaziwaFresh Supplies')})
     )
     business_type = forms.ModelChoiceField(
         queryset=BusinessType.objects.all(),
-        empty_label='-- Select Business Type --'
+        label=_("Business Type"),
+        empty_label=_("-- Select Business Type --")
     )
     phone = forms.CharField(
         max_length=20,
         required=True,
-        widget=forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'})
+        label=_("Phone Number"),
+        widget=forms.TextInput(attrs={'placeholder': _('e.g. 0712345678')})
     )
     email_business = forms.EmailField(
         required=False,
-        label='Business Email',
-        widget=forms.EmailInput(attrs={'placeholder': 'business@email.com'})
+        label=_("Business Email"),
+        widget=forms.EmailInput(attrs={'placeholder': _('business@email.com')})
     )
 
     # Location fields
     county = forms.ModelChoiceField(
         queryset=County.objects.all(),
-        empty_label='-- Select County --'
+        label=_("County"),
+        empty_label=_("-- Select County --")
     )
     sub_county = forms.ModelChoiceField(
         queryset=SubCounty.objects.none(),
-        empty_label='-- Select Sub County --',
+        label=_("Sub County"),
+        empty_label=_("-- Select Sub County --"),
         required=True
     )
     ward = forms.ModelChoiceField(
         queryset=Ward.objects.none(),
-        empty_label='-- Select Ward --',
+        label=_("Ward"),
+        empty_label=_("-- Select Ward --"),
         required=False
     )
 
@@ -190,13 +221,13 @@ class SupplierSignupForm(forms.Form):
     def clean_username(self):
         username = self.cleaned_data['username']
         if User.objects.filter(username=username).exists():
-            raise forms.ValidationError("Username already taken.")
+            raise forms.ValidationError(_("Username already taken."))
         return username
 
     def clean_business_name(self):
         name = self.cleaned_data['business_name']
         if Business.objects.filter(name=name).exists():
-            raise forms.ValidationError("A business with this name already exists.")
+            raise forms.ValidationError(_("A business with this name already exists."))
         return name
 
     def clean(self):
@@ -204,7 +235,7 @@ class SupplierSignupForm(forms.Form):
         p1 = cleaned_data.get('password1')
         p2 = cleaned_data.get('password2')
         if p1 and p2 and p1 != p2:
-            raise forms.ValidationError("Passwords do not match.")
+            raise forms.ValidationError(_("Passwords do not match."))
         return cleaned_data
 
 
@@ -391,55 +422,62 @@ class AddStaffForm(forms.Form):
 class RiderSignupForm(forms.Form):
     username = forms.CharField(
         max_length=150,
-        widget=forms.TextInput(attrs={'placeholder': 'Choose a username'})
+        label=_("Username"),
+        widget=forms.TextInput(attrs={'placeholder': _('Choose a username')})
     )
     email = forms.EmailField(
         required=False,
-        widget=forms.EmailInput(attrs={'placeholder': 'your@email.com'})
+        label=_("Email"),
+        widget=forms.EmailInput(attrs={'placeholder': _('your@email.com')})
     )
     first_name = forms.CharField(
         max_length=100,
-        widget=forms.TextInput(attrs={'placeholder': 'First name'})
+        label=_("First Name"),
+        widget=forms.TextInput(attrs={'placeholder': _('First name')})
     )
     last_name = forms.CharField(
         max_length=100,
-        widget=forms.TextInput(attrs={'placeholder': 'Last name'})
+        label=_("Last Name"),
+        widget=forms.TextInput(attrs={'placeholder': _('Last name')})
     )
     phone = forms.CharField(
         max_length=20,
-        widget=forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'})
+        label=_("Phone Number"),
+        widget=forms.TextInput(attrs={'placeholder': _('e.g. 0712345678')})
     )
     county = forms.ModelChoiceField(
         queryset=County.objects.all(),
-        empty_label='-- Select County --',
+        label=_("County"),
+        empty_label=_("-- Select County --"),
         required=False,
     )
     vehicle_type = forms.ChoiceField(
+        label=_("Vehicle Type"),
         choices=[
-            ('motorcycle', 'Motorcycle 🏍️'),
-            ('bicycle', 'Bicycle 🚲'),
-            ('car', 'Car 🚗'),
-            ('footsubishi', 'Footsubishi (Miguu Niponye) 🚶'),
+            ('motorcycle', _('Motorcycle 🏍️')),
+            ('bicycle', _('Bicycle 🚲')),
+            ('car', _('Car 🚗')),
+            ('footsubishi', _('Footsubishi (Miguu Niponye) 🚶')),
         ],
     )
     password1 = forms.CharField(
-        widget=forms.PasswordInput(attrs={'placeholder': 'Create a password'}),
-        label='Password'
+        widget=forms.PasswordInput(attrs={'placeholder': _('Create a password')}),
+        label=_("Password")
     )
     password2 = forms.CharField(
-        widget=forms.PasswordInput(attrs={'placeholder': 'Confirm password'}),
-        label='Confirm Password'
+        widget=forms.PasswordInput(attrs={'placeholder': _('Confirm password')}),
+        label=_("Confirm Password")
     )
     preferred_language = forms.ChoiceField(
         choices=settings.LANGUAGES,
         initial='en',
-        label='Preferred Language',
+        label=_("Preferred Language"),
     )
 
     def clean_username(self):
         username = self.cleaned_data['username']
         if User.objects.filter(username=username).exists():
-            raise forms.ValidationError("Username already taken.")
+            raise forms.ValidationError(_("Username already taken."))
         return username
 
     def clean(self):
@@ -447,5 +485,5 @@ class RiderSignupForm(forms.Form):
         p1 = cleaned_data.get('password1')
         p2 = cleaned_data.get('password2')
         if p1 and p2 and p1 != p2:
-            raise forms.ValidationError("Passwords do not match.")
+            raise forms.ValidationError(_("Passwords do not match."))
         return cleaned_data

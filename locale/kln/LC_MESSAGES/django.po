@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:59\n"
-"PO-Revision-Date: 2026-04-11 06:59\n"
+"POT-Creation-Date: 2026-04-11 07:38\n"
+"PO-Revision-Date: 2026-04-11 07:38\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kalenjin\n"
 "Language: kln\n"
@@ -345,4 +345,308 @@ msgstr ""
 
 #  TODO: Translate to Kalenjin
 msgid "Join as Supplier"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Staff Members"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Your Team"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "member"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "members"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Edit"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Reset Password"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Remove"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "No staff members yet."
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Add your first staff member"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Logged Out"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "You have been successfully logged out."
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Login Again"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Join as a Delivery Partner"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Please correct the errors below."
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Account"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Rider Details"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Preferences"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Register as Rider"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Already have an account?"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Want to register a business?"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Register Your Business"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Create your account and get started"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Account Details"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Business Details"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Location"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Create Account & Business"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Login here"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "-- Select Sub County --"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "-- Select Ward --"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "-- Loading Sub Counties... --"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "-- Error loading --"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "-- Loading Wards... --"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Join as a Supplier"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Register as Supplier"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Join as a rider?"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Register Rider"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Username"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Choose a username"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Password"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Email"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "your@email.com"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Create a password"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Confirm your password"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Confirm Password"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Preferred Language"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Business Name"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "e.g. The Royal Farm"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Business Type"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "-- Select Business Type --"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Phone Number"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "e.g. 0712345678"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Business Email"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "business@email.com"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Address"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Physical address"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "County"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "-- Select County --"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Sub County"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Ward"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Username already taken."
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "A business with this name already exists."
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Passwords do not match."
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Supply Business Name"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "e.g. MaziwaFresh Supplies"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "First Name"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "First name"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Last Name"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Last name"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Vehicle Type"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Motorcycle 🏍️"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Bicycle 🚲"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Car 🚗"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Footsubishi (Miguu Niponye) 🚶"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Confirm password"
 msgstr ""

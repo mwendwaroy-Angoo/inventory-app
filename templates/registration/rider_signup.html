@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
+{% load i18n %}
 
-{% block title %}Join as Rider — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Join as Rider' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -49,19 +50,19 @@
 {% block content %}
 <div class="signup-card">
     <div class="signup-header">
-        <h2>🚀 Join as a Delivery Partner</h2>
-        <p>Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders</p>
+        <h2>🚀 {% trans 'Join as a Delivery Partner' %}</h2>
+        <p>{% trans 'Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders' %}</p>
     </div>
 
     <div class="signup-body">
         {% if form.errors %}
-        <div class="alert alert-danger">Please correct the errors below.</div>
+        <div class="alert alert-danger">{% trans 'Please correct the errors below.' %}</div>
         {% endif %}
 
         <form method="post" id="riderSignupForm">
             {% csrf_token %}
 
-            <div class="section-divider"><span>Account</span></div>
+            <div class="section-divider"><span>{% trans 'Account' %}</span></div>
             <div class="row g-3">
                 <div class="col-md-6">{% bootstrap_field form.first_name %}</div>
                 <div class="col-md-6">{% bootstrap_field form.last_name %}</div>
@@ -73,22 +74,22 @@
                 <div class="col-md-6">{% bootstrap_field form.password2 %}</div>
             </div>
 
-            <div class="section-divider"><span>Rider Details</span></div>
+            <div class="section-divider"><span>{% trans 'Rider Details' %}</span></div>
             {% bootstrap_field form.phone %}
             {% bootstrap_field form.county %}
             {% bootstrap_field form.vehicle_type %}
 
-            <div class="section-divider"><span>🌍 Preferences</span></div>
+            <div class="section-divider"><span>🌍 {% trans 'Preferences' %}</span></div>
             {% bootstrap_field form.preferred_language %}
 
             <button type="submit" class="btn btn-success w-100 mt-3" style="font-weight:600;">
-                🏍️ Register as Rider
+                🏍️ {% trans 'Register as Rider' %}
             </button>
         </form>
 
         <p class="text-center mt-3" style="color:var(--muted); font-size:0.85rem;">
-            Already have an account? <a href="{% url 'login' %}" style="color:var(--gold);">Login</a>
-            · Want to register a business? <a href="{% url 'signup' %}" style="color:var(--gold);">Register Business</a>
+            {% trans 'Already have an account?' %} <a href="{% url 'login' %}" style="color:var(--gold);">{% trans 'Login' %}</a>
+            · {% trans 'Want to register a business?' %} <a href="{% url 'signup' %}" style="color:var(--gold);">{% trans 'Register Business' %}</a>
         </p>
     </div>
 </div>

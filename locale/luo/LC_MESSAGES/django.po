@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:59\n"
-"PO-Revision-Date: 2026-04-11 06:59\n"
+"POT-Creation-Date: 2026-04-11 07:38\n"
+"PO-Revision-Date: 2026-04-11 07:38\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Dholuo\n"
 "Language: luo\n"
@@ -337,4 +337,308 @@ msgstr ""
 
 #  TODO: Translate to Dholuo
 msgid "Join as Supplier"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Staff Members"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Your Team"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "member"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "members"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Edit"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Reset Password"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Remove"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "No staff members yet."
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Add your first staff member"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Logged Out"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "You have been successfully logged out."
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Login Again"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Join as a Delivery Partner"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Please correct the errors below."
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Account"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Rider Details"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Preferences"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Register as Rider"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Already have an account?"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Want to register a business?"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Register Your Business"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Create your account and get started"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Account Details"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Business Details"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Location"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Create Account & Business"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Login here"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "-- Select Sub County --"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "-- Select Ward --"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "-- Loading Sub Counties... --"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "-- Error loading --"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "-- Loading Wards... --"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Join as a Supplier"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Register as Supplier"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Join as a rider?"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Register Rider"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Username"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Choose a username"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Password"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Email"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "your@email.com"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Create a password"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Confirm your password"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Confirm Password"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Preferred Language"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Business Name"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "e.g. The Royal Farm"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Business Type"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "-- Select Business Type --"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Phone Number"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "e.g. 0712345678"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Business Email"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "business@email.com"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Address"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Physical address"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "County"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "-- Select County --"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Sub County"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Ward"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Username already taken."
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "A business with this name already exists."
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Passwords do not match."
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Supply Business Name"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "e.g. MaziwaFresh Supplies"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "First Name"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "First name"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Last Name"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Last name"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Vehicle Type"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Motorcycle 🏍️"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Bicycle 🚲"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Car 🚗"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Footsubishi (Miguu Niponye) 🚶"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Confirm password"
 msgstr ""

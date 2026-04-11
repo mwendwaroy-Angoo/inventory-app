@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
+{% load i18n %}
 
-{% block title %}Register Your Business — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Register Your Business' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -65,15 +66,15 @@
 {% block content %}
 <div class="signup-card">
     <div class="signup-header">
-        <h2>📦 Register Your Business</h2>
-        <p>Create your account and get started</p>
+        <h2>📦 {% trans 'Register Your Business' %}</h2>
+        <p>{% trans 'Create your account and get started' %}</p>
     </div>
 
     <div class="signup-body">
 
         {% if form.errors %}
         <div class="alert alert-danger">
-            Please correct the errors below.
+            {% trans 'Please correct the errors below.' %}
         </div>
         {% endif %}
 
@@ -81,14 +82,14 @@
             {% csrf_token %}
 
             <!-- Account Details -->
-            <div class="section-divider"><span>👤 Account Details</span></div>
+            <div class="section-divider"><span>👤 {% trans 'Account Details' %}</span></div>
             {% bootstrap_field form.username %}
             {% bootstrap_field form.email %}
             {% bootstrap_field form.password1 %}
             {% bootstrap_field form.password2 %}
 
             <!-- Business Details -->
-            <div class="section-divider"><span>🏢 Business Details</span></div>
+            <div class="section-divider"><span>🏢 {% trans 'Business Details' %}</span></div>
             {% bootstrap_field form.business_name %}
             {% bootstrap_field form.business_type %}
             {% bootstrap_field form.phone %}
@@ -96,18 +97,18 @@
             {% bootstrap_field form.address %}
 
             <!-- Location -->
-            <div class="section-divider"><span>📍 Location</span></div>
+            <div class="section-divider"><span>📍 {% trans 'Location' %}</span></div>
             {% bootstrap_field form.county %}
             {% bootstrap_field form.sub_county %}
             {% bootstrap_field form.ward %}
 
             <!-- Preferences -->
-            <div class="section-divider"><span>🌍 Preferences</span></div>
+            <div class="section-divider"><span>🌍 {% trans 'Preferences' %}</span></div>
             {% bootstrap_field form.preferred_language %}
 
             <div class="d-grid mt-4">
                 <button type="submit" class="btn btn-primary btn-lg py-2">
-                    Create Account & Business
+                    {% trans 'Create Account & Business' %}
                 </button>
             </div>
         </form>
@@ -115,8 +116,8 @@
         <hr class="gold-divider mt-4">
 
         <div class="text-center" style="font-size: 0.85rem; color: var(--muted);">
-            Already have an account?
-            <a href="{% url 'login' %}" style="color: var(--gold);">Login here</a>
+            {% trans 'Already have an account?' %}
+            <a href="{% url 'login' %}" style="color: var(--gold);">{% trans 'Login here' %}</a>
         </div>
 
     </div>
@@ -145,14 +146,14 @@
     }
 
     // Initial state
-    resetSelect(subCountySelect, '-- Select Sub County --');
-    resetSelect(wardSelect, '-- Select Ward --');
+    resetSelect(subCountySelect, "{% trans '-- Select Sub County --' %}");
+    resetSelect(wardSelect, "{% trans '-- Select Ward --' %}");
 
     // County → Sub County
     countySelect.addEventListener('change', function () {
         const countyId = this.value;
-        resetSelect(subCountySelect, '-- Loading Sub Counties... --');
-        resetSelect(wardSelect, '-- Select Ward --');
+        resetSelect(subCountySelect, "{% trans '-- Loading Sub Counties... --' %}");
+        resetSelect(wardSelect, "{% trans '-- Select Ward --' %}");
 
         if (countyId) {
             fetch(`/business/ajax/subcounties/?county_id=${countyId}`)
@@ -161,17 +162,17 @@
                     return response.json();
                 })
                 .then(data => {
-                    resetSelect(subCountySelect, '-- Select Sub County --');
+                    resetSelect(subCountySelect, "{% trans '-- Select Sub County --' %}");
                     populateSelect(subCountySelect, data, 'id', 'name');
                 })
-                .catch(() => resetSelect(subCountySelect, '-- Error loading --'));
+                .catch(() => resetSelect(subCountySelect, "{% trans '-- Error loading --' %}"));
         }
     });
 
     // Sub County → Ward
     subCountySelect.addEventListener('change', function () {
         const subCountyId = this.value;
-        resetSelect(wardSelect, '-- Loading Wards... --');
+        resetSelect(wardSelect, "{% trans '-- Loading Wards... --' %}");
 
         if (subCountyId) {
             fetch(`/business/ajax/wards/?sub_county_id=${subCountyId}`)
@@ -180,10 +181,10 @@
                     return response.json();
                 })
                 .then(data => {
-                    resetSelect(wardSelect, '-- Select Ward --');
+                    resetSelect(wardSelect, "{% trans '-- Select Ward --' %}");
                     populateSelect(wardSelect, data, 'id', 'name');
                 })
-                .catch(() => resetSelect(wardSelect, '-- Error loading --'));
+                .catch(() => resetSelect(wardSelect, "{% trans '-- Error loading --' %}"));
         }
     });
 </script>

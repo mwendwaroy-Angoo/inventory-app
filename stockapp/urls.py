@@ -1,5 +1,7 @@
 from django.contrib import admin
+from django.contrib.auth import views as auth_views
 from django.urls import path, include
+from accounts.forms import LocalizedAuthenticationForm
 from core.views import (
     home, stock_list, add_transaction, item_detail,
     transaction_history, export_stock_excel, export_transactions_excel,
@@ -40,6 +42,7 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('accounts/login/', auth_views.LoginView.as_view(authentication_form=LocalizedAuthenticationForm), name='login'),
     path('accounts/', include('django.contrib.auth.urls')),
     path('business/', include('accounts.urls')),
     path('', home, name='home'),

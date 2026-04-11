@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% load i18n %}
 
-{% block title %}Staff — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Staff' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -52,23 +53,25 @@
 
 <!-- Breadcrumb -->
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <span>Staff</span>
+    <span>{% trans 'Staff' %}</span>
 </nav>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2 class="page-title">👥 Staff Members</h2>
+    <h2 class="page-title">👥 {% trans 'Staff Members' %}</h2>
     <div class="d-flex gap-2">
-        <a href="{% url 'add_staff' %}" class="btn btn-primary btn-sm">➕ Add Staff</a>
-        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+        <a href="{% url 'add_staff' %}" class="btn btn-primary btn-sm">➕ {% trans 'Add Staff' %}</a>
+        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← {% trans 'Dashboard' %}</a>
     </div>
 </div>
 
 <div class="staff-card">
+    {% with staff_count=staff|length %}
     <div class="staff-card-header">
-        Your Team — {{ staff|length }} member{{ staff|length|pluralize }}
+        {% trans 'Your Team' %} — {{ staff_count }} {% if staff_count == 1 %}{% trans 'member' %}{% else %}{% trans 'members' %}{% endif %}
     </div>
+    {% endwith %}
     {% for profile in staff %}
 <div class="staff-row">
     <div class="d-flex align-items-center">
@@ -88,19 +91,19 @@
     </div>
     <div class="d-flex gap-2 align-items-center">
         <span style="font-size:0.75rem; color:var(--muted);
-                     text-transform:uppercase; letter-spacing:0.05em;">Staff</span>
+                            text-transform:uppercase; letter-spacing:0.05em;">{% trans 'Staff' %}</span>
         <a href="{% url 'edit_staff' profile.user.id %}"
-           class="btn btn-sm btn-outline-primary">Edit</a>
+              class="btn btn-sm btn-outline-primary">{% trans 'Edit' %}</a>
         <a href="{% url 'reset_staff_password' profile.user.id %}"
-           class="btn btn-sm btn-secondary">🔑 Reset Password</a>
+              class="btn btn-sm btn-secondary">🔑 {% trans 'Reset Password' %}</a>
         <a href="{% url 'delete_staff' profile.user.id %}"
-           class="btn btn-sm btn-outline-danger">Remove</a>
+              class="btn btn-sm btn-outline-danger">{% trans 'Remove' %}</a>
     </div>
 </div>
 {% empty %}
 <div style="padding:2rem; text-align:center; color:var(--muted);">
-    No staff members yet.
-    <a href="{% url 'add_staff' %}" style="color:var(--gold)">Add your first staff member →</a>
+     {% trans 'No staff members yet.' %}
+     <a href="{% url 'add_staff' %}" style="color:var(--gold)">{% trans 'Add your first staff member' %} →</a>
 </div>
 {% endfor %}
 </div>

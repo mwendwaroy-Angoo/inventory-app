@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:59\n"
-"PO-Revision-Date: 2026-04-11 06:59\n"
+"POT-Creation-Date: 2026-04-11 07:38\n"
+"PO-Revision-Date: 2026-04-11 07:38\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Ekegusii\n"
 "Language: guz\n"
@@ -348,4 +348,308 @@ msgstr ""
 
 #  TODO: Translate to Ekegusii
 msgid "Join as Supplier"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Staff Members"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Your Team"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "member"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "members"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Edit"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Reset Password"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Remove"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "No staff members yet."
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Add your first staff member"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Logged Out"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "You have been successfully logged out."
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Login Again"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Join as a Delivery Partner"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Please correct the errors below."
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Account"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Rider Details"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Preferences"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Register as Rider"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Already have an account?"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Want to register a business?"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Register Your Business"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Create your account and get started"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Account Details"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Business Details"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Location"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Create Account & Business"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Login here"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "-- Select Sub County --"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "-- Select Ward --"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "-- Loading Sub Counties... --"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "-- Error loading --"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "-- Loading Wards... --"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Join as a Supplier"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Register as Supplier"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Join as a rider?"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Register Rider"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Username"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Choose a username"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Password"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Email"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "your@email.com"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Create a password"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Confirm your password"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Confirm Password"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Preferred Language"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Business Name"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "e.g. The Royal Farm"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Business Type"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "-- Select Business Type --"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Phone Number"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "e.g. 0712345678"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Business Email"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "business@email.com"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Address"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Physical address"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "County"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "-- Select County --"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Sub County"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Ward"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Username already taken."
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "A business with this name already exists."
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Passwords do not match."
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Supply Business Name"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "e.g. MaziwaFresh Supplies"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "First Name"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "First name"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Last Name"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Last name"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Vehicle Type"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Motorcycle 🏍️"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Bicycle 🚲"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Car 🚗"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Footsubishi (Miguu Niponye) 🚶"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Confirm password"
 msgstr ""
