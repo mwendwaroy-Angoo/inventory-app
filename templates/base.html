@@ -353,17 +353,6 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: var(--onyx); }
         ::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 3px; }
-
-        /* ── NAVBAR DROPDOWN FIX ── */
-        .navbar .dropdown-menu {
-            z-index: 1055;
-        }
-        .navbar, .navbar > .container, .navbar .navbar-collapse {
-            overflow: visible !important;
-        }
-        @media (max-width: 991.98px) {
-            .owner-desktop-dropdown { display: none !important; }
-        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -481,9 +470,8 @@
                         <a class="nav-link" href="{% url 'transaction_history' %}">History</a>
                     </li>
 
-                    <!-- ── DESKTOP: Supply Chain dropdown ── -->
-                    <li class="nav-item dropdown owner-desktop-dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                             📦 Supply Chain
                         </a>
                         <ul class="dropdown-menu">
@@ -500,22 +488,8 @@
                         </ul>
                     </li>
 
-                    <!-- ── MOBILE: Supply Chain flat links ── -->
-                    <li class="nav-item d-lg-none">
-                        <hr class="my-1" style="border-color:#333;">
-                        <span class="nav-link disabled" style="color:var(--gold) !important; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.1em; padding-bottom:0;">📦 Supply Chain</span>
-                    </li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'supplier_list' %}">👥 My Suppliers</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'supplier_applications' %}">📨 Applications</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'procurement_list_owner' %}">📋 My Procurement</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'create_procurement' %}">➕ New Procurement</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'procurement_browse' %}">🔍 Browse Requests</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'my_bids' %}">📤 My Bids</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'browse_businesses' %}">🏢 Browse Businesses</a></li>
-
-                    <!-- ── DESKTOP: Manage dropdown ── -->
-                    <li class="nav-item dropdown owner-desktop-dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                             Manage
                         </a>
                         <ul class="dropdown-menu">
@@ -536,23 +510,6 @@
                             <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ Business Settings</a></li>
                         </ul>
                     </li>
-
-                    <!-- ── MOBILE: Manage flat links ── -->
-                    <li class="nav-item d-lg-none">
-                        <hr class="my-1" style="border-color:#333;">
-                        <span class="nav-link disabled" style="color:var(--gold) !important; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.1em; padding-bottom:0;">⚙️ Manage</span>
-                    </li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'manage_stores' %}">🏪 Stores</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'manage_items' %}">📦 Items</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'sales_dashboard' %}">📊 Sales & P&L</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'analytics' %}">📈 Analytics</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'staff_list' %}">👥 Staff</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'order_list' %}">📦 Orders</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'fulfillment_list' %}">📋 Fulfillment</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'my_feedback' %}">⭐ Feedback</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'pending_prompts' %}">💰 Payment Prompts</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'payment_settings' %}">💳 Payment Settings</a></li>
-                    <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'edit_business' %}">⚙️ Business Settings</a></li>
                 </ul>
                 {% endif %}
 
