@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 07:38\n"
-"PO-Revision-Date: 2026-04-11 07:38\n"
+"POT-Creation-Date: 2026-04-11 07:44\n"
+"PO-Revision-Date: 2026-04-11 07:44\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Gĩkũyũ\n"
 "Language: ki\n"
@@ -61,21 +61,17 @@ msgstr "Mũnyororo wa Ũheani"
 msgid "My Suppliers"
 msgstr "Aheani Akwa"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Supplier Applications"
-msgstr ""
+msgstr "Maũhĩro ma Aheani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "My Procurement"
-msgstr ""
+msgstr "Ũgũrani Wakwa"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "New Procurement"
-msgstr ""
+msgstr "Ũgũrani Mweru"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Browse Businesses"
-msgstr ""
+msgstr "Rora Maciarwa"
 
 msgid "Manage"
 msgstr "Taara"
@@ -86,9 +82,8 @@ msgstr "Nduka"
 msgid "Items"
 msgstr "Indo"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Sales & P&L"
-msgstr ""
+msgstr "Mauzo na Faida/Hasara"
 
 msgid "Analytics"
 msgstr "Takwimu"
@@ -96,9 +91,8 @@ msgstr "Takwimu"
 msgid "Staff"
 msgstr "Andũ a Wĩra"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Add Staff"
-msgstr ""
+msgstr "Ongera Mũndũ wa Wĩra"
 
 msgid "Orders"
 msgstr "Maodha"
@@ -106,21 +100,17 @@ msgstr "Maodha"
 msgid "Feedback"
 msgstr "Ũcokio"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Payment Prompts"
-msgstr ""
+msgstr "Mahenyo ma Marĩba"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Payment Settings"
-msgstr ""
+msgstr "Mĩtugo ya Marĩba"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Business Settings"
-msgstr ""
+msgstr "Mĩtugo ya Biashara"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "View Tutorial"
-msgstr ""
+msgstr "Rora Mũrutani"
 
 msgid "Change Password"
 msgstr "Cenjia Nenosiri"
@@ -143,24 +133,20 @@ msgstr "Hĩthia Rũthiomi"
 msgid "Sign in to your account"
 msgstr "Toonya akaunti yaku"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Invalid username or password."
-msgstr ""
+msgstr "Rĩĩtwa rĩa mũtumiaji kana nenosiri ti rirega."
 
 msgid "Login"
 msgstr "Toonya"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Forgot password?"
-msgstr ""
+msgstr "Wĩrũgĩrwo ni nenosiri?"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Staff members:"
-msgstr ""
+msgstr "Andũ a Wĩra:"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Ask your business owner to reset your password from the Staff page."
-msgstr ""
+msgstr "Hoya mwene biashara yaku akĩgarũrĩrie nenosiri kuuma karatasi ya Andũ a Wĩra."
 
 msgid "Don't have an account?"
 msgstr "Ndũrĩ na akaunti?"
@@ -168,466 +154,350 @@ msgstr "Ndũrĩ na akaunti?"
 msgid "Register your business"
 msgstr "Andĩkĩthia biashara yaku"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Overview"
-msgstr ""
+msgstr "Mũhtasari"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Inventory"
-msgstr ""
+msgstr "Hisa"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Sales"
-msgstr ""
+msgstr "Mauzo"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "All Orders"
-msgstr ""
+msgstr "Maodha Mothe"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Customers"
-msgstr ""
+msgstr "Ateja"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Transaction History"
-msgstr ""
+msgstr "Ũhoro wa Mĩciaro"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Manage Items"
-msgstr ""
+msgstr "Taara Indo"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Deliveries"
-msgstr ""
+msgstr "Ũheanio"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Active Deliveries"
-msgstr ""
+msgstr "Ũheanio Ĩrĩ Mbere"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Delivery History"
-msgstr ""
+msgstr "Ũhoro wa Ũheanio"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Earnings"
-msgstr ""
+msgstr "Mapato"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "My Earnings"
-msgstr ""
+msgstr "Mapato Makwa"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Toggle Availability"
-msgstr ""
+msgstr "Garũra Ũkorwo"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Profile"
-msgstr ""
+msgstr "Wasifu"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Procurement"
-msgstr ""
+msgstr "Ũgũrani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Clients"
-msgstr ""
+msgstr "Ateja"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "My Clients"
-msgstr ""
+msgstr "Ateja Akwa"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Catalog"
-msgstr ""
+msgstr "Katalogu"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "My Products"
-msgstr ""
+msgstr "Indo Cakwa"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Applications"
-msgstr ""
+msgstr "Maũhĩro"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Management"
-msgstr ""
+msgstr "Ũtongoria"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Supplier Portal"
-msgstr ""
+msgstr "Njĩra ya Mũheani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Rider Portal"
-msgstr ""
+msgstr "Njĩra ya Mũtwarĩ wa Boda"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Owner Portal"
-msgstr ""
+msgstr "Njĩra ya Mwene"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "My Supply Business"
-msgstr ""
+msgstr "Biashara Yakwa ya Ũheani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "My Business"
-msgstr ""
+msgstr "Biashara Yakwa"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Settings"
-msgstr ""
+msgstr "Mĩtugo"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Owner"
-msgstr ""
+msgstr "Mwene"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Rider"
-msgstr ""
+msgstr "Mũtwarĩ wa Boda"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Supplier"
-msgstr ""
+msgstr "Mũheani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "About"
-msgstr ""
+msgstr "Ũhoro"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Services"
-msgstr ""
+msgstr "Wĩra"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "How It Works"
-msgstr ""
+msgstr "Ũrĩa Ĩgũkorwo"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Testimonials"
-msgstr ""
+msgstr "Ũira"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "FAQ"
-msgstr ""
+msgstr "Mawĩria ma Mahinda Mothe"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Join Us"
-msgstr ""
+msgstr "Injira hamwe na ithui"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Contact"
-msgstr ""
+msgstr "Tũmĩrĩrana"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Register Business"
-msgstr ""
+msgstr "Andĩkĩsa Biashara"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Join as Rider"
-msgstr ""
+msgstr "Injira ta Mũtwarĩ wa Boda"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Join as Supplier"
-msgstr ""
+msgstr "Injira ta Mũheani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Staff Members"
-msgstr ""
+msgstr "Andũ a Wĩra"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Your Team"
-msgstr ""
+msgstr "Kĩama Gĩaku"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "member"
-msgstr ""
+msgstr "mũndũ"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "members"
-msgstr ""
+msgstr "andũ"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Edit"
-msgstr ""
+msgstr "Cenjia"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Reset Password"
-msgstr ""
+msgstr "Garũra Nenosiri"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Remove"
-msgstr ""
+msgstr "Nina"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "No staff members yet."
-msgstr ""
+msgstr "Gũtirĩ andũ a wĩra hana."
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Add your first staff member"
-msgstr ""
+msgstr "Ongera mũndũ wa mbere wa wĩra"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Logged Out"
-msgstr ""
+msgstr "Ũma"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "You have been successfully logged out."
-msgstr ""
+msgstr "Ũmĩte o wega."
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Login Again"
-msgstr ""
+msgstr "Toonya Tena"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Join as a Delivery Partner"
-msgstr ""
+msgstr "Injira ta Mũhũthĩrĩri wa Ũheanio"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
-msgstr ""
+msgstr "Pikipiki, Baiskeli, Ngari, kana Footsubishi (Miguu Niponye) — endia mbeca na gũtwarithia maodha"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Please correct the errors below."
-msgstr ""
+msgstr "Tafadhali corregia mahĩtia aria marĩ thĩ."
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Account"
-msgstr ""
+msgstr "Akaunti"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Rider Details"
-msgstr ""
+msgstr "Ũhoro wa Mũtwarĩ wa Boda"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Preferences"
-msgstr ""
+msgstr "Ũthabiti"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Register as Rider"
-msgstr ""
+msgstr "Andĩkĩsa ta Mũtwarĩ wa Boda"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Already have an account?"
-msgstr ""
+msgstr "Ũrĩ na akaunti kare?"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Want to register a business?"
-msgstr ""
+msgstr "Ũkwenda kwandĩkĩsa biashara?"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Register Your Business"
-msgstr ""
+msgstr "Andĩkĩsa Biashara Yaku"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Create your account and get started"
-msgstr ""
+msgstr "Andaa akaunti yaku na ũambĩrĩrie"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Account Details"
-msgstr ""
+msgstr "Ũhoro wa Akaunti"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Business Details"
-msgstr ""
+msgstr "Ũhoro wa Biashara"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Location"
-msgstr ""
+msgstr "Kũrĩa"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Create Account & Business"
-msgstr ""
+msgstr "Andaa Akaunti na Biashara"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Login here"
-msgstr ""
+msgstr "Toonya haha"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "-- Select Sub County --"
-msgstr ""
+msgstr "-- Thagũra Kaunti Nini --"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "-- Select Ward --"
-msgstr ""
+msgstr "-- Thagũra Wadi --"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "-- Loading Sub Counties... --"
-msgstr ""
+msgstr "-- Gũcookerera Kaunti Nini... --"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "-- Error loading --"
-msgstr ""
+msgstr "-- Kosa rĩa gũcookera --"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "-- Loading Wards... --"
-msgstr ""
+msgstr "-- Gũcookerera Wadi... --"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Join as a Supplier"
-msgstr ""
+msgstr "Injira ta Mũheani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
-msgstr ""
+msgstr "Heana indo kũrĩ maciarwa thĩinĩ wa Kenya yothe — heana zabuni kũrĩ maũhĩro ma ũgũrani na ũnenehe mũnyororo waku"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Register as Supplier"
-msgstr ""
+msgstr "Andĩkĩsa ta Mũheani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Join as a rider?"
-msgstr ""
+msgstr "Injira ta mũtwarĩ wa boda?"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Register Rider"
-msgstr ""
+msgstr "Andĩkĩsa Mũtwarĩ wa Boda"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Username"
-msgstr ""
+msgstr "Rĩĩtwa rĩa mũtumiaji"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Choose a username"
-msgstr ""
+msgstr "Thagũra rĩĩtwa rĩa mũtumiaji"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Password"
-msgstr ""
+msgstr "Nenosiri"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Email"
-msgstr ""
+msgstr "Barua pepe"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "your@email.com"
-msgstr ""
+msgstr "your@email.com"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Create a password"
-msgstr ""
+msgstr "Andaa nenosiri"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Confirm your password"
-msgstr ""
+msgstr "Thibitisha nenosiri yaku"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Confirm Password"
-msgstr ""
+msgstr "Thibitisha Nenosiri"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Preferred Language"
-msgstr ""
+msgstr "Rũthiomi Rũrĩa Wĩendete"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Business Name"
-msgstr ""
+msgstr "Rĩĩtwa rĩa Biashara"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "e.g. The Royal Farm"
-msgstr ""
+msgstr "ta The Royal Farm"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Business Type"
-msgstr ""
+msgstr "Mũthemba wa Biashara"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "-- Select Business Type --"
-msgstr ""
+msgstr "-- Thagũra Mũthemba wa Biashara --"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Phone Number"
-msgstr ""
+msgstr "Namba ya Simu"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "e.g. 0712345678"
-msgstr ""
+msgstr "ta 0712345678"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Business Email"
-msgstr ""
+msgstr "Barua pepe ya Biashara"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "business@email.com"
-msgstr ""
+msgstr "business@email.com"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Address"
-msgstr ""
+msgstr "Anwani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Physical address"
-msgstr ""
+msgstr "Anwani ya kũrĩa"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "County"
-msgstr ""
+msgstr "Kaunti"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "-- Select County --"
-msgstr ""
+msgstr "-- Thagũra Kaunti --"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Sub County"
-msgstr ""
+msgstr "Kaunti Nini"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Ward"
-msgstr ""
+msgstr "Wadi"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Username already taken."
-msgstr ""
+msgstr "Rĩĩtwa rĩa mũtumiaji rĩrĩ na mũndũ ũngĩ."
 
-#  TODO: Translate to Gĩkũyũ
 msgid "A business with this name already exists."
-msgstr ""
+msgstr "Biashara ĩrĩ na rĩĩtwa rĩno ĩrĩ kuo."
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Passwords do not match."
-msgstr ""
+msgstr "Nenosiri itiganĩte."
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Supply Business Name"
-msgstr ""
+msgstr "Rĩĩtwa rĩa Biashara ya Ũheani"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "e.g. MaziwaFresh Supplies"
-msgstr ""
+msgstr "ta MaziwaFresh Supplies"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "First Name"
-msgstr ""
+msgstr "Rĩĩtwa rĩa Mbere"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "First name"
-msgstr ""
+msgstr "Rĩĩtwa rĩa mbere"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Last Name"
-msgstr ""
+msgstr "Rĩĩtwa rĩa Mũthia"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Last name"
-msgstr ""
+msgstr "Rĩĩtwa rĩa mũthia"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Vehicle Type"
-msgstr ""
+msgstr "Mũthemba wa Gĩthuthũ"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Motorcycle 🏍️"
-msgstr ""
+msgstr "Pikipiki 🏍️"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Bicycle 🚲"
-msgstr ""
+msgstr "Baiskeli 🚲"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Car 🚗"
-msgstr ""
+msgstr "Ngari 🚗"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Footsubishi (Miguu Niponye) 🚶"
-msgstr ""
+msgstr "Footsubishi (Miguu Niponye) 🚶"
 
-#  TODO: Translate to Gĩkũyũ
 msgid "Confirm password"
-msgstr ""
+msgstr "Thibitisha nenosiri"
