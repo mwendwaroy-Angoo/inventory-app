@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:34\n"
-"PO-Revision-Date: 2026-04-11 06:34\n"
+"POT-Creation-Date: 2026-04-11 06:59\n"
+"PO-Revision-Date: 2026-04-11 06:59\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Ateso\n"
 "Language: teo\n"
@@ -296,4 +296,60 @@ msgstr ""
 
 #  TODO: Translate to Ateso
 msgid "My Business"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Settings"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Owner"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Rider"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Supplier"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "About"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Services"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "How It Works"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Testimonials"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "FAQ"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Join Us"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Contact"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Register Business"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Join as Rider"
+msgstr ""
+
+#  TODO: Translate to Ateso
+msgid "Join as Supplier"
 msgstr ""

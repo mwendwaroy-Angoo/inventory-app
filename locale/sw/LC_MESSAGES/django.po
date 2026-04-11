@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:34\n"
-"PO-Revision-Date: 2026-04-11 06:34\n"
+"POT-Creation-Date: 2026-04-11 06:59\n"
+"PO-Revision-Date: 2026-04-11 06:59\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kiswahili\n"
 "Language: sw\n"
@@ -231,3 +231,45 @@ msgstr "Biashara Yangu ya Usambazaji"
 
 msgid "My Business"
 msgstr "Biashara Yangu"
+
+msgid "Settings"
+msgstr "Mipangilio"
+
+msgid "Owner"
+msgstr "Mmiliki"
+
+msgid "Rider"
+msgstr "Mpanda Baiskeli"
+
+msgid "Supplier"
+msgstr "Msambazaji"
+
+msgid "About"
+msgstr "Kuhusu"
+
+msgid "Services"
+msgstr "Huduma"
+
+msgid "How It Works"
+msgstr "Jinsi Inavyofanya Kazi"
+
+msgid "Testimonials"
+msgstr "Shuhuda"
+
+msgid "FAQ"
+msgstr "Maswali Ya Mara Kwa Mara"
+
+msgid "Join Us"
+msgstr "Jiunge Nasi"
+
+msgid "Contact"
+msgstr "Wasiliana"
+
+msgid "Register Business"
+msgstr "Sajili Biashara"
+
+msgid "Join as Rider"
+msgstr "Jiunge kama Mpanda Baiskeli"
+
+msgid "Join as Supplier"
+msgstr "Jiunge kama Msambazaji"

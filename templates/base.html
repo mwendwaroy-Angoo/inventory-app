@@ -534,13 +534,13 @@
                         <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                             {{ user.username }}
                             {% if user.userprofile.is_owner %}
-                                <span class="badge-role badge-owner ms-1">Owner</span>
+                                <span class="badge-role badge-owner ms-1">{% trans 'Owner' %}</span>
                             {% elif user.userprofile.is_rider %}
-                                <span class="badge-role badge-rider ms-1">Rider</span>
+                                <span class="badge-role badge-rider ms-1">{% trans 'Rider' %}</span>
                             {% elif user.userprofile.is_supplier %}
-                                <span class="badge-role badge-supplier ms-1">Supplier</span>
+                                <span class="badge-role badge-supplier ms-1">{% trans 'Supplier' %}</span>
                             {% else %}
-                                <span class="badge-role badge-staff ms-1">Staff</span>
+                                <span class="badge-role badge-staff ms-1">{% trans 'Staff' %}</span>
                             {% endif %}
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end">
@@ -570,26 +570,26 @@
                 {% else %}
                 <!-- Logged out: anchor links + auth buttons -->
                 <ul class="navbar-nav me-auto">
-                    <li class="nav-item"><a class="nav-link" href="#about">About</a></li>
-                    <li class="nav-item"><a class="nav-link" href="#services">Services</a></li>
-                    <li class="nav-item"><a class="nav-link" href="#how-it-works">How It Works</a></li>
-                    <li class="nav-item"><a class="nav-link" href="#testimonials">Testimonials</a></li>
-                    <li class="nav-item"><a class="nav-link" href="#faq">FAQ</a></li>
-                    <li class="nav-item"><a class="nav-link" href="#join">Join Us</a></li>
-                    <li class="nav-item"><a class="nav-link" href="#contact">Contact</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#about">{% trans 'About' %}</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#services">{% trans 'Services' %}</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#how-it-works">{% trans 'How It Works' %}</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#testimonials">{% trans 'Testimonials' %}</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#faq">{% trans 'FAQ' %}</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#join">{% trans 'Join Us' %}</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#contact">{% trans 'Contact' %}</a></li>
                 </ul>
                 <ul class="navbar-nav ms-auto gap-2">
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'login' %}">Login</a>
+                        <a class="nav-link" href="{% url 'login' %}">{% trans 'Login' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="btn btn-primary btn-sm px-3" href="{% url 'signup' %}">Register Business</a>
+                        <a class="btn btn-primary btn-sm px-3" href="{% url 'signup' %}">{% trans 'Register Business' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="btn btn-outline-light btn-sm px-3" href="{% url 'rider_signup' %}">🏍️ Join as Rider</a>
+                        <a class="btn btn-outline-light btn-sm px-3" href="{% url 'rider_signup' %}">🏍️ {% trans 'Join as Rider' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="btn btn-outline-info btn-sm px-3" href="{% url 'supplier_signup' %}">📦 Join as Supplier</a>
+                        <a class="btn btn-outline-info btn-sm px-3" href="{% url 'supplier_signup' %}">📦 {% trans 'Join as Supplier' %}</a>
                     </li>
                 </ul>
                 {% endif %}

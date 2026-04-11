@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:34\n"
-"PO-Revision-Date: 2026-04-11 06:34\n"
+"POT-Creation-Date: 2026-04-11 06:59\n"
+"PO-Revision-Date: 2026-04-11 06:59\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kĩembu\n"
 "Language: ebu\n"
@@ -292,4 +292,60 @@ msgstr ""
 
 #  TODO: Translate to Kĩembu
 msgid "My Business"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Settings"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Owner"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Rider"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Supplier"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "About"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Services"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "How It Works"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Testimonials"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "FAQ"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Join Us"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Contact"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Register Business"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Join as Rider"
+msgstr ""
+
+#  TODO: Translate to Kĩembu
+msgid "Join as Supplier"
 msgstr ""

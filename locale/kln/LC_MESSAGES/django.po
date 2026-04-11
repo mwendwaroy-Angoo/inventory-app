@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:34\n"
-"PO-Revision-Date: 2026-04-11 06:34\n"
+"POT-Creation-Date: 2026-04-11 06:59\n"
+"PO-Revision-Date: 2026-04-11 06:59\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kalenjin\n"
 "Language: kln\n"
@@ -289,4 +289,60 @@ msgstr ""
 
 #  TODO: Translate to Kalenjin
 msgid "My Business"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Settings"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Owner"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Rider"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Supplier"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "About"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Services"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "How It Works"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Testimonials"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "FAQ"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Join Us"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Contact"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Register Business"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Join as Rider"
+msgstr ""
+
+#  TODO: Translate to Kalenjin
+msgid "Join as Supplier"
 msgstr ""

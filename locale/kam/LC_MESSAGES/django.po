@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:34\n"
-"PO-Revision-Date: 2026-04-11 06:34\n"
+"POT-Creation-Date: 2026-04-11 06:59\n"
+"PO-Revision-Date: 2026-04-11 06:59\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kĩkamba\n"
 "Language: kam\n"
@@ -19,78 +19,62 @@ msgstr ""
 msgid "Dashboard"
 msgstr "Dashibodi"
 
-#  TODO: Translate to Kĩkamba
 msgid "Suppliers"
-msgstr ""
+msgstr "Asambazaji"
 
-#  TODO: Translate to Kĩkamba
 msgid "Fulfillment"
-msgstr ""
+msgstr "Utimanisyo"
 
 msgid "Notifications"
 msgstr "Ĩla"
 
-#  TODO: Translate to Kĩkamba
 msgid "Browse Requests"
-msgstr ""
+msgstr "Tala Maombi"
 
-#  TODO: Translate to Kĩkamba
 msgid "My Bids"
-msgstr ""
+msgstr "Zabuni Syakwa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Businesses"
-msgstr ""
+msgstr "Biashara"
 
-#  TODO: Translate to Kĩkamba
 msgid "Stock List"
-msgstr ""
+msgstr "Orodha ya Hisa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Add Transaction"
-msgstr ""
+msgstr "Ongeza Muamala"
 
-#  TODO: Translate to Kĩkamba
 msgid "Quick Sell"
-msgstr ""
+msgstr "Uza Noke"
 
 msgid "History"
 msgstr "Mbaĩtu ya tene"
 
-#  TODO: Translate to Kĩkamba
 msgid "Order Fulfillment"
-msgstr ""
+msgstr "Utimanisyo wa Oda"
 
 msgid "Payments"
 msgstr "Malĩbu"
 
-#  TODO: Translate to Kĩkamba
 msgid "Supply Chain"
-msgstr ""
+msgstr "Mnyororo wa Usambazaji"
 
-#  TODO: Translate to Kĩkamba
 msgid "My Suppliers"
-msgstr ""
+msgstr "Asambazaji Makwa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Supplier Applications"
-msgstr ""
+msgstr "Maombi ma Asambazaji"
 
-#  TODO: Translate to Kĩkamba
 msgid "My Procurement"
-msgstr ""
+msgstr "Ununuzi Wakwa"
 
-#  TODO: Translate to Kĩkamba
 msgid "New Procurement"
-msgstr ""
+msgstr "Ununuzi Mweu"
 
-#  TODO: Translate to Kĩkamba
 msgid "Browse Businesses"
-msgstr ""
+msgstr "Tala Biashara"
 
-#  TODO: Translate to Kĩkamba
 msgid "Manage"
-msgstr ""
+msgstr "Simamia"
 
 msgid "Stores"
 msgstr "Nduka"
@@ -98,48 +82,38 @@ msgstr "Nduka"
 msgid "Items"
 msgstr "Indo"
 
-#  TODO: Translate to Kĩkamba
 msgid "Sales & P&L"
-msgstr ""
+msgstr "Mauzo na Faida/Hasara"
 
-#  TODO: Translate to Kĩkamba
 msgid "Analytics"
-msgstr ""
+msgstr "Takwimu"
 
 msgid "Staff"
 msgstr "Andu a wĩa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Add Staff"
-msgstr ""
+msgstr "Ongeza Mundu wa Wĩa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Orders"
-msgstr ""
+msgstr "Oda"
 
-#  TODO: Translate to Kĩkamba
 msgid "Feedback"
-msgstr ""
+msgstr "Maoni"
 
-#  TODO: Translate to Kĩkamba
 msgid "Payment Prompts"
-msgstr ""
+msgstr "Vikumbusho vya Malĩbu"
 
-#  TODO: Translate to Kĩkamba
 msgid "Payment Settings"
-msgstr ""
+msgstr "Mipangĩlio ya Malĩbu"
 
-#  TODO: Translate to Kĩkamba
 msgid "Business Settings"
-msgstr ""
+msgstr "Mipangĩlio ya Biashara"
 
-#  TODO: Translate to Kĩkamba
 msgid "View Tutorial"
-msgstr ""
+msgstr "Tala Mwongozo"
 
-#  TODO: Translate to Kĩkamba
 msgid "Change Password"
-msgstr ""
+msgstr "Cenjia Nenosiri"
 
 msgid "Language"
 msgstr "Lũkha"
@@ -147,9 +121,8 @@ msgstr "Lũkha"
 msgid "Logout"
 msgstr "Ũma"
 
-#  TODO: Translate to Kĩkamba
 msgid "Delete Account"
-msgstr ""
+msgstr "Thiia Akaunti"
 
 msgid "Choose Language"
 msgstr "Sũa Lũkha"
@@ -160,131 +133,143 @@ msgstr "Vika Lũkha"
 msgid "Sign in to your account"
 msgstr "Ĩngĩa akaunti yaku"
 
-#  TODO: Translate to Kĩkamba
 msgid "Invalid username or password."
-msgstr ""
+msgstr "Jina ria mtumiaji kana nenosiri ti syĩsyo."
 
 msgid "Login"
 msgstr "Ĩngĩa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Forgot password?"
-msgstr ""
+msgstr "Wĩw'o nenosiri?"
 
-#  TODO: Translate to Kĩkamba
 msgid "Staff members:"
-msgstr ""
+msgstr "Andu a wĩa:"
 
-#  TODO: Translate to Kĩkamba
 msgid "Ask your business owner to reset your password from the Staff page."
-msgstr ""
+msgstr "Sũma mwene wa biashara yaku akucenjie nenosiri kuuma peji ya andu a wĩa."
 
 msgid "Don't have an account?"
-msgstr "Wĩ na akaunti?"
+msgstr "Ndũna akaunti?"
 
 msgid "Register your business"
 msgstr "Andĩkĩthya biashara yaku"
 
-#  TODO: Translate to Kĩkamba
 msgid "Overview"
-msgstr ""
+msgstr "Muhtasari"
 
-#  TODO: Translate to Kĩkamba
 msgid "Inventory"
-msgstr ""
+msgstr "Hisa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Sales"
-msgstr ""
+msgstr "Mauzo"
 
-#  TODO: Translate to Kĩkamba
 msgid "All Orders"
-msgstr ""
+msgstr "Oda Syonthe"
 
-#  TODO: Translate to Kĩkamba
 msgid "Customers"
-msgstr ""
+msgstr "Ateja"
 
-#  TODO: Translate to Kĩkamba
 msgid "Transaction History"
-msgstr ""
+msgstr "Mbaĩtu ya Miamala"
 
-#  TODO: Translate to Kĩkamba
 msgid "Manage Items"
-msgstr ""
+msgstr "Simamia Indo"
 
-#  TODO: Translate to Kĩkamba
 msgid "Deliveries"
-msgstr ""
+msgstr "Usafirishaji"
 
-#  TODO: Translate to Kĩkamba
 msgid "Active Deliveries"
-msgstr ""
+msgstr "Usafirishaji Ũtũũlũ"
 
-#  TODO: Translate to Kĩkamba
 msgid "Delivery History"
-msgstr ""
+msgstr "Mbaĩtu ya Usafirishaji"
 
-#  TODO: Translate to Kĩkamba
 msgid "Earnings"
-msgstr ""
+msgstr "Mapato"
 
-#  TODO: Translate to Kĩkamba
 msgid "My Earnings"
-msgstr ""
+msgstr "Mapato Makwa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Toggle Availability"
-msgstr ""
+msgstr "Cenjia Upatikanaji"
 
-#  TODO: Translate to Kĩkamba
 msgid "Profile"
-msgstr ""
+msgstr "Wasifu"
 
-#  TODO: Translate to Kĩkamba
 msgid "Procurement"
-msgstr ""
+msgstr "Ununuzi"
 
-#  TODO: Translate to Kĩkamba
 msgid "Clients"
-msgstr ""
+msgstr "Ateja"
 
-#  TODO: Translate to Kĩkamba
 msgid "My Clients"
-msgstr ""
+msgstr "Ateja Makwa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Catalog"
-msgstr ""
+msgstr "Katalogi"
 
-#  TODO: Translate to Kĩkamba
 msgid "My Products"
-msgstr ""
+msgstr "Indo Syakwa"
 
-#  TODO: Translate to Kĩkamba
 msgid "Applications"
-msgstr ""
+msgstr "Maombi"
 
-#  TODO: Translate to Kĩkamba
 msgid "Management"
-msgstr ""
+msgstr "Usimamizi"
 
-#  TODO: Translate to Kĩkamba
 msgid "Supplier Portal"
-msgstr ""
+msgstr "Lango la Msambazaji"
 
-#  TODO: Translate to Kĩkamba
 msgid "Rider Portal"
-msgstr ""
+msgstr "Lango la Mũtumia wa Boda"
 
-#  TODO: Translate to Kĩkamba
 msgid "Owner Portal"
-msgstr ""
+msgstr "Lango la Mwene"
 
-#  TODO: Translate to Kĩkamba
 msgid "My Supply Business"
-msgstr ""
+msgstr "Biashara Yakwa ya Usambazaji"
 
-#  TODO: Translate to Kĩkamba
 msgid "My Business"
-msgstr ""
+msgstr "Biashara Yakwa"
+
+msgid "Settings"
+msgstr "Mipangĩlio"
+
+msgid "Owner"
+msgstr "Mwene"
+
+msgid "Rider"
+msgstr "Mũtumia wa Boda"
+
+msgid "Supplier"
+msgstr "Msambazaji"
+
+msgid "About"
+msgstr "Kuhusu"
+
+msgid "Services"
+msgstr "Huduma"
+
+msgid "How It Works"
+msgstr "Nĩ Ĩkũtĩka Ata"
+
+msgid "Testimonials"
+msgstr "Ushuhuda"
+
+msgid "FAQ"
+msgstr "Maswali ma Mara kwa Mara"
+
+msgid "Join Us"
+msgstr "Ĩungana Naitũ"
+
+msgid "Contact"
+msgstr "Wasiliana"
+
+msgid "Register Business"
+msgstr "Andĩkĩthya Biashara"
+
+msgid "Join as Rider"
+msgstr "Ĩungana ta Mũtumia wa Boda"
+
+msgid "Join as Supplier"
+msgstr "Ĩungana ta Msambazaji"

@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 06:34\n"
-"PO-Revision-Date: 2026-04-11 06:34\n"
+"POT-Creation-Date: 2026-04-11 06:59\n"
+"PO-Revision-Date: 2026-04-11 06:59\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Maa (Maasai)\n"
 "Language: mas\n"
@@ -292,4 +292,60 @@ msgstr ""
 
 #  TODO: Translate to Maa (Maasai)
 msgid "My Business"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Settings"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Owner"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Rider"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Supplier"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "About"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Services"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "How It Works"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Testimonials"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "FAQ"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Join Us"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Contact"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Register Business"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Join as Rider"
+msgstr ""
+
+#  TODO: Translate to Maa (Maasai)
+msgid "Join as Supplier"
 msgstr ""
