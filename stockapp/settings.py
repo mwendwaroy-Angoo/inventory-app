@@ -34,9 +34,11 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.locale.LocaleMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'accounts.middleware.UserLanguageMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -74,10 +76,33 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'en'
 TIME_ZONE = 'Africa/Nairobi'
 USE_I18N = True
 USE_TZ = True
+
+# ── INTERNATIONALIZATION (Kenyan Languages) ───────────────────────────────────
+LOCALE_PATHS = [BASE_DIR / 'locale']
+
+LANGUAGES = [
+    ('en', 'English'),
+    ('sw', 'Kiswahili'),
+    ('ki', 'Gĩkũyũ'),
+    ('luo', 'Dholuo'),
+    ('kln', 'Kalenjin'),
+    ('kam', 'Kĩkamba'),
+    ('luy', 'Luhya'),
+    ('guz', 'Ekegusii'),
+    ('mer', 'Kĩmĩrũ'),
+    ('mas', 'Maa (Maasai)'),
+    ('tuv', "Ng'aturkana"),
+    ('so', 'Soomaali'),
+    ('dav', 'Kitaita'),
+    ('pko', 'Pokot'),
+    ('teo', 'Ateso'),
+    ('saq', 'Samburu'),
+    ('ebu', 'Kĩembu'),
+]
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'

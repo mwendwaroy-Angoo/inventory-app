@@ -1,0 +1,195 @@
+# Samburu translations for Duka Mwecheche
+# Copyright (C) 2026 Duka Mwecheche
+# This file is distributed under the same license as the Duka Mwecheche package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Duka Mwecheche 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-11 05:46\n"
+"PO-Revision-Date: 2026-04-11 05:46\n"
+"Last-Translator: Duka Mwecheche Team\n"
+"Language-Team: Samburu\n"
+"Language: saq\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#  TODO: Translate to Samburu
+msgid "Dashboard"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Suppliers"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Fulfillment"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Notifications"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Browse Requests"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "My Bids"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Businesses"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Stock List"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Add Transaction"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Quick Sell"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "History"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Order Fulfillment"
+msgstr ""
+
+msgid "Payments"
+msgstr "Enshillingi"
+
+#  TODO: Translate to Samburu
+msgid "Supply Chain"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "My Suppliers"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Supplier Applications"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "My Procurement"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "New Procurement"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Browse Businesses"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Manage"
+msgstr ""
+
+msgid "Stores"
+msgstr "Idukani"
+
+msgid "Items"
+msgstr "Inkera"
+
+#  TODO: Translate to Samburu
+msgid "Sales & P&L"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Analytics"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Staff"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Add Staff"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Orders"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Feedback"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Payment Prompts"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Payment Settings"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Business Settings"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "View Tutorial"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Change Password"
+msgstr ""
+
+msgid "Language"
+msgstr "Engutuk"
+
+msgid "Logout"
+msgstr "Dupoto"
+
+#  TODO: Translate to Samburu
+msgid "Delete Account"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Choose Language"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Save Language"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Sign in to your account"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Invalid username or password."
+msgstr ""
+
+msgid "Login"
+msgstr "Iyiolo"
+
+#  TODO: Translate to Samburu
+msgid "Forgot password?"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Staff members:"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Ask your business owner to reset your password from the Staff page."
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Don't have an account?"
+msgstr ""
+
+#  TODO: Translate to Samburu
+msgid "Register your business"
+msgstr ""

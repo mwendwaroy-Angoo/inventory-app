@@ -1,0 +1,169 @@
+# Gĩkũyũ translations for Duka Mwecheche
+# Copyright (C) 2026 Duka Mwecheche
+# This file is distributed under the same license as the Duka Mwecheche package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Duka Mwecheche 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-11 05:46\n"
+"PO-Revision-Date: 2026-04-11 05:46\n"
+"Last-Translator: Duka Mwecheche Team\n"
+"Language-Team: Gĩkũyũ\n"
+"Language: ki\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Dashboard"
+msgstr "Dashibodi"
+
+msgid "Suppliers"
+msgstr "Aheani"
+
+msgid "Fulfillment"
+msgstr "Kũhingũra"
+
+msgid "Notifications"
+msgstr "Mahĩtia"
+
+msgid "Browse Requests"
+msgstr "Rora Maũhĩro"
+
+msgid "My Bids"
+msgstr "Mabidi Makwa"
+
+msgid "Businesses"
+msgstr "Maciarwa"
+
+msgid "Stock List"
+msgstr "Mũrangio wa Indo"
+
+msgid "Add Transaction"
+msgstr "Ongera Mũciaro"
+
+msgid "Quick Sell"
+msgstr "Enda Haraka"
+
+msgid "History"
+msgstr "Ũhoro wa Tene"
+
+msgid "Order Fulfillment"
+msgstr "Kũhingũra Maodha"
+
+msgid "Payments"
+msgstr "Marĩba"
+
+msgid "Supply Chain"
+msgstr "Mũnyororo wa Ũheani"
+
+msgid "My Suppliers"
+msgstr "Aheani Akwa"
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Supplier Applications"
+msgstr ""
+
+#  TODO: Translate to Gĩkũyũ
+msgid "My Procurement"
+msgstr ""
+
+#  TODO: Translate to Gĩkũyũ
+msgid "New Procurement"
+msgstr ""
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Browse Businesses"
+msgstr ""
+
+msgid "Manage"
+msgstr "Taara"
+
+msgid "Stores"
+msgstr "Nduka"
+
+msgid "Items"
+msgstr "Indo"
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Sales & P&L"
+msgstr ""
+
+msgid "Analytics"
+msgstr "Takwimu"
+
+msgid "Staff"
+msgstr "Andũ a Wĩra"
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Add Staff"
+msgstr ""
+
+msgid "Orders"
+msgstr "Maodha"
+
+msgid "Feedback"
+msgstr "Ũcokio"
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Payment Prompts"
+msgstr ""
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Payment Settings"
+msgstr ""
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Business Settings"
+msgstr ""
+
+#  TODO: Translate to Gĩkũyũ
+msgid "View Tutorial"
+msgstr ""
+
+msgid "Change Password"
+msgstr "Cenjia Nenosiri"
+
+msgid "Language"
+msgstr "Rũthiomi"
+
+msgid "Logout"
+msgstr "Ũma"
+
+msgid "Delete Account"
+msgstr "Thiira Akaunti"
+
+msgid "Choose Language"
+msgstr "Thagũra Rũthiomi"
+
+msgid "Save Language"
+msgstr "Hĩthia Rũthiomi"
+
+msgid "Sign in to your account"
+msgstr "Toonya akaunti yaku"
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Invalid username or password."
+msgstr ""
+
+msgid "Login"
+msgstr "Toonya"
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Forgot password?"
+msgstr ""
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Staff members:"
+msgstr ""
+
+#  TODO: Translate to Gĩkũyũ
+msgid "Ask your business owner to reset your password from the Staff page."
+msgstr ""
+
+msgid "Don't have an account?"
+msgstr "Ndũrĩ na akaunti?"
+
+msgid "Register your business"
+msgstr "Andĩkĩthia biashara yaku"

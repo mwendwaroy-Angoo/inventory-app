@@ -1,0 +1,155 @@
+# Kiswahili translations for Duka Mwecheche
+# Copyright (C) 2026 Duka Mwecheche
+# This file is distributed under the same license as the Duka Mwecheche package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Duka Mwecheche 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-11 05:46\n"
+"PO-Revision-Date: 2026-04-11 05:46\n"
+"Last-Translator: Duka Mwecheche Team\n"
+"Language-Team: Kiswahili\n"
+"Language: sw\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Dashboard"
+msgstr "Dashibodi"
+
+msgid "Suppliers"
+msgstr "Wasambazaji"
+
+msgid "Fulfillment"
+msgstr "Utimizaji"
+
+msgid "Notifications"
+msgstr "Arifa"
+
+msgid "Browse Requests"
+msgstr "Tazama Maombi"
+
+msgid "My Bids"
+msgstr "Zabuni Zangu"
+
+msgid "Businesses"
+msgstr "Biashara"
+
+msgid "Stock List"
+msgstr "Orodha ya Hisa"
+
+msgid "Add Transaction"
+msgstr "Ongeza Muamala"
+
+msgid "Quick Sell"
+msgstr "Uza Haraka"
+
+msgid "History"
+msgstr "Historia"
+
+msgid "Order Fulfillment"
+msgstr "Utimizaji wa Agizo"
+
+msgid "Payments"
+msgstr "Malipo"
+
+msgid "Supply Chain"
+msgstr "Mnyororo wa Usambazaji"
+
+msgid "My Suppliers"
+msgstr "Wasambazaji Wangu"
+
+msgid "Supplier Applications"
+msgstr "Maombi ya Wasambazaji"
+
+msgid "My Procurement"
+msgstr "Ununuzi Wangu"
+
+msgid "New Procurement"
+msgstr "Ununuzi Mpya"
+
+msgid "Browse Businesses"
+msgstr "Tazama Biashara"
+
+msgid "Manage"
+msgstr "Simamia"
+
+msgid "Stores"
+msgstr "Maduka"
+
+msgid "Items"
+msgstr "Bidhaa"
+
+msgid "Sales & P&L"
+msgstr "Mauzo na Faida/Hasara"
+
+msgid "Analytics"
+msgstr "Takwimu"
+
+msgid "Staff"
+msgstr "Wafanyakazi"
+
+msgid "Add Staff"
+msgstr "Ongeza Mfanyakazi"
+
+msgid "Orders"
+msgstr "Maagizo"
+
+msgid "Feedback"
+msgstr "Maoni"
+
+msgid "Payment Prompts"
+msgstr "Vikumbusho vya Malipo"
+
+msgid "Payment Settings"
+msgstr "Mipangilio ya Malipo"
+
+msgid "Business Settings"
+msgstr "Mipangilio ya Biashara"
+
+msgid "View Tutorial"
+msgstr "Tazama Mwongozo"
+
+msgid "Change Password"
+msgstr "Badilisha Nenosiri"
+
+msgid "Language"
+msgstr "Lugha"
+
+msgid "Logout"
+msgstr "Ondoka"
+
+msgid "Delete Account"
+msgstr "Futa Akaunti"
+
+msgid "Choose Language"
+msgstr "Chagua Lugha"
+
+msgid "Save Language"
+msgstr "Hifadhi Lugha"
+
+msgid "Sign in to your account"
+msgstr "Ingia kwenye akaunti yako"
+
+msgid "Invalid username or password."
+msgstr "Jina la mtumiaji au nenosiri si sahihi."
+
+msgid "Login"
+msgstr "Ingia"
+
+msgid "Forgot password?"
+msgstr "Umesahau nenosiri?"
+
+msgid "Staff members:"
+msgstr "Wafanyakazi:"
+
+msgid "Ask your business owner to reset your password from the Staff page."
+msgstr "Muombe mmiliki wa biashara yako akurejeshe nenosiri kutoka ukurasa wa Wafanyakazi."
+
+msgid "Don't have an account?"
+msgstr "Huna akaunti?"
+
+msgid "Register your business"
+msgstr "Sajili biashara yako"

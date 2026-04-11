@@ -4,6 +4,8 @@ from django.contrib.auth import login, logout as auth_logout
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
+from django.utils import translation
+from django.conf import settings as django_settings
 from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm, RiderSignupForm, PaymentSettingsForm, SupplierSignupForm
 from .models import Business, UserProfile
 from django.http import JsonResponse
@@ -47,6 +49,30 @@ def tutorial_reset(request):
     return JsonResponse({'error': 'POST required'}, status=405)
 
 
+@login_required
+def change_language(request):
+    """Change the user's preferred language."""
+    if request.method == 'POST':
+        lang_code = request.POST.get('language', 'en')
+        valid_codes = [code for code, _ in django_settings.LANGUAGES]
+        if lang_code not in valid_codes:
+            lang_code = 'en'
+
+        profile = getattr(request.user, 'userprofile', None)
+        if profile:
+            profile.preferred_language = lang_code
+            profile.save(update_fields=['preferred_language'])
+
+        translation.activate(lang_code)
+        response = redirect(request.POST.get('next', '/'))
+        response.set_cookie(
+            django_settings.LANGUAGE_COOKIE_NAME, lang_code,
+            max_age=365 * 24 * 60 * 60,
+        )
+        return response
+    return redirect('home')
+
+
 def signup(request):
     if request.user.is_authenticated:
         return redirect('role_redirect')
@@ -74,6 +100,7 @@ def signup(request):
                     user=user,
                     business=business,
                     role='owner',
+                    preferred_language=form.cleaned_data.get('preferred_language', 'en'),
                 )
 
             login(request, user)
@@ -342,6 +369,7 @@ def rider_signup(request):
                     user=user,
                     role='rider',
                     phone=form.cleaned_data['phone'],
+                    preferred_language=form.cleaned_data.get('preferred_language', 'en'),
                 )
                 RiderProfile.objects.create(
                     user=user,
@@ -505,6 +533,7 @@ def supplier_signup(request):
                     business=business,
                     role='supplier',
                     phone=form.cleaned_data.get('phone', ''),
+                    preferred_language=form.cleaned_data.get('preferred_language', 'en'),
                 )
             login(request, user)
             messages.success(request, f"Welcome! Your supply business '{business.name}' has been registered.")

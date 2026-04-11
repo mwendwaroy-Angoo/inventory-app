@@ -1,0 +1,180 @@
+# Dholuo translations for Duka Mwecheche
+# Copyright (C) 2026 Duka Mwecheche
+# This file is distributed under the same license as the Duka Mwecheche package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Duka Mwecheche 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-11 05:46\n"
+"PO-Revision-Date: 2026-04-11 05:46\n"
+"Last-Translator: Duka Mwecheche Team\n"
+"Language-Team: Dholuo\n"
+"Language: luo\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Dashboard"
+msgstr "Dashboard"
+
+msgid "Suppliers"
+msgstr "Jochiwo"
+
+#  TODO: Translate to Dholuo
+msgid "Fulfillment"
+msgstr ""
+
+msgid "Notifications"
+msgstr "Wach manyien"
+
+#  TODO: Translate to Dholuo
+msgid "Browse Requests"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "My Bids"
+msgstr ""
+
+msgid "Businesses"
+msgstr "Ohala"
+
+msgid "Stock List"
+msgstr "Ranyisi mar gik manie stoo"
+
+#  TODO: Translate to Dholuo
+msgid "Add Transaction"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Quick Sell"
+msgstr ""
+
+msgid "History"
+msgstr "Histori"
+
+#  TODO: Translate to Dholuo
+msgid "Order Fulfillment"
+msgstr ""
+
+msgid "Payments"
+msgstr "Chudo"
+
+#  TODO: Translate to Dholuo
+msgid "Supply Chain"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "My Suppliers"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Supplier Applications"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "My Procurement"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "New Procurement"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Browse Businesses"
+msgstr ""
+
+msgid "Manage"
+msgstr "Rit"
+
+msgid "Stores"
+msgstr "Duche"
+
+msgid "Items"
+msgstr "Gik"
+
+#  TODO: Translate to Dholuo
+msgid "Sales & P&L"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Analytics"
+msgstr ""
+
+msgid "Staff"
+msgstr "Jotich"
+
+#  TODO: Translate to Dholuo
+msgid "Add Staff"
+msgstr ""
+
+msgid "Orders"
+msgstr "Chike"
+
+msgid "Feedback"
+msgstr "Dwoko"
+
+#  TODO: Translate to Dholuo
+msgid "Payment Prompts"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Payment Settings"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Business Settings"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "View Tutorial"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Change Password"
+msgstr ""
+
+msgid "Language"
+msgstr "Dhok"
+
+msgid "Logout"
+msgstr "Wuogi"
+
+#  TODO: Translate to Dholuo
+msgid "Delete Account"
+msgstr ""
+
+msgid "Choose Language"
+msgstr "Yier Dhok"
+
+msgid "Save Language"
+msgstr "Kan Dhok"
+
+msgid "Sign in to your account"
+msgstr "Donji e akaunti mari"
+
+#  TODO: Translate to Dholuo
+msgid "Invalid username or password."
+msgstr ""
+
+msgid "Login"
+msgstr "Donji"
+
+#  TODO: Translate to Dholuo
+msgid "Forgot password?"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Staff members:"
+msgstr ""
+
+#  TODO: Translate to Dholuo
+msgid "Ask your business owner to reset your password from the Staff page."
+msgstr ""
+
+msgid "Don't have an account?"
+msgstr "Ionge gi akaunti?"
+
+msgid "Register your business"
+msgstr "Ndik ohala mari"

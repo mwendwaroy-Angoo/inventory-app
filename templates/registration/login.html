@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
+{% load i18n %}
 
 {% block title %}Login — Duka Mwecheche{% endblock %}
 
@@ -43,36 +44,36 @@
 <div class="login-card">
     <div class="login-header">
         <h2>Duka Mwecheche</h2>
-        <p>Sign in to your account</p>
+        <p>{% trans 'Sign in to your account' %}</p>
     </div>
     <div class="login-body">
         {% if form.errors %}
-        <div class="alert alert-danger">Invalid username or password.</div>
+        <div class="alert alert-danger">{% trans 'Invalid username or password.' %}</div>
         {% endif %}
 
         <form method="post">
             {% csrf_token %}
             {% bootstrap_form form %}
             <button type="submit" class="btn btn-primary w-100 mt-2 py-2">
-                Login
+                {% trans 'Login' %}
             </button>
         </form>
 
         <div class="text-end mt-2">
             <a href="{% url 'password_reset' %}" style="color: var(--muted); font-size: 0.8rem;">
-                Forgot password?
+                {% trans 'Forgot password?' %}
             </a>
         </div>
 
         <div class="alert alert-info mt-3" style="font-size: 0.8rem; padding: 0.7rem 1rem;">
-            <strong>Staff members:</strong> Ask your business owner to reset your password from the Staff page.
+            <strong>{% trans 'Staff members:' %}</strong> {% trans 'Ask your business owner to reset your password from the Staff page.' %}
         </div>
 
         <hr class="gold-divider mt-3">
 
         <div class="text-center" style="font-size: 0.85rem; color: var(--muted);">
-            Don't have an account?
-            <a href="{% url 'signup' %}" style="color: var(--gold);">Register your business</a>
+            {% trans "Don't have an account?" %}
+            <a href="{% url 'signup' %}" style="color: var(--gold);">{% trans 'Register your business' %}</a>
         </div>
     </div>
 </div>

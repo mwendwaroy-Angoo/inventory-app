@@ -1,0 +1,183 @@
+# Soomaali translations for Duka Mwecheche
+# Copyright (C) 2026 Duka Mwecheche
+# This file is distributed under the same license as the Duka Mwecheche package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Duka Mwecheche 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-11 05:46\n"
+"PO-Revision-Date: 2026-04-11 05:46\n"
+"Last-Translator: Duka Mwecheche Team\n"
+"Language-Team: Soomaali\n"
+"Language: so\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Dashboard"
+msgstr "Dashboard"
+
+msgid "Suppliers"
+msgstr "Bixiyeyaasha"
+
+#  TODO: Translate to Soomaali
+msgid "Fulfillment"
+msgstr ""
+
+msgid "Notifications"
+msgstr "Ogeysiisyo"
+
+#  TODO: Translate to Soomaali
+msgid "Browse Requests"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "My Bids"
+msgstr ""
+
+msgid "Businesses"
+msgstr "Ganacsiyada"
+
+#  TODO: Translate to Soomaali
+msgid "Stock List"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Add Transaction"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Quick Sell"
+msgstr ""
+
+msgid "History"
+msgstr "Taariikhda"
+
+#  TODO: Translate to Soomaali
+msgid "Order Fulfillment"
+msgstr ""
+
+msgid "Payments"
+msgstr "Lacagaha"
+
+#  TODO: Translate to Soomaali
+msgid "Supply Chain"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "My Suppliers"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Supplier Applications"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "My Procurement"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "New Procurement"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Browse Businesses"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Manage"
+msgstr ""
+
+msgid "Stores"
+msgstr "Dukaanka"
+
+msgid "Items"
+msgstr "Alaabada"
+
+#  TODO: Translate to Soomaali
+msgid "Sales & P&L"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Analytics"
+msgstr ""
+
+msgid "Staff"
+msgstr "Shaqaalaha"
+
+#  TODO: Translate to Soomaali
+msgid "Add Staff"
+msgstr ""
+
+msgid "Orders"
+msgstr "Dalbashada"
+
+#  TODO: Translate to Soomaali
+msgid "Feedback"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Payment Prompts"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Payment Settings"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Business Settings"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "View Tutorial"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Change Password"
+msgstr ""
+
+msgid "Language"
+msgstr "Luqadda"
+
+msgid "Logout"
+msgstr "Ka bax"
+
+#  TODO: Translate to Soomaali
+msgid "Delete Account"
+msgstr ""
+
+msgid "Choose Language"
+msgstr "Dooro Luqadda"
+
+msgid "Save Language"
+msgstr "Kaydi Luqadda"
+
+msgid "Sign in to your account"
+msgstr "Soo gal akoontigaada"
+
+#  TODO: Translate to Soomaali
+msgid "Invalid username or password."
+msgstr ""
+
+msgid "Login"
+msgstr "Soo gal"
+
+#  TODO: Translate to Soomaali
+msgid "Forgot password?"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Staff members:"
+msgstr ""
+
+#  TODO: Translate to Soomaali
+msgid "Ask your business owner to reset your password from the Staff page."
+msgstr ""
+
+msgid "Don't have an account?"
+msgstr "Ma lihid akoonti?"
+
+msgid "Register your business"
+msgstr "Diiwaan geli ganacsigaaga"

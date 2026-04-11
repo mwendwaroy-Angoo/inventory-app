@@ -1,5 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
+{% load i18n %}<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE|default:'en' }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -374,16 +374,16 @@
             <!-- Mobile quick-action button (outside collapse) -->
             {% if user.userprofile.is_rider %}
             <a href="{% url 'rider_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-               style="font-size:0.85rem; padding:0.35rem 0.9rem;">🏍️ Dashboard</a>
+               style="font-size:0.85rem; padding:0.35rem 0.9rem;">🏍️ {% trans 'Dashboard' %}</a>
             {% elif user.userprofile.is_supplier %}
             <a href="{% url 'supplier_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📊 Dashboard</a>
+               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📊 {% trans 'Dashboard' %}</a>
             {% elif user.userprofile.is_owner %}
             <a href="{% url 'supplier_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📦 Suppliers</a>
+               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📦 {% trans 'Suppliers' %}</a>
             {% else %}
             <a href="{% url 'fulfillment_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📋 Fulfillment</a>
+               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📋 {% trans 'Fulfillment' %}</a>
             {% endif %}
             {% endif %}
 
@@ -394,10 +394,10 @@
                 <!-- ═══ RIDER NAV ═══ -->
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'rider_dashboard' %}">🏍️ Dashboard</a>
+                        <a class="nav-link" href="{% url 'rider_dashboard' %}">🏍️ {% trans 'Dashboard' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'notifications' %}">🔔 Notifications</a>
+                        <a class="nav-link" href="{% url 'notifications' %}">🔔 {% trans 'Notifications' %}</a>
                     </li>
                 </ul>
 
@@ -405,19 +405,19 @@
                 <!-- ═══ SUPPLIER NAV ═══ -->
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'supplier_dashboard' %}">📊 Dashboard</a>
+                        <a class="nav-link" href="{% url 'supplier_dashboard' %}">📊 {% trans 'Dashboard' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'procurement_browse' %}">🔍 Browse Requests</a>
+                        <a class="nav-link" href="{% url 'procurement_browse' %}">🔍 {% trans 'Browse Requests' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'my_bids' %}">📤 My Bids</a>
+                        <a class="nav-link" href="{% url 'my_bids' %}">📤 {% trans 'My Bids' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'browse_businesses' %}">🏢 Businesses</a>
+                        <a class="nav-link" href="{% url 'browse_businesses' %}">🏢 {% trans 'Businesses' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'notifications' %}">🔔 Notifications</a>
+                        <a class="nav-link" href="{% url 'notifications' %}">🔔 {% trans 'Notifications' %}</a>
                     </li>
                 </ul>
 
@@ -425,22 +425,22 @@
                 <!-- ═══ STAFF NAV ═══ -->
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'stock_list' %}">Stock List</a>
+                        <a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'add_transaction' %}">Add Transaction</a>
+                        <a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'quick_sell' %}">⚡ Quick Sell</a>
+                        <a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'transaction_history' %}">History</a>
+                        <a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'fulfillment_list' %}">📋 Order Fulfillment</a>
+                        <a class="nav-link" href="{% url 'fulfillment_list' %}">📋 {% trans 'Order Fulfillment' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link position-relative" href="{% url 'pending_prompts' %}">💰 Payments
+                        <a class="nav-link position-relative" href="{% url 'pending_prompts' %}">💰 {% trans 'Payments' %}
                             <span id="prompts-badge"
                                   style="position:absolute; top:2px; right:-2px;
                                          background:var(--gold); color:var(--onyx);
@@ -458,56 +458,56 @@
                 <!-- ═══ OWNER NAV ═══ -->
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'stock_list' %}">Stock List</a>
+                        <a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'add_transaction' %}">Add Transaction</a>
+                        <a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'quick_sell' %}">⚡ Quick Sell</a>
+                        <a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'transaction_history' %}">History</a>
+                        <a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a>
                     </li>
 
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                            📦 Supply Chain
+                            📦 {% trans 'Supply Chain' %}
                         </a>
                         <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{% url 'supplier_list' %}">👥 My Suppliers</a></li>
-                            <li><a class="dropdown-item" href="{% url 'supplier_applications' %}">📨 Supplier Applications</a></li>
+                            <li><a class="dropdown-item" href="{% url 'supplier_list' %}">👥 {% trans 'My Suppliers' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'supplier_applications' %}">📨 {% trans 'Supplier Applications' %}</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'procurement_list_owner' %}">📋 My Procurement</a></li>
-                            <li><a class="dropdown-item" href="{% url 'create_procurement' %}">➕ New Procurement</a></li>
+                            <li><a class="dropdown-item" href="{% url 'procurement_list_owner' %}">📋 {% trans 'My Procurement' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'create_procurement' %}">➕ {% trans 'New Procurement' %}</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'procurement_browse' %}">🔍 Browse Requests</a></li>
-                            <li><a class="dropdown-item" href="{% url 'my_bids' %}">📤 My Bids</a></li>
+                            <li><a class="dropdown-item" href="{% url 'procurement_browse' %}">🔍 {% trans 'Browse Requests' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'my_bids' %}">📤 {% trans 'My Bids' %}</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'browse_businesses' %}">🏢 Browse Businesses</a></li>
+                            <li><a class="dropdown-item" href="{% url 'browse_businesses' %}">🏢 {% trans 'Browse Businesses' %}</a></li>
                         </ul>
                     </li>
 
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                            Manage
+                            {% trans 'Manage' %}
                         </a>
                         <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{% url 'manage_stores' %}">🏪 Stores</a></li>
-                            <li><a class="dropdown-item" href="{% url 'manage_items' %}">📦 Items</a></li>
-                            <li><a class="dropdown-item" href="{% url 'sales_dashboard' %}">📊 Sales & P&L</a></li>
-                            <li><a class="dropdown-item" href="{% url 'analytics' %}">📈 Analytics</a></li>
+                            <li><a class="dropdown-item" href="{% url 'manage_stores' %}">🏪 {% trans 'Stores' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'manage_items' %}">📦 {% trans 'Items' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'sales_dashboard' %}">📊 {% trans 'Sales & P&L' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'analytics' %}">📈 {% trans 'Analytics' %}</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 Staff</a></li>
-                            <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ Add Staff</a></li>
+                            <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 Orders</a></li>
-                            <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 Fulfillment</a></li>
-                            <li><a class="dropdown-item" href="{% url 'my_feedback' %}">⭐ Feedback</a></li>
+                            <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 {% trans 'Fulfillment' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'my_feedback' %}">⭐ {% trans 'Feedback' %}</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'pending_prompts' %}">💰 Payment Prompts</a></li>
-                            <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 Payment Settings</a></li>
-                            <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ Business Settings</a></li>
+                            <li><a class="dropdown-item" href="{% url 'pending_prompts' %}">💰 {% trans 'Payment Prompts' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
                         </ul>
                     </li>
                 </ul>
@@ -544,17 +544,25 @@
                             {% endif %}
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end">
-                            <li><a class="dropdown-item" href="#" onclick="showTutorial(); return false;">📖 View Tutorial</a></li>
-                            <li><a class="dropdown-item" href="{% url 'password_change' %}">🔑 Change Password</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="showTutorial(); return false;">📖 {% trans 'View Tutorial' %}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'password_change' %}">🔑 {% trans 'Change Password' %}</a></li>
+                            <li>
+                                <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#langModal">
+                                    🌍 {% trans 'Language' %}
+                                    <span style="color:var(--muted); font-size:0.8rem; margin-left:0.3rem;">
+                                        ({{ LANGUAGE_CODE|default:'en' }})
+                                    </span>
+                                </a>
+                            </li>
                             <li><hr class="dropdown-divider"></li>
                             <li>
                                 <form method="post" action="{% url 'logout' %}">
                                     {% csrf_token %}
-                                    <button type="submit" class="dropdown-item">🚪 Logout</button>
+                                    <button type="submit" class="dropdown-item">🚪 {% trans 'Logout' %}</button>
                                 </form>
                             </li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'delete_account' %}" style="color:var(--danger);">🗑️ Delete Account</a></li>
+                            <li><a class="dropdown-item" href="{% url 'delete_account' %}" style="color:var(--danger);">🗑️ {% trans 'Delete Account' %}</a></li>
                         </ul>
                     </li>
                 </ul>
@@ -845,6 +853,34 @@
         }
     })();
     </script>
+    {% endif %}
+
+    <!-- Language Selection Modal -->
+    {% if user.is_authenticated %}
+    <div class="modal fade" id="langModal" tabindex="-1" aria-labelledby="langModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <div class="modal-content" style="background:var(--onyx-card); border:1px solid var(--gold); border-radius:12px;">
+                <div class="modal-header border-0 pb-0">
+                    <h6 class="modal-title" id="langModalLabel" style="color:var(--gold); font-family:'Playfair Display',serif;">🌍 {% trans 'Choose Language' %}</h6>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body pt-2">
+                    <form method="post" action="{% url 'change_language' %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ request.path }}">
+                        <select name="language" class="form-select mb-3"
+                                style="background:var(--onyx); color:var(--pearl); border-color:#444;">
+                            {% get_available_languages as languages %}
+                            {% for code, name in languages %}
+                            <option value="{{ code }}" {% if code == LANGUAGE_CODE %}selected{% endif %}>{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-gold w-100">{% trans 'Save Language' %}</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
     {% endif %}
 </body>
 </html>

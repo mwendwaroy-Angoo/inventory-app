@@ -1,0 +1,191 @@
+# Ekegusii translations for Duka Mwecheche
+# Copyright (C) 2026 Duka Mwecheche
+# This file is distributed under the same license as the Duka Mwecheche package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Duka Mwecheche 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-11 05:46\n"
+"PO-Revision-Date: 2026-04-11 05:46\n"
+"Last-Translator: Duka Mwecheche Team\n"
+"Language-Team: Ekegusii\n"
+"Language: guz\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Dashboard"
+msgstr "Dashboard"
+
+#  TODO: Translate to Ekegusii
+msgid "Suppliers"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Fulfillment"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Notifications"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Browse Requests"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "My Bids"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Businesses"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Stock List"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Add Transaction"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Quick Sell"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "History"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Order Fulfillment"
+msgstr ""
+
+msgid "Payments"
+msgstr "Obogambi"
+
+#  TODO: Translate to Ekegusii
+msgid "Supply Chain"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "My Suppliers"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Supplier Applications"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "My Procurement"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "New Procurement"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Browse Businesses"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Manage"
+msgstr ""
+
+msgid "Stores"
+msgstr "Chiduka"
+
+msgid "Items"
+msgstr "Ebinto"
+
+#  TODO: Translate to Ekegusii
+msgid "Sales & P&L"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Analytics"
+msgstr ""
+
+msgid "Staff"
+msgstr "Abakora"
+
+#  TODO: Translate to Ekegusii
+msgid "Add Staff"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Orders"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Feedback"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Payment Prompts"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Payment Settings"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Business Settings"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "View Tutorial"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Change Password"
+msgstr ""
+
+msgid "Language"
+msgstr "Ekegusii"
+
+msgid "Logout"
+msgstr "Oka"
+
+#  TODO: Translate to Ekegusii
+msgid "Delete Account"
+msgstr ""
+
+msgid "Choose Language"
+msgstr "Tobora Omoruok"
+
+#  TODO: Translate to Ekegusii
+msgid "Save Language"
+msgstr ""
+
+msgid "Sign in to your account"
+msgstr "Tera akaunti yao"
+
+#  TODO: Translate to Ekegusii
+msgid "Invalid username or password."
+msgstr ""
+
+msgid "Login"
+msgstr "Tera"
+
+#  TODO: Translate to Ekegusii
+msgid "Forgot password?"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Staff members:"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Ask your business owner to reset your password from the Staff page."
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Don't have an account?"
+msgstr ""
+
+#  TODO: Translate to Ekegusii
+msgid "Register your business"
+msgstr ""

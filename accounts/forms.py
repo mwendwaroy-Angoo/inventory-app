@@ -1,6 +1,7 @@
 from django import forms
 from django.contrib.auth.models import User
-from .models import Business
+from django.conf import settings
+from .models import Business, UserProfile
 from core.models import BusinessType, County, SubCounty, Ward
 
 
@@ -20,6 +21,11 @@ class BusinessSignupForm(forms.Form):
     password2 = forms.CharField(
         widget=forms.PasswordInput(attrs={'placeholder': 'Confirm your password'}),
         label='Confirm Password'
+    )
+    preferred_language = forms.ChoiceField(
+        choices=settings.LANGUAGES,
+        initial='en',
+        label='Preferred Language',
     )
 
     # Business fields
@@ -118,6 +124,11 @@ class SupplierSignupForm(forms.Form):
     password2 = forms.CharField(
         widget=forms.PasswordInput(attrs={'placeholder': 'Confirm your password'}),
         label='Confirm Password'
+    )
+    preferred_language = forms.ChoiceField(
+        choices=settings.LANGUAGES,
+        initial='en',
+        label='Preferred Language',
     )
 
     # Business fields
@@ -418,6 +429,11 @@ class RiderSignupForm(forms.Form):
     password2 = forms.CharField(
         widget=forms.PasswordInput(attrs={'placeholder': 'Confirm password'}),
         label='Confirm Password'
+    )
+    preferred_language = forms.ChoiceField(
+        choices=settings.LANGUAGES,
+        initial='en',
+        label='Preferred Language',
     )
 
     def clean_username(self):

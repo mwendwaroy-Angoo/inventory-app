@@ -129,12 +129,32 @@ class UserProfile(models.Model):
         ('rider', 'Rider'),
         ('supplier', 'Supplier'),
     ]
+    LANGUAGE_CHOICES = [
+        ('en', 'English'),
+        ('sw', 'Kiswahili'),
+        ('ki', 'Gĩkũyũ'),
+        ('luo', 'Dholuo'),
+        ('kln', 'Kalenjin'),
+        ('kam', 'Kĩkamba'),
+        ('luy', 'Luhya'),
+        ('guz', 'Ekegusii'),
+        ('mer', 'Kĩmĩrũ'),
+        ('mas', 'Maa (Maasai)'),
+        ('tuv', "Ng'aturkana"),
+        ('so', 'Soomaali'),
+        ('dav', 'Kitaita'),
+        ('pko', 'Pokot'),
+        ('teo', 'Ateso'),
+        ('saq', 'Samburu'),
+        ('ebu', 'Kĩembu'),
+    ]
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     business = models.ForeignKey(Business, on_delete=models.CASCADE,
                                   related_name='users', null=True, blank=True)
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='staff')
-    phone = models.CharField(max_length=20, blank=True)  # ← add this
+    phone = models.CharField(max_length=20, blank=True)
     has_seen_tutorial = models.BooleanField(default=False)
+    preferred_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default='en')
 
     def __str__(self):
         return f"{self.user.username} ({self.business.name if self.business else 'No Business'}) - {self.role}"

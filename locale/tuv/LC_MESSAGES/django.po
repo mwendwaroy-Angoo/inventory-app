@@ -1,0 +1,194 @@
+# Ng'aturkana translations for Duka Mwecheche
+# Copyright (C) 2026 Duka Mwecheche
+# This file is distributed under the same license as the Duka Mwecheche package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Duka Mwecheche 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-11 05:46\n"
+"PO-Revision-Date: 2026-04-11 05:46\n"
+"Last-Translator: Duka Mwecheche Team\n"
+"Language-Team: Ng'aturkana\n"
+"Language: tuv\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Dashboard"
+msgstr "Dashboard"
+
+#  TODO: Translate to Ng'aturkana
+msgid "Suppliers"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Fulfillment"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Notifications"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Browse Requests"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "My Bids"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Businesses"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Stock List"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Add Transaction"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Quick Sell"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "History"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Order Fulfillment"
+msgstr ""
+
+msgid "Payments"
+msgstr "Ngishillingi"
+
+#  TODO: Translate to Ng'aturkana
+msgid "Supply Chain"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "My Suppliers"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Supplier Applications"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "My Procurement"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "New Procurement"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Browse Businesses"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Manage"
+msgstr ""
+
+msgid "Stores"
+msgstr "Edukani"
+
+msgid "Items"
+msgstr "Ngikaliok"
+
+#  TODO: Translate to Ng'aturkana
+msgid "Sales & P&L"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Analytics"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Staff"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Add Staff"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Orders"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Feedback"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Payment Prompts"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Payment Settings"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Business Settings"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "View Tutorial"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Change Password"
+msgstr ""
+
+msgid "Language"
+msgstr "Akuj"
+
+msgid "Logout"
+msgstr "Alot"
+
+#  TODO: Translate to Ng'aturkana
+msgid "Delete Account"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Choose Language"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Save Language"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Sign in to your account"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Invalid username or password."
+msgstr ""
+
+msgid "Login"
+msgstr "Apou"
+
+#  TODO: Translate to Ng'aturkana
+msgid "Forgot password?"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Staff members:"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Ask your business owner to reset your password from the Staff page."
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Don't have an account?"
+msgstr ""
+
+#  TODO: Translate to Ng'aturkana
+msgid "Register your business"
+msgstr ""
