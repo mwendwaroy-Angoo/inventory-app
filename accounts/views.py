@@ -395,7 +395,11 @@ def rider_dashboard(request):
 def rider_toggle_availability(request):
     rider = getattr(request.user, 'rider_profile', None)
     if not rider:
-        return JsonResponse({'error': 'Not a rider'}, status=403)
+        if request.method == 'POST':
+            return JsonResponse({'error': 'Not a rider'}, status=403)
+        return redirect('home')
+    if request.method != 'POST':
+        return redirect('rider_dashboard')
     rider.is_available = not rider.is_available
     rider.save(update_fields=['is_available'])
     return JsonResponse({'is_available': rider.is_available})

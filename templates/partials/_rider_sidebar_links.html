@@ -25,7 +25,32 @@
 
 <div class="sidebar-section">
     <div class="sidebar-section-title">Profile</div>
-    <a href="{% url 'rider_toggle_availability' %}" class="sidebar-link">
+    <a href="#" class="sidebar-link" id="sidebarToggleAvail" onclick="event.preventDefault(); sidebarToggleAvailability();">
         <span class="icon">🔄</span> Toggle Availability
     </a>
 </div>
+
+<script>
+function sidebarToggleAvailability() {
+    const link = document.getElementById('sidebarToggleAvail');
+    fetch('{% url "rider_toggle_availability" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+        },
+    })
+    .then(r => r.json())
+    .then(data => {
+        const status = data.is_available ? '🟢 Available' : '🔴 Unavailable';
+        link.innerHTML = '<span class="icon">🔄</span> ' + status;
+        /* Also update dashboard toggle if on that page */
+        const toggle = document.getElementById('availToggle');
+        const text = document.getElementById('availText');
+        if (toggle && text) {
+            toggle.className = data.is_available ? 'status-toggle available' : 'status-toggle unavailable';
+            text.textContent = data.is_available ? 'Available' : 'Unavailable';
+        }
+    });
+}
+</script>
