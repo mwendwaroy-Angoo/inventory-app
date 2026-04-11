@@ -1,12 +1,12 @@
 {% extends "base_supplier.html" %}
-
-{% block title %}My Clients — Duka Mwecheche{% endblock %}
+{% load i18n %}
+{% block title %}{% trans 'My Clients' %} — Duka Mwecheche{% endblock %}
 
 {% block portal_content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 style="font-family:'Playfair Display',serif; color:var(--gold); margin:0;">My Clients</h4>
+    <h4 style="font-family:'Playfair Display',serif; color:var(--gold); margin:0;">{% trans 'My Clients' %}</h4>
     <a href="{% url 'browse_businesses' %}" class="btn btn-sm" style="background:#4da6ff; color:#fff;">
-        🏢 Browse Businesses
+        🏢 {% trans 'Browse Businesses' %}
     </a>
 </div>
 
@@ -21,7 +21,7 @@
                 {% if rel.business.phone %} · {{ rel.business.phone }}{% endif %}
             </p>
             <div class="mt-2">
-                <span class="badge bg-success">Approved</span>
+                <span class="badge bg-success">{% trans 'Approved' %}</span>
             </div>
         </div>
     </div>
@@ -30,7 +30,7 @@
 {% else %}
 <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:3rem; text-align:center;">
     <div style="font-size:3rem; margin-bottom:1rem;">🤝</div>
-    <p style="color:var(--muted);">No clients yet. <a href="{% url 'browse_businesses' %}" style="color:#4da6ff;">Browse businesses</a> and apply as their supplier.</p>
+    <p style="color:var(--muted);">{% trans 'No clients yet.' %} <a href="{% url 'browse_businesses' %}" style="color:#4da6ff;">{% trans 'Browse businesses' %}</a> {% trans 'and apply as their supplier.' %}</p>
 </div>
 {% endif %}
 {% endblock %}

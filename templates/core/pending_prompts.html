@@ -1,17 +1,18 @@
 {% extends "base.html" %}
+{% load i18n %}
 
-{% block title %}Payment Prompts — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Payment Prompts' %} — Duka Mwecheche{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-lg-10">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
-                <h2 class="page-title mb-0">💰 Payment Prompts</h2>
-                <p class="text-muted mb-0">Confirm what was sold when M-Pesa payments come in</p>
+                <h2 class="page-title mb-0">💰 {% trans 'Payment Prompts' %}</h2>
+                <p class="text-muted mb-0">{% trans 'Confirm what was sold when M-Pesa payments come in' %}</p>
             </div>
             <span class="badge bg-warning" style="font-size:0.9rem;" id="pending-count">
-                {{ prompts|length }} pending
+                {% blocktrans with count=prompts|length %}{{ count }} pending{% endblocktrans %}
             </span>
         </div>
 
@@ -46,9 +47,9 @@
                         <form class="confirm-form" data-prompt-id="{{ p.id }}">
                             {% csrf_token %}
                             <div class="mb-2">
-                                <label class="form-label" style="font-size:0.8rem;">What was sold?</label>
+                                <label class="form-label" style="font-size:0.8rem;">{% trans 'What was sold?' %}</label>
                                 <select name="item_id" class="form-select form-select-sm" required>
-                                    <option value="">-- Select Item --</option>
+                                    <option value="">{% trans '-- Select Item --' %}</option>
                                     {% for item in items %}
                                     <option value="{{ item.id }}"
                                             data-price="{{ item.selling_price|default:0 }}">
@@ -61,18 +62,18 @@
                             </div>
 
                             <div class="mb-2">
-                                <label class="form-label" style="font-size:0.8rem;">Quantity</label>
+                                <label class="form-label" style="font-size:0.8rem;">{% trans 'Quantity' %}</label>
                                 <input type="number" name="qty" value="1" min="1" class="form-control form-control-sm"
                                        style="width:80px;" required>
                             </div>
 
                             <div class="d-flex gap-2">
                                 <button type="submit" class="btn btn-gold btn-sm flex-grow-1">
-                                    ✅ Confirm Sale
+                                    ✅ {% trans 'Confirm Sale' %}
                                 </button>
                                 <button type="button" class="btn btn-outline-danger btn-sm dismiss-btn"
                                         data-prompt-id="{{ p.id }}">
-                                    ✕ Not a Sale
+                                    ✕ {% trans 'Not a Sale' %}
                                 </button>
                             </div>
                         </form>
@@ -86,26 +87,25 @@
         <div class="card">
             <div class="card-body text-center py-5">
                 <div style="font-size:3rem; margin-bottom:1rem;">✨</div>
-                <h5 style="color:var(--gold);">No Pending Payments</h5>
-                <p class="text-muted">When customers pay via your Till, Paybill, or Pochi la Biashara,<br>
-                payment prompts will appear here for you to log the sale.</p>
-                <a href="{% url 'payment_settings' %}" class="btn btn-gold btn-sm mt-2">⚙️ Payment Settings</a>
+                <h5 style="color:var(--gold);">{% trans 'No Pending Payments' %}</h5>
+                <p class="text-muted">{% trans 'When customers pay via your Till, Paybill, or Pochi la Biashara, payment prompts will appear here for you to log the sale.' %}</p>
+                <a href="{% url 'payment_settings' %}" class="btn btn-gold btn-sm mt-2">⚙️ {% trans 'Payment Settings' %}</a>
             </div>
         </div>
         {% endif %}
 
         {% if confirmed %}
         <hr class="gold-divider">
-        <h5 style="color:var(--gold-light);">✅ Recently Confirmed</h5>
+        <h5 style="color:var(--gold-light);">{% trans 'Recently Confirmed' %}</h5>
         <div class="table-responsive">
             <table class="table table-sm">
                 <thead>
                     <tr>
-                        <th>Amount</th>
-                        <th>From</th>
-                        <th>Item Sold</th>
-                        <th>Confirmed By</th>
-                        <th>When</th>
+                        <th>{% trans 'Amount' %}</th>
+                        <th>{% trans 'From' %}</th>
+                        <th>{% trans 'Item Sold' %}</th>
+                        <th>{% trans 'Confirmed By' %}</th>
+                        <th>{% trans 'When' %}</th>
                     </tr>
                 </thead>
                 <tbody>

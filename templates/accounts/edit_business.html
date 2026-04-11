@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
+{% load i18n %}
 
 {% block title %}Edit Business — Duka Mwecheche{% endblock %}
 
@@ -94,17 +95,17 @@
 {% block content %}
 <div class="edit-card">
     <div class="edit-header">
-        <h2>Edit Business Details</h2>
+        <h2>{% trans 'Edit Business Details' %}</h2>
     </div>
     <div class="edit-body">
         {% if form.errors %}
-        <div class="alert alert-danger">Please correct the errors below.</div>
+        <div class="alert alert-danger">{% trans 'Please correct the errors below.' %}</div>
         {% endif %}
 
         <form method="post">
             {% csrf_token %}
 
-            <h5 class="section-label">Business Information</h5>
+            <h5 class="section-label">{% trans 'Business Information' %}</h5>
             <div class="mb-3">
                 {% bootstrap_field form.name %}
             </div>
@@ -119,52 +120,52 @@
                 {% bootstrap_field form.address %}
             </div>
 
-            <h5 class="section-label mt-4">Location</h5>
+            <h5 class="section-label mt-4">{% trans 'Location' %}</h5>
             <div class="mb-3">{% bootstrap_field form.county %}</div>
             <div class="mb-3">{% bootstrap_field form.sub_county %}</div>
             <div class="mb-3">{% bootstrap_field form.ward %}</div>
 
-            <h5 class="section-label mt-4">🕐 Operating Hours</h5>
+            <h5 class="section-label mt-4">🕐 {% trans 'Operating Hours' %}</h5>
             <div class="row">
                 <div class="col-md-4 mb-3">{% bootstrap_field form.opening_time %}</div>
                 <div class="col-md-4 mb-3">{% bootstrap_field form.closing_time %}</div>
                 <div class="col-md-4 mb-3">{% bootstrap_field form.is_open_override %}</div>
             </div>
 
-            <h5 class="section-label mt-4">📍 GPS Coordinates</h5>
+            <h5 class="section-label mt-4">📍 {% trans 'GPS Coordinates' %}</h5>
             <div class="map-search-row">
-                <input type="text" id="mapSearchInput" class="form-control" placeholder="Search for your business location e.g. Mama Ngina Street, Nairobi">
-                <button type="button" class="locate-btn" onclick="searchBusinessLocation()">Search</button>
+                <input type="text" id="mapSearchInput" class="form-control" placeholder="{% trans 'Search for your business location e.g. Mama Ngina Street, Nairobi' %}">
+                <button type="button" class="locate-btn" onclick="searchBusinessLocation()">{% trans 'Search' %}</button>
             </div>
             <div class="map-search-results" id="mapSearchResults" style="display:none;"></div>
-            <button type="button" class="locate-btn" onclick="locateMe()">📍 Use My Current Location</button>
+            <button type="button" class="locate-btn" onclick="locateMe()">📍 {% trans 'Use My Current Location' %}</button>
             <div id="mapPicker"></div>
-            <p class="map-hint">Search above, click the map, or drag the marker to set your business location.</p>
+            <p class="map-hint">{% trans 'Search above, click the map, or drag the marker to set your business location.' %}</p>
             <div class="row">
                 <div class="col-md-6 mb-3">{% bootstrap_field form.latitude %}</div>
                 <div class="col-md-6 mb-3">{% bootstrap_field form.longitude %}</div>
             </div>
 
-            <h5 class="section-label mt-4">🚚 Delivery Settings</h5>
+            <h5 class="section-label mt-4">🚚 {% trans 'Delivery Settings' %}</h5>
             <div class="mb-3">{% bootstrap_field form.offers_delivery %}</div>
             <div class="mb-3">{% bootstrap_field form.delivery_radius_km %}</div>
 
-            <h6 style="color:var(--pearl); margin-top:1rem;">💰 Base Pricing</h6>
-            <small class="text-muted d-block mb-2">Base fee + per-km rate. Example: KES 50 base + KES 30/km → 3km delivery costs KES 140</small>
+            <h6 style="color:var(--pearl); margin-top:1rem;">💰 {% trans 'Base Pricing' %}</h6>
+            <small class="text-muted d-block mb-2">{% trans 'Base fee + per-km rate. Example: KES 50 base + KES 30/km → 3km delivery costs KES 140' %}</small>
             <div class="row">
                 <div class="col-md-6 mb-3">{% bootstrap_field form.delivery_fee %}</div>
                 <div class="col-md-6 mb-3">{% bootstrap_field form.delivery_fee_per_km %}</div>
             </div>
 
-            <h6 style="color:var(--pearl); margin-top:0.5rem;">📦 Minimum Order (distance-based)</h6>
-            <small class="text-muted d-block mb-2">Base minimum + per-km increase. Example: KES 200 base + KES 50/km → 3km away needs KES 350 minimum</small>
+            <h6 style="color:var(--pearl); margin-top:0.5rem;">📦 {% trans 'Minimum Order (distance-based)' %}</h6>
+            <small class="text-muted d-block mb-2">{% trans 'Base minimum + per-km increase. Example: KES 200 base + KES 50/km → 3km away needs KES 350 minimum' %}</small>
             <div class="row">
                 <div class="col-md-6 mb-3">{% bootstrap_field form.min_order_amount %}</div>
                 <div class="col-md-6 mb-3">{% bootstrap_field form.min_order_per_km %}</div>
             </div>
 
-            <h6 style="color:var(--pearl); margin-top:1rem;">🚶 Delivery Modes by Distance</h6>
-            <small class="text-muted d-block mb-2">Set which delivery modes are available and their max range. The system will recommend the best mode based on customer distance.</small>
+            <h6 style="color:var(--pearl); margin-top:1rem;">🚶 {% trans 'Delivery Modes by Distance' %}</h6>
+            <small class="text-muted d-block mb-2">{% trans 'Set which delivery modes are available and their max range. The system will recommend the best mode based on customer distance.' %}</small>
 
             <div id="tierContainer">
                 {% for tier in delivery_tiers %}
@@ -172,41 +173,41 @@
                     <input type="hidden" name="tier_id_{{ forloop.counter0 }}" value="{{ tier.id }}">
                     <div class="row g-2 mb-2 align-items-end">
                         <div class="col-md-3">
-                            <label class="form-label form-label-sm">Mode</label>
+                            <label class="form-label form-label-sm">{% trans 'Mode' %}</label>
                             <select name="tier_mode_{{ forloop.counter0 }}" class="form-select form-select-sm">
-                                <option value="foot" {% if tier.mode == 'foot' %}selected{% endif %}>🚶 On Foot</option>
-                                <option value="bicycle" {% if tier.mode == 'bicycle' %}selected{% endif %}>🚲 Bicycle</option>
-                                <option value="boda" {% if tier.mode == 'boda' %}selected{% endif %}>🏍️ Boda Boda</option>
-                                <option value="vehicle" {% if tier.mode == 'vehicle' %}selected{% endif %}>🚗 Vehicle</option>
+                                <option value="foot" {% if tier.mode == 'foot' %}selected{% endif %}>🚶 {% trans 'On Foot' %}</option>
+                                <option value="bicycle" {% if tier.mode == 'bicycle' %}selected{% endif %}>🚲 {% trans 'Bicycle' %}</option>
+                                <option value="boda" {% if tier.mode == 'boda' %}selected{% endif %}>🏘️ {% trans 'Boda Boda' %}</option>
+                                <option value="vehicle" {% if tier.mode == 'vehicle' %}selected{% endif %}>🚗 {% trans 'Vehicle' %}</option>
                             </select>
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label form-label-sm">Max km</label>
+                            <label class="form-label form-label-sm">{% trans 'Max km' %}</label>
                             <input type="number" name="tier_max_km_{{ forloop.counter0 }}" class="form-control form-control-sm" step="0.5" value="{{ tier.max_distance_km }}" placeholder="e.g. 2">
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label form-label-sm">Base fee</label>
+                            <label class="form-label form-label-sm">{% trans 'Base fee' %}</label>
                             <input type="number" name="tier_base_fee_{{ forloop.counter0 }}" class="form-control form-control-sm" step="1" value="{{ tier.base_fee|floatformat:0 }}" placeholder="0">
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label form-label-sm">Per km</label>
+                            <label class="form-label form-label-sm">{% trans 'Per km' %}</label>
                             <input type="number" name="tier_fee_per_km_{{ forloop.counter0 }}" class="form-control form-control-sm" step="1" value="{{ tier.fee_per_km|floatformat:0 }}" placeholder="0">
                         </div>
                         <div class="col-md-3 d-flex gap-1">
                             <div class="form-check mt-2">
                                 <input type="checkbox" name="tier_delete_{{ forloop.counter0 }}" class="form-check-input" id="delTier{{ forloop.counter0 }}">
-                                <label class="form-check-label text-danger" for="delTier{{ forloop.counter0 }}" style="font-size:0.8rem;">Remove</label>
+                                <label class="form-check-label text-danger" for="delTier{{ forloop.counter0 }}" style="font-size:0.8rem;">{% trans 'Remove' %}</label>
                             </div>
                         </div>
                     </div>
                 </div>
                 {% endfor %}
             </div>
-            <button type="button" class="btn btn-sm btn-outline-warning mt-1 mb-3" onclick="addTierRow()">+ Add Delivery Mode</button>
+            <button type="button" class="btn btn-sm btn-outline-warning mt-1 mb-3" onclick="addTierRow()">+ {% trans 'Add Delivery Mode' %}</button>
 
             <div class="d-flex gap-2 mt-4">
-                <button type="submit" class="btn btn-primary flex-fill py-2">Save Changes</button>
-                <a href="{% url 'home' %}" class="btn btn-secondary flex-fill py-2">Cancel</a>
+                <button type="submit" class="btn btn-primary flex-fill py-2">{% trans 'Save Changes' %}</button>
+                <a href="{% url 'home' %}" class="btn btn-secondary flex-fill py-2">{% trans 'Cancel' %}</a>
             </div>
         </form>
     </div>

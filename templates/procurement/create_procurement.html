@@ -1,55 +1,56 @@
 {% extends "base.html" %}
-{% block title %}Create Procurement Request{% endblock %}
+{% load i18n %}
+{% block title %}{% trans 'Create Procurement Request' %}{% endblock %}
 {% block content %}
 <div class="container-fluid" style="max-width:650px;">
-    <h4 class="mb-1" style="color:var(--gold); font-family:'Playfair Display',serif;">📝 New Procurement Request</h4>
-    <p style="color:var(--muted); margin-bottom:1rem;">Post what you need and let suppliers on the platform bid for it.</p>
+    <h4 class="mb-1" style="color:var(--gold); font-family:'Playfair Display',serif;">📝 {% trans 'New Procurement Request' %}</h4>
+    <p style="color:var(--muted); margin-bottom:1rem;">{% trans 'Post what you need and let suppliers on the platform bid for it.' %}</p>
 
     <form method="post" style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem;">
         {% csrf_token %}
 
         <div class="mb-3">
-            <label class="form-label">Title *</label>
-            <input type="text" name="title" class="form-control" required placeholder="e.g. 500kg Sugar Supply">
+            <label class="form-label">{% trans 'Title' %} *</label>
+            <input type="text" name="title" class="form-control" required placeholder="{% trans 'e.g. 500kg Sugar Supply' %}">
         </div>
 
         <div class="mb-3">
-            <label class="form-label">Description *</label>
+            <label class="form-label">{% trans 'Description' %} *</label>
             <textarea name="description" class="form-control" rows="4" required
-                placeholder="Describe what you need, quality requirements, quantity, delivery preferences..."></textarea>
+                placeholder="{% trans 'Describe what you need, quality requirements, quantity, delivery preferences...' %}"></textarea>
         </div>
 
         <div class="mb-3">
-            <label class="form-label">Category</label>
+            <label class="form-label">{% trans 'Category' %}</label>
             <select name="category" class="form-select">
-                <option value="">— Any type —</option>
+                <option value="">{% trans '— Any type —' %}</option>
                 {% for cat in categories %}
                 <option value="{{ cat.id }}">{{ cat.name }}</option>
                 {% endfor %}
             </select>
-            <div style="color:var(--muted); font-size:0.8rem; margin-top:0.3rem;">Select the type of supplier best suited for this request.</div>
+            <div style="color:var(--muted); font-size:0.8rem; margin-top:0.3rem;">{% trans 'Select the type of supplier best suited for this request.' %}</div>
         </div>
 
         <div class="row mb-3">
             <div class="col-6">
-                <label class="form-label">Budget Min (KES)</label>
+                <label class="form-label">{% trans 'Budget Min (KES)' %}</label>
                 <input type="number" name="budget_min" class="form-control" min="0" step="1" placeholder="e.g. 10000">
             </div>
             <div class="col-6">
-                <label class="form-label">Budget Max (KES)</label>
+                <label class="form-label">{% trans 'Budget Max (KES)' %}</label>
                 <input type="number" name="budget_max" class="form-control" min="0" step="1" placeholder="e.g. 50000">
             </div>
         </div>
 
         <div class="mb-3">
-            <label class="form-label">Deadline *</label>
+            <label class="form-label">{% trans 'Deadline' %} *</label>
             <input type="date" name="deadline" class="form-control" required>
-            <div style="color:var(--muted); font-size:0.8rem; margin-top:0.3rem;">Last day suppliers can submit bids.</div>
+            <div style="color:var(--muted); font-size:0.8rem; margin-top:0.3rem;">{% trans 'Last day suppliers can submit bids.' %}</div>
         </div>
 
         <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-gold">🚀 Post Request</button>
-            <a href="{% url 'procurement_list_owner' %}" class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-gold">🚀 {% trans 'Post Request' %}</button>
+            <a href="{% url 'procurement_list_owner' %}" class="btn btn-outline-secondary">{% trans 'Cancel' %}</a>
         </div>
     </form>
 </div>

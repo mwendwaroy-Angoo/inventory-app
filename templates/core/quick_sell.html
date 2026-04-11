@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% load i18n %}
 
-{% block title %}Quick Sell — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Quick Sell' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -394,19 +395,19 @@
 <div class="qs-page">
     <!-- Header -->
     <div class="qs-header">
-        <h2>⚡ Quick Sell</h2>
-        <a href="{% url 'add_transaction' %}" class="btn btn-sm btn-secondary">Full Form →</a>
+        <h2>⚡ {% trans 'Quick Sell' %}</h2>
+        <a href="{% url 'add_transaction' %}" class="btn btn-sm btn-secondary">{% trans 'Full Form' %} →</a>
     </div>
 
     <!-- Search -->
     <div class="qs-search">
         <span class="qs-search-icon">🔍</span>
-        <input type="text" id="qsSearch" placeholder="Search items...">
+        <input type="text" id="qsSearch" placeholder="{% trans 'Search items...' %}">
     </div>
 
     <!-- Store filters -->
     <div class="qs-stores">
-        <button class="qs-store-btn active" data-store="all">All</button>
+        <button class="qs-store-btn active" data-store="all">{% trans 'All' %}</button>
         {% for store in stores %}
         <button class="qs-store-btn" data-store="{{ store.id }}">{{ store.name }}</button>
         {% endfor %}
@@ -435,7 +436,7 @@
             </div>
         </div>
         {% empty %}
-        <div class="qs-empty">No items found. Add items from the Manage page.</div>
+        <div class="qs-empty">{% trans 'No items found. Add items from the Manage page.' %}</div>
         {% endfor %}
     </div>
 
@@ -457,8 +458,8 @@
             Subtotal: KES 0
         </div>
         <div class="qs-modal-actions">
-            <button class="qs-modal-cancel" id="qsModalCancel">Cancel</button>
-            <button class="qs-modal-add" id="qsModalAdd">Add to Sale</button>
+            <button class="qs-modal-cancel" id="qsModalCancel">{% trans 'Cancel' %}</button>
+            <button class="qs-modal-add" id="qsModalAdd">{% trans 'Add to Sale' %}</button>
         </div>
     </div>
 </div>
@@ -467,10 +468,10 @@
 <div class="qs-modal-overlay" id="qsSuccessModal">
     <div class="qs-modal">
         <div style="font-size: 3rem; margin-bottom: 0.5rem;">✅</div>
-        <h4>Sale Recorded!</h4>
+        <h4>{% trans 'Sale Recorded!' %}</h4>
         <div class="qs-receipt" id="qsReceipt"></div>
         <button class="qs-modal-add w-100 mt-3" onclick="document.getElementById('qsSuccessModal').classList.remove('active')">
-            Continue Selling
+            {% trans 'Continue Selling' %}
         </button>
     </div>
 </div>
@@ -483,8 +484,8 @@
             <div class="qs-cart-total" id="qsCartTotal">KES 0</div>
         </div>
         <div class="qs-cart-actions">
-            <button class="qs-clear-btn" id="qsClear">Clear</button>
-            <button class="qs-sell-btn" id="qsSell">Complete Sale ➜</button>
+            <button class="qs-clear-btn" id="qsClear">{% trans 'Clear' %}</button>
+            <button class="qs-sell-btn" id="qsSell">{% trans 'Complete Sale' %} ➜</button>
         </div>
     </div>
 </div>

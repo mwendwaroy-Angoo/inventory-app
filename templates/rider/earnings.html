@@ -1,11 +1,12 @@
 {% extends "base_rider.html" %}
+{% load i18n %}
 
-{% block title %}My Earnings — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'My Earnings' %} — Duka Mwecheche{% endblock %}
 
 {% block portal_content %}
 <div class="mb-4">
-    <h4 style="font-family:'Playfair Display',serif; color:#4caf50; margin:0;">💰 My Earnings</h4>
-    <p style="color:var(--muted); font-size:0.85rem;">Overview of your delivery earnings</p>
+    <h4 style="font-family:'Playfair Display',serif; color:#4caf50; margin:0;">💰 {% trans 'My Earnings' %}</h4>
+    <p style="color:var(--muted); font-size:0.85rem;">{% trans 'Overview of your delivery earnings' %}</p>
 </div>
 
 <div class="row g-3 mb-4">
@@ -14,7 +15,7 @@
             <div style="font-size:2.5rem; font-weight:700; color:#4caf50; font-family:'Playfair Display',serif;">
                 KES {{ total_earnings|floatformat:0 }}
             </div>
-            <div style="color:var(--muted); font-size:0.85rem; margin-top:0.3rem;">Total Earnings</div>
+            <div style="color:var(--muted); font-size:0.85rem; margin-top:0.3rem;">{% trans 'Total Earnings' %}</div>
         </div>
     </div>
     <div class="col-md-6">
@@ -22,17 +23,17 @@
             <div style="font-size:2.5rem; font-weight:700; color:#4caf50; font-family:'Playfair Display',serif;">
                 {{ total_deliveries }}
             </div>
-            <div style="color:var(--muted); font-size:0.85rem; margin-top:0.3rem;">Total Deliveries</div>
+            <div style="color:var(--muted); font-size:0.85rem; margin-top:0.3rem;">{% trans 'Total Deliveries' %}</div>
         </div>
     </div>
 </div>
 
 {% if total_deliveries > 0 %}
 <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem;">
-    <h6 style="color:var(--pearl); font-family:'Playfair Display',serif;">Earnings Summary</h6>
+    <h6 style="color:var(--pearl); font-family:'Playfair Display',serif;">{% trans 'Earnings Summary' %}</h6>
     <div class="row g-3 mt-2" style="font-size:0.9rem;">
         <div class="col-6">
-            <span style="color:var(--muted);">Average per delivery:</span><br>
+            <span style="color:var(--muted);">{% trans 'Average per delivery:' %}</span><br>
             <span style="color:#4caf50; font-weight:600;">
                 KES {% widthratio total_earnings total_deliveries 1 %}
             </span>
@@ -42,7 +43,7 @@
 {% else %}
 <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:3rem; text-align:center;">
     <div style="font-size:3rem; margin-bottom:1rem;">💰</div>
-    <p style="color:var(--muted);">Complete deliveries to start earning! Make sure you're set as available.</p>
+    <p style="color:var(--muted);">{% trans "Complete deliveries to start earning! Make sure you're set as available." %}</p>
 </div>
 {% endif %}
 {% endblock %}

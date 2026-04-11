@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-
-{% block title %}Analytics — Duka Mwecheche{% endblock %}
+{% load i18n %}
+{% block title %}{% trans 'Analytics' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -96,65 +96,65 @@
 
 <!-- Breadcrumb -->
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <span>Analytics</span>
+    <span>{% trans 'Analytics' %}</span>
 </nav>
 
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
-    <h2 class="page-title">📊 Business Analytics</h2>
-    <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+    <h2 class="page-title">📊 {% trans 'Business Analytics' %}</h2>
+    <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← {% trans 'Dashboard' %}</a>
 </div>
 
 <!-- Period Filter -->
 <div class="d-flex flex-wrap gap-2 mb-4">
-    <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; align-self:center;">Period:</span>
-    <a href="?period=7" class="period-btn {% if period == 7 %}active{% endif %}">7 Days</a>
-    <a href="?period=14" class="period-btn {% if period == 14 %}active{% endif %}">14 Days</a>
-    <a href="?period=30" class="period-btn {% if period == 30 %}active{% endif %}">30 Days</a>
-    <a href="?period=90" class="period-btn {% if period == 90 %}active{% endif %}">90 Days</a>
-    <a href="?period=365" class="period-btn {% if period == 365 %}active{% endif %}">1 Year</a>
+    <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; align-self:center;">{% trans 'Period:' %}</span>
+    <a href="?period=7" class="period-btn {% if period == 7 %}active{% endif %}">{% trans '7 Days' %}</a>
+    <a href="?period=14" class="period-btn {% if period == 14 %}active{% endif %}">{% trans '14 Days' %}</a>
+    <a href="?period=30" class="period-btn {% if period == 30 %}active{% endif %}">{% trans '30 Days' %}</a>
+    <a href="?period=90" class="period-btn {% if period == 90 %}active{% endif %}">{% trans '90 Days' %}</a>
+    <a href="?period=365" class="period-btn {% if period == 365 %}active{% endif %}">{% trans '1 Year' %}</a>
 </div>
 
 <div style="font-size:0.8rem; color:var(--muted); margin-bottom:1.5rem;">
-    Showing: <span style="color:var(--gold)">{{ start_date }} → {{ end_date }}</span>
-    · Compared to previous {{ period }} days
+    {% trans 'Showing:' %} <span style="color:var(--gold)">{{ start_date }} → {{ end_date }}</span>
+    · {% blocktrans with p=period %}Compared to previous {{ p }} days{% endblocktrans %}
 </div>
 
 <!-- ═══ KEY METRICS ═══ -->
 <div class="row g-3 mb-4">
     <div class="col-6 col-md-3">
         <div class="stat-card" style="border-top: 3px solid var(--gold);">
-            <div class="stat-label">Revenue</div>
+            <div class="stat-label">{% trans 'Revenue' %}</div>
             <div class="stat-value" style="color:var(--gold)">{{ cur_revenue|floatformat:0 }}</div>
             <div class="stat-change {% if revenue_change >= 0 %}up{% else %}down{% endif %}">
-                {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change }}% vs prev
+                {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change }}% {% trans 'vs prev' %}
             </div>
         </div>
     </div>
     <div class="col-6 col-md-3">
         <div class="stat-card" style="border-top: 3px solid {% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};">
-            <div class="stat-label">Gross Profit</div>
+            <div class="stat-label">{% trans 'Gross Profit' %}</div>
             <div class="stat-value" style="color:{% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}">{{ cur_profit|floatformat:0 }}</div>
             <div class="stat-change {% if profit_change >= 0 %}up{% else %}down{% endif %}">
-                {% if profit_change >= 0 %}↑{% else %}↓{% endif %} {{ profit_change }}% vs prev
+                {% if profit_change >= 0 %}↑{% else %}↓{% endif %} {{ profit_change }}% {% trans 'vs prev' %}
             </div>
         </div>
     </div>
     <div class="col-6 col-md-3">
         <div class="stat-card" style="border-top: 3px solid var(--pearl);">
-            <div class="stat-label">Units Sold</div>
+            <div class="stat-label">{% trans 'Units Sold' %}</div>
             <div class="stat-value" style="color:var(--pearl)">{{ cur_units }}</div>
             <div class="stat-change {% if units_change >= 0 %}up{% else %}down{% endif %}">
-                {% if units_change >= 0 %}↑{% else %}↓{% endif %} {{ units_change }}% vs prev
+                {% if units_change >= 0 %}↑{% else %}↓{% endif %} {{ units_change }}% {% trans 'vs prev' %}
             </div>
         </div>
     </div>
     <div class="col-6 col-md-3">
         <div class="stat-card" style="border-top: 3px solid #6c8ebf;">
-            <div class="stat-label">Profit Margin</div>
+            <div class="stat-label">{% trans 'Profit Margin' %}</div>
             <div class="stat-value" style="color:#6c8ebf">{{ profit_margin }}%</div>
-            <div class="stat-change" style="color:var(--muted)">{{ cur_txn_count }} transactions</div>
+            <div class="stat-change" style="color:var(--muted)">{{ cur_txn_count }} {% trans 'transactions' %}</div>
         </div>
     </div>
 </div>
@@ -163,25 +163,25 @@
 <div class="row g-3 mb-4">
     <div class="col-md-3 col-6">
         <div class="insight-card">
-            <div class="insight-label">Avg Daily Revenue</div>
+            <div class="insight-label">{% trans 'Avg Daily Revenue' %}</div>
             <div class="insight-value">KES {{ avg_daily_revenue|floatformat:0 }}</div>
         </div>
     </div>
     <div class="col-md-3 col-6">
         <div class="insight-card">
-            <div class="insight-label">Active Selling Days</div>
+            <div class="insight-label">{% trans 'Active Selling Days' %}</div>
             <div class="insight-value">{{ active_days }} / {{ period }}</div>
         </div>
     </div>
     <div class="col-md-3 col-6">
         <div class="insight-card">
-            <div class="insight-label">Best Day</div>
+            <div class="insight-label">{% trans 'Best Day' %}</div>
             <div class="insight-value">{{ busiest_day }}</div>
         </div>
     </div>
     <div class="col-md-3 col-6">
         <div class="insight-card">
-            <div class="insight-label">Best Day Revenue</div>
+            <div class="insight-label">{% trans 'Best Day Revenue' %}</div>
             <div class="insight-value">KES {{ busiest_day_rev|floatformat:0 }}</div>
         </div>
     </div>
@@ -193,13 +193,13 @@
 <div class="row g-4 mb-4">
     <div class="col-lg-8">
         <div class="chart-box">
-            <h3>📈 Revenue & Profit Trend</h3>
+            <h3>📈 {% trans 'Revenue & Profit Trend' %}</h3>
             <canvas id="trendChart" height="130"></canvas>
         </div>
     </div>
     <div class="col-lg-4">
         <div class="chart-box">
-            <h3>🏆 Top Products</h3>
+            <h3>🏆 {% trans 'Top Products' %}</h3>
             <canvas id="topProductsChart" height="220"></canvas>
         </div>
     </div>
@@ -208,13 +208,13 @@
 <div class="row g-4 mb-4">
     <div class="col-lg-6">
         <div class="chart-box">
-            <h3>📦 Daily Units Sold</h3>
+            <h3>📦 {% trans 'Daily Units Sold' %}</h3>
             <canvas id="unitsChart" height="150"></canvas>
         </div>
     </div>
     <div class="col-lg-6">
         <div class="chart-box">
-            <h3>🏥 Stock Health</h3>
+            <h3>🏥 {% trans 'Stock Health' %}</h3>
             <div class="health-bar mb-3" style="height:12px;">
                 {% if total_items > 0 %}
                 <div class="health-segment" style="width:{% widthratio healthy_stock total_items 100 %}%; background:var(--success);"></div>
@@ -225,19 +225,19 @@
             <div class="row g-2 text-center">
                 <div class="col-4">
                     <div style="font-size:1.5rem; font-weight:700; color:var(--success)">{{ healthy_stock }}</div>
-                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">Healthy</div>
+                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">{% trans 'Healthy' %}</div>
                 </div>
                 <div class="col-4">
                     <div style="font-size:1.5rem; font-weight:700; color:var(--warning)">{{ low_stock }}</div>
-                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">Low Stock</div>
+                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">{% trans 'Low Stock' %}</div>
                 </div>
                 <div class="col-4">
                     <div style="font-size:1.5rem; font-weight:700; color:var(--danger)">{{ out_of_stock }}</div>
-                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">Out of Stock</div>
+                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">{% trans 'Out of Stock' %}</div>
                 </div>
             </div>
             <div style="text-align:center; margin-top:1rem; color:var(--muted); font-size:0.85rem;">
-                Stock Value: <span style="color:var(--gold); font-weight:600;">KES {{ stock_value|floatformat:0 }}</span>
+                {% trans 'Stock Value:' %} <span style="color:var(--gold); font-weight:600;">KES {{ stock_value|floatformat:0 }}</span>
             </div>
         </div>
     </div>
@@ -246,29 +246,29 @@
 <hr class="gold-divider">
 
 <!-- ═══ ORDER & PAYMENT ANALYTICS ═══ -->
-<div class="section-title">📋 Orders & Payments</div>
+<div class="section-title">📋 {% trans 'Orders & Payments' %}</div>
 <div class="row g-3 mb-4">
     <div class="col-md-3 col-6">
         <div class="stat-card">
-            <div class="stat-label">Total Orders</div>
+            <div class="stat-label">{% trans 'Total Orders' %}</div>
             <div class="stat-value" style="color:var(--pearl)">{{ total_orders }}</div>
         </div>
     </div>
     <div class="col-md-3 col-6">
         <div class="stat-card">
-            <div class="stat-label">Pending</div>
+            <div class="stat-label">{% trans 'Pending' %}</div>
             <div class="stat-value" style="color:var(--warning)">{{ pending_orders }}</div>
         </div>
     </div>
     <div class="col-md-3 col-6">
         <div class="stat-card">
-            <div class="stat-label">Completed</div>
+            <div class="stat-label">{% trans 'Completed' %}</div>
             <div class="stat-value" style="color:var(--success)">{{ completed_orders }}</div>
         </div>
     </div>
     <div class="col-md-3 col-6">
         <div class="stat-card">
-            <div class="stat-label">Order Revenue</div>
+            <div class="stat-label">{% trans 'Order Revenue' %}</div>
             <div class="stat-value" style="color:var(--gold)">{{ order_revenue|floatformat:0 }}</div>
         </div>
     </div>
@@ -277,14 +277,14 @@
 <div class="row g-3 mb-4">
     <div class="col-md-6">
         <div class="stat-card">
-            <div class="stat-label">M-Pesa Collected</div>
+            <div class="stat-label">{% trans 'M-Pesa Collected' %}</div>
             <div class="stat-value" style="color:#4CAF50">KES {{ mpesa_total|floatformat:0 }}</div>
-            <div style="color:var(--muted); font-size:0.8rem; margin-top:0.3rem;">{{ mpesa_count }} payments</div>
+            <div style="color:var(--muted); font-size:0.8rem; margin-top:0.3rem;">{{ mpesa_count }} {% trans 'payments' %}</div>
         </div>
     </div>
     <div class="col-md-6">
         <div class="stat-card">
-            <div class="stat-label">Total Cost of Goods</div>
+            <div class="stat-label">{% trans 'Total Cost of Goods' %}</div>
             <div class="stat-value" style="color:var(--raspberry)">KES {{ cur_cost|floatformat:0 }}</div>
         </div>
     </div>
@@ -294,14 +294,14 @@
 
 <!-- ═══ STORE PERFORMANCE ═══ -->
 {% if store_list %}
-<div class="section-title">🏪 Store Performance</div>
+<div class="section-title">🏪 {% trans 'Store Performance' %}</div>
 <div class="table-responsive mb-4">
     <table class="table table-hover">
         <thead>
             <tr>
-                <th>Store</th>
-                <th>Units Sold</th>
-                <th>Revenue (KES)</th>
+                <th>{% trans 'Store' %}</th>
+                <th>{% trans 'Units Sold' %}</th>
+                <th>{% trans 'Revenue (KES)' %}</th>
             </tr>
         </thead>
         <tbody>
@@ -319,16 +319,16 @@
 
 <!-- ═══ TOP PRODUCTS TABLE ═══ -->
 {% if top_products %}
-<div class="section-title">🏆 Top 10 Products</div>
+<div class="section-title">🏆 {% trans 'Top 10 Products' %}</div>
 <div class="table-responsive mb-4">
     <table class="table table-hover">
         <thead>
             <tr>
-                <th>Product</th>
-                <th>Units</th>
-                <th>Revenue</th>
-                <th>Profit</th>
-                <th>Margin</th>
+                <th>{% trans 'Product' %}</th>
+                <th>{% trans 'Units' %}</th>
+                <th>{% trans 'Revenue' %}</th>
+                <th>{% trans 'Profit' %}</th>
+                <th>{% trans 'Margin' %}</th>
             </tr>
         </thead>
         <tbody>

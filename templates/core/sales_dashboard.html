@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% load i18n %}
 
-{% block title %}Sales Dashboard — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Sales & P&L' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -102,13 +103,13 @@
 
 <!-- Breadcrumb -->
 <nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
-    <span>Sales & P&L</span>
+    <span>{% trans 'Sales & P&L' %}</span>
 </nav>
 
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
-    <h2 class="page-title">📊 Sales & Profit/Loss</h2>
+    <h2 class="page-title">📊 {% trans 'Sales & Profit/Loss' %}</h2>
     <div class="d-flex gap-2 flex-wrap align-items-center">
         <a href="{% url 'export_sales' %}?period={{ period }}&date_from={{ date_from }}&date_to={{ date_to }}"
            class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
@@ -117,23 +118,23 @@
                 <rect x="8" width="8" height="16" rx="2" fill="#217346"/>
                 <path d="M2 4.5L5.5 8L2 11.5H4.5L6.75 9L9 11.5H11.5L8 8L11.5 4.5H9L6.75 7L4.5 4.5H2Z" fill="white"/>
             </svg>
-            Export Excel
+            {% trans 'Export Excel' %}
         </a>
-        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← Dashboard</a>
+        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← {% trans 'Dashboard' %}</a>
     </div>
 </div>
 
 <!-- Period Filter -->
 <div class="chart-card mb-4">
     <div class="d-flex flex-wrap gap-2 align-items-center">
-        <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Period:</span>
-        <a href="?period=today" class="period-btn {% if period == 'today' %}active{% endif %}">Today</a>
-        <a href="?period=week" class="period-btn {% if period == 'week' %}active{% endif %}">This Week</a>
-        <a href="?period=month" class="period-btn {% if period == 'month' %}active{% endif %}">This Month</a>
-        <a href="?period=year" class="period-btn {% if period == 'year' %}active{% endif %}">This Year</a>
+        <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">{% trans 'Period:' %}</span>
+        <a href="?period=today" class="period-btn {% if period == 'today' %}active{% endif %}">{% trans 'Today' %}</a>
+        <a href="?period=week" class="period-btn {% if period == 'week' %}active{% endif %}">{% trans 'This Week' %}</a>
+        <a href="?period=month" class="period-btn {% if period == 'month' %}active{% endif %}">{% trans 'This Month' %}</a>
+        <a href="?period=year" class="period-btn {% if period == 'year' %}active{% endif %}">{% trans 'This Year' %}</a>
         <button onclick="toggleCustom()"
                 class="period-btn {% if period == 'custom' %}active{% endif %}">
-            Custom Range
+            {% trans 'Custom Range' %}
         </button>
 
         <div class="custom-date-fields {% if period == 'custom' %}show{% endif %}" id="customFields">
@@ -141,16 +142,16 @@
                 <input type="hidden" name="period" value="custom">
                 <input type="date" name="date_from" value="{{ date_from }}"
                        class="form-control form-control-sm" style="width:auto">
-                <span style="color:var(--muted)">to</span>
+                <span style="color:var(--muted)">{% trans 'to' %}</span>
                 <input type="date" name="date_to" value="{{ date_to }}"
                        class="form-control form-control-sm" style="width:auto">
-                <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+                <button type="submit" class="btn btn-primary btn-sm">{% trans 'Apply' %}</button>
             </form>
         </div>
     </div>
 
     <div style="font-size:0.8rem; color:var(--muted); margin-top:0.8rem;">
-        Showing: <span style="color:var(--gold)">{{ date_from }} → {{ date_to }}</span>
+        {% trans 'Showing:' %} <span style="color:var(--gold)">{{ date_from }} → {{ date_to }}</span>
     </div>
 </div>
 
@@ -158,7 +159,7 @@
 <div class="row g-3 mb-4">
     <div class="col-6 col-md-3">
         <div class="summary-card" style="border-top: 3px solid var(--gold);">
-            <div class="summary-label">Total Revenue</div>
+            <div class="summary-label">{% trans 'Total Revenue' %}</div>
             <div class="summary-value" style="color:var(--gold)">
                 {{ total_revenue|floatformat:0 }}
             </div>
@@ -167,7 +168,7 @@
     </div>
     <div class="col-6 col-md-3">
         <div class="summary-card" style="border-top: 3px solid var(--raspberry);">
-            <div class="summary-label">Total Cost</div>
+            <div class="summary-label">{% trans 'Total Cost' %}</div>
             <div class="summary-value" style="color:var(--raspberry)">
                 {{ total_cost|floatformat:0 }}
             </div>
@@ -176,7 +177,7 @@
     </div>
     <div class="col-6 col-md-3">
         <div class="summary-card" style="border-top: 3px solid {% if total_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};">
-            <div class="summary-label">Gross Profit</div>
+            <div class="summary-label">{% trans 'Gross Profit' %}</div>
             <div class="summary-value {% if total_profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
                 {{ total_profit|floatformat:0 }}
             </div>
@@ -185,11 +186,11 @@
     </div>
     <div class="col-6 col-md-3">
         <div class="summary-card" style="border-top: 3px solid #6c8ebf;">
-            <div class="summary-label">Stock Value</div>
+            <div class="summary-label">{% trans 'Stock Value' %}</div>
             <div class="summary-value" style="color:#6c8ebf">
                 {{ stock_value|floatformat:0 }}
             </div>
-            <div class="summary-sub">KES (at cost)</div>
+            <div class="summary-sub">{% trans 'KES (at cost)' %}</div>
         </div>
     </div>
 </div>
@@ -197,14 +198,14 @@
 <div class="row g-3 mb-4">
     <div class="col-md-6">
         <div class="summary-card">
-            <div class="summary-label">Units Sold</div>
+            <div class="summary-label">{% trans 'Units Sold' %}</div>
             <div class="summary-value" style="color:var(--pearl)">{{ total_units_sold }}</div>
-            <div class="summary-sub">items issued</div>
+            <div class="summary-sub">{% trans 'items issued' %}</div>
         </div>
     </div>
     <div class="col-md-6">
         <div class="summary-card">
-            <div class="summary-label">Profit Margin</div>
+            <div class="summary-label">{% trans 'Profit Margin' %}</div>
             <div class="summary-value {% if total_profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
                 {% if total_revenue > 0 %}
                     {{ profit_margin }}%
@@ -212,7 +213,7 @@
                     —
                 {% endif %}
             </div>
-            <div class="summary-sub">gross margin</div>
+            <div class="summary-sub">{% trans 'gross margin' %}</div>
         </div>
     </div>
 </div>
@@ -238,18 +239,18 @@
 <hr class="gold-divider">
 
 <!-- Per Item Breakdown -->
-<div class="section-title">📦 Sales by Item</div>
+<div class="section-title">📦 {% trans 'Sales by Item' %}</div>
 {% if item_sales_list %}
 <div class="table-responsive mb-4">
     <table class="table table-hover">
         <thead>
             <tr>
-                <th>Item</th>
-                <th>Units Sold</th>
-                <th>Revenue (KES)</th>
-                <th>Cost (KES)</th>
-                <th>Profit (KES)</th>
-                <th>Margin</th>
+                <th>{% trans 'Item' %}</th>
+                <th>{% trans 'Units Sold' %}</th>
+                <th>{% trans 'Revenue (KES)' %}</th>
+                <th>{% trans 'Cost (KES)' %}</th>
+                <th>{% trans 'Profit (KES)' %}</th>
+                <th>{% trans 'Margin' %}</th>
             </tr>
         </thead>
         <tbody>
@@ -278,12 +279,12 @@
     </table>
 </div>
 {% else %}
-<div class="alert alert-info">No sales recorded in this period.</div>
+<div class="alert alert-info">{% trans 'No sales recorded in this period.' %}</div>
 {% endif %}
 
 <!-- Top Selling Items -->
 {% if top_items %}
-<div class="section-title">🏆 Top Selling Items</div>
+<div class="section-title">🏆 {% trans 'Top Selling Items' %}</div>
 <div class="row g-3 mb-4">
     {% for item in top_items %}
     <div class="col-md-4">
@@ -302,10 +303,10 @@
 
 <!-- Slow Moving Items -->
 {% if slow_items %}
-<div class="section-title">🐢 Slow Moving Items</div>
+<div class="section-title">🐢 {% trans 'Slow Moving Items' %}</div>
 <div class="alert" style="background:rgba(243,156,18,0.08); border:1px solid var(--warning); border-radius:8px;">
     <p style="color:var(--warning); font-size:0.85rem; margin-bottom:0.8rem;">
-        These items had no sales in the selected period:
+        {% trans 'These items had no sales in the selected period:' %}
     </p>
     <div class="d-flex flex-wrap gap-2">
         {% for item in slow_items %}

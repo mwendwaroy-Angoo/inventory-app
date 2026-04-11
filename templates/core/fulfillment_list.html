@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% load i18n %}
 
-{% block title %}Order Fulfillment — Duka Mwecheche{% endblock %}
+{% block title %}{% trans 'Order Fulfillment' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -38,19 +39,19 @@
 
 {% block content %}
 <div class="page-header">
-    <h1>📋 Order Fulfillment</h1>
-    <p style="color:var(--muted);">Pending orders that need attention</p>
+    <h1>📋 {% trans 'Order Fulfillment' %}</h1>
+    <p style="color:var(--muted);">{% trans 'Pending orders that need attention' %}</p>
 </div>
 
 <!-- Filters -->
 <div class="filter-bar">
-    <a href="{% url 'fulfillment_list' %}" class="filter-pill {% if not status_filter and not delivery_filter %}active{% endif %}">All</a>
-    <a href="?status=pending" class="filter-pill {% if status_filter == 'pending' %}active{% endif %}">Pending</a>
-    <a href="?status=confirmed" class="filter-pill {% if status_filter == 'confirmed' %}active{% endif %}">Confirmed</a>
-    <a href="?status=paid" class="filter-pill {% if status_filter == 'paid' %}active{% endif %}">Paid</a>
-    <a href="?status=ready" class="filter-pill {% if status_filter == 'ready' %}active{% endif %}">Ready</a>
-    <a href="?delivery=delivery" class="filter-pill {% if delivery_filter == 'delivery' %}active{% endif %}">🚚 Deliveries</a>
-    <a href="?delivery=pickup" class="filter-pill {% if delivery_filter == 'pickup' %}active{% endif %}">🏪 Pickups</a>
+    <a href="{% url 'fulfillment_list' %}" class="filter-pill {% if not status_filter and not delivery_filter %}active{% endif %}">{% trans 'All' %}</a>
+    <a href="?status=pending" class="filter-pill {% if status_filter == 'pending' %}active{% endif %}">{% trans 'Pending' %}</a>
+    <a href="?status=confirmed" class="filter-pill {% if status_filter == 'confirmed' %}active{% endif %}">{% trans 'Confirmed' %}</a>
+    <a href="?status=paid" class="filter-pill {% if status_filter == 'paid' %}active{% endif %}">{% trans 'Paid' %}</a>
+    <a href="?status=ready" class="filter-pill {% if status_filter == 'ready' %}active{% endif %}">{% trans 'Ready' %}</a>
+    <a href="?delivery=delivery" class="filter-pill {% if delivery_filter == 'delivery' %}active{% endif %}">🚚 {% trans 'Deliveries' %}</a>
+    <a href="?delivery=pickup" class="filter-pill {% if delivery_filter == 'pickup' %}active{% endif %}">🏪 {% trans 'Pickups' %}</a>
 </div>
 
 {% for order in orders %}
@@ -93,19 +94,19 @@
         <!-- Status update -->
         <select class="form-select form-select-sm" style="width:auto; font-size:0.8rem;"
                 onchange="updateStatus({{ order.id }}, this.value)" id="statusSel{{ order.id }}">
-            <option value="">Update status...</option>
-            <option value="confirmed">✅ Confirm</option>
-            <option value="paid">💰 Mark Paid</option>
-            <option value="ready">📦 Ready</option>
-            <option value="completed">🎉 Complete</option>
-            <option value="cancelled">❌ Cancel</option>
+            <option value="">{% trans 'Update status...' %}</option>
+            <option value="confirmed">✅ {% trans 'Confirm' %}</option>
+            <option value="paid">💰 {% trans 'Mark Paid' %}</option>
+            <option value="ready">📦 {% trans 'Ready' %}</option>
+            <option value="completed">🎉 {% trans 'Complete' %}</option>
+            <option value="cancelled">❌ {% trans 'Cancel' %}</option>
         </select>
 
         {% if order.delivery_mode == 'delivery' %}
         <!-- Rider assignment (ranked by performance) -->
         <select class="form-select form-select-sm" style="width:auto; font-size:0.8rem;"
                 onchange="assignRider({{ order.id }}, this.value)" id="riderSel{{ order.id }}">
-            <option value="">Assign rider...</option>
+            <option value="">{% trans 'Assign rider...' %}</option>
             {% for entry in ranked_riders %}
             <option value="{{ entry.rider.id }}" {% if order.rider_id == entry.rider.id %}selected{% endif %}>
                 ⭐{{ entry.score }} {{ entry.rider.user.get_full_name|default:entry.rider.user.username }} ({{ entry.rider.get_vehicle_type_display }})
@@ -121,7 +122,7 @@
 </div>
 {% empty %}
 <div class="text-center py-4">
-    <p style="color:var(--muted); font-size:1.1rem;">🎉 No pending orders!</p>
+    <p style="color:var(--muted); font-size:1.1rem;">🎉 {% trans 'No pending orders!' %}</p>
 </div>
 {% endfor %}
 

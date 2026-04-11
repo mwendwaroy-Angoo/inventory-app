@@ -144,13 +144,13 @@
     <table class="table table-hover" id="stockTable">
         <thead>
             <tr>
-                <th>Material No</th>
-                <th>Description</th>
-                <th>Unit</th>
-                <th>Balance</th>
-                <th>Physical</th>
-                <th>Deficit</th>
-                <th>Surplus</th>
+                <th>{% trans 'Material No' %}</th>
+                <th>{% trans 'Description' %}</th>
+                <th>{% trans 'Unit' %}</th>
+                <th>{% trans 'Balance' %}</th>
+                <th>{% trans 'Physical' %}</th>
+                <th>{% trans 'Deficit' %}</th>
+                <th>{% trans 'Surplus' %}</th>
                 <th>{% trans 'Reorder Lvl' %}</th>
                 <th>{% trans 'Reorder Qty' %}</th>
                 {% if user.userprofile.is_owner %}<th>{% trans 'Price (KES)' %}</th>{% endif %}

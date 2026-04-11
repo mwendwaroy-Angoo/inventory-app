@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
-{% block title %}Orders — Duka Mwecheche{% endblock %}
+{% load i18n %}
+{% block title %}{% trans 'Orders' %} — Duka Mwecheche{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -37,16 +38,16 @@
 {% endblock %}
 
 {% block content %}
-<h2 class="page-title mb-3">📦 Customer Orders</h2>
+<h2 class="page-title mb-3">📦 {% trans 'Customer Orders' %}</h2>
 
 <div class="filter-pills">
-    <a href="{% url 'order_list' %}" class="{% if not status_filter %}active{% endif %}">All</a>
-    <a href="?status=pending" class="{% if status_filter == 'pending' %}active{% endif %}">Pending</a>
-    <a href="?status=confirmed" class="{% if status_filter == 'confirmed' %}active{% endif %}">Confirmed</a>
-    <a href="?status=paid" class="{% if status_filter == 'paid' %}active{% endif %}">Paid</a>
-    <a href="?status=ready" class="{% if status_filter == 'ready' %}active{% endif %}">Ready</a>
-    <a href="?status=completed" class="{% if status_filter == 'completed' %}active{% endif %}">Completed</a>
-    <a href="?status=cancelled" class="{% if status_filter == 'cancelled' %}active{% endif %}">Cancelled</a>
+    <a href="{% url 'order_list' %}" class="{% if not status_filter %}active{% endif %}">{% trans 'All' %}</a>
+    <a href="?status=pending" class="{% if status_filter == 'pending' %}active{% endif %}">{% trans 'Pending' %}</a>
+    <a href="?status=confirmed" class="{% if status_filter == 'confirmed' %}active{% endif %}">{% trans 'Confirmed' %}</a>
+    <a href="?status=paid" class="{% if status_filter == 'paid' %}active{% endif %}">{% trans 'Paid' %}</a>
+    <a href="?status=ready" class="{% if status_filter == 'ready' %}active{% endif %}">{% trans 'Ready' %}</a>
+    <a href="?status=completed" class="{% if status_filter == 'completed' %}active{% endif %}">{% trans 'Completed' %}</a>
+    <a href="?status=cancelled" class="{% if status_filter == 'cancelled' %}active{% endif %}">{% trans 'Cancelled' %}</a>
 </div>
 
 {% if orders %}
@@ -54,13 +55,13 @@
     <table class="table">
         <thead>
             <tr>
-                <th>Order #</th>
-                <th>Customer</th>
-                <th>Phone</th>
-                <th>Total</th>
-                <th>Status</th>
-                <th>Date</th>
-                <th>Actions</th>
+                <th>{% trans 'Order' %} #</th>
+                <th>{% trans 'Customer' %}</th>
+                <th>{% trans 'Phone' %}</th>
+                <th>{% trans 'Total' %}</th>
+                <th>{% trans 'Status' %}</th>
+                <th>{% trans 'Date' %}</th>
+                <th>{% trans 'Actions' %}</th>
             </tr>
         </thead>
         <tbody>
@@ -105,8 +106,8 @@
 </div>
 {% else %}
 <div class="text-center py-5">
-    <p style="color:var(--muted); font-size:1.2rem;">No orders yet.</p>
-    <p style="color:var(--muted);">Share your shop link with customers to start receiving orders!</p>
+    <p style="color:var(--muted); font-size:1.2rem;">{% trans 'No orders yet.' %}</p>
+    <p style="color:var(--muted);">{% trans 'Share your shop link with customers to start receiving orders!' %}</p>
     <div class="mt-2" style="background:var(--onyx-card); border:1px solid #333; border-radius:8px; padding:1rem; display:inline-block;">
         <code style="color:var(--gold); font-size:0.9rem;">
             {{ request.scheme }}://{{ request.get_host }}/shop/{{ request.user.userprofile.business.id }}/

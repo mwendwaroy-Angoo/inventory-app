@@ -1,25 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Evaluate Bids — {{ procurement.title }}{% endblock %}
+{% load i18n %}
+{% block title %}{% trans 'Evaluate Bids' %} — {{ procurement.title }}{% endblock %}
 {% block content %}
 <div class="container-fluid" style="max-width:900px;">
-    <h4 class="mb-1" style="color:var(--gold); font-family:'Playfair Display',serif;">⚡ Bid Evaluation</h4>
+    <h4 class="mb-1" style="color:var(--gold); font-family:'Playfair Display',serif;">⚡ {% trans 'Bid Evaluation' %}</h4>
     <p style="color:var(--muted);">{{ procurement.title }} · {{ bids.count }} bid{{ bids.count|pluralize }}</p>
 
     <!-- Scoring legend -->
     <div style="background:var(--onyx-card); border:1px solid #333; border-left:3px solid var(--gold); border-radius:10px; padding:1rem; margin-bottom:1rem;">
-        <h6 style="color:var(--pearl); margin-bottom:0.4rem;">Scoring Criteria</h6>
+        <h6 style="color:var(--pearl); margin-bottom:0.4rem;">{% trans 'Scoring Criteria' %}</h6>
         <div class="d-flex flex-wrap gap-3" style="font-size:0.8rem; color:var(--muted);">
-            <span>💰 Price: 40%</span>
-            <span>📍 Proximity: 25%</span>
-            <span>⭐ Rating: 20%</span>
-            <span>🎯 Relevance: 10%</span>
-            <span>⚡ Speed: 5%</span>
+            <span>💰 {% trans 'Price: 40%' %}</span>
+            <span>📍 {% trans 'Proximity: 25%' %}</span>
+            <span>⭐ {% trans 'Rating: 20%' %}</span>
+            <span>🎯 {% trans 'Relevance: 10%' %}</span>
+            <span>⚡ {% trans 'Speed: 5%' %}</span>
         </div>
     </div>
 
     {% if bids %}
     <div class="alert alert-info">
-        ℹ️ Top 3 bids are auto-shortlisted. Review and award the best supplier.
+        ℹ️ {% trans 'Top 3 bids are auto-shortlisted. Review and award the best supplier.' %}
     </div>
 
     {% for bid in bids %}
@@ -28,8 +29,8 @@
             <div>
                 <h5 class="mb-1" style="color:var(--pearl);">
                     #{{ forloop.counter }} {{ bid.supplier.name }}
-                    {% if bid.status == 'shortlisted' %}<span class="badge bg-warning text-dark ms-1">Shortlisted</span>{% endif %}
-                    {% if bid.status == 'accepted' %}<span class="badge bg-success ms-1">Awarded</span>{% endif %}
+                    {% if bid.status == 'shortlisted' %}<span class="badge bg-warning text-dark ms-1">{% trans 'Shortlisted' %}</span>{% endif %}
+                    {% if bid.status == 'accepted' %}<span class="badge bg-success ms-1">{% trans 'Awarded' %}</span>{% endif %}
                 </h5>
                 <p style="color:var(--muted); font-size:0.8rem; margin-bottom:0;">
                     {% if bid.supplier.business_type %}{{ bid.supplier.business_type.name }} · {% endif %}
@@ -51,17 +52,17 @@
         <p style="color:var(--pearl); margin-top:0.6rem; margin-bottom:0.3rem; white-space:pre-line;">{{ bid.proposal }}</p>
 
         {% if bid.status != 'accepted' and procurement.status != 'awarded' %}
-        <a href="{% url 'award_bid' bid_id=bid.pk %}" class="btn btn-sm mt-2" style="background:#2ecc71; color:white;">✅ Award This Bid</a>
+        <a href="{% url 'award_bid' bid_id=bid.pk %}" class="btn btn-sm mt-2" style="background:#2ecc71; color:white;">✅ {% trans 'Award This Bid' %}</a>
         {% endif %}
     </div>
     {% endfor %}
     {% else %}
     <div class="text-center py-5" style="color:var(--muted);">
         <p style="font-size:3rem;">📭</p>
-        <p>No bids have been submitted yet.</p>
+        <p>{% trans 'No bids have been submitted yet.' %}</p>
     </div>
     {% endif %}
 
-    <a href="{% url 'procurement_detail' pk=procurement.pk %}" class="btn btn-outline-secondary mt-2">← Back to Details</a>
+    <a href="{% url 'procurement_detail' pk=procurement.pk %}" class="btn btn-outline-secondary mt-2">← {% trans 'Back to Details' %}</a>
 </div>
 {% endblock %}
