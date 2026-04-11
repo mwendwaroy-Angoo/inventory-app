@@ -43,14 +43,46 @@
             min-height: 100vh;
         }
 
+        /* ── SITE HEADER (sticky wrapper: navbar + secondary nav) ── */
+        .site-header {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
         /* ── NAVBAR ── */
         .navbar {
             background: linear-gradient(135deg, #111111 0%, #1a1a1a 50%, #1f1a14 100%);
             border-bottom: 1px solid var(--gold);
             padding: 0.8rem 0;
-            position: sticky;
-            top: 0;
-            z-index: 1000;
+            position: relative;
+        }
+
+        /* ── SECONDARY HEADER (desktop-only page nav / anchor nav) ── */
+        .secondary-header {
+            background: linear-gradient(135deg, #0c0c0c 0%, #111111 50%, #0f0d09 100%);
+            border-bottom: 1px solid rgba(201,168,76,0.2);
+            padding: 0.15rem 0;
+            min-height: 38px;
+        }
+
+        .secondary-header .nav-link {
+            color: #aaa !important;
+            font-size: 0.75rem;
+            font-weight: 400;
+            letter-spacing: 0.07em;
+            padding: 0.5rem 0.85rem !important;
+            text-transform: uppercase;
+            white-space: nowrap;
+            transition: color 0.2s;
+        }
+
+        .secondary-header .nav-link:hover {
+            color: var(--gold) !important;
+        }
+
+        .secondary-header .dropdown-menu {
+            z-index: 1001;
         }
 
         .navbar-brand {
@@ -145,80 +177,6 @@
 
         .navbar-auth-translated .navbar-collapse {
             row-gap: 0.6rem;
-        }
-
-        .navbar-guest-translated .navbar-collapse {
-            row-gap: 0.75rem;
-            align-items: flex-start;
-        }
-
-        .navbar-guest-translated .navbar-nav {
-            row-gap: 0.35rem;
-        }
-
-        .navbar-guest-translated .navbar-nav.me-auto,
-        .navbar-guest-translated .navbar-nav.ms-auto {
-            flex-wrap: wrap;
-            gap: 0.4rem 0.2rem;
-        }
-
-        .navbar-guest-translated .navbar-nav.ms-auto {
-            justify-content: flex-end;
-        }
-
-        .navbar-guest-translated .btn,
-        .navbar-guest-translated .nav-link {
-            white-space: nowrap;
-        }
-
-        .navbar-auth-translated .navbar-nav.me-auto,
-        .navbar-auth-translated .navbar-nav.ms-auto {
-            flex-wrap: wrap;
-            gap: 0.25rem 0.15rem;
-        }
-
-        .navbar-auth-translated .navbar-nav.ms-auto {
-            justify-content: flex-end;
-        }
-
-        .navbar-auth-translated .dropdown-toggle {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.35rem;
-            flex-wrap: wrap;
-        }
-
-        .navbar-auth-translated .badge-role {
-            font-size: 0.58rem;
-            padding: 0.15rem 0.35rem;
-        }
-
-        @media (max-width: 1599.98px) {
-            .navbar-auth-translated .nav-link {
-                font-size: 0.78rem;
-                letter-spacing: 0.03em;
-                padding: 0.35rem 0.55rem !important;
-            }
-
-            .navbar-auth-translated .btn {
-                font-size: 0.78rem;
-                padding: 0.35rem 0.8rem;
-            }
-
-            .navbar-auth-translated .navbar-brand {
-                font-size: 1.2rem;
-            }
-
-            .navbar-guest-translated .nav-link {
-                font-size: 0.78rem;
-                letter-spacing: 0.03em;
-                padding: 0.35rem 0.55rem !important;
-            }
-
-            .navbar-guest-translated .btn {
-                font-size: 0.78rem;
-                padding: 0.35rem 0.8rem;
-            }
         }
 
         /* ── ALERTS ── */
@@ -447,220 +405,292 @@
     </style>
     {% block extra_css %}{% endblock %}
 </head>
-<body class="{% if user.is_authenticated and LANGUAGE_CODE != 'en' %}lang-translated auth-language{% elif user.is_authenticated %}auth-language{% elif LANGUAGE_CODE != 'en' %}lang-translated guest-language{% endif %}">
-    <!-- NAVBAR -->
-    <nav class="navbar {% if user.is_authenticated %}{% if LANGUAGE_CODE == 'en' %}navbar-expand-xl{% else %}navbar-expand-xxl navbar-auth-translated{% endif %} navbar-auth{% else %}navbar-expand-xxl navbar-guest{% if LANGUAGE_CODE != 'en' %} navbar-guest-translated{% endif %}{% endif %}">
-        <div class="container">
-            <a class="navbar-brand" href="{% if user.is_authenticated %}{% if user.userprofile.is_rider %}{% url 'rider_dashboard' %}{% elif user.userprofile.is_supplier %}{% url 'supplier_dashboard' %}{% else %}{% url 'home' %}{% endif %}{% else %}{% url 'home' %}{% endif %}">
-                Duka <span>Mwecheche</span>
-            </a>
+<body class="{% if LANGUAGE_CODE != 'en' %}lang-translated{% endif %}{% if user.is_authenticated %} auth-body{% else %} guest-body{% endif %}">
+    <!-- ═══ SITE HEADER (sticky: top navbar + secondary page nav) ═══ -->
+    <header class="site-header">
 
-            <button class="navbar-toggler" type="button"
-                    data-bs-toggle="collapse"
-                    data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
+        <!-- TOP NAVBAR: brand + account controls only -->
+        <nav class="navbar navbar-expand-lg {% if user.is_authenticated %}navbar-auth{% else %}navbar-guest{% endif %}">
+            <div class="container">
+                <a class="navbar-brand" href="{% if user.is_authenticated %}{% if user.userprofile.is_rider %}{% url 'rider_dashboard' %}{% elif user.userprofile.is_supplier %}{% url 'supplier_dashboard' %}{% else %}{% url 'home' %}{% endif %}{% else %}{% url 'home' %}{% endif %}">
+                    Duka <span>Mwecheche</span>
+                </a>
 
-            {% if user.is_authenticated %}
-            <!-- Mobile quick-action button (outside collapse) -->
-            {% if user.userprofile.is_rider %}
-            <a href="{% url 'rider_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-               style="font-size:0.85rem; padding:0.35rem 0.9rem;">🏍️ {% trans 'Dashboard' %}</a>
-            {% elif user.userprofile.is_supplier %}
-            <a href="{% url 'supplier_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📊 {% trans 'Dashboard' %}</a>
-            {% elif user.userprofile.is_owner %}
-            <a href="{% url 'supplier_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📦 {% trans 'Suppliers' %}</a>
-            {% else %}
-            <a href="{% url 'fulfillment_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-               style="font-size:0.85rem; padding:0.35rem 0.9rem;">📋 {% trans 'Fulfillment' %}</a>
-            {% endif %}
-            {% endif %}
-
-            <div class="collapse navbar-collapse" id="navbarNav">
                 {% if user.is_authenticated %}
-
+                <!-- Mobile quick-action button (hidden on desktop) -->
                 {% if user.userprofile.is_rider %}
-                <!-- ═══ RIDER NAV ═══ -->
-                <ul class="navbar-nav me-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'rider_dashboard' %}">🏍️ {% trans 'Dashboard' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'notifications' %}">🔔 {% trans 'Notifications' %}</a>
-                    </li>
-                </ul>
-
+                <a href="{% url 'rider_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
+                   style="font-size:0.85rem; padding:0.35rem 0.9rem;">🏍️ {% trans 'Dashboard' %}</a>
                 {% elif user.userprofile.is_supplier %}
-                <!-- ═══ SUPPLIER NAV ═══ -->
-                <ul class="navbar-nav me-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'supplier_dashboard' %}">📊 {% trans 'Dashboard' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'procurement_browse' %}">🔍 {% trans 'Browse Requests' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'my_bids' %}">📤 {% trans 'My Bids' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'browse_businesses' %}">🏢 {% trans 'Businesses' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'notifications' %}">🔔 {% trans 'Notifications' %}</a>
-                    </li>
-                </ul>
-
-                {% elif user.userprofile.is_staff_member %}
-                <!-- ═══ STAFF NAV ═══ -->
-                <ul class="navbar-nav me-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'fulfillment_list' %}">📋 {% trans 'Order Fulfillment' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link position-relative" href="{% url 'pending_prompts' %}">💰 {% trans 'Payments' %}
-                            <span id="prompts-badge"
-                                  style="position:absolute; top:2px; right:-2px;
-                                         background:var(--gold); color:var(--onyx);
-                                         border-radius:50%; font-size:0.6rem;
-                                         width:16px; height:16px;
-                                         display:none; align-items:center;
-                                         justify-content:center; font-weight:700;">
-                                0
-                            </span>
-                        </a>
-                    </li>
-                </ul>
-
+                <a href="{% url 'supplier_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
+                   style="font-size:0.85rem; padding:0.35rem 0.9rem;">📊 {% trans 'Dashboard' %}</a>
+                {% elif user.userprofile.is_owner %}
+                <a href="{% url 'supplier_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
+                   style="font-size:0.85rem; padding:0.35rem 0.9rem;">📦 {% trans 'Suppliers' %}</a>
                 {% else %}
-                <!-- ═══ OWNER NAV ═══ -->
-                <ul class="navbar-nav me-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a>
-                    </li>
-
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                            📦 {% trans 'Supply Chain' %}
-                        </a>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{% url 'supplier_list' %}">👥 {% trans 'My Suppliers' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'supplier_applications' %}">📨 {% trans 'Supplier Applications' %}</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'procurement_list_owner' %}">📋 {% trans 'My Procurement' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'create_procurement' %}">➕ {% trans 'New Procurement' %}</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'procurement_browse' %}">🔍 {% trans 'Browse Requests' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'my_bids' %}">📤 {% trans 'My Bids' %}</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'browse_businesses' %}">🏢 {% trans 'Browse Businesses' %}</a></li>
-                        </ul>
-                    </li>
-
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                            {% trans 'Manage' %}
-                        </a>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{% url 'manage_stores' %}">🏪 {% trans 'Stores' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'manage_items' %}">📦 {% trans 'Items' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'sales_dashboard' %}">📊 {% trans 'Sales & P&L' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'analytics' %}">📈 {% trans 'Analytics' %}</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 {% trans 'Fulfillment' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'my_feedback' %}">⭐ {% trans 'Feedback' %}</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'pending_prompts' %}">💰 {% trans 'Payment Prompts' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
-                        </ul>
-                    </li>
-                </ul>
+                <a href="{% url 'fulfillment_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
+                   style="font-size:0.85rem; padding:0.35rem 0.9rem;">📋 {% trans 'Fulfillment' %}</a>
+                {% endif %}
                 {% endif %}
 
-                <!-- Right nav: bell + username + logout -->
-                <ul class="navbar-nav ms-auto align-items-center gap-2">
-                    <li class="nav-item">
-                        <a href="{% url 'notifications' %}" class="nav-link position-relative"
-                           style="padding: 0.4rem 0.6rem;">
-                            🔔
-                            <span id="notif-badge"
-                                  style="position:absolute; top:2px; right:2px;
-                                         background:var(--raspberry); color:white;
-                                         border-radius:50%; font-size:0.6rem;
-                                         width:16px; height:16px;
-                                         display:none; align-items:center;
-                                         justify-content:center; font-weight:700;">
-                                0
-                            </span>
-                        </a>
-                    </li>
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                            {{ user.username }}
-                            {% if user.userprofile.is_owner %}
-                                <span class="badge-role badge-owner ms-1">{% trans 'Owner' %}</span>
-                            {% elif user.userprofile.is_rider %}
-                                <span class="badge-role badge-rider ms-1">{% trans 'Rider' %}</span>
-                            {% elif user.userprofile.is_supplier %}
-                                <span class="badge-role badge-supplier ms-1">{% trans 'Supplier' %}</span>
-                            {% else %}
-                                <span class="badge-role badge-staff ms-1">{% trans 'Staff' %}</span>
-                            {% endif %}
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li><a class="dropdown-item" href="#" onclick="showTutorial(); return false;">📖 {% trans 'View Tutorial' %}</a></li>
-                            <li><a class="dropdown-item" href="{% url 'password_change' %}">🔑 {% trans 'Change Password' %}</a></li>
-                            <li>
-                                <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#langModal">
-                                    🌍 {% trans 'Language' %}
-                                    <span style="color:var(--muted); font-size:0.8rem; margin-left:0.3rem;">
-                                        ({{ LANGUAGE_CODE|default:'en' }})
-                                    </span>
-                                </a>
-                            </li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li>
-                                <form method="post" action="{% url 'logout' %}">
-                                    {% csrf_token %}
-                                    <button type="submit" class="dropdown-item">🚪 {% trans 'Logout' %}</button>
-                                </form>
-                            </li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'delete_account' %}" style="color:var(--danger);">🗑️ {% trans 'Delete Account' %}</a></li>
-                        </ul>
-                    </li>
-                </ul>
+                <button class="navbar-toggler" type="button"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#navbarNav">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    {% if user.is_authenticated %}
+
+                    {% if user.userprofile.is_rider %}
+                    <!-- RIDER: mobile-only nav (hidden on desktop — shown in secondary header) -->
+                    <ul class="navbar-nav me-auto d-lg-none">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'rider_dashboard' %}">🏍️ {% trans 'Dashboard' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'notifications' %}">🔔 {% trans 'Notifications' %}</a></li>
+                    </ul>
+
+                    {% elif user.userprofile.is_supplier %}
+                    <!-- SUPPLIER: mobile-only nav -->
+                    <ul class="navbar-nav me-auto d-lg-none">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'supplier_dashboard' %}">📊 {% trans 'Dashboard' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'procurement_browse' %}">🔍 {% trans 'Browse Requests' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'my_bids' %}">📤 {% trans 'My Bids' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'browse_businesses' %}">🏢 {% trans 'Businesses' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'notifications' %}">🔔 {% trans 'Notifications' %}</a></li>
+                    </ul>
+
+                    {% elif user.userprofile.is_staff_member %}
+                    <!-- STAFF: mobile-only nav -->
+                    <ul class="navbar-nav me-auto d-lg-none">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'fulfillment_list' %}">📋 {% trans 'Order Fulfillment' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'pending_prompts' %}">💰 {% trans 'Payments' %}</a></li>
+                    </ul>
+
+                    {% else %}
+                    <!-- OWNER: mobile-only nav -->
+                    <ul class="navbar-nav me-auto d-lg-none">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">📦 {% trans 'Supply Chain' %}</a>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="{% url 'supplier_list' %}">👥 {% trans 'My Suppliers' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'supplier_applications' %}">📨 {% trans 'Supplier Applications' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'procurement_list_owner' %}">📋 {% trans 'My Procurement' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'create_procurement' %}">➕ {% trans 'New Procurement' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'procurement_browse' %}">🔍 {% trans 'Browse Requests' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'my_bids' %}">📤 {% trans 'My Bids' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'browse_businesses' %}">🏢 {% trans 'Browse Businesses' %}</a></li>
+                            </ul>
+                        </li>
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">{% trans 'Manage' %}</a>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="{% url 'manage_stores' %}">🏪 {% trans 'Stores' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'manage_items' %}">📦 {% trans 'Items' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'sales_dashboard' %}">📊 {% trans 'Sales & P&L' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'analytics' %}">📈 {% trans 'Analytics' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 {% trans 'Fulfillment' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'my_feedback' %}">⭐ {% trans 'Feedback' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'pending_prompts' %}">💰 {% trans 'Payment Prompts' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
+                            </ul>
+                        </li>
+                    </ul>
+                    {% endif %}
+
+                    <!-- Right nav: bell + username (always in top navbar on desktop AND in collapse on mobile) -->
+                    <ul class="navbar-nav ms-auto align-items-center gap-2">
+                        <li class="nav-item">
+                            <a href="{% url 'notifications' %}" class="nav-link position-relative"
+                               style="padding: 0.4rem 0.6rem;">
+                                🔔
+                                <span id="notif-badge"
+                                      style="position:absolute; top:2px; right:2px;
+                                             background:var(--raspberry); color:white;
+                                             border-radius:50%; font-size:0.6rem;
+                                             width:16px; height:16px;
+                                             display:none; align-items:center;
+                                             justify-content:center; font-weight:700;">
+                                    0
+                                </span>
+                            </a>
+                        </li>
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
+                                {{ user.username }}
+                                {% if user.userprofile.is_owner %}
+                                    <span class="badge-role badge-owner ms-1">{% trans 'Owner' %}</span>
+                                {% elif user.userprofile.is_rider %}
+                                    <span class="badge-role badge-rider ms-1">{% trans 'Rider' %}</span>
+                                {% elif user.userprofile.is_supplier %}
+                                    <span class="badge-role badge-supplier ms-1">{% trans 'Supplier' %}</span>
+                                {% else %}
+                                    <span class="badge-role badge-staff ms-1">{% trans 'Staff' %}</span>
+                                {% endif %}
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item" href="#" onclick="showTutorial(); return false;">📖 {% trans 'View Tutorial' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'password_change' %}">🔑 {% trans 'Change Password' %}</a></li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#langModal">
+                                        🌍 {% trans 'Language' %}
+                                        <span style="color:var(--muted); font-size:0.8rem; margin-left:0.3rem;">
+                                            ({{ LANGUAGE_CODE|default:'en' }})
+                                        </span>
+                                    </a>
+                                </li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li>
+                                    <form method="post" action="{% url 'logout' %}">
+                                        {% csrf_token %}
+                                        <button type="submit" class="dropdown-item">🚪 {% trans 'Logout' %}</button>
+                                    </form>
+                                </li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'delete_account' %}" style="color:var(--danger);">🗑️ {% trans 'Delete Account' %}</a></li>
+                            </ul>
+                        </li>
+                    </ul>
+
+                    {% else %}
+                    <!-- GUEST: mobile-only anchor links (hidden on desktop — shown in secondary header) -->
+                    <ul class="navbar-nav me-auto d-lg-none">
+                        <li class="nav-item"><a class="nav-link" href="#about">{% trans 'About' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#services">{% trans 'Services' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#how-it-works">{% trans 'How It Works' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#testimonials">{% trans 'Testimonials' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#faq">{% trans 'FAQ' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#join">{% trans 'Join Us' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#contact">{% trans 'Contact' %}</a></li>
+                    </ul>
+                    <!-- Auth buttons (always visible in top navbar on desktop and mobile) -->
+                    <ul class="navbar-nav ms-auto gap-2 align-items-center">
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'login' %}">{% trans 'Login' %}</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="btn btn-primary btn-sm px-3" href="{% url 'signup' %}">{% trans 'Register Business' %}</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="btn btn-outline-light btn-sm px-3" href="{% url 'rider_signup' %}">🏍️ {% trans 'Join as Rider' %}</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="btn btn-outline-info btn-sm px-3" href="{% url 'supplier_signup' %}">📦 {% trans 'Join as Supplier' %}</a>
+                        </li>
+                    </ul>
+                    {% endif %}
+
+                </div>
+            </div>
+        </nav>
+
+        <!-- SECONDARY HEADER: desktop-only page navigation (laptop view, hidden on mobile) -->
+        <div class="secondary-header d-none d-lg-flex align-items-center">
+            <div class="container d-flex align-items-center">
+                {% if user.is_authenticated %}
+
+                    {% if user.userprofile.is_rider %}
+                    <ul class="navbar-nav flex-row">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'rider_dashboard' %}">🏍️ {% trans 'Dashboard' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'notifications' %}">🔔 {% trans 'Notifications' %}</a></li>
+                    </ul>
+
+                    {% elif user.userprofile.is_supplier %}
+                    <ul class="navbar-nav flex-row">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'supplier_dashboard' %}">📊 {% trans 'Dashboard' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'procurement_browse' %}">🔍 {% trans 'Browse Requests' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'my_bids' %}">📤 {% trans 'My Bids' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'browse_businesses' %}">🏢 {% trans 'Businesses' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'notifications' %}">🔔 {% trans 'Notifications' %}</a></li>
+                    </ul>
+
+                    {% elif user.userprofile.is_staff_member %}
+                    <ul class="navbar-nav flex-row">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'fulfillment_list' %}">📋 {% trans 'Order Fulfillment' %}</a></li>
+                        <li class="nav-item">
+                            <a class="nav-link position-relative" href="{% url 'pending_prompts' %}">💰 {% trans 'Payments' %}
+                                <span id="prompts-badge"
+                                      style="position:absolute; top:2px; right:-2px;
+                                             background:var(--gold); color:var(--onyx);
+                                             border-radius:50%; font-size:0.6rem;
+                                             width:16px; height:16px;
+                                             display:none; align-items:center;
+                                             justify-content:center; font-weight:700;">
+                                    0
+                                </span>
+                            </a>
+                        </li>
+                    </ul>
+
+                    {% else %}
+                    <!-- OWNER secondary header nav -->
+                    <ul class="navbar-nav flex-row">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">📦 {% trans 'Supply Chain' %}</a>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="{% url 'supplier_list' %}">👥 {% trans 'My Suppliers' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'supplier_applications' %}">📨 {% trans 'Supplier Applications' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'procurement_list_owner' %}">📋 {% trans 'My Procurement' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'create_procurement' %}">➕ {% trans 'New Procurement' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'procurement_browse' %}">🔍 {% trans 'Browse Requests' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'my_bids' %}">📤 {% trans 'My Bids' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'browse_businesses' %}">🏢 {% trans 'Browse Businesses' %}</a></li>
+                            </ul>
+                        </li>
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">{% trans 'Manage' %}</a>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="{% url 'manage_stores' %}">🏪 {% trans 'Stores' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'manage_items' %}">📦 {% trans 'Items' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'sales_dashboard' %}">📊 {% trans 'Sales & P&L' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'analytics' %}">📈 {% trans 'Analytics' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 {% trans 'Fulfillment' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'my_feedback' %}">⭐ {% trans 'Feedback' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'pending_prompts' %}">💰 {% trans 'Payment Prompts' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
+                            </ul>
+                        </li>
+                    </ul>
+                    {% endif %}
 
                 {% else %}
-                <!-- Logged out: anchor links + auth buttons -->
-                <ul class="navbar-nav me-auto">
+                <!-- GUEST: anchor links in desktop secondary header -->
+                <ul class="navbar-nav flex-row">
                     <li class="nav-item"><a class="nav-link" href="#about">{% trans 'About' %}</a></li>
                     <li class="nav-item"><a class="nav-link" href="#services">{% trans 'Services' %}</a></li>
                     <li class="nav-item"><a class="nav-link" href="#how-it-works">{% trans 'How It Works' %}</a></li>
@@ -669,25 +699,11 @@
                     <li class="nav-item"><a class="nav-link" href="#join">{% trans 'Join Us' %}</a></li>
                     <li class="nav-item"><a class="nav-link" href="#contact">{% trans 'Contact' %}</a></li>
                 </ul>
-                <ul class="navbar-nav ms-auto gap-2">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'login' %}">{% trans 'Login' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="btn btn-primary btn-sm px-3" href="{% url 'signup' %}">{% trans 'Register Business' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="btn btn-outline-light btn-sm px-3" href="{% url 'rider_signup' %}">🏍️ {% trans 'Join as Rider' %}</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="btn btn-outline-info btn-sm px-3" href="{% url 'supplier_signup' %}">📦 {% trans 'Join as Supplier' %}</a>
-                    </li>
-                </ul>
                 {% endif %}
-
             </div>
         </div>
-    </nav>
+
+    </header>
 
     <!-- MESSAGES -->
     <div class="container mt-3">
