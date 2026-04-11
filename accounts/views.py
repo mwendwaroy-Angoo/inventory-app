@@ -415,7 +415,7 @@ def rider_active_deliveries(request):
         rider=rider,
         status__in=['confirmed', 'paid', 'ready'],
         delivery_mode='delivery',
-    ).select_related('business', 'customer').order_by('-created_at')
+    ).select_related('business').order_by('-created_at')
 
     return render(request, 'rider/active_deliveries.html', {
         'rider': rider,
@@ -437,7 +437,7 @@ def rider_delivery_history(request):
         rider=rider,
         status='completed',
         delivery_mode='delivery',
-    ).select_related('business', 'customer').order_by('-created_at')[:50]
+    ).select_related('business').order_by('-created_at')[:50]
 
     return render(request, 'rider/delivery_history.html', {
         'rider': rider,
