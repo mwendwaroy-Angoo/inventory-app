@@ -156,6 +156,33 @@ class UserProfile(models.Model):
         return self.role == 'supplier'
 
 
+class AccountDeletionLog(models.Model):
+    """Records why users chose to delete their accounts (user is deleted after this is saved)."""
+    REASON_CHOICES = [
+        ('not_useful', 'The platform is not useful for my business'),
+        ('too_complex', 'Too complex / hard to use'),
+        ('found_alternative', 'Found a better alternative'),
+        ('closing_business', 'Closing my business'),
+        ('privacy', 'Privacy / data concerns'),
+        ('temporary', 'Just taking a break'),
+        ('other', 'Other'),
+    ]
+
+    username = models.CharField(max_length=150)
+    email = models.EmailField(blank=True)
+    role = models.CharField(max_length=20)
+    business_name = models.CharField(max_length=255, blank=True)
+    reason = models.CharField(max_length=30, choices=REASON_CHOICES)
+    details = models.TextField(blank=True, help_text='Optional additional details')
+    deleted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-deleted_at']
+
+    def __str__(self):
+        return f"{self.username} ({self.role}) — {self.get_reason_display()} — {self.deleted_at:%Y-%m-%d}"
+
+
 # Safely save profile if it exists — does NOT auto-create
 @receiver(post_save, sender=User)
 def save_user_profile(sender, instance, **kwargs):

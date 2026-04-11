@@ -3,10 +3,16 @@
 
 {% block content %}
 <div class="container-fluid" style="max-width:600px;">
-    <h4 class="mb-3" style="color:var(--danger); font-family:'Playfair Display',serif;">⚠️ Delete Your Account</h4>
+
+    <!-- Farewell message -->
+    <div style="background:linear-gradient(135deg, rgba(201,168,76,0.08), rgba(192,57,90,0.06)); border:1px solid rgba(201,168,76,0.25); border-radius:12px; padding:1.8rem; margin-bottom:1.5rem; text-align:center;">
+        <p style="font-size:1.6rem; margin-bottom:0.5rem;">😔</p>
+        <h4 style="color:var(--gold-light); font-family:'Playfair Display',serif; margin-bottom:0.4rem;">We're sorry to see you go, {{ request.user.first_name|default:request.user.username }}</h4>
+        <p style="color:var(--muted); font-size:0.9rem; margin-bottom:0;">Before you leave, we'd love to know why — your feedback helps us build a better platform for everyone.</p>
+    </div>
 
     <div style="background:rgba(231,76,60,0.1); border:1px solid var(--danger); border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
-        <p style="color:var(--pearl); margin-bottom:0.5rem; font-weight:500;">This action is <strong style="color:var(--danger);">permanent and cannot be undone</strong>.</p>
+        <p style="color:var(--pearl); margin-bottom:0.5rem; font-weight:500;">⚠️ This action is <strong style="color:var(--danger);">permanent and cannot be undone</strong>.</p>
         <p style="color:var(--muted); font-size:0.85rem; margin-bottom:0;">All your data will be permanently removed from the platform.</p>
     </div>
 
@@ -67,6 +73,34 @@
     <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem;">
         <form method="post">
             {% csrf_token %}
+
+            <h6 style="color:var(--gold-light); margin-bottom:0.3rem;">Help us improve</h6>
+            <p style="color:var(--muted); font-size:0.82rem; margin-bottom:1rem;">Your honest feedback means a lot to us — it helps shape the future of Duka Mwecheche for thousands of MSMEs.</p>
+
+            <label class="form-label" style="color:var(--pearl); font-weight:500;">
+                What's the main reason you're leaving? <span style="color:var(--danger);">*</span>
+            </label>
+            <select name="reason" class="form-select mb-3" required
+                    style="background:var(--onyx); color:var(--pearl); border-color:#444;">
+                <option value="">— Select a reason —</option>
+                <option value="not_useful">The platform is not useful for my business</option>
+                <option value="too_complex">Too complex / hard to use</option>
+                <option value="found_alternative">Found a better alternative</option>
+                <option value="closing_business">Closing my business</option>
+                <option value="privacy">Privacy / data concerns</option>
+                <option value="temporary">Just taking a break</option>
+                <option value="other">Other</option>
+            </select>
+
+            <label class="form-label" style="color:var(--pearl);">
+                Anything else you'd like us to know? <span style="color:var(--muted);">(optional)</span>
+            </label>
+            <textarea name="details" class="form-control mb-3" rows="3"
+                      placeholder="What could we have done differently? We're listening..."
+                      style="background:var(--onyx); color:var(--pearl); border-color:#444;"></textarea>
+
+            <hr style="border-color:#333; margin:1rem 0;">
+
             <label class="form-label" style="color:var(--pearl);">
                 To confirm, type <strong style="color:var(--danger);">DELETE MY ACCOUNT</strong> below:
             </label>

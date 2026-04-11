@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
-from .models import Business, UserProfile, DeliveryTier
+from .models import Business, UserProfile, DeliveryTier, AccountDeletionLog
 
 
 # ── Inline UserProfile on the User admin page ──
@@ -82,3 +82,11 @@ class UserProfileAdmin(admin.ModelAdmin):
         return obj.user.email
     get_email.short_description = 'Email'
     get_email.admin_order_field = 'user__email'
+
+
+@admin.register(AccountDeletionLog)
+class AccountDeletionLogAdmin(admin.ModelAdmin):
+    list_display = ('username', 'role', 'business_name', 'reason', 'deleted_at')
+    list_filter = ('reason', 'role', 'deleted_at')
+    search_fields = ('username', 'email', 'business_name', 'details')
+    readonly_fields = ('username', 'email', 'role', 'business_name', 'reason', 'details', 'deleted_at')

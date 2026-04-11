@@ -617,9 +617,24 @@ def delete_account(request):
             messages.error(request, 'Please type "DELETE MY ACCOUNT" exactly to confirm.')
             return redirect('delete_account')
 
+        reason = request.POST.get('reason', '').strip()
+        if not reason:
+            messages.error(request, 'Please select a reason for deleting your account.')
+            return redirect('delete_account')
+
         user = request.user
 
         with transaction.atomic():
+            # ── Log the deletion reason (before the user is deleted) ──
+            from accounts.models import AccountDeletionLog
+            AccountDeletionLog.objects.create(
+                username=user.username,
+                email=user.email or '',
+                role=role,
+                business_name=business.name if business else '',
+                reason=reason,
+                details=request.POST.get('details', '').strip(),
+            )
             # ── Owner: delete business and all its data ──
             if role == 'owner' and business:
                 # Remove staff profiles linked to this business (but keep their User accounts)
@@ -638,8 +653,13 @@ def delete_account(request):
             # Delete user — cascades UserProfile, owned businesses
             user.delete()
 
-        messages.success(request, 'Your account has been permanently deleted.')
-        return redirect('home')
+        messages.success(
+            request,
+            'Your account has been deleted. We\'re sad to see you go, '
+            'but the door is always open — you\'re welcome back anytime. '
+            'Thank you for being part of the Duka Mwecheche community. 💛'
+        )
+        return redirect('login')
 
     # GET: show confirmation page
     context = {
