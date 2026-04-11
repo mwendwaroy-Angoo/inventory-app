@@ -353,6 +353,17 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: var(--onyx); }
         ::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 3px; }
+
+        /* ── NAVBAR DROPDOWN FIX ── */
+        .navbar .dropdown-menu {
+            z-index: 1055;
+        }
+        .navbar, .navbar > .container, .navbar .navbar-collapse {
+            overflow: visible !important;
+        }
+        @media (max-width: 991.98px) {
+            .owner-desktop-dropdown { display: none !important; }
+        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -471,7 +482,7 @@
                     </li>
 
                     <!-- ── DESKTOP: Supply Chain dropdown ── -->
-                    <li class="nav-item dropdown d-none d-lg-block">
+                    <li class="nav-item dropdown owner-desktop-dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             📦 Supply Chain
                         </a>
@@ -503,7 +514,7 @@
                     <li class="nav-item d-lg-none"><a class="nav-link ps-4" href="{% url 'browse_businesses' %}">🏢 Browse Businesses</a></li>
 
                     <!-- ── DESKTOP: Manage dropdown ── -->
-                    <li class="nav-item dropdown d-none d-lg-block">
+                    <li class="nav-item dropdown owner-desktop-dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             Manage
                         </a>
