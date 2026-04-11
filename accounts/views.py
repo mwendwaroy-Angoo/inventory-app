@@ -1,6 +1,6 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth.models import User
-from django.contrib.auth import login
+from django.contrib.auth import login, logout as auth_logout
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
@@ -602,3 +602,70 @@ def payment_settings(request):
         'form': form,
         'business': business,
     })
+
+
+@login_required
+def delete_account(request):
+    """Allow any user to permanently delete their account and all associated data."""
+    profile = getattr(request.user, 'userprofile', None)
+    role = profile.role if profile else 'unknown'
+    business = profile.business if profile else None
+
+    if request.method == 'POST':
+        confirm_text = request.POST.get('confirm_text', '').strip()
+        if confirm_text != 'DELETE MY ACCOUNT':
+            messages.error(request, 'Please type "DELETE MY ACCOUNT" exactly to confirm.')
+            return redirect('delete_account')
+
+        user = request.user
+
+        with transaction.atomic():
+            # ── Owner: delete business and all its data ──
+            if role == 'owner' and business:
+                # Remove staff profiles linked to this business (but keep their User accounts)
+                UserProfile.objects.filter(business=business).exclude(user=user).update(business=None)
+                # Delete the business — cascades to items, stores, transactions,
+                # orders, procurement requests, bids, supplier links, etc.
+                business.delete()
+
+            # ── Rider: delete rider profile (ratings cascade, orders SET_NULL) ──
+            rider_profile = getattr(user, 'rider_profile', None)
+            if rider_profile:
+                rider_profile.delete()
+
+            # Log out before deleting
+            auth_logout(request)
+            # Delete user — cascades UserProfile, owned businesses
+            user.delete()
+
+        messages.success(request, 'Your account has been permanently deleted.')
+        return redirect('home')
+
+    # GET: show confirmation page
+    context = {
+        'role': role,
+        'business': business,
+    }
+
+    # Provide summary of what will be deleted
+    if role == 'owner' and business:
+        from core.models import Item, Order, Transaction, Store, ProcurementRequest
+        context['item_count'] = Item.objects.filter(business=business).count()
+        context['order_count'] = Order.objects.filter(business=business).count()
+        context['transaction_count'] = Transaction.objects.filter(business=business).count()
+        context['store_count'] = Store.objects.filter(business=business).count()
+        context['staff_count'] = UserProfile.objects.filter(business=business).exclude(user=request.user).count()
+        context['procurement_count'] = ProcurementRequest.objects.filter(business=business).count()
+    elif role == 'rider':
+        rider_profile = getattr(request.user, 'rider_profile', None)
+        if rider_profile:
+            from core.models import Order, DeliveryRating
+            context['delivery_count'] = Order.objects.filter(rider=rider_profile, status='completed').count()
+            context['rating_count'] = DeliveryRating.objects.filter(rider=rider_profile).count()
+    elif role == 'supplier' and business:
+        from core.models import SupplierBid, SupplierRelationship, SupplierApplication
+        context['bid_count'] = SupplierBid.objects.filter(supplier=business).count()
+        context['client_count'] = SupplierRelationship.objects.filter(supplier=business).count()
+        context['application_count'] = SupplierApplication.objects.filter(applicant=business).count()
+
+    return render(request, 'accounts/delete_account.html', context)

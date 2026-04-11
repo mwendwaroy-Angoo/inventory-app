@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Delete Account — Duka Mwecheche{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:600px;">
+    <h4 class="mb-3" style="color:var(--danger); font-family:'Playfair Display',serif;">⚠️ Delete Your Account</h4>
+
+    <div style="background:rgba(231,76,60,0.1); border:1px solid var(--danger); border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
+        <p style="color:var(--pearl); margin-bottom:0.5rem; font-weight:500;">This action is <strong style="color:var(--danger);">permanent and cannot be undone</strong>.</p>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:0;">All your data will be permanently removed from the platform.</p>
+    </div>
+
+    <!-- What will be deleted -->
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
+        <h6 style="color:var(--gold-light); margin-bottom:0.8rem;">What will be deleted:</h6>
+        <ul style="color:var(--pearl); font-size:0.9rem; padding-left:1.2rem; margin:0;">
+            <li>Your user account and login credentials</li>
+            <li>Your profile and all personal information</li>
+
+            {% if role == 'owner' and business %}
+            <li style="margin-top:0.5rem; color:var(--danger);">
+                <strong>Your business "{{ business.name }}" and ALL its data:</strong>
+            </li>
+            <ul style="color:var(--muted); font-size:0.85rem; padding-left:1rem;">
+                {% if item_count %}<li>{{ item_count }} inventory item{{ item_count|pluralize }}</li>{% endif %}
+                {% if store_count %}<li>{{ store_count }} store{{ store_count|pluralize }}</li>{% endif %}
+                {% if order_count %}<li>{{ order_count }} order{{ order_count|pluralize }}</li>{% endif %}
+                {% if transaction_count %}<li>{{ transaction_count }} transaction{{ transaction_count|pluralize }}</li>{% endif %}
+                {% if procurement_count %}<li>{{ procurement_count }} procurement request{{ procurement_count|pluralize }}</li>{% endif %}
+                {% if staff_count %}<li>{{ staff_count }} staff member{{ staff_count|pluralize }} will lose access</li>{% endif %}
+                <li>All supplier relationships and applications</li>
+                <li>All customer feedback and reviews</li>
+                <li>Your online storefront</li>
+            </ul>
+
+            {% elif role == 'rider' %}
+            <li>Your rider profile and vehicle details</li>
+            {% if delivery_count %}<li>{{ delivery_count }} completed delivery record{{ delivery_count|pluralize }}</li>{% endif %}
+            {% if rating_count %}<li>{{ rating_count }} delivery rating{{ rating_count|pluralize }}</li>{% endif %}
+            <li>All your earnings history and performance scores</li>
+
+            {% elif role == 'supplier' and business %}
+            <li style="margin-top:0.5rem; color:var(--danger);">
+                <strong>Your supplier business "{{ business.name }}" and ALL its data:</strong>
+            </li>
+            <ul style="color:var(--muted); font-size:0.85rem; padding-left:1rem;">
+                {% if bid_count %}<li>{{ bid_count }} bid{{ bid_count|pluralize }} on procurement requests</li>{% endif %}
+                {% if client_count %}<li>{{ client_count }} client relationship{{ client_count|pluralize }}</li>{% endif %}
+                {% if application_count %}<li>{{ application_count }} supplier application{{ application_count|pluralize }}</li>{% endif %}
+                <li>All feedback and performance scores</li>
+            </ul>
+
+            {% else %}
+            <li>Your staff access to any business</li>
+            {% endif %}
+        </ul>
+    </div>
+
+    <!-- Note about re-registration -->
+    <div style="background:rgba(243,156,18,0.1); border:1px solid var(--warning); border-radius:10px; padding:1rem; margin-bottom:1.5rem;">
+        <p style="color:var(--pearl); font-size:0.85rem; margin:0;">
+            💡 <strong>If you register again later</strong>, you will start fresh — all metrics, ratings, relationships, and history will be reset to zero.
+        </p>
+    </div>
+
+    <!-- Confirmation form -->
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem;">
+        <form method="post">
+            {% csrf_token %}
+            <label class="form-label" style="color:var(--pearl);">
+                To confirm, type <strong style="color:var(--danger);">DELETE MY ACCOUNT</strong> below:
+            </label>
+            <input type="text" name="confirm_text" class="form-control mb-3"
+                   placeholder="DELETE MY ACCOUNT" autocomplete="off" required
+                   style="border-color:var(--danger);">
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn" style="background:var(--danger); color:white; font-weight:600;">
+                    🗑️ Permanently Delete Account
+                </button>
+                <a href="{% url 'home' %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

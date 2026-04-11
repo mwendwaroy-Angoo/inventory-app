@@ -24,4 +24,5 @@ urlpatterns = [
     path('ajax/wards/', views.load_wards, name='load_wards'),
     path('tutorial/dismiss/', views.tutorial_dismiss, name='tutorial_dismiss'),
     path('tutorial/reset/', views.tutorial_reset, name='tutorial_reset'),
+    path('delete-account/', views.delete_account, name='delete_account'),
 ]
