@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Duka Mwecheche 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 12:44\n"
-"PO-Revision-Date: 2026-04-11 12:44\n"
+"POT-Creation-Date: 2026-04-13 13:12\n"
+"PO-Revision-Date: 2026-04-13 13:12\n"
 "Last-Translator: Duka Mwecheche Team\n"
 "Language-Team: Kalenjin\n"
 "Language: kln\n"
@@ -20,61 +20,61 @@ msgid "Dashboard"
 msgstr "Dashboard"
 
 msgid "Suppliers"
-msgstr "Wasambazaji"
+msgstr "Suppliers"
 
 msgid "Fulfillment"
-msgstr "Utimizaji"
+msgstr "Fulfillment"
 
 msgid "Notifications"
-msgstr "Arifa"
+msgstr "Notifications"
 
 msgid "Browse Requests"
-msgstr "Tazama Maombi"
+msgstr "Browse Requests"
 
 msgid "My Bids"
-msgstr "Zabuni Zangu"
+msgstr "My Bids"
 
 msgid "Businesses"
-msgstr "Biashara"
+msgstr "Businesses"
 
 msgid "Stock List"
-msgstr "Orodha ya Hisa"
+msgstr "Stock List"
 
 msgid "Add Transaction"
-msgstr "Ongeza Muamala"
+msgstr "Add Transaction"
 
 msgid "Quick Sell"
-msgstr "Uza Haraka"
+msgstr "Quick Sell"
 
 msgid "History"
-msgstr "Historia"
+msgstr "History"
 
 msgid "Order Fulfillment"
-msgstr "Utimizaji wa Agizo"
+msgstr "Order Fulfillment"
 
 msgid "Payments"
 msgstr "Arawek"
 
 msgid "Supply Chain"
-msgstr "Mnyororo wa Usambazaji"
+msgstr "Supply Chain"
 
 msgid "My Suppliers"
-msgstr "Wasambazaji Wangu"
+msgstr "My Suppliers"
 
 msgid "Supplier Applications"
-msgstr "Maombi ya Wasambazaji"
+msgstr "Supplier Applications"
 
 msgid "My Procurement"
-msgstr "Ununuzi Wangu"
+msgstr "My Procurement"
 
 msgid "New Procurement"
-msgstr "Ununuzi Mpya"
+msgstr "New Procurement"
 
 msgid "Browse Businesses"
-msgstr "Tazama Biashara"
+msgstr "Browse Businesses"
 
 msgid "Manage"
-msgstr "Simamia"
+msgstr "Manage"
 
 msgid "Stores"
 msgstr "Tuguchu"
@@ -83,37 +83,37 @@ msgid "Items"
 msgstr "Ichek"
 
 msgid "Sales & P&L"
-msgstr "Mauzo na Faida/Hasara"
+msgstr "Sales & P&L"
 
 msgid "Analytics"
-msgstr "Takwimu"
+msgstr "Analytics"
 
 msgid "Staff"
 msgstr "Bik che kiboisiyo"
 
 msgid "Add Staff"
-msgstr "Ongeza Mfanyakazi"
+msgstr "Add Staff"
 
 msgid "Orders"
-msgstr "Maagizo"
+msgstr "Orders"
 
 msgid "Feedback"
-msgstr "Maoni"
+msgstr "Feedback"
 
 msgid "Payment Prompts"
-msgstr "Vikumbusho vya Malipo"
+msgstr "Payment Prompts"
 
 msgid "Payment Settings"
-msgstr "Mipangilio ya Malipo"
+msgstr "Payment Settings"
 
 msgid "Business Settings"
-msgstr "Mipangilio ya Biashara"
+msgstr "Business Settings"
 
 msgid "View Tutorial"
-msgstr "Tazama Mwongozo"
+msgstr "View Tutorial"
 
 msgid "Change Password"
-msgstr "Badilisha Nenosiri"
+msgstr "Change Password"
 
 msgid "Language"
 msgstr "Kutit"
@@ -122,7 +122,7 @@ msgid "Logout"
 msgstr "Ityo"
 
 msgid "Delete Account"
-msgstr "Futa Akaunti"
+msgstr "Delete Account"
 
 msgid "Choose Language"
 msgstr "Til Kutit"
@@ -134,19 +134,19 @@ msgid "Sign in to your account"
 msgstr "Itu ko akaunti"
 
 msgid "Invalid username or password."
-msgstr "Jina la mtumiaji au nenosiri si sahihi."
+msgstr "Invalid username or password."
 
 msgid "Login"
 msgstr "Itu"
 
 msgid "Forgot password?"
-msgstr "Umesahau nenosiri?"
+msgstr "Forgot password?"
 
 msgid "Staff members:"
-msgstr "Wafanyakazi:"
+msgstr "Staff members:"
 
 msgid "Ask your business owner to reset your password from the Staff page."
-msgstr "Muombe mmiliki wa biashara yako akurejeshe nenosiri kutoka ukurasa wa Wafanyakazi."
+msgstr "Ask your business owner to reset your password from the Staff page."
 
 msgid "Don't have an account?"
 msgstr "Momi akaunti?"
@@ -155,622 +155,622 @@ msgid "Register your business"
 msgstr "Ndike biashara"
 
 msgid "Overview"
-msgstr "Muhtasari"
+msgstr "Overview"
 
 msgid "Inventory"
-msgstr "Hisa"
+msgstr "Inventory"
 
 msgid "Sales"
-msgstr "Mauzo"
+msgstr "Sales"
 
 msgid "All Orders"
-msgstr "Maagizo Yote"
+msgstr "All Orders"
 
 msgid "Customers"
-msgstr "Wateja"
+msgstr "Customers"
 
 msgid "Transaction History"
-msgstr "Historia ya Miamala"
+msgstr "Transaction History"
 
 msgid "Manage Items"
-msgstr "Simamia Bidhaa"
+msgstr "Manage Items"
 
 msgid "Deliveries"
-msgstr "Usafirishaji"
+msgstr "Deliveries"
 
 msgid "Active Deliveries"
-msgstr "Usafirishaji Unaoendelea"
+msgstr "Active Deliveries"
 
 msgid "Delivery History"
-msgstr "Historia ya Usafirishaji"
+msgstr "Delivery History"
 
 msgid "Earnings"
-msgstr "Mapato"
+msgstr "Earnings"
 
 msgid "My Earnings"
-msgstr "Mapato Yangu"
+msgstr "My Earnings"
 
 msgid "Toggle Availability"
-msgstr "Badilisha Upatikanaji"
+msgstr "Toggle Availability"
 
 msgid "Profile"
-msgstr "Wasifu"
+msgstr "Profile"
 
 msgid "Procurement"
-msgstr "Ununuzi"
+msgstr "Procurement"
 
 msgid "Clients"
-msgstr "Wateja"
+msgstr "Clients"
 
 msgid "My Clients"
-msgstr "Wateja Wangu"
+msgstr "My Clients"
 
 msgid "Catalog"
-msgstr "Katalogi"
+msgstr "Catalog"
 
 msgid "My Products"
-msgstr "Bidhaa Zangu"
+msgstr "My Products"
 
 msgid "Applications"
-msgstr "Maombi"
+msgstr "Applications"
 
 msgid "Management"
-msgstr "Usimamizi"
+msgstr "Management"
 
 msgid "Supplier Portal"
-msgstr "Lango la Msambazaji"
+msgstr "Supplier Portal"
 
 msgid "Rider Portal"
-msgstr "Lango la Mpanda Baiskeli"
+msgstr "Rider Portal"
 
 msgid "Owner Portal"
-msgstr "Lango la Mmiliki"
+msgstr "Owner Portal"
 
 msgid "My Supply Business"
-msgstr "Biashara Yangu ya Usambazaji"
+msgstr "My Supply Business"
 
 msgid "My Business"
-msgstr "Biashara Yangu"
+msgstr "My Business"
 
 msgid "Settings"
-msgstr "Mipangilio"
+msgstr "Settings"
 
 msgid "Owner"
-msgstr "Mmiliki"
+msgstr "Owner"
 
 msgid "Rider"
-msgstr "Mpanda Baiskeli"
+msgstr "Rider"
 
 msgid "Supplier"
-msgstr "Msambazaji"
+msgstr "Supplier"
 
 msgid "About"
-msgstr "Kuhusu"
+msgstr "About"
 
 msgid "Services"
-msgstr "Huduma"
+msgstr "Services"
 
 msgid "How It Works"
-msgstr "Jinsi Inavyofanya Kazi"
+msgstr "How It Works"
 
 msgid "Testimonials"
-msgstr "Shuhuda"
+msgstr "Testimonials"
 
 msgid "FAQ"
-msgstr "Maswali Ya Mara Kwa Mara"
+msgstr "FAQ"
 
 msgid "Join Us"
-msgstr "Jiunge Nasi"
+msgstr "Join Us"
 
 msgid "Contact"
-msgstr "Wasiliana"
+msgstr "Contact"
 
 msgid "Register Business"
-msgstr "Sajili Biashara"
+msgstr "Register Business"
 
 msgid "Join as Rider"
-msgstr "Jiunge kama Mpanda Baiskeli"
+msgstr "Join as Rider"
 
 msgid "Join as Supplier"
-msgstr "Jiunge kama Msambazaji"
+msgstr "Join as Supplier"
 
 msgid "New Procurement Request"
-msgstr "Ombi Jipya la Ununuzi"
+msgstr "New Procurement Request"
 
 msgid "Post what you need and let suppliers on the platform bid for it."
-msgstr "Tuma unachohitaji na waache wasambazaji kwenye jukwaa watoe zabuni kwa ajili yake."
+msgstr "Post what you need and let suppliers on the platform bid for it."
 
 msgid "Post Request"
-msgstr "Tuma Ombi"
+msgstr "Post Request"
 
 msgid "Submit Your Bid"
-msgstr "Wasilisha Zabuni Yako"
+msgstr "Submit Your Bid"
 
 msgid "Bid Amount (KES)"
-msgstr "Kiasi cha Zabuni (KES)"
+msgstr "Bid Amount (KES)"
 
 msgid "Delivery Timeline"
-msgstr "Muda wa Usafirishaji"
+msgstr "Delivery Timeline"
 
 msgid "Proposal"
-msgstr "Pendekezo"
+msgstr "Proposal"
 
 msgid "Submit Bid"
-msgstr "Wasilisha Zabuni"
+msgstr "Submit Bid"
 
 msgid "Bid Evaluation"
-msgstr "Tathmini ya Zabuni"
+msgstr "Bid Evaluation"
 
 msgid "Scoring Criteria"
-msgstr "Vigezo vya Alama"
+msgstr "Scoring Criteria"
 
 msgid "Top 3 bids are auto-shortlisted. Review and award the best supplier."
-msgstr "Zabuni 3 bora zinapendekezwa kiotomatiki. Kagua na mpe msambazaji bora."
+msgstr "Top 3 bids are auto-shortlisted. Review and award the best supplier."
 
 msgid "Award This Bid"
-msgstr "Mpa Zabuni Hii"
+msgstr "Award This Bid"
 
 msgid "No bids have been submitted yet."
-msgstr "Bado hakuna zabuni zilizowasilishwa."
+msgstr "No bids have been submitted yet."
 
 msgid "Back to Details"
-msgstr "Rudi kwa Maelezo"
+msgstr "Back to Details"
 
 msgid "All Bids (Ranked by Score)"
-msgstr "Zabuni Zote (Zimeainishwa kwa Alama)"
+msgstr "All Bids (Ranked by Score)"
 
 msgid "Your Bid"
-msgstr "Zabuni Yako"
+msgstr "Your Bid"
 
 msgid "Submit a Bid"
-msgstr "Wasilisha Zabuni"
+msgstr "Submit a Bid"
 
 msgid "Evaluate & Score Bids"
-msgstr "Tathmini na Piga Alama Zabuni"
+msgstr "Evaluate & Score Bids"
 
 msgid "You have already submitted a bid for this request."
-msgstr "Tayari umewasilisha zabuni kwa ombi hili."
+msgstr "You have already submitted a bid for this request."
 
 msgid "Score:"
-msgstr "Alama:"
+msgstr "Score:"
 
 msgid "By"
-msgstr "Na"
+msgstr "By"
 
 msgid "Evaluate Bids"
-msgstr "Tathmini Zabuni"
+msgstr "Evaluate Bids"
 
 msgid "Edit Business Details"
-msgstr "Hariri Maelezo ya Biashara"
+msgstr "Edit Business Details"
 
 msgid "Business Information"
-msgstr "Maelezo ya Biashara"
+msgstr "Business Information"
 
 msgid "Operating Hours"
-msgstr "Masaa ya Kazi"
+msgstr "Operating Hours"
 
 msgid "GPS Coordinates"
-msgstr "Kuratibu za GPS"
+msgstr "GPS Coordinates"
 
 msgid "Delivery Settings"
-msgstr "Mipangilio ya Usafirishaji"
+msgstr "Delivery Settings"
 
 msgid "Base Pricing"
-msgstr "Bei ya Msingi"
+msgstr "Base Pricing"
 
 msgid "Minimum Order (distance-based)"
-msgstr "Agizo la Kiwango cha Chini (kulingana na umbali)"
+msgstr "Minimum Order (distance-based)"
 
 msgid "Delivery Modes by Distance"
-msgstr "Njia za Usafirishaji kwa Umbali"
+msgstr "Delivery Modes by Distance"
 
 msgid "Save Changes"
-msgstr "Hifadhi Mabadiliko"
+msgstr "Save Changes"
 
 msgid "Use My Current Location"
-msgstr "Tumia Eneo Langu la Sasa"
+msgstr "Use My Current Location"
 
 msgid "Search above, click the map, or drag the marker to set your business location."
-msgstr "Tafuta hapo juu, bonyeza ramani, au buruta alama kuweka eneo la biashara yako."
+msgstr "Search above, click the map, or drag the marker to set your business location."
 
 msgid "Add Delivery Mode"
-msgstr "Ongeza Njia ya Usafirishaji"
+msgstr "Add Delivery Mode"
 
 msgid "Mode"
-msgstr "Njia"
+msgstr "Mode"
 
 msgid "Max km"
-msgstr "Km ya Juu"
+msgstr "Max km"
 
 msgid "Base fee"
-msgstr "Ada ya Msingi"
+msgstr "Base fee"
 
 msgid "Per km"
-msgstr "Kwa km"
+msgstr "Per km"
 
 msgid "Approved"
-msgstr "Imeidhinishwa"
+msgstr "Approved"
 
 msgid "No clients yet."
-msgstr "Bado hakuna wateja."
+msgstr "No clients yet."
 
 msgid "Browse businesses"
-msgstr "Tazama biashara"
+msgstr "Browse businesses"
 
 msgid "and apply as their supplier."
-msgstr "na omba kuwa msambazaji wao."
+msgstr "and apply as their supplier."
 
 msgid "Business Analytics"
-msgstr "Takwimu za Biashara"
+msgstr "Business Analytics"
 
 msgid "7 Days"
-msgstr "Siku 7"
+msgstr "7 Days"
 
 msgid "14 Days"
-msgstr "Siku 14"
+msgstr "14 Days"
 
 msgid "30 Days"
-msgstr "Siku 30"
+msgstr "30 Days"
 
 msgid "90 Days"
-msgstr "Siku 90"
+msgstr "90 Days"
 
 msgid "1 Year"
-msgstr "Mwaka 1"
+msgstr "1 Year"
 
 msgid "Showing:"
-msgstr "Inaonyesha:"
+msgstr "Showing:"
 
 msgid "Compared to previous %(p)s days"
-msgstr "Ikilinganishwa na siku %(p)s zilizopita"
+msgstr "Compared to previous %(p)s days"
 
 msgid "vs prev"
-msgstr "dhidi ya iliyopita"
+msgstr "vs prev"
 
 msgid "Avg Daily Revenue"
-msgstr "Mapato ya Wastani ya Kila Siku"
+msgstr "Avg Daily Revenue"
 
 msgid "Active Selling Days"
-msgstr "Siku za Uuzaji Zinazofanya Kazi"
+msgstr "Active Selling Days"
 
 msgid "Best Day"
-msgstr "Siku Bora"
+msgstr "Best Day"
 
 msgid "Best Day Revenue"
-msgstr "Mapato ya Siku Bora"
+msgstr "Best Day Revenue"
 
 msgid "Revenue & Profit Trend"
-msgstr "Mwelekeo wa Mapato na Faida"
+msgstr "Revenue & Profit Trend"
 
 msgid "Top Products"
-msgstr "Bidhaa Bora"
+msgstr "Top Products"
 
 msgid "Daily Units Sold"
-msgstr "Vipande Vilivouzwa Kila Siku"
+msgstr "Daily Units Sold"
 
 msgid "Stock Health"
-msgstr "Afya ya Hisa"
+msgstr "Stock Health"
 
 msgid "Stock Value:"
-msgstr "Thamani ya Hisa:"
+msgstr "Stock Value:"
 
 msgid "Orders & Payments"
-msgstr "Maagizo na Malipo"
+msgstr "Orders & Payments"
 
 msgid "Total Orders"
-msgstr "Maagizo Yote"
+msgstr "Total Orders"
 
 msgid "Order Revenue"
-msgstr "Mapato ya Maagizo"
+msgstr "Order Revenue"
 
 msgid "M-Pesa Collected"
-msgstr "M-Pesa Iliyokusanywa"
+msgstr "M-Pesa Collected"
 
 msgid "payments"
-msgstr "malipo"
+msgstr "payments"
 
 msgid "Total Cost of Goods"
-msgstr "Gharama Yote ya Bidhaa"
+msgstr "Total Cost of Goods"
 
 msgid "Store Performance"
-msgstr "Utendaji wa Duka"
+msgstr "Store Performance"
 
 msgid "Revenue (KES)"
-msgstr "Mapato (KES)"
+msgstr "Revenue (KES)"
 
 msgid "Top 10 Products"
-msgstr "Bidhaa 10 Bora"
+msgstr "Top 10 Products"
 
 msgid "Product"
-msgstr "Bidhaa"
+msgstr "Product"
 
 msgid "Units"
-msgstr "Vipande"
+msgstr "Units"
 
 msgid "Revenue"
-msgstr "Mapato"
+msgstr "Revenue"
 
 msgid "Profit"
-msgstr "Faida"
+msgstr "Profit"
 
 msgid "Margin"
-msgstr "Kiwango"
+msgstr "Margin"
 
 msgid "transactions"
-msgstr "miamala"
+msgstr "transactions"
 
 msgid "Sales & Profit/Loss"
-msgstr "Mauzo na Faida/Hasara"
+msgstr "Sales & Profit/Loss"
 
 msgid "Period:"
-msgstr "Kipindi:"
+msgstr "Period:"
 
 msgid "Today"
-msgstr "Leo"
+msgstr "Today"
 
 msgid "This Week"
-msgstr "Wiki Hii"
+msgstr "This Week"
 
 msgid "This Month"
-msgstr "Mwezi Huu"
+msgstr "This Month"
 
 msgid "This Year"
-msgstr "Mwaka Huu"
+msgstr "This Year"
 
 msgid "Custom Range"
-msgstr "Kipindi Maalum"
+msgstr "Custom Range"
 
 msgid "to"
-msgstr "hadi"
+msgstr "to"
 
 msgid "Total Revenue"
-msgstr "Mapato Yote"
+msgstr "Total Revenue"
 
 msgid "Total Cost"
-msgstr "Gharama Yote"
+msgstr "Total Cost"
 
 msgid "Gross Profit"
-msgstr "Faida Ghafi"
+msgstr "Gross Profit"
 
 msgid "KES (at cost)"
-msgstr "KES (bei ya gharama)"
+msgstr "KES (at cost)"
 
 msgid "items issued"
-msgstr "bidhaa zilizotolewa"
+msgstr "items issued"
 
 msgid "gross margin"
-msgstr "kiwango cha faida ghafi"
+msgstr "gross margin"
 
 msgid "Sales by Item"
-msgstr "Mauzo kwa Bidhaa"
+msgstr "Sales by Item"
 
 msgid "Cost (KES)"
-msgstr "Gharama (KES)"
+msgstr "Cost (KES)"
 
 msgid "Profit (KES)"
-msgstr "Faida (KES)"
+msgstr "Profit (KES)"
 
 msgid "No sales recorded in this period."
-msgstr "Hakuna mauzo yaliyorekodiwa katika kipindi hiki."
+msgstr "No sales recorded in this period."
 
 msgid "Top Selling Items"
-msgstr "Bidhaa Zinazouzwa Zaidi"
+msgstr "Top Selling Items"
 
 msgid "Slow Moving Items"
-msgstr "Bidhaa Zinazouzwa Polepole"
+msgstr "Slow Moving Items"
 
 msgid "These items had no sales in the selected period:"
-msgstr "Bidhaa hizi hazikuwa na mauzo katika kipindi kilichochaguliwa:"
+msgstr "These items had no sales in the selected period:"
 
 msgid "Full Form"
-msgstr "Fomu Kamili"
+msgstr "Full Form"
 
 msgid "Add to Sale"
-msgstr "Ongeza Kwenye Mauzo"
+msgstr "Add to Sale"
 
 msgid "Sale Recorded!"
-msgstr "Mauzo Yamerekodiwa!"
+msgstr "Sale Recorded!"
 
 msgid "Continue Selling"
-msgstr "Endelea Kuuza"
+msgstr "Continue Selling"
 
 msgid "Complete Sale"
-msgstr "Maliza Mauzo"
+msgstr "Complete Sale"
 
 msgid "No items found. Add items from the Manage page."
-msgstr "Hakuna bidhaa zilizopatikana. Ongeza bidhaa kutoka ukurasa wa Simamia."
+msgstr "No items found. Add items from the Manage page."
 
 msgid "Pending orders that need attention"
-msgstr "Maagizo yanayosubiri yanayohitaji umakini"
+msgstr "Pending orders that need attention"
 
 msgid "Pickups"
-msgstr "Kuchukua"
+msgstr "Pickups"
 
 msgid "Update status..."
-msgstr "Sasisha hali..."
+msgstr "Update status..."
 
 msgid "Mark Paid"
-msgstr "Alama ya Kulipwa"
+msgstr "Mark Paid"
 
 msgid "Assign rider..."
-msgstr "Weka mpanda boda..."
+msgstr "Assign rider..."
 
 msgid "No pending orders!"
-msgstr "Hakuna maagizo yanayosubiri!"
+msgstr "No pending orders!"
 
 msgid "Customer Orders"
-msgstr "Maagizo ya Wateja"
+msgstr "Customer Orders"
 
 msgid "No orders yet."
-msgstr "Bado hakuna maagizo."
+msgstr "No orders yet."
 
 msgid "Share your shop link with customers to start receiving orders!"
-msgstr "Shiriki kiungo cha duka lako na wateja ili uanze kupokea maagizo!"
+msgstr "Share your shop link with customers to start receiving orders!"
 
 msgid "Total"
-msgstr "Jumla"
+msgstr "Total"
 
 msgid "Phone"
-msgstr "Simu"
+msgstr "Phone"
 
 msgid "Order #"
-msgstr "Agizo #"
+msgstr "Order #"
 
 msgid "Confirm what was sold when M-Pesa payments come in"
-msgstr "Thibitisha kilichouzwa wakati malipo ya M-Pesa yanaingia"
+msgstr "Confirm what was sold when M-Pesa payments come in"
 
 msgid "What was sold?"
-msgstr "Nini kiliuzwa?"
+msgstr "What was sold?"
 
 msgid "-- Select Item --"
-msgstr "-- Chagua Bidhaa --"
+msgstr "-- Select Item --"
 
 msgid "Confirm Sale"
-msgstr "Thibitisha Mauzo"
+msgstr "Confirm Sale"
 
 msgid "Not a Sale"
-msgstr "Si Mauzo"
+msgstr "Not a Sale"
 
 msgid "No Pending Payments"
-msgstr "Hakuna Malipo Yanayosubiri"
+msgstr "No Pending Payments"
 
 msgid "Recently Confirmed"
-msgstr "Yaliyothibitishwa Hivi Karibuni"
+msgstr "Recently Confirmed"
 
 msgid "From"
-msgstr "Kutoka"
+msgstr "From"
 
 msgid "Item Sold"
-msgstr "Bidhaa Iliyouzwa"
+msgstr "Item Sold"
 
 msgid "Confirmed By"
-msgstr "Imethibitishwa Na"
+msgstr "Confirmed By"
 
 msgid "Overview of your delivery earnings"
-msgstr "Muhtasari wa mapato yako ya usafirishaji"
+msgstr "Overview of your delivery earnings"
 
 msgid "Earnings Summary"
-msgstr "Muhtasari wa Mapato"
+msgstr "Earnings Summary"
 
 msgid "Average per delivery:"
-msgstr "Wastani kwa usafirishaji:"
+msgstr "Average per delivery:"
 
 msgid "My Procurement Requests"
-msgstr "Maombi Yangu ya Ununuzi"
+msgstr "My Procurement Requests"
 
 msgid "New Request"
-msgstr "Ombi Jipya"
+msgstr "New Request"
 
 msgid "No procurement requests yet."
-msgstr "Bado hakuna maombi ya ununuzi."
+msgstr "No procurement requests yet."
 
 msgid "Create Your First Request"
-msgstr "Unda Ombi Lako la Kwanza"
+msgstr "Create Your First Request"
 
 msgid "Deadline:"
-msgstr "Mwisho wa Muda:"
+msgstr "Deadline:"
 
 msgid "Receiving Channels"
-msgstr "Njia za Kupokea"
+msgstr "Receiving Channels"
 
 msgid "Preferred Payment Channel"
-msgstr "Njia Unayopendelea ya Malipo"
+msgstr "Preferred Payment Channel"
 
 msgid "Save Payment Settings"
-msgstr "Hifadhi Mipangilio ya Malipo"
+msgstr "Save Payment Settings"
 
 msgid "Current Payment Channels"
-msgstr "Njia za Malipo za Sasa"
+msgstr "Current Payment Channels"
 
 msgid "Not Set"
-msgstr "Haijawekwa"
+msgstr "Not Set"
 
 msgid "Confirm"
-msgstr "Thibitisha"
+msgstr "Confirm"
 
 msgid "Cancel"
-msgstr "Ghairi"
+msgstr "Cancel"
 
 msgid "Complete"
-msgstr "Kamilisha"
+msgstr "Complete"
 
 msgid "Skip Tutorial"
-msgstr "Ruka Mwongozo"
+msgstr "Skip Tutorial"
 
 msgid "Back"
-msgstr "Nyuma"
+msgstr "Back"
 
 msgid "Next"
-msgstr "Ifuatayo"
+msgstr "Next"
 
 msgid "Welcome to Duka Mwecheche!"
-msgstr "Karibu Duka Mwecheche!"
+msgstr "Welcome to Duka Mwecheche!"
 
 msgid "This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username."
-msgstr "Mwongozo huu mfupi utakuelekeza kwenye vipengele muhimu vya dashibodi yako. Unaweza kuucheza tena wakati wowote kutoka kwenye menyu iliyo chini ya jina lako la mtumiaji."
+msgstr "This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username."
 
 msgid "Your Dashboard"
-msgstr "Dashibodi Yako"
+msgstr "Your Dashboard"
 
 msgid "Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests."
-msgstr "<strong>Dashibodi ya Msambazaji</strong> yako inaonyesha takwimu muhimu: wateja hai, zabuni zinazosubiri, zabuni zilizoshinda, na maombi ya ununuzi yaliyo wazi."
+msgstr "Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests."
 
 msgid "Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts."
-msgstr "Bofya <strong>Tazama Maombi</strong> kupata fursa za ununuzi kutoka kwa biashara. Wasilisha zabuni shindani ili ushinde mikataba ya usambazaji."
+msgstr "Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts."
 
 msgid "Track Your Bids"
-msgstr "Fuatilia Zabuni Zako"
+msgstr "Track Your Bids"
 
 msgid "Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected."
-msgstr "Chini ya <strong>Zabuni Zangu</strong>, fuatilia hali ya zabuni zako zote zilizowasilishwa — zinasubiri, zimepewa, au zimekataliwa."
+msgstr "Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected."
 
 msgid "Connect with Businesses"
-msgstr "Ungana na Biashara"
+msgstr "Connect with Businesses"
 
 msgid "Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier."
-msgstr "Tumia <strong>Tazama Biashara</strong> kugundua wateja watarajiwa. Omba kuwa msambazaji wao aliyeidhinishwa."
+msgstr "Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier."
 
 msgid "Client Relationships"
-msgstr "Mahusiano ya Wateja"
+msgstr "Client Relationships"
 
 msgid "Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement."
-msgstr "Ukishaidhinishwa, tazama orodha ya wateja wako chini ya <strong>Wateja Wangu</strong>. Jenga mahusiano imara kwa ununuzi wa kurudiwa."
+msgstr "Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement."
 
 msgid "You're All Set!"
-msgstr "Uko Tayari!"
+msgstr "You're All Set!"
 
 msgid "Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime."
-msgstr "Anza kutazama maombi ya ununuzi ili kukuza mtandao wako wa usambazaji! Cheza mwongozo huu tena kutoka kwenye menyu ya jina lako la mtumiaji wakati wowote."
+msgstr "Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime."
 
 msgid "Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score."
-msgstr "<strong>Dashibodi ya Mpanda Baiskeli</strong> yako inaonyesha usafirishaji unaoendelea, oda zilizokamilika, na alama yako ya utendaji."
+msgstr "Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score."
 
 msgid "Availability Toggle"
-msgstr "Badili Upatikanaji"
+msgstr "Availability Toggle"
 
 msgid "Toggle your <strong>availability</strong> status so businesses know when you are ready to accept deliveries."
-msgstr "Badili hali yako ya <strong>upatikanaji</strong> ili biashara zijue wakati uko tayari kupokea usafirishaji."
+msgstr "Toggle your <strong>availability</strong> status so businesses know when you are ready to accept deliveries."
 
 msgid "View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts."
-msgstr "Tazama kazi zako za sasa za usafirishaji chini ya <strong>Usafirishaji Unaoendelea</strong>. Ona maelezo ya mteja, eneo, na kiasi cha oda."
+msgstr "View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts."
 
 msgid "Check <strong>Delivery History</strong> for a complete record of all your past deliveries."
-msgstr "Angalia <strong>Historia ya Usafirishaji</strong> kwa rekodi kamili ya usafirishaji wako wote wa zamani."
+msgstr "Check <strong>Delivery History</strong> for a complete record of all your past deliveries."
 
 msgid "Track your total earnings and delivery count under <strong>My Earnings</strong>."
-msgstr "Fuatilia mapato yako yote na idadi ya usafirishaji chini ya <strong>Mapato Yangu</strong>."
+msgstr "Track your total earnings and delivery count under <strong>My Earnings</strong>."
 
 msgid "Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime."
-msgstr "Endelea kupatikana ili upokee kazi za usafirishaji! Cheza mwongozo huu tena kutoka kwenye menyu ya jina lako la mtumiaji wakati wowote."
+msgstr "Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime."
 
 msgid "Get Started!"
-msgstr "Anza!"
+msgstr "Get Started!"
 
 msgid "Add Staff Member"
 msgstr "Add Staff Member"
 
 msgid "Please correct the errors below."
-msgstr "Tafadhali sahihisha makosa hapa chini."
+msgstr "Please correct the errors below."
 
 msgid "Personal Details"
 msgstr "Personal Details"
@@ -794,13 +794,13 @@ msgid "Yes, Remove"
 msgstr "Yes, Remove"
 
 msgid "Location"
-msgstr "Mahali"
+msgstr "Location"
 
 msgid "Search for your business location e.g. Mama Ngina Street, Nairobi"
 msgstr "Search for your business location e.g. Mama Ngina Street, Nairobi"
 
 msgid "Search"
-msgstr "Tafuta"
+msgstr "Search"
 
 msgid "Base fee + per-km rate. Example: KES 50 base + KES 30/km → 3km delivery costs KES 140"
 msgstr "Base fee + per-km rate. Example: KES 50 base + KES 30/km → 3km delivery costs KES 140"
@@ -824,19 +824,19 @@ msgid "Vehicle"
 msgstr "Vehicle"
 
 msgid "Remove"
-msgstr "Ondoa"
+msgstr "Remove"
 
 msgid "Edit Staff"
 msgstr "Edit Staff"
 
 msgid "First Name"
-msgstr "Jina la Kwanza"
+msgstr "First Name"
 
 msgid "Last Name"
-msgstr "Jina la Mwisho"
+msgstr "Last Name"
 
 msgid "Email"
-msgstr "Barua Pepe"
+msgstr "Email"
 
 msgid "Configure how customers can pay your business via M-Pesa"
 msgstr "Configure how customers can pay your business via M-Pesa"
@@ -866,94 +866,94 @@ msgid "Reset Password for"
 msgstr "Reset Password for"
 
 msgid "Reset Password"
-msgstr "Weka upya Nenosiri"
+msgstr "Reset Password"
 
 msgid "Set New Password"
 msgstr "Set New Password"
 
 msgid "Rider Dashboard"
-msgstr "Dashibodi ya Mpanda Baiskeli"
+msgstr "Rider Dashboard"
 
 msgid "Available"
 msgstr "Available"
 
 msgid "Unavailable"
-msgstr "Hapatikani"
+msgstr "Unavailable"
 
 msgid "Active"
-msgstr "Inaendelea"
+msgstr "Active"
 
 msgid "Completed"
-msgstr "Imekamilika"
+msgstr "Completed"
 
 msgid "Status"
-msgstr "Hali"
+msgstr "Status"
 
 msgid "Your Performance Score"
-msgstr "Alama Yako ya Utendaji"
+msgstr "Your Performance Score"
 
 msgid "Rating"
-msgstr "Ukadiriaji"
+msgstr "Rating"
 
 msgid "On-time"
-msgstr "Kwa Wakati"
+msgstr "On-time"
 
 msgid "Condition"
-msgstr "Hali"
+msgstr "Condition"
 
 msgid "Experience"
-msgstr "Uzoefu"
+msgstr "Experience"
 
 msgid "Based on"
-msgstr "Kutokana na"
+msgstr "Based on"
 
 msgid "ratings and"
-msgstr "makadirio na"
+msgstr "ratings and"
 
 msgid "total deliveries"
-msgstr "usafirishaji wote"
+msgstr "total deliveries"
 
 msgid "Avg"
-msgstr "Wastani"
+msgstr "Avg"
 
 msgid "Complete deliveries and get rated to build your score!"
-msgstr "Kamilisha usafirishaji na upate makadirio ili kujenga alama yako!"
+msgstr "Complete deliveries and get rated to build your score!"
 
 msgid "No location"
-msgstr "Hakuna eneo"
+msgstr "No location"
 
 msgid "View Details"
-msgstr "Tazama Maelezo"
+msgstr "View Details"
 
 msgid "No active deliveries right now."
-msgstr "Hakuna usafirishaji unaoendelea sasa hivi."
+msgstr "No active deliveries right now."
 
 msgid "Recent Completions"
-msgstr "Vilivyokamilika Hivi Karibuni"
+msgstr "Recent Completions"
 
 msgid "ago"
-msgstr "iliyopita"
+msgstr "ago"
 
 msgid "Staff Members"
-msgstr "Wafanyakazi"
+msgstr "Staff Members"
 
 msgid "Your Team"
-msgstr "Timu Yako"
+msgstr "Your Team"
 
 msgid "member"
-msgstr "mfanyakazi"
+msgstr "member"
 
 msgid "members"
-msgstr "wafanyakazi"
+msgstr "members"
 
 msgid "Edit"
-msgstr "Hariri"
+msgstr "Edit"
 
 msgid "No staff members yet."
-msgstr "Bado hakuna wafanyakazi."
+msgstr "No staff members yet."
 
 msgid "Add your first staff member"
-msgstr "Ongeza mfanyakazi wako wa kwanza"
+msgstr "Add your first staff member"
 
 msgid "Item Details"
 msgstr "Item Details"
@@ -965,7 +965,7 @@ msgid "Type to search item..."
 msgstr "Type to search item..."
 
 msgid "Balance"
-msgstr "Salio"
+msgstr "Balance"
 
 msgid "Transaction Type"
 msgstr "Transaction Type"
@@ -1037,10 +1037,10 @@ msgid "Healthy"
 msgstr "Healthy"
 
 msgid "Low Stock"
-msgstr "Hisa Chini"
+msgstr "Low Stock"
 
 msgid "Out of Stock"
-msgstr "Hisa Imeisha"
+msgstr "Out of Stock"
 
 msgid "Pending"
 msgstr "Pending"
@@ -1061,7 +1061,7 @@ msgid "Yes, Delete"
 msgstr "Yes, Delete"
 
 msgid "All"
-msgstr "Yote"
+msgstr "All"
 
 msgid "Confirmed"
 msgstr "Confirmed"
@@ -1073,64 +1073,64 @@ msgid "Ready"
 msgstr "Ready"
 
 msgid "Owner Quick Actions"
-msgstr "Vitendo vya Haraka vya Mmiliki"
+msgstr "Owner Quick Actions"
 
 msgid "Manage Stores"
-msgstr "Simamia Maduka"
+msgstr "Manage Stores"
 
 msgid "Add Item"
-msgstr "Ongeza Bidhaa"
+msgstr "Add Item"
 
 msgid "Total Items"
-msgstr "Jumla ya Bidhaa"
+msgstr "Total Items"
 
 msgid "Needs Reorder"
-msgstr "Inahitaji Kuagizwa Tena"
+msgstr "Needs Reorder"
 
 msgid "View Stock List"
-msgstr "Tazama Orodha ya Hisa"
+msgstr "View Stock List"
 
 msgid "Export Excel"
-msgstr "Hamisha Excel"
+msgstr "Export Excel"
 
 msgid "Items Needing Urgent Reorder"
-msgstr "Bidhaa Zinazohitaji Kuagizwa Tena Haraka"
+msgstr "Items Needing Urgent Reorder"
 
 msgid "Material No"
-msgstr "Nambari ya Bidhaa"
+msgstr "Material No"
 
 msgid "Description"
-msgstr "Maelezo"
+msgstr "Description"
 
 msgid "Unit"
-msgstr "Kipimo"
+msgstr "Unit"
 
 msgid "Reorder Level"
-msgstr "Kiwango cha Kuagiza Tena"
+msgstr "Reorder Level"
 
 msgid "All items are above reorder level. Great job!"
-msgstr "Bidhaa zote ziko juu ya kiwango cha kuagiza tena. Hongera!"
+msgstr "All items are above reorder level. Great job!"
 
 msgid "Welcome to"
-msgstr "Karibu"
+msgstr "Welcome to"
 
 msgid "The smart platform that empowers Kenyan businesses to manage inventory, sell online, and grow — all from one place."
-msgstr "Jukwaa hili linawezesha biashara za Kenya kusimamia hesabu, kuuza mtandaoni, na kukua — yote kutoka sehemu moja."
+msgstr "The smart platform that empowers Kenyan businesses to manage inventory, sell online, and grow — all from one place."
 
 msgid "Browse Shop"
-msgstr "Tazama Duka"
+msgstr "Browse Shop"
 
 msgid "Register Your Business"
-msgstr "Sajili Biashara Yako"
+msgstr "Register Your Business"
 
 msgid "Already a business?"
-msgstr "Tayari una biashara?"
+msgstr "Already a business?"
 
 msgid "Log in"
-msgstr "Ingia"
+msgstr "Log in"
 
 msgid "to apply as a supplier, browse procurement requests, and bid for contracts."
-msgstr "kuomba kuwa msambazaji, kutazama maombi ya ununuzi, na kutoa zabuni za mikataba."
+msgstr "to apply as a supplier, browse procurement requests, and bid for contracts."
 
 msgid "About Us"
 msgstr "About Us"
@@ -1325,16 +1325,16 @@ msgid "Cancelled"
 msgstr "Cancelled"
 
 msgid "Order"
-msgstr "Agizo"
+msgstr "Order"
 
 msgid "Customer"
-msgstr "Mteja"
+msgstr "Customer"
 
 msgid "When customers pay via your Till, Paybill, or Pochi la Biashara, payment prompts will appear here for you to log the sale."
 msgstr "When customers pay via your Till, Paybill, or Pochi la Biashara, payment prompts will appear here for you to log the sale."
 
 msgid "Amount"
-msgstr "Kiasi"
+msgstr "Amount"
 
 msgid "When"
 msgstr "When"
@@ -1346,7 +1346,7 @@ msgid "Clear"
 msgstr "Clear"
 
 msgid "Apply"
-msgstr "Omba"
+msgstr "Apply"
 
 msgid "Stock Value"
 msgstr "Stock Value"
@@ -1379,73 +1379,73 @@ msgid "No transactions yet."
 msgstr "No transactions yet."
 
 msgid "Apply as Supplier"
-msgstr "Omba kuwa Msambazaji"
+msgstr "Apply as Supplier"
 
 msgid "Apply to supply products or services to"
-msgstr "Omba kusambaza bidhaa au huduma kwa"
+msgstr "Apply to supply products or services to"
 
 msgid "Services / Products You Can Supply *"
-msgstr "Huduma / Bidhaa Unazoweza Kusambaza *"
+msgstr "Services / Products You Can Supply *"
 
 msgid "e.g. Fresh produce, dairy products, packaging materials..."
-msgstr "k.m. mazao mabichi, bidhaa za maziwa, vifaa vya kufungashia..."
+msgstr "e.g. Fresh produce, dairy products, packaging materials..."
 
 msgid "Cover Letter *"
-msgstr "Barua ya Maombi *"
+msgstr "Cover Letter *"
 
 msgid "Why should this business choose you as a supplier? Describe your experience, reliability, pricing, location advantages..."
-msgstr "Kwa nini biashara hii ikuchague kama msambazaji? Eleza uzoefu wako, uaminifu, bei, na faida za eneo lako..."
+msgstr "Why should this business choose you as a supplier? Describe your experience, reliability, pricing, location advantages..."
 
 msgid "Submit Application"
-msgstr "Wasilisha Ombi"
+msgstr "Submit Application"
 
 msgid "Browse Procurement Requests"
-msgstr "Tazama Maombi ya Ununuzi"
+msgstr "Browse Procurement Requests"
 
 msgid "Open Procurement Requests"
-msgstr "Maombi ya Ununuzi Yaliyo Wazi"
+msgstr "Open Procurement Requests"
 
 msgid "Find businesses looking for suppliers and submit your bid."
-msgstr "Pata biashara zinazotafuta wasambazaji na uwasilishe zabuni yako."
+msgstr "Find businesses looking for suppliers and submit your bid."
 
 msgid "Search requests..."
-msgstr "Tafuta maombi..."
+msgstr "Search requests..."
 
 msgid "All Categories"
-msgstr "Makundi Yote"
+msgstr "All Categories"
 
 msgid "Open"
-msgstr "Wazi"
+msgstr "Open"
 
 msgid "Deadline"
-msgstr "Mwisho wa Muda"
+msgstr "Deadline"
 
 msgid "bids"
-msgstr "zabuni"
+msgstr "bids"
 
 msgid "Bid Now"
-msgstr "Toa Zabuni Sasa"
+msgstr "Bid Now"
 
 msgid "No open procurement requests at the moment."
-msgstr "Hakuna maombi ya ununuzi yaliyo wazi kwa sasa."
+msgstr "No open procurement requests at the moment."
 
 msgid "Find businesses on the platform and apply to become their supplier."
-msgstr "Pata biashara kwenye jukwaa na omba kuwa msambazaji wao."
+msgstr "Find businesses on the platform and apply to become their supplier."
 
 msgid "Search by name..."
-msgstr "Tafuta kwa jina..."
+msgstr "Search by name..."
 
 msgid "All Counties"
-msgstr "Kaunti Zote"
+msgstr "All Counties"
 
 msgid "General"
-msgstr "Jumla"
+msgstr "General"
 
 msgid "Applied"
-msgstr "Imetuma Ombi"
+msgstr "Applied"
 
 msgid "No businesses found matching your criteria."
-msgstr "Hakuna biashara zilizopatikana zinazolingana na vigezo vyako."
+msgstr "No businesses found matching your criteria."
 
 msgid "Create Procurement Request"
 msgstr "Create Procurement Request"
@@ -1493,31 +1493,31 @@ msgid "Speed: 5%"
 msgstr "Speed: 5%"
 
 msgid "Shortlisted"
-msgstr "Imeorodheshwa"
+msgstr "Shortlisted"
 
 msgid "Awarded"
 msgstr "Awarded"
 
 msgid "My Submitted Bids"
-msgstr "Zabuni Zangu Nilizowasilisha"
+msgstr "My Submitted Bids"
 
 msgid "Submitted"
-msgstr "Imewasilishwa"
+msgstr "Submitted"
 
 msgid "Accepted"
-msgstr "Imekubaliwa"
+msgstr "Accepted"
 
 msgid "Rejected"
 msgstr "Rejected"
 
 msgid "View Request"
-msgstr "Tazama Ombi"
+msgstr "View Request"
 
 msgid "You haven't submitted any bids yet."
-msgstr "Bado hujawasilisha zabuni yoyote."
+msgstr "You haven't submitted any bids yet."
 
 msgid "Browse Open Requests"
-msgstr "Tazama Maombi Wazi"
+msgstr "Browse Open Requests"
 
 msgid "Evaluating"
 msgstr "Evaluating"
@@ -1526,7 +1526,7 @@ msgid "Closed"
 msgstr "Closed"
 
 msgid "No bids yet."
-msgstr "Bado hakuna zabuni."
+msgstr "No bids yet."
 
 msgid "Your total price for this request"
 msgstr "Your total price for this request"
@@ -1538,97 +1538,97 @@ msgid "Explain why you are the best fit: your experience, quality assurance, del
 msgstr "Explain why you are the best fit: your experience, quality assurance, delivery capabilities..."
 
 msgid "Logged Out"
-msgstr "Umetoka"
+msgstr "Logged Out"
 
 msgid "You have been successfully logged out."
-msgstr "Umetoka kwenye akaunti yako kwa mafanikio."
+msgstr "You have been successfully logged out."
 
 msgid "Login Again"
-msgstr "Ingia Tena"
+msgstr "Login Again"
 
 msgid "Join as a Delivery Partner"
-msgstr "Jiunge kama Mshirika wa Usafirishaji"
+msgstr "Join as a Delivery Partner"
 
 msgid "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
-msgstr "Pikipiki, Baiskeli, Gari, au Footsubishi (Miguu Niponye) — pata pesa kwa kupeleka oda"
+msgstr "Motorcycle, Bicycle, Car, or Footsubishi (Miguu Niponye) — earn money delivering orders"
 
 msgid "Account"
-msgstr "Akaunti"
+msgstr "Account"
 
 msgid "Rider Details"
-msgstr "Maelezo ya Mpanda Boda"
+msgstr "Rider Details"
 
 msgid "Preferences"
-msgstr "Mapendeleo"
+msgstr "Preferences"
 
 msgid "Register as Rider"
-msgstr "Sajili kama Mpanda Boda"
+msgstr "Register as Rider"
 
 msgid "Already have an account?"
-msgstr "Tayari una akaunti?"
+msgstr "Already have an account?"
 
 msgid "Want to register a business?"
-msgstr "Unataka kusajili biashara?"
+msgstr "Want to register a business?"
 
 msgid "Create your account and get started"
-msgstr "Fungua akaunti yako na uanze"
+msgstr "Create your account and get started"
 
 msgid "Account Details"
-msgstr "Maelezo ya Akaunti"
+msgstr "Account Details"
 
 msgid "Business Details"
-msgstr "Maelezo ya Biashara"
+msgstr "Business Details"
 
 msgid "Create Account & Business"
-msgstr "Fungua Akaunti na Biashara"
+msgstr "Create Account & Business"
 
 msgid "Login here"
-msgstr "Ingia hapa"
+msgstr "Login here"
 
 msgid "-- Select Sub County --"
-msgstr "-- Chagua Kaunti Ndogo --"
+msgstr "-- Select Sub County --"
 
 msgid "-- Select Ward --"
-msgstr "-- Chagua Wadi --"
+msgstr "-- Select Ward --"
 
 msgid "-- Loading Sub Counties... --"
-msgstr "-- Inapakia Kaunti Ndogo... --"
+msgstr "-- Loading Sub Counties... --"
 
 msgid "-- Error loading --"
-msgstr "-- Hitilafu ya kupakia --"
+msgstr "-- Error loading --"
 
 msgid "-- Loading Wards... --"
-msgstr "-- Inapakia Wadi... --"
+msgstr "-- Loading Wards... --"
 
 msgid "Join as a Supplier"
-msgstr "Jiunge kama Msambazaji"
+msgstr "Join as a Supplier"
 
 msgid "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
-msgstr "Sambaza bidhaa kwa biashara kote Kenya — toa zabuni kwa maombi ya ununuzi na panua mtandao wako"
+msgstr "Supply goods to businesses across Kenya — bid on procurement requests and grow your network"
 
 msgid "Register as Supplier"
-msgstr "Sajili kama Msambazaji"
+msgstr "Register as Supplier"
 
 msgid "Join as a rider?"
-msgstr "Jiunge kama mpanda boda?"
+msgstr "Join as a rider?"
 
 msgid "Register Rider"
-msgstr "Sajili Mpanda Boda"
+msgstr "Register Rider"
 
 msgid "active deliveries"
-msgstr "usafirishaji unaoendelea"
+msgstr "active deliveries"
 
 msgid "No active deliveries right now. Stay available to receive new orders!"
 msgstr "No active deliveries right now. Stay available to receive new orders!"
 
 msgid "Your last 50 completed deliveries"
-msgstr "Usafirishaji wako 50 wa mwisho uliokamilika"
+msgstr "Your last 50 completed deliveries"
 
 msgid "Business"
 msgstr "Business"
 
 msgid "No completed deliveries yet. Start delivering to build your history!"
-msgstr "Bado hakuna usafirishaji uliokamilika. Anza kusafirisha ili ujenge historia yako!"
+msgstr "No completed deliveries yet. Start delivering to build your history!"
 
 msgid "Total Earnings"
 msgstr "Total Earnings"
@@ -1640,151 +1640,151 @@ msgid "Complete deliveries to start earning! Make sure you're set as available."
 msgstr "Complete deliveries to start earning! Make sure you're set as available."
 
 msgid "Supplier Dashboard"
-msgstr "Dashibodi ya Msambazaji"
+msgstr "Supplier Dashboard"
 
 msgid "Welcome back,"
-msgstr "Karibu tena,"
+msgstr "Welcome back,"
 
 msgid "Active Clients"
-msgstr "Wateja Hai"
+msgstr "Active Clients"
 
 msgid "Active Bids"
-msgstr "Zabuni Hai"
+msgstr "Active Bids"
 
 msgid "Won Bids"
-msgstr "Zabuni Zilizoshinda"
+msgstr "Won Bids"
 
 msgid "Open Requests"
-msgstr "Maombi Wazi"
+msgstr "Open Requests"
 
 msgid "Find new procurement opportunities"
-msgstr "Pata fursa mpya za ununuzi"
+msgstr "Find new procurement opportunities"
 
 msgid "Track your submitted bids"
-msgstr "Fuatilia zabuni ulizowasilisha"
+msgstr "Track your submitted bids"
 
 msgid "Connect with potential clients"
-msgstr "Ungana na wateja watarajiwa"
+msgstr "Connect with potential clients"
 
 msgid "Recent Bids"
-msgstr "Zabuni za Hivi Karibuni"
+msgstr "Recent Bids"
 
 msgid "Request"
-msgstr "Ombi"
+msgstr "Request"
 
 msgid "Won"
-msgstr "Imeshinda"
+msgstr "Won"
 
 msgid "Browse procurement requests"
-msgstr "Tazama maombi ya ununuzi"
+msgstr "Browse procurement requests"
 
 msgid "to get started."
-msgstr "ili kuanza."
+msgstr "to get started."
 
 msgid "Username"
-msgstr "Jina la mtumiaji"
+msgstr "Username"
 
 msgid "Choose a username"
-msgstr "Chagua jina la mtumiaji"
+msgstr "Choose a username"
 
 msgid "Password"
-msgstr "Nenosiri"
+msgstr "Password"
 
 msgid "your@email.com"
 msgstr "your@email.com"
 
 msgid "Create a password"
-msgstr "Unda nenosiri"
+msgstr "Create a password"
 
 msgid "Confirm your password"
-msgstr "Thibitisha nenosiri lako"
+msgstr "Confirm your password"
 
 msgid "Confirm Password"
-msgstr "Thibitisha Nenosiri"
+msgstr "Confirm Password"
 
 msgid "Preferred Language"
-msgstr "Lugha Unayopendelea"
+msgstr "Preferred Language"
 
 msgid "Business Name"
-msgstr "Jina la Biashara"
+msgstr "Business Name"
 
 msgid "e.g. The Royal Farm"
-msgstr "k.m. The Royal Farm"
+msgstr "e.g. The Royal Farm"
 
 msgid "Business Type"
-msgstr "Aina ya Biashara"
+msgstr "Business Type"
 
 msgid "-- Select Business Type --"
-msgstr "-- Chagua Aina ya Biashara --"
+msgstr "-- Select Business Type --"
 
 msgid "Phone Number"
-msgstr "Nambari ya Simu"
+msgstr "Phone Number"
 
 msgid "e.g. 0712345678"
-msgstr "k.m. 0712345678"
+msgstr "e.g. 0712345678"
 
 msgid "Business Email"
-msgstr "Barua Pepe ya Biashara"
+msgstr "Business Email"
 
 msgid "business@email.com"
 msgstr "business@email.com"
 
 msgid "Address"
-msgstr "Anwani"
+msgstr "Address"
 
 msgid "Physical address"
-msgstr "Anwani ya mahali"
+msgstr "Physical address"
 
 msgid "County"
-msgstr "Kaunti"
+msgstr "County"
 
 msgid "-- Select County --"
-msgstr "-- Chagua Kaunti --"
+msgstr "-- Select County --"
 
 msgid "Sub County"
-msgstr "Kaunti Ndogo"
+msgstr "Sub County"
 
 msgid "Ward"
-msgstr "Wadi"
+msgstr "Ward"
 
 msgid "Username already taken."
-msgstr "Jina la mtumiaji tayari limetumika."
+msgstr "Username already taken."
 
 msgid "A business with this name already exists."
-msgstr "Biashara yenye jina hili tayari ipo."
+msgstr "A business with this name already exists."
 
 msgid "Passwords do not match."
-msgstr "Manenosiri hayalingani."
+msgstr "Passwords do not match."
 
 msgid "Supply Business Name"
-msgstr "Jina la Biashara ya Usambazaji"
+msgstr "Supply Business Name"
 
 msgid "e.g. MaziwaFresh Supplies"
-msgstr "k.m. MaziwaFresh Supplies"
+msgstr "e.g. MaziwaFresh Supplies"
 
 msgid "First name"
-msgstr "Jina la kwanza"
+msgstr "First name"
 
 msgid "Last name"
-msgstr "Jina la mwisho"
+msgstr "Last name"
 
 msgid "Vehicle Type"
-msgstr "Aina ya Chombo cha Usafiri"
+msgstr "Vehicle Type"
 
 msgid "Motorcycle 🏍️"
-msgstr "Pikipiki 🏍️"
+msgstr "Motorcycle 🏍️"
 
 msgid "Bicycle 🚲"
-msgstr "Baiskeli 🚲"
+msgstr "Bicycle 🚲"
 
 msgid "Car 🚗"
-msgstr "Gari 🚗"
+msgstr "Car 🚗"
 
 msgid "Footsubishi (Miguu Niponye) 🚶"
 msgstr "Footsubishi (Miguu Niponye) 🚶"
 
 msgid "Confirm password"
-msgstr "Thibitisha nenosiri"
+msgstr "Confirm password"
 
 msgid "Pochi la Biashara"
 msgstr "Pochi la Biashara"

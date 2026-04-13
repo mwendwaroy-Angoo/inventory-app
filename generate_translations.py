@@ -1815,12 +1815,9 @@ def resolve_translation(lang_code, translations, message):
     if message in translations:
         return translations[message]
 
-    if FALLBACK_LANGUAGE:
-        fallback_translations = TRANSLATIONS.get(FALLBACK_LANGUAGE, {})
-        if message in fallback_translations:
-            return fallback_translations[message]
-
-    # Final fallback keeps unfinished languages readable without forcing a different local language.
+    # Do not automatically fall back to another local language. If a language
+    # lacks a translation, keep the original English source text instead of
+    # mixing in Swahili or another locale.
     return message
 
 # Language display names
