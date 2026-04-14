@@ -101,6 +101,30 @@
             <div class="section-divider"><span>📋 {% trans 'Optional Fields' %}</span></div>
             {% bootstrap_field form.material_no %}
             {% bootstrap_field form.unit %}
+
+            <div class="mb-3">
+                <label class="form-label">{% trans 'Category' %}</label>
+                <div class="d-flex gap-2">
+                    <div style="flex:1">{% bootstrap_field form.category_level1 %}</div>
+                    <div style="flex:1">{% bootstrap_field form.category_level2 %}</div>
+                    <div style="flex:1">{% bootstrap_field form.category_level3 %}</div>
+                </div>
+                {# hidden raw category field that will receive the selected category id #}
+                <div style="display:none">{% bootstrap_field form.category %}</div>
+            </div>
+
+            {% if form.recommended_tags %}
+            <div class="mb-2">
+                <label class="form-label">{% trans 'Suggested tags' %}</label>
+                <div>
+                    {% for t in form.recommended_tags %}
+                        <button type="button" class="btn btn-sm btn-outline-secondary suggested-tag" data-tag="{{ t }}">{{ t }}</button>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% bootstrap_field form.tags %}
             {% bootstrap_field form.opening_bin_balance %}
             {% bootstrap_field form.opening_physical %}
             {% bootstrap_field form.reorder_level %}
@@ -115,6 +139,80 @@
                 </a>
             </div>
         </form>
+        <script>
+        (function(){
+            const categories = {{ form.categories_json|safe }};
+            const lvl1 = document.getElementById('id_category_level1');
+            const lvl2 = document.getElementById('id_category_level2');
+            const lvl3 = document.getElementById('id_category_level3');
+            const hiddenCat = document.getElementById('id_category');
+            const tagsInput = document.getElementById('id_tags');
+
+            function unique(arr){ return [...new Set(arr)].filter(v=>v).sort(); }
+            function populateSelect(select, values, includeBlank=true){
+                if(!select) return;
+                select.innerHTML = '';
+                if(includeBlank){ const opt=document.createElement('option'); opt.value=''; opt.text='—'; select.appendChild(opt); }
+                values.forEach(v=>{ const o=document.createElement('option'); o.value=v; o.text=v; select.appendChild(o); });
+            }
+
+            const level1Values = unique(categories.map(c=>c.level1));
+            if(lvl1) populateSelect(lvl1, level1Values);
+
+            function updateLevel2(){
+                const sel1 = lvl1.value;
+                const level2Values = unique(categories.filter(c=>c.level1===sel1).map(c=>c.level2));
+                populateSelect(lvl2, level2Values);
+                updateLevel3();
+                resolveCategory();
+            }
+            function updateLevel3(){
+                const sel1 = lvl1.value, sel2 = lvl2.value;
+                const level3Values = unique(categories.filter(c=>c.level1===sel1 && c.level2===sel2).map(c=>c.level3));
+                populateSelect(lvl3, level3Values);
+                resolveCategory();
+            }
+            function resolveCategory(){
+                const sel1 = lvl1 ? lvl1.value : '';
+                const sel2 = lvl2 ? lvl2.value : '';
+                const sel3 = lvl3 ? lvl3.value : '';
+                const found = categories.find(c=>c.level1===sel1 && (sel2?c.level2===sel2:(c.level2===''||!c.level2)) && (sel3?c.level3===sel3:(c.level3===''||!c.level3)));
+                if(found && hiddenCat) hiddenCat.value = found.id;
+                else if(hiddenCat) hiddenCat.value = '';
+            }
+
+            if(lvl1) lvl1.addEventListener('change', updateLevel2);
+            if(lvl2) lvl2.addEventListener('change', updateLevel3);
+            if(lvl3) lvl3.addEventListener('change', resolveCategory);
+
+            try{
+                const initialCatId = hiddenCat ? hiddenCat.value : '';
+                if(initialCatId){
+                    const c = categories.find(x=>String(x.id)===String(initialCatId));
+                    if(c){
+                        if(lvl1){ lvl1.value = c.level1; }
+                        updateLevel2();
+                        if(lvl2){ lvl2.value = c.level2 || ''; }
+                        updateLevel3();
+                        if(lvl3){ lvl3.value = c.level3 || ''; }
+                        resolveCategory();
+                    }
+                }
+            }catch(e){console.error(e);}
+
+            document.querySelectorAll('.suggested-tag').forEach(btn=>{
+                btn.addEventListener('click', function(){
+                    const tag = this.dataset.tag;
+                    if(!tagsInput) return;
+                    const existing = tagsInput.value.split(',').map(s=>s.trim()).filter(s=>s);
+                    if(!existing.includes(tag)){
+                        existing.push(tag);
+                        tagsInput.value = existing.join(', ');
+                    }
+                });
+            });
+        })();
+        </script>
     </div>
 </div>
 

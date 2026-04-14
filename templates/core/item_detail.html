@@ -97,6 +97,14 @@
         <div class="item-meta">
             {% trans 'Unit' %}: <span>{{ item.unit }}</span>
         </div>
+        <div class="item-meta">
+            {% trans 'Category' %}: <span>{{ item.category|default:"—" }}</span>
+        </div>
+        {% if item.tags %}
+        <div class="item-meta">
+            {% trans 'Tags' %}: <span>{% for tag in item.tags %}{{ tag }}{% if not forloop.last %}, {% endif %}{% endfor %}</span>
+        </div>
+        {% endif %}
         {% if item.selling_price and user.userprofile.is_owner %}
         <div class="item-meta">
             {% trans 'Price' %}: <span style="color:var(--gold)">KES {{ item.selling_price }}</span>

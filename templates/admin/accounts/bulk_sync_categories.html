@@ -1,0 +1,31 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<h1>Bulk Sync Business Categories</h1>
+<p>Upload a CSV with columns: <strong>business</strong> (id or exact name) and <strong>categories</strong> (comma or semicolon-separated category codes or level1 names).</p>
+<form method="post" enctype="multipart/form-data">{% csrf_token %}
+  {{ form.as_p }}
+  <input type="submit" value="Upload" class="default">
+</form>
+
+{% if result %}
+  <h2>Result</h2>
+  <ul>
+    <li>Rows processed: {{ result.processed }}</li>
+    <li>Businesses updated: {{ result.updated }}</li>
+    <li>Missing businesses: {{ result.missing_business|length }}</li>
+    <li>Missing categories: {{ result.missing_categories|length }}</li>
+  </ul>
+  {% if result.missing_business %}
+    <h3>Missing businesses (row, key)</h3>
+    <pre>{{ result.missing_business }}</pre>
+  {% endif %}
+  {% if result.missing_categories %}
+    <h3>Missing categories (row, code)</h3>
+    <pre>{{ result.missing_categories }}</pre>
+  {% endif %}
+{% endif %}
+
+<p><a href="{% url 'admin:accounts_business_changelist' %}">Back to Businesses</a></p>
+{% endblock %}
