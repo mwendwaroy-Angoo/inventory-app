@@ -5,7 +5,7 @@ from .models import (
     ProcurementRequest, SupplierBid, SupplierApplication, Feedback, DeliveryRating,
     PendingTransactionPrompt,
 )
-from .models import PurchaseOrder, PurchaseOrderLine, SupplierBidLine
+from .models import PurchaseOrder, PurchaseOrderLine, SupplierBidLine, Category
 
 
 @admin.register(Store)
@@ -21,9 +21,9 @@ class StoreAdmin(admin.ModelAdmin):
 
 @admin.register(Item)
 class ItemAdmin(admin.ModelAdmin):
-    list_display = ('material_no', 'description', 'store', 'business',
+    list_display = ('material_no', 'description', 'store', 'business', 'category',
                     'current_balance_display', 'selling_price', 'status_display')
-    list_filter = ('store', 'business')
+    list_filter = ('store', 'business', 'category')
     search_fields = ('material_no', 'description')
 
     def current_balance_display(self, obj):
@@ -77,6 +77,13 @@ class WardAdmin(admin.ModelAdmin):
     list_display = ('name', 'sub_county')
     list_filter = ('sub_county__county',)
     search_fields = ('name',)
+
+
+@admin.register(Category)
+class CategoryAdmin(admin.ModelAdmin):
+    list_display = ('code', 'level1', 'level2', 'level3')
+    search_fields = ('code', 'level1', 'level2', 'level3')
+    list_filter = ('level1',)
 
 
 @admin.register(Order)

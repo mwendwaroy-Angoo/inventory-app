@@ -1,0 +1,21 @@
+product_id,sku,name,level1,level2,level3,suggested_code,tags,price,cost,supplier
+1001,SKU-1001,Organic Gala Apples 1kg,Produce,Fresh Fruits,Pome Fruit,PROD-FRT-PM,organic;local,3.50,1.80,Local Farms Co
+1002,SKU-1002,Whole Milk 2L,Dairy & Eggs,Milk & Alternatives,Dairy Milk,DAIR-MLK-DM,,2.20,1.00,DairyBest
+1003,SKU-1003,Cheddar Cheese 200g,Dairy & Eggs,Cheese,Hard Cheese,DAIR-CHE-HD,,3.50,1.80,CheeseCo
+1004,SKU-1004,Chicken Breast 1kg,Meat & Poultry,Fresh Poultry,Chicken,MET-CHK-FR,,5.00,3.20,PoultryFarm
+1005,SKU-1005,Salmon Fillet 200g,Seafood,Fresh Seafood,Fish Fillets,SEA-FSH-FL,,6.99,4.00,SeaFoodsLtd
+1006,SKU-1006,White Loaf 800g,Bakery,In-Store Baked,Bread,BAK-ISB-BR,,1.50,0.60,BakeryCo
+1007,SKU-1007,Frozen Peas 500g,Frozen Foods,Frozen Vegetables,Vegetables,FRZ-VEG-VG,,1.20,0.50,FrozenFoodsInc
+1008,SKU-1008,Spaghetti 500g,Pantry Staples,Grains & Pasta,Pasta & Noodles,PAN-GRA-PN,,1.00,0.30,PastaMakers
+1009,SKU-1009,Olive Oil 1L,Pantry Staples,Oils & Condiments,Cooking Oils,PAN-OIL-CO,,6.00,3.50,OilsCorp
+1010,SKU-1010,Coke 330ml Can,Beverages,Non-Alcoholic,Soft Drinks,BEV-NAL-SD,,1.20,0.50,CokeCo
+1011,SKU-1011,Red Wine 750ml,Beverages,Alcoholic,Wine,BEV-ALC-WN,age_restricted,12.00,8.00,WineImporters
+1012,SKU-1012,Lager Beer 500ml,Beverages,Alcoholic,Beer,BEV-ALC-BR,age_restricted,2.00,1.10,BreweryLtd
+1013,SKU-1013,Milk Chocolate Bar 50g,Snacks & Confectionery,Sweet Snacks,Chocolate & Candy,SNK-SWT-CC,,0.90,0.30,ChocoMkt
+1014,SKU-1014,Multivitamin 30ct,Health & Wellness,Vitamins & Supplements,Vitamins,HLW-VTS-VM,,7.00,4.00,HealthDistrib
+1015,SKU-1015,Toothpaste 100ml,Personal Care,Hygiene,Oral Care,PER-HYG-OC,,2.50,1.00,PersonalCareCo
+1016,SKU-1016,Laundry Detergent 2L,Household,Cleaning,Laundry,HOU-CLE-LD,,10.00,6.00,CleanCo
+1017,SKU-1017,Baby Diapers Size M,Baby & Childcare,Diapers & Wipes,Diapers,BAB-DWP-DI,,8.00,4.50,BabyGoodsInc
+1018,SKU-1018,Dog Food 2kg,Household,Pet Care,Pet Food,HOU-PET-PF,,12.00,7.00,PetFoodsLtd
+1019,SKU-1019,Nonstick Frying Pan,Non-Food & General Merchandise,Home & Kitchen,Kitchenware,NFG-HOM-KW,,25.00,15.00,KitchenwareCo
+1020,SKU-1020,Halloween Candy Pack,Seasonal & Promotions,Rotating Specials,Weekly Deals,SEA-ROT-WK,seasonal,3.99,2.00,PromotionsLtd

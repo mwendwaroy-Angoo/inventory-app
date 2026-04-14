@@ -1,0 +1,63 @@
+Level1,Level2,Level3,SuggestedCode,Description
+Produce,Fresh Vegetables,Leafy Greens,PROD-VEG-LG,Lettuces; spinach; salad greens
+Produce,Fresh Vegetables,Root Vegetables,PROD-VEG-RT,Carrots; potatoes; beets; onions
+Produce,Fresh Vegetables,Allium & Aromatics,PROD-VEG-AL,Onions; garlic; leeks
+Produce,Fresh Fruits,Citrus,PROD-FRT-CT,Oranges; lemons; limes
+Produce,Fresh Fruits,Berries,PROD-FRT-BR,Strawberries; blueberries; raspberries
+Produce,Fresh Fruits,Pome Fruit,PROD-FRT-PM,Apples; pears; quince
+Produce,Fresh Fruits,Stone Fruit,PROD-FRT-SF,Peaches; plums; nectarines
+Produce,Organic Produce,Organic Vegetables,PROD-ORG-VEG,Certified organic vegetables
+Dairy & Eggs,Milk & Alternatives,Dairy Milk,DAIR-MLK-DM,Cow milk whole skim semiskim
+Dairy & Eggs,Milk & Alternatives,Plant-Based Milk,DAIR-MLK-PB,Almond milk; oat milk; soy milk
+Dairy & Eggs,Cheese,Hard Cheese,DAIR-CHE-HD,Cheddar; parmesan; grana padano
+Dairy & Eggs,Cheese,Soft & Fresh Cheese,DAIR-CHE-SF,Mozzarella; ricotta; feta
+Dairy & Eggs,Eggs,Fresh Eggs,DAIR-EGG-FR,Chicken eggs; free-range; organic
+Meat & Poultry,Fresh Meat,Beef,MET-BEF-FR,Steaks; roasts; ground beef
+Meat & Poultry,Fresh Meat,Pork,MET-POR-FR,Pork chops; ground pork; ribs
+Meat & Poultry,Fresh Poultry,Chicken,MET-CHK-FR,Whole chicken; breasts; thighs
+Meat & Poultry,Processed Meats,Bacon & Sausage,MET-PRO-BS,Bacon; sausages; hot dogs
+Meat & Poultry,Deli & Prepared,Packaged Deli,MET-DLI-PK,Sliced ham; turkey; salami
+Seafood,Fresh Seafood,Fish Fillets,SEA-FSH-FL,Salmon; cod; tilapia fillets
+Seafood,Fresh Seafood,Shellfish,SEA-SHL-SH,Shrimp; mussels; clams
+Seafood,Frozen Seafood,Frozen Fish,SEA-FZR-FF,Frozen fillets and portions
+Bakery,In-Store Baked,Bread,BAK-ISB-BR,Daily baked loaves and rolls
+Bakery,In-Store Baked,Cakes & Pastries,BAK-ISB-CP,Croissants; muffins; cakes
+Bakery,Pre-Packaged,Bread & Rolls,BAK-PRK-BR,Packaged sandwich bread and wraps
+Deli & Prepared Foods,Deli,Cheese & Charcuterie,DLP-DLI-CH,Sliced cheese; cured meats
+Deli & Prepared Foods,Prepared Meals,Ready Meals,DLP-PRP-RM,Prepared salads; rotisserie chicken; soups
+Pantry Staples,Grains & Pasta,Rice & Grains,PAN-GRA-RG,White rice; brown rice; quinoa
+Pantry Staples,Grains & Pasta,Pasta & Noodles,PAN-GRA-PN,Dried pasta; ramen; noodles
+Pantry Staples,Canned & Jarred,Vegetables & Beans,PAN-CAN-VB,Canned peas; beans; tomatoes
+Pantry Staples,Canned & Jarred,Fruits & Sauces,PAN-CAN-FS,Canned fruit; pasta sauces
+Pantry Staples,Oils & Condiments,Cooking Oils,PAN-OIL-CO,Olive oil; sunflower oil; vegetable oil
+Pantry Staples,Oils & Condiments,Sauces & Condiments,PAN-OIL-SC,Ketchup; mustard; soy sauce
+Frozen Foods,Frozen Meals,Ready-to-Eat,FRZ-MLS-RT,Frozen entrees and meals
+Frozen Foods,Frozen Vegetables,Vegetables,FRZ-VEG-VG,Frozen mixed vegetables; peas
+Frozen Foods,Frozen Desserts,Ice Cream,FRZ-DES-IC,Ice cream tubs and novelties
+Beverages,Non-Alcoholic,Soft Drinks,BEV-NAL-SD,Sodas; lemonades; mixers
+Beverages,Non-Alcoholic,Coffee & Tea,BEV-NAL-CT,Ground coffee; instant; tea bags
+Beverages,Non-Alcoholic,Water,BEV-NAL-WA,Bottled still and sparkling water
+Beverages,Alcoholic,Wine,BEV-ALC-WN,Red; white; rosé wines
+Beverages,Alcoholic,Beer,BEV-ALC-BR,Lagers; ales; craft beers
+Beverages,Alcoholic,Spirits,BEV-ALC-SP,Whisky; vodka; gin; rum
+Snacks & Confectionery,Salty Snacks,Chips & Crisps,SNK-SAL-CC,Potato chips; tortilla chips; pretzels
+Snacks & Confectionery,Sweet Snacks,Chocolate & Candy,SNK-SWT-CC,Chocolate bars; boxed candy
+Snacks & Confectionery,Sweet Snacks,Cookies & Crackers,SNK-SWT-CK,Packaged cookies and crackers
+Health & Wellness,Vitamins & Supplements,Vitamins,HLW-VTS-VM,Multivitamins; minerals; specialty supplements
+Health & Wellness,Specialty Diets,Gluten-Free,HLW-SPC-GF,Gluten-free pasta; breads; snacks
+Health & Wellness,Specialty Diets,Vegan & Vegetarian,HLW-SPC-VV,Plant-based meat alternatives; vegan snacks
+Personal Care,Hygiene,Bath & Body,PER-HYG-BB,Soap; body wash; lotions
+Personal Care,Hygiene,Oral Care,PER-HYG-OC,Toothpaste; toothbrushes; mouthwash
+Personal Care,Hair Care,Shampoo & Conditioner,PER-HAI-SC,Shampoos; conditioners; treatments
+Household,Cleaning,All-Purpose,HOU-CLE-AP,Multi-surface cleaners and sprays
+Household,Cleaning,Laundry,HOU-CLE-LD,Detergents; fabric softeners; stain removers
+Household,Paper & Disposable,Paper Goods,HOU-PAP-PG,Toilet paper; paper towels; napkins
+Household,Pet Care,Pet Food,HOU-PET-PF,Dog food; cat food
+Baby & Childcare,Diapers & Wipes,Diapers,BAB-DWP-DI,Disposable diapers and training pants
+Baby & Childcare,Baby Food & Formula,Infant Formula,BAB-FOO-IF,Formula; baby cereals; jars
+Non-Food & General Merchandise,Home & Kitchen,Kitchenware,NFG-HOM-KW,Utensils; cookware; small appliances
+Non-Food & General Merchandise,Stationery & Office,Paper & Supplies,NFG-STA-PS,Notebooks; pens; envelopes
+Seasonal & Promotions,Seasonal,Holiday Items,SEA-SEA-HI,Seasonal decorations and gifts
+Seasonal & Promotions,Rotating Specials,Weekly Deals,SEA-ROT-WK,Limited time non-food specials
+Pharmacy & OTC,Over-The-Counter,Cold & Flu,PHR-OTC-CF,Cold remedies and cough syrups
+Pharmacy & OTC,Over-The-Counter,Pain Relief,PHR-OTC-PR,Pain relievers and topical analgesics

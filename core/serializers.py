@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Item, Transaction, Store, Notification, Customer
+from .models import Item, Transaction, Store, Notification, Customer, Category
 from accounts.models import Business
 
 
@@ -20,12 +20,15 @@ class ItemSerializer(serializers.ModelSerializer):
     needs_reorder = serializers.SerializerMethodField()
     stock_value = serializers.SerializerMethodField()
     profit_per_unit = serializers.SerializerMethodField()
+    category_code = serializers.CharField(source='category.code', read_only=True)
+    category_name = serializers.CharField(source='category.__str__', read_only=True)
 
     class Meta:
         model = Item
         fields = [
             'id', 'material_no', 'description', 'unit',
             'store', 'store_name',
+            'category', 'category_code', 'category_name',
             'opening_bin_balance', 'opening_physical',
             'reorder_quantity', 'reorder_level',
             'selling_price', 'cost_price', 'currency',
@@ -57,6 +60,7 @@ class ItemWriteSerializer(serializers.ModelSerializer):
             'store', 'opening_bin_balance', 'opening_physical',
             'reorder_quantity', 'reorder_level',
             'selling_price', 'cost_price',
+            'category', 'tags',
         ]
 
 

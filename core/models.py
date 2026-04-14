@@ -122,11 +122,38 @@ class Store(models.Model):
         return f"{self.name} ({business_name})"
 
 
+class Category(models.Model):
+    """Hierarchical category for inventory items.
+
+    Use `code` as the stable external identifier (SuggestedCode in CSV).
+    """
+    code = models.CharField(max_length=50, unique=True)
+    level1 = models.CharField(max_length=120)
+    level2 = models.CharField(max_length=120, blank=True, null=True)
+    level3 = models.CharField(max_length=120, blank=True, null=True)
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='children')
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['level1', 'level2', 'level3']
+        indexes = [models.Index(fields=['code']), models.Index(fields=['level1'])]
+
+    def __str__(self):
+        if self.level3:
+            return f"{self.level1} > {self.level2} > {self.level3}"
+        if self.level2:
+            return f"{self.level1} > {self.level2}"
+        return self.level1
+
+
 class Item(models.Model):
     store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='items')
     material_no = models.CharField(max_length=20, unique=True)
     description = models.CharField(max_length=200)
     unit = models.CharField(max_length=20)
+    category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, blank=True, related_name='items')
+    tags = models.JSONField(default=list, blank=True)
     opening_bin_balance = models.IntegerField(default=0)
     opening_physical = models.IntegerField(default=0)
     reorder_quantity = models.IntegerField(default=0)
