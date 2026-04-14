@@ -57,23 +57,27 @@
 </form>
 
 <script>
-// Simple inline formset add/remove logic
+// Inline formset add/remove logic, with prefill and validation
 document.addEventListener('DOMContentLoaded', function() {
     const addBtn = document.getElementById('add-line-btn');
-    const table = document.getElementById('po-lines-table').getElementsByTagName('tbody')[0];
+    const tableBody = document.getElementById('po-lines-table').getElementsByTagName('tbody')[0];
     const emptyTpl = document.getElementById('empty-form-template').getElementsByTagName('tr')[0].innerHTML;
     const totalFormsInput = document.querySelector('input[name$="-TOTAL_FORMS"]');
+    const formPrefixRegex = /^(.*)-(\d+)-(.+)$/;
+
+    function isRowDeleted(row) {
+        const del = row.querySelector('input[type="checkbox"][name$="-DELETE"]');
+        return del && del.checked;
+    }
 
     function makeRemoveHandler(row) {
         return function(e) {
             e.preventDefault();
-            // Try to find a DELETE checkbox in this row and check it, then hide the row
             const deleteInput = row.querySelector('input[type="checkbox"][name$="-DELETE"]');
             if (deleteInput) {
                 deleteInput.checked = true;
                 row.style.display = 'none';
             } else {
-                // Not an existing form — just remove from DOM and decrement total forms
                 row.remove();
                 totalFormsInput.value = parseInt(totalFormsInput.value) - 1;
             }
@@ -92,19 +96,96 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Delegated handler for item selection changes to prefill recommended qty
+    document.getElementById('po-lines-table').addEventListener('change', function(e) {
+        const el = e.target;
+        if (el && el.tagName.toLowerCase() === 'select' && el.name && el.name.match(/-item$/)) {
+            // Determine the corresponding quantity input in the same form index
+            const m = el.name.match(formPrefixRegex);
+            if (!m) return;
+            const prefix = m[1] + '-' + m[2];
+            const qtyName = prefix + '-quantity_ordered';
+            const qtyInput = document.querySelector('[name="' + qtyName + '"]');
+            const itemId = el.value;
+            if (!itemId || !qtyInput) return;
+
+            // Fetch recommendation from server
+            fetch('/api/item/' + itemId + '/recommendation/')
+                .then(function(res){ return res.json(); })
+                .then(function(data){
+                    if (data && data.recommended_qty) {
+                        const current = parseInt(qtyInput.value) || 0;
+                        if (!current || current <= 0) {
+                            qtyInput.value = data.recommended_qty;
+                            qtyInput.classList.add('prefilled');
+                        }
+                        // show a subtle hint if desired (title)
+                        qtyInput.title = 'Recommended: ' + data.recommended_qty + '\nOn order: ' + data.on_order;
+                    }
+                }).catch(function(){ /* silent fail — not critical */ });
+        }
+    });
+
     addBtn.addEventListener('click', function() {
-        const formIdx = parseInt(totalFormsInput.value);
+        const formIdx = parseInt(totalFormsInput.value, 10);
         let rowHtml = emptyTpl.replace(/__prefix__/g, formIdx);
         const tmp = document.createElement('tr');
         tmp.innerHTML = rowHtml;
-        table.appendChild(tmp);
+        tableBody.appendChild(tmp);
         totalFormsInput.value = formIdx + 1;
         wireRemoveButtons();
+    });
+
+    // Validation on submit
+    const poForm = document.querySelector('form');
+    poForm.addEventListener('submit', function(e) {
+        let valid = true;
+        let hasLine = false;
+        const errors = [];
+
+        document.querySelectorAll('#po-lines-table tbody tr').forEach(function(row){
+            if (isRowDeleted(row)) return; // skip deleted rows
+            const qtyInput = row.querySelector('input[name$="-quantity_ordered"]');
+            const priceInput = row.querySelector('input[name$="-unit_price"]');
+            if (!qtyInput) return;
+            const qtyVal = parseInt(qtyInput.value || '0', 10);
+            const priceVal = priceInput ? parseFloat(priceInput.value || '0') : 0;
+            if (qtyVal && qtyVal > 0) {
+                hasLine = true;
+            }
+            if (!qtyVal || qtyVal <= 0) {
+                valid = false;
+                qtyInput.classList.add('is-invalid');
+                errors.push('Please enter a positive quantity for each active line.');
+            } else {
+                qtyInput.classList.remove('is-invalid');
+            }
+            if (priceInput && (isNaN(priceVal) || priceVal < 0)) {
+                valid = false;
+                priceInput.classList.add('is-invalid');
+                errors.push('Unit price must be a number ≥ 0.');
+            } else if (priceInput) {
+                priceInput.classList.remove('is-invalid');
+            }
+        });
+
+        if (!hasLine) {
+            valid = false;
+            errors.push('Add at least one line with quantity > 0.');
+        }
+
+        if (!valid) {
+            e.preventDefault();
+            alert(Array.from(new Set(errors)).join('\n'));
+            const firstInvalid = document.querySelector('.is-invalid');
+            if (firstInvalid) firstInvalid.scrollIntoView({behavior: 'smooth', block: 'center'});
+        }
     });
 
     // Wire remove for existing rows
     wireRemoveButtons();
 });
+</script>
 </script>
 
 {% endblock %}

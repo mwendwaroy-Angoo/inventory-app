@@ -391,6 +391,36 @@ def purchase_order_create(request):
 
 
 @login_required
+def item_recommendation(request, item_id):
+    """API: return recommended order qty and related metrics for an item.
+
+    Only the business owner for the item's business may retrieve this.
+    """
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return JsonResponse({'error': 'unauthorized'}, status=403)
+
+    try:
+        item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
+    except Exception:
+        return JsonResponse({'error': 'not_found_or_unauthorized'}, status=404)
+
+    try:
+        recommended = item.recommended_order_qty()
+    except Exception:
+        recommended = 0
+
+    data = {
+        'recommended_qty': int(recommended or 0),
+        'on_order': int(item.on_order() or 0),
+        'current_balance': int(item.current_balance() or 0),
+        'reorder_point': int(item.reorder_point() or 0),
+        'target_stock': int(item.target_stock() or 0),
+    }
+    return JsonResponse(data)
+
+
+@login_required
 @owner_required
 def purchase_order_edit(request, po_id):
     user_profile = get_user_profile(request)
