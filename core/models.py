@@ -264,6 +264,37 @@ class Item(models.Model):
         return f"{self.material_no} - {self.description}"
 
 
+class ImportJob(models.Model):
+    JOB_TYPE_CHOICES = [
+        ('taxonomy', 'Taxonomy CSV'),
+        ('products', 'Products CSV'),
+    ]
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+
+    job_type = models.CharField(max_length=20, choices=JOB_TYPE_CHOICES)
+    original_filename = models.CharField(max_length=255, blank=True)
+    file_path = models.CharField(max_length=1024)
+    commit = models.BooleanField(default=False)
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True)
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    result_text = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"ImportJob {self.id} {self.job_type} {self.status}"
+
+
 class Transaction(models.Model):
     TYPE_CHOICES = [
         ('Receipt', _('Receipt')),

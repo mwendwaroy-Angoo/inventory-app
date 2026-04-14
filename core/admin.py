@@ -3,9 +3,11 @@ from django import forms
 from django.urls import path
 from django.template.response import TemplateResponse
 from django.contrib import messages
-from django.core.management import call_command
 import tempfile
 import io
+import threading
+
+from .tasks import run_import_job
 
 from .models import (
     Store, Item, Transaction, Customer, BusinessType, County, SubCounty, Ward,
@@ -14,6 +16,7 @@ from .models import (
     PendingTransactionPrompt,
 )
 from .models import PurchaseOrder, PurchaseOrderLine, SupplierBidLine, Category
+from .models import ImportJob
 
 
 @admin.register(Store)
@@ -58,6 +61,7 @@ class ItemAdmin(admin.ModelAdmin):
                 f = form.cleaned_data['csv_file']
                 commit = form.cleaned_data['commit']
                 store = form.cleaned_data['store']
+
                 # Save uploaded file to a temp file
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
                 for chunk in f.chunks():
@@ -65,16 +69,20 @@ class ItemAdmin(admin.ModelAdmin):
                 tmp.flush()
                 tmp.close()
 
-                out = io.StringIO()
-                try:
-                    if commit and not store:
-                        messages.error(request, 'Store is required when committing imports.')
-                    else:
-                        call_command('import_products', tmp.name, commit=commit, store_id=(store.id if store else None), stdout=out)
-                        result = out.getvalue()
-                        messages.success(request, 'Import completed. See results below.')
-                except Exception as e:
-                    messages.error(request, f'Import failed: {e}')
+                # Create ImportJob record and queue background worker
+                from core.models import ImportJob
+                job = ImportJob.objects.create(
+                    job_type='products',
+                    original_filename=getattr(f, 'name', 'upload.csv'),
+                    file_path=tmp.name,
+                    commit=bool(commit),
+                    store=store,
+                    created_by=request.user,
+                    status='pending',
+                )
+                # Start background thread
+                threading.Thread(target=run_import_job, args=(job.id,), daemon=True).start()
+                messages.success(request, f'Import job queued (id={job.id}). View Import Jobs in admin for status/results.')
         else:
             form = ProductImportForm()
 
@@ -145,6 +153,14 @@ class CategoryAdmin(admin.ModelAdmin):
     search_fields = ('code', 'level1', 'level2', 'level3')
     list_filter = ('level1',)
 
+
+@admin.register(ImportJob)
+class ImportJobAdmin(admin.ModelAdmin):
+    list_display = ('id', 'job_type', 'original_filename', 'status', 'created_by', 'created_at', 'started_at', 'finished_at')
+    readonly_fields = ('result_text', 'file_path')
+    search_fields = ('original_filename', 'file_path')
+    list_filter = ('job_type', 'status', 'created_by')
+
     def get_urls(self):
         urls = super().get_urls()
         my_urls = [
@@ -174,12 +190,17 @@ class CategoryAdmin(admin.ModelAdmin):
                 tmp.close()
 
                 out = io.StringIO()
-                try:
-                    call_command('import_taxonomy', tmp.name, commit=commit, stdout=out)
-                    result = out.getvalue()
-                    messages.success(request, 'Taxonomy import completed. See results below.')
-                except Exception as e:
-                    messages.error(request, f'Import failed: {e}')
+                from core.models import ImportJob
+                job = ImportJob.objects.create(
+                    job_type='taxonomy',
+                    original_filename=getattr(f, 'name', 'upload.csv'),
+                    file_path=tmp.name,
+                    commit=bool(commit),
+                    created_by=request.user,
+                    status='pending',
+                )
+                threading.Thread(target=run_import_job, args=(job.id,), daemon=True).start()
+                messages.success(request, f'Taxonomy import job queued (id={job.id}). View Import Jobs in admin for status/results.')
         else:
             form = TaxonomyImportForm()
 
