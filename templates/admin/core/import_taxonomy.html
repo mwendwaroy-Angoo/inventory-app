@@ -1,0 +1,15 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<h1>Import Taxonomy</h1>
+<form method="post" enctype="multipart/form-data">{% csrf_token %}
+  {{ form.as_p }}
+  <input type="submit" value="Upload" class="default">
+</form>
+{% if result %}
+ <h2>Result</h2>
+ <pre>{{ result }}</pre>
+{% endif %}
+<p><a href="{% url 'admin:core_category_changelist' %}">Back to categories</a></p>
+{% endblock %}

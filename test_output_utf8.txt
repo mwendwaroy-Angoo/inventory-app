@@ -1,0 +1,2150 @@
+Found 9 test(s).
+python : Creating test database for alias 'default' 
+('file:memorydb_default?mode=memory&cache=shared')...
+At line:1 char:1
++ python manage.py test -v2 --noinput > test_output.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Creating test d...che=shared')... 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+Operations to perform:
+  Synchronize unmigrated apps: django_bootstrap5, messages, rest_framework, staticfiles
+  Apply all migrations: accounts, admin, auth, authtoken, contenttypes, core, sessions
+Synchronizing apps without migrations:
+  Creating tables...
+    Running deferred SQL...
+Running migrations:
+  Applying core.0001_initial... OK
+  Applying core.0002_remove_transaction_running_balance_and_more... OK
+  Applying accounts.0001_initial... OK
+  Applying accounts.0002_initial... OK
+  Applying core.0003_businesstype_county_item_business_item_currency_and_more... OK
+  Applying contenttypes.0001_initial... OK
+  Applying auth.0001_initial... OK
+  Applying accounts.0003_initial... OK
+  Applying core.0004_alter_store_business... OK
+  Applying core.0006_seed_business_types_counties... OK
+  Applying core.0005_alter_store_business... OK
+  Applying core.0007_merge_20260323_0202... OK
+  Applying accounts.0004_userprofile_role_alter_userprofile_business... OK
+  Applying accounts.0005_remove_business_sub_location... OK
+  Applying core.0008_subcounty_ward_delete_sublocation... OK
+  Applying accounts.0006_business_sub_county_business_ward... OK
+  Applying accounts.0007_userprofile_phone... OK
+  Applying accounts.0008_alter_business_id_alter_userprofile_id... OK
+  Applying accounts.0009_alter_business_id_alter_userprofile_id... OK
+  Applying accounts.0010_business_closing_time_business_delivery_fee_and_more... OK
+  Applying accounts.0011_alter_userprofile_role... OK
+  Applying accounts.0012_business_mpesa_paybill_and_more... OK
+  Applying accounts.0013_delivery_tiers_and_distance_pricing... OK
+  Applying accounts.0014_add_supplier_role... OK
+  Applying accounts.0015_add_has_seen_tutorial... OK
+  Applying accounts.0016_add_account_deletion_log... OK
+  Applying accounts.0017_add_preferred_language... OK
+  Applying admin.0001_initial... OK
+  Applying admin.0002_logentry_remove_auto_add... OK
+  Applying admin.0003_logentry_add_action_flag_choices... OK
+  Applying contenttypes.0002_remove_content_type_name... OK
+  Applying auth.0002_alter_permission_name_max_length... OK
+  Applying auth.0003_alter_user_email_max_length... OK
+  Applying auth.0004_alter_user_username_opts... OK
+  Applying auth.0005_alter_user_last_login_null... OK
+  Applying auth.0006_require_contenttypes_0002... OK
+  Applying auth.0007_alter_validators_add_error_messages... OK
+  Applying auth.0008_alter_user_username_max_length... OK
+  Applying auth.0009_alter_user_last_name_max_length... OK
+  Applying auth.0010_alter_group_name_max_length... OK
+  Applying auth.0011_update_proxy_permissions... OK
+  Applying auth.0012_alter_user_first_name_max_length... OK
+  Applying authtoken.0001_initial... OK
+  Applying authtoken.0002_auto_20160226_1747... OK
+  Applying authtoken.0003_tokenproxy... OK
+  Applying authtoken.0004_alter_tokenproxy_options... OK
+  Applying core.0009_seed_subcounties_and_wards... OK
+  Applying core.0010_rename_doc_no_transaction_invoice_no_and_more... OK
+  Applying core.0011_item_cost_price... OK
+  Applying core.0012_alter_businesstype_id_alter_county_id_and_more... OK
+  Applying core.0013_alter_businesstype_id_alter_county_id_and_more... OK
+  Applying core.0014_order_payment_orderline... OK
+  Applying core.0015_order_delivery_fee_order_delivery_mode_and_more... OK
+  Applying core.0016_riderprofile_order_rider_supplierrelationship... OK
+  Applying core.0017_procurementrequest_feedback_supplierbid_and_more... OK
+  Applying core.0018_alter_riderprofile_vehicle_type_deliveryrating... OK
+  Applying core.0019_riderprofile_mpesa_phone_pendingtransactionprompt... OK
+  Applying core.0020_item_lead_time_days_item_safety_days_purchaseorder_and_more... OK
+  Applying core.0021_supplierbidline... OK
+  Applying sessions.0001_initial... OK
+System check identified no issues (0 silenced).
+test_authenticated_requests_do_not_force_device_cookie (accounts.tests.Language
+PreferenceTests.test_authenticated_requests_do_not_force_device_cookie) ... ok
+test_change_language_updates_profile_and_cookie (accounts.tests.LanguagePrefere
+nceTests.test_change_language_updates_profile_and_cookie) ... ok
+test_logout_clears_language_cookie_for_unsaved_devices (accounts.tests.Language
+PreferenceTests.test_logout_clears_language_cookie_for_unsaved_devices) ... ok
+test_logout_preserves_language_cookie_for_saved_devices (accounts.tests.Languag
+ePreferenceTests.test_logout_preserves_language_cookie_for_saved_devices) ... 
+ERROR
+test_public_pages_use_saved_device_language_cookie (accounts.tests.LanguagePref
+erenceTests.test_public_pages_use_saved_device_language_cookie) ... ERROR
+test_recommendation_endpoint 
+(core.tests_api.TestItemRecommendation.test_recommendation_endpoint) ... ok
+test_avg_daily_issues 
+(core.tests_inventory.InventorySupplyChainTests.test_avg_daily_issues) ... ok
+test_lead_time_and_rop 
+(core.tests_inventory.InventorySupplyChainTests.test_lead_time_and_rop) ... ok
+test_recommended_order_and_on_order (core.tests_inventory.InventorySupplyChainT
+ests.test_recommended_order_and_on_order) ... ok
+
+======================================================================
+ERROR: test_logout_preserves_language_cookie_for_saved_devices (accounts.tests.
+LanguagePreferenceTests.test_logout_preserves_language_cookie_for_saved_devices
+)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\base.py", line 197, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\Roy\BUSINESS SITE\Inventory App\core\views.py", line 91, in 
+home
+    return render(request, 'core/home.html', context)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\shor
+tcuts.py", line 24, in render
+    content = loader.render_to_string(template_name, context, request, 
+using=using)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\loader.py", line 62, in render_to_string
+    return template.render(context, request)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\backends\django.py", line 61, in render
+    return self.template.render(context)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\BUSINESS SITE\Inventory App\accounts\middleware.py", line 
+43, in __call__
+    response = self.get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\whitenoise\
+middleware.py", line 123, in __call__
+    return self.get_response(request)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\BUSINESS SITE\Inventory App\accounts\tests.py", line 78, 
+in test_logout_preserves_language_cookie_for_saved_devices
+    home_response = self.client.get(reverse('home'))
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 927, in get
+    response = super().get(path, data=data, secure=secure, headers=headers, 
+**extra)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 457, in get
+    return self.generic(
+           ~~~~~~~~~~~~^
+        "GET",
+        ^^^^^^
+    ...<6 lines>...
+        },
+        ^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 609, in generic
+    return self.request(**r)
+           ~~~~~~~~~~~~^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 886, in request
+    response = self.handler(environ)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 176, in __call__
+    response = self.get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\base.py", line 140, in get_response
+    response = self._middleware_chain(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+======================================================================
+ERROR: test_public_pages_use_saved_device_language_cookie (accounts.tests.Langu
+agePreferenceTests.test_public_pages_use_saved_device_language_cookie)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\base.py", line 220, in _get_response
+    response = response.render()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\response.py", line 114, in render
+    self.content = self.rendered_content
+                   ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\response.py", line 92, in rendered_content
+    return template.render(context, self._request)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\backends\django.py", line 61, in render
+    return self.template.render(context)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\BUSINESS SITE\Inventory App\accounts\middleware.py", line 
+43, in __call__
+    response = self.get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\whitenoise\
+middleware.py", line 123, in __call__
+    return self.get_response(request)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\deprecation.py", line 134, in __call__
+    response = response or self.get_response(request)
+                           ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Roy\BUSINESS SITE\Inventory App\accounts\tests.py", line 51, 
+in test_public_pages_use_saved_device_language_cookie
+    login_response = self.client.get(reverse('login'))
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 927, in get
+    response = super().get(path, data=data, secure=secure, headers=headers, 
+**extra)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 457, in get
+    return self.generic(
+           ~~~~~~~~~~~~^
+        "GET",
+        ^^^^^^
+    ...<6 lines>...
+        },
+        ^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 609, in generic
+    return self.request(**r)
+           ~~~~~~~~~~~~^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 886, in request
+    response = self.handler(environ)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 176, in __call__
+    response = self.get_response(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\base.py", line 140, in get_response
+    response = self._middleware_chain(request)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 57, in inner
+    response = response_for_exception(request, exc)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\core
+\handlers\exception.py", line 144, in response_for_exception
+    log_response(
+    ~~~~~~~~~~~~^
+        "%s: %s",
+        ^^^^^^^^^
+    ...<4 lines>...
+        exception=exc,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 246, in log_response
+    getattr(logger, level)(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        message,
+        ^^^^^^^^
+    ...<5 lines>...
+        exc_info=exception,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python314\Lib\logging\__init__.py", line 1549, in error
+    self._log(ERROR, msg, args, **kwargs)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python314\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+    ~~~~~~~~~^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\util
+s\log.py", line 125, in emit
+    reporter.get_traceback_text(),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\view
+s\debug.py", line 418, in get_traceback_text
+    return t.render(c)
+           ~~~~~~~~^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\base.py", line 175, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\utils.py", line 111, in instrumented_test_render
+    template_rendered.send(sender=self, template=self, context=context)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\disp
+atch\dispatcher.py", line 177, in send
+    (receiver, receiver(signal=self, sender=sender, **named))
+               ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\test
+\client.py", line 267, in store_rendered_templates
+    store["context"].append(copy(context))
+                            ~~~~^^^^^^^^^
+  File "C:\Python314\Lib\copy.py", line 82, in copy
+    return copier(x)
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 158, in __copy__
+    duplicate = super().__copy__()
+  File "C:\Users\Roy\AppData\Roaming\Python\Python314\site-packages\django\temp
+late\context.py", line 39, in __copy__
+    duplicate.dicts = self.dicts[:]
+    ^^^^^^^^^^^^^^^
+AttributeError: 'super' object has no attribute 'dicts' and no __dict__ for 
+setting new attributes
+
+----------------------------------------------------------------------
+Ran 9 tests in 11.316s
+
+FAILED (errors=2)
+Destroying test database for alias 'default' 
+('file:memorydb_default?mode=memory&cache=shared')...
+

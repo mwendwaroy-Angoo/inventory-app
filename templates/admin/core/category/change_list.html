@@ -1,0 +1,9 @@
+{% extends "admin/change_list.html" %}
+{% load i18n %}
+
+{% block object-tools %}
+{{ block.super }}
+<li>
+  <a href="{% url 'admin:core_category_import_taxonomy' %}" class="addlink">Import taxonomy (CSV)</a>
+</li>
+{% endblock %}

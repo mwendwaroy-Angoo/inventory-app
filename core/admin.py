@@ -1,4 +1,12 @@
 from django.contrib import admin
+from django import forms
+from django.urls import path
+from django.template.response import TemplateResponse
+from django.contrib import messages
+from django.core.management import call_command
+import tempfile
+import io
+
 from .models import (
     Store, Item, Transaction, Customer, BusinessType, County, SubCounty, Ward,
     Order, OrderLine, Payment, RiderProfile, SupplierRelationship, Notification,
@@ -25,6 +33,58 @@ class ItemAdmin(admin.ModelAdmin):
                     'current_balance_display', 'selling_price', 'status_display')
     list_filter = ('store', 'business', 'category')
     search_fields = ('material_no', 'description')
+
+    def get_urls(self):
+        urls = super().get_urls()
+        my_urls = [
+            path('import-products/', self.admin_site.admin_view(self.import_products_view), name=f'{self.model._meta.app_label}_{self.model._meta.model_name}_import_products'),
+        ]
+        return my_urls + urls
+
+    def import_products_view(self, request):
+        if not self.has_change_permission(request):
+            from django.http import HttpResponseForbidden
+            return HttpResponseForbidden()
+
+        class ProductImportForm(forms.Form):
+            csv_file = forms.FileField(label='Products CSV')
+            commit = forms.BooleanField(required=False, initial=False, label='Commit to database')
+            store = forms.ModelChoiceField(queryset=Store.objects.all(), required=False)
+
+        result = None
+        if request.method == 'POST':
+            form = ProductImportForm(request.POST, request.FILES)
+            if form.is_valid():
+                f = form.cleaned_data['csv_file']
+                commit = form.cleaned_data['commit']
+                store = form.cleaned_data['store']
+                # Save uploaded file to a temp file
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+                for chunk in f.chunks():
+                    tmp.write(chunk)
+                tmp.flush()
+                tmp.close()
+
+                out = io.StringIO()
+                try:
+                    if commit and not store:
+                        messages.error(request, 'Store is required when committing imports.')
+                    else:
+                        call_command('import_products', tmp.name, commit=commit, store_id=(store.id if store else None), stdout=out)
+                        result = out.getvalue()
+                        messages.success(request, 'Import completed. See results below.')
+                except Exception as e:
+                    messages.error(request, f'Import failed: {e}')
+        else:
+            form = ProductImportForm()
+
+        context = dict(
+            self.admin_site.each_context(request),
+            form=form,
+            result=result,
+            opts=self.model._meta,
+        )
+        return TemplateResponse(request, 'admin/core/import_products.html', context)
 
     def current_balance_display(self, obj):
         return obj.current_balance()
@@ -84,6 +144,52 @@ class CategoryAdmin(admin.ModelAdmin):
     list_display = ('code', 'level1', 'level2', 'level3')
     search_fields = ('code', 'level1', 'level2', 'level3')
     list_filter = ('level1',)
+
+    def get_urls(self):
+        urls = super().get_urls()
+        my_urls = [
+            path('import-taxonomy/', self.admin_site.admin_view(self.import_taxonomy_view), name=f'{self.model._meta.app_label}_{self.model._meta.model_name}_import_taxonomy'),
+        ]
+        return my_urls + urls
+
+    def import_taxonomy_view(self, request):
+        if not self.has_change_permission(request):
+            from django.http import HttpResponseForbidden
+            return HttpResponseForbidden()
+
+        class TaxonomyImportForm(forms.Form):
+            csv_file = forms.FileField(label='Taxonomy CSV')
+            commit = forms.BooleanField(required=False, initial=False, label='Commit to database')
+
+        result = None
+        if request.method == 'POST':
+            form = TaxonomyImportForm(request.POST, request.FILES)
+            if form.is_valid():
+                f = form.cleaned_data['csv_file']
+                commit = form.cleaned_data['commit']
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+                for chunk in f.chunks():
+                    tmp.write(chunk)
+                tmp.flush()
+                tmp.close()
+
+                out = io.StringIO()
+                try:
+                    call_command('import_taxonomy', tmp.name, commit=commit, stdout=out)
+                    result = out.getvalue()
+                    messages.success(request, 'Taxonomy import completed. See results below.')
+                except Exception as e:
+                    messages.error(request, f'Import failed: {e}')
+        else:
+            form = TaxonomyImportForm()
+
+        context = dict(
+            self.admin_site.each_context(request),
+            form=form,
+            result=result,
+            opts=self.model._meta,
+        )
+        return TemplateResponse(request, 'admin/core/import_taxonomy.html', context)
 
 
 @admin.register(Order)
