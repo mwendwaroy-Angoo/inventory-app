@@ -1,0 +1,12 @@
+Hello {{ supplier_owner.user.get_full_name|default:supplier_owner.user.username }},
+
+A draft Purchase Order (PO-{{ po.id }}) has been created by {{ awarding_business.name }} and assigned to your business ({{ po.supplier.name }}).
+
+PO ID: PO-{{ po.id }}
+Created by: {{ awarding_user.get_full_name|default:awarding_user.username }}
+Expected delivery date: {{ po.expected_delivery_date|default:'Not specified' }}
+Notes: {{ po.notes|default:'None' }}
+
+Please review and confirm the PO in your supplier dashboard.
+
+— Duka Mwecheche

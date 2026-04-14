@@ -338,7 +338,9 @@ def award_bid(request, bid_id):
             po = None
         # Notify owner and supplier about the created draft PO (if any)
         try:
-            from core.notifications import create_in_app_notification
+            from core.notifications import create_in_app_notification, send_email_notification
+            from django.template.loader import render_to_string
+
             if po:
                 # Notify the awarding owner (request.user)
                 create_in_app_notification(
@@ -347,7 +349,8 @@ def award_bid(request, bid_id):
                     f"A draft purchase order for {bid.supplier.name} was created from procurement award.",
                     notification_type='order'
                 )
-                # Notify supplier owner (if present)
+
+                # Notify supplier owner (if present) via in-app and email
                 supplier_owner_profile = bid.supplier.users.filter(role='owner').first()
                 if supplier_owner_profile:
                     create_in_app_notification(
@@ -356,6 +359,22 @@ def award_bid(request, bid_id):
                         f"You were awarded procurement '{bid.procurement.title}'. A draft PO ({po.id}) has been created.",
                         notification_type='order'
                     )
+
+                    # Render and send supplier award email
+                    try:
+                        subject = f"Procurement awarded: {bid.procurement.title}"
+                        message = render_to_string('emails/supplier_awarded.txt', {
+                            'bid': bid,
+                            'po': po,
+                            'awarding_business': profile.business,
+                            'supplier_owner': supplier_owner_profile,
+                        })
+                        recipient_email = supplier_owner_profile.user.email or bid.supplier.email
+                        if recipient_email:
+                            send_email_notification(subject, message, recipient_email)
+                    except Exception:
+                        # don't block main flow if email fails
+                        pass
         except Exception:
             pass
 

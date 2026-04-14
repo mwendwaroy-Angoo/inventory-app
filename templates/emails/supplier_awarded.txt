@@ -1,0 +1,23 @@
+Hello {{ supplier_owner.user.get_full_name|default:supplier_owner.user.username }},
+
+Good news — your bid for the procurement request "{{ bid.procurement.title }}" has been accepted by {{ awarding_business.name }}.
+
+Procurement: {{ bid.procurement.title }}
+Awarded by: {{ awarding_business.name }}
+Supplier (your business): {{ bid.supplier.name }}
+Bid Amount: KES {{ bid.amount }}
+Delivery Timeline: {{ bid.delivery_timeline }}
+
+{% if po %}
+A draft Purchase Order has been created: PO-{{ po.id }}.
+Please login to your supplier dashboard to review and confirm delivery details.
+{% else %}
+No purchase order was created automatically. The buyer will follow up with purchase instructions.
+{% endif %}
+
+Proposal excerpt:
+{{ bid.proposal|truncatechars:400 }}
+
+If you have questions, reply to this email or contact the buyer: {{ awarding_business.email|default:"(no email on file)" }}.
+
+— Duka Mwecheche
