@@ -1,3 +1,4 @@
+import datetime
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -130,6 +131,9 @@ class Item(models.Model):
     opening_physical = models.IntegerField(default=0)
     reorder_quantity = models.IntegerField(default=0)
     reorder_level = models.IntegerField(default=0)
+    # Supply-chain tuning fields
+    lead_time_days = models.IntegerField(default=7, help_text='Expected supplier lead time (days)')
+    safety_days = models.IntegerField(default=2, help_text='Safety stock expressed as days of cover')
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='items', null=True, blank=True)
     selling_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     cost_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -149,8 +153,75 @@ class Item(models.Model):
     def surplus(self):
         return max(0, self.physical_balance() - self.current_balance())
 
+    # --- Demand & reorder helpers (basic demand-driven heuristics) ---
+    def avg_daily_issues(self, window_days=30):
+        """Average daily issues (sales) over the past `window_days` days."""
+        since = timezone.now().date() - datetime.timedelta(days=window_days)
+        total = self.transactions.filter(type='Issue', date__gte=since).aggregate(models.Sum('qty'))['qty__sum'] or 0
+        total = abs(total)
+        try:
+            return float(total) / float(window_days) if window_days else 0.0
+        except Exception:
+            return 0.0
+
+    def lead_time_demand(self):
+        """Demand expected during lead time (units)."""
+        return int(round(self.avg_daily_issues() * (self.lead_time_days or 0)))
+
+    def safety_stock(self):
+        """Simple safety stock expressed as `safety_days * avg_daily_demand`."""
+        return int(round(self.avg_daily_issues() * (self.safety_days or 0)))
+
+    def reorder_point(self):
+        """Reorder point (ROP) = lead-time demand + safety stock."""
+        return int(round(self.lead_time_demand() + self.safety_stock()))
+
+    def target_stock(self):
+        """Target stock level after replenishment (ROP + reorder_quantity buffer)."""
+        return int(round(self.reorder_point() + (self.reorder_quantity or 0)))
+
+    def on_order(self):
+        """Quantity currently on open purchase orders for this item."""
+        # Resolve the PO line model dynamically to avoid circular import issues
+        try:
+            from django.apps import apps
+            PurchaseOrderLine = apps.get_model('core', 'PurchaseOrderLine')
+        except Exception:
+            PurchaseOrderLine = None
+        if not PurchaseOrderLine:
+            return 0
+        qs = PurchaseOrderLine.objects.filter(item=self, po__status__in=['draft', 'ordered', 'part_received'])
+        ordered = qs.aggregate(total=models.Sum('quantity_ordered'))['total'] or 0
+        received = qs.aggregate(total=models.Sum('quantity_received'))['total'] or 0
+        try:
+            return max(0, int(ordered - received))
+        except Exception:
+            return 0
+
+    def shortage(self):
+        """Units short of ROP considering on-order quantities."""
+        return max(0, self.reorder_point() - (self.current_balance() + self.on_order()))
+
+    def overstock(self):
+        """Units in excess of target stock (suggest promotions/transfers)."""
+        return max(0, self.current_balance() - self.target_stock())
+
+    def recommended_order_qty(self):
+        """Recommended quantity to order now to reach target stock (respecting reorder_quantity minimum).
+        Returns 0 when no order is recommended.
+        """
+        req = self.target_stock() - (self.current_balance() + self.on_order())
+        if req <= 0:
+            return 0
+        min_qty = self.reorder_quantity or 0
+        return max(min_qty, int(req))
+
     def needs_reorder(self):
-        return self.current_balance() <= self.reorder_level
+        # Prefer computed ROP if available; fall back to legacy reorder_level
+        try:
+            return (self.current_balance() + self.on_order()) <= max(self.reorder_level or 0, self.reorder_point())
+        except Exception:
+            return self.current_balance() <= self.reorder_level
 
     def stock_value(self):
         if self.cost_price and self.current_balance() > 0:
@@ -532,3 +603,51 @@ class PendingTransactionPrompt(models.Model):
 
     def __str__(self):
         return f"KES {self.amount:,.0f} from {self.phone} — {self.status}"
+
+
+# ────────────────────────────────────────────────
+# PURCHASE ORDERS
+# ────────────────────────────────────────────────
+
+class PurchaseOrder(models.Model):
+    STATUS_CHOICES = [
+        ('draft', _('Draft')),
+        ('ordered', _('Ordered')),
+        ('part_received', _('Partially Received')),
+        ('received', _('Received')),
+        ('cancelled', _('Cancelled')),
+    ]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='purchase_orders')
+    supplier = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='supplier_purchase_orders', null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    order_date = models.DateField(default=timezone.now)
+    expected_delivery_date = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        supplier_name = self.supplier.name if self.supplier else 'Supplier'
+        return f"PO-{self.id} — {supplier_name} — {self.get_status_display()}"
+
+    def total_ordered_value(self):
+        return sum([(l.quantity_ordered or 0) * (float(l.unit_price) if l.unit_price else 0.0) for l in self.lines.all()])
+
+
+class PurchaseOrderLine(models.Model):
+    po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='lines')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    quantity_ordered = models.IntegerField(default=0)
+    quantity_received = models.IntegerField(default=0)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
+    def quantity_remaining(self):
+        return max(0, (self.quantity_ordered or 0) - (self.quantity_received or 0))
+
+    def __str__(self):
+        return f"{self.item.description} x{self.quantity_ordered} — PO-{self.po.id}"

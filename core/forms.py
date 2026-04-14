@@ -1,6 +1,7 @@
 from django import forms
 from django.utils.translation import gettext_lazy as _
-from .models import Item, Store
+from .models import Item, Store, PurchaseOrder, PurchaseOrderLine
+from django.forms import inlineformset_factory
 
 
 class ItemForm(forms.ModelForm):
@@ -17,6 +18,8 @@ class ItemForm(forms.ModelForm):
             'opening_physical',
             'reorder_level',
             'reorder_quantity',
+            'lead_time_days',
+            'safety_days',
         ]
         widgets = {
             'description': forms.TextInput(attrs={'placeholder': _('e.g. Cement 50kg')}),
@@ -28,6 +31,8 @@ class ItemForm(forms.ModelForm):
             'opening_physical': forms.NumberInput(attrs={'placeholder': '0'}),
             'reorder_level': forms.NumberInput(attrs={'placeholder': '0'}),
             'reorder_quantity': forms.NumberInput(attrs={'placeholder': '0'}),
+            'lead_time_days': forms.NumberInput(attrs={'placeholder': '7'}),
+            'safety_days': forms.NumberInput(attrs={'placeholder': '2'}),
         }
 
     def __init__(self, *args, business=None, show_cost_price=False, **kwargs):
@@ -43,6 +48,8 @@ class ItemForm(forms.ModelForm):
         self.fields['opening_physical'].label = _('Opening Physical')
         self.fields['reorder_level'].label = _('Reorder Level')
         self.fields['reorder_quantity'].label = _('Reorder Quantity')
+        self.fields['lead_time_days'].label = _('Lead Time (days)')
+        self.fields['safety_days'].label = _('Safety Days')
 
         if business:
             self.fields['store'].queryset = Store.objects.filter(business=business)
@@ -60,6 +67,8 @@ class ItemForm(forms.ModelForm):
         self.fields['opening_physical'].required = False
         self.fields['reorder_level'].required = False
         self.fields['reorder_quantity'].required = False
+        self.fields['lead_time_days'].required = False
+        self.fields['safety_days'].required = False
 
         # Hide cost_price from staff
         if not show_cost_price:
@@ -67,3 +76,34 @@ class ItemForm(forms.ModelForm):
 
         for field in self.fields.values():
             field.widget.attrs['class'] = 'form-control'
+
+
+class PurchaseOrderForm(forms.ModelForm):
+    class Meta:
+        model = PurchaseOrder
+        fields = [
+            'supplier',
+            'status',
+            'expected_delivery_date',
+            'notes',
+        ]
+
+
+class PurchaseOrderLineForm(forms.ModelForm):
+    class Meta:
+        model = PurchaseOrderLine
+        fields = [
+            'item',
+            'quantity_ordered',
+            'unit_price',
+        ]
+
+
+# Inline formset for PurchaseOrder lines
+PurchaseOrderLineFormSet = inlineformset_factory(
+    PurchaseOrder,
+    PurchaseOrderLine,
+    form=PurchaseOrderLineForm,
+    extra=1,
+    can_delete=True,
+)

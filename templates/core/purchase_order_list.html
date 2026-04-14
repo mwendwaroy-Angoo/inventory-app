@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Purchase Orders' %} — Duka Mwecheche{% endblock %}
+
+{% block content %}
+<h2 class="page-title">📦 {% trans 'Purchase Orders' %}</h2>
+
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>{% trans 'PO #' %}</th>
+                <th>{% trans 'Status' %}</th>
+                <th>{% trans 'Supplier' %}</th>
+                <th>{% trans 'Lines' %}</th>
+                <th>{% trans 'Total Value' %}</th>
+                <th>{% trans 'Created' %}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for po in purchase_orders %}
+            <tr>
+                <td><strong>PO-{{ po.id }}</strong></td>
+                <td>{{ po.get_status_display }}</td>
+                <td>{{ po.supplier.name if po.supplier else '—' }}</td>
+                <td>{{ po.lines.count }}</td>
+                <td>KES {{ po.total_ordered_value|floatformat:0 }}</td>
+                <td>{{ po.created_at.date }}</td>
+                <td><a href="{% url 'purchase_order_detail' po.id %}" class="btn btn-sm btn-outline-primary">{% trans 'View' %}</a></td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" class="text-center py-4" style="color:var(--muted);">{% trans 'No purchase orders found.' %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

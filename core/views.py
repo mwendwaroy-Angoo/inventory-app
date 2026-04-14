@@ -4,8 +4,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
 from django.utils.translation import gettext as _
-from .models import Item, Transaction, Store, Customer
-from .forms import ItemForm
+from .models import Item, Transaction, Store, Customer, PurchaseOrder, PurchaseOrderLine
+from .forms import ItemForm, PurchaseOrderForm, PurchaseOrderLineForm, PurchaseOrderLineFormSet
 import openpyxl
 from datetime import date, timedelta
 import json
@@ -287,6 +287,135 @@ def item_detail(request, item_id):
         'today': timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, 'core/item_detail.html', context)
+
+
+@login_required
+@owner_required
+def create_po_from_item(request, item_id):
+    """Quick action: create a draft Purchase Order for the item using recommended qty."""
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+
+    item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
+    try:
+        qty = item.recommended_order_qty()
+    except Exception:
+        qty = 0
+
+    if not qty or qty <= 0:
+        messages.info(request, _('No order recommended for this item.'))
+        return redirect('item_detail', item_id=item.id)
+
+    po = PurchaseOrder.objects.create(
+        business=user_profile.business,
+        status='draft',
+        created_by=request.user,
+    )
+    PurchaseOrderLine.objects.create(
+        po=po,
+        item=item,
+        quantity_ordered=qty,
+        unit_price=item.cost_price or 0,
+    )
+    messages.success(request, _('Draft purchase order created with %(qty)s units of %(item)s.') % {'qty': qty, 'item': item.description})
+    return redirect('stock_list')
+
+
+@login_required
+@owner_required
+def purchase_orders_list(request):
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+    pos = PurchaseOrder.objects.filter(business=user_profile.business).order_by('-created_at').prefetch_related('lines__item')
+    context = {
+        'purchase_orders': pos,
+        'today': timezone.now().strftime("%B %d, %Y"),
+    }
+    return render(request, 'core/purchase_order_list.html', context)
+
+
+@login_required
+@owner_required
+def purchase_order_detail(request, po_id):
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+    po = get_object_or_404(PurchaseOrder, id=po_id, business=user_profile.business)
+    context = {
+        'po': po,
+        'today': timezone.now().strftime("%B %d, %Y"),
+    }
+    return render(request, 'core/purchase_order_detail.html', context)
+
+
+@login_required
+@owner_required
+def purchase_order_create(request):
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+
+    if request.method == 'POST':
+        form = PurchaseOrderForm(request.POST)
+        # Temporary unsaved instance to bind formset
+        temp_po = PurchaseOrder(business=user_profile.business)
+        formset = PurchaseOrderLineFormSet(request.POST, instance=temp_po)
+        if form.is_valid() and formset.is_valid():
+            po = form.save(commit=False)
+            po.business = user_profile.business
+            po.created_by = request.user
+            po.save()
+            formset.instance = po
+            lines = formset.save(commit=False)
+            for line in lines:
+                # ensure item belongs to this business
+                if line.item and line.item.business != user_profile.business:
+                    continue
+                line.save()
+            messages.success(request, _('Purchase order created.'))
+            return redirect('purchase_order_detail', po.id)
+    else:
+        form = PurchaseOrderForm()
+        temp_po = PurchaseOrder(business=user_profile.business)
+        formset = PurchaseOrderLineFormSet(instance=temp_po)
+
+    # Limit item choices to this business
+    for f in formset.forms:
+        if 'item' in f.fields:
+            f.fields['item'].queryset = Item.objects.filter(business=user_profile.business)
+
+    context = {'form': form, 'formset': formset, 'today': timezone.now().strftime('%B %d, %Y')}
+    return render(request, 'core/purchase_order_form.html', context)
+
+
+@login_required
+@owner_required
+def purchase_order_edit(request, po_id):
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+    po = get_object_or_404(PurchaseOrder, id=po_id, business=user_profile.business)
+
+    if request.method == 'POST':
+        form = PurchaseOrderForm(request.POST, instance=po)
+        formset = PurchaseOrderLineFormSet(request.POST, instance=po)
+        if form.is_valid() and formset.is_valid():
+            form.save()
+            lines = formset.save()
+            messages.success(request, _('Purchase order updated.'))
+            return redirect('purchase_order_detail', po.id)
+    else:
+        form = PurchaseOrderForm(instance=po)
+        formset = PurchaseOrderLineFormSet(instance=po)
+
+    for f in formset.forms:
+        if 'item' in f.fields:
+            f.fields['item'].queryset = Item.objects.filter(business=user_profile.business)
+
+    context = {'form': form, 'formset': formset, 'po': po, 'today': timezone.now().strftime('%B %d, %Y')}
+    return render(request, 'core/purchase_order_form.html', context)
 
 
 # ── EXPORT STOCK ──────────────────────────────────────────────────────────────

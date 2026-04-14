@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Purchase Order' %} — Duka Mwecheche{% endblock %}
+
+{% block content %}
+<h2 class="page-title">📦 {% trans 'Purchase Order' %}</h2>
+
+<form method="post">
+    {% csrf_token %}
+    <div class="row">
+        <div class="col-md-6">
+            {{ form.as_p }}
+        </div>
+    </div>
+
+    <h4 class="mt-3">{% trans 'Lines' %}</h4>
+    {{ formset.management_form }}
+    <table class="table table-sm" id="po-lines-table">
+        <thead>
+            <tr>
+                <th>{% trans 'Item' %}</th>
+                <th>{% trans 'Qty' %}</th>
+                <th>{% trans 'Unit Price' %}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in formset.forms %}
+            <tr>
+                <td>{{ f.item }}</td>
+                <td>{{ f.quantity_ordered }}</td>
+                <td>{{ f.unit_price }}</td>
+                <td>{% if f.DELETE %}{{ f.DELETE }}{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <button type="button" id="add-line-btn" class="btn btn-sm btn-outline-secondary">+ {% trans 'Add Line' %}</button>
+
+    <!-- Empty form template for JS cloning -->
+    <table style="display:none;" id="empty-form-template">
+        <tbody>
+            <tr>
+                <td>{{ formset.empty_form.item }}</td>
+                <td>{{ formset.empty_form.quantity_ordered }}</td>
+                <td>{{ formset.empty_form.unit_price }}</td>
+                <td>{% if formset.empty_form.DELETE %}{{ formset.empty_form.DELETE }}{% endif %}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="mt-3">
+        <button class="btn btn-primary" type="submit">{% trans 'Save' %}</button>
+        <a href="{% url 'purchase_orders_list' %}" class="btn btn-secondary">{% trans 'Cancel' %}</a>
+    </div>
+</form>
+
+<script>
+// Simple inline formset add/remove logic
+document.addEventListener('DOMContentLoaded', function() {
+    const addBtn = document.getElementById('add-line-btn');
+    const table = document.getElementById('po-lines-table').getElementsByTagName('tbody')[0];
+    const emptyTpl = document.getElementById('empty-form-template').getElementsByTagName('tr')[0].innerHTML;
+    const totalFormsInput = document.querySelector('input[name$="-TOTAL_FORMS"]');
+
+    function makeRemoveHandler(row) {
+        return function(e) {
+            e.preventDefault();
+            // Try to find a DELETE checkbox in this row and check it, then hide the row
+            const deleteInput = row.querySelector('input[type="checkbox"][name$="-DELETE"]');
+            if (deleteInput) {
+                deleteInput.checked = true;
+                row.style.display = 'none';
+            } else {
+                // Not an existing form — just remove from DOM and decrement total forms
+                row.remove();
+                totalFormsInput.value = parseInt(totalFormsInput.value) - 1;
+            }
+        };
+    }
+
+    function wireRemoveButtons() {
+        document.querySelectorAll('#po-lines-table tbody tr').forEach(function(r){
+            if (!r.querySelector('.remove-line-btn')) {
+                const td = document.createElement('td');
+                td.innerHTML = '<button class="btn btn-sm btn-outline-danger remove-line-btn">✖</button>';
+                r.appendChild(td);
+                const btn = td.querySelector('.remove-line-btn');
+                btn.addEventListener('click', makeRemoveHandler(r));
+            }
+        });
+    }
+
+    addBtn.addEventListener('click', function() {
+        const formIdx = parseInt(totalFormsInput.value);
+        let rowHtml = emptyTpl.replace(/__prefix__/g, formIdx);
+        const tmp = document.createElement('tr');
+        tmp.innerHTML = rowHtml;
+        table.appendChild(tmp);
+        totalFormsInput.value = formIdx + 1;
+        wireRemoveButtons();
+    });
+
+    // Wire remove for existing rows
+    wireRemoveButtons();
+});
+</script>
+
+{% endblock %}

@@ -5,6 +5,7 @@ from .models import (
     ProcurementRequest, SupplierBid, SupplierApplication, Feedback, DeliveryRating,
     PendingTransactionPrompt,
 )
+from .models import PurchaseOrder, PurchaseOrderLine
 
 
 @admin.register(Store)
@@ -164,3 +165,20 @@ class PendingTransactionPromptAdmin(admin.ModelAdmin):
     list_display = ('business', 'amount', 'phone', 'payment_channel', 'status', 'mpesa_receipt', 'created_at')
     list_filter = ('status', 'payment_channel')
     search_fields = ('phone', 'mpesa_receipt', 'business__name')
+
+
+class PurchaseOrderLineInline(admin.TabularInline):
+    model = PurchaseOrderLine
+    extra = 0
+
+
+@admin.register(PurchaseOrder)
+class PurchaseOrderAdmin(admin.ModelAdmin):
+    list_display = ('id', 'business', 'supplier', 'status', 'order_date', 'expected_delivery_date', 'created_at')
+    list_filter = ('status', 'business')
+    inlines = [PurchaseOrderLineInline]
+
+
+@admin.register(PurchaseOrderLine)
+class PurchaseOrderLineAdmin(admin.ModelAdmin):
+    list_display = ('po', 'item', 'quantity_ordered', 'quantity_received', 'unit_price')

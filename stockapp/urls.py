@@ -5,6 +5,8 @@ from accounts.forms import LocalizedAuthenticationForm
 from accounts.views import logout_view
 from core.views import (
     home, stock_list, add_transaction, item_detail,
+    create_po_from_item,
+    purchase_orders_list, purchase_order_create, purchase_order_edit, purchase_order_detail,
     transaction_history, export_stock_excel, export_transactions_excel,
     manage_items, add_item, edit_item, delete_item,
     manage_stores, customer_list, add_customer, delete_customer,
@@ -58,6 +60,11 @@ urlpatterns = [
     path('add-transaction/', add_transaction, name='add_transaction'),
     path('quick-sell/', quick_sell, name='quick_sell'),
     path('item/<int:item_id>/', item_detail, name='item_detail'),
+    path('po/create-from-item/<int:item_id>/', create_po_from_item, name='create_po_from_item'),
+    path('purchase-orders/', purchase_orders_list, name='purchase_orders_list'),
+    path('purchase-orders/create/', purchase_order_create, name='purchase_order_create'),
+    path('purchase-orders/<int:po_id>/edit/', purchase_order_edit, name='purchase_order_edit'),
+    path('purchase-orders/<int:po_id>/', purchase_order_detail, name='purchase_order_detail'),
     path('history/', transaction_history, name='transaction_history'),
     path('export/stock/', export_stock_excel, name='export_stock'),
     path('export/transactions/', export_transactions_excel, name='export_transactions'),

@@ -73,6 +73,8 @@ for row in sheet.iter_rows(min_row=data_start_row, values_only=True):
             'opening_physical': open_phys,
             'reorder_quantity': reorder_qty,
             'reorder_level': reorder_level,
+            'lead_time_days': 7,
+            'safety_days': 2,
         }
     )
     if created:
@@ -85,6 +87,8 @@ for row in sheet.iter_rows(min_row=data_start_row, values_only=True):
         item.opening_physical = open_phys
         item.reorder_quantity = reorder_qty
         item.reorder_level = reorder_level
+        item.lead_time_days = 7
+        item.safety_days = 2
         item.store = store
         item.save()
 

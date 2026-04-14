@@ -151,6 +151,10 @@
                 <th>{% trans 'Physical' %}</th>
                 <th>{% trans 'Deficit' %}</th>
                 <th>{% trans 'Surplus' %}</th>
+                <th>{% trans 'Lead Time (d)' %}</th>
+                <th>{% trans 'ROP' %}</th>
+                <th>{% trans 'On Order' %}</th>
+                <th>{% trans 'Recommended Qty' %}</th>
                 <th>{% trans 'Reorder Lvl' %}</th>
                 <th>{% trans 'Reorder Qty' %}</th>
                 {% if user.userprofile.is_owner %}<th>{% trans 'Price (KES)' %}</th>{% endif %}
@@ -172,6 +176,10 @@
                 <td>{{ item.physical_balance }}</td>
                 <td>{% if item.deficit > 0 %}<span style="color:var(--danger)">{{ item.deficit }}</span>{% else %}—{% endif %}</td>
                 <td>{% if item.surplus > 0 %}<span style="color:var(--success)">{{ item.surplus }}</span>{% else %}—{% endif %}</td>
+                <td>{{ item.lead_time_days }}</td>
+                <td>{% if item.reorder_point > 0 %}{{ item.reorder_point }}{% else %}—{% endif %}</td>
+                <td>{% if item.on_order > 0 %}<span style="color:var(--muted)">{{ item.on_order }}</span>{% else %}—{% endif %}</td>
+                <td>{% if item.recommended_order_qty > 0 %}<strong style="color:var(--gold)">{{ item.recommended_order_qty }}</strong>{% else %}—{% endif %}</td>
                 <td>{{ item.reorder_level }}</td>
                 <td>{{ item.reorder_quantity }}</td>
                 {% if user.userprofile.is_owner %}
@@ -196,7 +204,7 @@
             </tr>
             {% empty %}
             <tr>
-                <td colspan="13" class="text-center py-4" style="color: var(--muted);">
+                <td colspan="17" class="text-center py-4" style="color: var(--muted);">
                     {% trans 'No items found.' %}
                     {% if user.userprofile.is_owner %}
                         <a href="{% url 'add_item' %}">{% trans 'Add your first item' %} →</a>

@@ -338,3 +338,71 @@ def send_daily_summary(business):
         f"View full report: https://stock-made-simpler-sms.onrender.com/sales/"
     )
     send_whatsapp_notification(wa_msg, owner_phone)
+
+    # Also send reorder recommendations as part of daily summary
+    try:
+        notify_reorder_recommendations(business)
+    except Exception:
+        logger.exception('notify_reorder_recommendations failed during daily summary')
+
+
+def notify_reorder_recommendations(business, max_items=20, create_draft=False):
+    """Compute recommended order quantities and notify the business owner.
+
+    Optionally creates a draft PurchaseOrder when `create_draft` is True.
+    """
+    from django.apps import apps
+    Item = apps.get_model('core', 'Item')
+    PurchaseOrder = apps.get_model('core', 'PurchaseOrder')
+    PurchaseOrderLine = apps.get_model('core', 'PurchaseOrderLine')
+
+    owner_profile = business.users.filter(role='owner').first()
+    if not owner_profile:
+        return None
+
+    owner = owner_profile.user
+    owner_email = owner.email
+    owner_phone = owner_profile.phone or business.phone
+
+    items = Item.objects.filter(business=business).order_by('material_no')
+    recs = []
+    for item in items:
+        try:
+            qty = item.recommended_order_qty()
+        except Exception:
+            qty = 0
+        if qty and qty > 0:
+            recs.append((item, qty))
+
+    if not recs:
+        return None
+
+    # Limit list for concise notifications
+    top = recs[:max_items]
+
+    title = f"🔔 Reorder Recommendations — {business.name}"
+    short_msg = ', '.join([f"{it.material_no}:{q}" for it, q in top])
+    long_msg_lines = [f"Reorder recommendations for {business.name}", '']
+    for it, q in top:
+        long_msg_lines.append(f"• {it.material_no} | {it.description} → Recommend: {q} {it.unit}")
+    long_msg = '\n'.join(long_msg_lines)
+
+    # In-app notification
+    create_in_app_notification(owner, title, short_msg, notification_type='warning')
+
+    # Email notification
+    send_email_notification(title, long_msg + "\n\n— Duka Mwecheche", owner_email)
+
+    # Optionally create a draft PO
+    created_po = None
+    if create_draft:
+        try:
+            po = PurchaseOrder.objects.create(business=business, status='draft', created_by=None)
+            for it, q in recs:
+                PurchaseOrderLine.objects.create(po=po, item=it, quantity_ordered=q, unit_price=it.cost_price or 0)
+            created_po = po
+            create_in_app_notification(owner, f"Draft PO-{po.id} created", f"A draft PO with {len(recs)} lines was created.", notification_type='order')
+        except Exception:
+            logger.exception('Failed to create draft PO in notify_reorder_recommendations')
+
+    return created_po

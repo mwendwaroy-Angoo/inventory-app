@@ -29,6 +29,8 @@ from .models import (
     SupplierRelationship, Feedback, BusinessType,
 )
 
+from .models import PurchaseOrder
+
 
 # ── SCORING ENGINE ───────────────────────────────────────────────────────────
 
@@ -306,6 +308,56 @@ def award_bid(request, bid_id):
             supplier=bid.supplier,
             defaults={'notes': f'Awarded via procurement: {bid.procurement.title}'},
         )
+
+        # Auto-create a draft Purchase Order for the awarded supplier so owner can confirm lines
+        try:
+            # Estimate expected delivery date from delivery_timeline (simple parse)
+            from datetime import timedelta
+            import re
+
+            expected = None
+            dt = bid.delivery_timeline or ''
+            m = re.search(r"(\d+)", dt)
+            if m:
+                n = int(m.group(1))
+                if 'week' in dt.lower():
+                    days = n * 7
+                else:
+                    days = n
+                expected = timezone.now().date() + timedelta(days=days)
+
+            po = PurchaseOrder.objects.create(
+                business=profile.business,
+                supplier=bid.supplier,
+                status='draft',
+                expected_delivery_date=expected,
+                created_by=request.user,
+                notes=f'Auto-created from procurement award: {bid.procurement.title} — Bid {bid.id} by {bid.supplier.name}'
+            )
+        except Exception:
+            po = None
+        # Notify owner and supplier about the created draft PO (if any)
+        try:
+            from core.notifications import create_in_app_notification
+            if po:
+                # Notify the awarding owner (request.user)
+                create_in_app_notification(
+                    request.user,
+                    f"Draft PO-{po.id} created",
+                    f"A draft purchase order for {bid.supplier.name} was created from procurement award.",
+                    notification_type='order'
+                )
+                # Notify supplier owner (if present)
+                supplier_owner_profile = bid.supplier.users.filter(role='owner').first()
+                if supplier_owner_profile:
+                    create_in_app_notification(
+                        supplier_owner_profile.user,
+                        f"Procurement Award — {profile.business.name}",
+                        f"You were awarded procurement '{bid.procurement.title}'. A draft PO ({po.id}) has been created.",
+                        notification_type='order'
+                    )
+        except Exception:
+            pass
 
         django_messages.success(
             request,
