@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Procurement Awarded</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; color: #111; }
+    .card { border: 1px solid #e6e6e6; border-radius: 8px; padding: 20px; }
+    .button { display:inline-block; padding:10px 16px; background:#0b74de; color:#fff; border-radius:6px; text-decoration:none }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>🎉 Procurement Awarded — {{ bid.procurement.title }}</h2>
+    <p>Hello {{ supplier_owner.user.get_full_name|default:supplier_owner.user.username }},</p>
+    <p>Your bid for <strong>{{ bid.procurement.title }}</strong> was accepted by <strong>{{ awarding_business.name }}</strong>.</p>
+
+    <ul>
+      <li><strong>Procurement:</strong> {{ bid.procurement.title }}</li>
+      <li><strong>Buyer:</strong> {{ awarding_business.name }}</li>
+      <li><strong>Bid Amount:</strong> KES {{ bid.amount }}</li>
+      <li><strong>Delivery:</strong> {{ bid.delivery_timeline }}</li>
+    </ul>
+
+    {% if po %}
+    <p>A draft Purchase Order has been created: <strong>PO-{{ po.id }}</strong>. Please review it in your supplier dashboard.</p>
+    <a class="button" href="{{ request.scheme }}://{{ request.get_host }}/purchase-orders/{{ po.id }}/">View PO</a>
+    {% else %}
+    <p>No automatic purchase order was created. The buyer will follow up with purchase instructions.</p>
+    {% endif %}
+
+    <hr>
+    <p style="color:#666">Proposal excerpt:</p>
+    <blockquote style="color:#333">{{ bid.proposal|linebreaksbr }}</blockquote>
+
+    <p style="color:#666">If you have questions, reply to this email or contact the buyer at {{ awarding_business.email|default:'(no email on file)' }}.</p>
+
+    <p>— Duka Mwecheche</p>
+  </div>
+</body>
+</html>

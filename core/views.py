@@ -3,6 +3,7 @@ from django.utils import timezone
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
+from django.db.models import Q
 from django.utils.translation import gettext as _
 from .models import Item, Transaction, Store, Customer, PurchaseOrder, PurchaseOrderLine
 from .forms import ItemForm, PurchaseOrderForm, PurchaseOrderLineForm, PurchaseOrderLineFormSet
@@ -418,6 +419,37 @@ def item_recommendation(request, item_id):
         'target_stock': int(item.target_stock() or 0),
     }
     return JsonResponse(data)
+
+
+@login_required
+def item_search(request):
+    """Simple search endpoint for items (owner-only). Returns JSON list of items.
+
+    Query params:
+      - q: search term (material_no or description)
+    """
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return JsonResponse({'results': []})
+
+    q = request.GET.get('q', '').strip()
+    items_qs = Item.objects.filter(business=user_profile.business)
+    if q:
+        items_qs = items_qs.filter(
+            Q(material_no__icontains=q) | Q(description__icontains=q)
+        )
+    items_qs = items_qs.order_by('material_no')[:30]
+    results = []
+    for it in items_qs:
+        results.append({
+            'id': it.id,
+            'material_no': it.material_no,
+            'description': it.description,
+            'cost_price': float(it.cost_price) if it.cost_price else None,
+            'selling_price': float(it.selling_price) if it.selling_price else None,
+            'unit': it.unit,
+        })
+    return JsonResponse({'results': results})
 
 
 @login_required

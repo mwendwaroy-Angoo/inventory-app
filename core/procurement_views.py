@@ -27,9 +27,8 @@ from accounts.models import Business
 from .models import (
     ProcurementRequest, SupplierBid, SupplierApplication,
     SupplierRelationship, Feedback, BusinessType,
+    PurchaseOrder, PurchaseOrderLine, SupplierBidLine,
 )
-
-from .models import PurchaseOrder
 
 
 # ── SCORING ENGINE ───────────────────────────────────────────────────────────
@@ -334,6 +333,19 @@ def award_bid(request, bid_id):
                 created_by=request.user,
                 notes=f'Auto-created from procurement award: {bid.procurement.title} — Bid {bid.id} by {bid.supplier.name}'
             )
+            # If the bid included itemised lines, create PO lines from them
+            try:
+                for bl in getattr(bid, 'lines', []).all():
+                    if bl.item and bl.quantity and bl.quantity > 0:
+                        PurchaseOrderLine.objects.create(
+                            po=po,
+                            item=bl.item,
+                            quantity_ordered=bl.quantity,
+                            unit_price=bl.unit_price or bl.item.cost_price or 0,
+                        )
+            except Exception:
+                # ignore failures creating PO lines — owner can edit PO manually
+                pass
         except Exception:
             po = None
         # Notify owner and supplier about the created draft PO (if any)
@@ -360,18 +372,26 @@ def award_bid(request, bid_id):
                         notification_type='order'
                     )
 
-                    # Render and send supplier award email
+                    # Render and send supplier award email (plain + HTML)
                     try:
                         subject = f"Procurement awarded: {bid.procurement.title}"
-                        message = render_to_string('emails/supplier_awarded.txt', {
+                        text_message = render_to_string('emails/supplier_awarded.txt', {
                             'bid': bid,
                             'po': po,
                             'awarding_business': profile.business,
                             'supplier_owner': supplier_owner_profile,
                         })
+                        html_message = render_to_string('emails/supplier_awarded.html', {
+                            'bid': bid,
+                            'po': po,
+                            'awarding_business': profile.business,
+                            'supplier_owner': supplier_owner_profile,
+                            'request': request,
+                        })
                         recipient_email = supplier_owner_profile.user.email or bid.supplier.email
                         if recipient_email:
-                            send_email_notification(subject, message, recipient_email)
+                            from core.notifications import send_email_notification
+                            send_email_notification(subject, text_message, recipient_email, html_message=html_message)
                     except Exception:
                         # don't block main flow if email fails
                         pass

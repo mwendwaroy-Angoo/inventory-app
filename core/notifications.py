@@ -1,21 +1,34 @@
 import logging
-from django.core.mail import send_mail
+from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 
-def send_email_notification(subject, message, recipient_email):
+def send_email_notification(subject, message, recipient_email, html_message=None):
+    """Send an email; supports plain-text and optional HTML alternative.
+
+    Args:
+        subject: Email subject
+        message: Plain-text body
+        recipient_email: recipient address
+        html_message: optional HTML body (string)
+    """
     if not recipient_email:
         return False
     try:
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[recipient_email],
-            fail_silently=True,
-        )
+        if html_message:
+            msg = EmailMultiAlternatives(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient_email])
+            msg.attach_alternative(html_message, "text/html")
+            msg.send(fail_silently=True)
+        else:
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[recipient_email],
+                fail_silently=True,
+            )
         logger.info(f"Email sent to {recipient_email}: {subject}")
         return True
     except Exception as e:

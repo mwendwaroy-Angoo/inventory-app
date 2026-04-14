@@ -490,6 +490,27 @@ class SupplierBid(models.Model):
         return f"Bid by {self.supplier.name} — KES {self.amount:,.0f}"
 
 
+class SupplierBidLine(models.Model):
+    """Optional: item-level lines for a supplier bid.
+
+    If suppliers submit itemised bids, these lines can be used to auto-create
+    PurchaseOrderLine entries when a bid is awarded.
+    """
+    bid = models.ForeignKey(SupplierBid, on_delete=models.CASCADE, related_name='lines')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    quantity = models.IntegerField(default=0)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
+    def line_total(self):
+        try:
+            return float(self.unit_price or 0) * (self.quantity or 0)
+        except Exception:
+            return 0
+
+    def __str__(self):
+        return f"{self.item.description} x{self.quantity} — Bid {self.bid.id}"
+
+
 class SupplierApplication(models.Model):
     """A business applies to become a supplier to another business."""
     STATUS_CHOICES = [

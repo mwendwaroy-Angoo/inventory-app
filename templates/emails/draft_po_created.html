@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Draft Purchase Order Created</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; color: #111; }
+    .card { border: 1px solid #e6e6e6; border-radius: 8px; padding: 20px; }
+    .muted { color:#666 }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>📄 Draft Purchase Order — PO-{{ po.id }}</h2>
+    <p>Hello {{ supplier_owner.user.get_full_name|default:supplier_owner.user.username }},</p>
+    <p>{{ awarding_business.name }} created a draft Purchase Order for your business ({{ po.supplier.name }}).</p>
+
+    <ul>
+      <li><strong>PO ID:</strong> PO-{{ po.id }}</li>
+      <li><strong>Created by:</strong> {{ awarding_user.get_full_name|default:awarding_user.username }}</li>
+      <li><strong>Expected delivery:</strong> {{ po.expected_delivery_date|default:'Not specified' }}</li>
+      <li><strong>Notes:</strong> {{ po.notes|default:'None' }}</li>
+    </ul>
+
+    <p class="muted">Please review and confirm this PO in your supplier dashboard.</p>
+
+    <p>— Duka Mwecheche</p>
+  </div>
+</body>
+</html>

@@ -63,6 +63,7 @@ urlpatterns = [
     path('item/<int:item_id>/', item_detail, name='item_detail'),
     path('po/create-from-item/<int:item_id>/', create_po_from_item, name='create_po_from_item'),
     path('api/item/<int:item_id>/recommendation/', item_recommendation, name='item_recommendation'),
+    path('api/items/search/', item_search, name='item_search'),
     path('purchase-orders/', purchase_orders_list, name='purchase_orders_list'),
     path('purchase-orders/create/', purchase_order_create, name='purchase_order_create'),
     path('purchase-orders/<int:po_id>/edit/', purchase_order_edit, name='purchase_order_edit'),

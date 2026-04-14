@@ -5,7 +5,7 @@ from .models import (
     ProcurementRequest, SupplierBid, SupplierApplication, Feedback, DeliveryRating,
     PendingTransactionPrompt,
 )
-from .models import PurchaseOrder, PurchaseOrderLine
+from .models import PurchaseOrder, PurchaseOrderLine, SupplierBidLine
 
 
 @admin.register(Store)
@@ -132,11 +132,17 @@ class SupplierBidInline(admin.TabularInline):
     readonly_fields = ('score',)
 
 
+class SupplierBidLineInline(admin.TabularInline):
+    model = SupplierBidLine
+    extra = 0
+
+
 @admin.register(SupplierBid)
 class SupplierBidAdmin(admin.ModelAdmin):
     list_display = ('supplier', 'procurement', 'amount', 'score', 'status', 'created_at')
     list_filter = ('status',)
     search_fields = ('supplier__name', 'procurement__title')
+    inlines = [SupplierBidLineInline]
 
 
 @admin.register(SupplierApplication)
