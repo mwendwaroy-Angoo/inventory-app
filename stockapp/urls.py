@@ -7,7 +7,7 @@ from core.views import (
     home, stock_list, add_transaction, item_detail,
     create_po_from_item,
     purchase_orders_list, purchase_order_create, purchase_order_edit, purchase_order_detail,
-    item_recommendation,
+    item_recommendation, item_search,
     transaction_history, export_stock_excel, export_transactions_excel,
     manage_items, add_item, edit_item, delete_item,
     manage_stores, customer_list, add_customer, delete_customer,
