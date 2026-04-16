@@ -41,6 +41,16 @@ def analytics_dashboard(request):
     prev_start = start_date - timedelta(days=days)
     prev_end = start_date - timedelta(days=1)
 
+    # Optional product filter for per-product analytics/forecast
+    product_id = request.GET.get('product')
+    items = list(Item.objects.filter(business=business).order_by('description').values('id', 'description'))
+    selected_product = None
+    if product_id:
+        try:
+            selected_product = int(product_id)
+        except Exception:
+            selected_product = None
+
     # ── Current period sales ──
     current_sales = Transaction.objects.filter(
         business=business, type='Issue',
@@ -51,6 +61,10 @@ def analytics_dashboard(request):
         business=business, type='Issue',
         date__gte=prev_start, date__lte=prev_end,
     ).select_related('item')
+
+    if selected_product:
+        current_sales = current_sales.filter(item_id=selected_product)
+        prev_sales = prev_sales.filter(item_id=selected_product)
 
     # ── Revenue / Cost / Profit ──
     cur_revenue = sum(t.revenue() for t in current_sales)
@@ -171,7 +185,10 @@ def analytics_dashboard(request):
     # ── Latest precomputed forecast (if any) ──
     try:
         from core.models import Forecast
-        latest_fc = Forecast.objects.filter(business=business).order_by('-generated_at').first()
+        if selected_product:
+            latest_fc = Forecast.objects.filter(business=business, meta__product_id=selected_product, meta__status='completed').order_by('-generated_at').first()
+        else:
+            latest_fc = Forecast.objects.filter(business=business, meta__status='completed').order_by('-generated_at').first()
     except Exception:
         latest_fc = None
 
@@ -230,6 +247,9 @@ def analytics_dashboard(request):
         # Forecast
         'forecast_chart_labels': json.dumps(forecast_chart_labels),
         'forecast_chart_values': json.dumps(forecast_chart_values),
+        # Product filter
+        'items': items,
+        'selected_product': selected_product,
     }
     return render(request, 'core/analytics.html', context)
 

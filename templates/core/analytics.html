@@ -121,6 +121,21 @@
     · {% blocktrans with p=period %}Compared to previous {{ p }} days{% endblocktrans %}
 </div>
 
+<!-- Product / Date Forecast Controls -->
+<div class="d-flex gap-2 mb-3 align-items-center">
+    <label style="font-size:0.8rem; color:var(--muted); align-self:center;">Product:</label>
+    <select id="forecastProduct" class="form-select form-select-sm" style="width:240px;">
+        <option value="">All products</option>
+        {% for i in items %}
+            <option value="{{ i.id }}" {% if selected_product and selected_product == i.id %}selected{% endif %}>{{ i.description|truncatechars:40 }}</option>
+        {% endfor %}
+    </select>
+    <input type="date" id="forecastStart" class="form-control form-control-sm" value="{{ start_date|date:'Y-m-d' }}" style="width:150px;">
+    <input type="date" id="forecastEnd" class="form-control form-control-sm" value="{{ end_date|date:'Y-m-d' }}" style="width:150px;">
+    <button id="runForecast" class="btn btn-primary btn-sm">Run Forecast</button>
+    <span id="forecastStatus" style="margin-left:0.5rem;color:var(--muted)"></span>
+</div>
+
 <!-- ═══ KEY METRICS ═══ -->
 <div class="row g-3 mb-4">
     <div class="col-6 col-md-3">
@@ -490,17 +505,24 @@
     });
 </script>
 <script>
-    // Render precomputed forecast chart when available
+    // Render precomputed forecast chart when available and support live updates
     const fc_labels = {{ forecast_chart_labels|default:'[]'|safe }};
     const fc_values = {{ forecast_chart_values|default:'[]'|safe }};
-    if (fc_labels && fc_labels.length) {
-        new Chart(document.getElementById('forecastChart'), {
+
+    function createOrUpdateForecastChart(labels, values) {
+        if (window.forecastChart) {
+            window.forecastChart.data.labels = labels;
+            window.forecastChart.data.datasets[0].data = values;
+            window.forecastChart.update();
+            return;
+        }
+        window.forecastChart = new Chart(document.getElementById('forecastChart'), {
             type: 'line',
             data: {
-                labels: fc_labels,
+                labels: labels,
                 datasets: [{
                     label: 'Forecast',
-                    data: fc_values,
+                    data: values,
                     borderColor: '#9b59b6',
                     backgroundColor: 'rgba(155,89,182,0.06)',
                     borderWidth: 2,
@@ -522,5 +544,65 @@
             }
         });
     }
+
+    if (fc_labels && fc_labels.length) {
+        createOrUpdateForecastChart(fc_labels, fc_values);
+    }
+
+    function updateForecastChart(history, forecast) {
+        const labels = (forecast || []).map(d => d.date);
+        const values = (forecast || []).map(d => d.forecast);
+        createOrUpdateForecastChart(labels, values);
+    }
+
+    function pollStatus(statusUrl) {
+        const statusEl = document.getElementById('forecastStatus');
+        fetch(statusUrl, { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(data => {
+                if (!data) { statusEl.textContent = 'No response'; return; }
+                if (data.status === 'pending' || data.status === 'running') {
+                    statusEl.textContent = 'Processing...';
+                    setTimeout(() => pollStatus(statusUrl), 2000);
+                } else if (data.status === 'completed') {
+                    statusEl.textContent = 'Completed';
+                    updateForecastChart(data.history || [], data.forecast || []);
+                } else {
+                    statusEl.textContent = 'Failed';
+                }
+            }).catch(() => {
+                document.getElementById('forecastStatus').textContent = 'Error';
+            });
+    }
+
+    document.getElementById('runForecast').addEventListener('click', function () {
+        const product = document.getElementById('forecastProduct').value || '';
+        const start = document.getElementById('forecastStart').value || '';
+        const end = document.getElementById('forecastEnd').value || '';
+        const params = new URLSearchParams();
+        if (product) params.append('product_id', product);
+        if (start) params.append('start', start);
+        if (end) params.append('end', end);
+        params.append('async', '1');
+        const url = `/api/forecast/?${params.toString()}`;
+        const statusEl = document.getElementById('forecastStatus');
+        statusEl.textContent = 'Queueing...';
+        fetch(url, { credentials: 'same-origin' }).then(response => {
+            return response.json().then(data => ({ status: response.status, body: data }));
+        }).then(({ status, body }) => {
+            if (status === 202) {
+                statusEl.textContent = 'Queued — processing...';
+                pollStatus(body.status_url || `/api/forecast/?task=${body.task}`);
+            } else if (body && body.status === 'completed') {
+                statusEl.textContent = 'Completed';
+                updateForecastChart(body.history || [], body.forecast || []);
+            } else if (body && body.task) {
+                statusEl.textContent = 'Queued';
+                pollStatus(`/api/forecast/?task=${body.task}`);
+            } else {
+                statusEl.textContent = 'Error queuing';
+            }
+        }).catch(() => { statusEl.textContent = 'Error queuing'; });
+    });
 </script>
 {% endblock %}

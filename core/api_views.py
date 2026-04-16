@@ -4,6 +4,9 @@ from rest_framework.response import Response
 from django.utils import timezone
 from django.db.models import Sum
 from datetime import timedelta
+import uuid
+from django.urls import reverse
+from . import tasks as core_tasks
 
 from .models import Item, Transaction, Store, Notification, Customer
 from .serializers import (
@@ -266,8 +269,26 @@ def forecast_api(request):
         horizon = 30
     date_from = request.query_params.get('start')
     date_to = request.query_params.get('end')
+    product_id = request.query_params.get('product_id') or request.query_params.get('product')
+    async_req = request.query_params.get('async') in ('1', 'true', 'True', 'TRUE')
+    task_token = request.query_params.get('task')
 
     import pandas as pd
+
+    # Task status query (polling by token)
+    if task_token:
+        try:
+            from core.models import Forecast
+            fc = Forecast.objects.filter(business=business, meta__task=task_token).order_by('-generated_at').first()
+            if not fc:
+                return Response({'status': 'unknown'}, status=status.HTTP_404_NOT_FOUND)
+            status_meta = fc.meta or {}
+            state = status_meta.get('status', 'pending')
+            if state != 'completed':
+                return Response({'status': state, 'meta': status_meta})
+            return Response({'status': 'completed', 'history': fc.history or [], 'forecast': fc.forecast or [], 'meta': status_meta})
+        except Exception:
+            return Response({'error': 'internal'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     parts = []
     # Transactions (POS)
@@ -277,6 +298,11 @@ def forecast_api(request):
             tx_qs = tx_qs.filter(date__gte=date_from)
         if date_to:
             tx_qs = tx_qs.filter(date__lte=date_to)
+        if product_id:
+            try:
+                tx_qs = tx_qs.filter(item_id=int(product_id))
+            except Exception:
+                pass
         tx_rows = list(tx_qs.values('date', 'qty', 'item__selling_price'))
         if tx_rows:
             df_tx = pd.DataFrame(tx_rows)
@@ -308,28 +334,68 @@ def forecast_api(request):
     else:
         df_hist = pd.DataFrame(columns=['date', 'revenue'])
 
-    # If no history, return empty arrays
-    if df_hist.empty:
-        return Response({
-            'history': [],
-            'forecast': [],
-            'meta': {'cadence': cadence, 'horizon': horizon, 'source': source}
-        })
+    # If no history and not requesting async, return empty arrays
+    if df_hist.empty and not async_req:
+        return Response({'history': [], 'forecast': [], 'meta': {'cadence': cadence, 'horizon': horizon, 'source': source}})
 
-    # Prefer returned persisted forecast when available and matching params
+    # Check for a cached persisted Forecast that matches parameters (including product/date when present)
     try:
         from core.models import Forecast
-        cached = Forecast.objects.filter(business=business, source=source, cadence=cadence, horizon=horizon).order_by('-generated_at').first()
+        cached_qs = Forecast.objects.filter(business=business, source=source, cadence=cadence, horizon=horizon)
+        if product_id:
+            try:
+                cached_qs = cached_qs.filter(meta__product_id=int(product_id))
+            except Exception:
+                cached_qs = cached_qs.filter(meta__product_id=str(product_id))
+        if date_from:
+            cached_qs = cached_qs.filter(meta__start=date_from)
+        if date_to:
+            cached_qs = cached_qs.filter(meta__end=date_to)
+        cached = cached_qs.order_by('-generated_at').first()
         if cached:
             return Response({
                 'history': cached.history or [],
                 'forecast': cached.forecast or [],
-                'meta': {'cadence': cadence, 'horizon': horizon, 'source': source, 'cached': True, 'generated_at': cached.generated_at.isoformat()}
+                'meta': {**{'cadence': cadence, 'horizon': horizon, 'source': source, 'cached': True}, **(cached.meta or {})}
             })
     except Exception:
         pass
 
-    # Resample and forecast using the prototype module
+    # If client asked for async, create a placeholder Forecast, enqueue work, and return task token
+    if async_req:
+        try:
+            from django.apps import apps
+            Forecast = None
+            try:
+                Forecast = apps.get_model('core', 'Forecast')
+            except Exception:
+                Forecast = None
+
+            token = str(uuid.uuid4())
+            fobj = None
+            if Forecast:
+                fobj = Forecast.objects.create(
+                    business=business,
+                    source=source,
+                    cadence=cadence,
+                    horizon=horizon,
+                    history=[],
+                    forecast=[],
+                    meta={'task': token, 'status': 'pending', 'product_id': int(product_id) if product_id else None, 'start': date_from, 'end': date_to}
+                )
+
+            # schedule background worker (Celery when available)
+            if hasattr(core_tasks.forecast_async_task, 'delay'):
+                core_tasks.forecast_async_task.delay(fobj.id if fobj else None, business.id, source, cadence, horizon, date_from, date_to, int(product_id) if product_id else None)
+            else:
+                core_tasks.forecast_async_task(fobj.id if fobj else None, business.id, source, cadence, horizon, date_from, date_to, int(product_id) if product_id else None)
+
+            status_url = request.build_absolute_uri(reverse('api-forecast')) + f'?task={token}'
+            return Response({'task': token, 'status_url': status_url}, status=status.HTTP_202_ACCEPTED)
+        except Exception:
+            pass
+
+    # Synchronous path: resample and forecast now
     from forecast import forecast as fcmod
 
     s = fcmod.resample_series(df_hist, cadence=cadence)
@@ -341,7 +407,6 @@ def forecast_api(request):
 
     forecast_list = []
     for d, v in zip(forecast_series.index.to_pydatetime(), forecast_series.values.tolist()):
-        # ensure serializable
         forecast_list.append({'date': d.isoformat(), 'forecast': float(v)})
 
     return Response({
