@@ -46,3 +46,26 @@ python manage.py precompute_forecasts --source both --cadence daily --horizon 30
 ```
 
 - If you use Celery, you can call `call_command('forecast', ...)` from a Celery task or schedule the `precompute_forecasts` command using Celery Beat.
+
+Celery integration
+
+- This repository includes a minimal Celery integration: add the broker URL in the environment and start a worker + beat to run the precompute task automatically.
+
+Environment variables (examples):
+
+```bash
+export CELERY_BROKER_URL=redis://localhost:6379/0
+export CELERY_RESULT_BACKEND=redis://localhost:6379/0
+```
+
+Start a worker and beat (development):
+
+```bash
+# start worker
+celery -A stockapp worker --loglevel=info
+
+# start beat in a separate terminal
+celery -A stockapp beat --loglevel=info
+```
+
+The project adds a `precompute_forecasts_task` Celery task (in `core.tasks`) and an optional default beat schedule (nightly 02:15) configured in `stockapp/settings.py` when Celery is installed. You can manage recurring schedules via the Django admin (django-celery-beat) as well.
