@@ -21,3 +21,7 @@ Thumbs.db
 
 # Static files (collected)
 staticfiles/
+
+# Forecast output artifacts (generated; keep out of source control)
+/forecast/output_*
+/forecast/output_*/**
