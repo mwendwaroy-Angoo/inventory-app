@@ -189,6 +189,16 @@
 
 <hr class="gold-divider">
 
+<!-- ═══ FORECAST PANEL ═══ -->
+<div class="row g-4 mb-4">
+    <div class="col-12">
+        <div class="chart-box">
+            <h3>🔮 {% trans 'Revenue Forecast (precomputed)' %}</h3>
+            <canvas id="forecastChart" height="120"></canvas>
+        </div>
+    </div>
+</div>
+
 <!-- ═══ CHARTS ═══ -->
 <div class="row g-4 mb-4">
     <div class="col-lg-8">
@@ -478,5 +488,39 @@
             }
         }
     });
+</script>
+<script>
+    // Render precomputed forecast chart when available
+    const fc_labels = {{ forecast_chart_labels|default:'[]'|safe }};
+    const fc_values = {{ forecast_chart_values|default:'[]'|safe }};
+    if (fc_labels && fc_labels.length) {
+        new Chart(document.getElementById('forecastChart'), {
+            type: 'line',
+            data: {
+                labels: fc_labels,
+                datasets: [{
+                    label: 'Forecast',
+                    data: fc_values,
+                    borderColor: '#9b59b6',
+                    backgroundColor: 'rgba(155,89,182,0.06)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    tension: 0.3,
+                    fill: true,
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { labels: { color: '#f0ece4' } },
+                    tooltip: { backgroundColor: '#2a2a2a', titleColor: '#9b59b6', bodyColor: '#f0ece4' }
+                },
+                scales: {
+                    x: { ticks: { color: '#666' }, grid: { color: '#2a2a2a' } },
+                    y: { ticks: { color: '#888' }, grid: { color: '#2a2a2a' } }
+                }
+            }
+        });
+    }
 </script>
 {% endblock %}

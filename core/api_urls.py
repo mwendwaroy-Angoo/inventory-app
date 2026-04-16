@@ -5,7 +5,7 @@ from rest_framework.authtoken.views import obtain_auth_token
 from .api_views import (
     StoreViewSet, ItemViewSet, TransactionViewSet,
     NotificationViewSet, CustomerViewSet,
-    business_summary, quick_sell_api,
+    business_summary, quick_sell_api, forecast_api,
 )
 
 router = DefaultRouter()
@@ -19,5 +19,6 @@ urlpatterns = [
     path('', include(router.urls)),
     path('summary/', business_summary, name='api-summary'),
     path('quick-sell/', quick_sell_api, name='api-quick-sell'),
+    path('forecast/', forecast_api, name='api-forecast'),
     path('auth/token/', obtain_auth_token, name='api-token'),
 ]
