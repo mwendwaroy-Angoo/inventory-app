@@ -244,3 +244,108 @@ def quick_sell_api(request):
         'sales': results,
         'total_revenue': round(total_revenue, 2),
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated, HasBusiness])
+def forecast_api(request):
+    """Return revenue history and forecast for the user's business.
+
+    Query params:
+    - source: 'transaction' | 'order' | 'both' (default 'both')
+    - cadence: 'daily'|'weekly'|'monthly' (default 'daily')
+    - horizon: integer periods to forecast (default 30)
+    - start / end: optional ISO dates to filter history
+    """
+    business = get_business(request)
+    source = request.query_params.get('source', 'both')
+    cadence = request.query_params.get('cadence', 'daily')
+    try:
+        horizon = int(request.query_params.get('horizon', 30))
+    except Exception:
+        horizon = 30
+    date_from = request.query_params.get('start')
+    date_to = request.query_params.get('end')
+
+    import pandas as pd
+
+    parts = []
+    # Transactions (POS)
+    if source in ('transaction', 'both'):
+        tx_qs = Transaction.objects.filter(type='Issue', business=business)
+        if date_from:
+            tx_qs = tx_qs.filter(date__gte=date_from)
+        if date_to:
+            tx_qs = tx_qs.filter(date__lte=date_to)
+        tx_rows = list(tx_qs.values('date', 'qty', 'item__selling_price'))
+        if tx_rows:
+            df_tx = pd.DataFrame(tx_rows)
+            df_tx['date'] = pd.to_datetime(df_tx['date'])
+            df_tx['item__selling_price'] = pd.to_numeric(df_tx['item__selling_price'], errors='coerce').fillna(0.0)
+            df_tx['revenue'] = df_tx['qty'].abs() * df_tx['item__selling_price']
+            df_tx_group = df_tx.groupby(df_tx['date'].dt.floor('D')).agg({'revenue': 'sum'}).reset_index()
+            parts.append(df_tx_group)
+
+    # Orders (marketplace)
+    if source in ('order', 'both'):
+        from .models import Order
+        ord_qs = Order.objects.filter(business=business, status__in=['paid', 'ready', 'completed'])
+        if date_from:
+            ord_qs = ord_qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            ord_qs = ord_qs.filter(created_at__date__lte=date_to)
+        ord_rows = list(ord_qs.values('created_at', 'total_amount'))
+        if ord_rows:
+            df_ord = pd.DataFrame(ord_rows)
+            df_ord['date'] = pd.to_datetime(df_ord['created_at']).dt.floor('D')
+            df_ord['total_amount'] = pd.to_numeric(df_ord['total_amount'], errors='coerce').fillna(0.0)
+            df_ord_group = df_ord.groupby('date').agg({'total_amount': 'sum'}).reset_index()
+            df_ord_group = df_ord_group.rename(columns={'total_amount': 'revenue'})
+            parts.append(df_ord_group)
+
+    if parts:
+        df_hist = pd.concat(parts).groupby('date', as_index=False).agg({'revenue': 'sum'})
+    else:
+        df_hist = pd.DataFrame(columns=['date', 'revenue'])
+
+    # If no history, return empty arrays
+    if df_hist.empty:
+        return Response({
+            'history': [],
+            'forecast': [],
+            'meta': {'cadence': cadence, 'horizon': horizon, 'source': source}
+        })
+
+    # Prefer returned persisted forecast when available and matching params
+    try:
+        from core.models import Forecast
+        cached = Forecast.objects.filter(business=business, source=source, cadence=cadence, horizon=horizon).order_by('-generated_at').first()
+        if cached:
+            return Response({
+                'history': cached.history or [],
+                'forecast': cached.forecast or [],
+                'meta': {'cadence': cadence, 'horizon': horizon, 'source': source, 'cached': True, 'generated_at': cached.generated_at.isoformat()}
+            })
+    except Exception:
+        pass
+
+    # Resample and forecast using the prototype module
+    from forecast import forecast as fcmod
+
+    s = fcmod.resample_series(df_hist, cadence=cadence)
+    forecast_series = fcmod.fit_ets_forecast(s, steps=horizon, cadence=cadence)
+
+    history_list = []
+    for d, v in zip(s.index.to_pydatetime(), s.values.tolist()):
+        history_list.append({'date': d.isoformat(), 'revenue': float(v)})
+
+    forecast_list = []
+    for d, v in zip(forecast_series.index.to_pydatetime(), forecast_series.values.tolist()):
+        # ensure serializable
+        forecast_list.append({'date': d.isoformat(), 'forecast': float(v)})
+
+    return Response({
+        'history': history_list,
+        'forecast': forecast_list,
+        'meta': {'cadence': cadence, 'horizon': horizon, 'source': source}
+    })

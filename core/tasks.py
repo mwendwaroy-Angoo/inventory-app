@@ -6,6 +6,31 @@ from django.core.management import call_command
 from .models import ImportJob
 
 
+# Celery-friendly shared_task decorator: use Celery when available, otherwise
+# provide a no-op decorator so imports don't fail when Celery isn't installed.
+try:
+    from celery import shared_task
+except Exception:
+    def shared_task(*a, **k):
+        def _dec(fn):
+            return fn
+        return _dec
+
+
+@shared_task(bind=True)
+def precompute_forecasts_task(self, source='both', cadence='daily', horizon=30, output_dir='forecast/output'):
+    """Celery task wrapper that runs the `precompute_forecasts` management command.
+
+    Arguments mirror the management command and are left as simple types
+    so they serialize cleanly via Celery.
+    """
+    try:
+        call_command('precompute_forecasts', '--source', source, '--cadence', cadence, '--horizon', str(horizon), '--output-dir', output_dir)
+    except Exception:
+        # Let Celery record the failure/traceback; don't re-raise here to allow retries configuration.
+        raise
+
+
 def run_import_job(job_id):
     """Background runner for queued import jobs.
 

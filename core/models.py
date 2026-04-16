@@ -399,6 +399,40 @@ class OrderLine(models.Model):
         return f"{self.item.description} x{self.quantity}"
 
 
+class Forecast(models.Model):
+    """Persisted revenue forecasts for a business.
+
+    Stores the input history and produced forecast as JSON so the UI can
+    display precomputed forecasts quickly.
+    """
+    SOURCE_CHOICES = [
+        ('transaction', 'Transaction'),
+        ('order', 'Order'),
+        ('both', 'Both'),
+    ]
+    CADENCE_CHOICES = [
+        ('daily', 'Daily'),
+        ('weekly', 'Weekly'),
+        ('monthly', 'Monthly'),
+    ]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='forecasts', null=True, blank=True)
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='both')
+    cadence = models.CharField(max_length=10, choices=CADENCE_CHOICES, default='daily')
+    horizon = models.IntegerField(default=30)
+    generated_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    history = models.JSONField(default=list, blank=True)
+    forecast = models.JSONField(default=list, blank=True)
+    plot_path = models.CharField(max_length=512, blank=True, null=True)
+    meta = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-generated_at']
+
+    def __str__(self):
+        return f"Forecast {self.business} {self.cadence} h{self.horizon} @ {self.generated_at.isoformat()}"
+
+
 # ────────────────────────────────────────────────
 # PAYMENT MODEL (M-Pesa & Others)
 # ────────────────────────────────────────────────

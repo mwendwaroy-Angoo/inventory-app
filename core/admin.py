@@ -12,6 +12,7 @@ from .tasks import run_import_job
 from .models import (
     Store, Item, Transaction, Customer, BusinessType, County, SubCounty, Ward,
     Order, OrderLine, Payment, RiderProfile, SupplierRelationship, Notification,
+    Forecast,
     ProcurementRequest, SupplierBid, SupplierApplication, Feedback, DeliveryRating,
     PendingTransactionPrompt,
 )
@@ -258,6 +259,14 @@ class ProcurementRequestAdmin(admin.ModelAdmin):
     list_display = ('title', 'business', 'category', 'status', 'deadline', 'created_at')
     list_filter = ('status', 'category')
     search_fields = ('title', 'description', 'business__name')
+
+
+@admin.register(Forecast)
+class ForecastAdmin(admin.ModelAdmin):
+    list_display = ('id', 'business', 'source', 'cadence', 'horizon', 'generated_at')
+    list_filter = ('source', 'cadence', 'generated_at')
+    readonly_fields = ('history', 'forecast', 'plot_path', 'meta')
+    search_fields = ('business__name',)
 
 
 class SupplierBidInline(admin.TabularInline):

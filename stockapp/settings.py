@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework.authtoken',
+    'django_celery_beat',
     'core',
     'django_bootstrap5',
     'accounts',
@@ -159,3 +160,27 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 25,
 }
+
+
+# Celery configuration
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', CELERY_BROKER_URL)
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+
+# Optional Beat schedule: default nightly precompute at 02:15 if celery is installed
+try:
+    from celery.schedules import crontab
+except Exception:
+    crontab = None
+
+if crontab:
+    CELERY_BEAT_SCHEDULE = {
+        'precompute-forecasts-nightly': {
+            'task': 'core.tasks.precompute_forecasts_task',
+            'schedule': crontab(hour=2, minute=15),
+            'args': (),
+        },
+    }

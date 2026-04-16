@@ -168,6 +168,21 @@ def analytics_dashboard(request):
 
     profit_margin = round(cur_profit / cur_revenue * 100, 1) if cur_revenue > 0 else 0
 
+    # ── Latest precomputed forecast (if any) ──
+    try:
+        from core.models import Forecast
+        latest_fc = Forecast.objects.filter(business=business).order_by('-generated_at').first()
+    except Exception:
+        latest_fc = None
+
+    if latest_fc:
+        fc_forecast = latest_fc.forecast or []
+        forecast_chart_labels = [d.get('date') for d in fc_forecast]
+        forecast_chart_values = [round(d.get('forecast', 0), 2) for d in fc_forecast]
+    else:
+        forecast_chart_labels = []
+        forecast_chart_values = []
+
     context = {
         'period': days,
         'start_date': start_date,
@@ -212,6 +227,9 @@ def analytics_dashboard(request):
         'busiest_day_rev': busiest_day_rev,
         'avg_daily_revenue': avg_daily_revenue,
         'active_days': active_days,
+        # Forecast
+        'forecast_chart_labels': json.dumps(forecast_chart_labels),
+        'forecast_chart_values': json.dumps(forecast_chart_values),
     }
     return render(request, 'core/analytics.html', context)
 
