@@ -14,7 +14,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-#e-h-#sy&d7=%m2v$2g%&x_odb
 
 DEBUG = True
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'dukamwecheche.co.ke,www.dukamwecheche.co.ke').split(',')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
