@@ -584,7 +584,7 @@
         if (start) params.append('start', start);
         if (end) params.append('end', end);
         params.append('async', '1');
-        const url = `/api/forecast/?${params.toString()}`;
+        const url = `/api/v1/forecast/?${params.toString()}`;
         const statusEl = document.getElementById('forecastStatus');
         statusEl.textContent = 'Queueing...';
         fetch(url, { credentials: 'same-origin' }).then(response => {
@@ -604,7 +604,7 @@
             // 202: queued via Celery — poll for completion
             if (status === 202) {
                 statusEl.textContent = 'Queued — processing...';
-                pollStatus(body.status_url || `/api/forecast/?task=${body.task}`);
+                pollStatus(body.status_url || `/api/v1/forecast/?task=${body.task}`);
                 return;
             }
             // Completed inline (sync fallback or pure synchronous response)
@@ -618,7 +618,7 @@
             // Still pending and we got a task token back
             if (body.task) {
                 statusEl.textContent = 'Queued';
-                pollStatus(body.status_url || `/api/forecast/?task=${body.task}`);
+                pollStatus(body.status_url || `/api/v1/forecast/?task=${body.task}`);
                 return;
             }
             statusEl.textContent = 'Error queuing';
