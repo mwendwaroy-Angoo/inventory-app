@@ -41,3 +41,7 @@ whitenoise==6.11.0
 yarl==1.23.0
 celery>=5.3.0
 django-celery-beat>=2.4.0
+pandas
+numpy
+matplotlib
+statsmodels
