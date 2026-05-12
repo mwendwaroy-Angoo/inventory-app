@@ -363,6 +363,7 @@ def forecast_api(request):
 
     # If client asked for async, create a placeholder Forecast, enqueue work, and return task token
     if async_req:
+        enqueue_error = None
         try:
             from django.apps import apps
             Forecast = None
@@ -386,14 +387,55 @@ def forecast_api(request):
 
             # schedule background worker (Celery when available)
             if hasattr(core_tasks.forecast_async_task, 'delay'):
-                core_tasks.forecast_async_task.delay(fobj.id if fobj else None, business.id, source, cadence, horizon, date_from, date_to, int(product_id) if product_id else None)
+                try:
+                    core_tasks.forecast_async_task.delay(
+                        fobj.id if fobj else None, business.id, source, cadence,
+                        horizon, date_from, date_to,
+                        int(product_id) if product_id else None,
+                    )
+                except Exception as exc:
+                    # Broker / Celery worker not reachable — fall back to inline execution
+                    enqueue_error = str(exc)
+                    core_tasks.forecast_async_task(
+                        fobj.id if fobj else None, business.id, source, cadence,
+                        horizon, date_from, date_to,
+                        int(product_id) if product_id else None,
+                    )
             else:
-                core_tasks.forecast_async_task(fobj.id if fobj else None, business.id, source, cadence, horizon, date_from, date_to, int(product_id) if product_id else None)
+                core_tasks.forecast_async_task(
+                    fobj.id if fobj else None, business.id, source, cadence,
+                    horizon, date_from, date_to,
+                    int(product_id) if product_id else None,
+                )
+
+            # If we ran inline (no .delay or broker failure), the Forecast row is
+            # already populated — return the completed payload immediately so the
+            # UI doesn't have to poll a queue that doesn't exist.
+            if enqueue_error is not None or not hasattr(core_tasks.forecast_async_task, 'delay'):
+                if fobj is not None:
+                    try:
+                        fobj.refresh_from_db()
+                    except Exception:
+                        pass
+                    return Response({
+                        'status': 'completed',
+                        'task': token,
+                        'history': fobj.history or [],
+                        'forecast': fobj.forecast or [],
+                        'meta': {
+                            **{'cadence': cadence, 'horizon': horizon, 'source': source, 'sync_fallback': True},
+                            **(fobj.meta or {}),
+                        },
+                    })
 
             status_url = request.build_absolute_uri(reverse('api-forecast')) + f'?task={token}'
             return Response({'task': token, 'status_url': status_url}, status=status.HTTP_202_ACCEPTED)
-        except Exception:
-            pass
+        except Exception as exc:
+            # Last-resort fallback so the UI gets a useful response instead of "Error queueing"
+            return Response(
+                {'error': 'forecast_enqueue_failed', 'detail': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
     # Synchronous path: resample and forecast now
     from forecast import forecast as fcmod
@@ -410,7 +452,10 @@ def forecast_api(request):
         forecast_list.append({'date': d.isoformat(), 'forecast': float(v)})
 
     return Response({
+        'status': 'completed',
         'history': history_list,
         'forecast': forecast_list,
         'meta': {'cadence': cadence, 'horizon': horizon, 'source': source}
     })
+
+

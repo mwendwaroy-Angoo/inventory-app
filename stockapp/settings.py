@@ -33,11 +33,21 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "rest_framework.authtoken",
-    "django_celery_beat",
     "core",
     "django_bootstrap5",
     "accounts",
 ]
+
+# Optional: only add django_celery_beat if installed in the current environment.
+# This prevents ModuleNotFoundError when running with a Python interpreter that
+# doesn't have it (e.g. system Python instead of the project venv).
+try:
+    import importlib.util as _ilu
+    if _ilu.find_spec("django_celery_beat") is not None:
+        INSTALLED_APPS.insert(INSTALLED_APPS.index("core"), "django_celery_beat")
+except Exception:
+    pass
+
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

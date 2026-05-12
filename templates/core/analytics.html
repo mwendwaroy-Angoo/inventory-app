@@ -588,21 +588,45 @@
         const statusEl = document.getElementById('forecastStatus');
         statusEl.textContent = 'Queueing...';
         fetch(url, { credentials: 'same-origin' }).then(response => {
-            return response.json().then(data => ({ status: response.status, body: data }));
+            return response.json().then(data => ({ status: response.status, body: data }))
+                .catch(() => ({ status: response.status, body: null }));
         }).then(({ status, body }) => {
+            // Server-side error responses (broker down, 500, 503, etc.)
+            if (status >= 400) {
+                const detail = (body && (body.detail || body.error)) || ('HTTP ' + status);
+                statusEl.textContent = 'Error: ' + detail;
+                return;
+            }
+            if (!body) {
+                statusEl.textContent = 'Error: empty response';
+                return;
+            }
+            // 202: queued via Celery — poll for completion
             if (status === 202) {
                 statusEl.textContent = 'Queued — processing...';
                 pollStatus(body.status_url || `/api/forecast/?task=${body.task}`);
-            } else if (body && body.status === 'completed') {
-                statusEl.textContent = 'Completed';
-                updateForecastChart(body.history || [], body.forecast || []);
-            } else if (body && body.task) {
-                statusEl.textContent = 'Queued';
-                pollStatus(`/api/forecast/?task=${body.task}`);
-            } else {
-                statusEl.textContent = 'Error queuing';
+                return;
             }
-        }).catch(() => { statusEl.textContent = 'Error queuing'; });
+            // Completed inline (sync fallback or pure synchronous response)
+            if (body.status === 'completed' || (Array.isArray(body.forecast) && body.forecast.length >= 0 && Array.isArray(body.history))) {
+                statusEl.textContent = body.meta && body.meta.sync_fallback
+                    ? 'Completed (inline — no worker available)'
+                    : 'Completed';
+                updateForecastChart(body.history || [], body.forecast || []);
+                return;
+            }
+            // Still pending and we got a task token back
+            if (body.task) {
+                statusEl.textContent = 'Queued';
+                pollStatus(body.status_url || `/api/forecast/?task=${body.task}`);
+                return;
+            }
+            statusEl.textContent = 'Error queuing';
+        }).catch((err) => {
+            console.error('Forecast request failed:', err);
+            statusEl.textContent = 'Network error';
+        });
     });
+
 </script>
 {% endblock %}
