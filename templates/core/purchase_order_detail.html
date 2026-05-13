@@ -6,7 +6,7 @@
 {% block content %}
 <h2 class="page-title">📦 PO-{{ po.id }}</h2>
 <p><strong>{% trans 'Status' %}:</strong> {{ po.get_status_display }}</p>
-<p><strong>{% trans 'Supplier' %}:</strong> {{ po.supplier.name if po.supplier else '—' }}</p>
+<p><strong>{% trans 'Supplier' %}:</strong> {{ po.supplier.name|default:'—' }}</p>
 <p><strong>{% trans 'Expected Delivery' %}:</strong> {{ po.expected_delivery_date|default:'—' }}</p>
 <hr class="gold-divider">
 

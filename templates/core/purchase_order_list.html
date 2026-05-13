@@ -24,7 +24,7 @@
             <tr>
                 <td><strong>PO-{{ po.id }}</strong></td>
                 <td>{{ po.get_status_display }}</td>
-                <td>{{ po.supplier.name if po.supplier else '—' }}</td>
+                <td>{{ po.supplier.name|default:'—' }}</td>
                 <td>{{ po.lines.count }}</td>
                 <td>KES {{ po.total_ordered_value|floatformat:0 }}</td>
                 <td>{{ po.created_at.date }}</td>
