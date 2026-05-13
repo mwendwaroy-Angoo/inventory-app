@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans 'Expenses' %} — Duka Mwecheche{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'analytics' %}" style="color:var(--gold)">{% trans 'Analytics' %}</a>
+    <span class="mx-1">›</span>
+    <span>{% trans 'Expenses' %}</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+    <h2 class="page-title">💰 {% trans 'Business Expenses' %}</h2>
+    <div>
+        <a href="{% url 'expense_add' %}" class="btn btn-primary btn-sm">+ {% trans 'Add Expense' %}</a>
+        <a href="{% url 'analytics' %}" class="btn btn-secondary btn-sm">← {% trans 'Analytics' %}</a>
+    </div>
+</div>
+
+<!-- Period Filter -->
+<div class="d-flex flex-wrap gap-2 mb-4">
+    <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; align-self:center;">{% trans 'Period:' %}</span>
+    <a href="?period=7" class="period-btn {% if period == 7 %}active{% endif %}">{% trans '7 Days' %}</a>
+    <a href="?period=14" class="period-btn {% if period == 14 %}active{% endif %}">{% trans '14 Days' %}</a>
+    <a href="?period=30" class="period-btn {% if period == 30 %}active{% endif %}">{% trans '30 Days' %}</a>
+    <a href="?period=90" class="period-btn {% if period == 90 %}active{% endif %}">{% trans '90 Days' %}</a>
+    <a href="?period=365" class="period-btn {% if period == 365 %}active{% endif %}">{% trans '1 Year' %}</a>
+</div>
+
+<div style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    {% trans 'Showing:' %} <span style="color:var(--gold)">{{ start_date }} → {{ end_date }}</span>
+</div>
+
+<!-- Summary Card -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="stat-card" style="border-top: 3px solid var(--raspberry);">
+            <div class="stat-label">{% trans 'Total Expenses' %}</div>
+            <div class="stat-value" style="color:var(--raspberry)">KES {{ total_expenses|floatformat:0 }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Category Breakdown -->
+{% if category_breakdown %}
+<div class="section-title">📊 {% trans 'Expense Breakdown by Category' %}</div>
+<div class="table-responsive mb-4">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>{% trans 'Category' %}</th>
+                <th>{% trans 'Amount (KES)' %}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cat in category_breakdown %}
+            <tr>
+                <td><strong style="color:var(--pearl)">{{ cat.category }}</strong></td>
+                <td style="color:var(--raspberry)">{{ cat.total|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Expense List -->
+{% if expenses %}
+<div class="section-title">📋 {% trans 'All Expenses' %}</div>
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>{% trans 'Date' %}</th>
+                <th>{% trans 'Description' %}</th>
+                <th>{% trans 'Category' %}</th>
+                <th>{% trans 'Amount' %}</th>
+                <th>{% trans 'Notes' %}</th>
+                <th>{% trans 'Actions' %}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in expenses %}
+            <tr>
+                <td>{{ e.date|date:'d/m/Y' }}</td>
+                <td><strong style="color:var(--pearl)">{{ e.description }}</strong></td>
+                <td>{{ e.get_category_display }}</td>
+                <td style="color:var(--raspberry); font-weight:600;">KES {{ e.amount|floatformat:0 }}</td>
+                <td style="color:var(--muted); font-size:0.85rem;">{{ e.notes|truncatechars:50 }}</td>
+                <td>
+                    <a href="{% url 'expense_edit' e.id %}" class="btn btn-sm btn-outline-secondary">✏️</a>
+                    <a href="{% url 'expense_delete' e.id %}" class="btn btn-sm btn-outline-danger">🗑️</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p style="color:var(--muted); text-align:center; padding:2rem 0;">
+    {% trans 'No expenses recorded for this period.' %}
+</p>
+{% endif %}
+
+<style>
+    .period-btn {
+        padding: 0.4rem 1rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        letter-spacing: 0.05em;
+        text-decoration: none;
+        border: 1px solid #333;
+        color: var(--muted);
+        transition: all 0.2s;
+        background: transparent;
+    }
+    .period-btn:hover, .period-btn.active {
+        background: var(--raspberry);
+        border-color: var(--raspberry);
+        color: white;
+    }
+    .stat-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.2rem;
+        transition: transform 0.2s, border-color 0.2s;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+        border-color: var(--gold);
+    }
+    .stat-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+        margin-bottom: 0.4rem;
+    }
+    .stat-value {
+        font-family: 'Playfair Display', serif;
+        font-size: 1.6rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .section-title {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1.2rem;
+        margin: 2rem 0 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+</style>
+{% endblock %}

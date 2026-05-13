@@ -6,6 +6,7 @@ from .api_views import (
     StoreViewSet, ItemViewSet, TransactionViewSet,
     NotificationViewSet, CustomerViewSet,
     business_summary, quick_sell_api, forecast_api,
+    cancel_forecast_api,
 )
 
 router = DefaultRouter()
@@ -20,5 +21,6 @@ urlpatterns = [
     path('summary/', business_summary, name='api-summary'),
     path('quick-sell/', quick_sell_api, name='api-quick-sell'),
     path('forecast/', forecast_api, name='api-forecast'),
+    path('forecast/cancel/', cancel_forecast_api, name='api-forecast-cancel'),
     path('auth/token/', obtain_auth_token, name='api-token'),
 ]

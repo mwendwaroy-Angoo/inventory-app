@@ -8,7 +8,7 @@ import uuid
 from django.urls import reverse
 from . import tasks as core_tasks
 
-from .models import Item, Transaction, Store, Notification, Customer
+from .models import Item, Transaction, Store, Notification, Customer, Forecast
 from .serializers import (
     ItemSerializer, ItemWriteSerializer,
     TransactionSerializer, TransactionWriteSerializer,
@@ -198,13 +198,19 @@ def quick_sell_api(request):
     results = []
     today = timezone.localtime(timezone.now()).date()
 
+    # Pre-fetch all items in one query to avoid N+1
+    item_ids = [entry.get('item_id') for entry in cart if entry.get('item_id')]
+    items_map = {}
+    if item_ids:
+        for item in Item.objects.filter(id__in=item_ids, business=business).select_related('store'):
+            items_map[item.id] = item
+
     for entry in cart:
         item_id = entry.get('item_id')
         qty = entry.get('qty', 1)
 
-        try:
-            item = Item.objects.get(id=item_id, business=business)
-        except Item.DoesNotExist:
+        item = items_map.get(item_id)
+        if not item:
             results.append({'item_id': item_id, 'error': 'Item not found'})
             continue
 
@@ -249,6 +255,62 @@ def quick_sell_api(request):
     }, status=status.HTTP_201_CREATED)
 
 
+@api_view(['GET', 'POST'])
+@permission_classes([permissions.IsAuthenticated, HasBusiness])
+def cancel_forecast_api(request):
+    """Cancel a running forecast task.
+
+    GET: List running forecasts for this business.
+    POST: Cancel a forecast by task token or forecast ID.
+      Expects JSON: {"task": "<token>"} or {"forecast_id": <id>}
+    """
+    business = get_business(request)
+
+    if request.method == 'GET':
+        running = Forecast.objects.filter(
+            business=business,
+            meta__status__in=['pending', 'running']
+        ).order_by('-generated_at').values('id', 'meta', 'source', 'cadence', 'horizon', 'generated_at')
+        return Response({
+            'running_forecasts': [
+                {
+                    'id': f['id'],
+                    'task': (f['meta'] or {}).get('task'),
+                    'source': f['source'],
+                    'cadence': f['cadence'],
+                    'horizon': f['horizon'],
+                    'generated_at': f['generated_at'],
+                    'status': (f['meta'] or {}).get('status'),
+                }
+                for f in running
+            ]
+        })
+
+    # POST: cancel
+    task_token = request.data.get('task')
+    forecast_id = request.data.get('forecast_id')
+
+    qs = Forecast.objects.filter(business=business)
+    if task_token:
+        qs = qs.filter(meta__task=task_token)
+    elif forecast_id:
+        qs = qs.filter(id=forecast_id)
+    else:
+        return Response({'error': 'Provide "task" or "forecast_id".'}, status=status.HTTP_400_BAD_REQUEST)
+
+    count = 0
+    for fc in qs:
+        meta = fc.meta or {}
+        if meta.get('status') in ('pending', 'running'):
+            meta['status'] = 'cancelled'
+            meta['cancelled_at'] = timezone.now().isoformat()
+            fc.meta = meta
+            fc.save(update_fields=['meta'])
+            count += 1
+
+    return Response({'cancelled': count})
+
+
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated, HasBusiness])
 def forecast_api(request):
@@ -278,12 +340,13 @@ def forecast_api(request):
     # Task status query (polling by token)
     if task_token:
         try:
-            from core.models import Forecast
             fc = Forecast.objects.filter(business=business, meta__task=task_token).order_by('-generated_at').first()
             if not fc:
                 return Response({'status': 'unknown'}, status=status.HTTP_404_NOT_FOUND)
             status_meta = fc.meta or {}
             state = status_meta.get('status', 'pending')
+            if state == 'cancelled':
+                return Response({'status': 'cancelled', 'meta': status_meta})
             if state != 'completed':
                 return Response({'status': state, 'meta': status_meta})
             return Response({'status': 'completed', 'history': fc.history or [], 'forecast': fc.forecast or [], 'meta': status_meta})
@@ -340,7 +403,6 @@ def forecast_api(request):
 
     # Check for a cached persisted Forecast that matches parameters (including product/date when present)
     try:
-        from core.models import Forecast
         cached_qs = Forecast.objects.filter(business=business, source=source, cadence=cadence, horizon=horizon)
         if product_id:
             try:
@@ -365,25 +427,17 @@ def forecast_api(request):
     if async_req:
         enqueue_error = None
         try:
-            from django.apps import apps
-            Forecast = None
-            try:
-                Forecast = apps.get_model('core', 'Forecast')
-            except Exception:
-                Forecast = None
-
             token = str(uuid.uuid4())
             fobj = None
-            if Forecast:
-                fobj = Forecast.objects.create(
-                    business=business,
-                    source=source,
-                    cadence=cadence,
-                    horizon=horizon,
-                    history=[],
-                    forecast=[],
-                    meta={'task': token, 'status': 'pending', 'product_id': int(product_id) if product_id else None, 'start': date_from, 'end': date_to}
-                )
+            fobj = Forecast.objects.create(
+                business=business,
+                source=source,
+                cadence=cadence,
+                horizon=horizon,
+                history=[],
+                forecast=[],
+                meta={'task': token, 'status': 'pending', 'product_id': int(product_id) if product_id else None, 'start': date_from, 'end': date_to}
+            )
 
             # schedule background worker (Celery when available)
             if hasattr(core_tasks.forecast_async_task, 'delay'):
@@ -457,5 +511,3 @@ def forecast_api(request):
         'forecast': forecast_list,
         'meta': {'cadence': cadence, 'horizon': horizon, 'source': source}
     })
-
-

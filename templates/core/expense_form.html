@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{{ title }} — Duka Mwecheche{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'expense_list' %}" style="color:var(--gold)">{% trans 'Expenses' %}</a>
+    <span class="mx-1">›</span>
+    <span>{{ title }}</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+    <h2 class="page-title">💰 {{ title }}</h2>
+    <a href="{% url 'expense_list' %}" class="btn btn-secondary btn-sm">← {% trans 'Back to Expenses' %}</a>
+</div>
+
+<div class="row">
+    <div class="col-md-8 col-lg-6">
+        <div style="background: var(--onyx-card); border: 1px solid #333; border-radius: 10px; padding: 1.5rem;">
+            <form method="post">
+                {% csrf_token %}
+                {% for field in form %}
+                <div class="mb-3">
+                    <label for="{{ field.id_for_label }}" style="display:block; font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.3rem;">
+                        {{ field.label }}
+                    </label>
+                    {{ field }}
+                    {% if field.help_text %}
+                    <div style="font-size:0.75rem; color:var(--muted); margin-top:0.2rem;">{{ field.help_text }}</div>
+                    {% endif %}
+                    {% if field.errors %}
+                    <div style="color:var(--danger); font-size:0.8rem; margin-top:0.2rem;">
+                        {% for error in field.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+                <div class="d-flex gap-2 mt-4">
+                    <button type="submit" class="btn btn-primary">{% trans 'Save' %}</button>
+                    <a href="{% url 'expense_list' %}" class="btn btn-secondary">{% trans 'Cancel' %}</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+    input, select, textarea {
+        width: 100%;
+        padding: 0.6rem 0.8rem;
+        border-radius: 6px;
+        border: 1px solid #444;
+        background: #1a1a1a;
+        color: var(--pearl);
+        font-size: 0.9rem;
+    }
+    input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: var(--gold);
+    }
+</style>
+{% endblock %}

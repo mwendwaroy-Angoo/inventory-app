@@ -3,7 +3,7 @@ from django.utils import timezone
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.utils.translation import gettext as _
 from .models import Item, Transaction, Store, Customer, PurchaseOrder, PurchaseOrderLine
 from .forms import ItemForm, PurchaseOrderForm, PurchaseOrderLineForm, PurchaseOrderLineFormSet
@@ -1016,18 +1016,30 @@ def quick_sell(request):
                 }
             )
 
-    # Build items with pre-calculated balance
-    items_qs = Item.objects.filter(
+    # Build items with pre-calculated balance (bulk prefetch to avoid N+1)
+    items_qs = list(Item.objects.filter(
         store__business=user_profile.business
-    ).select_related('store').order_by('description')
+    ).select_related('store').order_by('description'))
+
+    # Pre-fetch aggregate transaction quantities in ONE query
+    if items_qs:
+        item_ids = [item.id for item in items_qs]
+        txn_aggregates = Transaction.objects.filter(
+            item_id__in=item_ids
+        ).values('item_id').annotate(total_qty=Sum('qty'))
+        balance_lookup = {agg['item_id']: (agg['total_qty'] or 0) for agg in txn_aggregates}
+    else:
+        balance_lookup = {}
 
     items = []
     for item in items_qs:
+        txn_sum = balance_lookup.get(item.id, 0)
+        balance = item.opening_bin_balance + txn_sum
         items.append({
             'id': item.id,
             'description': item.description,
             'selling_price': item.selling_price,
-            'balance': item.current_balance(),
+            'balance': balance,
             'unit': item.unit,
             'store_id': item.store_id,
             'reorder_level': item.reorder_level,

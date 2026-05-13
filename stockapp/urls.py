@@ -40,7 +40,10 @@ from core.feedback_views import (
     rate_rider, rider_performance_view, supplier_performance_view,
 )
 from core.whatsapp_bot import whatsapp_webhook
-from core.analytics_views import analytics_dashboard, analytics_api
+from core.analytics_views import (
+    analytics_dashboard, analytics_api,
+    expense_list, expense_add, expense_edit, expense_delete,
+)
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -140,6 +143,12 @@ urlpatterns = [
 
     # ── WhatsApp Bot ──
     path('whatsapp/webhook/', whatsapp_webhook, name='whatsapp_webhook'),
+
+    # ── Business Expenses ──
+    path('analytics/expenses/', expense_list, name='expense_list'),
+    path('analytics/expenses/add/', expense_add, name='expense_add'),
+    path('analytics/expenses/<int:expense_id>/edit/', expense_edit, name='expense_edit'),
+    path('analytics/expenses/<int:expense_id>/delete/', expense_delete, name='expense_delete'),
 
     # ── Analytics ──
     path('analytics/', analytics_dashboard, name='analytics'),

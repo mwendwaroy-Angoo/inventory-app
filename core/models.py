@@ -434,6 +434,45 @@ class Forecast(models.Model):
 
 
 # ────────────────────────────────────────────────
+# BUSINESS EXPENSES (for net profit calculation)
+# ────────────────────────────────────────────────
+
+class BusinessExpense(models.Model):
+    CATEGORY_CHOICES = [
+        ('labor', _('Labor / Salaries')),
+        ('electricity', _('Electricity Bills')),
+        ('rent', _('Rent')),
+        ('utilities', _('Utilities (Water, Internet)')),
+        ('transport', _('Transport / Logistics')),
+        ('marketing', _('Marketing & Advertising')),
+        ('maintenance', _('Maintenance & Repairs')),
+        ('supplies', _('Office Supplies')),
+        ('tax', _('Taxes & Licenses')),
+        ('other', _('Other')),
+    ]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='expenses')
+    description = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='other')
+    date = models.DateField(default=timezone.now)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+        verbose_name = _('Business Expense')
+        verbose_name_plural = _('Business Expenses')
+        indexes = [
+            models.Index(fields=['business', 'date']),
+        ]
+
+    def __str__(self):
+        return f"{self.description} — KES {self.amount:,.0f} ({self.date})"
+
+
+# ────────────────────────────────────────────────
 # PAYMENT MODEL (M-Pesa & Others)
 # ────────────────────────────────────────────────
 

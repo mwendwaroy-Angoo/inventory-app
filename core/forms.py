@@ -1,7 +1,8 @@
 from django import forms
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 import json
-from .models import Item, Store, PurchaseOrder, PurchaseOrderLine, Category
+from .models import Item, Store, PurchaseOrder, PurchaseOrderLine, Category, BusinessExpense
 from django.forms import inlineformset_factory
 
 
@@ -193,3 +194,28 @@ PurchaseOrderLineFormSet = inlineformset_factory(
     extra=1,
     can_delete=True,
 )
+
+
+class BusinessExpenseForm(forms.ModelForm):
+    """Form for recording business expenses (labor, rent, electricity, etc.)."""
+
+    class Meta:
+        model = BusinessExpense
+        fields = ['description', 'amount', 'category', 'date', 'notes']
+        widgets = {
+            'description': forms.TextInput(attrs={'placeholder': _('e.g. Staff salaries for March')}),
+            'amount': forms.NumberInput(attrs={'placeholder': '0.00', 'step': '0.01'}),
+            'date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 3, 'placeholder': _('Optional notes...')}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            field.widget.attrs['class'] = 'form-control'
+        self.fields['description'].label = _('Description')
+        self.fields['amount'].label = _('Amount (KES)')
+        self.fields['category'].label = _('Category')
+        self.fields['date'].label = _('Date')
+        self.fields['notes'].label = _('Notes')
+        self.fields['date'].initial = timezone.now().date()

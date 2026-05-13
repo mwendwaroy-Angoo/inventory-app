@@ -4,6 +4,10 @@ Analytics views — advanced reports and chart data.
 Available views:
     /analytics/                  — Full analytics dashboard (HTML)
     /api/v1/analytics/trends/    — JSON: daily revenue/profit/orders for charts
+    /analytics/expenses/         — List business expenses
+    /analytics/expenses/add/     — Add a business expense
+    /analytics/expenses/<id>/edit/ — Edit a business expense
+    /analytics/expenses/<id>/delete/ — Delete a business expense
 """
 
 import json
@@ -12,12 +16,15 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
+from django.contrib import messages
 from django.db.models import Sum, Count, Q, F
 from django.http import JsonResponse
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
+from django.utils.translation import gettext as _
 
-from core.models import Item, Transaction, Order, Payment
+from core.models import Item, Transaction, Order, Payment, BusinessExpense
+from core.forms import BusinessExpenseForm
 from core.views import get_user_profile, owner_required
 
 
@@ -182,6 +189,14 @@ def analytics_dashboard(request):
 
     profit_margin = round(cur_profit / cur_revenue * 100, 1) if cur_revenue > 0 else 0
 
+    # ── Net Profit (gross profit - expenses) ──
+    total_expenses = BusinessExpense.objects.filter(
+        business=business,
+        date__gte=start_date,
+        date__lte=today,
+    ).aggregate(total=Sum('amount'))['total'] or 0
+    net_profit = cur_profit - float(total_expenses)
+
     # ── Latest precomputed forecast (if any) ──
     try:
         from core.models import Forecast
@@ -247,6 +262,9 @@ def analytics_dashboard(request):
         # Forecast
         'forecast_chart_labels': json.dumps(forecast_chart_labels),
         'forecast_chart_values': json.dumps(forecast_chart_values),
+        # Expenses & Net Profit
+        'total_expenses': round(float(total_expenses), 2),
+        'net_profit': round(net_profit, 2),
         # Product filter
         'items': items,
         'selected_product': selected_product,
@@ -291,3 +309,117 @@ def analytics_api(request):
         d += timedelta(days=1)
 
     return JsonResponse({'trends': data, 'period_days': days})
+
+
+# ── BUSINESS EXPENSES CRUD ────────────────────────────────────────────────────
+
+
+@login_required
+@owner_required
+def expense_list(request):
+    """List all business expenses for the current period."""
+    user_profile = request.user.userprofile
+    business = user_profile.business
+    today = date.today()
+
+    period = request.GET.get('period', '30')
+    try:
+        days = int(period)
+    except ValueError:
+        days = 30
+    days = min(days, 365)
+    start_date = today - timedelta(days=days - 1)
+
+    expenses = BusinessExpense.objects.filter(
+        business=business,
+        date__gte=start_date,
+        date__lte=today,
+    ).order_by('-date', '-created_at')
+
+    total_expenses = expenses.aggregate(total=Sum('amount'))['total'] or 0
+
+    # Group by category for breakdown
+    category_totals = expenses.values('category').annotate(
+        total=Sum('amount')
+    ).order_by('-total')
+
+    CATEGORY_LABELS = dict(BusinessExpense.CATEGORY_CHOICES)
+    category_breakdown = [
+        {'category': CATEGORY_LABELS.get(c['category'], c['category']),
+         'total': float(c['total'])}
+        for c in category_totals
+    ]
+
+    return render(request, 'core/expense_list.html', {
+        'expenses': expenses,
+        'total_expenses': float(total_expenses),
+        'category_breakdown': category_breakdown,
+        'period': days,
+        'start_date': start_date,
+        'end_date': today,
+    })
+
+
+@login_required
+@owner_required
+def expense_add(request):
+    """Add a new business expense."""
+    user_profile = request.user.userprofile
+    business = user_profile.business
+
+    if request.method == 'POST':
+        form = BusinessExpenseForm(request.POST)
+        if form.is_valid():
+            expense = form.save(commit=False)
+            expense.business = business
+            expense.save()
+            messages.success(request, _('Expense recorded successfully.'))
+            return redirect('expense_list')
+    else:
+        form = BusinessExpenseForm()
+
+    return render(request, 'core/expense_form.html', {
+        'form': form,
+        'title': _('Add Expense'),
+    })
+
+
+@login_required
+@owner_required
+def expense_edit(request, expense_id):
+    """Edit an existing business expense."""
+    user_profile = request.user.userprofile
+    business = user_profile.business
+    expense = get_object_or_404(BusinessExpense, id=expense_id, business=business)
+
+    if request.method == 'POST':
+        form = BusinessExpenseForm(request.POST, instance=expense)
+        if form.is_valid():
+            form.save()
+            messages.success(request, _('Expense updated successfully.'))
+            return redirect('expense_list')
+    else:
+        form = BusinessExpenseForm(instance=expense)
+
+    return render(request, 'core/expense_form.html', {
+        'form': form,
+        'title': _('Edit Expense'),
+    })
+
+
+@login_required
+@owner_required
+def expense_delete(request, expense_id):
+    """Delete a business expense."""
+    user_profile = request.user.userprofile
+    business = user_profile.business
+    expense = get_object_or_404(BusinessExpense, id=expense_id, business=business)
+
+    if request.method == 'POST':
+        expense.delete()
+        messages.success(request, _('Expense deleted.'))
+        return redirect('expense_list')
+
+    return render(request, 'core/expense_confirm_delete.html', {
+        'expense': expense,
+    })

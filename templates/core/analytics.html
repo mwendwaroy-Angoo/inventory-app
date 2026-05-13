@@ -133,6 +133,7 @@
     <input type="date" id="forecastStart" class="form-control form-control-sm" value="{{ start_date|date:'Y-m-d' }}" style="width:150px;">
     <input type="date" id="forecastEnd" class="form-control form-control-sm" value="{{ end_date|date:'Y-m-d' }}" style="width:150px;">
     <button id="runForecast" class="btn btn-primary btn-sm">Run Forecast</button>
+    <button id="cancelForecast" class="btn btn-danger btn-sm" style="display:none;">Cancel Forecast</button>
     <span id="forecastStatus" style="margin-left:0.5rem;color:var(--muted)"></span>
 </div>
 
@@ -174,8 +175,26 @@
     </div>
 </div>
 
-<!-- ═══ INSIGHTS ROW ═══ -->
+<!-- ═══ NET PROFIT & EXPENSES ROW ═══ -->
 <div class="row g-3 mb-4">
+    <div class="col-md-3 col-6">
+        <div class="stat-card" style="border-top: 3px solid {% if net_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};">
+            <div class="stat-label">{% trans 'Net Profit' %}</div>
+            <div class="stat-value" style="color:{% if net_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}">{{ net_profit|floatformat:0 }}</div>
+            <div class="stat-change" style="color:var(--muted)">
+                {% trans 'Gross:' %} {{ cur_profit|floatformat:0 }}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="stat-card" style="border-top: 3px solid var(--raspberry);">
+            <div class="stat-label">{% trans 'Total Expenses' %}</div>
+            <div class="stat-value" style="color:var(--raspberry)">{{ total_expenses|floatformat:0 }}</div>
+            <div class="stat-change">
+                <a href="{% url 'expense_list' %}" style="color:var(--gold); font-size:0.8rem;">{% trans 'Manage Expenses →' %}</a>
+            </div>
+        </div>
+    </div>
     <div class="col-md-3 col-6">
         <div class="insight-card">
             <div class="insight-label">{% trans 'Avg Daily Revenue' %}</div>
@@ -188,6 +207,10 @@
             <div class="insight-value">{{ active_days }} / {{ period }}</div>
         </div>
     </div>
+</div>
+
+<!-- ═══ INSIGHTS ROW ═══ -->
+<div class="row g-3 mb-4">
     <div class="col-md-3 col-6">
         <div class="insight-card">
             <div class="insight-label">{% trans 'Best Day' %}</div>
@@ -198,6 +221,18 @@
         <div class="insight-card">
             <div class="insight-label">{% trans 'Best Day Revenue' %}</div>
             <div class="insight-value">KES {{ busiest_day_rev|floatformat:0 }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="insight-card">
+            <div class="insight-label">{% trans 'Cost of Goods Sold' %}</div>
+            <div class="insight-value" style="color:var(--raspberry)">KES {{ cur_cost|floatformat:0 }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="insight-card">
+            <div class="insight-label">{% trans 'Stock Value' %}</div>
+            <div class="insight-value">KES {{ stock_value|floatformat:0 }}</div>
         </div>
     </div>
 </div>
@@ -586,7 +621,9 @@
         params.append('async', '1');
         const url = `/api/v1/forecast/?${params.toString()}`;
         const statusEl = document.getElementById('forecastStatus');
+        const cancelBtn = document.getElementById('cancelForecast');
         statusEl.textContent = 'Queueing...';
+        cancelBtn.style.display = 'none';
         fetch(url, { credentials: 'same-origin' }).then(response => {
             return response.json().then(data => ({ status: response.status, body: data }))
                 .catch(() => ({ status: response.status, body: null }));
@@ -604,6 +641,8 @@
             // 202: queued via Celery — poll for completion
             if (status === 202) {
                 statusEl.textContent = 'Queued — processing...';
+                cancelBtn.style.display = 'inline-block';
+                cancelBtn.dataset.taskId = body.task || '';
                 pollStatus(body.status_url || `/api/v1/forecast/?task=${body.task}`);
                 return;
             }
@@ -612,12 +651,15 @@
                 statusEl.textContent = body.meta && body.meta.sync_fallback
                     ? 'Completed (inline — no worker available)'
                     : 'Completed';
+                cancelBtn.style.display = 'none';
                 updateForecastChart(body.history || [], body.forecast || []);
                 return;
             }
             // Still pending and we got a task token back
             if (body.task) {
                 statusEl.textContent = 'Queued';
+                cancelBtn.style.display = 'inline-block';
+                cancelBtn.dataset.taskId = body.task || '';
                 pollStatus(body.status_url || `/api/v1/forecast/?task=${body.task}`);
                 return;
             }
@@ -625,6 +667,30 @@
         }).catch((err) => {
             console.error('Forecast request failed:', err);
             statusEl.textContent = 'Network error';
+        });
+    });
+
+    // Cancel Forecast button
+    document.getElementById('cancelForecast').addEventListener('click', function () {
+        const taskId = this.dataset.taskId || '';
+        const statusEl = document.getElementById('forecastStatus');
+        const cancelBtn = this;
+        if (!taskId) {
+            statusEl.textContent = 'No active task';
+            return;
+        }
+        statusEl.textContent = 'Cancelling...';
+        fetch('/api/v1/forecast/cancel/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ task: taskId })
+        }).then(r => r.json()).then(data => {
+            statusEl.textContent = data.status === 'cancelled' ? 'Cancelled' : (data.detail || 'Error');
+            cancelBtn.style.display = 'none';
+        }).catch(err => {
+            console.error('Cancel request failed:', err);
+            statusEl.textContent = 'Error cancelling';
         });
     });
 

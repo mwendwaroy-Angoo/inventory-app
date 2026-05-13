@@ -77,6 +77,7 @@ def forecast_async_task(forecast_obj_id, business_id, source='both', cadence='da
     """Background worker to compute a forecast and update the Forecast DB record.
 
     This supports being called via Celery (.delay) or directly when Celery is not available.
+    Checks for cancellation before doing heavy computation.
     """
     from django.apps import apps
     import pandas as pd
@@ -93,8 +94,17 @@ def forecast_async_task(forecast_obj_id, business_id, source='both', cadence='da
         except Exception:
             fobj = None
 
-    # Mark as running if we have a record
+    # Helper to check cancellation status
+    def is_cancelled(obj):
+        if not obj:
+            return False
+        meta = obj.meta or {}
+        return meta.get('status') == 'cancelled'
+
+    # Mark as running if we have a record (unless already cancelled)
     if fobj:
+        if is_cancelled(fobj):
+            return False
         meta = fobj.meta or {}
         meta.update({'status': 'running'})
         fobj.meta = meta
@@ -104,6 +114,10 @@ def forecast_async_task(forecast_obj_id, business_id, source='both', cadence='da
             pass
 
     try:
+        # Check cancellation before heavy data fetching
+        if is_cancelled(fobj):
+            return False
+
         from .models import Transaction, Order
         parts = []
 
@@ -126,6 +140,10 @@ def forecast_async_task(forecast_obj_id, business_id, source='both', cadence='da
                 df_tx['revenue'] = df_tx['qty'].abs() * df_tx['item__selling_price']
                 parts.append(df_tx.groupby(df_tx['date'].dt.floor('D')).agg({'revenue': 'sum'}).reset_index())
 
+        # Check cancellation after data fetching but before computation
+        if is_cancelled(fobj):
+            return False
+
         if source in ('order', 'both'):
             ord_qs = Order.objects.filter(business_id=business_id, status__in=['paid', 'ready', 'completed'])
             if date_from:
@@ -138,6 +156,10 @@ def forecast_async_task(forecast_obj_id, business_id, source='both', cadence='da
                 df_ord['date'] = pd.to_datetime(df_ord['created_at']).dt.floor('D')
                 df_ord['total_amount'] = pd.to_numeric(df_ord['total_amount'], errors='coerce').fillna(0.0)
                 parts.append(df_ord.groupby('date').agg({'total_amount': 'sum'}).reset_index().rename(columns={'total_amount': 'revenue'}))
+
+        # Check cancellation before heavy ETS computation
+        if is_cancelled(fobj):
+            return False
 
         if parts:
             df_hist = pd.concat(parts).groupby('date', as_index=False).agg({'revenue': 'sum'})
