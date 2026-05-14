@@ -506,6 +506,22 @@ def forecast_api(request):
         try:
             token = str(uuid.uuid4())
             fobj = None
+            # Allow tests to request a simulated sleep inside the worker by
+            # passing `simulate_sleep` as a query param. This is stored in the
+            # Forecast.meta so the worker can observe it and pause while
+            # checking for cancellation.
+            simulate_sleep = int(request.query_params.get("simulate_sleep") or 0)
+
+            meta = {
+                "task": token,
+                "status": "pending",
+                "product_id": int(product_id) if product_id else None,
+                "start": date_from,
+                "end": date_to,
+            }
+            if simulate_sleep > 0:
+                meta["simulate_sleep"] = simulate_sleep
+
             fobj = Forecast.objects.create(
                 business=business,
                 source=source,
@@ -513,13 +529,7 @@ def forecast_api(request):
                 horizon=horizon,
                 history=[],
                 forecast=[],
-                meta={
-                    "task": token,
-                    "status": "pending",
-                    "product_id": int(product_id) if product_id else None,
-                    "start": date_from,
-                    "end": date_to,
-                },
+                meta=meta,
             )
 
             # schedule background worker (Celery when available)
