@@ -24,6 +24,11 @@ ALLOWED_HOSTS = [
     "127.0.0.1",
 ]
 
+# Allow the Django test client to use the default 'testserver' host during
+# local test runs without modifying production settings.
+if "testserver" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("testserver")
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -43,6 +48,7 @@ INSTALLED_APPS = [
 # doesn't have it (e.g. system Python instead of the project venv).
 try:
     import importlib.util as _ilu
+
     if _ilu.find_spec("django_celery_beat") is not None:
         INSTALLED_APPS.insert(INSTALLED_APPS.index("core"), "django_celery_beat")
 except Exception:
