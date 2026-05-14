@@ -1,379 +1,569 @@
-{% extends "base.html" %}
-{% load i18n %}
-{% block title %}{% trans 'Analytics' %} — Duka Mwecheche{% endblock %}
-
-{% block extra_css %}
+{% extends "base.html" %} {% load i18n %} {% block title %}{% trans 'Analytics'
+%} — Duka Mwecheche{% endblock %} {% block extra_css %}
 <style>
-    .period-btn {
-        padding: 0.4rem 1rem;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: 500;
-        letter-spacing: 0.05em;
-        text-decoration: none;
-        border: 1px solid #333;
-        color: var(--muted);
-        transition: all 0.2s;
-        background: transparent;
-    }
-    .period-btn:hover, .period-btn.active {
-        background: var(--raspberry);
-        border-color: var(--raspberry);
-        color: white;
-    }
-    .stat-card {
-        background: var(--onyx-card);
-        border: 1px solid #333;
-        border-radius: 10px;
-        padding: 1.2rem;
-        transition: transform 0.2s, border-color 0.2s;
-    }
-    .stat-card:hover {
-        transform: translateY(-2px);
-        border-color: var(--gold);
-    }
-    .stat-label {
-        font-size: 0.7rem;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: var(--muted);
-        margin-bottom: 0.4rem;
-    }
-    .stat-value {
-        font-family: 'Playfair Display', serif;
-        font-size: 1.6rem;
-        font-weight: 700;
-        line-height: 1;
-    }
-    .stat-change {
-        font-size: 0.75rem;
-        margin-top: 0.3rem;
-    }
-    .stat-change.up { color: var(--success); }
-    .stat-change.down { color: var(--danger); }
-    .chart-box {
-        background: var(--onyx-card);
-        border: 1px solid #333;
-        border-radius: 10px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-    }
-    .chart-box h3 {
-        font-family: 'Playfair Display', serif;
-        color: var(--gold);
-        font-size: 1rem;
-        margin-bottom: 1rem;
-    }
-    .insight-card {
-        background: var(--onyx-card);
-        border-left: 3px solid var(--gold);
-        border-radius: 0 8px 8px 0;
-        padding: 1rem 1.2rem;
-    }
-    .insight-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-    .insight-value { font-size: 1.1rem; color: var(--pearl); font-weight: 600; margin-top: 0.2rem; }
-    .health-bar {
-        height: 8px;
-        border-radius: 4px;
-        overflow: hidden;
-        background: #333;
-        display: flex;
-    }
-    .health-segment { height: 100%; transition: width 0.5s; }
-    .section-title {
-        font-family: 'Playfair Display', serif;
-        color: var(--gold);
-        font-size: 1.2rem;
-        margin: 2rem 0 1rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
+  .period-btn {
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-decoration: none;
+    border: 1px solid #333;
+    color: var(--muted);
+    transition: all 0.2s;
+    background: transparent;
+  }
+  .period-btn:hover,
+  .period-btn.active {
+    background: var(--raspberry);
+    border-color: var(--raspberry);
+    color: white;
+  }
+  .stat-card {
+    background: var(--onyx-card);
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 1.2rem;
+    transition:
+      transform 0.2s,
+      border-color 0.2s;
+  }
+  .stat-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--gold);
+  }
+  .stat-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+  }
+  .stat-value {
+    font-family: "Playfair Display", serif;
+    font-size: 1.6rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .stat-change {
+    font-size: 0.75rem;
+    margin-top: 0.3rem;
+  }
+  .stat-change.up {
+    color: var(--success);
+  }
+  .stat-change.down {
+    color: var(--danger);
+  }
+  .chart-box {
+    background: var(--onyx-card);
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .chart-box h3 {
+    font-family: "Playfair Display", serif;
+    color: var(--gold);
+    font-size: 1rem;
+    margin-bottom: 1rem;
+  }
+  .insight-card {
+    background: var(--onyx-card);
+    border-left: 3px solid var(--gold);
+    border-radius: 0 8px 8px 0;
+    padding: 1rem 1.2rem;
+  }
+  .insight-label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .insight-value {
+    font-size: 1.1rem;
+    color: var(--pearl);
+    font-weight: 600;
+    margin-top: 0.2rem;
+  }
+  .health-bar {
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #333;
+    display: flex;
+  }
+  .health-segment {
+    height: 100%;
+    transition: width 0.5s;
+  }
+  .section-title {
+    font-family: "Playfair Display", serif;
+    color: var(--gold);
+    font-size: 1.2rem;
+    margin: 2rem 0 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
 </style>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 
 <!-- Breadcrumb -->
-<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
-    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
-    <span class="mx-1">›</span>
-    <span>{% trans 'Analytics' %}</span>
+<nav style="font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem">
+  <a href="{% url 'home' %}" style="color: var(--gold)"
+    >{% trans 'Dashboard' %}</a
+  >
+  <span class="mx-1">›</span>
+  <span>{% trans 'Analytics' %}</span>
 </nav>
 
-<div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
-    <h2 class="page-title">📊 {% trans 'Business Analytics' %}</h2>
-    <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← {% trans 'Dashboard' %}</a>
+<div
+  class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4"
+>
+  <h2 class="page-title">📊 {% trans 'Business Analytics' %}</h2>
+  <a href="{% url 'home' %}" class="btn btn-secondary btn-sm"
+    >← {% trans 'Dashboard' %}</a
+  >
 </div>
 
 <!-- Period Filter -->
 <div class="d-flex flex-wrap gap-2 mb-4">
-    <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; align-self:center;">{% trans 'Period:' %}</span>
-    <a href="?period=7" class="period-btn {% if period == 7 %}active{% endif %}">{% trans '7 Days' %}</a>
-    <a href="?period=14" class="period-btn {% if period == 14 %}active{% endif %}">{% trans '14 Days' %}</a>
-    <a href="?period=30" class="period-btn {% if period == 30 %}active{% endif %}">{% trans '30 Days' %}</a>
-    <a href="?period=90" class="period-btn {% if period == 90 %}active{% endif %}">{% trans '90 Days' %}</a>
-    <a href="?period=365" class="period-btn {% if period == 365 %}active{% endif %}">{% trans '1 Year' %}</a>
+  <span
+    style="
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      align-self: center;
+    "
+    >{% trans 'Period:' %}</span
+  >
+  <a href="?period=7" class="period-btn {% if period == 7 %}active{% endif %}"
+    >{% trans '7 Days' %}</a
+  >
+  <a href="?period=14" class="period-btn {% if period == 14 %}active{% endif %}"
+    >{% trans '14 Days' %}</a
+  >
+  <a href="?period=30" class="period-btn {% if period == 30 %}active{% endif %}"
+    >{% trans '30 Days' %}</a
+  >
+  <a href="?period=90" class="period-btn {% if period == 90 %}active{% endif %}"
+    >{% trans '90 Days' %}</a
+  >
+  <a
+    href="?period=365"
+    class="period-btn {% if period == 365 %}active{% endif %}"
+    >{% trans '1 Year' %}</a
+  >
 </div>
 
-<div style="font-size:0.8rem; color:var(--muted); margin-bottom:1.5rem;">
-    {% trans 'Showing:' %} <span style="color:var(--gold)">{{ start_date }} → {{ end_date }}</span>
-    · {% blocktrans with p=period %}Compared to previous {{ p }} days{% endblocktrans %}
+<div style="font-size: 0.8rem; color: var(--muted); margin-bottom: 1.5rem">
+  {% trans 'Showing:' %}
+  <span style="color: var(--gold)">{{ start_date }} → {{ end_date }}</span>
+  · {% blocktrans with p=period %}Compared to previous {{ p }} days{%
+  endblocktrans %}
 </div>
 
 <!-- Product / Date Forecast Controls -->
 <div class="d-flex gap-2 mb-3 align-items-center">
-    <label style="font-size:0.8rem; color:var(--muted); align-self:center;">Product:</label>
-    <select id="forecastProduct" class="form-select form-select-sm" style="width:240px;">
-        <option value="">All products</option>
-        {% for i in items %}
-            <option value="{{ i.id }}" {% if selected_product and selected_product == i.id %}selected{% endif %}>{{ i.description|truncatechars:40 }}</option>
-        {% endfor %}
-    </select>
-    <input type="date" id="forecastStart" class="form-control form-control-sm" value="{{ start_date|date:'Y-m-d' }}" style="width:150px;">
-    <input type="date" id="forecastEnd" class="form-control form-control-sm" value="{{ end_date|date:'Y-m-d' }}" style="width:150px;">
-    <button id="runForecast" class="btn btn-primary btn-sm">Run Forecast</button>
-    <button id="cancelForecast" class="btn btn-danger btn-sm" style="display:none;">Cancel Forecast</button>
-    <span id="forecastStatus" style="margin-left:0.5rem;color:var(--muted)"></span>
+  <label style="font-size: 0.8rem; color: var(--muted); align-self: center"
+    >Product:</label
+  >
+  <select
+    id="forecastProduct"
+    class="form-select form-select-sm"
+    style="width: 240px"
+  >
+    <option value="">All products</option>
+    {% for i in items %}
+    <option
+      value="{{ i.id }}"
+      {%
+      if
+      selected_product
+      and
+      selected_product=""
+      ="i.id"
+      %}selected{%
+      endif
+      %}
+    >
+      {{ i.description|truncatechars:40 }}
+    </option>
+    {% endfor %}
+  </select>
+  <input
+    type="date"
+    id="forecastStart"
+    class="form-control form-control-sm"
+    value="{{ start_date|date:'Y-m-d' }}"
+    style="width: 150px"
+  />
+  <input
+    type="date"
+    id="forecastEnd"
+    class="form-control form-control-sm"
+    value="{{ end_date|date:'Y-m-d' }}"
+    style="width: 150px"
+  />
+  <button id="runForecast" class="btn btn-primary btn-sm">Run Forecast</button>
+  <button
+    id="cancelForecast"
+    class="btn btn-danger btn-sm"
+    style="display: none"
+  >
+    Cancel Forecast
+  </button>
+  <span
+    id="forecastStatus"
+    style="margin-left: 0.5rem; color: var(--muted)"
+  ></span>
 </div>
 
 <!-- ═══ KEY METRICS ═══ -->
 <div class="row g-3 mb-4">
-    <div class="col-6 col-md-3">
-        <div class="stat-card" style="border-top: 3px solid var(--gold);">
-            <div class="stat-label">{% trans 'Revenue' %}</div>
-            <div class="stat-value" style="color:var(--gold)">{{ cur_revenue|floatformat:0 }}</div>
-            <div class="stat-change {% if revenue_change >= 0 %}up{% else %}down{% endif %}">
-                {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change }}% {% trans 'vs prev' %}
-            </div>
-        </div>
+  <div class="col-6 col-md-3">
+    <div class="stat-card" style="border-top: 3px solid var(--gold)">
+      <div class="stat-label">{% trans 'Revenue' %}</div>
+      <div class="stat-value" style="color: var(--gold)">
+        {{ cur_revenue|floatformat:0 }}
+      </div>
+      <div
+        class="stat-change {% if revenue_change >= 0 %}up{% else %}down{% endif %}"
+      >
+        {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change
+        }}% {% trans 'vs prev' %}
+      </div>
     </div>
-    <div class="col-6 col-md-3">
-        <div class="stat-card" style="border-top: 3px solid {% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};">
-            <div class="stat-label">{% trans 'Gross Profit' %}</div>
-            <div class="stat-value" style="color:{% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}">{{ cur_profit|floatformat:0 }}</div>
-            <div class="stat-change {% if profit_change >= 0 %}up{% else %}down{% endif %}">
-                {% if profit_change >= 0 %}↑{% else %}↓{% endif %} {{ profit_change }}% {% trans 'vs prev' %}
-            </div>
-        </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div
+      class="stat-card"
+      style="border-top: 3px solid {% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};"
+    >
+      <div class="stat-label">{% trans 'Gross Profit' %}</div>
+      <div
+        class="stat-value"
+        style="color:{% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}"
+      >
+        {{ cur_profit|floatformat:0 }}
+      </div>
+      <div
+        class="stat-change {% if profit_change >= 0 %}up{% else %}down{% endif %}"
+      >
+        {% if profit_change >= 0 %}↑{% else %}↓{% endif %} {{ profit_change }}%
+        {% trans 'vs prev' %}
+      </div>
     </div>
-    <div class="col-6 col-md-3">
-        <div class="stat-card" style="border-top: 3px solid var(--pearl);">
-            <div class="stat-label">{% trans 'Units Sold' %}</div>
-            <div class="stat-value" style="color:var(--pearl)">{{ cur_units }}</div>
-            <div class="stat-change {% if units_change >= 0 %}up{% else %}down{% endif %}">
-                {% if units_change >= 0 %}↑{% else %}↓{% endif %} {{ units_change }}% {% trans 'vs prev' %}
-            </div>
-        </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="stat-card" style="border-top: 3px solid var(--pearl)">
+      <div class="stat-label">{% trans 'Units Sold' %}</div>
+      <div class="stat-value" style="color: var(--pearl)">{{ cur_units }}</div>
+      <div
+        class="stat-change {% if units_change >= 0 %}up{% else %}down{% endif %}"
+      >
+        {% if units_change >= 0 %}↑{% else %}↓{% endif %} {{ units_change }}% {%
+        trans 'vs prev' %}
+      </div>
     </div>
-    <div class="col-6 col-md-3">
-        <div class="stat-card" style="border-top: 3px solid #6c8ebf;">
-            <div class="stat-label">{% trans 'Profit Margin' %}</div>
-            <div class="stat-value" style="color:#6c8ebf">{{ profit_margin }}%</div>
-            <div class="stat-change" style="color:var(--muted)">{{ cur_txn_count }} {% trans 'transactions' %}</div>
-        </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="stat-card" style="border-top: 3px solid #6c8ebf">
+      <div class="stat-label">{% trans 'Profit Margin' %}</div>
+      <div class="stat-value" style="color: #6c8ebf">{{ profit_margin }}%</div>
+      <div class="stat-change" style="color: var(--muted)">
+        {{ cur_txn_count }} {% trans 'transactions' %}
+      </div>
     </div>
+  </div>
 </div>
 
 <!-- ═══ NET PROFIT & EXPENSES ROW ═══ -->
 <div class="row g-3 mb-4">
-    <div class="col-md-3 col-6">
-        <div class="stat-card" style="border-top: 3px solid {% if net_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};">
-            <div class="stat-label">{% trans 'Net Profit' %}</div>
-            <div class="stat-value" style="color:{% if net_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}">{{ net_profit|floatformat:0 }}</div>
-            <div class="stat-change" style="color:var(--muted)">
-                {% trans 'Gross:' %} {{ cur_profit|floatformat:0 }}
-            </div>
-        </div>
+  <div class="col-md-3 col-6">
+    <div
+      class="stat-card"
+      style="border-top: 3px solid {% if net_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};"
+    >
+      <div class="stat-label">{% trans 'Net Profit' %}</div>
+      <div
+        class="stat-value"
+        style="color:{% if net_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}"
+      >
+        {{ net_profit|floatformat:0 }}
+      </div>
+      <div class="stat-change" style="color: var(--muted)">
+        {% trans 'Gross:' %} {{ cur_profit|floatformat:0 }}
+      </div>
     </div>
-    <div class="col-md-3 col-6">
-        <div class="stat-card" style="border-top: 3px solid var(--raspberry);">
-            <div class="stat-label">{% trans 'Total Expenses' %}</div>
-            <div class="stat-value" style="color:var(--raspberry)">{{ total_expenses|floatformat:0 }}</div>
-            <div class="stat-change">
-                <a href="{% url 'expense_list' %}" style="color:var(--gold); font-size:0.8rem;">{% trans 'Manage Expenses →' %}</a>
-            </div>
-        </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="stat-card" style="border-top: 3px solid var(--raspberry)">
+      <div class="stat-label">{% trans 'Total Expenses' %}</div>
+      <div class="stat-value" style="color: var(--raspberry)">
+        {{ total_expenses|floatformat:0 }}
+      </div>
+      <div class="stat-change">
+        <a
+          href="{% url 'expense_list' %}"
+          style="color: var(--gold); font-size: 0.8rem"
+          >{% trans 'Manage Expenses →' %}</a
+        >
+      </div>
     </div>
-    <div class="col-md-3 col-6">
-        <div class="insight-card">
-            <div class="insight-label">{% trans 'Avg Daily Revenue' %}</div>
-            <div class="insight-value">KES {{ avg_daily_revenue|floatformat:0 }}</div>
-        </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="insight-card">
+      <div class="insight-label">{% trans 'Avg Daily Revenue' %}</div>
+      <div class="insight-value">KES {{ avg_daily_revenue|floatformat:0 }}</div>
     </div>
-    <div class="col-md-3 col-6">
-        <div class="insight-card">
-            <div class="insight-label">{% trans 'Active Selling Days' %}</div>
-            <div class="insight-value">{{ active_days }} / {{ period }}</div>
-        </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="insight-card">
+      <div class="insight-label">{% trans 'Active Selling Days' %}</div>
+      <div class="insight-value">{{ active_days }} / {{ period }}</div>
     </div>
+  </div>
 </div>
 
 <!-- ═══ INSIGHTS ROW ═══ -->
 <div class="row g-3 mb-4">
-    <div class="col-md-3 col-6">
-        <div class="insight-card">
-            <div class="insight-label">{% trans 'Best Day' %}</div>
-            <div class="insight-value">{{ busiest_day }}</div>
-        </div>
+  <div class="col-md-3 col-6">
+    <div class="insight-card">
+      <div class="insight-label">{% trans 'Best Day' %}</div>
+      <div class="insight-value">{{ busiest_day }}</div>
     </div>
-    <div class="col-md-3 col-6">
-        <div class="insight-card">
-            <div class="insight-label">{% trans 'Best Day Revenue' %}</div>
-            <div class="insight-value">KES {{ busiest_day_rev|floatformat:0 }}</div>
-        </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="insight-card">
+      <div class="insight-label">{% trans 'Best Day Revenue' %}</div>
+      <div class="insight-value">KES {{ busiest_day_rev|floatformat:0 }}</div>
     </div>
-    <div class="col-md-3 col-6">
-        <div class="insight-card">
-            <div class="insight-label">{% trans 'Cost of Goods Sold' %}</div>
-            <div class="insight-value" style="color:var(--raspberry)">KES {{ cur_cost|floatformat:0 }}</div>
-        </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="insight-card">
+      <div class="insight-label">{% trans 'Cost of Goods Sold' %}</div>
+      <div class="insight-value" style="color: var(--raspberry)">
+        KES {{ cur_cost|floatformat:0 }}
+      </div>
     </div>
-    <div class="col-md-3 col-6">
-        <div class="insight-card">
-            <div class="insight-label">{% trans 'Stock Value' %}</div>
-            <div class="insight-value">KES {{ stock_value|floatformat:0 }}</div>
-        </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="insight-card">
+      <div class="insight-label">{% trans 'Stock Value' %}</div>
+      <div class="insight-value">KES {{ stock_value|floatformat:0 }}</div>
     </div>
+  </div>
 </div>
 
-<hr class="gold-divider">
+<hr class="gold-divider" />
 
 <!-- ═══ FORECAST PANEL ═══ -->
 <div class="row g-4 mb-4">
-    <div class="col-12">
-        <div class="chart-box">
-            <h3>🔮 {% trans 'Revenue Forecast (precomputed)' %}</h3>
-            <canvas id="forecastChart" height="120"></canvas>
-        </div>
+  <div class="col-12">
+    <div class="chart-box">
+      <h3>🔮 {% trans 'Revenue Forecast (precomputed)' %}</h3>
+      <canvas id="forecastChart" height="120"></canvas>
     </div>
+  </div>
 </div>
 
 <!-- ═══ CHARTS ═══ -->
 <div class="row g-4 mb-4">
-    <div class="col-lg-8">
-        <div class="chart-box">
-            <h3>📈 {% trans 'Revenue & Profit Trend' %}</h3>
-            <canvas id="trendChart" height="130"></canvas>
-        </div>
+  <div class="col-lg-8">
+    <div class="chart-box">
+      <h3>📈 {% trans 'Revenue & Profit Trend' %}</h3>
+      <canvas id="trendChart" height="130"></canvas>
     </div>
-    <div class="col-lg-4">
-        <div class="chart-box">
-            <h3>🏆 {% trans 'Top Products' %}</h3>
-            <canvas id="topProductsChart" height="220"></canvas>
-        </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="chart-box">
+      <h3>🏆 {% trans 'Top Products' %}</h3>
+      <canvas id="topProductsChart" height="220"></canvas>
     </div>
+  </div>
 </div>
 
 <div class="row g-4 mb-4">
-    <div class="col-lg-6">
-        <div class="chart-box">
-            <h3>📦 {% trans 'Daily Units Sold' %}</h3>
-            <canvas id="unitsChart" height="150"></canvas>
-        </div>
+  <div class="col-lg-6">
+    <div class="chart-box">
+      <h3>📦 {% trans 'Daily Units Sold' %}</h3>
+      <canvas id="unitsChart" height="150"></canvas>
     </div>
-    <div class="col-lg-6">
-        <div class="chart-box">
-            <h3>🏥 {% trans 'Stock Health' %}</h3>
-            <div class="health-bar mb-3" style="height:12px;">
-                {% if total_items > 0 %}
-                <div class="health-segment" style="width:{% widthratio healthy_stock total_items 100 %}%; background:var(--success);"></div>
-                <div class="health-segment" style="width:{% widthratio low_stock total_items 100 %}%; background:var(--warning);"></div>
-                <div class="health-segment" style="width:{% widthratio out_of_stock total_items 100 %}%; background:var(--danger);"></div>
-                {% endif %}
-            </div>
-            <div class="row g-2 text-center">
-                <div class="col-4">
-                    <div style="font-size:1.5rem; font-weight:700; color:var(--success)">{{ healthy_stock }}</div>
-                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">{% trans 'Healthy' %}</div>
-                </div>
-                <div class="col-4">
-                    <div style="font-size:1.5rem; font-weight:700; color:var(--warning)">{{ low_stock }}</div>
-                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">{% trans 'Low Stock' %}</div>
-                </div>
-                <div class="col-4">
-                    <div style="font-size:1.5rem; font-weight:700; color:var(--danger)">{{ out_of_stock }}</div>
-                    <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase;">{% trans 'Out of Stock' %}</div>
-                </div>
-            </div>
-            <div style="text-align:center; margin-top:1rem; color:var(--muted); font-size:0.85rem;">
-                {% trans 'Stock Value:' %} <span style="color:var(--gold); font-weight:600;">KES {{ stock_value|floatformat:0 }}</span>
-            </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="chart-box">
+      <h3>🏥 {% trans 'Stock Health' %}</h3>
+      <div class="health-bar mb-3" style="height: 12px">
+        {% if total_items > 0 %}
+        <div
+          class="health-segment"
+          style="width:{% widthratio healthy_stock total_items 100 %}%; background:var(--success);"
+        ></div>
+        <div
+          class="health-segment"
+          style="width:{% widthratio low_stock total_items 100 %}%; background:var(--warning);"
+        ></div>
+        <div
+          class="health-segment"
+          style="width:{% widthratio out_of_stock total_items 100 %}%; background:var(--danger);"
+        ></div>
+        {% endif %}
+      </div>
+      <div class="row g-2 text-center">
+        <div class="col-4">
+          <div
+            style="font-size: 1.5rem; font-weight: 700; color: var(--success)"
+          >
+            {{ healthy_stock }}
+          </div>
+          <div
+            style="
+              font-size: 0.7rem;
+              color: var(--muted);
+              text-transform: uppercase;
+            "
+          >
+            {% trans 'Healthy' %}
+          </div>
         </div>
+        <div class="col-4">
+          <div
+            style="font-size: 1.5rem; font-weight: 700; color: var(--warning)"
+          >
+            {{ low_stock }}
+          </div>
+          <div
+            style="
+              font-size: 0.7rem;
+              color: var(--muted);
+              text-transform: uppercase;
+            "
+          >
+            {% trans 'Low Stock' %}
+          </div>
+        </div>
+        <div class="col-4">
+          <div
+            style="font-size: 1.5rem; font-weight: 700; color: var(--danger)"
+          >
+            {{ out_of_stock }}
+          </div>
+          <div
+            style="
+              font-size: 0.7rem;
+              color: var(--muted);
+              text-transform: uppercase;
+            "
+          >
+            {% trans 'Out of Stock' %}
+          </div>
+        </div>
+      </div>
+      <div
+        style="
+          text-align: center;
+          margin-top: 1rem;
+          color: var(--muted);
+          font-size: 0.85rem;
+        "
+      >
+        {% trans 'Stock Value:' %}
+        <span style="color: var(--gold); font-weight: 600"
+          >KES {{ stock_value|floatformat:0 }}</span
+        >
+      </div>
     </div>
+  </div>
 </div>
 
-<hr class="gold-divider">
+<hr class="gold-divider" />
 
 <!-- ═══ ORDER & PAYMENT ANALYTICS ═══ -->
 <div class="section-title">📋 {% trans 'Orders & Payments' %}</div>
 <div class="row g-3 mb-4">
-    <div class="col-md-3 col-6">
-        <div class="stat-card">
-            <div class="stat-label">{% trans 'Total Orders' %}</div>
-            <div class="stat-value" style="color:var(--pearl)">{{ total_orders }}</div>
-        </div>
+  <div class="col-md-3 col-6">
+    <div class="stat-card">
+      <div class="stat-label">{% trans 'Total Orders' %}</div>
+      <div class="stat-value" style="color: var(--pearl)">
+        {{ total_orders }}
+      </div>
     </div>
-    <div class="col-md-3 col-6">
-        <div class="stat-card">
-            <div class="stat-label">{% trans 'Pending' %}</div>
-            <div class="stat-value" style="color:var(--warning)">{{ pending_orders }}</div>
-        </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="stat-card">
+      <div class="stat-label">{% trans 'Pending' %}</div>
+      <div class="stat-value" style="color: var(--warning)">
+        {{ pending_orders }}
+      </div>
     </div>
-    <div class="col-md-3 col-6">
-        <div class="stat-card">
-            <div class="stat-label">{% trans 'Completed' %}</div>
-            <div class="stat-value" style="color:var(--success)">{{ completed_orders }}</div>
-        </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="stat-card">
+      <div class="stat-label">{% trans 'Completed' %}</div>
+      <div class="stat-value" style="color: var(--success)">
+        {{ completed_orders }}
+      </div>
     </div>
-    <div class="col-md-3 col-6">
-        <div class="stat-card">
-            <div class="stat-label">{% trans 'Order Revenue' %}</div>
-            <div class="stat-value" style="color:var(--gold)">{{ order_revenue|floatformat:0 }}</div>
-        </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="stat-card">
+      <div class="stat-label">{% trans 'Order Revenue' %}</div>
+      <div class="stat-value" style="color: var(--gold)">
+        {{ order_revenue|floatformat:0 }}
+      </div>
     </div>
+  </div>
 </div>
 
 <div class="row g-3 mb-4">
-    <div class="col-md-6">
-        <div class="stat-card">
-            <div class="stat-label">{% trans 'M-Pesa Collected' %}</div>
-            <div class="stat-value" style="color:#4CAF50">KES {{ mpesa_total|floatformat:0 }}</div>
-            <div style="color:var(--muted); font-size:0.8rem; margin-top:0.3rem;">{{ mpesa_count }} {% trans 'payments' %}</div>
-        </div>
+  <div class="col-md-6">
+    <div class="stat-card">
+      <div class="stat-label">{% trans 'M-Pesa Collected' %}</div>
+      <div class="stat-value" style="color: #4caf50">
+        KES {{ mpesa_total|floatformat:0 }}
+      </div>
+      <div style="color: var(--muted); font-size: 0.8rem; margin-top: 0.3rem">
+        {{ mpesa_count }} {% trans 'payments' %}
+      </div>
     </div>
-    <div class="col-md-6">
-        <div class="stat-card">
-            <div class="stat-label">{% trans 'Total Cost of Goods' %}</div>
-            <div class="stat-value" style="color:var(--raspberry)">KES {{ cur_cost|floatformat:0 }}</div>
-        </div>
+  </div>
+  <div class="col-md-6">
+    <div class="stat-card">
+      <div class="stat-label">{% trans 'Total Cost of Goods' %}</div>
+      <div class="stat-value" style="color: var(--raspberry)">
+        KES {{ cur_cost|floatformat:0 }}
+      </div>
     </div>
+  </div>
 </div>
 
-<hr class="gold-divider">
+<hr class="gold-divider" />
 
 <!-- ═══ STORE PERFORMANCE ═══ -->
 {% if store_list %}
 <div class="section-title">🏪 {% trans 'Store Performance' %}</div>
 <div class="table-responsive mb-4">
-    <table class="table table-hover">
-        <thead>
-            <tr>
-                <th>{% trans 'Store' %}</th>
-                <th>{% trans 'Units Sold' %}</th>
-                <th>{% trans 'Revenue (KES)' %}</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for store in store_list %}
-            <tr>
-                <td><strong style="color:var(--pearl)">{{ store.name }}</strong></td>
-                <td>{{ store.units }}</td>
-                <td style="color:var(--gold)">{{ store.revenue|floatformat:0 }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+  <table class="table table-hover">
+    <thead>
+      <tr>
+        <th>{% trans 'Store' %}</th>
+        <th>{% trans 'Units Sold' %}</th>
+        <th>{% trans 'Revenue (KES)' %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for store in store_list %}
+      <tr>
+        <td><strong style="color: var(--pearl)">{{ store.name }}</strong></td>
+        <td>{{ store.units }}</td>
+        <td style="color: var(--gold)">{{ store.revenue|floatformat:0 }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 {% endif %}
 
@@ -381,318 +571,328 @@
 {% if top_products %}
 <div class="section-title">🏆 {% trans 'Top 10 Products' %}</div>
 <div class="table-responsive mb-4">
-    <table class="table table-hover">
-        <thead>
-            <tr>
-                <th>{% trans 'Product' %}</th>
-                <th>{% trans 'Units' %}</th>
-                <th>{% trans 'Revenue' %}</th>
-                <th>{% trans 'Profit' %}</th>
-                <th>{% trans 'Margin' %}</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for p in top_products %}
-            <tr>
-                <td><strong style="color:var(--pearl)">{{ p.name }}</strong></td>
-                <td>{{ p.units }}</td>
-                <td style="color:var(--gold)">{{ p.revenue|floatformat:0 }}</td>
-                <td class="{% if p.profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}" style="color:{% if p.profit >= 0 %}var(--success){% else %}var(--danger){% endif %}">{{ p.profit|floatformat:0 }}</td>
-                <td>
-                    {% if p.revenue > 0 %}
-                        <span style="color:{% if p.profit >= 0 %}var(--success){% else %}var(--danger){% endif %}">
-                            {{ p.profit|floatformat:0 }}
-                        </span>
-                    {% else %}—{% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+  <table class="table table-hover">
+    <thead>
+      <tr>
+        <th>{% trans 'Product' %}</th>
+        <th>{% trans 'Units' %}</th>
+        <th>{% trans 'Revenue' %}</th>
+        <th>{% trans 'Profit' %}</th>
+        <th>{% trans 'Margin' %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in top_products %}
+      <tr>
+        <td><strong style="color: var(--pearl)">{{ p.name }}</strong></td>
+        <td>{{ p.units }}</td>
+        <td style="color: var(--gold)">{{ p.revenue|floatformat:0 }}</td>
+        <td
+          class="{% if p.profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}"
+          style="color:{% if p.profit >= 0 %}var(--success){% else %}var(--danger){% endif %}"
+        >
+          {{ p.profit|floatformat:0 }}
+        </td>
+        <td>
+          {% if p.revenue > 0 %}
+          <span
+            style="color:{% if p.profit >= 0 %}var(--success){% else %}var(--danger){% endif %}"
+          >
+            {{ p.profit|floatformat:0 }}
+          </span>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
-{% endif %}
-
-{% endblock %}
-
-{% block extra_js %}
+{% endif %} {% endblock %} {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-    const labels = {{ chart_labels|safe }};
-    const revenueData = {{ chart_revenue|safe }};
-    const profitData = {{ chart_profit|safe }};
-    const unitsData = {{ chart_units|safe }};
-    const topLabels = {{ top_product_labels|safe }};
-    const topRevenue = {{ top_product_revenue|safe }};
+  const labels = {{ chart_labels|safe }};
+  const revenueData = {{ chart_revenue|safe }};
+  const profitData = {{ chart_profit|safe }};
+  const unitsData = {{ chart_units|safe }};
+  const topLabels = {{ top_product_labels|safe }};
+  const topRevenue = {{ top_product_revenue|safe }};
 
-    const chartFont = { family: "'DM Sans', sans-serif" };
-    const gridColor = '#2a2a2a';
+  const chartFont = { family: "'DM Sans', sans-serif" };
+  const gridColor = '#2a2a2a';
 
-    // Revenue & Profit trend
-    new Chart(document.getElementById('trendChart'), {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'Revenue',
-                    data: revenueData,
-                    borderColor: '#c9a84c',
-                    backgroundColor: 'rgba(201,168,76,0.08)',
-                    borderWidth: 2,
-                    pointRadius: labels.length > 60 ? 0 : 3,
-                    pointHoverRadius: 6,
-                    tension: 0.3,
-                    fill: true,
-                },
-                {
-                    label: 'Profit',
-                    data: profitData,
-                    borderColor: '#2ecc71',
-                    backgroundColor: 'rgba(46,204,113,0.05)',
-                    borderWidth: 2,
-                    pointRadius: labels.length > 60 ? 0 : 3,
-                    pointHoverRadius: 6,
-                    tension: 0.3,
-                    fill: true,
-                    borderDash: [5, 3],
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            interaction: { mode: 'index', intersect: false },
-            plugins: {
-                legend: { labels: { color: '#f0ece4', font: chartFont, usePointStyle: true } },
-                tooltip: {
-                    backgroundColor: '#2a2a2a', borderColor: '#c9a84c', borderWidth: 1,
-                    titleColor: '#c9a84c', bodyColor: '#f0ece4', padding: 10,
-                    callbacks: { label: ctx => ` ${ctx.dataset.label}: KES ${ctx.parsed.y.toLocaleString()}` }
-                }
-            },
-            scales: {
-                x: { ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 15 }, grid: { color: gridColor } },
-                y: { ticks: { color: '#888', callback: v => 'KES ' + v.toLocaleString() }, grid: { color: gridColor } }
-            }
-        }
-    });
+  // Revenue & Profit trend
+  new Chart(document.getElementById('trendChart'), {
+      type: 'line',
+      data: {
+          labels: labels,
+          datasets: [
+              {
+                  label: 'Revenue',
+                  data: revenueData,
+                  borderColor: '#c9a84c',
+                  backgroundColor: 'rgba(201,168,76,0.08)',
+                  borderWidth: 2,
+                  pointRadius: labels.length > 60 ? 0 : 3,
+                  pointHoverRadius: 6,
+                  tension: 0.3,
+                  fill: true,
+              },
+              {
+                  label: 'Profit',
+                  data: profitData,
+                  borderColor: '#2ecc71',
+                  backgroundColor: 'rgba(46,204,113,0.05)',
+                  borderWidth: 2,
+                  pointRadius: labels.length > 60 ? 0 : 3,
+                  pointHoverRadius: 6,
+                  tension: 0.3,
+                  fill: true,
+                  borderDash: [5, 3],
+              }
+          ]
+      },
+      options: {
+          responsive: true,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+              legend: { labels: { color: '#f0ece4', font: chartFont, usePointStyle: true } },
+              tooltip: {
+                  backgroundColor: '#2a2a2a', borderColor: '#c9a84c', borderWidth: 1,
+                  titleColor: '#c9a84c', bodyColor: '#f0ece4', padding: 10,
+                  callbacks: { label: ctx => ` ${ctx.dataset.label}: KES ${ctx.parsed.y.toLocaleString()}` }
+              }
+          },
+          scales: {
+              x: { ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 15 }, grid: { color: gridColor } },
+              y: { ticks: { color: '#888', callback: v => 'KES ' + v.toLocaleString() }, grid: { color: gridColor } }
+          }
+      }
+  });
 
-    // Top products (horizontal bar)
-    new Chart(document.getElementById('topProductsChart'), {
-        type: 'bar',
-        data: {
-            labels: topLabels,
-            datasets: [{
-                label: 'Revenue',
-                data: topRevenue,
-                backgroundColor: [
-                    '#c9a84c', '#c0395a', '#2ecc71', '#6c8ebf', '#f39c12',
-                    '#9b59b6', '#1abc9c', '#e74c3c', '#3498db', '#e2c36e'
-                ],
-                borderRadius: 4,
-            }]
-        },
-        options: {
-            indexAxis: 'y',
-            responsive: true,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    backgroundColor: '#2a2a2a', borderColor: '#c9a84c', borderWidth: 1,
-                    titleColor: '#c9a84c', bodyColor: '#f0ece4',
-                    callbacks: { label: ctx => `KES ${ctx.parsed.x.toLocaleString()}` }
-                }
-            },
-            scales: {
-                x: { ticks: { color: '#888', callback: v => 'KES ' + v.toLocaleString() }, grid: { color: gridColor } },
-                y: { ticks: { color: '#f0ece4', font: { size: 10 } }, grid: { display: false } }
-            }
-        }
-    });
+  // Top products (horizontal bar)
+  new Chart(document.getElementById('topProductsChart'), {
+      type: 'bar',
+      data: {
+          labels: topLabels,
+          datasets: [{
+              label: 'Revenue',
+              data: topRevenue,
+              backgroundColor: [
+                  '#c9a84c', '#c0395a', '#2ecc71', '#6c8ebf', '#f39c12',
+                  '#9b59b6', '#1abc9c', '#e74c3c', '#3498db', '#e2c36e'
+              ],
+              borderRadius: 4,
+          }]
+      },
+      options: {
+          indexAxis: 'y',
+          responsive: true,
+          plugins: {
+              legend: { display: false },
+              tooltip: {
+                  backgroundColor: '#2a2a2a', borderColor: '#c9a84c', borderWidth: 1,
+                  titleColor: '#c9a84c', bodyColor: '#f0ece4',
+                  callbacks: { label: ctx => `KES ${ctx.parsed.x.toLocaleString()}` }
+              }
+          },
+          scales: {
+              x: { ticks: { color: '#888', callback: v => 'KES ' + v.toLocaleString() }, grid: { color: gridColor } },
+              y: { ticks: { color: '#f0ece4', font: { size: 10 } }, grid: { display: false } }
+          }
+      }
+  });
 
-    // Daily units bar chart
-    new Chart(document.getElementById('unitsChart'), {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Units Sold',
-                data: unitsData,
-                backgroundColor: 'rgba(201,168,76,0.5)',
-                borderColor: '#c9a84c',
-                borderWidth: 1,
-                borderRadius: 3,
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { labels: { color: '#f0ece4', font: chartFont } },
-                tooltip: {
-                    backgroundColor: '#2a2a2a', borderColor: '#c9a84c', borderWidth: 1,
-                    titleColor: '#c9a84c', bodyColor: '#f0ece4',
-                }
-            },
-            scales: {
-                x: { ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 15 }, grid: { color: gridColor } },
-                y: { ticks: { color: '#888' }, grid: { color: gridColor } }
-            }
-        }
-    });
+  // Daily units bar chart
+  new Chart(document.getElementById('unitsChart'), {
+      type: 'bar',
+      data: {
+          labels: labels,
+          datasets: [{
+              label: 'Units Sold',
+              data: unitsData,
+              backgroundColor: 'rgba(201,168,76,0.5)',
+              borderColor: '#c9a84c',
+              borderWidth: 1,
+              borderRadius: 3,
+          }]
+      },
+      options: {
+          responsive: true,
+          plugins: {
+              legend: { labels: { color: '#f0ece4', font: chartFont } },
+              tooltip: {
+                  backgroundColor: '#2a2a2a', borderColor: '#c9a84c', borderWidth: 1,
+                  titleColor: '#c9a84c', bodyColor: '#f0ece4',
+              }
+          },
+          scales: {
+              x: { ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 15 }, grid: { color: gridColor } },
+              y: { ticks: { color: '#888' }, grid: { color: gridColor } }
+          }
+      }
+  });
 </script>
 <script>
-    // Render precomputed forecast chart when available and support live updates
-    const fc_labels = {{ forecast_chart_labels|default:'[]'|safe }};
-    const fc_values = {{ forecast_chart_values|default:'[]'|safe }};
+  function getCookie(name) {
+      const match = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+      return match ? decodeURIComponent(match.pop()) : '';
+  }
+  // Render precomputed forecast chart when available and support live updates
+  const fc_labels = {{ forecast_chart_labels|default:'[]'|safe }};
+  const fc_values = {{ forecast_chart_values|default:'[]'|safe }};
 
-    function createOrUpdateForecastChart(labels, values) {
-        if (window.forecastChart) {
-            window.forecastChart.data.labels = labels;
-            window.forecastChart.data.datasets[0].data = values;
-            window.forecastChart.update();
-            return;
-        }
-        window.forecastChart = new Chart(document.getElementById('forecastChart'), {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Forecast',
-                    data: values,
-                    borderColor: '#9b59b6',
-                    backgroundColor: 'rgba(155,89,182,0.06)',
-                    borderWidth: 2,
-                    pointRadius: 3,
-                    tension: 0.3,
-                    fill: true,
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: { labels: { color: '#f0ece4' } },
-                    tooltip: { backgroundColor: '#2a2a2a', titleColor: '#9b59b6', bodyColor: '#f0ece4' }
-                },
-                scales: {
-                    x: { ticks: { color: '#666' }, grid: { color: '#2a2a2a' } },
-                    y: { ticks: { color: '#888' }, grid: { color: '#2a2a2a' } }
-                }
-            }
-        });
-    }
+  function createOrUpdateForecastChart(labels, values) {
+      if (window.forecastChart) {
+          window.forecastChart.data.labels = labels;
+          window.forecastChart.data.datasets[0].data = values;
+          window.forecastChart.update();
+          return;
+      }
+      window.forecastChart = new Chart(document.getElementById('forecastChart'), {
+          type: 'line',
+          data: {
+              labels: labels,
+              datasets: [{
+                  label: 'Forecast',
+                  data: values,
+                  borderColor: '#9b59b6',
+                  backgroundColor: 'rgba(155,89,182,0.06)',
+                  borderWidth: 2,
+                  pointRadius: 3,
+                  tension: 0.3,
+                  fill: true,
+              }]
+          },
+          options: {
+              responsive: true,
+              plugins: {
+                  legend: { labels: { color: '#f0ece4' } },
+                  tooltip: { backgroundColor: '#2a2a2a', titleColor: '#9b59b6', bodyColor: '#f0ece4' }
+              },
+              scales: {
+                  x: { ticks: { color: '#666' }, grid: { color: '#2a2a2a' } },
+                  y: { ticks: { color: '#888' }, grid: { color: '#2a2a2a' } }
+              }
+          }
+      });
+  }
 
-    if (fc_labels && fc_labels.length) {
-        createOrUpdateForecastChart(fc_labels, fc_values);
-    }
+  if (fc_labels && fc_labels.length) {
+      createOrUpdateForecastChart(fc_labels, fc_values);
+  }
 
-    function updateForecastChart(history, forecast) {
-        const labels = (forecast || []).map(d => d.date);
-        const values = (forecast || []).map(d => d.forecast);
-        createOrUpdateForecastChart(labels, values);
-    }
+  function updateForecastChart(history, forecast) {
+      const labels = (forecast || []).map(d => d.date);
+      const values = (forecast || []).map(d => d.forecast);
+      createOrUpdateForecastChart(labels, values);
+  }
 
-    function pollStatus(statusUrl) {
-        const statusEl = document.getElementById('forecastStatus');
-        fetch(statusUrl, { credentials: 'same-origin' })
-            .then(r => r.json())
-            .then(data => {
-                if (!data) { statusEl.textContent = 'No response'; return; }
-                if (data.status === 'pending' || data.status === 'running') {
-                    statusEl.textContent = 'Processing...';
-                    setTimeout(() => pollStatus(statusUrl), 2000);
-                } else if (data.status === 'completed') {
-                    statusEl.textContent = 'Completed';
-                    updateForecastChart(data.history || [], data.forecast || []);
-                } else {
-                    statusEl.textContent = 'Failed';
-                }
-            }).catch(() => {
-                document.getElementById('forecastStatus').textContent = 'Error';
-            });
-    }
+  function pollStatus(statusUrl) {
+      const statusEl = document.getElementById('forecastStatus');
+      fetch(statusUrl, { credentials: 'same-origin' })
+          .then(r => r.json())
+          .then(data => {
+              if (!data) { statusEl.textContent = 'No response'; return; }
+              if (data.status === 'pending' || data.status === 'running') {
+                  statusEl.textContent = 'Processing...';
+                  setTimeout(() => pollStatus(statusUrl), 2000);
+              } else if (data.status === 'completed') {
+                  statusEl.textContent = 'Completed';
+                  updateForecastChart(data.history || [], data.forecast || []);
+              } else {
+                  statusEl.textContent = 'Failed';
+              }
+          }).catch(() => {
+              document.getElementById('forecastStatus').textContent = 'Error';
+          });
+  }
 
-    document.getElementById('runForecast').addEventListener('click', function () {
-        const product = document.getElementById('forecastProduct').value || '';
-        const start = document.getElementById('forecastStart').value || '';
-        const end = document.getElementById('forecastEnd').value || '';
-        const params = new URLSearchParams();
-        if (product) params.append('product_id', product);
-        if (start) params.append('start', start);
-        if (end) params.append('end', end);
-        params.append('async', '1');
-        const url = `/api/v1/forecast/?${params.toString()}`;
-        const statusEl = document.getElementById('forecastStatus');
-        const cancelBtn = document.getElementById('cancelForecast');
-        statusEl.textContent = 'Queueing...';
-        cancelBtn.style.display = 'none';
-        fetch(url, { credentials: 'same-origin' }).then(response => {
-            return response.json().then(data => ({ status: response.status, body: data }))
-                .catch(() => ({ status: response.status, body: null }));
-        }).then(({ status, body }) => {
-            // Server-side error responses (broker down, 500, 503, etc.)
-            if (status >= 400) {
-                const detail = (body && (body.detail || body.error)) || ('HTTP ' + status);
-                statusEl.textContent = 'Error: ' + detail;
-                return;
-            }
-            if (!body) {
-                statusEl.textContent = 'Error: empty response';
-                return;
-            }
-            // 202: queued via Celery — poll for completion
-            if (status === 202) {
-                statusEl.textContent = 'Queued — processing...';
-                cancelBtn.style.display = 'inline-block';
-                cancelBtn.dataset.taskId = body.task || '';
-                pollStatus(body.status_url || `/api/v1/forecast/?task=${body.task}`);
-                return;
-            }
-            // Completed inline (sync fallback or pure synchronous response)
-            if (body.status === 'completed' || (Array.isArray(body.forecast) && body.forecast.length >= 0 && Array.isArray(body.history))) {
-                statusEl.textContent = body.meta && body.meta.sync_fallback
-                    ? 'Completed (inline — no worker available)'
-                    : 'Completed';
-                cancelBtn.style.display = 'none';
-                updateForecastChart(body.history || [], body.forecast || []);
-                return;
-            }
-            // Still pending and we got a task token back
-            if (body.task) {
-                statusEl.textContent = 'Queued';
-                cancelBtn.style.display = 'inline-block';
-                cancelBtn.dataset.taskId = body.task || '';
-                pollStatus(body.status_url || `/api/v1/forecast/?task=${body.task}`);
-                return;
-            }
-            statusEl.textContent = 'Error queuing';
-        }).catch((err) => {
-            console.error('Forecast request failed:', err);
-            statusEl.textContent = 'Network error';
-        });
-    });
+  document.getElementById('runForecast').addEventListener('click', function () {
+      const product = document.getElementById('forecastProduct').value || '';
+      const start = document.getElementById('forecastStart').value || '';
+      const end = document.getElementById('forecastEnd').value || '';
+      const params = new URLSearchParams();
+      if (product) params.append('product_id', product);
+      if (start) params.append('start', start);
+      if (end) params.append('end', end);
+      params.append('async', '1');
+      const url = `/api/v1/forecast/?${params.toString()}`;
+      const statusEl = document.getElementById('forecastStatus');
+      const cancelBtn = document.getElementById('cancelForecast');
+      statusEl.textContent = 'Queueing...';
+      cancelBtn.style.display = 'none';
+      fetch(url, { credentials: 'same-origin' }).then(response => {
+          return response.json().then(data => ({ status: response.status, body: data }))
+              .catch(() => ({ status: response.status, body: null }));
+      }).then(({ status, body }) => {
+          // Server-side error responses (broker down, 500, 503, etc.)
+          if (status >= 400) {
+              const detail = (body && (body.detail || body.error)) || ('HTTP ' + status);
+              statusEl.textContent = 'Error: ' + detail;
+              return;
+          }
+          if (!body) {
+              statusEl.textContent = 'Error: empty response';
+              return;
+          }
+          // 202: queued via Celery — poll for completion
+          if (status === 202) {
+              statusEl.textContent = 'Queued — processing...';
+              cancelBtn.style.display = 'inline-block';
+              cancelBtn.dataset.taskId = body.task || '';
+              pollStatus(body.status_url || `/api/v1/forecast/?task=${body.task}`);
+              return;
+          }
+          // Completed inline (sync fallback or pure synchronous response)
+          if (body.status === 'completed' || (Array.isArray(body.forecast) && body.forecast.length >= 0 && Array.isArray(body.history))) {
+              statusEl.textContent = body.meta && body.meta.sync_fallback
+                  ? 'Completed (inline — no worker available)'
+                  : 'Completed';
+              cancelBtn.style.display = 'none';
+              updateForecastChart(body.history || [], body.forecast || []);
+              return;
+          }
+          // Still pending and we got a task token back
+          if (body.task) {
+              statusEl.textContent = 'Queued';
+              cancelBtn.style.display = 'inline-block';
+              cancelBtn.dataset.taskId = body.task || '';
+              pollStatus(body.status_url || `/api/v1/forecast/?task=${body.task}`);
+              return;
+          }
+          statusEl.textContent = 'Error queuing';
+      }).catch((err) => {
+          console.error('Forecast request failed:', err);
+          statusEl.textContent = 'Network error';
+      });
+  });
 
-    // Cancel Forecast button
-    document.getElementById('cancelForecast').addEventListener('click', function () {
-        const taskId = this.dataset.taskId || '';
-        const statusEl = document.getElementById('forecastStatus');
-        const cancelBtn = this;
-        if (!taskId) {
-            statusEl.textContent = 'No active task';
-            return;
-        }
-        statusEl.textContent = 'Cancelling...';
-        fetch('/api/v1/forecast/cancel/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ task: taskId })
-        }).then(r => r.json()).then(data => {
-            statusEl.textContent = data.status === 'cancelled' ? 'Cancelled' : (data.detail || 'Error');
-            cancelBtn.style.display = 'none';
-        }).catch(err => {
-            console.error('Cancel request failed:', err);
-            statusEl.textContent = 'Error cancelling';
-        });
-    });
-
+  // Cancel Forecast button
+  document.getElementById('cancelForecast').addEventListener('click', function () {
+      const taskId = this.dataset.taskId || '';
+      const statusEl = document.getElementById('forecastStatus');
+      const cancelBtn = this;
+      if (!taskId) {
+          statusEl.textContent = 'No active task';
+          return;
+      }
+      statusEl.textContent = 'Cancelling...';
+      fetch('/api/v1/forecast/cancel/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+          credentials: 'same-origin',
+          body: JSON.stringify({ task: taskId })
+      }).then(r => r.json()).then(data => {
+          if (data && (data.status === 'cancelled' || data.cancelled > 0)) {
+              statusEl.textContent = 'Cancelled';
+          } else {
+              statusEl.textContent = (data && (data.status || data.detail)) || 'Error';
+          }
+          cancelBtn.style.display = 'none';
+      }).catch(err => {
+          console.error('Cancel request failed:', err);
+          statusEl.textContent = 'Error cancelling';
+      });
+  });
 </script>
 {% endblock %}
