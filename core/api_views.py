@@ -511,6 +511,14 @@ def forecast_api(request):
             # Forecast.meta so the worker can observe it and pause while
             # checking for cancellation.
             simulate_sleep = int(request.query_params.get("simulate_sleep") or 0)
+            # Developer/testing override: force using a local background thread
+            # instead of attempting to use Celery. Useful when the broker
+            # is unavailable or for local integration tests.
+            force_thread = request.query_params.get("force_thread") in (
+                "1",
+                "true",
+                "True",
+            )
 
             meta = {
                 "task": token,
@@ -532,8 +540,35 @@ def forecast_api(request):
                 meta=meta,
             )
 
-            # schedule background worker (Celery when available)
-            if hasattr(core_tasks.forecast_async_task, "delay"):
+            # schedule background worker (Celery when available). If the
+            # broker is unreachable, spawn a daemon thread to run the task so
+            # the API can return immediately while the background work runs
+            # and still observe DB-based cancellation.
+            enqueue_error = None
+            use_thread_fallback = False
+            if force_thread:
+                # spawn a local background thread to run the task
+                import threading
+
+                def _bg():
+                    try:
+                        core_tasks.forecast_async_task(
+                            fobj.id if fobj else None,
+                            business.id,
+                            source,
+                            cadence,
+                            horizon,
+                            date_from,
+                            date_to,
+                            int(product_id) if product_id else None,
+                        )
+                    except Exception:
+                        pass
+
+                threading.Thread(target=_bg, daemon=True).start()
+                enqueue_error = "thread_fallback"
+                use_thread_fallback = True
+            elif hasattr(core_tasks.forecast_async_task, "delay"):
                 try:
                     core_tasks.forecast_async_task.delay(
                         fobj.id if fobj else None,
@@ -546,18 +581,40 @@ def forecast_api(request):
                         int(product_id) if product_id else None,
                     )
                 except Exception as exc:
-                    # Broker / Celery worker not reachable — fall back to inline execution
+                    # Broker / Celery worker not reachable — try background thread
                     enqueue_error = str(exc)
-                    core_tasks.forecast_async_task(
-                        fobj.id if fobj else None,
-                        business.id,
-                        source,
-                        cadence,
-                        horizon,
-                        date_from,
-                        date_to,
-                        int(product_id) if product_id else None,
-                    )
+                    try:
+                        import threading
+
+                        def _bg():
+                            try:
+                                core_tasks.forecast_async_task(
+                                    fobj.id if fobj else None,
+                                    business.id,
+                                    source,
+                                    cadence,
+                                    horizon,
+                                    date_from,
+                                    date_to,
+                                    int(product_id) if product_id else None,
+                                )
+                            except Exception:
+                                pass
+
+                        threading.Thread(target=_bg, daemon=True).start()
+                        use_thread_fallback = True
+                    except Exception:
+                        # If threading also fails for some reason, fall back to inline
+                        core_tasks.forecast_async_task(
+                            fobj.id if fobj else None,
+                            business.id,
+                            source,
+                            cadence,
+                            horizon,
+                            date_from,
+                            date_to,
+                            int(product_id) if product_id else None,
+                        )
             else:
                 core_tasks.forecast_async_task(
                     fobj.id if fobj else None,
@@ -570,10 +627,11 @@ def forecast_api(request):
                     int(product_id) if product_id else None,
                 )
 
-            # If we ran inline (no .delay or broker failure), the Forecast row is
-            # already populated — return the completed payload immediately so the
-            # UI doesn't have to poll a queue that doesn't exist.
-            if enqueue_error is not None or not hasattr(
+            # If we ran inline (no .delay) or we couldn't spawn a background
+            # thread, the Forecast row is already populated — return the
+            # completed payload immediately so the UI doesn't have to poll a
+            # queue that doesn't exist.
+            if (enqueue_error is not None and not use_thread_fallback) or not hasattr(
                 core_tasks.forecast_async_task, "delay"
             ):
                 if fobj is not None:
