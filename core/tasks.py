@@ -255,7 +255,9 @@ def forecast_async_task(
             try:
                 hist_dates = s.index.to_pydatetime()
             except Exception:
-                hist_dates = pd.to_datetime(list(s.index), errors="coerce").to_pydatetime()
+                hist_dates = pd.to_datetime(
+                    list(s.index), errors="coerce"
+                ).to_pydatetime()
             history_list = [
                 {"date": d.isoformat() if d is not None else None, "revenue": float(v)}
                 for d, v in zip(hist_dates, s.values.tolist())
@@ -265,7 +267,9 @@ def forecast_async_task(
         try:
             fc_dates = forecast_series.index.to_pydatetime()
         except Exception:
-            fc_dates = pd.to_datetime(list(forecast_series.index), errors="coerce").to_pydatetime()
+            fc_dates = pd.to_datetime(
+                list(forecast_series.index), errors="coerce"
+            ).to_pydatetime()
 
         forecast_list = [
             {"date": d.isoformat() if d is not None else None, "forecast": float(v)}
