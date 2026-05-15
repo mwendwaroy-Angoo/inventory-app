@@ -155,11 +155,12 @@
             {% if order.status == 'pending' %}
             <option value="confirmed">✓ Confirm</option>
             <option value="cancelled">✕ Cancel</option>
-            {% endif %} {% if order.status == 'confirmed' or order.status ==
-            'paid' %}
+            {% endif %}
+            {% if order.status == 'confirmed' or order.status == 'paid' %}
             <option value="ready">📦 Ready</option>
             <option value="cancelled">✕ Cancel</option>
-            {% endif %} {% if order.status == 'ready' %}
+            {% endif %}
+            {% if order.status == 'ready' %}
             <option value="completed">✅ Complete</option>
             {% endif %}
           </select>
