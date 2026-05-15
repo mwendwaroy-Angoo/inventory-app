@@ -192,10 +192,15 @@ def add_transaction(request):
             date=date.today()
         ).count()
 
-        # Send notifications asynchronously
+        # Send notifications in a background thread – never block the HTTP response.
         try:
-            from .notifications import notify_transaction
-            notify_transaction(transaction, user_profile.business, daily_count, user=request.user)
+            from .notifications import notify_transaction_async
+            notify_transaction_async(
+                transaction.id,
+                user_profile.business.id,
+                daily_count,
+                user_id=request.user.id,
+            )
         except Exception:
             pass  # Never block transaction recording due to notification failure
 
@@ -996,14 +1001,19 @@ def quick_sell(request):
         if recorded and last_transaction:
             total = sum(r['subtotal'] for r in recorded)
 
-            # Send notification for the sale batch
+            # Send notification in a background thread – never block the HTTP response.
             try:
-                from .notifications import notify_transaction
+                from .notifications import notify_transaction_async
                 daily_count = Transaction.objects.filter(
                     business=user_profile.business,
                     date=date.today()
                 ).count()
-                notify_transaction(last_transaction, user_profile.business, daily_count, user=request.user)
+                notify_transaction_async(
+                    last_transaction.id,
+                    user_profile.business.id,
+                    daily_count,
+                    user_id=request.user.id,
+                )
             except Exception:
                 pass
 

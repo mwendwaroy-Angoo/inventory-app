@@ -1,8 +1,36 @@
 import logging
+import threading
 from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+
+def notify_transaction_async(transaction_id, business_id, daily_count=0, user_id=None):
+    """Dispatch notification in a background thread so the HTTP response
+    is never blocked by email / SMS / WhatsApp API calls.
+
+    Accepts primary keys (not model instances) so each thread opens its
+    own DB connection – Django ORM per-thread connections are safe.
+    """
+    from .models import Transaction
+    from accounts.models import Business
+
+    def _worker():
+        try:
+            transaction = Transaction.objects.get(id=transaction_id)
+            business = Business.objects.get(id=business_id)
+            user = None
+            if user_id:
+                from django.contrib.auth.models import User
+                user = User.objects.get(id=user_id)
+            notify_transaction(transaction, business, daily_count, user=user)
+        except Exception:
+            logger.exception("Background notification failed for transaction %s", transaction_id)
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    logger.debug("Dispatched background notification thread for transaction %s", transaction_id)
 
 
 def send_email_notification(subject, message, recipient_email, html_message=None):
