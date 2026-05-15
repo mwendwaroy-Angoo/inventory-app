@@ -248,15 +248,28 @@ def forecast_async_task(
         s = fcmod.resample_series(df_hist, cadence=cadence)
         forecast_series = fcmod.fit_ets_forecast(s, steps=horizon, cadence=cadence)
 
-        history_list = [
-            {"date": d.isoformat(), "revenue": float(v)}
-            for d, v in zip(s.index.to_pydatetime(), s.values.tolist())
-        ]
+        # Build history list safely — handle empty or non-datetime indexes
+        if s.empty:
+            history_list = []
+        else:
+            try:
+                hist_dates = s.index.to_pydatetime()
+            except Exception:
+                hist_dates = pd.to_datetime(list(s.index), errors="coerce").to_pydatetime()
+            history_list = [
+                {"date": d.isoformat() if d is not None else None, "revenue": float(v)}
+                for d, v in zip(hist_dates, s.values.tolist())
+            ]
+
+        # Forecast series should usually have a DatetimeIndex, but be defensive
+        try:
+            fc_dates = forecast_series.index.to_pydatetime()
+        except Exception:
+            fc_dates = pd.to_datetime(list(forecast_series.index), errors="coerce").to_pydatetime()
+
         forecast_list = [
-            {"date": d.isoformat(), "forecast": float(v)}
-            for d, v in zip(
-                forecast_series.index.to_pydatetime(), forecast_series.values.tolist()
-            )
+            {"date": d.isoformat() if d is not None else None, "forecast": float(v)}
+            for d, v in zip(fc_dates, forecast_series.values.tolist())
         ]
 
         if fobj:
