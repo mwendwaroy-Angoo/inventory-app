@@ -179,15 +179,7 @@
     {% for i in items %}
     <option
       value="{{ i.id }}"
-      {%
-      if
-      selected_product
-      and
-      selected_product=""
-      ="i.id"
-      %}selected{%
-      endif
-      %}
+      {% if selected_product and selected_product|stringformat:"s" == i.id|stringformat:"s" %}selected{% endif %}
     >
       {{ i.description|truncatechars:40 }}
     </option>

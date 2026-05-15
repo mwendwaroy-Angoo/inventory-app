@@ -220,11 +220,16 @@
 
 {% block extra_js %}
 <script>
-    document.getElementById("searchInput").addEventListener("keyup", function () {
-        const input = this.value.toLowerCase();
-        document.querySelectorAll("#stockTable tbody tr").forEach(row => {
-            row.style.display = row.textContent.toLowerCase().includes(input) ? "" : "none";
-        });
+    // Debounced search — prevents UI freeze on large inventories
+    let searchTimeout;
+    document.getElementById("searchInput").addEventListener("input", function () {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            const input = this.value.toLowerCase();
+            document.querySelectorAll("#stockTable tbody tr").forEach(row => {
+                row.style.display = row.textContent.toLowerCase().includes(input) ? "" : "none";
+            });
+        }, 200);
     });
 </script>
 {% endblock %}

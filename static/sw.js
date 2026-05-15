@@ -1,4 +1,4 @@
-const CACHE_NAME = 'duka-v3';
+const CACHE_NAME = 'duka-v4';
 const OFFLINE_URL = '/offline/';
 
 const PRECACHE_URLS = [
@@ -8,6 +8,15 @@ const PRECACHE_URLS = [
   '/static/icons/icon-512.png',
   '/offline/',
 ];
+
+// Helper: only cache successful (2xx) responses
+function cacheOkResponse(cache, request, response) {
+  if (response.ok) {
+    const clone = response.clone();
+    cache.put(request, clone);
+  }
+  return response;
+}
 
 // Install: precache core shell
 self.addEventListener('install', event => {
@@ -54,12 +63,16 @@ self.addEventListener('fetch', event => {
   }
 
   // HTML navigations: network-first with offline fallback
+  // Only cache successful (2xx) responses — never cache error pages
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then(response => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(c => c.put(request, clone));
+          const cachePromise = caches.open(CACHE_NAME).then(cache => {
+            cacheOkResponse(cache, request, response.clone());
+          });
+          // Don't block response delivery on cache write
+          event.waitUntil(cachePromise);
           return response;
         })
         .catch(() => caches.match(request).then(c => c || caches.match(OFFLINE_URL)))

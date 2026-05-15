@@ -890,7 +890,8 @@ def export_sales_excel(request):
     wb.save(response)
     return response
 
-    # ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+
+# ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
 
 @login_required
 def notifications_list(request):

@@ -172,7 +172,7 @@ MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "")
 
 # ── SESSION ───────────────────────────────────────────────────────────────────
 SESSION_COOKIE_AGE = 7200  # 2 hours in seconds
-SESSION_SAVE_EVERY_REQUEST = True  # Reset timer on every request
+SESSION_SAVE_EVERY_REQUEST = False  # Only save session when modified — reduces DB writes
 
 # ── REST FRAMEWORK ────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
