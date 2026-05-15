@@ -161,8 +161,7 @@
 <div style="font-size: 0.8rem; color: var(--muted); margin-bottom: 1.5rem">
   {% trans 'Showing:' %}
   <span style="color: var(--gold)">{{ start_date }} → {{ end_date }}</span>
-  · {% blocktrans with p=period %}Compared to previous {{ p }} days{%
-  endblocktrans %}
+  · {% blocktrans with p=period %}Compared to previous {{ p }} days{% endblocktrans %}
 </div>
 
 <!-- Product / Date Forecast Controls -->
