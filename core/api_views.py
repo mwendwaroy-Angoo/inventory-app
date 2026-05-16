@@ -382,6 +382,15 @@ def forecast_api(request):
             state = status_meta.get("status", "pending")
             if state == "cancelled":
                 return Response({"status": "cancelled", "meta": status_meta})
+            if state == "failed":
+                return Response(
+                    {
+                        "status": "failed",
+                        "error": status_meta.get("error", "Unknown error"),
+                        "detail": status_meta.get("traceback", ""),
+                        "meta": status_meta,
+                    }
+                )
             if state != "completed":
                 return Response({"status": state, "meta": status_meta})
             return Response(
@@ -562,12 +571,23 @@ def forecast_api(request):
                             date_to,
                             int(product_id) if product_id else None,
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # Record the failure in the DB so polling doesn't hang forever
+                        try:
+                            from .models import Forecast as Fc
+                            fc = Fc.objects.get(id=fobj.id) if fobj else None
+                            if fc:
+                                meta = fc.meta or {}
+                                meta.update({"status": "failed", "error": str(exc)})
+                                fc.meta = meta
+                                fc.save(update_fields=["meta"])
+                        except Exception:
+                            pass
 
                 threading.Thread(target=_bg, daemon=True).start()
                 enqueue_error = "thread_fallback"
                 use_thread_fallback = True
+
             elif hasattr(core_tasks.forecast_async_task, "delay"):
                 try:
                     core_tasks.forecast_async_task.delay(
@@ -598,23 +618,47 @@ def forecast_api(request):
                                     date_to,
                                     int(product_id) if product_id else None,
                                 )
-                            except Exception:
-                                pass
+                            except Exception as exc2:
+                                # Record the failure in the DB so polling doesn't hang forever
+                                try:
+                                    from .models import Forecast as Fc
+                                    fc = Fc.objects.get(id=fobj.id) if fobj else None
+                                    if fc:
+                                        meta = fc.meta or {}
+                                        meta.update({"status": "failed", "error": str(exc2)})
+                                        fc.meta = meta
+                                        fc.save(update_fields=["meta"])
+                                except Exception:
+                                    pass
 
                         threading.Thread(target=_bg, daemon=True).start()
                         use_thread_fallback = True
-                    except Exception:
-                        # If threading also fails for some reason, fall back to inline
-                        core_tasks.forecast_async_task(
-                            fobj.id if fobj else None,
-                            business.id,
-                            source,
-                            cadence,
-                            horizon,
-                            date_from,
-                            date_to,
-                            int(product_id) if product_id else None,
-                        )
+                    except Exception as thr_exc:
+                        # If threading also fails, fall back to inline
+                        try:
+                            core_tasks.forecast_async_task(
+                                fobj.id if fobj else None,
+                                business.id,
+                                source,
+                                cadence,
+                                horizon,
+                                date_from,
+                                date_to,
+                                int(product_id) if product_id else None,
+                            )
+                        except Exception as inline_exc:
+                            # Record inline failure in DB
+                            try:
+                                from .models import Forecast as Fc
+                                fc = Fc.objects.get(id=fobj.id) if fobj else None
+                                if fc:
+                                    meta = fc.meta or {}
+                                    meta.update({"status": "failed", "error": str(inline_exc)})
+                                    fc.meta = meta
+                                    fc.save(update_fields=["meta"])
+                            except Exception:
+                                pass
+
             else:
                 core_tasks.forecast_async_task(
                     fobj.id if fobj else None,

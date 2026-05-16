@@ -1,0 +1,46 @@
+# Render.com infrastructure configuration
+# Health-check endpoint is served at /health/ so Render's load balancer
+# can warm the service instance before routing user traffic.
+#
+# Preboot: when a new deploy starts, Render keeps the old instance alive
+# until the new one passes its health check.  This eliminates the "cold
+# start" splash for free-tier apps.
+
+databases:
+  - name: duka-db
+    databaseName: duka_mwecheche
+    user: duka_user
+    plan: free
+
+services:
+  - type: web
+    name: duka-mwecheche
+    runtime: python
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn stockapp.wsgi:application --timeout 120 --log-file -"
+    healthCheckPath: /health/
+    preDeployCommand: "python manage.py migrate --noinput"
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: stockapp.settings
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: duka-db
+          property: connectionString
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false

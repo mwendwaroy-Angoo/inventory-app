@@ -13,6 +13,7 @@ from core.views import (
     manage_stores, customer_list, add_customer, delete_customer,
     ajax_customers, sales_dashboard, export_sales_excel, notifications_list,
     notifications_count, daily_summary_webhook, quick_sell, offline,
+    health_check,
 )
 from core.ussd import ussd_callback
 from core.customer_ussd import customer_ussd_callback
@@ -30,6 +31,7 @@ from core.marketplace_views import (
 from core.procurement_views import (
     procurement_list_owner, create_procurement, procurement_detail,
     evaluate_bids, award_bid,
+    confirm_delivery, confirm_payment,
     procurement_browse, submit_bid, my_bids,
     apply_as_supplier, supplier_applications, review_application,
     browse_businesses,
@@ -54,6 +56,7 @@ urlpatterns = [
     path('accounts/', include('django.contrib.auth.urls')),
     path('business/', include('accounts.urls')),
     path('', home, name='home'),
+    path('health/', health_check, name='health_check'),
     path('offline/', offline, name='offline'),
     path('stock/', stock_list, name='stock_list'),
     path('stock/manage/', manage_items, name='manage_items'),
@@ -127,6 +130,8 @@ urlpatterns = [
     path('procurement/browse/', procurement_browse, name='procurement_browse'),
     path('procurement/<int:pk>/bid/', submit_bid, name='submit_bid'),
     path('procurement/my-bids/', my_bids, name='my_bids'),
+    path('procurement/bid/<int:bid_id>/confirm-delivery/', confirm_delivery, name='confirm_delivery'),
+    path('procurement/bid/<int:bid_id>/confirm-payment/', confirm_payment, name='confirm_payment'),
     path('procurement/apply/<int:business_id>/', apply_as_supplier, name='apply_as_supplier'),
     path('procurement/applications/', supplier_applications, name='supplier_applications'),
     path('procurement/applications/<int:app_id>/review/', review_application, name='review_application'),

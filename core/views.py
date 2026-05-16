@@ -22,6 +22,16 @@ def get_user_profile(request):
         return None
 
 
+def health_check(request):
+    """Lightweight health-check endpoint for Render's preboot / load balancer."""
+    from django.db import connection
+    try:
+        connection.ensure_connection()
+        return HttpResponse('ok', content_type='text/plain', status=200)
+    except Exception:
+        return HttpResponse('error', content_type='text/plain', status=503)
+
+
 def offline(request):
     return render(request, 'offline.html')
 

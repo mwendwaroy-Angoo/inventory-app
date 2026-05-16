@@ -845,52 +845,93 @@
         const hasSeen = {{ user.userprofile.has_seen_tutorial|yesno:"true,false" }};
         const csrfToken = '{{ csrf_token }}';
 
-        // ── Role-specific tutorial steps ──
+        // ═══════════════════════════════════════════════════════════════════
+        // ENHANCED TUTORIAL — Detailed role-specific walkthroughs
+        // ═══════════════════════════════════════════════════════════════════
+
         const commonWelcome = {
             icon: '👋',
             title: "{% trans 'Welcome to Duka Mwecheche!' %}",
-            body: "{% trans 'This quick tutorial will guide you through the key features of your dashboard. You can always replay it from the menu under your username.' %}"
+            body: "{% trans 'This detailed tutorial will walk you through every section of the platform. You can replay it anytime from your username menu.' %}"
+        };
+
+        const commonTips = {
+            icon: '💡',
+            title: "{% trans 'Navigation Tips' %}",
+            body: "{% trans 'Use the <strong>sticky header</strong> at the top to navigate between sections. Your <strong>role badge</strong> (Owner / Staff / Supplier / Rider) appears next to your username. Notifications appear as a 🔔 bell icon with a red counter badge.' %}"
         };
 
         const ownerSteps = [
             commonWelcome,
-            { icon: '📦', title: 'Stock Management', body: 'Go to <strong>Stock List</strong> to view your inventory. Use <strong>Manage → Items</strong> to add, edit, or delete products. Set cost prices to track profit margins.' },
-            { icon: '⚡', title: 'Quick Sell', body: 'Hit <strong>Quick Sell</strong> for a fast point-of-sale checkout. Select items, set quantities, choose payment method, and record the sale in seconds.' },
-            { icon: '📊', title: 'Sales & Analytics', body: 'Under <strong>Manage → Sales & P&L</strong> see your daily/weekly/monthly revenue and profit. The <strong>Analytics</strong> page shows trends and visual charts.' },
-            { icon: '📦', title: 'Order Management', body: 'View customer orders under <strong>Manage → Orders</strong>. Assign riders from the <strong>Fulfillment</strong> page and track delivery status.' },
-            { icon: '🤝', title: 'Supply Chain', body: 'Under <strong>Supply Chain</strong>, manage your suppliers, create procurement requests, and evaluate bids. Browse other businesses to expand your network.' },
-            { icon: '👥', title: 'Staff & Settings', body: 'Add staff accounts under <strong>Manage → Staff</strong>. Configure your business details, operating hours, delivery zones, and payment settings under <strong>Manage</strong>.' },
-            { icon: '🏪', title: 'Your Online Shop', body: 'Customers can browse your shop at <strong>/shop/</strong> and place orders directly. Share your shop link to start receiving online orders!' },
-            { icon: '🎉', title: 'You\'re All Set!', body: 'That\'s the basics! Explore each section at your pace. If you need this tutorial again, click your username → <strong>View Tutorial</strong>.' }
+            commonTips,
+            { icon: '🏠', title: 'Dashboard Overview', body: 'Your <strong>Home Dashboard</strong> shows a summary of your entire business: total items, low-stock alerts, reorder recommendations, and quick links to your most-used features. The 📈 <strong>progress widgets</strong> give you at-a-glance health checks.' },
+            { icon: '📦', title: 'Stock List — Full Inventory', body: 'Go to <strong>Stock List</strong> to see every item across all stores. Each row shows: material number, description, unit, current balance, reorder level, selling price, and store location. Use the <strong>filter dropdowns</strong> (store, status) to narrow down. Click any item to view its full history.' },
+            { icon: '➕', title: 'Manage Items — Add / Edit / Delete', body: 'Under <strong>Manage → Items</strong>, you can <strong>add</strong> new products (with material number, description, unit, prices), <strong>edit</strong> existing ones, or <strong>delete</strong> discontinued items. Set <strong>cost price</strong> here — this is used to calculate profit margins in sales reports.' },
+            { icon: '🏪', title: 'Stores — Organise Locations', body: 'If you have multiple branches, use <strong>Manage → Stores</strong> to create stores (e.g. "Main Store", "Branch A"). Each item belongs to one store. Transactions and reports can be filtered by store.' },
+            { icon: '⚡', title: 'Quick Sell — Fast Checkout', body: 'Hit <strong>Quick Sell</strong> for a lightning-fast POS. Build a cart by clicking items, set quantities, choose payment method (Cash / M-Pesa), and record the sale in seconds. Ideal for busy counter service. Sale notifications are sent automatically.' },
+            { icon: '➕📄', title: 'Add Transaction — Detailed Entry', body: 'Use <strong>Add Transaction</strong> for detailed stock movements. Choose <strong>Receipt</strong> (stock in) or <strong>Issue</strong> (stock out). Enter invoice numbers and recipient names for audit trail. Supports <strong>new walk-in customers</strong> — add them on the fly.' },
+            { icon: '📜', title: 'Transaction History — Audit Trail', body: 'Every stock movement is recorded in <strong>History</strong>. Filter by date, item, or type. Export to Excel for offline record-keeping. Each entry shows: date, item, type (Receipt/Issue), quantity, recipient, and invoice number.' },
+            { icon: '📊', title: 'Sales & P&L — Profit Tracking', body: 'Under <strong>Manage → Sales & P&L</strong>, view your revenue, costs, and profit for any period (Today / Week / Month / Year / Custom). See a <strong>daily bar chart</strong> of revenue vs profit. The <strong>top-selling items</strong> table shows units sold, revenue, and profit margin per item.' },
+            { icon: '📈', title: 'Analytics — Charts & Trends', body: 'The <strong>Analytics</strong> page gives you visual charts: daily sales trends, top products, stock health pie chart (healthy vs low stock vs out of stock). Use the <strong>Run Forecast</strong> button to predict future demand using ETS (Holt-Winters) forecasting.' },
+            { icon: '📦📋', title: 'Purchase Orders — Procurement', body: 'Under <strong>Supply Chain → My Procurement</strong>, create <strong>Purchase Orders</strong> to re-stock from suppliers. Each PO can have multiple line items with quantities, unit prices, and expected delivery dates. Track PO status: Draft → Submitted → Partially Received → Received → Closed.' },
+            { icon: '🤝', title: 'Supplier Management', body: '<strong>Supply Chain → My Suppliers</strong> lists all approved suppliers. View their contact info, performance ratings, and past procurement history. Add new suppliers manually or approve from pending <strong>Supplier Applications</strong>.' },
+            { icon: '📨', title: 'Procurement Requests — Get Bids', body: 'Under <strong>Supply Chain → New Procurement</strong>, create a procurement request describing what you need, your budget range, and a deadline. Suppliers will submit bids. <strong>Evaluate & Score</strong> bids using the automated scoring engine (price, proximity, rating, relevance, speed).' },
+            { icon: '🏆', title: 'Awarding Bids & Completion', body: 'After evaluating, <strong>Award</strong> the winning bid — this auto-creates a Supplier Relationship and a draft Purchase Order. Once goods arrive, <strong>Confirm Delivery</strong>. After you pay the supplier, they <strong>Confirm Payment</strong>. Both confirmations close the procurement.' },
+            { icon: '📋📦', title: 'Order Management — Customer Orders', body: 'Under <strong>Manage → Orders</strong>, view all incoming customer orders from your online shop. Each order shows: customer details, items, total amount, payment status, and delivery status. Update order status as you process it.' },
+            { icon: '📋🚚', title: 'Fulfillment — Assign Riders', body: 'The <strong>Fulfillment</strong> page shows orders ready for delivery. Assign available riders, track delivery progress, and mark orders as delivered. Riders receive notifications when assigned.' },
+            { icon: '👥', title: 'Staff Management', body: 'Under <strong>Manage → Staff</strong>, you can <strong>add</strong> staff members (they get their own login), <strong>edit</strong> their details, <strong>reset passwords</strong>, or <strong>remove</strong> them. Staff can record transactions but cannot access settings or financial reports.' },
+            { icon: '💳', title: 'Payment Settings — M-Pesa', body: 'Under <strong>Manage → Payment Settings</strong>, configure your M-Pesa integration: enter your Till Number or Paybill, consumer key/secret, and passkey. This enables STK Push payments from customers and automatic payment confirmation.' },
+            { icon: '⚙️', title: 'Business Settings', body: 'Under <strong>Manage → Business Settings</strong>, update your business name, contact details, operating hours, delivery zones, and counties. Customers see this info on your storefront.' },
+            { icon: '🏪🌐', title: 'Your Online Shop — Storefront', body: 'Your business has a public <strong>storefront</strong> where customers can browse items, add to cart, and checkout. Share your shop link to start receiving orders. The <strong>Marketplace</strong> (/shop/) lists all businesses for customers to explore.' },
+            { icon: '💬', title: 'Feedback & Reviews', body: 'Under <strong>Manage → Feedback</strong>, view reviews left by customers. You can also rate your suppliers and riders. Performance scores are calculated from these ratings and used in procurement bid scoring.' },
+            { icon: '🔔', title: 'Notifications — Stay Informed', body: 'The 🔔 <strong>bell icon</strong> shows your unread notification count. Click it to view all notifications: new orders, staff logins, transaction alerts, supplier application updates, and bid status changes.' },
+            { icon: '🌍', title: 'Multi-Language Support', body: 'Click your username → <strong>Language</strong> to switch between English, Swahili, and other supported languages. The entire interface — menus, labels, messages — will translate automatically.' },
+            { icon: '💾', title: 'Export & Offline Access', body: 'Export stock lists, sales reports, and transaction history to <strong>Excel</strong>. Your app also works as a <strong>PWA</strong> — install it on your phone home screen for offline access to key features.' },
+            { icon: '🎉', title: 'You\'re All Set!', body: 'You\'ve completed the full tour! Every feature is now at your fingertips. To replay this tutorial, click your username → <strong>View Tutorial</strong>. Watch for <strong>"What\'s New"</strong> announcements when features are added.' }
         ];
 
         const staffSteps = [
             commonWelcome,
-            { icon: '📦', title: 'Stock List', body: 'View the current inventory under <strong>Stock List</strong>. Check quantities, prices, and which store each item belongs to.' },
-            { icon: '⚡', title: 'Quick Sell & Transactions', body: 'Use <strong>Quick Sell</strong> for fast sales or <strong>Add Transaction</strong> for detailed entries. All transactions are recorded under <strong>History</strong>.' },
-            { icon: '📋', title: 'Order Fulfillment', body: 'Go to <strong>Order Fulfillment</strong> to view and process customer orders. Pack items and assign riders for delivery.' },
-            { icon: '💰', title: 'Payment Prompts', body: 'Under <strong>Payments</strong>, confirm or dismiss M-Pesa payment notifications for customer orders.' },
-            { icon: '🎉', title: 'You\'re All Set!', body: 'Those are the key areas for your day-to-day work. Click your username → <strong>View Tutorial</strong> to replay anytime.' }
+            commonTips,
+            { icon: '📦', title: 'Stock List — View Inventory', body: 'Go to <strong>Stock List</strong> to see all items across stores. Each row shows: material number, description, unit, current balance, reorder level, and selling price. The <strong>coloured badges</strong> (AVAILABLE / LOW STOCK / OUT OF STOCK / REORDER) help you prioritise.' },
+            { icon: '⚡', title: 'Quick Sell — Fast Point of Sale', body: 'Use <strong>Quick Sell</strong> for fast customer checkouts. Select items, set quantities, choose payment method (Cash / M-Pesa), and record the sale. The system automatically reduces stock and sends notifications.' },
+            { icon: '➕📄', title: 'Add Transaction — Stock Movements', body: 'Use <strong>Add Transaction</strong> for detailed entries. <strong>Receipt</strong> adds stock, <strong>Issue</strong> removes it. Enter invoice numbers and customer names for records. Great for receiving supplier deliveries or recording sales manually.' },
+            { icon: '📜', title: 'Transaction History — Audit Trail', body: 'Every stock movement appears in <strong>History</strong>. You can review past transactions, search by date or item, and see who recorded each entry. Useful for reconciling stock counts.' },
+            { icon: '📋', title: 'Order Fulfillment — Process Orders', body: 'Go to <strong>Order Fulfillment</strong> to view incoming customer orders from the online shop. View order details, <strong>pack items</strong> for delivery, and update order status as you fulfill them.' },
+            { icon: '💰', title: 'Payment Prompts — Confirm Payments', body: 'Under <strong>Payments</strong>, view pending M-Pesa payment notifications. <strong>Confirm</strong> payments that match orders or <strong>Dismiss</strong> invalid ones. Confirmed payments automatically update order status.' },
+            { icon: '🔔', title: 'Notifications — Stay Updated', body: 'The 🔔 bell icon shows unread notifications. Click to view alerts about new orders, payment confirmations, and other updates relevant to your role.' },
+            { icon: '🎉', title: 'You\'re All Set!', body: 'That covers everything you need for your daily tasks! You help keep the business running smoothly. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' }
         ];
 
         const supplierSteps = [
             commonWelcome,
-            { icon: '📊', title: "{% trans 'Your Dashboard' %}", body: "{% trans 'Your <strong>Supplier Dashboard</strong> shows key stats: active clients, pending bids, won bids, and open procurement requests.' %}" },
-            { icon: '🔍', title: "{% trans 'Browse Requests' %}", body: "{% trans 'Click <strong>Browse Requests</strong> to find procurement opportunities from businesses. Submit competitive bids to win supply contracts.' %}" },
-            { icon: '📋', title: "{% trans 'Track Your Bids' %}", body: "{% trans 'Under <strong>My Bids</strong>, monitor the status of all your bid submissions — pending, awarded, or rejected.' %}" },
-            { icon: '🏢', title: "{% trans 'Connect with Businesses' %}", body: "{% trans 'Use <strong>Browse Businesses</strong> to discover potential clients. Apply to become their approved supplier.' %}" },
-            { icon: '🤝', title: "{% trans 'Client Relationships' %}", body: "{% trans 'Once approved, view your client list under <strong>My Clients</strong>. Build strong relationships for repeat procurement.' %}" },
-            { icon: '🎉', title: "{% trans "You're All Set!" %}", body: "{% trans 'Start browsing procurement requests to grow your supply network! Replay this tutorial from your username menu anytime.' %}" }
+            commonTips,
+            { icon: '📊', title: "{% trans 'Supplier Dashboard — At a Glance' %}", body: "{% trans 'Your <strong>Dashboard</strong> shows key stats: total active clients, pending bids (submitted but not yet decided), won bids (awarded to you), and open procurement requests you can bid on. Use this to prioritise your efforts.' %}" },
+            { icon: '🔍', title: "{% trans 'Browse Requests — Find Opportunities' %}", body: "{% trans 'Click <strong>Browse Requests</strong> to see all open procurement requests from businesses. Filter by <strong>category</strong> (e.g. food, hardware, logistics) or <strong>search</strong> by keyword. Each request shows the budget range, deadline, and description.' %}" },
+            { icon: '📝', title: "{% trans 'Submitting a Bid — Win Contracts' %}", body: "{% trans 'Click a procurement request to view details, then <strong>Submit a Bid</strong>. You will need to provide: your <strong>total amount</strong> (be competitive), <strong>delivery timeline</strong> (e.g. 3 days, 1 week), and a <strong>proposal</strong> explaining why you are the best fit. Your bid is automatically scored on price, proximity, rating, relevance, and speed.' %}" },
+            { icon: '📋', title: "{% trans 'Track Your Bids — Status Updates' %}", body: "{% trans 'Under <strong>My Bids</strong>, monitor all your submissions. Statuses: <strong>Submitted</strong> (pending review), <strong>Shortlisted</strong> (top 3 by score), <strong>Accepted</strong> (you won!), or <strong>Rejected</strong>. Click any bid to view full details.' %}" },
+            { icon: '🏆', title: "{% trans 'Won Bids — Delivery & Payment' %}", body: "{% trans 'If your bid is <strong>Accepted</strong>, the business will create a Purchase Order. Deliver the goods, then confirm with the owner when delivery is complete. After the owner confirms delivery and you <strong>Confirm Payment Received</strong>, the procurement is fully closed.' %}" },
+            { icon: '🏢', title: "{% trans 'Browse Businesses — Find Clients' %}", body: "{% trans 'Use <strong>Browse Businesses</strong> to discover potential clients on the platform. You can search by name, category (business type), or county. Each business shows their location and business type.' %}" },
+            { icon: '📨', title: "{% trans 'Apply to Become a Supplier' %}", body: "{% trans 'From a business profile, click <strong>Apply as Supplier</strong>. Describe the services you offer and write a cover letter. The business owner will review your application and approve or reject it. Once approved, they appear in your <strong>My Clients</strong> list.' %}" },
+            { icon: '🤝', title: "{% trans 'My Clients — Manage Relationships' %}", body: "{% trans 'Under <strong>My Clients</strong>, view all businesses you supply to. See contact info, relationship notes, and your performance rating from each client. Strong ratings improve your bid scores for future opportunities.' %}" },
+            { icon: '⭐', title: "{% trans 'Performance Ratings & Feedback' %}", body: "{% trans 'Your performance is rated by the businesses you supply to. Ratings range from 1-5 stars. High ratings (4-5) significantly boost your bid scores. Deliver on time and communicate well to maintain good ratings.' %}" },
+            { icon: '💰', title: "{% trans 'Payment Confirmation Workflow' %}", body: "{% trans 'After delivering goods and the owner confirms delivery, you will receive a notification. Click <strong>Confirm Payment Received</strong> on your awarded bid to acknowledge payment. Both parties must confirm for the procurement to close.' %}" },
+            { icon: '🔔', title: "{% trans 'Notifications — Never Miss a Bid' %}", body: "{% trans 'The 🔔 bell icon keeps you updated: new procurement requests matching your category, bid status changes (shortlisted/accepted/rejected), delivery confirmations, and payment requests.' %}" },
+            { icon: '🎉', title: "{% trans \"You're All Set!\" %}", body: "{% trans 'You\'re now equipped to find, bid, win, and fulfill procurement contracts! Start by browsing open requests or businesses. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' %}" }
         ];
 
         const riderSteps = [
             commonWelcome,
-            { icon: '🏍️', title: "{% trans 'Your Dashboard' %}", body: "{% trans 'Your <strong>Rider Dashboard</strong> shows active deliveries, completed orders, and your performance score.' %}" },
-            { icon: '🔄', title: "{% trans 'Availability Toggle' %}", body: "{% trans 'Toggle your <strong>availability</strong> status so businesses know when you are ready to accept deliveries.' %}" },
-            { icon: '🚴', title: "{% trans 'Active Deliveries' %}", body: "{% trans 'View your current delivery assignments under <strong>Active Deliveries</strong>. See customer details, location, and order amounts.' %}" },
-            { icon: '📜', title: "{% trans 'Delivery History' %}", body: "{% trans 'Check <strong>Delivery History</strong> for a complete record of all your past deliveries.' %}" },
-            { icon: '💰', title: "{% trans 'Earnings' %}", body: "{% trans 'Track your total earnings and delivery count under <strong>My Earnings</strong>.' %}" },
-            { icon: '🎉', title: "{% trans "You're All Set!" %}", body: "{% trans 'Stay available to receive delivery assignments! Replay this tutorial from your username menu anytime.' %}" }
+            commonTips,
+            { icon: '🏍️', title: "{% trans 'Rider Dashboard — Your Hub' %}", body: "{% trans 'Your <strong>Dashboard</strong> shows: active delivery count, completed deliveries, total earnings, and your performance score. The <strong>availability toggle</strong> lets you signal when you are ready to accept new deliveries.' %}" },
+            { icon: '🔄', title: "{% trans 'Availability Toggle — Control Your Work' %}", body: "{% trans 'Click the <strong>Available / Unavailable</strong> button to toggle your status. Businesses only assign deliveries to available riders. Set to <strong>Unavailable</strong> when you are off-duty or at capacity.' %}" },
+            { icon: '🚴', title: "{% trans 'Active Deliveries — Your Current Jobs' %}", body: "{% trans 'Under <strong>Active Deliveries</strong>, view all deliveries currently assigned to you. Each card shows: customer name, delivery address/location, order items, total amount, and pickup instructions. Tap to expand for more details.' %}" },
+            { icon: '📸', title: "{% trans 'Delivery Confirmation — Proof of Delivery' %}", body: "{% trans 'When you deliver an order, mark it as <strong>Delivered</strong>. The system records the delivery time and updates the order status. Customers can rate your performance after delivery.' %}" },
+            { icon: '📜', title: "{% trans 'Delivery History — Your Record' %}", body: "{% trans 'Check <strong>Delivery History</strong> for a complete log of all your past deliveries. See dates, amounts, distances, and customer ratings. Useful for tracking your performance over time.' %}" },
+            { icon: '💰', title: "{% trans 'Earnings — Track Your Income' %}", body: "{% trans 'Under <strong>My Earnings</strong>, view your total earnings, delivery count, and average earning per delivery. Earnings are calculated based on delivery fees set by businesses. Track your progress week by week.' %}" },
+            { icon: '⭐', title: "{% trans 'Performance Score — Your Reputation' %}", body: "{% trans 'After each delivery, customers and businesses can rate you (1-5 stars). Your <strong>average rating</strong> appears on your dashboard. Higher-rated riders get priority for delivery assignments. Be punctual and professional!' %}" },
+            { icon: '🔔', title: "{% trans 'Notifications — New Assignments' %}", body: "{% trans 'The 🔔 bell icon alerts you when: a new delivery is assigned, a customer leaves feedback, or your earnings are updated. Keep notifications on so you never miss an assignment.' %}" },
+            { icon: '🎉', title: "{% trans \"You're All Set!\" %}", body: "{% trans 'You are ready to start delivering! Stay available and check for new assignments. Your reliability and speed will build your reputation. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' %}" }
         ];
 
         // Pick the right steps for the role

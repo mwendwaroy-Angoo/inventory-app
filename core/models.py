@@ -612,6 +612,10 @@ class SupplierBid(models.Model):
                                 help_text='Auto-calculated composite score (0-100)')
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='submitted')
     created_at = models.DateTimeField(auto_now_add=True)
+    delivery_confirmed_at = models.DateTimeField(null=True, blank=True,
+        help_text='Owner confirmed delivery success')
+    payment_confirmed_at = models.DateTimeField(null=True, blank=True,
+        help_text='Supplier confirmed payment received')
 
     class Meta:
         unique_together = ['procurement', 'supplier']
@@ -619,6 +623,16 @@ class SupplierBid(models.Model):
 
     def __str__(self):
         return f"Bid by {self.supplier.name} — KES {self.amount:,.0f}"
+
+    def is_delivery_confirmed(self):
+        return self.delivery_confirmed_at is not None
+
+    def is_payment_confirmed(self):
+        return self.payment_confirmed_at is not None
+
+    def is_fully_completed(self):
+        return self.is_delivery_confirmed() and self.is_payment_confirmed()
+
 
 
 class SupplierBidLine(models.Model):

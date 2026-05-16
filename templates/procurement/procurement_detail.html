@@ -85,6 +85,18 @@
         {% if is_owner and bid.status != 'accepted' and procurement.status != 'awarded' %}
         <a href="{% url 'award_bid' bid_id=bid.pk %}" class="btn btn-sm btn-outline-success mt-2">✅ {% trans 'Award This Bid' %}</a>
         {% endif %}
+
+        {% if is_owner and bid.status == 'accepted' and not bid.is_delivery_confirmed %}
+        <a href="{% url 'confirm_delivery' bid_id=bid.pk %}" class="btn btn-sm btn-outline-info mt-2">📦 {% trans 'Confirm Delivery' %}</a>
+        {% endif %}
+
+        {% if not is_owner and bid.status == 'accepted' and not bid.is_payment_confirmed %}
+        <a href="{% url 'confirm_payment' bid_id=bid.pk %}" class="btn btn-sm btn-outline-info mt-2">💰 {% trans 'Confirm Payment Received' %}</a>
+        {% endif %}
+
+        {% if bid.status == 'accepted' and bid.is_fully_completed %}
+        <span class="badge bg-success mt-2" style="font-size:0.8rem;">✅ {% trans 'Fully Completed' %}</span>
+        {% endif %}
     </div>
     {% endfor %}
     {% else %}

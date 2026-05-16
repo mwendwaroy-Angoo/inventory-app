@@ -161,12 +161,26 @@ def score_all_bids(procurement):
 
 # ── OWNER: PROCUREMENT REQUESTS ──────────────────────────────────────────────
 
+def _close_expired_procurement():
+    """Auto-close any open procurement requests past their deadline."""
+    from django.utils import timezone
+    expired = ProcurementRequest.objects.filter(
+        status='open',
+        deadline__lt=timezone.now().date(),
+    )
+    count = expired.update(status='closed')
+    return count
+
+
 @login_required
 def procurement_list_owner(request):
     """Owner view: all their procurement requests."""
     profile = getattr(request.user, 'userprofile', None)
     if not profile or not profile.is_owner or not profile.business:
         return redirect('home')
+
+    # Auto-close expired ones
+    _close_expired_procurement()
 
     requests = ProcurementRequest.objects.filter(business=profile.business)
 
@@ -222,6 +236,11 @@ def procurement_detail(request, pk):
     """View a procurement request + bids (owner or supplier perspective)."""
     procurement = get_object_or_404(ProcurementRequest, pk=pk)
     profile = getattr(request.user, 'userprofile', None)
+
+    # Auto-close if expired and still open
+    if procurement.status == 'open' and procurement.deadline < timezone.now().date():
+        procurement.status = 'closed'
+        procurement.save(update_fields=['status'])
 
     is_owner = (
         profile and profile.business
@@ -407,7 +426,122 @@ def award_bid(request, bid_id):
     return render(request, 'procurement/award_bid.html', {'bid': bid})
 
 
+# ── BID COMPLETION WORKFLOW ──────────────────────────────────────────────────
+
+@login_required
+def confirm_delivery(request, bid_id):
+    """Owner: confirm that delivery from the supplier was successful.
+
+    Once delivery is confirmed AND the supplier confirms payment,
+    the bid is marked fully completed and pending bids are auto-cleared.
+    """
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.is_owner or not profile.business:
+        return redirect('home')
+
+    bid = get_object_or_404(SupplierBid, pk=bid_id, procurement__business=profile.business)
+    if bid.status != 'accepted':
+        django_messages.error(request, 'Only awarded bids can be completed.')
+        return redirect('procurement_detail', pk=bid.procurement.pk)
+
+    if bid.is_delivery_confirmed():
+        django_messages.info(request, 'Delivery already confirmed.')
+        return redirect('procurement_detail', pk=bid.procurement.pk)
+
+    if request.method == 'POST':
+        bid.delivery_confirmed_at = timezone.now()
+        bid.save(update_fields=['delivery_confirmed_at'])
+
+        # Notify the supplier owner that delivery was confirmed
+        try:
+            from core.notifications import create_in_app_notification
+            supplier_owner_profile = bid.supplier.users.filter(role='owner').first()
+            if supplier_owner_profile:
+                create_in_app_notification(
+                    supplier_owner_profile.user,
+                    f"Delivery Confirmed — {profile.business.name}",
+                    f"The business owner confirmed delivery for procurement '{bid.procurement.title}'.",
+                    notification_type='order'
+                )
+        except Exception:
+            pass
+
+        # If both confirmed, close out the bid
+        if bid.is_fully_completed():
+            bid.procurement.status = 'closed'
+            bid.procurement.save(update_fields=['status'])
+            django_messages.success(
+                request,
+                'Delivery confirmed! Payment was already confirmed. Procurement request closed.'
+            )
+        else:
+            django_messages.success(
+                request,
+                'Delivery confirmed! Awaiting supplier payment confirmation to close the request.'
+            )
+        return redirect('procurement_detail', pk=bid.procurement.pk)
+
+    return render(request, 'procurement/confirm_delivery.html', {'bid': bid})
+
+
+@login_required
+def confirm_payment(request, bid_id):
+    """Supplier: confirm that payment from the business owner was received.
+
+    Once payment is confirmed AND the owner confirms delivery,
+    the bid is marked fully completed and pending bids are auto-cleared.
+    """
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.business:
+        return redirect('home')
+
+    bid = get_object_or_404(SupplierBid, pk=bid_id, supplier=profile.business)
+    if bid.status != 'accepted':
+        django_messages.error(request, 'Only awarded bids can be completed.')
+        return redirect('procurement_detail', pk=bid.procurement.pk)
+
+    if bid.is_payment_confirmed():
+        django_messages.info(request, 'Payment already confirmed.')
+        return redirect('procurement_detail', pk=bid.procurement.pk)
+
+    if request.method == 'POST':
+        bid.payment_confirmed_at = timezone.now()
+        bid.save(update_fields=['payment_confirmed_at'])
+
+        # Notify the owner that payment was confirmed
+        try:
+            from core.notifications import create_in_app_notification
+            owner_profile = bid.procurement.business.users.filter(role='owner').first()
+            if owner_profile:
+                create_in_app_notification(
+                    owner_profile.user,
+                    f"Payment Confirmed — {profile.business.name}",
+                    f"The supplier confirmed payment receipt for procurement '{bid.procurement.title}'.",
+                    notification_type='order'
+                )
+        except Exception:
+            pass
+
+        # If both confirmed, close out the bid
+        if bid.is_fully_completed():
+            bid.procurement.status = 'closed'
+            bid.procurement.save(update_fields=['status'])
+            django_messages.success(
+                request,
+                'Payment confirmed! Delivery was already confirmed. Procurement request closed.'
+            )
+        else:
+            django_messages.success(
+                request,
+                'Payment confirmed! Awaiting owner delivery confirmation to close the request.'
+            )
+        return redirect('procurement_detail', pk=bid.procurement.pk)
+
+    return render(request, 'procurement/confirm_payment.html', {'bid': bid})
+
+
 # ── SUPPLIER: BROWSE & BID ──────────────────────────────────────────────────
+
 
 @login_required
 def procurement_browse(request):

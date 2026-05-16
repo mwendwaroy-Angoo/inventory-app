@@ -355,7 +355,7 @@
 <div class="row g-4 mb-4">
   <div class="col-12">
     <div class="chart-box">
-      <h3>🔮 {% trans 'Revenue Forecast (precomputed)' %}</h3>
+      <h3>🔮 {% trans 'Revenue Forecast' %}</h3>
       <canvas id="forecastChart" height="120"></canvas>
     </div>
   </div>
@@ -778,25 +778,45 @@
       createOrUpdateForecastChart(labels, values);
   }
 
-  function pollStatus(statusUrl) {
+  function pollStatus(statusUrl, retries) {
       const statusEl = document.getElementById('forecastStatus');
+      const cancelBtn = document.getElementById('cancelForecast');
+      retries = retries || 0;
+      // Timeout after ~60 seconds (30 retries * 2s) to avoid infinite polling
+      const MAX_RETRIES = 30;
+      if (retries >= MAX_RETRIES) {
+          statusEl.textContent = 'Timed out — try again';
+          cancelBtn.style.display = 'none';
+          return;
+      }
       fetch(statusUrl, { credentials: 'same-origin' })
           .then(r => r.json())
           .then(data => {
               if (!data) { statusEl.textContent = 'No response'; return; }
               if (data.status === 'pending' || data.status === 'running') {
                   statusEl.textContent = 'Processing...';
-                  setTimeout(() => pollStatus(statusUrl), 2000);
+                  setTimeout(() => pollStatus(statusUrl, retries + 1), 2000);
               } else if (data.status === 'completed') {
                   statusEl.textContent = 'Completed';
+                  cancelBtn.style.display = 'none';
                   updateForecastChart(data.history || [], data.forecast || []);
+              } else if (data.status === 'failed') {
+                  statusEl.textContent = 'Failed: ' + (data.error || 'Unknown error');
+                  cancelBtn.style.display = 'none';
+                  console.error('Forecast failed:', data.detail || data.error);
+              } else if (data.status === 'cancelled') {
+                  statusEl.textContent = 'Cancelled';
+                  cancelBtn.style.display = 'none';
               } else {
-                  statusEl.textContent = 'Failed';
+                  statusEl.textContent = 'Failed (unknown status)';
+                  cancelBtn.style.display = 'none';
               }
           }).catch(() => {
-              document.getElementById('forecastStatus').textContent = 'Error';
+              document.getElementById('forecastStatus').textContent = 'Network error — retrying...';
+              setTimeout(() => pollStatus(statusUrl, retries + 1), 3000);
           });
   }
+
 
   document.getElementById('runForecast').addEventListener('click', function () {
       const product = document.getElementById('forecastProduct').value || '';

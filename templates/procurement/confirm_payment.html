@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans 'Confirm Payment' %} — {{ bid.procurement.title }}{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width:700px;">
+    <div style="background:var(--onyx-card); border:1px solid #333; border-top:3px solid var(--success); border-radius:10px; padding:2rem;">
+        <h4 style="color:var(--pearl);">💰 {% trans 'Confirm Payment Received' %}</h4>
+        <p style="color:var(--muted); margin-bottom:1.5rem;">
+            {% trans 'Confirm that you have received payment from the business owner for this completed procurement.' %}
+        </p>
+
+        <div style="background:#1e1e1e; border-radius:8px; padding:1rem; margin-bottom:1.5rem;">
+            <h6 style="color:var(--gold); margin-bottom:0.5rem;">{{ bid.procurement.title }}</h6>
+            <table style="width:100%; font-size:0.85rem; color:var(--muted);">
+                <tr>
+                    <td style="padding:0.3rem 0;">{% trans 'Business' %}:</td>
+                    <td style="color:var(--pearl);">{{ bid.procurement.business.name }}</td>
+                </tr>
+                <tr>
+                    <td style="padding:0.3rem 0;">{% trans 'Amount' %}:</td>
+                    <td style="color:var(--gold); font-weight:600;">KES {{ bid.amount|floatformat:0 }}</td>
+                </tr>
+                <tr>
+                    <td style="padding:0.3rem 0;">{% trans 'Delivery Timeline' %}:</td>
+                    <td style="color:var(--pearl);">{{ bid.delivery_timeline }}</td>
+                </tr>
+                <tr>
+                    <td style="padding:0.3rem 0;">{% trans 'Awarded' %}:</td>
+                    <td style="color:var(--pearl);">{{ bid.created_at|date:"M d, Y" }}</td>
+                </tr>
+                {% if bid.is_delivery_confirmed %}
+                <tr>
+                    <td style="padding:0.3rem 0;">{% trans 'Delivery Confirmed' %}:</td>
+                    <td style="color:var(--success);">{{ bid.delivery_confirmed_at|date:"M d, Y H:i" }}</td>
+                </tr>
+                {% endif %}
+            </table>
+        </div>
+
+        <form method="post">
+            {% csrf_token %}
+            <p style="color:var(--muted); font-size:0.9rem; margin-bottom:1.5rem;">
+                {% trans 'By confirming, you attest that the business owner has paid you for the delivered items as agreed.' %}
+            </p>
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn" style="background:var(--success); color:white;">
+                    💰 {% trans 'Confirm Payment Received' %}
+                </button>
+                <a href="{% url 'procurement_detail' pk=bid.procurement.pk %}" class="btn btn-outline-secondary">
+                    {% trans 'Cancel' %}
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
