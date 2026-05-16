@@ -7,7 +7,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Duka">
-    <link rel="manifest" href="/static/manifest.json">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="Duka">
+    <link rel="manifest" href="/manifest.json">
+    <!-- iOS splash screen and icon support -->
+    <link rel="apple-touch-icon" sizes="152x152" href="/static/icons/icon-152.png">
+    <link rel="apple-touch-icon" sizes="167x167" href="/static/icons/icon-152.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
     <title>{% block title %}Duka Mwecheche{% endblock %}</title>
     {% load django_bootstrap5 %}
@@ -779,7 +785,7 @@
 
         // ── Service Worker registration ──
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/static/sw.js', { scope: '/' })
+            navigator.serviceWorker.register('/sw.js', { scope: '/' })
                 .then(reg => console.log('SW registered:', reg.scope))
                 .catch(err => console.log('SW registration failed:', err));
         }
@@ -917,7 +923,7 @@
             { icon: '⭐', title: "{% trans 'Performance Ratings & Feedback' %}", body: "{% trans 'Your performance is rated by the businesses you supply to. Ratings range from 1-5 stars. High ratings (4-5) significantly boost your bid scores. Deliver on time and communicate well to maintain good ratings.' %}" },
             { icon: '💰', title: "{% trans 'Payment Confirmation Workflow' %}", body: "{% trans 'After delivering goods and the owner confirms delivery, you will receive a notification. Click <strong>Confirm Payment Received</strong> on your awarded bid to acknowledge payment. Both parties must confirm for the procurement to close.' %}" },
             { icon: '🔔', title: "{% trans 'Notifications — Never Miss a Bid' %}", body: "{% trans 'The 🔔 bell icon keeps you updated: new procurement requests matching your category, bid status changes (shortlisted/accepted/rejected), delivery confirmations, and payment requests.' %}" },
-            { icon: '🎉', title: "{% trans \"You're All Set!\" %}", body: "{% trans 'You\'re now equipped to find, bid, win, and fulfill procurement contracts! Start by browsing open requests or businesses. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' %}" }
+            { icon: '🎉', title: '{% trans "You\'re All Set!" %}', body: "{% trans 'You\'re now equipped to find, bid, win, and fulfill procurement contracts! Start by browsing open requests or businesses. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' %}" }
         ];
 
         const riderSteps = [
@@ -931,7 +937,7 @@
             { icon: '💰', title: "{% trans 'Earnings — Track Your Income' %}", body: "{% trans 'Under <strong>My Earnings</strong>, view your total earnings, delivery count, and average earning per delivery. Earnings are calculated based on delivery fees set by businesses. Track your progress week by week.' %}" },
             { icon: '⭐', title: "{% trans 'Performance Score — Your Reputation' %}", body: "{% trans 'After each delivery, customers and businesses can rate you (1-5 stars). Your <strong>average rating</strong> appears on your dashboard. Higher-rated riders get priority for delivery assignments. Be punctual and professional!' %}" },
             { icon: '🔔', title: "{% trans 'Notifications — New Assignments' %}", body: "{% trans 'The 🔔 bell icon alerts you when: a new delivery is assigned, a customer leaves feedback, or your earnings are updated. Keep notifications on so you never miss an assignment.' %}" },
-            { icon: '🎉', title: "{% trans \"You're All Set!\" %}", body: "{% trans 'You are ready to start delivering! Stay available and check for new assignments. Your reliability and speed will build your reputation. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' %}" }
+            { icon: '🎉', title: '{% trans "You\'re All Set!" %}', body: "{% trans 'You are ready to start delivering! Stay available and check for new assignments. Your reliability and speed will build your reputation. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' %}" }
         ];
 
         // Pick the right steps for the role
