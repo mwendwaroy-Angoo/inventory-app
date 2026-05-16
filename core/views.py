@@ -32,6 +32,34 @@ def health_check(request):
         return HttpResponse('error', content_type='text/plain', status=503)
 
 
+def manifest_json(request):
+    """Serve the Web App Manifest at /manifest.json with proper content type."""
+    from django.conf import settings
+    import json
+    manifest_path = settings.BASE_DIR / 'static' / 'manifest.json'
+    try:
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        return JsonResponse(manifest, content_type='application/manifest+json')
+    except (FileNotFoundError, json.JSONDecodeError):
+        return JsonResponse({}, content_type='application/manifest+json')
+
+
+def service_worker(request):
+    """Serve the Service Worker at /sw.js with proper scope headers."""
+    from django.conf import settings
+    sw_path = settings.BASE_DIR / 'static' / 'sw.js'
+    try:
+        with open(sw_path, 'r') as f:
+            content = f.read()
+        response = HttpResponse(content, content_type='application/javascript')
+        response['Service-Worker-Allowed'] = '/'
+        response['Cache-Control'] = 'no-cache'
+        return response
+    except FileNotFoundError:
+        return HttpResponse('', content_type='application/javascript')
+
+
 def offline(request):
     return render(request, 'offline.html')
 

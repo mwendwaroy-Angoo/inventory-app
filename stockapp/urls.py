@@ -13,7 +13,7 @@ from core.views import (
     manage_stores, customer_list, add_customer, delete_customer,
     ajax_customers, sales_dashboard, export_sales_excel, notifications_list,
     notifications_count, daily_summary_webhook, quick_sell, offline,
-    health_check,
+    health_check, manifest_json, service_worker,
 )
 from core.ussd import ussd_callback
 from core.customer_ussd import customer_ussd_callback
@@ -58,6 +58,10 @@ urlpatterns = [
     path('', home, name='home'),
     path('health/', health_check, name='health_check'),
     path('offline/', offline, name='offline'),
+
+    # ── PWA (served from Django for correct scope and headers) ──
+    path('manifest.json', manifest_json, name='manifest_json'),
+    path('sw.js', service_worker, name='service_worker'),
     path('stock/', stock_list, name='stock_list'),
     path('stock/manage/', manage_items, name='manage_items'),
     path('stock/add/', add_item, name='add_item'),
