@@ -9,7 +9,7 @@
     <meta name="apple-mobile-web-app-title" content="Duka">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="application-name" content="Duka">
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="/static/manifest.json">
     <!-- iOS splash screen and icon support -->
     <link rel="apple-touch-icon" sizes="152x152" href="/static/icons/icon-152.png">
     <link rel="apple-touch-icon" sizes="167x167" href="/static/icons/icon-152.png">
@@ -783,9 +783,9 @@
         checkNotifications();
         setInterval(checkNotifications, 30000);
 
-        // ── Service Worker registration ──
+        // ── Service Worker registration (static file) ──
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            navigator.serviceWorker.register('/static/sw.js')
                 .then(reg => console.log('SW registered:', reg.scope))
                 .catch(err => console.log('SW registration failed:', err));
         }
