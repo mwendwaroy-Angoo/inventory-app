@@ -5,10 +5,16 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "orientation": "portrait",
   "background_color": "#1a1a1a",
   "theme_color": "#c9a84c",
   "categories": ["business", "finance", "shopping"],
+  "prefer_related_applications": false,
+  "related_applications": [],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
   "icons": [
     {
       "src": "/static/icons/icon-72.png",
@@ -77,6 +83,22 @@
       "short_name": "Shop",
       "url": "/shop/",
       "description": "Browse businesses"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Duka Mwecheche Dashboard"
+    },
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Duka Mwecheche Mobile View"
     }
   ]
 }

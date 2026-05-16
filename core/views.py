@@ -36,6 +36,34 @@ def offline(request):
     return render(request, 'offline.html')
 
 
+# ── PWA ──────────────────────────────────────────────────────────────────────
+
+def manifest_json(request):
+    """Serve the Web App Manifest at /manifest.json with proper content type."""
+    import json, os
+    from django.conf import settings
+    manifest_path = settings.BASE_DIR / 'static' / 'manifest.json'
+    if manifest_path.exists():
+        with open(manifest_path, 'r') as f:
+            manifest = json.load(f)
+        return JsonResponse(manifest, content_type='application/manifest+json')
+    return JsonResponse({}, content_type='application/manifest+json')
+
+
+def service_worker(request):
+    """Serve the Service Worker at /sw.js with proper headers."""
+    from django.conf import settings
+    from django.http import FileResponse
+    sw_path = settings.BASE_DIR / 'static' / 'sw.js'
+    if sw_path.exists():
+        response = FileResponse(open(sw_path, 'rb'), content_type='application/javascript')
+        response['Service-Worker-Allowed'] = '/'
+        response['Cache-Control'] = 'no-cache'
+        return response
+    from django.http import HttpResponse
+    return HttpResponse('', content_type='application/javascript')
+
+
 def owner_required(view_func):
     from functools import wraps
     @wraps(view_func)
