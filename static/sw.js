@@ -1,9 +1,9 @@
-const CACHE_NAME = 'duka-v4';
+const CACHE_NAME = 'duka-v5';
 const OFFLINE_URL = '/offline/';
 
 const PRECACHE_URLS = [
   '/',
-  '/static/manifest.json',
+  '/manifest.json',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',
   '/offline/',
