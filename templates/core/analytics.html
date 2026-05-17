@@ -1,4 +1,4 @@
-{% extends "base.html" %} {% load i18n %} {% block title %}{% trans 'Analytics'
+In templates/core/analytics.html, inside the renderForecastChart function, find the scales section of the Chart.js config and replace the entire x scale definition with this — it switches from type: 'time' (which needs an external adapter) to type: 'category' (which works with plain strings out of the box):{% extends "base.html" %} {% load i18n %} {% block title %}{% trans 'Analytics'
 %} — Duka Mwecheche{% endblock %} {% block extra_css %}
 <style>
   .period-btn {
@@ -989,9 +989,20 @@
         maintainAspectRatio: false,
         scales: {
           x: {
-            type: 'time',
-            time: { unit: 'day', tooltipFormat: 'MMM d' },
-            ticks: { color: '#aaa', maxTicksLimit: 10 },
+            type: 'category',
+            ticks: {
+              color: '#aaa',
+              maxTicksLimit: 10,
+              maxRotation: 45,
+              callback: function(val, index) {
+                // Show every Nth label to avoid crowding
+                const labels = this.chart.data.datasets
+                  .flatMap(ds => ds.data.map(p => p.x));
+                const total = labels.length;
+                const step = Math.max(1, Math.floor(total / 10));
+                return index % step === 0 ? val : '';
+              }
+            },
             grid: { color: 'rgba(255,255,255,0.05)' },
           },
           y: {
