@@ -1,5 +1,4 @@
-{% extends "base.html" %} {% load i18n %} {% block title %}{% trans 'Analytics'
-%} — Duka Mwecheche{% endblock %} {% block extra_css %}
+{% extends "base.html" %} {% load i18n %} {% block title %}{% trans 'Analytics' %} — Duka Mwecheche{% endblock %} {% block extra_css %}
 <style>
   .period-btn {
     padding: 0.4rem 1rem;
@@ -175,8 +174,7 @@
       <div
         class="stat-change {% if revenue_change >= 0 %}up{% else %}down{% endif %}"
       >
-        {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change
-        }}% {% trans 'vs prev' %}
+        {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change }}% {% trans 'vs prev' %}
       </div>
     </div>
   </div>
@@ -207,8 +205,7 @@
       <div
         class="stat-change {% if units_change >= 0 %}up{% else %}down{% endif %}"
       >
-        {% if units_change >= 0 %}↑{% else %}↓{% endif %} {{ units_change }}% {%
-        trans 'vs prev' %}
+        {% if units_change >= 0 %}↑{% else %}↓{% endif %} {{ units_change }}% {% trans 'vs prev' %}
       </div>
     </div>
   </div>
