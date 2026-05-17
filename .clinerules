@@ -1,0 +1,20 @@
+# Cline Rules for inventory-app
+
+## File Editing
+
+- Always output the complete file content from start to finish when editing any file
+- Never use `...`, `# unchanged`, `# rest of code`, `# existing code`, or any placeholder to skip sections
+- Never truncate output mid-file under any circumstances
+- Complete every file edit fully before stopping
+
+## Task Approach
+
+- Edit one file at a time, show the result, then move to the next
+- If a task involves more than 3 files, list the files and order of edits first and wait for confirmation
+- After each file edit, explicitly state what was changed and what file is next
+
+## Django-Specific
+
+- This is a multi-tenant Django app — always preserve business/user scoping in any view edits
+- Never remove existing URL patterns, only add new ones
+- Always keep existing migrations intact — never edit migration files
