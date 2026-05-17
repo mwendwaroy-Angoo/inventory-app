@@ -351,13 +351,55 @@
 
 <hr class="gold-divider" />
 
-<!-- ═══ FORECAST PANEL ═══ -->
-<div class="row g-4 mb-4">
-  <div class="col-12">
-    <div class="chart-box">
-      <h3>🔮 {% trans 'Revenue Forecast' %}</h3>
-      <canvas id="forecastChart" height="120"></canvas>
+<!-- ── Revenue Forecast ──────────────────────────────────────── -->
+<div class="card bg-dark border-secondary mb-4">
+  <div class="card-body">
+    <h6 class="text-gold mb-3">📈 Revenue Forecast</h6>
+
+    <!-- Controls -->
+    <div class="row g-2 align-items-end mb-3">
+      <div class="col-auto">
+        <label class="form-label text-muted small mb-1">Model</label>
+        <select id="fc-model" class="form-select form-select-sm bg-dark text-white border-secondary">
+          <option value="ets">ETS (Holt's Trend)</option>
+          <option value="regression">Linear Regression</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label text-muted small mb-1">Forecast horizon (days)</label>
+        <select id="fc-horizon" class="form-select form-select-sm bg-dark text-white border-secondary">
+          <option value="7">7 days</option>
+          <option value="14">14 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="60">60 days</option>
+          <option value="90">90 days</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <button id="run-forecast-btn" class="btn btn-sm btn-warning">
+          ▶ Run Forecast
+        </button>
+      </div>
+      <div class="col-auto">
+        <span id="fc-model-label" class="badge bg-secondary text-white" style="display:none;"></span>
+      </div>
     </div>
+
+    <!-- Chart -->
+    <div style="position:relative; height:260px;">
+      <canvas id="forecastChart"></canvas>
+      <div id="fc-placeholder" class="text-center text-muted pt-5"
+           style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+        Select a model and click <strong class="text-warning ms-1">▶ Run Forecast</strong>
+      </div>
+      <div id="fc-spinner" style="display:none;position:absolute;inset:0;
+           background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;">
+        <div class="spinner-border text-warning" role="status"></div>
+      </div>
+    </div>
+
+    <p id="fc-error" class="text-danger small mt-2" style="display:none;"></p>
+    <p id="fc-summary" class="text-muted small mt-2" style="display:none;"></p>
   </div>
 </div>
 
@@ -599,6 +641,7 @@
   </table>
 </div>
 {% endif %} {% endblock %} {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
   const labels = {{ chart_labels|safe }};
@@ -905,5 +948,135 @@
           statusEl.textContent = 'Error cancelling';
       });
   });
+</script>
+<script>
+(function () {
+  // ── grab date range from the existing date pickers on the page ──────────
+  function getDateRange() {
+    // adjust these selectors to match the actual date inputs on your page
+    const startEl = document.querySelector('input[name="start_date"], #id_start_date, .date-start');
+    const endEl   = document.querySelector('input[name="end_date"],   #id_end_date,   .date-end');
+    const today   = new Date().toISOString().slice(0, 10);
+    const thirtyAgo = new Date(Date.now() - 30*864e5).toISOString().slice(0, 10);
+    return {
+      start: startEl ? startEl.value : thirtyAgo,
+      end:   endEl   ? endEl.value   : today,
+    };
+  }
+
+  let fcChart = null;
+
+  function showSpinner(on) {
+    const el = document.getElementById('fc-spinner');
+    el.style.display = on ? 'flex' : 'none';
+  }
+
+  document.getElementById('run-forecast-btn').addEventListener('click', function () {
+    const { start, end } = getDateRange();
+    const model   = document.getElementById('fc-model').value;
+    const horizon = document.getElementById('fc-horizon').value;
+
+    document.getElementById('fc-placeholder').style.display = 'none';
+    document.getElementById('fc-error').style.display = 'none';
+    document.getElementById('fc-summary').style.display = 'none';
+    showSpinner(true);
+
+    fetch("{% url 'forecast_api' %}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': '{{ csrf_token }}',
+      },
+      body: JSON.stringify({ start_date: start, end_date: end, horizon, model }),
+    })
+    .then(r => r.json())
+    .then(data => {
+      showSpinner(false);
+      if (data.error) {
+        document.getElementById('fc-error').textContent = data.error;
+        document.getElementById('fc-error').style.display = 'block';
+        return;
+      }
+      renderForecastChart(data);
+    })
+    .catch(err => {
+      showSpinner(false);
+      document.getElementById('fc-error').textContent = 'Network error: ' + err;
+      document.getElementById('fc-error').style.display = 'block';
+    });
+  });
+
+  function renderForecastChart(data) {
+    const ctx = document.getElementById('forecastChart').getContext('2d');
+
+    const histDataset = {
+      label: 'Historical Revenue',
+      data: data.hist_dates.map((d, i) => ({ x: d, y: data.hist_values[i] })),
+      borderColor: '#f0c040',
+      backgroundColor: 'rgba(240,192,64,0.12)',
+      tension: 0.3,
+      pointRadius: 2,
+      fill: true,
+    };
+
+    const fcDataset = {
+      label: 'Forecast',
+      data: data.forecast_dates.map((d, i) => ({ x: d, y: data.forecast_values[i] })),
+      borderColor: '#e0457b',
+      backgroundColor: 'rgba(224,69,123,0.10)',
+      borderDash: [6, 3],
+      tension: 0.3,
+      pointRadius: 3,
+      fill: true,
+    };
+
+    if (fcChart) fcChart.destroy();
+
+    fcChart = new Chart(ctx, {
+      type: 'line',
+      data: { datasets: [histDataset, fcDataset] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            type: 'time',
+            time: { unit: 'day', tooltipFormat: 'MMM d' },
+            ticks: { color: '#aaa', maxTicksLimit: 10 },
+            grid: { color: 'rgba(255,255,255,0.05)' },
+          },
+          y: {
+            ticks: {
+              color: '#aaa',
+              callback: v => 'KES ' + v.toLocaleString(),
+            },
+            grid: { color: 'rgba(255,255,255,0.05)' },
+          },
+        },
+        plugins: {
+          legend: { labels: { color: '#eee' } },
+          tooltip: {
+            callbacks: {
+              label: ctx => ctx.dataset.label + ': KES ' + ctx.parsed.y.toLocaleString(),
+            },
+          },
+        },
+      },
+    });
+
+    // badge + summary
+    const badge = document.getElementById('fc-model-label');
+    badge.textContent = data.model;
+    badge.style.display = 'inline-block';
+
+    const total = data.forecast_values.reduce((a, b) => a + b, 0);
+    const avg   = total / data.forecast_values.length;
+    const summary = document.getElementById('fc-summary');
+    summary.textContent =
+      `Projected total over ${data.forecast_values.length} days: KES ${Math.round(total).toLocaleString()} `
+      + `(avg KES ${Math.round(avg).toLocaleString()}/day)`;
+    summary.style.display = 'block';
+  }
+})();
 </script>
 {% endblock %}

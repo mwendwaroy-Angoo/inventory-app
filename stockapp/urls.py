@@ -14,6 +14,7 @@ from core.views import (
     ajax_customers, sales_dashboard, export_sales_excel, notifications_list,
     notifications_count, daily_summary_webhook, quick_sell, offline,
     health_check, manifest_json, service_worker,
+    forecast_api,
 )
 from core.ussd import ussd_callback
 from core.customer_ussd import customer_ussd_callback
@@ -160,7 +161,8 @@ urlpatterns = [
     path('analytics/expenses/<int:expense_id>/delete/', expense_delete, name='expense_delete'),
 
     # ── Analytics ──
-    path('analytics/', analytics_dashboard, name='analytics'),
+    path('analytics/', analytics_dashboard, name='analytics'),.
+    path('analytics/forecast/', forecast_api, name='forecast_api'),
     path('api/v1/analytics/trends/', analytics_api, name='analytics_api'),
 ]
 

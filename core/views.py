@@ -4,9 +4,11 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
 from django.db.models import Q, Sum
+from django.views.decorators.http import require_POST
 from django.utils.translation import gettext as _
 from .models import Item, Transaction, Store, Customer, PurchaseOrder, PurchaseOrderLine
 from .forms import ItemForm, PurchaseOrderForm, PurchaseOrderLineForm, PurchaseOrderLineFormSet
+from core.forecast_engine import run_ets, run_regression
 import openpyxl
 from datetime import date, timedelta
 import json
@@ -1101,3 +1103,68 @@ def quick_sell(request):
         'stores': stores,
         'success_data': success_data,
     })
+
+
+@login_required
+@require_POST
+def forecast_api(request):
+    """
+    POST /analytics/forecast/
+    Body params (form or JSON):
+        start_date  – YYYY-MM-DD  (history window start)
+        end_date    – YYYY-MM-DD  (history window end / forecast origin)
+        horizon     – int, days ahead to forecast (default 30)
+        model       – 'ets' | 'regression'  (default 'ets')
+        item_id     – int or '' (optional, filter to one product)
+    Returns JSON ready for Chart.js.
+    """
+    import json as _json
+    try:
+        # ── parse params ─────────────────────────────────────────────────
+        if request.content_type == "application/json":
+            body = _json.loads(request.body)
+        else:
+            body = request.POST
+
+        start_str = body.get("start_date", "")
+        end_str   = body.get("end_date",   "")
+        horizon   = int(body.get("horizon", 30))
+        model     = body.get("model", "ets").lower()
+        item_id   = body.get("item_id") or None
+
+        # ── validate dates ───────────────────────────────────────────────
+        if not start_str or not end_str:
+            return JsonResponse({"error": "start_date and end_date are required."}, status=400)
+
+        start = date.fromisoformat(start_str)
+        end   = date.fromisoformat(end_str)
+
+        if start >= end:
+            return JsonResponse({"error": "start_date must be before end_date."}, status=400)
+
+        horizon = max(1, min(horizon, 365))   # clamp 1–365 days
+
+        # ── build queryset scoped to this business ───────────────────────
+        profile  = request.user.userprofile
+        business = profile.business
+
+        from core.models import Transaction
+        qs = Transaction.objects.filter(
+            business=business,
+            type="Issue",
+            date__gte=start,
+            date__lte=end,
+        )
+        if item_id:
+            qs = qs.filter(item_id=item_id)
+
+        # ── run chosen model ─────────────────────────────────────────────
+        if model == "regression":
+            result = run_regression(qs, start, end, horizon)
+        else:
+            result = run_ets(qs, start, end, horizon)
+
+        return JsonResponse(result)
+
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=500)
