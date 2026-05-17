@@ -161,7 +161,7 @@ urlpatterns = [
     path('analytics/expenses/<int:expense_id>/delete/', expense_delete, name='expense_delete'),
 
     # ── Analytics ──
-    path('analytics/', analytics_dashboard, name='analytics'),.
+    path('analytics/', analytics_dashboard, name='analytics'),
     path('analytics/forecast/', forecast_api, name='forecast_api'),
     path('api/v1/analytics/trends/', analytics_api, name='analytics_api'),
 ]
