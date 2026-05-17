@@ -1030,7 +1030,10 @@
       fill: true,
     };
 
-    if (fcChart) fcChart.destroy();
+    // Destroy ANY existing Chart.js instance on this canvas (v3+ safe)
+    const existing = Chart.getChart(ctx.canvas);
+    if (existing) existing.destroy();
+    if (fcChart) { fcChart.destroy(); fcChart = null; }
 
     fcChart = new Chart(ctx, {
       type: 'line',
