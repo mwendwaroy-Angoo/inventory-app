@@ -1,4 +1,4 @@
-In templates/core/analytics.html, inside the renderForecastChart function, find the scales section of the Chart.js config and replace the entire x scale definition with this — it switches from type: 'time' (which needs an external adapter) to type: 'category' (which works with plain strings out of the box):{% extends "base.html" %} {% load i18n %} {% block title %}{% trans 'Analytics'
+{% extends "base.html" %} {% load i18n %} {% block title %}{% trans 'Analytics'
 %} — Duka Mwecheche{% endblock %} {% block extra_css %}
 <style>
   .period-btn {
@@ -954,35 +954,53 @@ In templates/core/analytics.html, inside the renderForecastChart function, find 
   function renderForecastChart(data) {
     const ctx = document.getElementById('forecastChart').getContext('2d');
 
-    const histDataset = {
-      label: 'Historical Revenue',
-      data: data.hist_dates.map((d, i) => ({ x: d, y: data.hist_values[i] })),
-      borderColor: '#f0c040',
-      backgroundColor: 'rgba(240,192,64,0.12)',
-      tension: 0.3,
-      pointRadius: 2,
-      fill: true,
-    };
+    // Combine all labels (history + forecast)
+    const allLabels = [...data.hist_dates, ...data.forecast_dates];
 
-    const fcDataset = {
-      label: 'Forecast',
-      data: data.forecast_dates.map((d, i) => ({ x: d, y: data.forecast_values[i] })),
-      borderColor: '#e0457b',
-      backgroundColor: 'rgba(224,69,123,0.10)',
-      borderDash: [6, 3],
-      tension: 0.3,
-      pointRadius: 3,
-      fill: true,
-    };
+    // History dataset: real values for hist dates, null for forecast dates
+    const histData = [
+      ...data.hist_values,
+      ...new Array(data.forecast_dates.length).fill(null)
+    ];
 
-    // Destroy ANY existing Chart.js instance on this canvas (v3+ safe)
+    // Forecast dataset: null for hist dates, forecast values for forecast dates
+    const fcData = [
+      ...new Array(data.hist_dates.length).fill(null),
+      ...data.forecast_values
+    ];
+
     const existing = Chart.getChart(ctx.canvas);
     if (existing) existing.destroy();
     if (fcChart) { fcChart.destroy(); fcChart = null; }
 
     fcChart = new Chart(ctx, {
       type: 'line',
-      data: { datasets: [histDataset, fcDataset] },
+      data: {
+        labels: allLabels,
+        datasets: [
+          {
+            label: 'Historical Revenue',
+            data: histData,
+            borderColor: '#f0c040',
+            backgroundColor: 'rgba(240,192,64,0.12)',
+            tension: 0.3,
+            pointRadius: 2,
+            spanGaps: false,
+            fill: true,
+          },
+          {
+            label: 'Forecast',
+            data: fcData,
+            borderColor: '#e0457b',
+            backgroundColor: 'rgba(224,69,123,0.10)',
+            borderDash: [6, 3],
+            tension: 0.3,
+            pointRadius: 3,
+            spanGaps: false,
+            fill: true,
+          }
+        ]
+      },
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -993,14 +1011,6 @@ In templates/core/analytics.html, inside the renderForecastChart function, find 
               color: '#aaa',
               maxTicksLimit: 10,
               maxRotation: 45,
-              callback: function(val, index) {
-                // Show every Nth label to avoid crowding
-                const labels = this.chart.data.datasets
-                  .flatMap(ds => ds.data.map(p => p.x));
-                const total = labels.length;
-                const step = Math.max(1, Math.floor(total / 10));
-                return index % step === 0 ? val : '';
-              }
             },
             grid: { color: 'rgba(255,255,255,0.05)' },
           },
@@ -1016,26 +1026,12 @@ In templates/core/analytics.html, inside the renderForecastChart function, find 
           legend: { labels: { color: '#eee' } },
           tooltip: {
             callbacks: {
-              label: ctx => ctx.dataset.label + ': KES ' + ctx.parsed.y.toLocaleString(),
+              label: ctx => ctx.dataset.label + ': KES ' + (ctx.parsed.y ?? 0).toLocaleString(),
             },
           },
         },
       },
     });
-
-    // badge + summary
-    const badge = document.getElementById('fc-model-label');
-    badge.textContent = data.model;
-    badge.style.display = 'inline-block';
-
-    const total = data.forecast_values.reduce((a, b) => a + b, 0);
-    const avg   = total / data.forecast_values.length;
-    const summary = document.getElementById('fc-summary');
-    summary.textContent =
-      `Projected total over ${data.forecast_values.length} days: KES ${Math.round(total).toLocaleString()} `
-      + `(avg KES ${Math.round(avg).toLocaleString()}/day)`;
-    summary.style.display = 'block';
-  }
 })();
 </script>
 {% endblock %}
