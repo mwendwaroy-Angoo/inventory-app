@@ -342,7 +342,7 @@
       <canvas id="forecastChart"></canvas>
       <div id="fc-placeholder" class="text-center text-muted pt-5"
            style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
-        Select a model and click <strong class="text-warning ms-1">▶ Run Forecast</strong>
+        Select a model and click <strong class="text-warning ms-1">▶ Forecast</strong>
       </div>
       <div id="fc-spinner" style="display:none;position:absolute;inset:0;
            background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;">
@@ -719,16 +719,10 @@
 </script>
 <script>
 (function () {
-  // ── grab date range from the existing date pickers on the page ──────────
   function getDateRange() {
-    // adjust these selectors to match the actual date inputs on your page
-    const startEl = document.querySelector('input[name="start_date"], #id_start_date, .date-start');
-    const endEl   = document.querySelector('input[name="end_date"],   #id_end_date,   .date-end');
-    const today   = new Date().toISOString().slice(0, 10);
-    const thirtyAgo = new Date(Date.now() - 30*864e5).toISOString().slice(0, 10);
     return {
-      start: startEl ? startEl.value : thirtyAgo,
-      end:   endEl   ? endEl.value   : today,
+      start: '{{ start_date|date:"Y-m-d" }}',
+      end:   '{{ end_date|date:"Y-m-d" }}',
     };
   }
 
@@ -855,6 +849,20 @@
         },
       },
     });
+
+    // Show model badge
+    const badge = document.getElementById('fc-model-label');
+    badge.textContent = data.model;
+    badge.style.display = 'inline-block';
+
+    // Show summary line
+    const total = data.forecast_values.reduce((a, b) => a + b, 0);
+    const avg   = total / data.forecast_values.length;
+    const summary = document.getElementById('fc-summary');
+    summary.textContent = `Projected total over ${data.forecast_values.length} days: KES ${Math.round(total).toLocaleString()} (avg KES ${Math.round(avg).toLocaleString()}/day)`;
+    summary.style.display = 'block';
+  }
+
 })();
 </script>
 {% endblock %}
