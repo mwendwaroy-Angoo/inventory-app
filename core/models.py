@@ -308,6 +308,17 @@ class Transaction(models.Model):
     qty = models.IntegerField()
     recipient = models.CharField(max_length=200, blank=True)
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='transactions', null=True, blank=True)
+    PAYMENT_METHOD_CHOICES = [
+        ('cash',   'Cash'),
+        ('mpesa',  'M-Pesa'),
+        ('credit', 'Credit / Tab'),
+    ]
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PAYMENT_METHOD_CHOICES,
+        default='cash',
+        blank=True,
+    )
 
     def revenue(self):
         if self.type == 'Issue' and self.item.selling_price:
