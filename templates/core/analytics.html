@@ -1241,6 +1241,25 @@
         document.getElementById('fc-error').style.display = 'block';
         return;
       }
+
+      // ── Minimum data warning ─────────────────────────────────
+      const nonZeroDays = data.hist_values.filter(v => v > 0).length;
+      const fcError = document.getElementById('fc-error');
+      if (nonZeroDays === 0) {
+        fcError.textContent = 'No sales data found for this product in the selected period. Try a longer date range or select a different product.';
+        fcError.style.display = 'block';
+        showSpinner(false);
+        return;
+      }
+      if (nonZeroDays < 7) {
+        fcError.style.color = 'var(--warning)';
+        fcError.textContent = `⚠️ Only ${nonZeroDays} day(s) of sales data found — forecast is based on limited history and may not be reliable. Consider switching to a longer period.`;
+        fcError.style.display = 'block';
+      } else {
+        fcError.style.display = 'none';
+        fcError.style.color = 'var(--danger)';
+      }
+
       renderForecastChart(data);
     })
     .catch(err => {
