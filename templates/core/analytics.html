@@ -308,6 +308,15 @@
     <!-- Controls -->
     <div class="row g-2 align-items-end mb-3">
       <div class="col-auto">
+        <label class="form-label text-muted small mb-1">Product</label>
+        <select id="fc-product" class="form-select form-select-sm bg-dark text-white border-secondary">
+          <option value="">All products</option>
+          {% for item in items %}
+          <option value="{{ item.id }}">{{ item.description }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
         <label class="form-label text-muted small mb-1">Model</label>
         <select id="fc-model" class="form-select form-select-sm bg-dark text-white border-secondary">
           <option value="ets">ETS (Holt's Trend)</option>
@@ -348,7 +357,20 @@
     </div>
 
     <p id="fc-error" class="text-danger small mt-2" style="display:none;"></p>
-    <p id="fc-summary" class="text-muted small mt-2" style="display:none;"></p>
+    <div id="fc-summary-pills" class="d-flex gap-3 flex-wrap mt-3" style="display:none;">
+      <div class="px-3 py-2 rounded" style="background:rgba(240,192,64,0.1); border:1px solid rgba(240,192,64,0.3);">
+        <div style="font-size:0.65rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em;">Projected Total</div>
+        <div id="fc-pill-total" style="font-size:1rem; font-weight:700; color:var(--gold); font-family:'Playfair Display',serif;">—</div>
+      </div>
+      <div class="px-3 py-2 rounded" style="background:rgba(224,69,123,0.1); border:1px solid rgba(224,69,123,0.3);">
+        <div style="font-size:0.65rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em;">Daily Average</div>
+        <div id="fc-pill-avg" style="font-size:1rem; font-weight:700; color:var(--raspberry); font-family:'Playfair Display',serif;">—</div>
+      </div>
+      <div class="px-3 py-2 rounded" style="background:rgba(46,204,113,0.1); border:1px solid rgba(46,204,113,0.3);">
+        <div style="font-size:0.65rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em;">Trend</div>
+        <div id="fc-pill-trend" style="font-size:1rem; font-weight:700; font-family:'Playfair Display',serif;">—</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -716,6 +738,9 @@
 </script>
 <script>
 (function () {
+  const bestDay = '{{ busiest_day }}';
+  const bestDayRev = {{ busiest_day_rev|default:0 }};
+
   function getDateRange() {
     return {
       start: '{{ start_date|date:"Y-m-d" }}',
@@ -734,10 +759,11 @@
     const { start, end } = getDateRange();
     const model   = document.getElementById('fc-model').value;
     const horizon = document.getElementById('fc-horizon').value;
+    const itemId  = document.getElementById('fc-product').value || null;
 
     document.getElementById('fc-placeholder').style.display = 'none';
     document.getElementById('fc-error').style.display = 'none';
-    document.getElementById('fc-summary').style.display = 'none';
+    document.getElementById('fc-summary-pills').style.display = 'none';
     showSpinner(true);
 
     fetch("{% url 'forecast_api' %}", {
@@ -746,7 +772,13 @@
         'Content-Type': 'application/json',
         'X-CSRFToken': '{{ csrf_token }}',
       },
-      body: JSON.stringify({ start_date: start, end_date: end, horizon, model }),
+      body: JSON.stringify({
+        start_date: start,
+        end_date: end,
+        horizon,
+        model,
+        item_id: itemId,
+      }),
     })
     .then(r => r.json())
     .then(data => {
@@ -767,28 +799,102 @@
 
   function renderForecastChart(data) {
     const ctx = document.getElementById('forecastChart').getContext('2d');
+    const allLabels  = [...data.hist_dates, ...data.forecast_dates];
+    const junctionIdx = data.hist_dates.length;
 
-    // Combine all labels (history + forecast)
-    const allLabels = [...data.hist_dates, ...data.forecast_dates];
-
-    // History dataset: real values for hist dates, null for forecast dates
     const histData = [
       ...data.hist_values,
       ...new Array(data.forecast_dates.length).fill(null)
     ];
-
-    // Forecast dataset: null for hist dates, forecast values for forecast dates
     const fcData = [
       ...new Array(data.hist_dates.length).fill(null),
       ...data.forecast_values
     ];
 
+    // ── Plugin: gold dashed vertical line at forecast start ──────
+    const junctionPlugin = {
+      id: 'junctionLine',
+      afterDraw(chart) {
+        const { ctx: c, scales } = chart;
+        const x = scales.x.getPixelForValue(junctionIdx - 1);
+        c.save();
+        c.beginPath();
+        c.moveTo(x, scales.y.top);
+        c.lineTo(x, scales.y.bottom);
+        c.lineWidth = 1.5;
+        c.strokeStyle = 'rgba(201,168,76,0.5)';
+        c.setLineDash([5, 4]);
+        c.stroke();
+        c.fillStyle = 'rgba(201,168,76,0.7)';
+        c.font = '10px DM Sans, sans-serif';
+        c.textAlign = 'left';
+        c.fillText('Forecast →', x + 6, scales.y.top + 14);
+        c.restore();
+      }
+    };
+
+    // ── Plugin: shaded confidence band (±20%) around forecast ───
+    const confidenceBandPlugin = {
+      id: 'confidenceBand',
+      afterDatasetsDraw(chart) {
+        if (data.forecast_values.length < 2) return;
+        const { ctx: c, scales } = chart;
+        c.save();
+        c.fillStyle = 'rgba(224,69,123,0.07)';
+        c.beginPath();
+        for (let i = 0; i < data.forecast_values.length; i++) {
+          const x = scales.x.getPixelForValue(junctionIdx + i);
+          const y = scales.y.getPixelForValue(data.forecast_values[i] * 1.2);
+          i === 0 ? c.moveTo(x, y) : c.lineTo(x, y);
+        }
+        for (let i = data.forecast_values.length - 1; i >= 0; i--) {
+          const x = scales.x.getPixelForValue(junctionIdx + i);
+          const y = scales.y.getPixelForValue(Math.max(0, data.forecast_values[i] * 0.8));
+          c.lineTo(x, y);
+        }
+        c.closePath();
+        c.fill();
+        c.restore();
+      }
+    };
+
+    // ── Plugin: gold star marker on the best revenue day ────────
+    const bestDayPlugin = {
+      id: 'bestDayMarker',
+      afterDatasetsDraw(chart) {
+        if (!bestDay || !allLabels.includes(bestDay)) return;
+        const { ctx: c, scales } = chart;
+        const idx = allLabels.indexOf(bestDay);
+        const x   = scales.x.getPixelForValue(idx);
+        const y   = scales.y.getPixelForValue(bestDayRev);
+        c.save();
+        c.beginPath();
+        c.arc(x, y, 7, 0, Math.PI * 2);
+        c.fillStyle = 'rgba(201,168,76,0.25)';
+        c.fill();
+        c.beginPath();
+        c.arc(x, y, 4, 0, Math.PI * 2);
+        c.fillStyle = '#c9a84c';
+        c.fill();
+        c.strokeStyle = '#fff';
+        c.lineWidth = 1.5;
+        c.stroke();
+        c.fillStyle = '#c9a84c';
+        c.font = 'bold 9px DM Sans, sans-serif';
+        c.textAlign = 'center';
+        c.fillText('★ Best Day', x, y - 12);
+        c.restore();
+      }
+    };
+
+    // ── Destroy any existing chart ───────────────────────────────
     const existing = Chart.getChart(ctx.canvas);
     if (existing) existing.destroy();
     if (fcChart) { fcChart.destroy(); fcChart = null; }
 
     fcChart = new Chart(ctx, {
       type: 'line',
+      plugins: [junctionPlugin, confidenceBandPlugin, bestDayPlugin],
       data: {
         labels: allLabels,
         datasets: [
@@ -806,7 +912,7 @@
             label: 'Forecast',
             data: fcData,
             borderColor: '#e0457b',
-            backgroundColor: 'rgba(224,69,123,0.10)',
+            backgroundColor: 'rgba(224,69,123,0.06)',
             borderDash: [6, 3],
             tension: 0.3,
             pointRadius: 3,
@@ -821,11 +927,7 @@
         scales: {
           x: {
             type: 'category',
-            ticks: {
-              color: '#aaa',
-              maxTicksLimit: 10,
-              maxRotation: 45,
-            },
+            ticks: { color: '#aaa', maxTicksLimit: 10, maxRotation: 45 },
             grid: { color: 'rgba(255,255,255,0.05)' },
           },
           y: {
@@ -840,24 +942,32 @@
           legend: { labels: { color: '#eee' } },
           tooltip: {
             callbacks: {
-              label: ctx => ctx.dataset.label + ': KES ' + (ctx.parsed.y ?? 0).toLocaleString(),
+              label: c => c.dataset.label + ': KES ' + (c.parsed.y ?? 0).toLocaleString(),
             },
           },
         },
       },
     });
 
-    // Show model badge
+    // ── Model badge ──────────────────────────────────────────────
     const badge = document.getElementById('fc-model-label');
     badge.textContent = data.model;
     badge.style.display = 'inline-block';
 
-    // Show summary line
-    const total = data.forecast_values.reduce((a, b) => a + b, 0);
-    const avg   = total / data.forecast_values.length;
-    const summary = document.getElementById('fc-summary');
-    summary.textContent = `Projected total over ${data.forecast_values.length} days: KES ${Math.round(total).toLocaleString()} (avg KES ${Math.round(avg).toLocaleString()}/day)`;
-    summary.style.display = 'block';
+    // ── Summary pills ────────────────────────────────────────────
+    const total    = data.forecast_values.reduce((a, b) => a + b, 0);
+    const avg      = total / data.forecast_values.length;
+    const firstVal = data.forecast_values[0] || 0;
+    const lastVal  = data.forecast_values[data.forecast_values.length - 1] || 0;
+    const growing  = lastVal >= firstVal;
+
+    document.getElementById('fc-pill-total').textContent = 'KES ' + Math.round(total).toLocaleString();
+    document.getElementById('fc-pill-avg').textContent   = 'KES ' + Math.round(avg).toLocaleString() + '/day';
+    const trendEl = document.getElementById('fc-pill-trend');
+    trendEl.textContent  = growing ? '↑ Growing' : '↓ Declining';
+    trendEl.style.color  = growing ? 'var(--success)' : 'var(--danger)';
+
+    document.getElementById('fc-summary-pills').style.display = 'flex';
   }
 
 })();
