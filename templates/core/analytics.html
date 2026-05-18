@@ -864,6 +864,83 @@
 {% endif %} {% endblock %} {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+  // ── Kenyan Seasonal Events ───────────────────────────────────────
+  function buildKenyanEvents() {
+    const events = [];
+    const years = [new Date().getFullYear() - 1, new Date().getFullYear()];
+    years.forEach(yr => {
+      events.push(
+        // Public Holidays
+        { date: `${yr}-01-01`, label: 'New Year',    type: 'holiday' },
+        { date: `${yr}-05-01`, label: 'Labour Day',  type: 'holiday' },
+        { date: `${yr}-06-01`, label: 'Madaraka',    type: 'holiday' },
+        { date: `${yr}-10-20`, label: 'Mashujaa',    type: 'holiday' },
+        { date: `${yr}-12-12`, label: 'Jamhuri',     type: 'holiday' },
+        { date: `${yr}-12-25`, label: 'Christmas',   type: 'holiday' },
+        // School Terms (approximate Kenyan calendar)
+        { date: `${yr}-01-06`, label: 'T1 Opens',    type: 'school'  },
+        { date: `${yr}-04-04`, label: 'T1 Closes',   type: 'school'  },
+        { date: `${yr}-04-28`, label: 'T2 Opens',    type: 'school'  },
+        { date: `${yr}-08-01`, label: 'T2 Closes',   type: 'school'  },
+        { date: `${yr}-08-25`, label: 'T3 Opens',    type: 'school'  },
+        { date: `${yr}-10-31`, label: 'T3 Closes',   type: 'school'  }
+      );
+    });
+    return events;
+  }
+  const kenyanEvents = buildKenyanEvents();
+
+  // ── Seasonal Awareness Plugin (used on Revenue & Profit Trend) ───
+  const seasonalPlugin = {
+    id: 'seasonalMarkers',
+    afterDraw(chart) {
+      const { ctx, scales } = chart;
+      const chartLabels = chart.data.labels;
+      if (!chartLabels || !scales.x || !scales.y) return;
+
+      kenyanEvents.forEach(event => {
+        if (!chartLabels.includes(event.date)) return;
+
+        const idx = chartLabels.indexOf(event.date);
+        const x   = scales.x.getPixelForValue(idx);
+
+        // Vertical dashed line
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x, scales.y.top);
+        ctx.lineTo(x, scales.y.bottom);
+        ctx.lineWidth   = 1;
+        ctx.strokeStyle = event.type === 'holiday'
+          ? 'rgba(201,168,76,0.45)'
+          : 'rgba(46,204,113,0.45)';
+        ctx.setLineDash([3, 3]);
+        ctx.stroke();
+
+        // Small flag label at top
+        const label      = event.label;
+        const fontSize   = 8;
+        const padding    = 3;
+        const textWidth  = ctx.measureText(label).width + padding * 2;
+        const boxHeight  = fontSize + padding * 2;
+        const boxTop     = scales.y.top + 2;
+
+        ctx.fillStyle = event.type === 'holiday'
+          ? 'rgba(201,168,76,0.15)'
+          : 'rgba(46,204,113,0.15)';
+        ctx.fillRect(x - textWidth / 2, boxTop, textWidth, boxHeight);
+
+        ctx.fillStyle = event.type === 'holiday'
+          ? 'rgba(201,168,76,0.9)'
+          : 'rgba(46,204,113,0.9)';
+        ctx.font      = `${fontSize}px DM Sans, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x, boxTop + fontSize + 1);
+
+        ctx.restore();
+      });
+    }
+  };
+
   const labels = {{ chart_labels|safe }};
   const revenueData = {{ chart_revenue|safe }};
   const profitData = {{ chart_profit|safe }};
@@ -876,6 +953,7 @@
 
   // Revenue & Profit trend
   new Chart(document.getElementById('trendChart'), {
+      plugins: [seasonalPlugin],
       type: 'line',
       data: {
           labels: labels,
