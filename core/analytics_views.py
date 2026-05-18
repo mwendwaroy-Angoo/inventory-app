@@ -199,6 +199,34 @@ def analytics_dashboard(request):
     mpesa_total = float(mpesa_completed.aggregate(s=Sum('amount'))['s'] or 0)
     mpesa_count = mpesa_completed.count()
 
+    # ── Payment method split (for donut chart) ──
+    payment_split_raw = (
+        payments.filter(status='completed')
+        .values('method')
+        .annotate(total=Sum('amount'), count=Count('id'))
+        .order_by('-total')
+    )
+
+    METHOD_DISPLAY = {
+        'mpesa': 'M-Pesa',
+        'cash': 'Cash',
+        'credit': 'Credit',
+        'bank': 'Bank Transfer',
+        'card': 'Card',
+    }
+
+    split_labels, split_totals, split_counts = [], [], []
+    for item in payment_split_raw:
+        split_labels.append(METHOD_DISPLAY.get(item['method'], item['method'].title()))
+        split_totals.append(float(item['total'] or 0))
+        split_counts.append(item['count'])
+
+    # Fallback: if no payment records, show a placeholder
+    if not split_labels:
+        split_labels = ['No payments recorded']
+        split_totals = [0.0]
+        split_counts = [0]
+
     # ── Busiest day ──
     if daily_data:
         busiest_day = max(daily_data.items(), key=lambda x: x[1]['revenue'])
@@ -263,6 +291,11 @@ def analytics_dashboard(request):
         # Payments
         'mpesa_total': round(mpesa_total, 2),
         'mpesa_count': mpesa_count,
+        # Payment split
+        'split_labels': json.dumps(split_labels),
+        'split_totals': json.dumps(split_totals),
+        'split_counts': json.dumps(split_counts),
+        'split_zip': zip(split_labels, split_totals, split_counts),
         # Insights
         'busiest_day': busiest_day_str,
         'busiest_day_rev': busiest_day_rev,

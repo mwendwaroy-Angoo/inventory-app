@@ -583,6 +583,46 @@
   </div>
 </div>
 
+<!-- Payment method donut chart -->
+<div class="row g-4 mb-4">
+  <div class="col-lg-5">
+    <div class="chart-box">
+      <h3>💳 Payment Method Split</h3>
+      <p style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+        Completed payments breakdown for the selected period.
+      </p>
+      <div style="position:relative; height:220px;">
+        <canvas id="paymentSplitChart"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="chart-box h-100">
+      <h3>📊 Payment Breakdown</h3>
+      <div id="payment-split-table" class="mt-2">
+        {% for label, total, count in split_zip %}
+        <div class="d-flex justify-content-between align-items-center py-2"
+             style="border-bottom:1px solid #333;">
+          <div style="color:var(--pearl); font-size:0.9rem;">{{ label }}</div>
+          <div class="text-end">
+            <div style="color:var(--gold); font-weight:600;">
+              KES {{ total|floatformat:0 }}
+            </div>
+            <div style="color:var(--muted); font-size:0.75rem;">
+              {{ count }} payment{{ count|pluralize }}
+            </div>
+          </div>
+        </div>
+        {% empty %}
+        <div style="color:var(--muted); text-align:center; padding:2rem 0;">
+          No completed payments in this period.
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
 <hr class="gold-divider" />
 
 <!-- ═══ STORE PERFORMANCE ═══ -->
@@ -841,6 +881,64 @@
       },
     },
   });
+
+  // Payment Method Split donut chart
+  const splitLabels = {{ split_labels|safe }};
+  const splitTotals = {{ split_totals|safe }};
+
+  const splitColors = [
+    '#4caf50',   // M-Pesa green
+    '#c9a84c',   // Cash gold
+    '#6c8ebf',   // Card/Bank blue
+    '#c0395a',   // Credit raspberry
+    '#9b59b6',   // Other purple
+  ];
+
+  if (document.getElementById('paymentSplitChart')) {
+    new Chart(document.getElementById('paymentSplitChart'), {
+      type: 'doughnut',
+      data: {
+        labels: splitLabels,
+        datasets: [{
+          data: splitTotals,
+          backgroundColor: splitColors.slice(0, splitLabels.length),
+          borderColor: '#1a1a1a',
+          borderWidth: 3,
+          hoverOffset: 8,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '65%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              color: '#f0ece4',
+              font: chartFont,
+              padding: 16,
+              usePointStyle: true,
+            }
+          },
+          tooltip: {
+            backgroundColor: '#2a2a2a',
+            borderColor: '#c9a84c',
+            borderWidth: 1,
+            titleColor: '#c9a84c',
+            bodyColor: '#f0ece4',
+            callbacks: {
+              label: ctx => {
+                const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                const pct   = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : 0;
+                return ` KES ${ctx.parsed.toLocaleString()} (${pct}%)`;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
 </script>
 <script>
 (function () {
