@@ -522,6 +522,89 @@
   </div>
 </div>
 
+<!-- ═══ STOCK VELOCITY RANKING ═══ -->
+<div class="section-title">⚡ Stock Velocity Ranking</div>
+<div class="chart-box mb-4">
+  <h3>📦 Days Until Stockout — at Current Sales Rate</h3>
+  <p style="font-size:0.8rem; color:var(--muted); margin-bottom:1.2rem;">
+    Sorted by urgency. Stock up items in red and amber before they run out.
+  </p>
+
+  {% if velocity_data %}
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>Current Stock</th>
+          <th>Sold ({{ period }}d)</th>
+          <th>Daily Rate</th>
+          <th>Days Left</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in velocity_data %}
+        <tr>
+          <td><strong style="color:var(--pearl)">{{ item.name }}</strong></td>
+          <td style="color:var(--muted)">{{ item.balance }}</td>
+          <td style="color:var(--muted)">{{ item.units_sold }}</td>
+          <td style="color:var(--muted)">{{ item.daily_rate }}/day</td>
+          <td>
+            {% if item.velocity_status == 'out' %}
+              <span style="color:var(--danger); font-weight:700;">Out of stock</span>
+            {% elif item.velocity_status == 'no_movement' %}
+              <span style="color:var(--muted);">—</span>
+            {% else %}
+              <span style="
+                font-weight:600;
+                color:{% if item.velocity_status == 'critical' %}var(--danger)
+                      {% elif item.velocity_status == 'warning' %}var(--warning)
+                      {% else %}var(--success){% endif %};">
+                {{ item.days_left }} day{{ item.days_left|pluralize }}
+              </span>
+            {% endif %}
+          </td>
+          <td>
+            {% if item.velocity_status == 'out' %}
+              <span class="badge" style="background:rgba(231,76,60,0.2);
+                color:var(--danger); border:1px solid var(--danger);">
+                🔴 Out of Stock
+              </span>
+            {% elif item.velocity_status == 'critical' %}
+              <span class="badge" style="background:rgba(231,76,60,0.15);
+                color:#ff6b6b; border:1px solid #ff6b6b;">
+                🔴 Critical
+              </span>
+            {% elif item.velocity_status == 'warning' %}
+              <span class="badge" style="background:rgba(243,156,18,0.15);
+                color:var(--warning); border:1px solid var(--warning);">
+                🟡 Restock Soon
+              </span>
+            {% elif item.velocity_status == 'healthy' %}
+              <span class="badge" style="background:rgba(46,204,113,0.15);
+                color:var(--success); border:1px solid var(--success);">
+                🟢 Healthy
+              </span>
+            {% else %}
+              <span class="badge" style="background:rgba(136,136,136,0.15);
+                color:var(--muted); border:1px solid #444;">
+                ⚪ No Sales
+              </span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="text-align:center; color:var(--muted); padding:2rem 0;">
+    No stock data available for this period.
+  </div>
+  {% endif %}
+</div>
+
 <hr class="gold-divider" />
 
 <!-- ═══ ORDER & PAYMENT ANALYTICS ═══ -->

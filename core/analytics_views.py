@@ -189,6 +189,48 @@ def analytics_dashboard(request):
     healthy_stock = total_items - out_of_stock - low_stock
     stock_value = sum(i.stock_value() for i in all_items)
 
+    # ── Stock Velocity Ranking ──
+    # Build per-item units sold lookup from already-evaluated current_sales
+    item_units_sold = defaultdict(float)
+    for t in current_sales:
+        item_units_sold[t.item_id] += abs(float(t.qty or 0))
+
+    velocity_data = []
+    for item in all_items:
+        balance    = float(item.current_balance())
+        units_sold = item_units_sold.get(item.id, 0.0)
+        daily_rate = units_sold / days if days > 0 else 0.0
+
+        if balance <= 0:
+            days_left       = 0
+            velocity_status = 'out'
+        elif daily_rate == 0:
+            days_left       = None
+            velocity_status = 'no_movement'
+        else:
+            days_left = round(balance / daily_rate)
+            if days_left <= 7:
+                velocity_status = 'critical'
+            elif days_left <= 14:
+                velocity_status = 'warning'
+            else:
+                velocity_status = 'healthy'
+
+        velocity_data.append({
+            'name':             item.description,
+            'balance':          round(balance, 1),
+            'units_sold':       round(units_sold, 1),
+            'daily_rate':       round(daily_rate, 2),
+            'days_left':        days_left,
+            'velocity_status':  velocity_status,
+        })
+
+    # Sort: Out of Stock → Critical → Warning → Healthy → No Movement
+    STATUS_ORDER = {'out': 0, 'critical': 1, 'warning': 2, 'healthy': 3, 'no_movement': 4}
+    velocity_data.sort(
+        key=lambda x: (STATUS_ORDER[x['velocity_status']], x['days_left'] or 9999)
+    )
+
     # ── Payment analytics ──
     payments = Payment.objects.filter(
         business=business,
@@ -288,6 +330,7 @@ def analytics_dashboard(request):
         'low_stock': low_stock,
         'healthy_stock': healthy_stock,
         'stock_value': round(stock_value, 2),
+        'velocity_data': velocity_data,
         # Payments
         'mpesa_total': round(mpesa_total, 2),
         'mpesa_count': mpesa_count,
