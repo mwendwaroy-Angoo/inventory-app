@@ -483,9 +483,40 @@
             <div class="qs-cart-count" id="qsCartCount">0 items</div>
             <div class="qs-cart-total" id="qsCartTotal">KES 0</div>
         </div>
-        <div class="qs-cart-actions">
-            <button class="qs-clear-btn" id="qsClear">{% trans 'Clear' %}</button>
-            <button class="qs-sell-btn" id="qsSell">{% trans 'Complete Sale' %} ➜</button>
+        <div class="qs-cart-actions flex-column align-items-stretch">
+            <!-- Payment Method Toggle -->
+            <div class="mb-2">
+              <label class="form-label" style="color:var(--gold); font-size:0.8rem;
+                     text-transform:uppercase; letter-spacing:0.08em;">
+                Payment Method
+              </label>
+              <div class="d-flex gap-2">
+                <input type="radio" class="btn-check" name="payment_method"
+                       id="pm_cash" value="cash" checked>
+                <label class="btn btn-outline-warning flex-fill text-center"
+                       for="pm_cash" style="font-weight:600;">
+                  💵 Cash
+                </label>
+
+                <input type="radio" class="btn-check" name="payment_method"
+                       id="pm_mpesa" value="mpesa">
+                <label class="btn btn-outline-success flex-fill text-center"
+                       for="pm_mpesa" style="font-weight:600;">
+                  📱 M-Pesa
+                </label>
+
+                <input type="radio" class="btn-check" name="payment_method"
+                       id="pm_credit" value="credit">
+                <label class="btn btn-outline-secondary flex-fill text-center"
+                       for="pm_credit" style="font-weight:600;">
+                  📒 Credit/Tab
+                </label>
+              </div>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="qs-clear-btn" id="qsClear">{% trans 'Clear' %}</button>
+                <button class="qs-sell-btn" id="qsSell">{% trans 'Complete Sale' %} ➜</button>
+            </div>
         </div>
     </div>
 </div>
@@ -493,6 +524,7 @@
 <form id="qsForm" method="post" action="{% url 'quick_sell' %}" style="display:none;">
     {% csrf_token %}
     <input type="hidden" name="cart" id="qsCartData">
+    <input type="hidden" name="payment_method" id="qsPaymentMethodData" value="cash">
 </form>
 {% endblock %}
 
@@ -650,6 +682,9 @@
     document.getElementById('qsSell').addEventListener('click', function() {
         if (cart.length === 0) return;
         document.getElementById('qsCartData').value = JSON.stringify(cart);
+        // Capture the selected payment method before submitting
+        const selectedMethod = document.querySelector('input[name="payment_method"]:checked');
+        document.getElementById('qsPaymentMethodData').value = selectedMethod ? selectedMethod.value : 'cash';
         document.getElementById('qsForm').submit();
     });
 

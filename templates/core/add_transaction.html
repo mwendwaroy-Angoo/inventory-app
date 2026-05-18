@@ -218,6 +218,30 @@
                        placeholder="{% trans 'e.g. INV-001 or REC-2026-001' %}">
             </div>
 
+            <!-- Payment Method — only relevant for Issue (sales) -->
+            <div class="mb-3" id="paymentMethodRow" style="display:none;">
+              <label class="form-label">💳 Payment Method</label>
+              <div class="d-flex gap-2 flex-wrap">
+                <input type="radio" class="btn-check" name="payment_method"
+                       id="pm_cash" value="cash" checked>
+                <label class="btn btn-outline-warning" for="pm_cash" style="font-weight:600;">
+                  💵 Cash
+                </label>
+
+                <input type="radio" class="btn-check" name="payment_method"
+                       id="pm_mpesa" value="mpesa">
+                <label class="btn btn-outline-success" for="pm_mpesa" style="font-weight:600;">
+                  📱 M-Pesa
+                </label>
+
+                <input type="radio" class="btn-check" name="payment_method"
+                       id="pm_credit" value="credit">
+                <label class="btn btn-outline-secondary" for="pm_credit" style="font-weight:600;">
+                  📒 Credit/Tab
+                </label>
+              </div>
+            </div>
+
             <button type="submit" class="btn btn-primary w-100 py-2">
                 {% trans 'Submit Transaction' %}
             </button>
@@ -281,6 +305,17 @@ $(document).ready(function () {
             $('#customerSelect').attr('name', 'recipient');
         }
     });
+
+    // Show payment method only for Issue (sale) transactions
+    const typeSelect = document.querySelector('select[name="type"]');
+    const pmRow = document.getElementById('paymentMethodRow');
+    if (typeSelect && pmRow) {
+        function togglePM() {
+            pmRow.style.display = typeSelect.value === 'Issue' ? 'block' : 'none';
+        }
+        typeSelect.addEventListener('change', togglePM);
+        togglePM(); // run on page load
+    }
 });
 </script>
 {% endblock %}

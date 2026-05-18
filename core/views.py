@@ -224,6 +224,7 @@ def add_transaction(request):
             recipient=recipient,
             invoice_no=invoice_no,
             business=user_profile.business,
+            payment_method=request.POST.get('payment_method', 'cash') if trans_type == 'Issue' else '',
         )
 
         # Count today's transactions for SMS/WhatsApp decision
@@ -1031,6 +1032,7 @@ def quick_sell(request):
                 type='Issue',
                 qty=-qty,
                 business=user_profile.business,
+                payment_method=request.POST.get('payment_method', 'cash'),
             )
             recorded.append({
                 'name': item.description,

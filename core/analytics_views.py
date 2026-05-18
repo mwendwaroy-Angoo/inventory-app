@@ -241,33 +241,49 @@ def analytics_dashboard(request):
     mpesa_total = float(mpesa_completed.aggregate(s=Sum('amount'))['s'] or 0)
     mpesa_count = mpesa_completed.count()
 
-    # ── Payment method split (for donut chart) ──
-    payment_split_raw = (
+    # ── Payment method split (Transactions primary + Orders secondary) ──
+    METHOD_DISPLAY = {
+        'cash':   'Cash',
+        'mpesa':  'M-Pesa',
+        'credit': 'Credit / Tab',
+        'bank':   'Bank Transfer',
+        'card':   'Card',
+    }
+
+    txn_by_method = defaultdict(lambda: {'total': 0.0, 'count': 0})
+
+    # Primary: counter sales recorded through Quick Sell / Add Transaction
+    for t in current_sales:
+        method = t.payment_method or 'cash'
+        txn_by_method[method]['total'] += t.revenue()
+        txn_by_method[method]['count'] += 1
+
+    # Secondary: online order payments (M-Pesa STK push, etc.)
+    order_payment_raw = (
         payments.filter(status='completed')
         .values('method')
         .annotate(total=Sum('amount'), count=Count('id'))
-        .order_by('-total')
+    )
+    for item in order_payment_raw:
+        method = item['method']
+        txn_by_method[method]['total'] += float(item['total'] or 0)
+        txn_by_method[method]['count'] += item['count']
+
+    # Sort by total descending
+    split_items = sorted(
+        txn_by_method.items(),
+        key=lambda x: x[1]['total'],
+        reverse=True
     )
 
-    METHOD_DISPLAY = {
-        'mpesa': 'M-Pesa',
-        'cash': 'Cash',
-        'credit': 'Credit',
-        'bank': 'Bank Transfer',
-        'card': 'Card',
-    }
+    split_labels = [METHOD_DISPLAY.get(m, m.title()) for m, _ in split_items]
+    split_totals  = [round(v['total'], 2) for _, v in split_items]
+    split_counts  = [v['count'] for _, v in split_items]
 
-    split_labels, split_totals, split_counts = [], [], []
-    for item in payment_split_raw:
-        split_labels.append(METHOD_DISPLAY.get(item['method'], item['method'].title()))
-        split_totals.append(float(item['total'] or 0))
-        split_counts.append(item['count'])
-
-    # Fallback: if no payment records, show a placeholder
     if not split_labels:
         split_labels = ['No payments recorded']
-        split_totals = [0.0]
-        split_counts = [0]
+        split_totals  = [0.0]
+        split_counts  = [0]
 
     # ── Busiest day ──
     if daily_data:
