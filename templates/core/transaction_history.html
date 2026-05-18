@@ -147,6 +147,7 @@
                 <th>{% trans 'Qty' %}</th>
                 <th>{% trans 'Recipient' %}</th>
                 <th>{% trans 'Invoice No' %}</th>
+                <th>{% trans 'Payment' %}</th>
             </tr>
         </thead>
         <tbody id="tableBody">
@@ -171,10 +172,21 @@
                 </td>
                 <td>{{ trans.recipient|default:"—" }}</td>
                 <td>{{ trans.invoice_no|default:"—" }}</td>
+                <td>
+                    {% if trans.payment_method == 'mpesa' %}
+                        <span style="color:#4caf50; font-weight:500;">📱 M-Pesa</span>
+                    {% elif trans.payment_method == 'credit' %}
+                        <span style="color:var(--warning); font-weight:500;">📒 Credit/Tab</span>
+                    {% elif trans.payment_method == 'cash' %}
+                        <span style="color:var(--gold); font-weight:500;">💵 Cash</span>
+                    {% else %}
+                        <span style="color:var(--muted);">—</span>
+                    {% endif %}
+                </td>
             </tr>
             {% empty %}
             <tr>
-                <td colspan="7" class="no-results">{% trans 'No transactions yet.' %}</td>
+                <td colspan="8" class="no-results">{% trans 'No transactions yet.' %}</td>
             </tr>
             {% endfor %}
         </tbody>

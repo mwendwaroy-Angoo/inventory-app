@@ -296,7 +296,7 @@ def export_transactions_excel(request):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Transaction History"
-    ws.append(['Date', 'Item', 'Material No', 'Store', 'Type', 'Qty', 'Recipient', 'Invoice No'])
+    ws.append(['Date', 'Item', 'Material No', 'Store', 'Type', 'Qty', 'Recipient', 'Invoice No', 'Payment Method'])
 
     for t in transactions:
         ws.append([
@@ -308,6 +308,7 @@ def export_transactions_excel(request):
             t.qty,
             t.recipient or '—',
             t.invoice_no or '—',
+            t.get_payment_method_display() if t.payment_method else 'Cash',
         ])
 
     response = HttpResponse(
