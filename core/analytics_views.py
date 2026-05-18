@@ -113,6 +113,31 @@ def analytics_dashboard(request):
     chart_profit = [round(daily_data[d]['profit'], 2) for d in all_dates]
     chart_units = [daily_data[d]['units'] for d in all_dates]
 
+    # ── Market Day Intelligence ──
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    dow_revenue = defaultdict(float)
+    dow_occurrences = defaultdict(int)
+
+    # Count how many of each weekday fall in the current period
+    d = start_date
+    while d <= today:
+        dow_occurrences[d.weekday()] += 1
+        d += timedelta(days=1)
+
+    # Sum revenue per weekday from actual sales
+    for t in current_sales:
+        dow = t.date.weekday()
+        dow_revenue[dow] += t.revenue()
+
+    market_day_totals = [round(dow_revenue[i], 2) for i in range(7)]
+    market_day_avgs = [
+        round(dow_revenue[i] / dow_occurrences[i], 2) if dow_occurrences[i] > 0 else 0.0
+        for i in range(7)
+    ]
+    best_dow_idx = max(range(7), key=lambda i: dow_revenue[i]) if any(dow_revenue.values()) else 0
+    best_market_day = day_names[best_dow_idx]
+    best_market_day_avg = market_day_avgs[best_dow_idx]
+
     # ── Top 10 products by revenue ──
     product_stats = defaultdict(lambda: {
         'name': '', 'units': 0, 'revenue': 0.0, 'profit': 0.0
@@ -247,6 +272,12 @@ def analytics_dashboard(request):
         # Expenses & Net Profit
         'total_expenses': round(float(total_expenses), 2),
         'net_profit': round(net_profit, 2),
+        # Market Day Intelligence
+        'market_day_labels': json.dumps(day_names),
+        'market_day_totals': json.dumps(market_day_totals),
+        'market_day_avgs':   json.dumps(market_day_avgs),
+        'best_market_day':   best_market_day,
+        'best_market_day_avg': round(best_market_day_avg, 2),
         # Product filter
         'items': items,
         'selected_product': selected_product,
