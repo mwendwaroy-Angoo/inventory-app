@@ -522,6 +522,94 @@
   </div>
 </div>
 
+<!-- ═══ MARGIN EROSION ALERTS ═══ -->
+{% if margin_alerts %}
+<div class="section-title">⚠️ Margin Erosion Alerts</div>
+<div class="mb-4">
+  <p style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    Products whose profit margin has dropped by 5+ percentage points
+    compared to the previous {{ period }}-day period.
+    Consider reviewing your selling price or supplier cost.
+  </p>
+  <div class="row g-3">
+    {% for alert in margin_alerts %}
+    <div class="col-md-6 col-lg-4">
+      <div class="stat-card" style="border-top: 3px solid
+        {% if alert.severity == 'critical' %}var(--danger)
+        {% else %}var(--warning){% endif %};">
+
+        <!-- Product name + severity badge -->
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <div style="font-weight:600; color:var(--pearl);
+                      font-size:0.9rem; line-height:1.3;">
+            {{ alert.name }}
+          </div>
+          <span class="badge ms-2" style="
+            {% if alert.severity == 'critical' %}
+              background:rgba(231,76,60,0.2); color:var(--danger);
+              border:1px solid var(--danger);
+            {% else %}
+              background:rgba(243,156,18,0.2); color:var(--warning);
+              border:1px solid var(--warning);
+            {% endif %}
+            font-size:0.65rem; white-space:nowrap;">
+            {% if alert.severity == 'critical' %}🔴 Critical{% else %}🟡 Warning{% endif %}
+          </span>
+        </div>
+
+        <!-- Margin comparison -->
+        <div class="d-flex justify-content-between align-items-end mb-2">
+          <div>
+            <div style="font-size:0.65rem; color:var(--muted);
+                        text-transform:uppercase; letter-spacing:0.08em;">
+              Previous
+            </div>
+            <div style="font-size:1.1rem; font-weight:700;
+                        color:var(--success); font-family:'Playfair Display',serif;">
+              {{ alert.prev_margin }}%
+            </div>
+          </div>
+          <div style="color:var(--muted); font-size:1.2rem; padding-bottom:0.2rem;">→</div>
+          <div class="text-end">
+            <div style="font-size:0.65rem; color:var(--muted);
+                        text-transform:uppercase; letter-spacing:0.08em;">
+              Now
+            </div>
+            <div style="font-size:1.1rem; font-weight:700;
+                        font-family:'Playfair Display',serif;
+                        color:{% if alert.severity == 'critical' %}var(--danger)
+                              {% else %}var(--warning){% endif %};">
+              {{ alert.cur_margin }}%
+            </div>
+          </div>
+        </div>
+
+        <!-- Drop indicator -->
+        <div style="background:rgba(0,0,0,0.2); border-radius:6px;
+                    padding:0.4rem 0.6rem; margin-bottom:0.6rem;">
+          <span style="font-size:0.8rem;
+            color:{% if alert.severity == 'critical' %}var(--danger)
+                  {% else %}var(--warning){% endif %}; font-weight:600;">
+            ↓ {{ alert.drop }} pp drop
+          </span>
+          <span style="font-size:0.75rem; color:var(--muted);
+                       margin-left:0.5rem;">
+            on KES {{ alert.cur_revenue|floatformat:0 }} revenue
+          </span>
+        </div>
+
+        <!-- Action hint -->
+        <div style="font-size:0.75rem; color:var(--muted); line-height:1.4;">
+          💡 Review selling price or renegotiate supplier cost.
+        </div>
+
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <!-- ═══ STOCK VELOCITY RANKING ═══ -->
 <div class="section-title">⚡ Stock Velocity Ranking</div>
 <div class="chart-box mb-4">

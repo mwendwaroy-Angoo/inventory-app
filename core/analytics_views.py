@@ -156,6 +156,45 @@ def analytics_dashboard(request):
     top_product_labels = [p['name'][:20] for p in top_products]
     top_product_revenue = [round(p['revenue'], 2) for p in top_products]
 
+    # ── Margin Erosion Alerts ──
+    # Build per-product revenue and cost for current and previous periods
+    cur_product_data  = defaultdict(lambda: {'name': '', 'revenue': 0.0, 'cost': 0.0})
+    prev_product_data = defaultdict(lambda: {'revenue': 0.0, 'cost': 0.0})
+
+    for t in current_sales:
+        cur_product_data[t.item_id]['name']    = t.item.description
+        cur_product_data[t.item_id]['revenue'] += t.revenue()
+        cur_product_data[t.item_id]['cost']    += t.cost()
+
+    for t in prev_sales:
+        prev_product_data[t.item_id]['revenue'] += t.revenue()
+        prev_product_data[t.item_id]['cost']    += t.cost()
+
+    margin_alerts = []
+    for item_id, cur in cur_product_data.items():
+        if cur['revenue'] <= 0:
+            continue
+        cur_margin = (cur['revenue'] - cur['cost']) / cur['revenue'] * 100
+
+        prev = prev_product_data.get(item_id)
+        if not prev or prev['revenue'] <= 0:
+            continue
+        prev_margin = (prev['revenue'] - prev['cost']) / prev['revenue'] * 100
+
+        drop = prev_margin - cur_margin
+        if drop >= 5:
+            margin_alerts.append({
+                'name':           cur['name'],
+                'cur_margin':     round(cur_margin, 1),
+                'prev_margin':    round(prev_margin, 1),
+                'drop':           round(drop, 1),
+                'severity':       'critical' if drop >= 10 else 'warning',
+                'cur_revenue':    round(cur['revenue'], 2),
+            })
+
+    margin_alerts.sort(key=lambda x: x['drop'], reverse=True)
+    margin_alerts = margin_alerts[:5]  # show top 5 worst
+
     # ── Store performance ──
     store_stats = defaultdict(lambda: {'name': '', 'revenue': 0.0, 'units': 0})
     for t in current_sales:
@@ -332,6 +371,8 @@ def analytics_dashboard(request):
         'chart_units': json.dumps(chart_units),
         'top_product_labels': json.dumps(top_product_labels),
         'top_product_revenue': json.dumps(top_product_revenue),
+        # Margin Erosion Alerts
+        'margin_alerts': margin_alerts,
         # Products
         'top_products': top_products,
         'store_list': store_list,
