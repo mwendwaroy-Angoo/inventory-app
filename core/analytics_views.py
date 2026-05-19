@@ -11,6 +11,7 @@ Available views:
 """
 
 import json
+import math
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
@@ -360,7 +361,100 @@ def analytics_dashboard(request):
     ).aggregate(total=Sum('amount'))['total'] or 0
     net_profit = cur_profit - float(total_expenses)
 
+    # ── Break-Even Analysis (all-time, not period-filtered) ──────────────────────
+    total_capital = float(
+        CapitalInvestment.objects.filter(business=business)
+        .aggregate(total=Sum('amount'))['total'] or 0
+    )
 
+    breakeven_data = {}
+
+    if total_capital > 0:
+        # All-time sales and expenses — not period filtered
+        all_sales = Transaction.objects.filter(
+            business=business, type='Issue'
+        ).select_related('item').order_by('date')
+
+        all_expenses = BusinessExpense.objects.filter(
+            business=business
+        ).order_by('date')
+
+        # Aggregate by month
+        monthly_rev  = defaultdict(float)
+        monthly_cogs = defaultdict(float)
+        monthly_exp  = defaultdict(float)
+
+        for t in all_sales:
+            mk = t.date.strftime('%Y-%m')
+            monthly_rev[mk]  += t.revenue()
+            monthly_cogs[mk] += t.cost()
+
+        for e in all_expenses:
+            mk = e.date.strftime('%Y-%m')
+            monthly_exp[mk] += float(e.amount)
+
+        all_months = sorted(
+            set(list(monthly_rev.keys()) + list(monthly_exp.keys()))
+        )
+
+        # Build cumulative profit series
+        cumulative      = 0.0
+        be_labels       = []
+        be_values       = []
+        breakeven_month = None
+
+        for mk in all_months:
+            prev        = cumulative
+            monthly_pnl = monthly_rev[mk] - monthly_cogs[mk] - monthly_exp[mk]
+            cumulative += monthly_pnl
+            be_labels.append(mk)
+            be_values.append(round(cumulative, 2))
+
+            if breakeven_month is None and prev < total_capital <= cumulative:
+                breakeven_month = mk
+
+        # Recovery stats
+        amount_recovered = round(cumulative, 2)
+        amount_remaining = round(max(0.0, total_capital - cumulative), 2)
+        recovery_pct     = round(
+            min(100.0, (cumulative / total_capital) * 100), 1
+        ) if total_capital > 0 else 0
+
+        # Project break-even date (using last 3 months avg monthly profit)
+        projected_breakeven = None
+        if cumulative < total_capital and len(all_months) >= 1:
+            recent  = all_months[-3:]
+            avg_pnl = sum(
+                monthly_rev[m] - monthly_cogs[m] - monthly_exp[m]
+                for m in recent
+            ) / len(recent)
+
+            if avg_pnl > 0:
+                months_needed   = math.ceil(amount_remaining / avg_pnl)
+                today_d         = today
+                total_m         = today_d.month + months_needed
+                proj_year       = today_d.year + (total_m - 1) // 12
+                proj_month      = (total_m - 1) % 12 + 1
+                month_names     = [
+                    'Jan','Feb','Mar','Apr','May','Jun',
+                    'Jul','Aug','Sep','Oct','Nov','Dec'
+                ]
+                projected_breakeven = f"{month_names[proj_month-1]} {proj_year}"
+
+        breakeven_data = {
+            'total_capital':      round(total_capital, 2),
+            'amount_recovered':   amount_recovered,
+            'amount_remaining':   amount_remaining,
+            'recovery_pct':       recovery_pct,
+            'breakeven_month':    breakeven_month,
+            'projected_breakeven': projected_breakeven,
+            'chart_labels':       json.dumps(be_labels),
+            'chart_values':       json.dumps(be_values),
+            'capital_line':       json.dumps(
+                [round(total_capital, 2)] * len(be_labels)
+            ),
+            'has_broken_even':    breakeven_month is not None,
+        }
 
     context = {
         'period': days,
@@ -431,6 +525,8 @@ def analytics_dashboard(request):
         # Product filter
         'items': items,
         'selected_product': selected_product,
+        # Break-Even Analysis
+        'breakeven_data': breakeven_data,
     }
     return render(request, 'core/analytics.html', context)
 
