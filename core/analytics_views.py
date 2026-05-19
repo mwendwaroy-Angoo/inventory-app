@@ -23,8 +23,8 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from core.models import Item, Transaction, Order, Payment, BusinessExpense
-from core.forms import BusinessExpenseForm
+from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment
+from core.forms import BusinessExpenseForm, CapitalInvestmentForm
 from core.views import get_user_profile, owner_required
 
 
@@ -585,4 +585,93 @@ def expense_delete(request, expense_id):
 
     return render(request, 'core/expense_confirm_delete.html', {
         'expense': expense,
+    })
+
+
+# ── CAPITAL INVESTMENTS CRUD ──────────────────────────────────────────────────
+
+
+@login_required
+@owner_required
+def capital_investment_list(request):
+    """List and add capital investments (one-time startup/asset costs)."""
+    user_profile = request.user.userprofile
+    business     = user_profile.business
+
+    if request.method == 'POST':
+        form = CapitalInvestmentForm(request.POST)
+        if form.is_valid():
+            inv = form.save(commit=False)
+            inv.business = business
+            inv.save()
+            messages.success(request, _('Capital investment recorded successfully.'))
+            return redirect('capital_investment_list')
+    else:
+        form = CapitalInvestmentForm()
+
+    investments   = CapitalInvestment.objects.filter(business=business)
+    total_invested = float(
+        investments.aggregate(total=Sum('amount'))['total'] or 0
+    )
+
+    category_totals = investments.values('category').annotate(
+        total=Sum('amount')
+    ).order_by('-total')
+
+    CATEGORY_LABELS = dict(CapitalInvestment.CATEGORY_CHOICES)
+    category_breakdown = [
+        {
+            'category': CATEGORY_LABELS.get(c['category'], c['category']),
+            'total':    float(c['total']),
+        }
+        for c in category_totals
+    ]
+
+    return render(request, 'core/capital_investments.html', {
+        'investments':        investments,
+        'total_invested':     round(total_invested, 2),
+        'category_breakdown': category_breakdown,
+        'form':               form,
+    })
+
+
+@login_required
+@owner_required
+def capital_investment_edit(request, investment_id):
+    user_profile = request.user.userprofile
+    investment   = get_object_or_404(
+        CapitalInvestment, id=investment_id, business=user_profile.business
+    )
+
+    if request.method == 'POST':
+        form = CapitalInvestmentForm(request.POST, instance=investment)
+        if form.is_valid():
+            form.save()
+            messages.success(request, _('Investment updated successfully.'))
+            return redirect('capital_investment_list')
+    else:
+        form = CapitalInvestmentForm(instance=investment)
+
+    return render(request, 'core/capital_investment_form.html', {
+        'form':       form,
+        'investment': investment,
+        'title':      _('Edit Investment'),
+    })
+
+
+@login_required
+@owner_required
+def capital_investment_delete(request, investment_id):
+    user_profile = request.user.userprofile
+    investment   = get_object_or_404(
+        CapitalInvestment, id=investment_id, business=user_profile.business
+    )
+
+    if request.method == 'POST':
+        investment.delete()
+        messages.success(request, _('Investment deleted.'))
+        return redirect('capital_investment_list')
+
+    return render(request, 'core/capital_investment_confirm_delete.html', {
+        'investment': investment,
     })

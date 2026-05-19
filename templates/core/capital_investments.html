@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans 'Capital Investments' %} — Duka Mwecheche{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'analytics' %}" style="color:var(--gold)">{% trans 'Analytics' %}</a>
+    <span class="mx-1">›</span>
+    <span>{% trans 'Capital Investments' %}</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+    <h2 class="page-title">🏗️ {% trans 'Capital Investments' %}</h2>
+    <div>
+        <a href="{% url 'analytics' %}" class="btn btn-secondary btn-sm">← {% trans 'Analytics' %}</a>
+    </div>
+</div>
+
+<!-- Summary Card -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="stat-card" style="border-top: 3px solid var(--gold);">
+            <div class="stat-label">{% trans 'Total Invested' %}</div>
+            <div class="stat-value" style="color:var(--gold)">KES {{ total_invested|floatformat:0 }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Category Breakdown -->
+{% if category_breakdown %}
+<div class="section-title">📊 {% trans 'Investment Breakdown by Category' %}</div>
+<div class="table-responsive mb-4">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>{% trans 'Category' %}</th>
+                <th>{% trans 'Amount (KES)' %}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cat in category_breakdown %}
+            <tr>
+                <td><strong style="color:var(--pearl)">{{ cat.category }}</strong></td>
+                <td style="color:var(--gold)">{{ cat.total|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Add Investment Form -->
+<div class="section-title">➕ {% trans 'Record New Investment' %}</div>
+<div class="row mb-4">
+    <div class="col-md-8 col-lg-6">
+        <div style="background: var(--onyx-card); border: 1px solid #333; border-radius: 10px; padding: 1.5rem;">
+            <form method="post">
+                {% csrf_token %}
+                {% for field in form %}
+                <div class="mb-3">
+                    <label for="{{ field.id_for_label }}" style="display:block; font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.3rem;">
+                        {{ field.label }}
+                    </label>
+                    {{ field }}
+                    {% if field.help_text %}
+                    <div style="font-size:0.75rem; color:var(--muted); margin-top:0.2rem;">{{ field.help_text }}</div>
+                    {% endif %}
+                    {% if field.errors %}
+                    <div style="color:var(--danger); font-size:0.8rem; margin-top:0.2rem;">
+                        {% for error in field.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+                <div class="d-flex gap-2 mt-4">
+                    <button type="submit" class="btn btn-primary">{% trans 'Record Investment' %}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Investment List -->
+{% if investments %}
+<div class="section-title">📋 {% trans 'All Investments' %}</div>
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>{% trans 'Date Acquired' %}</th>
+                <th>{% trans 'Description' %}</th>
+                <th>{% trans 'Category' %}</th>
+                <th>{% trans 'Amount' %}</th>
+                <th>{% trans 'Notes' %}</th>
+                <th>{% trans 'Actions' %}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for inv in investments %}
+            <tr>
+                <td>{{ inv.date_acquired|date:'d/m/Y' }}</td>
+                <td><strong style="color:var(--pearl)">{{ inv.description }}</strong></td>
+                <td>{{ inv.get_category_display }}</td>
+                <td style="color:var(--gold); font-weight:600;">KES {{ inv.amount|floatformat:0 }}</td>
+                <td style="color:var(--muted); font-size:0.85rem;">{{ inv.notes|truncatechars:50 }}</td>
+                <td>
+                    <a href="{% url 'capital_investment_edit' inv.id %}" class="btn btn-sm btn-outline-secondary">✏️</a>
+                    <a href="{% url 'capital_investment_delete' inv.id %}" class="btn btn-sm btn-outline-danger">🗑️</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p style="color:var(--muted); text-align:center; padding:2rem 0;">
+    {% trans 'No capital investments recorded yet. Use the form above to add your first investment.' %}
+</p>
+{% endif %}
+
+<style>
+    .stat-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1.2rem;
+        transition: transform 0.2s, border-color 0.2s;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+        border-color: var(--gold);
+    }
+    .stat-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+        margin-bottom: 0.4rem;
+    }
+    .stat-value {
+        font-family: 'Playfair Display', serif;
+        font-size: 1.6rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .section-title {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1.2rem;
+        margin: 2rem 0 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    input, select, textarea {
+        width: 100%;
+        padding: 0.6rem 0.8rem;
+        border-radius: 6px;
+        border: 1px solid #444;
+        background: #1a1a1a;
+        color: var(--pearl);
+        font-size: 0.9rem;
+    }
+    input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: var(--gold);
+    }
+</style>
+{% endblock %}

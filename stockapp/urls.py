@@ -46,6 +46,7 @@ from core.whatsapp_bot import whatsapp_webhook
 from core.analytics_views import (
     analytics_dashboard, analytics_api,
     expense_list, expense_add, expense_edit, expense_delete,
+    capital_investment_list, capital_investment_edit, capital_investment_delete,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -159,6 +160,11 @@ urlpatterns = [
     path('analytics/expenses/add/', expense_add, name='expense_add'),
     path('analytics/expenses/<int:expense_id>/edit/', expense_edit, name='expense_edit'),
     path('analytics/expenses/<int:expense_id>/delete/', expense_delete, name='expense_delete'),
+
+    # ── Capital Investments ──
+    path('analytics/capital/', capital_investment_list, name='capital_investment_list'),
+    path('analytics/capital/<int:investment_id>/edit/', capital_investment_edit, name='capital_investment_edit'),
+    path('analytics/capital/<int:investment_id>/delete/', capital_investment_delete, name='capital_investment_delete'),
 
     # ── Analytics ──
     path('analytics/', analytics_dashboard, name='analytics'),
