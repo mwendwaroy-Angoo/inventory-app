@@ -484,6 +484,49 @@ class BusinessExpense(models.Model):
 
 
 # ────────────────────────────────────────────────
+# CAPITAL INVESTMENT (one-time startup / asset costs)
+# ────────────────────────────────────────────────
+
+class CapitalInvestment(models.Model):
+    CATEGORY_CHOICES = [
+        ('equipment',    _('Equipment & Machinery')),
+        ('vehicle',      _('Vehicle')),
+        ('property',     _('Property / Land')),
+        ('renovation',   _('Renovation & Fixtures')),
+        ('license',      _('Licenses & Permits')),
+        ('stock',        _('Initial Stock / Inventory')),
+        ('technology',   _('Technology & Software')),
+        ('other',        _('Other')),
+    ]
+
+    business     = models.ForeignKey(
+        'accounts.Business',
+        on_delete=models.CASCADE,
+        related_name='capital_investments',
+    )
+    description  = models.CharField(max_length=255,
+        help_text='e.g. 3 Pool Tables, Borehole Drilling Rig, Matatu KBX 123Z')
+    amount       = models.DecimalField(max_digits=14, decimal_places=2)
+    category     = models.CharField(max_length=20, choices=CATEGORY_CHOICES,
+                                    default='equipment')
+    date_acquired = models.DateField(
+        help_text='Date this asset was purchased or cost was incurred')
+    notes        = models.TextField(blank=True)
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date_acquired']
+        verbose_name        = _('Capital Investment')
+        verbose_name_plural = _('Capital Investments')
+        indexes = [
+            models.Index(fields=['business', 'date_acquired']),
+        ]
+
+    def __str__(self):
+        return f"{self.description} — KES {self.amount:,.0f}"
+
+
+# ────────────────────────────────────────────────
 # PAYMENT MODEL (M-Pesa & Others)
 # ────────────────────────────────────────────────
 

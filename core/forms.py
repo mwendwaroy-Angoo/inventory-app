@@ -2,7 +2,7 @@ from django import forms
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 import json
-from .models import Item, Store, PurchaseOrder, PurchaseOrderLine, Category, BusinessExpense
+from .models import Item, Store, PurchaseOrder, PurchaseOrderLine, Category, BusinessExpense, CapitalInvestment
 from django.forms import inlineformset_factory
 
 
@@ -219,3 +219,17 @@ class BusinessExpenseForm(forms.ModelForm):
         self.fields['date'].label = _('Date')
         self.fields['notes'].label = _('Notes')
         self.fields['date'].initial = timezone.now().date()
+
+
+class CapitalInvestmentForm(forms.ModelForm):
+    class Meta:
+        model  = CapitalInvestment
+        fields = ['description', 'amount', 'category', 'date_acquired', 'notes']
+        widgets = {
+            'description': forms.TextInput(attrs={
+                'placeholder': 'e.g. 3 Pool Tables, Borehole Rig, Matatu KBX 123Z'
+            }),
+            'date_acquired': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 2,
+                'placeholder': 'Optional — supplier, loan details, etc.'}),
+        }
