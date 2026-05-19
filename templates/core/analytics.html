@@ -174,7 +174,7 @@
       <div
         class="stat-change {% if revenue_change >= 0 %}up{% else %}down{% endif %}"
       >
-        {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change }}% {% trans 'vs prev' %}
+        {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change_display }} {% trans 'vs prev' %}
       </div>
     </div>
   </div>
@@ -193,7 +193,7 @@
       <div
         class="stat-change {% if profit_change >= 0 %}up{% else %}down{% endif %}"
       >
-        {% if profit_change >= 0 %}↑{% else %}↓{% endif %} {{ profit_change }}%
+        {% if profit_change >= 0 %}↑{% else %}↓{% endif %} {{ profit_change_display }}
         {% trans 'vs prev' %}
       </div>
     </div>
@@ -205,7 +205,7 @@
       <div
         class="stat-change {% if units_change >= 0 %}up{% else %}down{% endif %}"
       >
-        {% if units_change >= 0 %}↑{% else %}↓{% endif %} {{ units_change }}% {% trans 'vs prev' %}
+        {% if units_change >= 0 %}↑{% else %}↓{% endif %} {{ units_change_display }} {% trans 'vs prev' %}
       </div>
     </div>
   </div>

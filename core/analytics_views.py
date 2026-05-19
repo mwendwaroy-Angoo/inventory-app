@@ -89,6 +89,19 @@ def analytics_dashboard(request):
             return 100.0 if current > 0 else 0.0
         return round((current - previous) / previous * 100, 1)
 
+    def format_pct_change(value):
+        """Return a human-readable change string.
+        Values >= 100% display as a multiplier (e.g. 2.0×) since
+        '100%+ vs prev' is confusing for non-technical users.
+        """
+        if value >= 100:
+            multiplier = round((value / 100) + 1, 1)
+            return f"{multiplier}×"
+        elif value <= -100:
+            return "~100%"
+        else:
+            return f"{abs(round(value, 1))}%"
+
     revenue_change = pct_change(cur_revenue, prev_revenue)
     profit_change = pct_change(cur_profit, prev_profit)
     units_change = pct_change(cur_units, prev_units)
@@ -364,6 +377,10 @@ def analytics_dashboard(request):
         'revenue_change': revenue_change,
         'profit_change': profit_change,
         'units_change': units_change,
+        # Human-readable display versions
+        'revenue_change_display': format_pct_change(revenue_change),
+        'profit_change_display':  format_pct_change(profit_change),
+        'units_change_display':   format_pct_change(units_change),
         # Charts
         'chart_labels': json.dumps(chart_labels),
         'chart_revenue': json.dumps(chart_revenue),
