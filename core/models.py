@@ -19,6 +19,79 @@ class BusinessType(models.Model):
         verbose_name_plural = "Business Types"
 
 
+class BusinessTypeRequirement(models.Model):
+    """
+    Defines a prerequisite requirement for a specific business type.
+    business_type=None means it appears for ALL business types
+    that have a formal tier (not micro/informal).
+    """
+    TIER_CHOICES = [
+        ('micro',   'Micro / Informal'),
+        ('semi',    'Semi-Formal'),
+        ('formal',  'Formal / Regulated'),
+    ]
+
+    business_type    = models.ForeignKey(
+        BusinessType,
+        on_delete=models.CASCADE,
+        related_name='requirements',
+        null=True, blank=True,
+        help_text='Leave blank for universal requirements'
+    )
+    tier             = models.CharField(max_length=10, choices=TIER_CHOICES,
+                                        default='formal')
+    name             = models.CharField(max_length=200)
+    description      = models.TextField(blank=True,
+        help_text='Brief explanation of what this is and why it is needed')
+    issuing_authority = models.CharField(max_length=200, blank=True,
+        help_text='e.g. County Government, NTSA, PPB')
+    approximate_cost  = models.CharField(max_length=100, blank=True,
+        help_text='e.g. KES 10,000 annually')
+    is_mandatory     = models.BooleanField(default=True)
+    display_order    = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['display_order', 'name']
+        verbose_name        = 'Business Type Requirement'
+        verbose_name_plural = 'Business Type Requirements'
+
+    def __str__(self):
+        bt = self.business_type.name if self.business_type else 'Universal'
+        return f"{bt} — {self.name}"
+
+
+class BusinessCompliance(models.Model):
+    """
+    Self-declared compliance record for a business against a requirement.
+    Phase 1: declaration only.
+    Phase 2: add document_upload + verified_by + verified_at fields.
+    """
+    business    = models.ForeignKey(
+        'accounts.Business',
+        on_delete=models.CASCADE,
+        related_name='compliance_records',
+    )
+    requirement = models.ForeignKey(
+        BusinessTypeRequirement,
+        on_delete=models.CASCADE,
+        related_name='compliance_records',
+    )
+    is_declared  = models.BooleanField(default=False)
+    declared_at  = models.DateTimeField(null=True, blank=True)
+    notes        = models.TextField(blank=True,
+        help_text='Optional — e.g. permit number, expiry date')
+
+    class Meta:
+        unique_together = ['business', 'requirement']
+        ordering        = ['requirement__display_order']
+        verbose_name        = 'Business Compliance Record'
+        verbose_name_plural = 'Business Compliance Records'
+
+    def __str__(self):
+        status = '✅' if self.is_declared else '⬜'
+        return f"{status} {self.business.name} — {self.requirement.name}"
+
+
 class County(models.Model):
     name = models.CharField(max_length=100, unique=True)
 
