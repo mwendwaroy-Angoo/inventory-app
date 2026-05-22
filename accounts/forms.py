@@ -266,6 +266,7 @@ class BusinessEditForm(forms.ModelForm):
             'delivery_fee_per_km': forms.NumberInput(attrs={'step': '1', 'placeholder': 'Per km e.g. 30'}),
             'min_order_amount': forms.NumberInput(attrs={'step': '1', 'placeholder': 'Base min e.g. 200'}),
             'min_order_per_km': forms.NumberInput(attrs={'step': '1', 'placeholder': 'Per km e.g. 50'}),
+            'business_start_date': forms.DateInput(attrs={'type': 'date'}),
         }
 
     def __init__(self, *args, **kwargs):
