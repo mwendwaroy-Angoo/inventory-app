@@ -57,6 +57,22 @@ class Business(models.Model):
         max_length=10, choices=PAYMENT_CHANNEL_CHOICES, blank=True,
         help_text='Default payment channel customers should use')
 
+    # ── Pre-App Business History ──
+    pre_app_cumulative_profit = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=0,
+        blank=True,
+        help_text='Total profit earned before starting to use Duka Mwecheche. '
+                  'Used to give accurate break-even calculations for existing businesses.'
+    )
+    business_start_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text='When did this business first open? '
+                  'Used to show the full break-even timeline including pre-app history.'
+    )
+
     def __str__(self):
         return self.name
 
