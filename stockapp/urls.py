@@ -47,6 +47,7 @@ from core.analytics_views import (
     analytics_dashboard, analytics_api,
     expense_list, expense_add, expense_edit, expense_delete,
     capital_investment_list, capital_investment_edit, capital_investment_delete,
+    compliance_checklist,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -165,6 +166,9 @@ urlpatterns = [
     path('analytics/capital/', capital_investment_list, name='capital_investment_list'),
     path('analytics/capital/<int:investment_id>/edit/', capital_investment_edit, name='capital_investment_edit'),
     path('analytics/capital/<int:investment_id>/delete/', capital_investment_delete, name='capital_investment_delete'),
+
+    # ── Compliance & Licensing ──
+    path('analytics/compliance/', compliance_checklist, name='compliance_checklist'),
 
     # ── Analytics ──
     path('analytics/', analytics_dashboard, name='analytics'),

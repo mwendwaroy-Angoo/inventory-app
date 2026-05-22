@@ -1,0 +1,227 @@
+{% extends 'base.html' %}
+{% load i18n %}
+{% load django_bootstrap5 %}
+
+{% block title %}{% trans 'Compliance & Licensing Checklist' %} — {{ block.super }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+
+    <!-- ═══ HEADER ═══ -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between mb-4">
+        <div>
+            <h1 class="page-title mb-1">📋 {% trans 'Compliance & Licensing' %}</h1>
+            <p class="text-muted mb-0" style="font-size:0.9rem;">
+                {% trans 'Business Type' %}:
+                <strong style="color:var(--gold);">
+                    {{ business_type.name|default:'—' }}
+                </strong>
+            </p>
+        </div>
+        <div class="text-end">
+            <div style="font-size:2rem; font-weight:700; color:{{ badge_color }};">
+                {{ score }}%
+            </div>
+            <span class="badge"
+                  style="background:{{ badge_color }}; color:#fff; font-size:0.8rem; padding:0.3rem 0.8rem;">
+                {{ badge_label }}
+            </span>
+        </div>
+    </div>
+
+    {% if not has_requirements %}
+    <!-- ── NO REQUIREMENTS ── -->
+    <div class="card">
+        <div class="card-body text-center py-5">
+            <div style="font-size:3rem; margin-bottom:1rem;">📭</div>
+            <h5 style="color:var(--gold);">{% trans 'No Requirements Found' %}</h5>
+            <p class="text-muted">
+                {% trans 'There are no compliance requirements defined for this business type yet.' %}
+            </p>
+            <p class="text-muted small">
+                {% trans 'If you believe this is an error, please contact support.' %}
+            </p>
+        </div>
+    </div>
+    {% else %}
+
+    <!-- ═══ SCORE CARD ═══ -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row align-items-center g-3">
+                <div class="col-md-4 text-center">
+                    <div style="position:relative; display:inline-block;">
+                        <canvas id="scoreRing" width="120" height="120"></canvas>
+                        <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+                                    font-size:1.8rem; font-weight:700; color:{{ badge_color }};">
+                            {{ score }}%
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-8">
+                    <h6 style="color:var(--gold); font-family:'Playfair Display',serif;">
+                        {% trans 'Compliance Summary' %}
+                    </h6>
+                    <div class="d-flex flex-wrap gap-3 mt-2">
+                        <div>
+                            <span class="text-muted">{% trans 'Mandatory Requirements' %}:</span>
+                            <strong style="color:var(--pearl);">{{ total_mand }}</strong>
+                        </div>
+                        <div>
+                            <span class="text-muted">{% trans 'Declared' %}:</span>
+                            <strong style="color:var(--success);">{{ declared_mand }}</strong>
+                        </div>
+                        <div>
+                            <span class="text-muted">{% trans 'Remaining' %}:</span>
+                            <strong style="color:var(--danger);">{{ total_mand|add:declared_mand|cut:declared_mand }}</strong>
+                        </div>
+                    </div>
+                    <p class="text-muted small mt-2 mb-0">
+                        {% trans 'Compliance is calculated based on mandatory requirements only. Optional requirements are for your reference.' %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ CHECKLIST FORM ═══ -->
+    <form method="post">
+        {% csrf_token %}
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>📋 {% trans 'Requirement Checklist' %}</span>
+                <span class="badge" style="background:var(--gold); color:var(--onyx);">
+                    {{ checklist|length }} {% trans 'items' %}
+                </span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width:40px;">#</th>
+                                <th style="width:30px;">{% trans 'Done' %}</th>
+                                <th>{% trans 'Requirement' %}</th>
+                                <th>{% trans 'Tier' %}</th>
+                                <th>{% trans 'Issuing Authority' %}</th>
+                                <th style="width:80px;">{% trans 'Cost' %}</th>
+                                <th>{% trans 'Notes' %}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in checklist %}
+                            <tr class="{% if item.is_declared %}receipt-row{% endif %}">
+                                <td class="text-muted">{{ forloop.counter }}</td>
+                                <td>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                               name="declared"
+                                               value="{{ item.requirement.id }}"
+                                               id="req_{{ item.requirement.id }}"
+                                               {% if item.is_declared %}checked{% endif %}
+                                               style="border-color:var(--gold); cursor:pointer;">
+                                        <label class="form-check-label" for="req_{{ item.requirement.id }}"></label>
+                                    </div>
+                                </td>
+                                <td>
+                                    <strong style="color:var(--pearl);">{{ item.requirement.name }}</strong>
+                                    {% if item.requirement.description %}
+                                    <br><small class="text-muted">{{ item.requirement.description }}</small>
+                                    {% endif %}
+                                    {% if item.requirement.is_mandatory %}
+                                    <span class="badge bg-danger ms-1"
+                                          style="font-size:0.65rem;">{% trans 'MANDATORY' %}</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary ms-1"
+                                          style="font-size:0.65rem;">{% trans 'OPTIONAL' %}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge"
+                                          style="background:{% if item.requirement.tier == 'micro' %}#6c757d{% elif item.requirement.tier == 'semi' %}#f39c12{% else %}#c0395a{% endif %};">
+                                        {{ item.requirement.get_tier_display }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if item.requirement.issuing_authority %}
+                                    <small style="color:var(--muted);">{{ item.requirement.issuing_authority }}</small>
+                                    {% else %}
+                                    <small class="text-muted">—</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if item.requirement.approximate_cost %}
+                                    <small>KSh {{ item.requirement.approximate_cost|floatformat:0 }}</small>
+                                    {% else %}
+                                    <small class="text-muted">—</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm"
+                                           name="notes_{{ item.requirement.id }}"
+                                           value="{{ item.notes }}"
+                                           placeholder="{% trans 'Notes...' %}"
+                                           style="min-width:120px; background:var(--onyx); border-color:#444; color:var(--pearl); font-size:0.8rem;">
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ SAVE BUTTON ═══ -->
+        <div class="d-flex justify-content-between align-items-center mt-4">
+            <div>
+                <small class="text-muted">
+                    {% trans 'Check the items you have completed and add any relevant notes.' %}
+                </small>
+            </div>
+            <button type="submit" class="btn btn-gold px-4">
+                💾 {% trans 'Save Compliance Records' %}
+            </button>
+        </div>
+    </form>
+    {% endif %}
+
+    <!-- ═══ BACK LINK ═══ -->
+    <div class="mt-4">
+        <a href="{% url 'analytics' %}" class="btn btn-secondary btn-sm">
+            ← {% trans 'Back to Analytics' %}
+        </a>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // ── Score Ring ──
+    (function() {
+        const canvas = document.getElementById('scoreRing');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const score = {{ score }};
+        const cx = 60, cy = 60, r = 50;
+        const startAngle = -Math.PI / 2;
+        const endAngle = startAngle + (score / 100) * 2 * Math.PI;
+
+        // Background ring
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 8;
+        ctx.stroke();
+
+        // Score ring
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, startAngle, endAngle);
+        ctx.strokeStyle = '{{ badge_color }}';
+        ctx.lineWidth = 8;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+    })();
+</script>
+{% endblock %}

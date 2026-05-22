@@ -24,7 +24,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment
+from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance
 from core.forms import BusinessExpenseForm, CapitalInvestmentForm
 from core.views import get_user_profile, owner_required
 
@@ -773,4 +773,91 @@ def capital_investment_delete(request, investment_id):
 
     return render(request, 'core/capital_investment_confirm_delete.html', {
         'investment': investment,
+    })
+
+
+# ── COMPLIANCE & LICENSING ────────────────────────────────────────────────────
+
+@login_required
+@owner_required
+def compliance_checklist(request):
+    """Display and update the business compliance/licensing checklist."""
+    user_profile = request.user.userprofile
+    business     = user_profile.business
+
+    business_type = business.business_type if hasattr(business, 'business_type') else None
+
+    # Get all requirements for this business type
+    requirements = BusinessTypeRequirement.objects.filter(
+        business_type=business_type
+    ).order_by('display_order', 'name') if business_type else []
+
+    if request.method == 'POST':
+        from django.utils import timezone as tz
+        declared_ids = set(
+            int(x) for x in request.POST.getlist('declared') if x.isdigit()
+        )
+        for req in requirements:
+            compliance, _ = BusinessCompliance.objects.get_or_create(
+                business=business,
+                requirement=req,
+            )
+            was_declared = compliance.is_declared
+            compliance.is_declared = req.id in declared_ids
+            compliance.notes = request.POST.get(f'notes_{req.id}', '').strip()
+            if not was_declared and compliance.is_declared:
+                compliance.declared_at = tz.now()
+            elif not compliance.is_declared:
+                compliance.declared_at = None
+            compliance.save()
+        messages.success(request, _('Compliance records updated successfully.'))
+        return redirect('compliance_checklist')
+
+    # Build compliance map
+    existing = {
+        c.requirement_id: c
+        for c in BusinessCompliance.objects.filter(
+            business=business,
+            requirement__in=requirements,
+        )
+    }
+
+    checklist = []
+    for req in requirements:
+        compliance = existing.get(req.id)
+        checklist.append({
+            'requirement':  req,
+            'is_declared':  compliance.is_declared if compliance else False,
+            'declared_at':  compliance.declared_at if compliance else None,
+            'notes':        compliance.notes if compliance else '',
+        })
+
+    # Compliance score (mandatory only)
+    mandatory     = [c for c in checklist if c['requirement'].is_mandatory]
+    declared_mand = [c for c in mandatory if c['is_declared']]
+    total_mand    = len(mandatory)
+    score         = round(len(declared_mand) / total_mand * 100) if total_mand else 0
+
+    if score == 100:
+        badge_label = 'Fully Compliant'
+        badge_color = 'var(--success)'
+    elif score >= 50:
+        badge_label = 'Partially Compliant'
+        badge_color = 'var(--warning)'
+    elif score > 0:
+        badge_label = 'Getting Started'
+        badge_color = 'var(--danger)'
+    else:
+        badge_label = 'Not Started'
+        badge_color = 'var(--muted)'
+
+    return render(request, 'core/compliance_checklist.html', {
+        'checklist':       checklist,
+        'business_type':   business_type,
+        'score':           score,
+        'badge_label':     badge_label,
+        'badge_color':     badge_color,
+        'total_mand':      total_mand,
+        'declared_mand':   len(declared_mand),
+        'has_requirements': len(checklist) > 0,
     })
