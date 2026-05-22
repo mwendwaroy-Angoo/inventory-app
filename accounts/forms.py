@@ -249,6 +249,7 @@ class BusinessEditForm(forms.ModelForm):
             'latitude', 'longitude',
             'offers_delivery', 'delivery_radius_km', 'delivery_fee', 'delivery_fee_per_km',
             'min_order_amount', 'min_order_per_km',
+            'pre_app_cumulative_profit', 'business_start_date',
         ]
         widgets = {
             'name': forms.TextInput(attrs={'placeholder': 'Business name'}),

@@ -398,7 +398,8 @@ def analytics_dashboard(request):
         )
 
         # Build cumulative profit series
-        cumulative      = 0.0
+        pre_app_profit  = float(business.pre_app_cumulative_profit or 0)
+        cumulative      = pre_app_profit
         be_labels       = []
         be_values       = []
         breakeven_month = None
@@ -454,6 +455,8 @@ def analytics_dashboard(request):
                 [round(total_capital, 2)] * len(be_labels)
             ),
             'has_broken_even':    breakeven_month is not None,
+            'pre_app_profit':     round(pre_app_profit, 2),
+            'business_start_date': business.business_start_date.strftime('%d %b %Y') if business.business_start_date else None,
         }
 
     context = {

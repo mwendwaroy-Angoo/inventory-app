@@ -120,6 +120,48 @@
                 {% bootstrap_field form.address %}
             </div>
 
+            <!-- Pre-App History -->
+            <div class="card bg-dark border-secondary mb-4">
+              <div class="card-body">
+                <h6 style="color:var(--gold); font-family:'Playfair Display',serif;
+                           margin-bottom:0.3rem;">
+                  📊 Business History (for Break-Even Analysis)
+                </h6>
+                <p style="color:var(--muted); font-size:0.8rem; margin-bottom:1rem;">
+                  If your business was operating before joining Duka Mwecheche,
+                  fill in these details so your break-even analysis shows the
+                  full picture from day one.
+                </p>
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label class="form-label">
+                      📅 Business Start Date
+                      <span style="color:var(--muted); font-size:0.75rem; margin-left:0.3rem;">
+                        (when did you first open?)
+                      </span>
+                    </label>
+                    {{ form.business_start_date }}
+                    <div style="color:var(--muted); font-size:0.75rem; margin-top:0.3rem;">
+                      Leave blank if you started using Duka Mwecheche from day one.
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label">
+                      💰 Pre-App Cumulative Profit (KES)
+                      <span style="color:var(--muted); font-size:0.75rem; margin-left:0.3rem;">
+                        (profit earned before joining)
+                      </span>
+                    </label>
+                    {{ form.pre_app_cumulative_profit }}
+                    <div style="color:var(--muted); font-size:0.75rem; margin-top:0.3rem;">
+                      Estimate how much total profit you had already made.
+                      This adjusts your break-even chart automatically.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <h5 class="section-label mt-4">{% trans 'Location' %}</h5>
             <div class="mb-3">{% bootstrap_field form.county %}</div>
             <div class="mb-3">{% bootstrap_field form.sub_county %}</div>
