@@ -23,14 +23,19 @@ def notify_transaction_async(transaction_id, business_id, daily_count=0, user_id
             user = None
             if user_id:
                 from django.contrib.auth.models import User
+
                 user = User.objects.get(id=user_id)
             notify_transaction(transaction, business, daily_count, user=user)
         except Exception:
-            logger.exception("Background notification failed for transaction %s", transaction_id)
+            logger.exception(
+                "Background notification failed for transaction %s", transaction_id
+            )
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
-    logger.debug("Dispatched background notification thread for transaction %s", transaction_id)
+    logger.debug(
+        "Dispatched background notification thread for transaction %s", transaction_id
+    )
 
 
 def send_email_notification(subject, message, recipient_email, html_message=None):
@@ -46,7 +51,9 @@ def send_email_notification(subject, message, recipient_email, html_message=None
         return False
     try:
         if html_message:
-            msg = EmailMultiAlternatives(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient_email])
+            msg = EmailMultiAlternatives(
+                subject, message, settings.DEFAULT_FROM_EMAIL, [recipient_email]
+            )
             msg.attach_alternative(html_message, "text/html")
             msg.send(fail_silently=True)
         else:
@@ -69,15 +76,15 @@ def send_sms_notification(message, phone_number):
         return False
     try:
         import africastalking
+
         africastalking.initialize(
-            username=settings.AT_USERNAME,
-            api_key=settings.AT_API_KEY
+            username=settings.AT_USERNAME, api_key=settings.AT_API_KEY
         )
         sms = africastalking.SMS
-        if phone_number.startswith('0'):
-            phone_number = '+254' + phone_number[1:]
-        elif not phone_number.startswith('+'):
-            phone_number = '+254' + phone_number
+        if phone_number.startswith("0"):
+            phone_number = "+254" + phone_number[1:]
+        elif not phone_number.startswith("+"):
+            phone_number = "+254" + phone_number
         response = sms.send(message, [phone_number])
         logger.info(f"SMS sent to {phone_number}: {response}")
         return True
@@ -91,15 +98,14 @@ def send_whatsapp_notification(message, phone_number):
         return False
     try:
         from twilio.rest import Client
+
         client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-        if phone_number.startswith('0'):
-            phone_number = '+254' + phone_number[1:]
-        elif not phone_number.startswith('+'):
-            phone_number = '+254' + phone_number
+        if phone_number.startswith("0"):
+            phone_number = "+254" + phone_number[1:]
+        elif not phone_number.startswith("+"):
+            phone_number = "+254" + phone_number
         client.messages.create(
-            from_='whatsapp:+14155238886',
-            to=f'whatsapp:{phone_number}',
-            body=message
+            from_="whatsapp:+14155238886", to=f"whatsapp:{phone_number}", body=message
         )
         logger.info(f"WhatsApp sent to {phone_number}")
         return True
@@ -108,8 +114,9 @@ def send_whatsapp_notification(message, phone_number):
         return False
 
 
-def create_in_app_notification(user, title, message, notification_type='info'):
+def create_in_app_notification(user, title, message, notification_type="info"):
     from core.models import Notification
+
     try:
         Notification.objects.create(
             user=user,
@@ -128,9 +135,9 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
     item = transaction.item
     trans_type = transaction.type
     qty = abs(transaction.qty)
-    recorded_by = (user.get_full_name() or user.username) if user else 'N/A'
+    recorded_by = (user.get_full_name() or user.username) if user else "N/A"
 
-    owner_profile = business.users.filter(role='owner').first()
+    owner_profile = business.users.filter(role="owner").first()
     if not owner_profile:
         logger.warning(f"No owner found for business {business.name}")
         return
@@ -139,12 +146,12 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
     owner_email = owner.email
     owner_phone = owner_profile.phone or business.phone
 
-    if trans_type == 'Issue':
-        emoji = '📤'
-        action = 'issued/sold'
+    if trans_type == "Issue":
+        emoji = "📤"
+        action = "issued/sold"
     else:
-        emoji = '📥'
-        action = 'received'
+        emoji = "📥"
+        action = "received"
 
     subject = f"{emoji} Transaction Alert — {business.name}"
     message = (
@@ -166,7 +173,7 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
         owner,
         f"{emoji} {trans_type}: {item.description}",
         f"{qty} {item.unit} {action}. Balance: {item.current_balance()}. By: {recorded_by}",
-        notification_type='transaction'
+        notification_type="transaction",
     )
 
     # Email always
@@ -212,41 +219,42 @@ def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
         owner,
         f"⚠️ Low Stock: {item.description}",
         f"Balance: {item.current_balance()} {item.unit}. Reorder level: {item.reorder_level}",
-        notification_type='warning'
+        notification_type="warning",
     )
     send_email_notification(subject, message, owner_email)
     send_sms_notification(
         f"[Duka Mwecheche] LOW STOCK: {item.description}. "
         f"Balance: {item.current_balance()} {item.unit}. Please reorder.",
-        owner_phone
+        owner_phone,
     )
 
 
-def notify_staff_login(user, business, action='logged in'):
-    owner_profile = business.users.filter(role='owner').first()
+def notify_staff_login(user, business, action="logged in"):
+    owner_profile = business.users.filter(role="owner").first()
     if not owner_profile:
         return
 
     owner = owner_profile.user
 
     from django.utils import timezone
+
     now = timezone.localtime(timezone.now()).strftime("%B %d, %Y at %I:%M %p")
 
-    emoji = '🟢' if action == 'logged in' else '🔴'
+    emoji = "🟢" if action == "logged in" else "🔴"
     # Only in-app notification during login/logout — email/SMS would block
     # the request and cause worker timeouts on Render's free tier
     create_in_app_notification(
         owner,
         f"{emoji} {user.username} {action}",
         f"Staff member {action} at {now}",
-        notification_type='staff'
+        notification_type="staff",
     )
 
 
 def notify_new_order(order):
     """Notify the business owner (and staff) about a new customer order."""
     business = order.business
-    owner_profile = business.users.filter(role='owner').first()
+    owner_profile = business.users.filter(role="owner").first()
     if not owner_profile:
         return
 
@@ -254,12 +262,17 @@ def notify_new_order(order):
     owner_email = owner.email
     owner_phone = owner_profile.phone or business.phone
 
-    delivery_label = '🚚 Delivery' if order.delivery_mode == 'delivery' else '🏪 Pickup'
-    pay_labels = {'mpesa': '💳 M-Pesa', 'cash': '💵 Cash', 'pickup_pay': '🏪 Pay at Pickup'}
+    delivery_label = "🚚 Delivery" if order.delivery_mode == "delivery" else "🏪 Pickup"
+    pay_labels = {
+        "mpesa": "💳 M-Pesa",
+        "cash": "💵 Cash",
+        "pickup_pay": "🏪 Pay at Pickup",
+    }
     pay_label = pay_labels.get(order.payment_method, order.payment_method)
 
-    items_text = ', '.join(
-        f"{l.item.description} x{l.quantity}" for l in order.lines.select_related('item')
+    items_text = ", ".join(
+        f"{l.item.description} x{l.quantity}"
+        for l in order.lines.select_related("item")
     )
 
     subject = f"🛒 New Order #{order.order_number} — {business.name}"
@@ -281,16 +294,16 @@ def notify_new_order(order):
         owner,
         f"🛒 New Order #{order.order_number}",
         f"{order.customer_name} — KES {order.total_amount:,.0f} ({delivery_label}, {pay_label})",
-        notification_type='order'
+        notification_type="order",
     )
 
     # In-app notification for all staff
-    for staff_profile in business.users.filter(role='staff'):
+    for staff_profile in business.users.filter(role="staff"):
         create_in_app_notification(
             staff_profile.user,
             f"🛒 New Order #{order.order_number}",
             f"{order.customer_name} — KES {order.total_amount:,.0f} ({delivery_label})",
-            notification_type='order'
+            notification_type="order",
         )
 
     # Email to owner
@@ -309,7 +322,7 @@ def send_daily_summary(business):
     from datetime import date
     from core.models import Transaction
 
-    owner_profile = business.users.filter(role='owner').first()
+    owner_profile = business.users.filter(role="owner").first()
     if not owner_profile:
         return
 
@@ -320,9 +333,9 @@ def send_daily_summary(business):
     today = date.today()
     sales = Transaction.objects.filter(
         business=business,
-        type='Issue',
+        type="Issue",
         date=today,
-    ).select_related('item')
+    ).select_related("item")
 
     total_revenue = sum(t.revenue() for t in sales)
     total_cost = sum(t.cost() for t in sales)
@@ -331,7 +344,7 @@ def send_daily_summary(business):
 
     receipts = Transaction.objects.filter(
         business=business,
-        type='Receipt',
+        type="Receipt",
         date=today,
     ).count()
 
@@ -355,6 +368,7 @@ def send_daily_summary(business):
     )
 
     from collections import defaultdict
+
     item_sales = defaultdict(int)
     for t in sales:
         item_sales[t.item.description] += abs(t.qty)
@@ -364,7 +378,9 @@ def send_daily_summary(business):
         message += f"• {item_name}: {qty} units\n"
 
     message += f"\n{'='*40}\n"
-    message += "View full report at: https://stock-made-simpler-sms.onrender.com/sales/\n\n"
+    message += (
+        "View full report at: https://stock-made-simpler-sms.onrender.com/sales/\n\n"
+    )
     message += "— Duka Mwecheche"
 
     send_email_notification(subject, message, owner_email)
@@ -384,7 +400,7 @@ def send_daily_summary(business):
     try:
         notify_reorder_recommendations(business)
     except Exception:
-        logger.exception('notify_reorder_recommendations failed during daily summary')
+        logger.exception("notify_reorder_recommendations failed during daily summary")
 
 
 def notify_reorder_recommendations(business, max_items=20, create_draft=False):
@@ -393,11 +409,12 @@ def notify_reorder_recommendations(business, max_items=20, create_draft=False):
     Optionally creates a draft PurchaseOrder when `create_draft` is True.
     """
     from django.apps import apps
-    Item = apps.get_model('core', 'Item')
-    PurchaseOrder = apps.get_model('core', 'PurchaseOrder')
-    PurchaseOrderLine = apps.get_model('core', 'PurchaseOrderLine')
 
-    owner_profile = business.users.filter(role='owner').first()
+    Item = apps.get_model("core", "Item")
+    PurchaseOrder = apps.get_model("core", "PurchaseOrder")
+    PurchaseOrderLine = apps.get_model("core", "PurchaseOrderLine")
+
+    owner_profile = business.users.filter(role="owner").first()
     if not owner_profile:
         return None
 
@@ -405,7 +422,7 @@ def notify_reorder_recommendations(business, max_items=20, create_draft=False):
     owner_email = owner.email
     owner_phone = owner_profile.phone or business.phone
 
-    items = Item.objects.filter(business=business).order_by('material_no')
+    items = Item.objects.filter(business=business).order_by("material_no")
     recs = []
     for item in items:
         try:
@@ -422,14 +439,16 @@ def notify_reorder_recommendations(business, max_items=20, create_draft=False):
     top = recs[:max_items]
 
     title = f"🔔 Reorder Recommendations — {business.name}"
-    short_msg = ', '.join([f"{it.material_no}:{q}" for it, q in top])
-    long_msg_lines = [f"Reorder recommendations for {business.name}", '']
+    short_msg = ", ".join([f"{it.material_no}:{q}" for it, q in top])
+    long_msg_lines = [f"Reorder recommendations for {business.name}", ""]
     for it, q in top:
-        long_msg_lines.append(f"• {it.material_no} | {it.description} → Recommend: {q} {it.unit}")
-    long_msg = '\n'.join(long_msg_lines)
+        long_msg_lines.append(
+            f"• {it.material_no} | {it.description} → Recommend: {q} {it.unit}"
+        )
+    long_msg = "\n".join(long_msg_lines)
 
     # In-app notification
-    create_in_app_notification(owner, title, short_msg, notification_type='warning')
+    create_in_app_notification(owner, title, short_msg, notification_type="warning")
 
     # Email notification
     send_email_notification(title, long_msg + "\n\n— Duka Mwecheche", owner_email)
@@ -438,12 +457,275 @@ def notify_reorder_recommendations(business, max_items=20, create_draft=False):
     created_po = None
     if create_draft:
         try:
-            po = PurchaseOrder.objects.create(business=business, status='draft', created_by=None)
+            po = PurchaseOrder.objects.create(
+                business=business, status="draft", created_by=None
+            )
             for it, q in recs:
-                PurchaseOrderLine.objects.create(po=po, item=it, quantity_ordered=q, unit_price=it.cost_price or 0)
+                PurchaseOrderLine.objects.create(
+                    po=po, item=it, quantity_ordered=q, unit_price=it.cost_price or 0
+                )
             created_po = po
-            create_in_app_notification(owner, f"Draft PO-{po.id} created", f"A draft PO with {len(recs)} lines was created.", notification_type='order')
+            create_in_app_notification(
+                owner,
+                f"Draft PO-{po.id} created",
+                f"A draft PO with {len(recs)} lines was created.",
+                notification_type="order",
+            )
         except Exception:
-            logger.exception('Failed to create draft PO in notify_reorder_recommendations')
+            logger.exception(
+                "Failed to create draft PO in notify_reorder_recommendations"
+            )
 
     return created_po
+
+
+def notify_new_bid_opportunity(procurement_request):
+    """Notify registered suppliers about a new procurement opportunity."""
+    from core.models import SupplierApplication
+
+    requesting_business = procurement_request.business
+
+    # Find suppliers approved to bid for this business
+    approved_suppliers = SupplierApplication.objects.filter(
+        business=requesting_business, status="approved"
+    ).select_related("supplier")
+
+    if not approved_suppliers.exists():
+        logger.info(
+            f"No approved suppliers found for business {requesting_business.name}"
+        )
+        return
+
+    subject_line = f"💼 New Procurement Opportunity — {requesting_business.name}"
+    message_body = (
+        f"A new procurement request has been posted on Duka Mwecheche\n\n"
+        f"Business: {requesting_business.name}\n"
+        f"Item: {procurement_request.item_description}\n"
+        f"Quantity: {procurement_request.quantity} {procurement_request.unit}\n"
+        f"Budget: KES {procurement_request.budget:,.0f}\n"
+        f"Deadline: {procurement_request.deadline.strftime('%B %d, %Y') if procurement_request.deadline else 'N/A'}\n"
+        f"Location: {procurement_request.location or 'N/A'}\n\n"
+        f"Submit your bid on the platform to compete for this opportunity.\n\n"
+        f"— Duka Mwecheche"
+    )
+
+    for app in approved_suppliers:
+        supplier_business = app.supplier
+        supplier_owner = supplier_business.users.filter(role="owner").first()
+
+        if not supplier_owner:
+            continue
+
+        supplier_user = supplier_owner.user
+        supplier_email = supplier_user.email
+        supplier_phone = supplier_owner.phone or supplier_business.phone
+
+        # In-app notification
+        create_in_app_notification(
+            supplier_user,
+            "💼 New Bid Opportunity",
+            f"{requesting_business.name} — {procurement_request.item_description} ({procurement_request.quantity} {procurement_request.unit})",
+            notification_type="procurement",
+        )
+
+        # Email notification
+        send_email_notification(subject_line, message_body, supplier_email)
+
+        # SMS notification
+        sms_msg = (
+            f"[Duka Mwecheche] New Bid: {requesting_business.name} seeking "
+            f"{procurement_request.quantity} {procurement_request.unit} of "
+            f"{procurement_request.item_description}. Budget: KES {procurement_request.budget:,.0f}. "
+            f"Submit your bid now!"
+        )
+        send_sms_notification(sms_msg, supplier_phone)
+
+
+def notify_supplier_bid_received(bid):
+    """Notify the requesting business when they receive a new bid."""
+    requesting_business = bid.procurement.business
+    owner_profile = requesting_business.users.filter(role="owner").first()
+
+    if not owner_profile:
+        logger.warning(f"No owner found for business {requesting_business.name}")
+        return
+
+    owner = owner_profile.user
+    owner_email = owner.email
+    owner_phone = owner_profile.phone or requesting_business.phone
+
+    supplier_name = bid.supplier.name
+
+    subject = (
+        f"📋 New Bid Received — {supplier_name} for {bid.procurement.item_description}"
+    )
+    message = (
+        f"You have received a new bid on Duka Mwecheche\n\n"
+        f"Procurement Request: {bid.procurement.item_description}\n"
+        f"Supplier: {supplier_name}\n"
+        f"Bid Amount: KES {bid.amount:,.0f}\n"
+        f"Delivery Timeline: {bid.delivery_timeline}\n"
+        f"Proposal: {bid.proposal[:200]}...\n\n"
+        f"Review and score this bid on the platform.\n\n"
+        f"— Duka Mwecheche"
+    )
+
+    # In-app notification
+    create_in_app_notification(
+        owner,
+        f"📋 New Bid from {supplier_name}",
+        f"KES {bid.amount:,.0f} for {bid.procurement.quantity} {bid.procurement.unit}",
+        notification_type="procurement",
+    )
+
+    # Email to owner
+    send_email_notification(subject, message, owner_email)
+
+    # SMS to owner
+    sms_msg = (
+        f"[Duka Mwecheche] New Bid: {supplier_name} bid KES {bid.amount:,.0f} "
+        f"for {bid.procurement.item_description}. Review on the platform."
+    )
+    send_sms_notification(sms_msg, owner_phone)
+
+
+def notify_supplier_bid_awarded(bid):
+    """Notify the supplier when their bid is accepted."""
+    supplier_business = bid.supplier
+    owner_profile = supplier_business.users.filter(role="owner").first()
+
+    if not owner_profile:
+        logger.warning(f"No owner found for supplier {supplier_business.name}")
+        return
+
+    owner = owner_profile.user
+    owner_email = owner.email
+    owner_phone = owner_profile.phone or supplier_business.phone
+
+    requesting_business = bid.procurement.business
+
+    subject = f"🎉 Bid Awarded! — {requesting_business.name}"
+    message = (
+        f"Congratulations! Your bid has been accepted on Duka Mwecheche\n\n"
+        f"Buyer: {requesting_business.name}\n"
+        f"Item: {bid.procurement.item_description}\n"
+        f"Quantity: {bid.procurement.quantity} {bid.procurement.unit}\n"
+        f"Your Bid: KES {bid.amount:,.0f}\n"
+        f"Delivery Timeline: {bid.delivery_timeline}\n\n"
+        f"A purchase order will be created shortly. Check your platform for next steps.\n\n"
+        f"— Duka Mwecheche"
+    )
+
+    # In-app notification
+    create_in_app_notification(
+        owner,
+        "🎉 Bid Awarded!",
+        f"Your bid to {requesting_business.name} for KES {bid.amount:,.0f} has been accepted!",
+        notification_type="success",
+    )
+
+    # Email to supplier owner
+    send_email_notification(subject, message, owner_email)
+
+    # SMS to supplier owner
+    sms_msg = (
+        f"[Duka Mwecheche] 🎉 Bid Awarded! {requesting_business.name} accepted your bid "
+        f"for KES {bid.amount:,.0f}. Check your account for purchase order details."
+    )
+    send_sms_notification(sms_msg, owner_phone)
+
+
+def notify_rider_delivery_assigned(rider_profile, order):
+    """Notify a rider when they are assigned a delivery order."""
+    rider_user = rider_profile.user
+    rider_email = rider_user.email
+    rider_phone = rider_profile.phone
+
+    business = order.business
+
+    subject = f"🚚 New Delivery Assigned — Order #{order.order_number}"
+    message = (
+        f"You have been assigned a new delivery on Duka Mwecheche\n\n"
+        f"Order Number: {order.order_number}\n"
+        f"From: {business.name}\n"
+        f"Customer: {order.customer_name} ({order.customer_phone})\n"
+        f"Delivery Location: {order.customer_location}\n"
+        f"Items: {', '.join(f'{ol.item.description} x{ol.quantity}' for ol in order.lines.all())}\n"
+        f"Order Total: KES {order.total_amount:,.0f}\n"
+        f"Delivery Fee: KES {order.delivery_fee:,.0f}\n"
+        f"Status: {order.get_status_display()}\n\n"
+        f"Accept this delivery on the app and proceed to pickup.\n\n"
+        f"— Duka Mwecheche"
+    )
+
+    # In-app notification
+    create_in_app_notification(
+        rider_user,
+        "🚚 Delivery Assigned",
+        f"Order #{order.order_number} — {order.customer_name} in {order.customer_location}",
+        notification_type="delivery",
+    )
+
+    # Email to rider
+    send_email_notification(subject, message, rider_email)
+
+    # SMS to rider
+    sms_msg = (
+        f"[Duka Mwecheche] New Delivery: Order #{order.order_number} from {business.name} "
+        f"to {order.customer_name}. Fee: KES {order.delivery_fee:,.0f}. Accept in app."
+    )
+    send_sms_notification(sms_msg, rider_phone)
+
+
+def notify_business_rider_assigned(order, rider_profile):
+    """Notify the business owner when a rider is assigned to their order."""
+    business = order.business
+    owner_profile = business.users.filter(role="owner").first()
+
+    if not owner_profile:
+        logger.warning(f"No owner found for business {business.name}")
+        return
+
+    owner = owner_profile.user
+    owner_email = owner.email
+    owner_phone = owner_profile.phone or business.phone
+
+    rider_name = rider_profile.user.get_full_name() or rider_profile.user.username
+    rider_phone = rider_profile.phone
+    rider_vehicle = (
+        rider_profile.get_vehicle_type_display()
+        if hasattr(rider_profile, "get_vehicle_type_display")
+        else rider_profile.vehicle_type
+    )
+
+    subject = f"🚗 Rider Assigned — Order #{order.order_number}"
+    message = (
+        f"A rider has been assigned to your order on Duka Mwecheche\n\n"
+        f"Order: #{order.order_number}\n"
+        f"Customer: {order.customer_name}\n"
+        f"Location: {order.customer_location}\n"
+        f"Rider: {rider_name}\n"
+        f"Rider Phone: {rider_phone}\n"
+        f"Vehicle: {rider_vehicle}\n"
+        f"Delivery Fee: KES {order.delivery_fee:,.0f}\n\n"
+        f"The rider will contact the customer shortly for pickup/delivery details.\n\n"
+        f"— Duka Mwecheche"
+    )
+
+    # In-app notification
+    create_in_app_notification(
+        owner,
+        "🚗 Rider Assigned",
+        f"Order #{order.order_number} — {rider_name} ({rider_phone})",
+        notification_type="delivery",
+    )
+
+    # Email to owner
+    send_email_notification(subject, message, owner_email)
+
+    # SMS to owner
+    sms_msg = (
+        f"[Duka Mwecheche] Rider Assigned: Order #{order.order_number} "
+        f"— {rider_name} ({rider_phone}) will collect from your store."
+    )
+    send_sms_notification(sms_msg, owner_phone)
