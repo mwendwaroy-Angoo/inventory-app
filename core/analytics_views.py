@@ -798,7 +798,7 @@ def compliance_checklist(request):
             int(x) for x in request.POST.getlist('declared') if x.isdigit()
         )
         for req in requirements:
-            compliance, _ = BusinessCompliance.objects.get_or_create(
+            compliance, __ = BusinessCompliance.objects.get_or_create(
                 business=business,
                 requirement=req,
             )
