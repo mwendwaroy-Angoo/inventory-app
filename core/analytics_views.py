@@ -859,5 +859,6 @@ def compliance_checklist(request):
         'badge_color':     badge_color,
         'total_mand':      total_mand,
         'declared_mand':   len(declared_mand),
+        'remaining_mand':  total_mand - len(declared_mand),
         'has_requirements': len(checklist) > 0,
     })
