@@ -4,8 +4,67 @@
 
 {% block title %}{% trans 'Compliance & Licensing Checklist' %} — {{ block.super }}{% endblock %}
 
+{% block extra_css %}
+<style>
+    /* ── Table header visibility on dark background ── */
+    .compliance-table thead th {
+        color: var(--gold);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        border-bottom: 2px solid var(--gold);
+        background: var(--onyx-light);
+        padding: 0.75rem 0.5rem;
+        white-space: nowrap;
+    }
+    .compliance-table tbody td {
+        vertical-align: middle;
+        border-color: #2a2a2a;
+        padding: 0.75rem 0.5rem;
+    }
+    .compliance-table tbody tr:hover {
+        background: rgba(201, 168, 76, 0.05);
+    }
+    .compliance-table tbody tr.receipt-row {
+        background: rgba(46, 204, 113, 0.06);
+    }
+    .compliance-table tbody tr.receipt-row:hover {
+        background: rgba(46, 204, 113, 0.12);
+    }
+    /* ── Checkbox visibility ── */
+    .compliance-checkbox {
+        width: 1.1rem;
+        height: 1.1rem;
+        border: 2px solid var(--gold) !important;
+        background: var(--onyx) !important;
+        cursor: pointer;
+        border-radius: 3px;
+    }
+    .compliance-checkbox:checked {
+        background: var(--gold) !important;
+        border-color: var(--gold) !important;
+    }
+    .compliance-checkbox:focus {
+        box-shadow: 0 0 0 0.2rem rgba(201, 168, 76, 0.25);
+    }
+    /* ── Notes input ── */
+    .compliance-notes-input {
+        background: var(--onyx-light) !important;
+        border: 1px solid #444 !important;
+        color: var(--pearl) !important;
+        font-size: 0.8rem;
+        min-width: 120px;
+        transition: border-color 0.2s;
+    }
+    .compliance-notes-input:focus {
+        border-color: var(--gold) !important;
+        box-shadow: 0 0 0 0.15rem rgba(201, 168, 76, 0.15);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container py-4" style="padding-bottom: 5rem;">
+<div style="padding-bottom: 5rem;">
 
     <!-- ═══ HEADER ═══ -->
     <div class="d-flex flex-wrap align-items-center justify-content-between mb-4">
@@ -30,17 +89,29 @@
     </div>
 
     {% if not has_requirements %}
-    <!-- ── NO REQUIREMENTS ── -->
+    <!-- ── NO REQUIREMENTS / NO BUSINESS TYPE ── -->
     <div class="card">
         <div class="card-body text-center py-5">
             <div style="font-size:3rem; margin-bottom:1rem;">📭</div>
             <h5 style="color:var(--gold);">{% trans 'No Requirements Found' %}</h5>
+            {% if not business_type %}
+            <p class="text-muted">
+                {% trans 'Your business does not have a Business Type set yet.' %}
+            </p>
+            <p class="text-muted small">
+                {% trans 'Please set a Business Type in your business settings to see relevant compliance requirements.' %}
+            </p>
+            <a href="{% url 'edit_business' %}" class="btn btn-gold btn-sm mt-2">
+                ⚙️ {% trans 'Edit Business Settings' %}
+            </a>
+            {% else %}
             <p class="text-muted">
                 {% trans 'There are no compliance requirements defined for this business type yet.' %}
             </p>
             <p class="text-muted small">
                 {% trans 'If you believe this is an error, please contact support.' %}
             </p>
+            {% endif %}
         </div>
     </div>
     {% else %}
@@ -106,7 +177,7 @@
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
-                    <table class="table table-hover mb-0">
+                    <table class="table table-hover mb-0 compliance-table">
                         <thead>
                             <tr>
                                 <th style="width:40px;">#</th>
@@ -124,12 +195,11 @@
                                 <td class="text-muted">{{ forloop.counter }}</td>
                                 <td>
                                     <div class="form-check">
-                                        <input class="form-check-input" type="checkbox"
+                                        <input class="form-check-input compliance-checkbox" type="checkbox"
                                                name="declared"
                                                value="{{ item.requirement.id }}"
                                                id="req_{{ item.requirement.id }}"
-                                               {% if item.is_declared %}checked{% endif %}
-                                               style="border-color:var(--gold); cursor:pointer;">
+                                               {% if item.is_declared %}checked{% endif %}>
                                         <label class="form-check-label" for="req_{{ item.requirement.id }}"></label>
                                     </div>
                                 </td>
@@ -163,11 +233,10 @@
                                     {{ item.requirement.approximate_cost|default:"—" }}
                                 </td>
                                 <td>
-                                    <input type="text" class="form-control form-control-sm"
+                                    <input type="text" class="form-control form-control-sm compliance-notes-input"
                                            name="notes_{{ item.requirement.id }}"
                                            value="{{ item.notes }}"
-                                           placeholder="{% trans 'Notes...' %}"
-                                           style="min-width:120px; background:var(--onyx); border-color:#444; color:var(--pearl); font-size:0.8rem;">
+                                           placeholder="{% trans 'Notes...' %}">
                                 </td>
                             </tr>
                             {% endfor %}
@@ -216,7 +285,7 @@
         // Background ring
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-        ctx.strokeStyle = '#333';
+        ctx.strokeStyle = '#444';
         ctx.lineWidth = 8;
         ctx.stroke();
 
