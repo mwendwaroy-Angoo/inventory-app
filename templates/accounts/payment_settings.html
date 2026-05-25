@@ -27,8 +27,8 @@
             <label class="form-label"
               >📌 {% trans 'Preferred Payment Channel' %}</label
             >
-            {{ form.preferred_payment_channel }} {% if
-            form.preferred_payment_channel.errors %}
+            {{ form.preferred_payment_channel }}
+            {% if form.preferred_payment_channel.errors %}
             <div class="text-danger small mt-1">
               {{ form.preferred_payment_channel.errors.0 }}
             </div>
@@ -72,8 +72,8 @@
             <label class="form-label"
               >🔢 {% trans 'Paybill Account Number' %}</label
             >
-            {{ form.mpesa_paybill_account }} {% if
-            form.mpesa_paybill_account.errors %}
+            {{ form.mpesa_paybill_account }}
+            {% if form.mpesa_paybill_account.errors %}
             <div class="text-danger small mt-1">
               {{ form.mpesa_paybill_account.errors.0 }}
             </div>
