@@ -1,58 +1,110 @@
 {% extends "base.html" %}
-{% block title %}Reviews — {{ business.name }}{% endblock %}
+{% load i18n %}
+
+{% block title %}{% trans 'Reviews' %} — {{ business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .star-filled { color: var(--gold); }
+  .star-empty  { color: #3a3a3a; }
+  .review-card:hover { background: rgba(201,168,76,0.04) !important; }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container-fluid" style="max-width:800px;">
-    <h4 class="mb-1">⭐ Reviews for {{ business.name }}</h4>
-    <p class="text-muted">
-        {% if stats.avg_rating %}
-            {{ stats.avg_rating|floatformat:1 }}/5 average · {{ stats.total }} review{{ stats.total|pluralize }}
-        {% else %}
-            No reviews yet
-        {% endif %}
+<div class="container-fluid" style="max-width: 820px;">
+
+  <!-- ═══ HEADER ═══ -->
+  <div class="mb-4">
+    <h4 class="page-title mb-1">⭐ {% trans 'Reviews for' %} {{ business.name }}</h4>
+    {% if stats.avg_rating %}
+    <p style="color: #b0b0b0; font-size: 0.9rem; margin-bottom: 0;">
+      <span style="color: var(--gold); font-weight: 700; font-size: 1rem;">
+        {{ stats.avg_rating|floatformat:1 }}
+      </span>
+      <span style="color: #777;">/5</span>
+      &nbsp;·&nbsp;
+      <span style="color: #a0a0a0;">
+        {{ stats.total }} {% trans 'review' %}{{ stats.total|pluralize }}
+      </span>
     </p>
-
-    {% if stats.total %}
-    <!-- Rating breakdown -->
-    <div class="card bg-light mb-3">
-        <div class="card-body py-2">
-            {% for star in "54321" %}
-            {% with star_int=star|add:"0" %}
-            <div class="d-flex align-items-center gap-2 mb-1">
-                <span class="small" style="width: 20px;">{{ star }}★</span>
-                <div class="progress flex-grow-1" style="height: 8px;">
-                    {% with count=breakdown|default_if_none:"{}"|dictsort:star_int %}
-                    <div class="progress-bar bg-warning" style="width: {% widthratio breakdown.star_int stats.total 100 %}%;"></div>
-                    {% endwith %}
-                </div>
-            </div>
-            {% endwith %}
-            {% endfor %}
-        </div>
-    </div>
+    {% else %}
+    <p style="color: #777; font-size: 0.9rem; margin-bottom: 0;">{% trans 'No reviews yet' %}</p>
     {% endif %}
+  </div>
 
-    {% for review in reviews %}
-    <div class="card mb-2 shadow-sm">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <strong>{{ review.customer_name }}</strong>
-                    <span class="text-warning ms-1">
-                        {% for i in "12345" %}{% if forloop.counter <= review.rating %}★{% else %}☆{% endif %}{% endfor %}
-                    </span>
-                </div>
-                <span class="text-muted small">{{ review.created_at|timesince }} ago</span>
-            </div>
-            {% if review.comment %}
-            <p class="mt-1 mb-0">{{ review.comment }}</p>
-            {% endif %}
+  {% if stats.total %}
+  <!-- ═══ RATING BREAKDOWN ═══ -->
+  <div class="card mb-4" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);">
+    <div class="card-body py-3">
+      <h6 style="color: var(--gold); margin-bottom: 0.9rem; font-size: 0.85rem;
+                 text-transform: uppercase; letter-spacing: 0.07em;">
+        {% trans 'Rating Breakdown' %}
+      </h6>
+      {% for star_num in breakdown_range %}
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <span style="color: var(--gold); font-size: 0.82rem; width: 24px; text-align: right; flex-shrink: 0;">
+          {{ star_num }}★
+        </span>
+        <div style="flex: 1; height: 8px; background: #2a2a2a; border-radius: 4px; overflow: hidden;">
+          {% with count=breakdown|default_if_none:0 %}
+          <div style="height: 100%; border-radius: 4px; background: var(--gold);
+                      transition: width 0.4s ease;
+                      width: {% widthratio star_num stats.total 100 %}%;"></div>
+          {% endwith %}
         </div>
+        <span style="color: #777; font-size: 0.78rem; width: 28px; text-align: right; flex-shrink: 0;">
+          {{ star_num }}
+        </span>
+      </div>
+      {% endfor %}
     </div>
-    {% empty %}
-    <div class="text-center text-muted py-5">
-        <p class="display-6">📭</p>
-        <p>No reviews yet.</p>
+  </div>
+  {% endif %}
+
+  <!-- ═══ REVIEWS LIST ═══ -->
+  {% for review in reviews %}
+  <div class="card mb-2 review-card" style="background: rgba(255,255,255,0.03);
+                                             border: 1px solid rgba(255,255,255,0.07);
+                                             transition: background 0.15s;">
+    <div class="card-body py-3 px-4">
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <strong style="color: #e0e0e0;">{{ review.customer_name }}</strong>
+          <span style="margin-left: 0.5rem;">
+            {% for i in "12345" %}
+              {% if forloop.counter <= review.rating %}
+              <span class="star-filled">★</span>
+              {% else %}
+              <span class="star-empty">★</span>
+              {% endif %}
+            {% endfor %}
+          </span>
+        </div>
+        <small style="color: #666; white-space: nowrap; margin-left: 1rem;">
+          {{ review.created_at|timesince }} {% trans 'ago' %}
+        </small>
+      </div>
+      {% if review.comment %}
+      <p style="color: #b8b8b8; margin-top: 0.5rem; margin-bottom: 0; font-size: 0.9rem; line-height: 1.55;">
+        {{ review.comment }}
+      </p>
+      {% endif %}
     </div>
-    {% endfor %}
+  </div>
+
+  {% empty %}
+  <!-- ═══ EMPTY STATE ═══ -->
+  <div class="card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07);">
+    <div class="card-body text-center py-5">
+      <div style="font-size: 3rem; margin-bottom: 0.75rem;">📭</div>
+      <h6 style="color: var(--gold); margin-bottom: 0.4rem;">{% trans 'No Reviews Yet' %}</h6>
+      <p style="color: #888; font-size: 0.875rem; margin-bottom: 0;">
+        {% trans 'Customer reviews will appear here once submitted.' %}
+      </p>
+    </div>
+  </div>
+  {% endfor %}
+
 </div>
 {% endblock %}

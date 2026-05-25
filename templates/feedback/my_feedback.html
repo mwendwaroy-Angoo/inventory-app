@@ -1,81 +1,213 @@
 {% extends "base.html" %}
-{% block title %}My Feedback{% endblock %}
+{% load i18n %}
+
+{% block title %}{% trans 'Feedback Dashboard' %} — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+  .feedback-tab-btn {
+    font-size: 0.85rem;
+    padding: 0.4rem 1.1rem;
+    border-radius: 20px;
+    border: 1px solid rgba(201,168,76,0.35);
+    color: #a0a0a0;
+    background: transparent;
+    transition: all 0.18s;
+    text-decoration: none;
+  }
+  .feedback-tab-btn:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+  }
+  .feedback-tab-btn.active {
+    background: var(--gold);
+    border-color: var(--gold);
+    color: #1a1a1a;
+    font-weight: 600;
+  }
+  .star-filled { color: var(--gold); }
+  .star-empty  { color: #333; }
+  .feedback-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.07);
+    transition: background 0.15s;
+  }
+  .feedback-card:hover {
+    background: rgba(201,168,76,0.04);
+  }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container-fluid" style="max-width:900px;">
-    <h4 class="mb-3">📊 Feedback Dashboard</h4>
+<div class="container-fluid" style="max-width: 900px;">
 
-    <!-- Summary cards -->
-    <div class="row g-3 mb-3">
-        <div class="col-md-6">
-            <div class="card bg-primary text-white shadow-sm">
-                <div class="card-body text-center">
-                    <h6 class="mb-0">Customer Reviews</h6>
-                    <div class="display-5">{% if customer_stats.avg %}{{ customer_stats.avg|floatformat:1 }}★{% else %}—{% endif %}</div>
-                    <small>{{ customer_stats.total }} review{{ customer_stats.total|pluralize }}</small>
-                </div>
-            </div>
+  <!-- ═══ HEADER ═══ -->
+  <div class="mb-4">
+    <h4 class="page-title mb-1">📊 {% trans 'Feedback Dashboard' %}</h4>
+    <p style="color: #888; font-size: 0.875rem; margin-bottom: 0;">
+      {% trans 'Reviews from customers and ratings from business partners' %}
+    </p>
+  </div>
+
+  <!-- ═══ SUMMARY CARDS ═══ -->
+  <div class="row g-3 mb-4">
+
+    <!-- Customer Reviews card -->
+    <div class="col-md-6">
+      <div class="card" style="background: rgba(201,168,76,0.07);
+                                border: 1px solid rgba(201,168,76,0.25);
+                                border-top: 3px solid var(--gold);">
+        <div class="card-body text-center py-4">
+          <h6 style="color: #a0a0a0; font-size: 0.78rem; text-transform: uppercase;
+                     letter-spacing: 0.08em; margin-bottom: 0.6rem;">
+            {% trans 'Customer Reviews' %}
+          </h6>
+          <div style="font-size: 2.5rem; font-weight: 700; line-height: 1.1; margin-bottom: 0.3rem;">
+            {% if customer_stats.avg %}
+            <span style="color: var(--gold);">{{ customer_stats.avg|floatformat:1 }}</span>
+            <span style="color: var(--gold); font-size: 1.8rem;">★</span>
+            {% else %}
+            <span style="color: #555;">—</span>
+            {% endif %}
+          </div>
+          <small style="color: #888;">
+            {{ customer_stats.total }} {% trans 'review' %}{{ customer_stats.total|pluralize }}
+          </small>
         </div>
-        <div class="col-md-6">
-            <div class="card bg-success text-white shadow-sm">
-                <div class="card-body text-center">
-                    <h6 class="mb-0">Supplier Rating</h6>
-                    <div class="display-5">{% if supplier_stats.avg %}{{ supplier_stats.avg|floatformat:1 }}★{% else %}—{% endif %}</div>
-                    <small>{{ supplier_stats.total }} rating{{ supplier_stats.total|pluralize }}</small>
-                </div>
-            </div>
-        </div>
+      </div>
     </div>
 
-    <!-- Tab toggle -->
-    <div class="d-flex gap-2 mb-3">
-        <a href="?tab=customer" class="btn btn-sm {% if tab == 'customer' %}btn-primary{% else %}btn-outline-primary{% endif %}">Customer Reviews</a>
-        <a href="?tab=supplier" class="btn btn-sm {% if tab == 'supplier' %}btn-success{% else %}btn-outline-success{% endif %}">Supplier Ratings</a>
+    <!-- Supplier Rating card -->
+    <div class="col-md-6">
+      <div class="card" style="background: rgba(46,204,113,0.07);
+                                border: 1px solid rgba(46,204,113,0.2);
+                                border-top: 3px solid #2ecc71;">
+        <div class="card-body text-center py-4">
+          <h6 style="color: #a0a0a0; font-size: 0.78rem; text-transform: uppercase;
+                     letter-spacing: 0.08em; margin-bottom: 0.6rem;">
+            {% trans 'Supplier Rating' %}
+          </h6>
+          <div style="font-size: 2.5rem; font-weight: 700; line-height: 1.1; margin-bottom: 0.3rem;">
+            {% if supplier_stats.avg %}
+            <span style="color: #2ecc71;">{{ supplier_stats.avg|floatformat:1 }}</span>
+            <span style="color: #2ecc71; font-size: 1.8rem;">★</span>
+            {% else %}
+            <span style="color: #555;">—</span>
+            {% endif %}
+          </div>
+          <small style="color: #888;">
+            {{ supplier_stats.total }} {% trans 'rating' %}{{ supplier_stats.total|pluralize }}
+          </small>
+        </div>
+      </div>
     </div>
 
-    {% if tab == 'customer' %}
-    <!-- Customer feedback -->
+  </div>
+
+  <!-- ═══ TAB TOGGLE ═══ -->
+  <div class="d-flex gap-2 mb-4">
+    <a href="?tab=customer"
+       class="feedback-tab-btn {% if tab == 'customer' %}active{% endif %}">
+      ⭐ {% trans 'Customer Reviews' %}
+    </a>
+    <a href="?tab=supplier"
+       class="feedback-tab-btn {% if tab == 'supplier' %}active{% endif %}">
+      🤝 {% trans 'Supplier Ratings' %}
+    </a>
+  </div>
+
+  <!-- ═══ CUSTOMER FEEDBACK ═══ -->
+  {% if tab == 'customer' %}
+
     {% for fb in customer_feedback %}
-    <div class="card mb-2 shadow-sm">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <strong>{{ fb.customer_name }}</strong>
-                    <span class="text-warning ms-1">
-                        {% for i in "12345" %}{% if forloop.counter <= fb.rating %}★{% else %}☆{% endif %}{% endfor %}
-                    </span>
-                    {% if fb.order %}
-                    <span class="text-muted small ms-1">Order #{{ fb.order.order_number }}</span>
-                    {% endif %}
-                </div>
-                <span class="text-muted small">{{ fb.created_at|timesince }} ago</span>
-            </div>
-            {% if fb.comment %}<p class="mt-1 mb-0">{{ fb.comment }}</p>{% endif %}
+    <div class="card mb-2 feedback-card">
+      <div class="card-body py-3 px-4">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <strong style="color: #e0e0e0;">{{ fb.customer_name }}</strong>
+            <span style="margin-left: 0.5rem;">
+              {% for i in "12345" %}
+                {% if forloop.counter <= fb.rating %}
+                <span class="star-filled">★</span>
+                {% else %}
+                <span class="star-empty">★</span>
+                {% endif %}
+              {% endfor %}
+            </span>
+            {% if fb.order %}
+            <span style="color: #666; font-size: 0.78rem; margin-left: 0.5rem;">
+              Order #{{ fb.order.order_number }}
+            </span>
+            {% endif %}
+          </div>
+          <small style="color: #666; white-space: nowrap; margin-left: 1rem;">
+            {{ fb.created_at|timesince }} {% trans 'ago' %}
+          </small>
         </div>
+        {% if fb.comment %}
+        <p style="color: #b0b0b0; margin-top: 0.5rem; margin-bottom: 0;
+                  font-size: 0.9rem; line-height: 1.55;">
+          {{ fb.comment }}
+        </p>
+        {% endif %}
+      </div>
     </div>
+
     {% empty %}
-    <div class="text-center text-muted py-4">No customer reviews yet.</div>
+    <div class="card feedback-card">
+      <div class="card-body text-center py-5">
+        <div style="font-size: 2.5rem; margin-bottom: 0.75rem;">📭</div>
+        <p style="color: #888; font-size: 0.875rem; margin-bottom: 0;">
+          {% trans 'No customer reviews yet.' %}
+        </p>
+      </div>
+    </div>
     {% endfor %}
 
-    {% else %}
-    <!-- Supplier feedback (ratings received from business partners) -->
+  <!-- ═══ SUPPLIER FEEDBACK ═══ -->
+  {% else %}
+
     {% for fb in supplier_feedback %}
-    <div class="card mb-2 shadow-sm">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <strong>{{ fb.from_business.name }}</strong>
-                    <span class="text-warning ms-1">
-                        {% for i in "12345" %}{% if forloop.counter <= fb.rating %}★{% else %}☆{% endif %}{% endfor %}
-                    </span>
-                </div>
-                <span class="text-muted small">{{ fb.created_at|timesince }} ago</span>
-            </div>
-            {% if fb.comment %}<p class="mt-1 mb-0">{{ fb.comment }}</p>{% endif %}
+    <div class="card mb-2 feedback-card">
+      <div class="card-body py-3 px-4">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <strong style="color: #e0e0e0;">{{ fb.from_business.name }}</strong>
+            <span style="margin-left: 0.5rem;">
+              {% for i in "12345" %}
+                {% if forloop.counter <= fb.rating %}
+                <span class="star-filled">★</span>
+                {% else %}
+                <span class="star-empty">★</span>
+                {% endif %}
+              {% endfor %}
+            </span>
+          </div>
+          <small style="color: #666; white-space: nowrap; margin-left: 1rem;">
+            {{ fb.created_at|timesince }} {% trans 'ago' %}
+          </small>
         </div>
+        {% if fb.comment %}
+        <p style="color: #b0b0b0; margin-top: 0.5rem; margin-bottom: 0;
+                  font-size: 0.9rem; line-height: 1.55;">
+          {{ fb.comment }}
+        </p>
+        {% endif %}
+      </div>
     </div>
+
     {% empty %}
-    <div class="text-center text-muted py-4">No supplier ratings received yet.</div>
+    <div class="card feedback-card">
+      <div class="card-body text-center py-5">
+        <div style="font-size: 2.5rem; margin-bottom: 0.75rem;">🤝</div>
+        <p style="color: #888; font-size: 0.875rem; margin-bottom: 0;">
+          {% trans 'No supplier ratings received yet.' %}
+        </p>
+      </div>
+    </div>
     {% endfor %}
-    {% endif %}
+
+  {% endif %}
+
 </div>
 {% endblock %}
