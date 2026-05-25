@@ -26,6 +26,7 @@
         font-size: 1.5rem;
     }
     .edit-body { padding: 2rem; }
+
     .section-label {
         color: var(--gold);
         font-family: 'Playfair Display', serif;
@@ -39,15 +40,66 @@
         font-size: 0.9rem;
         font-weight: 600;
         margin-top: 1rem;
-        margin-bottom: 0.3rem;
+        margin-bottom: 0.25rem;
     }
+
+    /* ── All form labels themed ── */
+    .dm-label {
+        color: #c0c0c0;
+        font-size: 0.875rem;
+        font-weight: 500;
+        margin-bottom: 0.3rem;
+        display: block;
+    }
+    .dm-label-sm {
+        color: #b0b0b0;
+        font-size: 0.8rem;
+        font-weight: 500;
+        margin-bottom: 0.25rem;
+        display: block;
+    }
+    /* ── All hint/helper text ── */
     .field-hint {
-        color: #888;
+        color: #b0b0b0;
         font-size: 0.78rem;
         display: block;
         margin-top: 0.25rem;
-        line-height: 1.4;
+        line-height: 1.45;
     }
+    /* ── Force all form controls dark ── */
+    .form-control,
+    .form-select {
+        background-color: rgba(255,255,255,0.05) !important;
+        border-color: #444 !important;
+        color: #e0e0e0 !important;
+    }
+    .form-control:focus,
+    .form-select:focus {
+        background-color: rgba(255,255,255,0.07) !important;
+        border-color: var(--gold) !important;
+        box-shadow: 0 0 0 0.15rem rgba(201,168,76,0.2) !important;
+        color: #e0e0e0 !important;
+    }
+    .form-control::placeholder { color: #666 !important; }
+    /* Override Bootstrap's own label colour inside bootstrap_field */
+    .mb-3 label.form-label,
+    .mb-4 label.form-label {
+        color: #c0c0c0 !important;
+        font-size: 0.875rem !important;
+    }
+    /* Override any Bootstrap help text */
+    .form-text { color: #b0b0b0 !important; }
+
+    /* ── History card ── */
+    .history-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #3a3a3a;
+        border-radius: 8px;
+        padding: 1.2rem 1.4rem;
+        margin-bottom: 1.5rem;
+    }
+
+    /* ── Map ── */
     #mapPicker {
         height: 300px;
         border-radius: 8px;
@@ -55,11 +107,7 @@
         margin-bottom: 0.5rem;
         z-index: 0;
     }
-    .map-hint {
-        color: #888;
-        font-size: 0.8rem;
-        margin-bottom: 0.8rem;
-    }
+    .map-hint { color: #b0b0b0; font-size: 0.8rem; margin-bottom: 0.8rem; }
     .locate-btn {
         background: var(--gold);
         color: var(--onyx);
@@ -71,16 +119,8 @@
         margin-bottom: 0.8rem;
     }
     .locate-btn:hover { opacity: 0.85; }
-    .map-search-row {
-        display: flex;
-        gap: 0.5rem;
-        margin-bottom: 0.5rem;
-    }
-    .map-search-row input {
-        flex: 1;
-        font-size: 0.85rem;
-        padding: 0.3rem 0.6rem;
-    }
+    .map-search-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .map-search-row input { flex: 1; font-size: 0.85rem; padding: 0.3rem 0.6rem; }
     .map-search-results {
         max-height: 150px;
         overflow-y: auto;
@@ -98,13 +138,10 @@
     }
     .map-search-results .result-item:hover { background: rgba(201,168,76,0.15); }
     .map-search-results .result-item:last-child { border-bottom: none; }
-    .history-card {
-        background: rgba(255,255,255,0.03);
-        border: 1px solid #3a3a3a;
-        border-radius: 8px;
-        margin-bottom: 1.5rem;
-    }
-    .history-card .card-body { padding: 1.2rem 1.4rem; }
+
+    /* ── Tier rows ── */
+    .tier-row { border-bottom: 1px solid #2a2a2a; padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
+    .tier-row:last-child { border-bottom: none; }
 </style>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 {% endblock %}
@@ -123,57 +160,98 @@
         <form method="post">
             {% csrf_token %}
 
-            <!-- ── Business Information ── -->
+            <!-- ══ BUSINESS INFORMATION ══ -->
             <h5 class="section-label">{% trans 'Business Information' %}</h5>
-            <div class="mb-3">{% bootstrap_field form.name %}</div>
-            <div class="mb-3">{% bootstrap_field form.business_type %}</div>
-            <div class="row">
-                <div class="col-md-6 mb-3">{% bootstrap_field form.phone %}</div>
-                <div class="col-md-6 mb-3">{% bootstrap_field form.email %}</div>
+
+            <div class="mb-3">
+                <label class="dm-label" for="{{ form.name.id_for_label }}">{% trans 'Business Name' %}</label>
+                {{ form.name }}
+                {% if form.name.errors %}<span style="color:#e74c3c;font-size:0.8rem;">{{ form.name.errors.0 }}</span>{% endif %}
             </div>
-            <div class="mb-3">{% bootstrap_field form.address %}</div>
+
+            <div class="mb-3">
+                <label class="dm-label" for="{{ form.business_type.id_for_label }}">{% trans 'Business Type' %}</label>
+                {{ form.business_type }}
+                {% if form.business_type.errors %}<span style="color:#e74c3c;font-size:0.8rem;">{{ form.business_type.errors.0 }}</span>{% endif %}
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="dm-label" for="{{ form.phone.id_for_label }}">{% trans 'Phone' %}</label>
+                    {{ form.phone }}
+                    {% if form.phone.errors %}<span style="color:#e74c3c;font-size:0.8rem;">{{ form.phone.errors.0 }}</span>{% endif %}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="dm-label" for="{{ form.email.id_for_label }}">{% trans 'Email' %}</label>
+                    {{ form.email }}
+                    {% if form.email.errors %}<span style="color:#e74c3c;font-size:0.8rem;">{{ form.email.errors.0 }}</span>{% endif %}
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="dm-label" for="{{ form.address.id_for_label }}">{% trans 'Address' %}</label>
+                {{ form.address }}
+                {% if form.address.errors %}<span style="color:#e74c3c;font-size:0.8rem;">{{ form.address.errors.0 }}</span>{% endif %}
+            </div>
 
             <!-- ── Business History ── -->
             <div class="history-card">
-                <div class="card-body">
-                    <h6 style="color: var(--gold); font-family: 'Playfair Display', serif; margin-bottom: 0.4rem;">📊 Business History (for Break-Even Analysis)</h6>
-                    <p style="color: #999; font-size: 0.82rem; margin-bottom: 1rem; line-height: 1.5;">If your business was operating before joining Duka Mwecheche, fill in these details so your break-even analysis shows the full picture from day one.</p>
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label" style="color: #d0d0d0;">
-                                📅 Business Start Date
-                                <span style="color: #888; font-size: 0.75rem; margin-left: 0.3rem;">(when did you first open?)</span>
-                            </label>
-                            {{ form.business_start_date }}
-                            <span class="field-hint">Leave blank if you started using Duka Mwecheche from day one.</span>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label" style="color: #d0d0d0;">
-                                💰 Pre-App Cumulative Profit (KES)
-                                <span style="color: #888; font-size: 0.75rem; margin-left: 0.3rem;">(profit earned before joining)</span>
-                            </label>
-                            {{ form.pre_app_cumulative_profit }}
-                            <span class="field-hint">Estimate how much total profit you had already made. This adjusts your break-even chart automatically.</span>
-                        </div>
+                <h6 style="color: var(--gold); font-family: 'Playfair Display', serif; margin-bottom: 0.4rem;">📊 Business History (for Break-Even Analysis)</h6>
+                <p style="color: #b0b0b0; font-size: 0.82rem; margin-bottom: 1rem; line-height: 1.5;">If your business was operating before joining Duka Mwecheche, fill in these details so your break-even analysis shows the full picture from day one.</p>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="dm-label" for="{{ form.business_start_date.id_for_label }}">
+                            📅 Business Start Date
+                            <span style="color: #888; font-size: 0.75rem;">(when did you first open?)</span>
+                        </label>
+                        {{ form.business_start_date }}
+                        <span class="field-hint">Leave blank if you started using Duka Mwecheche from day one.</span>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="dm-label" for="{{ form.pre_app_cumulative_profit.id_for_label }}">
+                            💰 Pre-App Cumulative Profit (KES)
+                            <span style="color: #888; font-size: 0.75rem;">(profit earned before joining)</span>
+                        </label>
+                        {{ form.pre_app_cumulative_profit }}
+                        <span class="field-hint">Estimate how much total profit you had already made. This adjusts your break-even chart automatically.</span>
                     </div>
                 </div>
             </div>
 
-            <!-- ── Location ── -->
+            <!-- ══ LOCATION ══ -->
             <h5 class="section-label mt-4">{% trans 'Location' %}</h5>
-            <div class="mb-3">{% bootstrap_field form.county %}</div>
-            <div class="mb-3">{% bootstrap_field form.sub_county %}</div>
-            <div class="mb-3">{% bootstrap_field form.ward %}</div>
-
-            <!-- ── Operating Hours ── -->
-            <h5 class="section-label mt-4">🕐 {% trans 'Operating Hours' %}</h5>
-            <div class="row">
-                <div class="col-md-4 mb-3">{% bootstrap_field form.opening_time %}</div>
-                <div class="col-md-4 mb-3">{% bootstrap_field form.closing_time %}</div>
-                <div class="col-md-4 mb-3">{% bootstrap_field form.is_open_override %}</div>
+            <div class="mb-3">
+                <label class="dm-label" for="{{ form.county.id_for_label }}">{% trans 'County' %}</label>
+                {{ form.county }}
+            </div>
+            <div class="mb-3">
+                <label class="dm-label" for="{{ form.sub_county.id_for_label }}">{% trans 'Sub County' %}</label>
+                {{ form.sub_county }}
+            </div>
+            <div class="mb-3">
+                <label class="dm-label" for="{{ form.ward.id_for_label }}">{% trans 'Ward' %}</label>
+                {{ form.ward }}
             </div>
 
-            <!-- ── GPS Coordinates ── -->
+            <!-- ══ OPERATING HOURS ══ -->
+            <h5 class="section-label mt-4">🕐 {% trans 'Operating Hours' %}</h5>
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label class="dm-label" for="{{ form.opening_time.id_for_label }}">{% trans 'Opening Time' %}</label>
+                    {{ form.opening_time }}
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="dm-label" for="{{ form.closing_time.id_for_label }}">{% trans 'Closing Time' %}</label>
+                    {{ form.closing_time }}
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="dm-label" for="{{ form.is_open_override.id_for_label }}">{% trans 'Open Override' %}</label>
+                    {{ form.is_open_override }}
+                    <span class="field-hint">{% trans 'Override the schedule to force open or closed status.' %}</span>
+                </div>
+            </div>
+
+            <!-- ══ GPS COORDINATES ══ -->
             <h5 class="section-label mt-4">📍 {% trans 'GPS Coordinates' %}</h5>
             <div class="map-search-row">
                 <input type="text" id="mapSearchInput" class="form-control" placeholder="{% trans 'Search for your business location e.g. Mama Ngina Street, Nairobi' %}">
@@ -184,39 +262,68 @@
             <div id="mapPicker"></div>
             <p class="map-hint">{% trans 'Search above, click the map, or drag the marker to set your business location.' %}</p>
             <div class="row">
-                <div class="col-md-6 mb-3">{% bootstrap_field form.latitude %}</div>
-                <div class="col-md-6 mb-3">{% bootstrap_field form.longitude %}</div>
+                <div class="col-md-6 mb-3">
+                    <label class="dm-label" for="{{ form.latitude.id_for_label }}">{% trans 'Latitude' %}</label>
+                    {{ form.latitude }}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="dm-label" for="{{ form.longitude.id_for_label }}">{% trans 'Longitude' %}</label>
+                    {{ form.longitude }}
+                </div>
             </div>
 
-            <!-- ── Delivery Settings ── -->
+            <!-- ══ DELIVERY SETTINGS ══ -->
             <h5 class="section-label mt-4">🚚 {% trans 'Delivery Settings' %}</h5>
-            <div class="mb-3">{% bootstrap_field form.offers_delivery %}</div>
-            <div class="mb-3">{% bootstrap_field form.delivery_radius_km %}</div>
 
+            <div class="mb-3 d-flex align-items-center gap-2">
+                {{ form.offers_delivery }}
+                <label class="dm-label mb-0" for="{{ form.offers_delivery.id_for_label }}">{% trans 'Offers delivery' %}</label>
+            </div>
+
+            <div class="mb-4">
+                <label class="dm-label" for="{{ form.delivery_radius_km.id_for_label }}">{% trans 'Delivery Radius (km)' %}</label>
+                {{ form.delivery_radius_km }}
+            </div>
+
+            <!-- Base Pricing -->
             <h6 class="sub-section-label">💰 {% trans 'Base Pricing' %}</h6>
-            <span class="field-hint mb-2 d-block">{% trans 'Base fee + per-km rate. Example: KES 50 base + KES 30/km → 3km delivery costs KES 140' %}</span>
+            <span class="field-hint mb-3 d-block">{% trans 'Base fee + per-km rate. Example: KES 50 base + KES 30/km → 3km delivery costs KES 140' %}</span>
             <div class="row">
-                <div class="col-md-6 mb-3">{% bootstrap_field form.delivery_fee %}</div>
-                <div class="col-md-6 mb-3">{% bootstrap_field form.delivery_fee_per_km %}</div>
+                <div class="col-md-6 mb-3">
+                    <label class="dm-label" for="{{ form.delivery_fee.id_for_label }}">{% trans 'Delivery Fee (KES)' %}</label>
+                    {{ form.delivery_fee }}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="dm-label" for="{{ form.delivery_fee_per_km.id_for_label }}">{% trans 'Fee per km (KES)' %}</label>
+                    {{ form.delivery_fee_per_km }}
+                </div>
             </div>
 
+            <!-- Minimum Order -->
             <h6 class="sub-section-label">📦 {% trans 'Minimum Order (distance-based)' %}</h6>
-            <span class="field-hint mb-2 d-block">{% trans 'Base minimum + per-km increase. Example: KES 200 base + KES 50/km → 3km away needs KES 350 minimum' %}</span>
+            <span class="field-hint mb-3 d-block">{% trans 'Base minimum + per-km increase. Example: KES 200 base + KES 50/km → 3km away needs KES 350 minimum' %}</span>
             <div class="row">
-                <div class="col-md-6 mb-3">{% bootstrap_field form.min_order_amount %}</div>
-                <div class="col-md-6 mb-3">{% bootstrap_field form.min_order_per_km %}</div>
+                <div class="col-md-6 mb-3">
+                    <label class="dm-label" for="{{ form.min_order_amount.id_for_label }}">{% trans 'Min Order Amount (KES)' %}</label>
+                    {{ form.min_order_amount }}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="dm-label" for="{{ form.min_order_per_km.id_for_label }}">{% trans 'Min Order per km (KES)' %}</label>
+                    {{ form.min_order_per_km }}
+                </div>
             </div>
 
+            <!-- Delivery Modes -->
             <h6 class="sub-section-label">🚶 {% trans 'Delivery Modes by Distance' %}</h6>
-            <span class="field-hint mb-2 d-block">{% trans 'Set which delivery modes are available and their max range. The system will recommend the best mode based on customer distance.' %}</span>
+            <span class="field-hint mb-3 d-block">{% trans 'Set which delivery modes are available and their max range. The system will recommend the best mode based on customer distance.' %}</span>
 
             <div id="tierContainer">
                 {% for tier in delivery_tiers %}
                 <div class="tier-row" data-index="{{ forloop.counter0 }}">
                     <input type="hidden" name="tier_id_{{ forloop.counter0 }}" value="{{ tier.id }}">
-                    <div class="row g-2 mb-2 align-items-end">
+                    <div class="row g-2 align-items-end">
                         <div class="col-md-3">
-                            <label class="form-label form-label-sm" style="color: #b0b0b0;">{% trans 'Mode' %}</label>
+                            <label class="dm-label-sm">{% trans 'Mode' %}</label>
                             <select name="tier_mode_{{ forloop.counter0 }}" class="form-select form-select-sm">
                                 <option value="foot" {% if tier.mode == 'foot' %}selected{% endif %}>🚶 {% trans 'On Foot' %}</option>
                                 <option value="bicycle" {% if tier.mode == 'bicycle' %}selected{% endif %}>🚲 {% trans 'Bicycle' %}</option>
@@ -225,19 +332,19 @@
                             </select>
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label form-label-sm" style="color: #b0b0b0;">{% trans 'Max km' %}</label>
+                            <label class="dm-label-sm">{% trans 'Max km' %}</label>
                             <input type="number" name="tier_max_km_{{ forloop.counter0 }}" class="form-control form-control-sm" step="0.5" value="{{ tier.max_distance_km }}" placeholder="e.g. 2">
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label form-label-sm" style="color: #b0b0b0;">{% trans 'Base fee' %}</label>
+                            <label class="dm-label-sm">{% trans 'Base fee' %}</label>
                             <input type="number" name="tier_base_fee_{{ forloop.counter0 }}" class="form-control form-control-sm" step="1" value="{{ tier.base_fee|floatformat:0 }}" placeholder="0">
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label form-label-sm" style="color: #b0b0b0;">{% trans 'Per km' %}</label>
+                            <label class="dm-label-sm">{% trans 'Per km' %}</label>
                             <input type="number" name="tier_fee_per_km_{{ forloop.counter0 }}" class="form-control form-control-sm" step="1" value="{{ tier.fee_per_km|floatformat:0 }}" placeholder="0">
                         </div>
-                        <div class="col-md-3">
-                            <div class="form-check mt-2">
+                        <div class="col-md-3 d-flex align-items-center" style="padding-top:1.4rem;">
+                            <div class="form-check">
                                 <input type="checkbox" name="tier_delete_{{ forloop.counter0 }}" class="form-check-input" id="delTier{{ forloop.counter0 }}">
                                 <label class="form-check-label" for="delTier{{ forloop.counter0 }}" style="color: #e74c3c; font-size: 0.8rem;">{% trans 'Remove' %}</label>
                             </div>
@@ -246,10 +353,10 @@
                 </div>
                 {% endfor %}
             </div>
-            <button type="button" class="btn btn-sm btn-outline-warning mt-1 mb-3" onclick="addTierRow()">+ {% trans 'Add Delivery Mode' %}</button>
+            <button type="button" class="btn btn-sm btn-outline-warning mt-2 mb-4" onclick="addTierRow()">+ {% trans 'Add Delivery Mode' %}</button>
 
             <!-- ── Actions ── -->
-            <div class="d-flex gap-2 mt-4">
+            <div class="d-flex gap-2 mt-2">
                 <button type="submit" class="btn btn-gold flex-fill py-2">{% trans 'Save Changes' %}</button>
                 <a href="{% url 'home' %}" class="btn btn-secondary flex-fill py-2">{% trans 'Cancel' %}</a>
             </div>
@@ -270,8 +377,7 @@
 
     const map = L.map('mapPicker').setView([initLat, initLng], initZoom);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap',
-        maxZoom: 19
+        attribution: '© OpenStreetMap', maxZoom: 19
     }).addTo(map);
 
     const marker = L.marker([initLat, initLng], {draggable: true}).addTo(map);
@@ -281,15 +387,11 @@
         lngField.value = lng.toFixed(6);
         marker.setLatLng([lat, lng]);
     }
-
     marker.on('dragend', function() {
         const pos = marker.getLatLng();
         setCoords(pos.lat, pos.lng);
     });
-
-    map.on('click', function(e) {
-        setCoords(e.latlng.lat, e.latlng.lng);
-    });
+    map.on('click', function(e) { setCoords(e.latlng.lat, e.latlng.lng); });
 
     function locateMe() {
         if (!navigator.geolocation) { alert('Geolocation not supported.'); return; }
@@ -302,7 +404,6 @@
             {timeout: 10000, enableHighAccuracy: true}
         );
     }
-
     setTimeout(function() { map.invalidateSize(); }, 200);
 
     function searchBusinessLocation() {
@@ -336,10 +437,9 @@
                 });
             })
             .catch(() => {
-                resultsDiv.innerHTML = '<div class="result-item" style="color:#888;">Search failed — check connection and try again</div>';
+                resultsDiv.innerHTML = '<div class="result-item" style="color:#888;">Search failed — check connection</div>';
             });
     }
-
     document.getElementById('mapSearchInput').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') { e.preventDefault(); searchBusinessLocation(); }
     });
@@ -359,15 +459,13 @@
                     .then(data => {
                         data.forEach(sc => {
                             const opt = document.createElement('option');
-                            opt.value = sc.id;
-                            opt.textContent = sc.name;
+                            opt.value = sc.id; opt.textContent = sc.name;
                             subCountyField.appendChild(opt);
                         });
                     });
             }
         });
     }
-
     if (subCountyField) {
         subCountyField.addEventListener('change', function() {
             const scId = this.value;
@@ -378,8 +476,7 @@
                     .then(data => {
                         data.forEach(w => {
                             const opt = document.createElement('option');
-                            opt.value = w.id;
-                            opt.textContent = w.name;
+                            opt.value = w.id; opt.textContent = w.name;
                             wardField.appendChild(opt);
                         });
                     });
@@ -392,9 +489,9 @@
         const container = document.getElementById('tierContainer');
         const html = `
         <div class="tier-row" data-index="${tierIndex}">
-            <div class="row g-2 mb-2 align-items-end">
+            <div class="row g-2 align-items-end">
                 <div class="col-md-3">
-                    <label class="form-label form-label-sm" style="color:#b0b0b0;">Mode</label>
+                    <label class="dm-label-sm">Mode</label>
                     <select name="tier_mode_${tierIndex}" class="form-select form-select-sm">
                         <option value="foot">🚶 On Foot</option>
                         <option value="bicycle">🚲 Bicycle</option>
@@ -403,19 +500,19 @@
                     </select>
                 </div>
                 <div class="col-md-2">
-                    <label class="form-label form-label-sm" style="color:#b0b0b0;">Max km</label>
+                    <label class="dm-label-sm">Max km</label>
                     <input type="number" name="tier_max_km_${tierIndex}" class="form-control form-control-sm" step="0.5" placeholder="e.g. 2">
                 </div>
                 <div class="col-md-2">
-                    <label class="form-label form-label-sm" style="color:#b0b0b0;">Base fee</label>
-                    <input type="number" name="tier_base_fee_${tierIndex}" class="form-control form-control-sm" step="1" placeholder="0" value="0">
+                    <label class="dm-label-sm">Base fee</label>
+                    <input type="number" name="tier_base_fee_${tierIndex}" class="form-control form-control-sm" step="1" value="0" placeholder="0">
                 </div>
                 <div class="col-md-2">
-                    <label class="form-label form-label-sm" style="color:#b0b0b0;">Per km</label>
-                    <input type="number" name="tier_fee_per_km_${tierIndex}" class="form-control form-control-sm" step="1" placeholder="0" value="0">
+                    <label class="dm-label-sm">Per km</label>
+                    <input type="number" name="tier_fee_per_km_${tierIndex}" class="form-control form-control-sm" step="1" value="0" placeholder="0">
                 </div>
-                <div class="col-md-3">
-                    <div class="form-check mt-2">
+                <div class="col-md-3 d-flex align-items-center" style="padding-top:1.4rem;">
+                    <div class="form-check">
                         <input type="checkbox" name="tier_delete_${tierIndex}" class="form-check-input" id="delTier${tierIndex}">
                         <label class="form-check-label" for="delTier${tierIndex}" style="color:#e74c3c;font-size:0.8rem;">Remove</label>
                     </div>
