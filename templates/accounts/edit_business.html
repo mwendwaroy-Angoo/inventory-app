@@ -15,21 +15,17 @@
         border-radius: 12px;
         overflow: hidden;
     }
-
     .edit-header {
         background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
         padding: 1.5rem 2rem;
     }
-
     .edit-header h2 {
         font-family: 'Playfair Display', serif;
-        color: var(--white);
+        color: #ffffff;
         margin: 0;
         font-size: 1.5rem;
     }
-
     .edit-body { padding: 2rem; }
-
     .section-label {
         color: var(--gold);
         font-family: 'Playfair Display', serif;
@@ -37,6 +33,20 @@
         margin-bottom: 0.8rem;
         padding-bottom: 0.3rem;
         border-bottom: 1px solid #333;
+    }
+    .sub-section-label {
+        color: #d0d0d0;
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin-top: 1rem;
+        margin-bottom: 0.3rem;
+    }
+    .field-hint {
+        color: #888;
+        font-size: 0.78rem;
+        display: block;
+        margin-top: 0.25rem;
+        line-height: 1.4;
     }
     #mapPicker {
         height: 300px;
@@ -46,7 +56,7 @@
         z-index: 0;
     }
     .map-hint {
-        color: var(--muted);
+        color: #888;
         font-size: 0.8rem;
         margin-bottom: 0.8rem;
     }
@@ -83,11 +93,18 @@
         padding: 0.4rem 0.6rem;
         cursor: pointer;
         font-size: 0.8rem;
-        color: var(--pearl);
+        color: #d0d0d0;
         border-bottom: 1px solid #333;
     }
     .map-search-results .result-item:hover { background: rgba(201,168,76,0.15); }
     .map-search-results .result-item:last-child { border-bottom: none; }
+    .history-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #3a3a3a;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+    }
+    .history-card .card-body { padding: 1.2rem 1.4rem; }
 </style>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 {% endblock %}
@@ -98,6 +115,7 @@
         <h2>{% trans 'Edit Business Details' %}</h2>
     </div>
     <div class="edit-body">
+
         {% if form.errors %}
         <div class="alert alert-danger">{% trans 'Please correct the errors below.' %}</div>
         {% endif %}
@@ -105,68 +123,49 @@
         <form method="post">
             {% csrf_token %}
 
+            <!-- ── Business Information ── -->
             <h5 class="section-label">{% trans 'Business Information' %}</h5>
-            <div class="mb-3">
-                {% bootstrap_field form.name %}
-            </div>
-            <div class="mb-3">
-                {% bootstrap_field form.business_type %}
-            </div>
+            <div class="mb-3">{% bootstrap_field form.name %}</div>
+            <div class="mb-3">{% bootstrap_field form.business_type %}</div>
             <div class="row">
                 <div class="col-md-6 mb-3">{% bootstrap_field form.phone %}</div>
                 <div class="col-md-6 mb-3">{% bootstrap_field form.email %}</div>
             </div>
-            <div class="mb-3">
-                {% bootstrap_field form.address %}
-            </div>
+            <div class="mb-3">{% bootstrap_field form.address %}</div>
 
-            <!-- Pre-App History -->
-            <div class="card bg-dark border-secondary mb-4">
-              <div class="card-body">
-                <h6 style="color:var(--gold); font-family:'Playfair Display',serif;
-                           margin-bottom:0.3rem;">
-                  📊 Business History (for Break-Even Analysis)
-                </h6>
-                <p style="color:var(--muted); font-size:0.8rem; margin-bottom:1rem;">
-                  If your business was operating before joining Duka Mwecheche,
-                  fill in these details so your break-even analysis shows the
-                  full picture from day one.
-                </p>
-                <div class="row g-3">
-                  <div class="col-md-6">
-                    <label class="form-label">
-                      📅 Business Start Date
-                      <span style="color:var(--muted); font-size:0.75rem; margin-left:0.3rem;">
-                        (when did you first open?)
-                      </span>
-                    </label>
-                    {{ form.business_start_date }}
-                    <div style="color:var(--muted); font-size:0.75rem; margin-top:0.3rem;">
-                      Leave blank if you started using Duka Mwecheche from day one.
+            <!-- ── Business History ── -->
+            <div class="history-card">
+                <div class="card-body">
+                    <h6 style="color: var(--gold); font-family: 'Playfair Display', serif; margin-bottom: 0.4rem;">📊 Business History (for Break-Even Analysis)</h6>
+                    <p style="color: #999; font-size: 0.82rem; margin-bottom: 1rem; line-height: 1.5;">If your business was operating before joining Duka Mwecheche, fill in these details so your break-even analysis shows the full picture from day one.</p>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label" style="color: #d0d0d0;">
+                                📅 Business Start Date
+                                <span style="color: #888; font-size: 0.75rem; margin-left: 0.3rem;">(when did you first open?)</span>
+                            </label>
+                            {{ form.business_start_date }}
+                            <span class="field-hint">Leave blank if you started using Duka Mwecheche from day one.</span>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" style="color: #d0d0d0;">
+                                💰 Pre-App Cumulative Profit (KES)
+                                <span style="color: #888; font-size: 0.75rem; margin-left: 0.3rem;">(profit earned before joining)</span>
+                            </label>
+                            {{ form.pre_app_cumulative_profit }}
+                            <span class="field-hint">Estimate how much total profit you had already made. This adjusts your break-even chart automatically.</span>
+                        </div>
                     </div>
-                  </div>
-                  <div class="col-md-6">
-                    <label class="form-label">
-                      💰 Pre-App Cumulative Profit (KES)
-                      <span style="color:var(--muted); font-size:0.75rem; margin-left:0.3rem;">
-                        (profit earned before joining)
-                      </span>
-                    </label>
-                    {{ form.pre_app_cumulative_profit }}
-                    <div style="color:var(--muted); font-size:0.75rem; margin-top:0.3rem;">
-                      Estimate how much total profit you had already made.
-                      This adjusts your break-even chart automatically.
-                    </div>
-                  </div>
                 </div>
-              </div>
             </div>
 
+            <!-- ── Location ── -->
             <h5 class="section-label mt-4">{% trans 'Location' %}</h5>
             <div class="mb-3">{% bootstrap_field form.county %}</div>
             <div class="mb-3">{% bootstrap_field form.sub_county %}</div>
             <div class="mb-3">{% bootstrap_field form.ward %}</div>
 
+            <!-- ── Operating Hours ── -->
             <h5 class="section-label mt-4">🕐 {% trans 'Operating Hours' %}</h5>
             <div class="row">
                 <div class="col-md-4 mb-3">{% bootstrap_field form.opening_time %}</div>
@@ -174,6 +173,7 @@
                 <div class="col-md-4 mb-3">{% bootstrap_field form.is_open_override %}</div>
             </div>
 
+            <!-- ── GPS Coordinates ── -->
             <h5 class="section-label mt-4">📍 {% trans 'GPS Coordinates' %}</h5>
             <div class="map-search-row">
                 <input type="text" id="mapSearchInput" class="form-control" placeholder="{% trans 'Search for your business location e.g. Mama Ngina Street, Nairobi' %}">
@@ -188,26 +188,27 @@
                 <div class="col-md-6 mb-3">{% bootstrap_field form.longitude %}</div>
             </div>
 
+            <!-- ── Delivery Settings ── -->
             <h5 class="section-label mt-4">🚚 {% trans 'Delivery Settings' %}</h5>
             <div class="mb-3">{% bootstrap_field form.offers_delivery %}</div>
             <div class="mb-3">{% bootstrap_field form.delivery_radius_km %}</div>
 
-            <h6 style="color:var(--pearl); margin-top:1rem;">💰 {% trans 'Base Pricing' %}</h6>
-            <small class="text-muted d-block mb-2">{% trans 'Base fee + per-km rate. Example: KES 50 base + KES 30/km → 3km delivery costs KES 140' %}</small>
+            <h6 class="sub-section-label">💰 {% trans 'Base Pricing' %}</h6>
+            <span class="field-hint mb-2 d-block">{% trans 'Base fee + per-km rate. Example: KES 50 base + KES 30/km → 3km delivery costs KES 140' %}</span>
             <div class="row">
                 <div class="col-md-6 mb-3">{% bootstrap_field form.delivery_fee %}</div>
                 <div class="col-md-6 mb-3">{% bootstrap_field form.delivery_fee_per_km %}</div>
             </div>
 
-            <h6 style="color:var(--pearl); margin-top:0.5rem;">📦 {% trans 'Minimum Order (distance-based)' %}</h6>
-            <small class="text-muted d-block mb-2">{% trans 'Base minimum + per-km increase. Example: KES 200 base + KES 50/km → 3km away needs KES 350 minimum' %}</small>
+            <h6 class="sub-section-label">📦 {% trans 'Minimum Order (distance-based)' %}</h6>
+            <span class="field-hint mb-2 d-block">{% trans 'Base minimum + per-km increase. Example: KES 200 base + KES 50/km → 3km away needs KES 350 minimum' %}</span>
             <div class="row">
                 <div class="col-md-6 mb-3">{% bootstrap_field form.min_order_amount %}</div>
                 <div class="col-md-6 mb-3">{% bootstrap_field form.min_order_per_km %}</div>
             </div>
 
-            <h6 style="color:var(--pearl); margin-top:1rem;">🚶 {% trans 'Delivery Modes by Distance' %}</h6>
-            <small class="text-muted d-block mb-2">{% trans 'Set which delivery modes are available and their max range. The system will recommend the best mode based on customer distance.' %}</small>
+            <h6 class="sub-section-label">🚶 {% trans 'Delivery Modes by Distance' %}</h6>
+            <span class="field-hint mb-2 d-block">{% trans 'Set which delivery modes are available and their max range. The system will recommend the best mode based on customer distance.' %}</span>
 
             <div id="tierContainer">
                 {% for tier in delivery_tiers %}
@@ -215,30 +216,30 @@
                     <input type="hidden" name="tier_id_{{ forloop.counter0 }}" value="{{ tier.id }}">
                     <div class="row g-2 mb-2 align-items-end">
                         <div class="col-md-3">
-                            <label class="form-label form-label-sm">{% trans 'Mode' %}</label>
+                            <label class="form-label form-label-sm" style="color: #b0b0b0;">{% trans 'Mode' %}</label>
                             <select name="tier_mode_{{ forloop.counter0 }}" class="form-select form-select-sm">
                                 <option value="foot" {% if tier.mode == 'foot' %}selected{% endif %}>🚶 {% trans 'On Foot' %}</option>
                                 <option value="bicycle" {% if tier.mode == 'bicycle' %}selected{% endif %}>🚲 {% trans 'Bicycle' %}</option>
-                                <option value="boda" {% if tier.mode == 'boda' %}selected{% endif %}>🏘️ {% trans 'Boda Boda' %}</option>
+                                <option value="boda" {% if tier.mode == 'boda' %}selected{% endif %}>🏍️ {% trans 'Boda Boda' %}</option>
                                 <option value="vehicle" {% if tier.mode == 'vehicle' %}selected{% endif %}>🚗 {% trans 'Vehicle' %}</option>
                             </select>
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label form-label-sm">{% trans 'Max km' %}</label>
+                            <label class="form-label form-label-sm" style="color: #b0b0b0;">{% trans 'Max km' %}</label>
                             <input type="number" name="tier_max_km_{{ forloop.counter0 }}" class="form-control form-control-sm" step="0.5" value="{{ tier.max_distance_km }}" placeholder="e.g. 2">
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label form-label-sm">{% trans 'Base fee' %}</label>
+                            <label class="form-label form-label-sm" style="color: #b0b0b0;">{% trans 'Base fee' %}</label>
                             <input type="number" name="tier_base_fee_{{ forloop.counter0 }}" class="form-control form-control-sm" step="1" value="{{ tier.base_fee|floatformat:0 }}" placeholder="0">
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label form-label-sm">{% trans 'Per km' %}</label>
+                            <label class="form-label form-label-sm" style="color: #b0b0b0;">{% trans 'Per km' %}</label>
                             <input type="number" name="tier_fee_per_km_{{ forloop.counter0 }}" class="form-control form-control-sm" step="1" value="{{ tier.fee_per_km|floatformat:0 }}" placeholder="0">
                         </div>
-                        <div class="col-md-3 d-flex gap-1">
+                        <div class="col-md-3">
                             <div class="form-check mt-2">
                                 <input type="checkbox" name="tier_delete_{{ forloop.counter0 }}" class="form-check-input" id="delTier{{ forloop.counter0 }}">
-                                <label class="form-check-label text-danger" for="delTier{{ forloop.counter0 }}" style="font-size:0.8rem;">{% trans 'Remove' %}</label>
+                                <label class="form-check-label" for="delTier{{ forloop.counter0 }}" style="color: #e74c3c; font-size: 0.8rem;">{% trans 'Remove' %}</label>
                             </div>
                         </div>
                     </div>
@@ -247,10 +248,12 @@
             </div>
             <button type="button" class="btn btn-sm btn-outline-warning mt-1 mb-3" onclick="addTierRow()">+ {% trans 'Add Delivery Mode' %}</button>
 
+            <!-- ── Actions ── -->
             <div class="d-flex gap-2 mt-4">
-                <button type="submit" class="btn btn-primary flex-fill py-2">{% trans 'Save Changes' %}</button>
+                <button type="submit" class="btn btn-gold flex-fill py-2">{% trans 'Save Changes' %}</button>
                 <a href="{% url 'home' %}" class="btn btn-secondary flex-fill py-2">{% trans 'Cancel' %}</a>
             </div>
+
         </form>
     </div>
 </div>
@@ -259,10 +262,9 @@
 {% block extra_js %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // ── MAP PICKER ──
     const latField = document.getElementById('id_latitude');
     const lngField = document.getElementById('id_longitude');
-    const initLat = parseFloat(latField.value) || -1.2921;   // Default: Nairobi
+    const initLat = parseFloat(latField.value) || -1.2921;
     const initLng = parseFloat(lngField.value) || 36.8219;
     const initZoom = (latField.value && lngField.value) ? 15 : 7;
 
@@ -290,42 +292,33 @@
     });
 
     function locateMe() {
-        if (!navigator.geolocation) {
-            alert('Geolocation is not supported by your browser.');
-            return;
-        }
-        navigator.geolocation.getCurrentPosition(function(pos) {
-            const lat = pos.coords.latitude;
-            const lng = pos.coords.longitude;
-            setCoords(lat, lng);
-            map.setView([lat, lng], 16);
-        }, function() {
-            alert('Could not get your location. Please allow location access and try again.');
-        }, {timeout: 10000, enableHighAccuracy: true});
+        if (!navigator.geolocation) { alert('Geolocation not supported.'); return; }
+        navigator.geolocation.getCurrentPosition(
+            function(pos) {
+                setCoords(pos.coords.latitude, pos.coords.longitude);
+                map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+            },
+            function() { alert('Could not get your location. Please allow location access.'); },
+            {timeout: 10000, enableHighAccuracy: true}
+        );
     }
 
-    // Fix map rendering in case the container was hidden initially
     setTimeout(function() { map.invalidateSize(); }, 200);
 
-    // ── LOCATION SEARCH (Nominatim) ──
     function searchBusinessLocation() {
         const q = document.getElementById('mapSearchInput').value.trim();
         if (!q) return;
         const resultsDiv = document.getElementById('mapSearchResults');
-        resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Searching...</div>';
+        resultsDiv.innerHTML = '<div class="result-item" style="color:#888;">Searching...</div>';
         resultsDiv.style.display = 'block';
         const url = 'https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=5&addressdetails=1&countrycodes=ke&email=app@dukamwecheche.com';
         fetch(url)
-            .then(r => {
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.text();
-            })
+            .then(r => r.text())
             .then(text => {
-                console.log('Nominatim raw response:', text);
                 let data;
-                try { data = JSON.parse(text); } catch(e) { throw new Error('Invalid JSON: ' + text.substring(0, 200)); }
+                try { data = JSON.parse(text); } catch(e) { throw new Error('Invalid JSON'); }
                 if (!Array.isArray(data) || !data.length) {
-                    resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">No results found — try a different search term</div>';
+                    resultsDiv.innerHTML = '<div class="result-item" style="color:#888;">No results — try a different search term</div>';
                     return;
                 }
                 resultsDiv.innerHTML = '';
@@ -334,21 +327,19 @@
                     div.className = 'result-item';
                     div.textContent = item.display_name;
                     div.onclick = function() {
-                        const lat = parseFloat(item.lat);
-                        const lng = parseFloat(item.lon);
-                        setCoords(lat, lng);
-                        map.setView([lat, lng], 16);
+                        setCoords(parseFloat(item.lat), parseFloat(item.lon));
+                        map.setView([parseFloat(item.lat), parseFloat(item.lon)], 16);
                         resultsDiv.style.display = 'none';
                         document.getElementById('mapSearchInput').value = item.display_name;
                     };
                     resultsDiv.appendChild(div);
                 });
             })
-            .catch(err => {
-                console.error('Nominatim search error:', err);
-                resultsDiv.innerHTML = '<div class="result-item" style="color:var(--muted);">Search failed — check your connection and try again</div>';
+            .catch(() => {
+                resultsDiv.innerHTML = '<div class="result-item" style="color:#888;">Search failed — check connection and try again</div>';
             });
     }
+
     document.getElementById('mapSearchInput').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') { e.preventDefault(); searchBusinessLocation(); }
     });
@@ -358,7 +349,7 @@
     const wardField = document.querySelector('#id_ward');
 
     if (countyField) {
-        countyField.addEventListener('change', function () {
+        countyField.addEventListener('change', function() {
             const countyId = this.value;
             subCountyField.innerHTML = '<option value="">-- Select Sub County --</option>';
             wardField.innerHTML = '<option value="">-- Select Ward --</option>';
@@ -378,7 +369,7 @@
     }
 
     if (subCountyField) {
-        subCountyField.addEventListener('change', function () {
+        subCountyField.addEventListener('change', function() {
             const scId = this.value;
             wardField.innerHTML = '<option value="">-- Select Ward --</option>';
             if (scId) {
@@ -396,7 +387,6 @@
         });
     }
 
-    // ── DELIVERY TIER ROWS ──
     let tierIndex = document.querySelectorAll('.tier-row').length;
     function addTierRow() {
         const container = document.getElementById('tierContainer');
@@ -404,7 +394,7 @@
         <div class="tier-row" data-index="${tierIndex}">
             <div class="row g-2 mb-2 align-items-end">
                 <div class="col-md-3">
-                    <label class="form-label form-label-sm">Mode</label>
+                    <label class="form-label form-label-sm" style="color:#b0b0b0;">Mode</label>
                     <select name="tier_mode_${tierIndex}" class="form-select form-select-sm">
                         <option value="foot">🚶 On Foot</option>
                         <option value="bicycle">🚲 Bicycle</option>
@@ -413,21 +403,21 @@
                     </select>
                 </div>
                 <div class="col-md-2">
-                    <label class="form-label form-label-sm">Max km</label>
+                    <label class="form-label form-label-sm" style="color:#b0b0b0;">Max km</label>
                     <input type="number" name="tier_max_km_${tierIndex}" class="form-control form-control-sm" step="0.5" placeholder="e.g. 2">
                 </div>
                 <div class="col-md-2">
-                    <label class="form-label form-label-sm">Base fee</label>
+                    <label class="form-label form-label-sm" style="color:#b0b0b0;">Base fee</label>
                     <input type="number" name="tier_base_fee_${tierIndex}" class="form-control form-control-sm" step="1" placeholder="0" value="0">
                 </div>
                 <div class="col-md-2">
-                    <label class="form-label form-label-sm">Per km</label>
+                    <label class="form-label form-label-sm" style="color:#b0b0b0;">Per km</label>
                     <input type="number" name="tier_fee_per_km_${tierIndex}" class="form-control form-control-sm" step="1" placeholder="0" value="0">
                 </div>
-                <div class="col-md-3 d-flex gap-1">
+                <div class="col-md-3">
                     <div class="form-check mt-2">
                         <input type="checkbox" name="tier_delete_${tierIndex}" class="form-check-input" id="delTier${tierIndex}">
-                        <label class="form-check-label text-danger" for="delTier${tierIndex}" style="font-size:0.8rem;">Remove</label>
+                        <label class="form-check-label" for="delTier${tierIndex}" style="color:#e74c3c;font-size:0.8rem;">Remove</label>
                     </div>
                 </div>
             </div>
