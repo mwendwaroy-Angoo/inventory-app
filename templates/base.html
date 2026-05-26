@@ -12,7 +12,6 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
     <link rel="shortcut icon" href="/static/icons/icon-192.png" type="image/png">
-    <!-- iOS splash screen and icon support -->
     <link rel="apple-touch-icon" sizes="152x152" href="/static/icons/icon-152.png">
     <link rel="apple-touch-icon" sizes="167x167" href="/static/icons/icon-152.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-192.png">
@@ -40,7 +39,6 @@
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
-
         html { scroll-behavior: smooth; }
 
         body {
@@ -51,12 +49,8 @@
             min-height: 100vh;
         }
 
-        /* ── SITE HEADER (sticky wrapper: navbar + secondary nav) ── */
-        .site-header {
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-        }
+        /* ── SITE HEADER ── */
+        .site-header { position: sticky; top: 0; z-index: 1000; }
 
         /* ── NAVBAR ── */
         .navbar {
@@ -66,14 +60,13 @@
             position: relative;
         }
 
-        /* ── SECONDARY HEADER (desktop-only page nav / anchor nav) ── */
+        /* ── SECONDARY HEADER ── */
         .secondary-header {
             background: linear-gradient(135deg, #0c0c0c 0%, #111111 50%, #0f0d09 100%);
             border-bottom: 1px solid rgba(201,168,76,0.2);
             padding: 0.15rem 0;
             min-height: 38px;
         }
-
         .secondary-header .nav-link {
             color: #aaa !important;
             font-size: 0.75rem;
@@ -84,14 +77,8 @@
             white-space: nowrap;
             transition: color 0.2s;
         }
-
-        .secondary-header .nav-link:hover {
-            color: var(--gold) !important;
-        }
-
-        .secondary-header .dropdown-menu {
-            z-index: 1001;
-        }
+        .secondary-header .nav-link:hover { color: var(--gold) !important; }
+        .secondary-header .dropdown-menu { z-index: 1001; }
 
         .navbar-brand {
             font-family: 'Playfair Display', serif;
@@ -100,7 +87,6 @@
             letter-spacing: 0.05em;
             text-decoration: none;
         }
-
         .navbar-brand span { color: var(--raspberry); }
 
         .nav-link {
@@ -113,7 +99,6 @@
             text-transform: uppercase;
             white-space: nowrap;
         }
-
         .nav-link:hover { color: var(--gold) !important; }
 
         .dropdown-menu {
@@ -121,19 +106,13 @@
             border: 1px solid var(--gold);
             border-radius: 4px;
         }
-
         .dropdown-item {
             color: var(--pearl);
             font-size: 0.85rem;
             padding: 0.6rem 1.2rem;
             transition: all 0.2s;
         }
-
-        .dropdown-item:hover {
-            background: var(--gold);
-            color: var(--onyx);
-        }
-
+        .dropdown-item:hover { background: var(--gold); color: var(--onyx); }
         .dropdown-divider { border-color: #333; }
 
         .badge-role {
@@ -144,79 +123,28 @@
             text-transform: uppercase;
             font-weight: 500;
         }
-
-        .badge-owner {
-            background: linear-gradient(135deg, var(--gold), var(--gold-light));
-            color: var(--onyx);
-        }
-
-        .badge-staff {
-            background: #333;
-            color: var(--muted);
-        }
-
-        .badge-rider {
-            background: linear-gradient(135deg, #2ecc71, #27ae60);
-            color: white;
-        }
-
-        .badge-supplier {
-            background: linear-gradient(135deg, #3498db, #2980b9);
-            color: white;
-        }
+        .badge-owner   { background: linear-gradient(135deg, var(--gold), var(--gold-light)); color: var(--onyx); }
+        .badge-staff   { background: #333; color: var(--muted); }
+        .badge-rider   { background: linear-gradient(135deg, #2ecc71, #27ae60); color: white; }
+        .badge-supplier { background: linear-gradient(135deg, #3498db, #2980b9); color: white; }
 
         .navbar-toggler { border-color: var(--gold); }
-
         .navbar-toggler-icon {
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(201, 168, 76, 1)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
         }
 
         @media (max-width: 1399.98px) {
-            .navbar-auth .nav-link {
-                font-size: 0.78rem;
-                letter-spacing: 0.03em;
-                padding: 0.35rem 0.55rem !important;
-            }
-
-            .navbar-auth .navbar-brand {
-                font-size: 1.25rem;
-            }
+            .navbar-auth .nav-link { font-size: 0.78rem; letter-spacing: 0.03em; padding: 0.35rem 0.55rem !important; }
+            .navbar-auth .navbar-brand { font-size: 1.25rem; }
         }
-
-        .navbar-auth-translated .navbar-collapse {
-            row-gap: 0.6rem;
-        }
+        .navbar-auth-translated .navbar-collapse { row-gap: 0.6rem; }
 
         /* ── ALERTS ── */
-        .alert {
-            border-radius: 6px;
-            border: none;
-            font-size: 0.9rem;
-        }
-
-        .alert-success {
-            background: rgba(46, 204, 113, 0.15);
-            color: #2ecc71;
-            border-left: 3px solid #2ecc71;
-        }
-
-        .alert-danger {
-            background: rgba(231, 76, 60, 0.15);
-            color: #e74c3c;
-            border-left: 3px solid #e74c3c;
-        }
-
-        .alert-warning {
-            background: rgba(243, 156, 18, 0.15);
-            color: #f39c12;
-            border-left: 3px solid #f39c12;
-        }
-
-        .alert-info {
-            background: rgba(201, 168, 76, 0.1);
-            color: var(--gold-light);
-            border-left: 3px solid var(--gold);
-        }
+        .alert { border-radius: 6px; border: none; font-size: 0.9rem; }
+        .alert-success  { background: rgba(46,204,113,0.15);  color: #2ecc71; border-left: 3px solid #2ecc71; }
+        .alert-danger   { background: rgba(231,76,60,0.15);   color: #e74c3c; border-left: 3px solid #e74c3c; }
+        .alert-warning  { background: rgba(243,156,18,0.15);  color: #f39c12; border-left: 3px solid #f39c12; }
+        .alert-info     { background: rgba(201,168,76,0.1);   color: var(--gold-light); border-left: 3px solid var(--gold); }
 
         /* ── CARDS ── */
         .card {
@@ -225,7 +153,6 @@
             border-radius: 8px;
             color: var(--pearl);
         }
-
         .card-header {
             background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
             border-bottom: 1px solid #444;
@@ -237,71 +164,32 @@
         /* ── BUTTONS ── */
         .btn-primary {
             background: linear-gradient(135deg, var(--raspberry-dark), var(--raspberry));
-            border: none;
-            color: white;
-            font-weight: 500;
-            letter-spacing: 0.05em;
-            transition: all 0.2s;
+            border: none; color: white; font-weight: 500;
+            letter-spacing: 0.05em; transition: all 0.2s;
         }
-
         .btn-primary:hover {
             background: linear-gradient(135deg, var(--raspberry), #d4446a);
             transform: translateY(-1px);
-            box-shadow: 0 4px 15px rgba(192, 57, 90, 0.4);
+            box-shadow: 0 4px 15px rgba(192,57,90,0.4);
         }
-
-        .btn-secondary {
-            background: #333;
-            border: 1px solid #444;
-            color: var(--pearl);
-        }
-
-        .btn-secondary:hover {
-            background: #444;
-            color: var(--white);
-        }
-
-        .btn-outline-primary {
-            border: 1px solid var(--raspberry);
-            color: var(--raspberry);
-            background: transparent;
-        }
-
-        .btn-outline-primary:hover {
-            background: var(--raspberry);
-            color: white;
-        }
-
-        .btn-outline-danger {
-            border: 1px solid var(--danger);
-            color: var(--danger);
-            background: transparent;
-        }
-
-        .btn-outline-danger:hover {
-            background: var(--danger);
-            color: white;
-        }
-
+        .btn-secondary { background: #333; border: 1px solid #444; color: var(--pearl); }
+        .btn-secondary:hover { background: #444; color: var(--white); }
+        .btn-outline-primary { border: 1px solid var(--raspberry); color: var(--raspberry); background: transparent; }
+        .btn-outline-primary:hover { background: var(--raspberry); color: white; }
+        .btn-outline-danger { border: 1px solid var(--danger); color: var(--danger); background: transparent; }
+        .btn-outline-danger:hover { background: var(--danger); color: white; }
         .btn-gold {
             background: linear-gradient(135deg, var(--gold), var(--gold-light));
-            border: none;
-            color: var(--onyx);
-            font-weight: 600;
+            border: none; color: var(--onyx); font-weight: 600;
         }
-
         .btn-gold:hover {
             transform: translateY(-1px);
-            box-shadow: 0 4px 15px rgba(201, 168, 76, 0.4);
+            box-shadow: 0 4px 15px rgba(201,168,76,0.4);
             color: var(--onyx);
         }
 
         /* ── TABLES ── */
-        .table {
-            color: var(--pearl);
-            border-color: #333;
-        }
-
+        .table { color: var(--pearl); border-color: #333; }
         .table thead th {
             background: linear-gradient(135deg, #111, #1f1f1f);
             color: var(--gold);
@@ -312,70 +200,46 @@
             font-weight: 500;
             padding: 1rem 0.75rem;
         }
-
         .table tbody tr {
             background: var(--onyx-card) !important;
             border-color: #2e2e2e !important;
             transition: all 0.2s;
         }
-
         .table tbody tr:hover {
-            background: rgba(201, 168, 76, 0.08) !important;
+            background: rgba(201,168,76,0.08) !important;
             border-left: 3px solid var(--gold);
         }
-
         .table tbody td {
             color: var(--pearl) !important;
             border-color: #2e2e2e !important;
             vertical-align: middle;
             padding: 0.9rem 0.75rem;
         }
+        .table tbody tr.reorder     { background: rgba(243,156,18,0.06) !important; border-left: 3px solid var(--warning) !important; }
+        .table tbody tr.out-of-stock { background: rgba(231,76,60,0.06)  !important; border-left: 3px solid var(--danger) !important; }
+        .table tbody tr.receipt-row  { background: rgba(46,204,113,0.04) !important; border-left: 3px solid var(--success) !important; }
+        .table tbody tr.issue-row    { background: rgba(192,57,90,0.04)  !important; border-left: 3px solid var(--raspberry) !important; }
+        .table-striped tbody tr:nth-of-type(odd) { background: rgba(255,255,255,0.02) !important; }
+        .table > :not(caption) > * > * { background-color: transparent !important; }
 
-        .table tbody tr.reorder {
-            background: rgba(243, 156, 18, 0.06) !important;
-            border-left: 3px solid var(--warning) !important;
-        }
-
-        .table tbody tr.out-of-stock {
-            background: rgba(231, 76, 60, 0.06) !important;
-            border-left: 3px solid var(--danger) !important;
-        }
-
-        .table tbody tr.receipt-row {
-            background: rgba(46, 204, 113, 0.04) !important;
-            border-left: 3px solid var(--success) !important;
-        }
-
-        .table tbody tr.issue-row {
-            background: rgba(192, 57, 90, 0.04) !important;
-            border-left: 3px solid var(--raspberry) !important;
-        }
-
-        .table-striped tbody tr:nth-of-type(odd) {
-            background: rgba(255,255,255,0.02) !important;
-        }
-
-        .table > :not(caption) > * > * {
-            background-color: transparent !important;
-        }
-
-        /* ── FORMS ── */
-        .form-control, .form-select {
+        /* ── FORMS — global dark theme overrides ── */
+        .form-control,
+        .form-select {
             background: #222;
             border: 1px solid #444;
             color: var(--pearl);
             border-radius: 6px;
         }
-
-        .form-control:focus, .form-select:focus {
+        .form-control:focus,
+        .form-select:focus {
             background: #2a2a2a;
             border-color: var(--gold);
             color: var(--pearl);
-            box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.15);
+            box-shadow: 0 0 0 3px rgba(201,168,76,0.15);
         }
-
         .form-control::placeholder { color: #666; }
 
+        /* Field labels — gold-light to match theme */
         .form-label {
             color: var(--gold-light);
             font-size: 0.85rem;
@@ -383,10 +247,23 @@
             letter-spacing: 0.03em;
         }
 
+        /* ── THE KEY FIX: Bootstrap help/hint text under every field ── */
+        /* bootstrap_field renders help_text as <div class="form-text"> which
+           inherits Bootstrap's light colour — invisible on a dark background.
+           This single rule fixes every form on the entire site at once.      */
+        .form-text {
+            color: #b0b0b0 !important;
+        }
+
+        /* Checkbox / radio labels readable on dark background */
+        .form-check-label {
+            color: var(--pearl);
+        }
+
         /* ── BADGES ── */
-        .badge.bg-success { background: rgba(46,204,113,0.2) !important; color: #2ecc71; border: 1px solid #2ecc71; }
-        .badge.bg-warning { background: rgba(243,156,18,0.2) !important; color: #f39c12; border: 1px solid #f39c12; }
-        .badge.bg-danger  { background: rgba(231,76,60,0.2)  !important; color: #e74c3c; border: 1px solid #e74c3c; }
+        .badge.bg-success { background: rgba(46,204,113,0.2)  !important; color: #2ecc71; border: 1px solid #2ecc71; }
+        .badge.bg-warning { background: rgba(243,156,18,0.2)  !important; color: #f39c12; border: 1px solid #f39c12; }
+        .badge.bg-danger  { background: rgba(231,76,60,0.2)   !important; color: #e74c3c; border: 1px solid #e74c3c; }
 
         /* ── MAIN CONTENT ── */
         .main-content { padding: 2rem 0 4rem; }
@@ -414,10 +291,11 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body class="{% if LANGUAGE_CODE != 'en' %}lang-translated{% endif %}{% if user.is_authenticated %} auth-body{% else %} guest-body{% endif %}">
-    <!-- ═══ SITE HEADER (sticky: top navbar + secondary page nav) ═══ -->
+
+    <!-- ═══ SITE HEADER ═══ -->
     <header class="site-header">
 
-        <!-- TOP NAVBAR: brand + account controls only -->
+        <!-- TOP NAVBAR -->
         <nav class="navbar navbar-expand-lg {% if user.is_authenticated %}navbar-auth{% else %}navbar-guest{% endif %}">
             <div class="container">
                 <a class="navbar-brand" href="{% if user.is_authenticated %}{% if user.userprofile.is_rider %}{% url 'rider_dashboard' %}{% elif user.userprofile.is_supplier %}{% url 'supplier_dashboard' %}{% else %}{% url 'home' %}{% endif %}{% else %}{% url 'home' %}{% endif %}">
@@ -425,25 +303,18 @@
                 </a>
 
                 {% if user.is_authenticated %}
-                <!-- Mobile quick-action button (hidden on desktop) -->
                 {% if user.userprofile.is_rider %}
-                <a href="{% url 'rider_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-                   style="font-size:0.85rem; padding:0.35rem 0.9rem;">🏍️ {% trans 'Dashboard' %}</a>
+                <a href="{% url 'rider_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2" style="font-size:0.85rem; padding:0.35rem 0.9rem;">🏍️ {% trans 'Dashboard' %}</a>
                 {% elif user.userprofile.is_supplier %}
-                <a href="{% url 'supplier_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-                   style="font-size:0.85rem; padding:0.35rem 0.9rem;">📊 {% trans 'Dashboard' %}</a>
+                <a href="{% url 'supplier_dashboard' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2" style="font-size:0.85rem; padding:0.35rem 0.9rem;">📊 {% trans 'Dashboard' %}</a>
                 {% elif user.userprofile.is_owner %}
-                <a href="{% url 'supplier_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-                   style="font-size:0.85rem; padding:0.35rem 0.9rem;">📦 {% trans 'Suppliers' %}</a>
+                <a href="{% url 'supplier_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2" style="font-size:0.85rem; padding:0.35rem 0.9rem;">📦 {% trans 'Suppliers' %}</a>
                 {% else %}
-                <a href="{% url 'fulfillment_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2"
-                   style="font-size:0.85rem; padding:0.35rem 0.9rem;">📋 {% trans 'Fulfillment' %}</a>
+                <a href="{% url 'fulfillment_list' %}" class="btn btn-gold btn-sm d-lg-none ms-auto me-2" style="font-size:0.85rem; padding:0.35rem 0.9rem;">📋 {% trans 'Fulfillment' %}</a>
                 {% endif %}
                 {% endif %}
 
-                <button class="navbar-toggler" type="button"
-                        data-bs-toggle="collapse"
-                        data-bs-target="#navbarNav">
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                     <span class="navbar-toggler-icon"></span>
                 </button>
 
@@ -451,14 +322,12 @@
                     {% if user.is_authenticated %}
 
                     {% if user.userprofile.is_rider %}
-                    <!-- RIDER: mobile-only nav (hidden on desktop — shown in secondary header) -->
                     <ul class="navbar-nav me-auto d-lg-none">
                         <li class="nav-item"><a class="nav-link" href="{% url 'rider_dashboard' %}">🏍️ {% trans 'Dashboard' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'notifications' %}">🔔 {% trans 'Notifications' %}</a></li>
                     </ul>
 
                     {% elif user.userprofile.is_supplier %}
-                    <!-- SUPPLIER: mobile-only nav -->
                     <ul class="navbar-nav me-auto d-lg-none">
                         <li class="nav-item"><a class="nav-link" href="{% url 'supplier_dashboard' %}">📊 {% trans 'Dashboard' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'procurement_browse' %}">🔍 {% trans 'Browse Requests' %}</a></li>
@@ -468,7 +337,6 @@
                     </ul>
 
                     {% elif user.userprofile.is_staff_member %}
-                    <!-- STAFF: mobile-only nav -->
                     <ul class="navbar-nav me-auto d-lg-none">
                         <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a></li>
@@ -479,7 +347,6 @@
                     </ul>
 
                     {% else %}
-                    <!-- OWNER: mobile-only nav -->
                     <ul class="navbar-nav me-auto d-lg-none">
                         <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a></li>
@@ -525,11 +392,9 @@
                     </ul>
                     {% endif %}
 
-                    <!-- Right nav: bell + username (always in top navbar on desktop AND in collapse on mobile) -->
                     <ul class="navbar-nav ms-auto align-items-center gap-2">
                         <li class="nav-item">
-                            <a href="{% url 'notifications' %}" class="nav-link position-relative"
-                               style="padding: 0.4rem 0.6rem;">
+                            <a href="{% url 'notifications' %}" class="nav-link position-relative" style="padding: 0.4rem 0.6rem;">
                                 🔔
                                 <span id="notif-badge"
                                       style="position:absolute; top:2px; right:2px;
@@ -561,9 +426,7 @@
                                 <li>
                                     <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#langModal">
                                         🌍 {% trans 'Language' %}
-                                        <span style="color:var(--muted); font-size:0.8rem; margin-left:0.3rem;">
-                                            ({{ LANGUAGE_CODE|default:'en' }})
-                                        </span>
+                                        <span style="color:#888; font-size:0.8rem; margin-left:0.3rem;">({{ LANGUAGE_CODE|default:'en' }})</span>
                                     </a>
                                 </li>
                                 <li><hr class="dropdown-divider"></li>
@@ -580,7 +443,6 @@
                     </ul>
 
                     {% else %}
-                    <!-- GUEST: mobile-only anchor links (hidden on desktop — shown in secondary header) -->
                     <ul class="navbar-nav me-auto d-lg-none">
                         <li class="nav-item"><a class="nav-link" href="#about">{% trans 'About' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="#services">{% trans 'Services' %}</a></li>
@@ -590,20 +452,11 @@
                         <li class="nav-item"><a class="nav-link" href="#join">{% trans 'Join Us' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="#contact">{% trans 'Contact' %}</a></li>
                     </ul>
-                    <!-- Auth buttons (always visible in top navbar on desktop and mobile) -->
                     <ul class="navbar-nav ms-auto gap-2 align-items-center">
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'login' %}">{% trans 'Login' %}</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="btn btn-primary btn-sm px-3" href="{% url 'signup' %}">{% trans 'Register Business' %}</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="btn btn-outline-light btn-sm px-3" href="{% url 'rider_signup' %}">🏍️ {% trans 'Join as Rider' %}</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="btn btn-outline-info btn-sm px-3" href="{% url 'supplier_signup' %}">📦 {% trans 'Join as Supplier' %}</a>
-                        </li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'login' %}">{% trans 'Login' %}</a></li>
+                        <li class="nav-item"><a class="btn btn-primary btn-sm px-3" href="{% url 'signup' %}">{% trans 'Register Business' %}</a></li>
+                        <li class="nav-item"><a class="btn btn-outline-light btn-sm px-3" href="{% url 'rider_signup' %}">🏍️ {% trans 'Join as Rider' %}</a></li>
+                        <li class="nav-item"><a class="btn btn-outline-info btn-sm px-3" href="{% url 'supplier_signup' %}">📦 {% trans 'Join as Supplier' %}</a></li>
                     </ul>
                     {% endif %}
 
@@ -611,7 +464,7 @@
             </div>
         </nav>
 
-        <!-- SECONDARY HEADER: desktop-only page navigation (laptop view, hidden on mobile) -->
+        <!-- SECONDARY HEADER: desktop-only -->
         <div class="secondary-header d-none d-lg-flex align-items-center">
             <div class="container d-flex align-items-center">
                 {% if user.is_authenticated %}
@@ -654,7 +507,6 @@
                     </ul>
 
                     {% else %}
-                    <!-- OWNER secondary header nav -->
                     <ul class="navbar-nav flex-row">
                         <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'add_transaction' %}">{% trans 'Add Transaction' %}</a></li>
@@ -701,7 +553,6 @@
                     {% endif %}
 
                 {% else %}
-                <!-- GUEST: anchor links in desktop secondary header -->
                 <ul class="navbar-nav flex-row">
                     <li class="nav-item"><a class="nav-link" href="#about">{% trans 'About' %}</a></li>
                     <li class="nav-item"><a class="nav-link" href="#services">{% trans 'Services' %}</a></li>
@@ -731,8 +582,7 @@
 
     <!-- MAIN CONTENT -->
     <div class="container main-content">
-        {% block content %}
-        {% endblock %}
+        {% block content %}{% endblock %}
     </div>
 
     {% block extra_js %}{% endblock %}
@@ -748,11 +598,11 @@
                 <img src="/static/icons/icon-72.png" alt="Duka" width="40" height="40" style="border-radius:8px;">
                 <div>
                     <div style="color:var(--gold);font-weight:600;font-size:0.9rem;">Install Duka Mwecheche</div>
-                    <div style="color:var(--muted);font-size:0.75rem;">Access offline · Faster · Home screen</div>
+                    <div style="color:#b0b0b0;font-size:0.75rem;">Access offline · Faster · Home screen</div>
                 </div>
             </div>
             <div class="d-flex gap-2">
-                <button onclick="dismissInstall()" class="btn btn-sm" style="color:var(--muted);font-size:0.8rem;">Later</button>
+                <button onclick="dismissInstall()" class="btn btn-sm" style="color:#999;font-size:0.8rem;">Later</button>
                 <button onclick="installPWA()" class="btn btn-gold btn-sm">Install</button>
             </div>
         </div>
@@ -785,38 +635,33 @@
                 })
                 .catch(() => {});
         }
-
         checkNotifications();
         setInterval(checkNotifications, 30000);
 
-        // ── Service Worker registration (Django-served for correct scope) ──
+        // ── Service Worker ──
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/sw.js', { scope: '/' })
                 .then(reg => console.log('SW registered:', reg.scope))
                 .catch(err => console.log('SW registration failed:', err));
         }
 
-        // ── PWA Install prompt ──
+        // ── PWA Install ──
         let deferredPrompt = null;
-
         window.addEventListener('beforeinstallprompt', e => {
             e.preventDefault();
             deferredPrompt = e;
-            // Show banner only if not dismissed recently
             if (!sessionStorage.getItem('pwa-dismissed')) {
                 document.getElementById('pwa-install-banner').style.display = 'block';
             }
         });
-
         function installPWA() {
             if (!deferredPrompt) return;
             deferredPrompt.prompt();
-            deferredPrompt.userChoice.then(result => {
+            deferredPrompt.userChoice.then(() => {
                 document.getElementById('pwa-install-banner').style.display = 'none';
                 deferredPrompt = null;
             });
         }
-
         function dismissInstall() {
             document.getElementById('pwa-install-banner').style.display = 'none';
             sessionStorage.setItem('pwa-dismissed', '1');
@@ -827,21 +672,15 @@
     <!-- ═══ ONBOARDING TUTORIAL OVERLAY ═══ -->
     <div id="tutorial-overlay" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.85); backdrop-filter:blur(4px);">
         <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:92%; max-width:520px;">
-            <!-- Progress bar -->
             <div style="margin-bottom:0.8rem; display:flex; gap:4px;" id="tutorial-progress"></div>
-
-            <!-- Card -->
             <div style="background:linear-gradient(135deg,#1a1a1a,#242424); border:1px solid var(--gold); border-radius:14px; overflow:hidden;">
-                <!-- Header with icon -->
                 <div id="tutorial-header" style="padding:2rem 2rem 1rem; text-align:center;">
                     <div id="tutorial-icon" style="font-size:3rem; margin-bottom:0.5rem;"></div>
                     <h4 id="tutorial-title" style="font-family:'Playfair Display',serif; color:var(--gold); margin:0; font-size:1.3rem;"></h4>
                 </div>
-                <!-- Body -->
                 <div id="tutorial-body" style="padding:0 2rem 1.5rem; color:var(--pearl); font-size:0.9rem; line-height:1.6; text-align:center;"></div>
-                <!-- Footer -->
                 <div style="padding:1rem 2rem; border-top:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
-                    <button id="tutorial-skip" onclick="dismissTutorial()" style="background:none; border:none; color:var(--muted); font-size:0.8rem; cursor:pointer;">{% trans 'Skip Tutorial' %}</button>
+                    <button id="tutorial-skip" onclick="dismissTutorial()" style="background:none; border:none; color:#888; font-size:0.8rem; cursor:pointer;">{% trans 'Skip Tutorial' %}</button>
                     <div style="display:flex; gap:0.5rem;">
                         <button id="tutorial-prev" onclick="tutorialNav(-1)" class="btn btn-sm" style="background:#333; color:var(--pearl); border:none; display:none;">← {% trans 'Back' %}</button>
                         <button id="tutorial-next" onclick="tutorialNav(1)" class="btn btn-sm btn-gold">{% trans 'Next' %} →</button>
@@ -857,96 +696,14 @@
         const hasSeen = {{ user.userprofile.has_seen_tutorial|yesno:"true,false" }};
         const csrfToken = '{{ csrf_token }}';
 
-        // ═══════════════════════════════════════════════════════════════════
-        // ENHANCED TUTORIAL — Detailed role-specific walkthroughs
-        // ═══════════════════════════════════════════════════════════════════
+        const commonWelcome = { icon: '👋', title: "{% trans 'Welcome to Duka Mwecheche!' %}", body: "{% trans 'This detailed tutorial will walk you through every section of the platform. You can replay it anytime from your username menu.' %}" };
+        const commonTips = { icon: '💡', title: "{% trans 'Navigation Tips' %}", body: "{% trans 'Use the <strong>sticky header</strong> at the top to navigate between sections. Your <strong>role badge</strong> (Owner / Staff / Supplier / Rider) appears next to your username. Notifications appear as a 🔔 bell icon with a red counter badge.' %}" };
 
-        const commonWelcome = {
-            icon: '👋',
-            title: "{% trans 'Welcome to Duka Mwecheche!' %}",
-            body: "{% trans 'This detailed tutorial will walk you through every section of the platform. You can replay it anytime from your username menu.' %}"
-        };
+        const ownerSteps = [ commonWelcome, commonTips, { icon: '🏠', title: 'Dashboard Overview', body: 'Your <strong>Home Dashboard</strong> shows a summary of your entire business: total items, low-stock alerts, reorder recommendations, and quick links to your most-used features.' }, { icon: '📦', title: 'Stock List — Full Inventory', body: 'Go to <strong>Stock List</strong> to see every item across all stores. Each row shows: material number, description, unit, current balance, reorder level, selling price, and store location.' }, { icon: '➕', title: 'Manage Items — Add / Edit / Delete', body: 'Under <strong>Manage → Items</strong>, add new products (with material number, description, unit, prices), edit existing ones, or delete discontinued items. Set <strong>cost price</strong> here — used to calculate profit margins.' }, { icon: '🏪', title: 'Stores — Organise Locations', body: 'Use <strong>Manage → Stores</strong> to create stores (e.g. "Main Store", "Branch A"). Each item belongs to one store. Transactions and reports can be filtered by store.' }, { icon: '⚡', title: 'Quick Sell — Fast Checkout', body: 'Hit <strong>Quick Sell</strong> for a lightning-fast POS. Build a cart, set quantities, choose payment method (Cash / M-Pesa), and record the sale in seconds.' }, { icon: '➕📄', title: 'Add Transaction — Detailed Entry', body: 'Use <strong>Add Transaction</strong> for detailed stock movements. Choose <strong>Receipt</strong> (stock in) or <strong>Issue</strong> (stock out). Enter invoice numbers and recipient names for audit trail.' }, { icon: '📜', title: 'Transaction History — Audit Trail', body: 'Every stock movement is recorded in <strong>History</strong>. Filter by date, item, or type. Export to Excel for offline record-keeping.' }, { icon: '📊', title: 'Sales & P&L — Profit Tracking', body: 'View revenue, costs, and profit for any period. See a <strong>daily bar chart</strong> of revenue vs profit and the <strong>top-selling items</strong> table with units sold, revenue, and profit margin.' }, { icon: '📈', title: 'Analytics — Charts & Trends', body: 'Visual charts: daily sales trends, top products, stock health pie chart. Use <strong>Run Forecast</strong> to predict future demand using ETS (Holt-Winters) forecasting.' }, { icon: '📦📋', title: 'Purchase Orders — Procurement', body: 'Create <strong>Purchase Orders</strong> to re-stock from suppliers. Track PO status: Draft → Submitted → Partially Received → Received → Closed.' }, { icon: '🤝', title: 'Supplier Management', body: 'View approved suppliers, their contact info, performance ratings, and past procurement history. Approve from pending <strong>Supplier Applications</strong>.' }, { icon: '📨', title: 'Procurement Requests — Get Bids', body: 'Create a procurement request with budget range and deadline. Suppliers submit bids. <strong>Evaluate & Score</strong> using the automated scoring engine (price, proximity, rating, relevance, speed).' }, { icon: '🏆', title: 'Awarding Bids & Completion', body: '<strong>Award</strong> the winning bid — auto-creates a Supplier Relationship and a draft Purchase Order. After delivery and payment, both parties confirm to close the procurement.' }, { icon: '👥', title: 'Staff Management', body: 'Add staff members (they get their own login), edit their details, reset passwords, or remove them. Staff can record transactions but cannot access financial reports.' }, { icon: '💳', title: 'Payment Settings — M-Pesa', body: 'Configure your M-Pesa integration: enter your Till Number or Paybill, consumer key/secret, and passkey for STK Push payments and automatic confirmation.' }, { icon: '🔔', title: 'Notifications — Stay Informed', body: 'The 🔔 bell shows unread notifications: new orders, staff logins, transaction alerts, supplier application updates, and bid status changes.' }, { icon: '🎉', title: "You're All Set!", body: "You've completed the full tour! Replay anytime from your username → <strong>View Tutorial</strong>." } ];
+        const staffSteps = [ commonWelcome, commonTips, { icon: '📦', title: 'Stock List', body: 'View all items across stores. Coloured badges (AVAILABLE / LOW STOCK / OUT OF STOCK / REORDER) help you prioritise.' }, { icon: '⚡', title: 'Quick Sell', body: 'Fast customer checkouts — select items, set quantities, choose payment method, and record the sale.' }, { icon: '➕📄', title: 'Add Transaction', body: '<strong>Receipt</strong> adds stock, <strong>Issue</strong> removes it. Enter invoice numbers and customer names for records.' }, { icon: '📜', title: 'Transaction History', body: 'Review past transactions, search by date or item, and see who recorded each entry.' }, { icon: '📋', title: 'Order Fulfillment', body: 'View incoming customer orders, pack items for delivery, and update order status.' }, { icon: '💰', title: 'Payment Prompts', body: 'View pending M-Pesa notifications. Confirm payments that match orders or dismiss invalid ones.' }, { icon: '🎉', title: "You're All Set!", body: "That covers everything you need! Replay from your username → <strong>View Tutorial</strong> anytime." } ];
+        const supplierSteps = [ commonWelcome, commonTips, { icon: '📊', title: "{% trans 'Supplier Dashboard' %}", body: "{% trans 'Key stats: total active clients, pending bids, won bids, and open procurement requests.' %}" }, { icon: '🔍', title: "{% trans 'Browse Requests' %}", body: "{% trans 'Find open procurement requests from businesses. Filter by category or search by keyword.' %}" }, { icon: '📝', title: "{% trans 'Submitting a Bid' %}", body: "{% trans 'Provide your total amount, delivery timeline, and proposal. Bids are automatically scored on price, proximity, rating, relevance, and speed.' %}" }, { icon: '📋', title: "{% trans 'Track Your Bids' %}", body: "{% trans 'Monitor statuses: Submitted → Shortlisted → Accepted or Rejected.' %}" }, { icon: '🏆', title: "{% trans 'Won Bids — Delivery & Payment' %}", body: "{% trans 'Deliver goods, confirm delivery with the owner. After payment is confirmed by both sides, the procurement closes.' %}" }, { icon: '🎉', title: '{% trans "You\'re All Set!" %}', body: "{% trans 'Start by browsing open requests or businesses. Replay from your username → <strong>View Tutorial</strong> anytime.' %}" } ];
+        const riderSteps = [ commonWelcome, commonTips, { icon: '🏍️', title: "{% trans 'Rider Dashboard' %}", body: "{% trans 'Active deliveries, completed count, total earnings, and your availability toggle.' %}" }, { icon: '🔄', title: "{% trans 'Availability Toggle' %}", body: "{% trans 'Set to Available when ready; Unavailable when off-duty. Businesses only assign to available riders.' %}" }, { icon: '🚴', title: "{% trans 'Active Deliveries' %}", body: "{% trans 'Each card shows: customer name, address, order items, total amount, and pickup instructions.' %}" }, { icon: '📸', title: "{% trans 'Delivery Confirmation' %}", body: "{% trans 'Mark deliveries as Delivered when complete. Customers can rate your performance.' %}" }, { icon: '⭐', title: "{% trans 'Performance Score' %}", body: "{% trans 'Your average rating from customers. Higher-rated riders get priority for new assignments.' %}" }, { icon: '🎉', title: '{% trans "You\'re All Set!" %}', body: "{% trans 'Stay available and check for assignments. Replay from your username → <strong>View Tutorial</strong> anytime.' %}" } ];
 
-        const commonTips = {
-            icon: '💡',
-            title: "{% trans 'Navigation Tips' %}",
-            body: "{% trans 'Use the <strong>sticky header</strong> at the top to navigate between sections. Your <strong>role badge</strong> (Owner / Staff / Supplier / Rider) appears next to your username. Notifications appear as a 🔔 bell icon with a red counter badge.' %}"
-        };
-
-        const ownerSteps = [
-            commonWelcome,
-            commonTips,
-            { icon: '🏠', title: 'Dashboard Overview', body: 'Your <strong>Home Dashboard</strong> shows a summary of your entire business: total items, low-stock alerts, reorder recommendations, and quick links to your most-used features. The 📈 <strong>progress widgets</strong> give you at-a-glance health checks.' },
-            { icon: '📦', title: 'Stock List — Full Inventory', body: 'Go to <strong>Stock List</strong> to see every item across all stores. Each row shows: material number, description, unit, current balance, reorder level, selling price, and store location. Use the <strong>filter dropdowns</strong> (store, status) to narrow down. Click any item to view its full history.' },
-            { icon: '➕', title: 'Manage Items — Add / Edit / Delete', body: 'Under <strong>Manage → Items</strong>, you can <strong>add</strong> new products (with material number, description, unit, prices), <strong>edit</strong> existing ones, or <strong>delete</strong> discontinued items. Set <strong>cost price</strong> here — this is used to calculate profit margins in sales reports.' },
-            { icon: '🏪', title: 'Stores — Organise Locations', body: 'If you have multiple branches, use <strong>Manage → Stores</strong> to create stores (e.g. "Main Store", "Branch A"). Each item belongs to one store. Transactions and reports can be filtered by store.' },
-            { icon: '⚡', title: 'Quick Sell — Fast Checkout', body: 'Hit <strong>Quick Sell</strong> for a lightning-fast POS. Build a cart by clicking items, set quantities, choose payment method (Cash / M-Pesa), and record the sale in seconds. Ideal for busy counter service. Sale notifications are sent automatically.' },
-            { icon: '➕📄', title: 'Add Transaction — Detailed Entry', body: 'Use <strong>Add Transaction</strong> for detailed stock movements. Choose <strong>Receipt</strong> (stock in) or <strong>Issue</strong> (stock out). Enter invoice numbers and recipient names for audit trail. Supports <strong>new walk-in customers</strong> — add them on the fly.' },
-            { icon: '📜', title: 'Transaction History — Audit Trail', body: 'Every stock movement is recorded in <strong>History</strong>. Filter by date, item, or type. Export to Excel for offline record-keeping. Each entry shows: date, item, type (Receipt/Issue), quantity, recipient, and invoice number.' },
-            { icon: '📊', title: 'Sales & P&L — Profit Tracking', body: 'Under <strong>Manage → Sales & P&L</strong>, view your revenue, costs, and profit for any period (Today / Week / Month / Year / Custom). See a <strong>daily bar chart</strong> of revenue vs profit. The <strong>top-selling items</strong> table shows units sold, revenue, and profit margin per item.' },
-            { icon: '📈', title: 'Analytics — Charts & Trends', body: 'The <strong>Analytics</strong> page gives you visual charts: daily sales trends, top products, stock health pie chart (healthy vs low stock vs out of stock). Use the <strong>Run Forecast</strong> button to predict future demand using ETS (Holt-Winters) forecasting.' },
-            { icon: '📦📋', title: 'Purchase Orders — Procurement', body: 'Under <strong>Supply Chain → My Procurement</strong>, create <strong>Purchase Orders</strong> to re-stock from suppliers. Each PO can have multiple line items with quantities, unit prices, and expected delivery dates. Track PO status: Draft → Submitted → Partially Received → Received → Closed.' },
-            { icon: '🤝', title: 'Supplier Management', body: '<strong>Supply Chain → My Suppliers</strong> lists all approved suppliers. View their contact info, performance ratings, and past procurement history. Add new suppliers manually or approve from pending <strong>Supplier Applications</strong>.' },
-            { icon: '📨', title: 'Procurement Requests — Get Bids', body: 'Under <strong>Supply Chain → New Procurement</strong>, create a procurement request describing what you need, your budget range, and a deadline. Suppliers will submit bids. <strong>Evaluate & Score</strong> bids using the automated scoring engine (price, proximity, rating, relevance, speed).' },
-            { icon: '🏆', title: 'Awarding Bids & Completion', body: 'After evaluating, <strong>Award</strong> the winning bid — this auto-creates a Supplier Relationship and a draft Purchase Order. Once goods arrive, <strong>Confirm Delivery</strong>. After you pay the supplier, they <strong>Confirm Payment</strong>. Both confirmations close the procurement.' },
-            { icon: '📋📦', title: 'Order Management — Customer Orders', body: 'Under <strong>Manage → Orders</strong>, view all incoming customer orders from your online shop. Each order shows: customer details, items, total amount, payment status, and delivery status. Update order status as you process it.' },
-            { icon: '📋🚚', title: 'Fulfillment — Assign Riders', body: 'The <strong>Fulfillment</strong> page shows orders ready for delivery. Assign available riders, track delivery progress, and mark orders as delivered. Riders receive notifications when assigned.' },
-            { icon: '👥', title: 'Staff Management', body: 'Under <strong>Manage → Staff</strong>, you can <strong>add</strong> staff members (they get their own login), <strong>edit</strong> their details, <strong>reset passwords</strong>, or <strong>remove</strong> them. Staff can record transactions but cannot access settings or financial reports.' },
-            { icon: '💳', title: 'Payment Settings — M-Pesa', body: 'Under <strong>Manage → Payment Settings</strong>, configure your M-Pesa integration: enter your Till Number or Paybill, consumer key/secret, and passkey. This enables STK Push payments from customers and automatic payment confirmation.' },
-            { icon: '⚙️', title: 'Business Settings', body: 'Under <strong>Manage → Business Settings</strong>, update your business name, contact details, operating hours, delivery zones, and counties. Customers see this info on your storefront.' },
-            { icon: '🏪🌐', title: 'Your Online Shop — Storefront', body: 'Your business has a public <strong>storefront</strong> where customers can browse items, add to cart, and checkout. Share your shop link to start receiving orders. The <strong>Marketplace</strong> (/shop/) lists all businesses for customers to explore.' },
-            { icon: '💬', title: 'Feedback & Reviews', body: 'Under <strong>Manage → Feedback</strong>, view reviews left by customers. You can also rate your suppliers and riders. Performance scores are calculated from these ratings and used in procurement bid scoring.' },
-            { icon: '🔔', title: 'Notifications — Stay Informed', body: 'The 🔔 <strong>bell icon</strong> shows your unread notification count. Click it to view all notifications: new orders, staff logins, transaction alerts, supplier application updates, and bid status changes.' },
-            { icon: '🌍', title: 'Multi-Language Support', body: 'Click your username → <strong>Language</strong> to switch between English, Swahili, and other supported languages. The entire interface — menus, labels, messages — will translate automatically.' },
-            { icon: '💾', title: 'Export & Offline Access', body: 'Export stock lists, sales reports, and transaction history to <strong>Excel</strong>. Your app also works as a <strong>PWA</strong> — install it on your phone home screen for offline access to key features.' },
-            { icon: '🎉', title: 'You\'re All Set!', body: 'You\'ve completed the full tour! Every feature is now at your fingertips. To replay this tutorial, click your username → <strong>View Tutorial</strong>. Watch for <strong>"What\'s New"</strong> announcements when features are added.' }
-        ];
-
-        const staffSteps = [
-            commonWelcome,
-            commonTips,
-            { icon: '📦', title: 'Stock List — View Inventory', body: 'Go to <strong>Stock List</strong> to see all items across stores. Each row shows: material number, description, unit, current balance, reorder level, and selling price. The <strong>coloured badges</strong> (AVAILABLE / LOW STOCK / OUT OF STOCK / REORDER) help you prioritise.' },
-            { icon: '⚡', title: 'Quick Sell — Fast Point of Sale', body: 'Use <strong>Quick Sell</strong> for fast customer checkouts. Select items, set quantities, choose payment method (Cash / M-Pesa), and record the sale. The system automatically reduces stock and sends notifications.' },
-            { icon: '➕📄', title: 'Add Transaction — Stock Movements', body: 'Use <strong>Add Transaction</strong> for detailed entries. <strong>Receipt</strong> adds stock, <strong>Issue</strong> removes it. Enter invoice numbers and customer names for records. Great for receiving supplier deliveries or recording sales manually.' },
-            { icon: '📜', title: 'Transaction History — Audit Trail', body: 'Every stock movement appears in <strong>History</strong>. You can review past transactions, search by date or item, and see who recorded each entry. Useful for reconciling stock counts.' },
-            { icon: '📋', title: 'Order Fulfillment — Process Orders', body: 'Go to <strong>Order Fulfillment</strong> to view incoming customer orders from the online shop. View order details, <strong>pack items</strong> for delivery, and update order status as you fulfill them.' },
-            { icon: '💰', title: 'Payment Prompts — Confirm Payments', body: 'Under <strong>Payments</strong>, view pending M-Pesa payment notifications. <strong>Confirm</strong> payments that match orders or <strong>Dismiss</strong> invalid ones. Confirmed payments automatically update order status.' },
-            { icon: '🔔', title: 'Notifications — Stay Updated', body: 'The 🔔 bell icon shows unread notifications. Click to view alerts about new orders, payment confirmations, and other updates relevant to your role.' },
-            { icon: '🎉', title: 'You\'re All Set!', body: 'That covers everything you need for your daily tasks! You help keep the business running smoothly. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' }
-        ];
-
-        const supplierSteps = [
-            commonWelcome,
-            commonTips,
-            { icon: '📊', title: "{% trans 'Supplier Dashboard — At a Glance' %}", body: "{% trans 'Your <strong>Dashboard</strong> shows key stats: total active clients, pending bids (submitted but not yet decided), won bids (awarded to you), and open procurement requests you can bid on. Use this to prioritise your efforts.' %}" },
-            { icon: '🔍', title: "{% trans 'Browse Requests — Find Opportunities' %}", body: "{% trans 'Click <strong>Browse Requests</strong> to see all open procurement requests from businesses. Filter by <strong>category</strong> (e.g. food, hardware, logistics) or <strong>search</strong> by keyword. Each request shows the budget range, deadline, and description.' %}" },
-            { icon: '📝', title: "{% trans 'Submitting a Bid — Win Contracts' %}", body: "{% trans 'Click a procurement request to view details, then <strong>Submit a Bid</strong>. You will need to provide: your <strong>total amount</strong> (be competitive), <strong>delivery timeline</strong> (e.g. 3 days, 1 week), and a <strong>proposal</strong> explaining why you are the best fit. Your bid is automatically scored on price, proximity, rating, relevance, and speed.' %}" },
-            { icon: '📋', title: "{% trans 'Track Your Bids — Status Updates' %}", body: "{% trans 'Under <strong>My Bids</strong>, monitor all your submissions. Statuses: <strong>Submitted</strong> (pending review), <strong>Shortlisted</strong> (top 3 by score), <strong>Accepted</strong> (you won!), or <strong>Rejected</strong>. Click any bid to view full details.' %}" },
-            { icon: '🏆', title: "{% trans 'Won Bids — Delivery & Payment' %}", body: "{% trans 'If your bid is <strong>Accepted</strong>, the business will create a Purchase Order. Deliver the goods, then confirm with the owner when delivery is complete. After the owner confirms delivery and you <strong>Confirm Payment Received</strong>, the procurement is fully closed.' %}" },
-            { icon: '🏢', title: "{% trans 'Browse Businesses — Find Clients' %}", body: "{% trans 'Use <strong>Browse Businesses</strong> to discover potential clients on the platform. You can search by name, category (business type), or county. Each business shows their location and business type.' %}" },
-            { icon: '📨', title: "{% trans 'Apply to Become a Supplier' %}", body: "{% trans 'From a business profile, click <strong>Apply as Supplier</strong>. Describe the services you offer and write a cover letter. The business owner will review your application and approve or reject it. Once approved, they appear in your <strong>My Clients</strong> list.' %}" },
-            { icon: '🤝', title: "{% trans 'My Clients — Manage Relationships' %}", body: "{% trans 'Under <strong>My Clients</strong>, view all businesses you supply to. See contact info, relationship notes, and your performance rating from each client. Strong ratings improve your bid scores for future opportunities.' %}" },
-            { icon: '⭐', title: "{% trans 'Performance Ratings & Feedback' %}", body: "{% trans 'Your performance is rated by the businesses you supply to. Ratings range from 1-5 stars. High ratings (4-5) significantly boost your bid scores. Deliver on time and communicate well to maintain good ratings.' %}" },
-            { icon: '💰', title: "{% trans 'Payment Confirmation Workflow' %}", body: "{% trans 'After delivering goods and the owner confirms delivery, you will receive a notification. Click <strong>Confirm Payment Received</strong> on your awarded bid to acknowledge payment. Both parties must confirm for the procurement to close.' %}" },
-            { icon: '🔔', title: "{% trans 'Notifications — Never Miss a Bid' %}", body: "{% trans 'The 🔔 bell icon keeps you updated: new procurement requests matching your category, bid status changes (shortlisted/accepted/rejected), delivery confirmations, and payment requests.' %}" },
-            { icon: '🎉', title: '{% trans "You\'re All Set!" %}', body: "{% trans 'You\'re now equipped to find, bid, win, and fulfill procurement contracts! Start by browsing open requests or businesses. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' %}" }
-        ];
-
-        const riderSteps = [
-            commonWelcome,
-            commonTips,
-            { icon: '🏍️', title: "{% trans 'Rider Dashboard — Your Hub' %}", body: "{% trans 'Your <strong>Dashboard</strong> shows: active delivery count, completed deliveries, total earnings, and your performance score. The <strong>availability toggle</strong> lets you signal when you are ready to accept new deliveries.' %}" },
-            { icon: '🔄', title: "{% trans 'Availability Toggle — Control Your Work' %}", body: "{% trans 'Click the <strong>Available / Unavailable</strong> button to toggle your status. Businesses only assign deliveries to available riders. Set to <strong>Unavailable</strong> when you are off-duty or at capacity.' %}" },
-            { icon: '🚴', title: "{% trans 'Active Deliveries — Your Current Jobs' %}", body: "{% trans 'Under <strong>Active Deliveries</strong>, view all deliveries currently assigned to you. Each card shows: customer name, delivery address/location, order items, total amount, and pickup instructions. Tap to expand for more details.' %}" },
-            { icon: '📸', title: "{% trans 'Delivery Confirmation — Proof of Delivery' %}", body: "{% trans 'When you deliver an order, mark it as <strong>Delivered</strong>. The system records the delivery time and updates the order status. Customers can rate your performance after delivery.' %}" },
-            { icon: '📜', title: "{% trans 'Delivery History — Your Record' %}", body: "{% trans 'Check <strong>Delivery History</strong> for a complete log of all your past deliveries. See dates, amounts, distances, and customer ratings. Useful for tracking your performance over time.' %}" },
-            { icon: '💰', title: "{% trans 'Earnings — Track Your Income' %}", body: "{% trans 'Under <strong>My Earnings</strong>, view your total earnings, delivery count, and average earning per delivery. Earnings are calculated based on delivery fees set by businesses. Track your progress week by week.' %}" },
-            { icon: '⭐', title: "{% trans 'Performance Score — Your Reputation' %}", body: "{% trans 'After each delivery, customers and businesses can rate you (1-5 stars). Your <strong>average rating</strong> appears on your dashboard. Higher-rated riders get priority for delivery assignments. Be punctual and professional!' %}" },
-            { icon: '🔔', title: "{% trans 'Notifications — New Assignments' %}", body: "{% trans 'The 🔔 bell icon alerts you when: a new delivery is assigned, a customer leaves feedback, or your earnings are updated. Keep notifications on so you never miss an assignment.' %}" },
-            { icon: '🎉', title: '{% trans "You\'re All Set!" %}', body: "{% trans 'You are ready to start delivering! Stay available and check for new assignments. Your reliability and speed will build your reputation. Replay this tutorial from your username → <strong>View Tutorial</strong> anytime.' %}" }
-        ];
-
-        // Pick the right steps for the role
         let steps;
         switch(role) {
             case 'supplier': steps = supplierSteps; break;
@@ -954,7 +711,6 @@
             case 'staff': steps = staffSteps; break;
             default: steps = ownerSteps;
         }
-
         let currentStep = 0;
 
         function renderStep() {
@@ -962,18 +718,14 @@
             document.getElementById('tutorial-icon').textContent = step.icon;
             document.getElementById('tutorial-title').textContent = step.title;
             document.getElementById('tutorial-body').innerHTML = step.body;
-
-            // Progress dots
             const prog = document.getElementById('tutorial-progress');
             prog.innerHTML = '';
             for (let i = 0; i < steps.length; i++) {
                 const dot = document.createElement('div');
-                dot.style.cssText = `flex:1; height:3px; border-radius:2px; transition:background 0.3s;`;
+                dot.style.cssText = 'flex:1; height:3px; border-radius:2px; transition:background 0.3s;';
                 dot.style.background = i <= currentStep ? 'var(--gold)' : '#333';
                 prog.appendChild(dot);
             }
-
-            // Nav buttons
             document.getElementById('tutorial-prev').style.display = currentStep > 0 ? 'inline-block' : 'none';
             const nextBtn = document.getElementById('tutorial-next');
             if (currentStep === steps.length - 1) {
@@ -989,33 +741,27 @@
             currentStep = Math.max(0, Math.min(steps.length - 1, currentStep + dir));
             renderStep();
         };
-
         window.showTutorial = function() {
             currentStep = 0;
             renderStep();
             document.getElementById('tutorial-overlay').style.display = 'block';
         };
-
         window.dismissTutorial = function() {
             document.getElementById('tutorial-overlay').style.display = 'none';
-            // Persist dismissal to server
             fetch('{% url "tutorial_dismiss" %}', {
                 method: 'POST',
                 headers: { 'X-CSRFToken': csrfToken },
             }).catch(() => {});
         };
 
-        // Auto-show for first-time users
         if (!hasSeen) {
-            document.addEventListener('DOMContentLoaded', function() {
-                showTutorial();
-            });
+            document.addEventListener('DOMContentLoaded', function() { showTutorial(); });
         }
     })();
     </script>
     {% endif %}
 
-    <!-- Language Selection Modal -->
+    <!-- Language Modal -->
     {% if user.is_authenticated %}
     <div class="modal fade" id="langModal" tabindex="-1" aria-labelledby="langModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-sm">
@@ -1028,8 +774,7 @@
                     <form method="post" action="{% url 'change_language' %}">
                         {% csrf_token %}
                         <input type="hidden" name="next" value="{{ request.path }}">
-                        <select name="language" class="form-select mb-3"
-                                style="background:var(--onyx); color:var(--pearl); border-color:#444;">
+                        <select name="language" class="form-select mb-3" style="background:var(--onyx); color:var(--pearl); border-color:#444;">
                             {% get_available_languages as languages %}
                             {% for code, name in languages %}
                             <option value="{{ code }}" {% if code == LANGUAGE_CODE %}selected{% endif %}>{{ name }}</option>
