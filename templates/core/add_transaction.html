@@ -91,9 +91,7 @@
     }
 
     /* Cost price section */
-    #costPriceSection {
-        display: none;
-    }
+    #costPriceSection { display: none; }
     .cost-price-box {
         background: rgba(201,168,76,0.05);
         border: 1px solid rgba(201,168,76,0.25);
@@ -163,9 +161,7 @@
                 <select name="item" id="item" class="form-select select2" required style="width:100%">
                     <option value="">{% trans 'Type to search item...' %}</option>
                     {% for item in items %}
-                    <option value="{{ item.id }}"
-                            data-cost="{{ item.cost_price|default:'' }}"
-                            data-unit="{{ item.unit }}">
+                    <option value="{{ item.id }}" data-unit="{{ item.unit }}">
                         {{ item.material_no }} — {{ item.description }}
                         ({% trans 'Balance' %}: {{ item.current_balance }} {{ item.unit }})
                     </option>
@@ -188,23 +184,21 @@
                        placeholder="{% trans 'Enter quantity' %}">
             </div>
 
-            <!-- ── COST PRICE CHECK (Receipt only) ────────────────────────── -->
+            <!-- ── COST PRICE CHECK (Receipt only, shown when item selected) ── -->
             <div id="costPriceSection">
                 <div class="section-divider">
                     <span>💰 {% trans 'Cost Price Check' %}</span>
                 </div>
                 <div class="cost-price-box">
-                    <!-- Previous vs new price row -->
                     <div class="d-flex align-items-start gap-3 mb-3 flex-wrap">
 
                         <!-- Previous cost price -->
-                        <div style="min-width:130px;">
+                        <div style="min-width:140px;">
                             <div class="prev-label">{% trans 'Previous Cost Price' %}</div>
                             <div class="prev-value" id="prevCostDisplay">—</div>
                             <div class="prev-unit" id="prevCostUnit"></div>
                         </div>
 
-                        <!-- Arrow -->
                         <div style="color:#555; font-size:1.4rem; margin-top:0.8rem;">→</div>
 
                         <!-- New cost price input -->
@@ -224,35 +218,35 @@
                     </div>
 
                     <!-- Update checkbox -->
-                    <div class="form-check" style="margin-top:0.5rem;">
+                    <div class="form-check mt-1">
                         <input type="checkbox" name="update_cost_price" id="updateCostPrice"
                                class="form-check-input" checked>
                         <label class="form-check-label" for="updateCostPrice"
                                style="font-size:0.875rem; color:#d0d0d0;">
-                            {% trans 'Update this item\'s cost price with the delivered price' %}
+                            {% trans "Update this item's cost price with the delivered price" %}
                         </label>
                     </div>
                     <div style="color:#888; font-size:0.75rem; margin-top:0.3rem; margin-left:1.75rem;">
-                        {% trans 'This affects profit margin calculations in Sales & P&L.' %}
+                        {% trans 'Affects profit margin calculations in Sales & P&L.' %}
                     </div>
 
                     <!-- No previous price notice -->
-                    <div id="noPrevCostNote" style="display:none; margin-top:0.75rem;
-                         background: rgba(243,156,18,0.1); border: 1px solid rgba(243,156,18,0.3);
-                         border-radius:6px; padding:0.5rem 0.75rem;
-                         color:#f39c12; font-size:0.82rem;">
+                    <div id="noPrevCostNote"
+                         style="display:none; margin-top:0.75rem;
+                                background:rgba(243,156,18,0.1); border:1px solid rgba(243,156,18,0.3);
+                                border-radius:6px; padding:0.5rem 0.75rem;
+                                color:#f39c12; font-size:0.82rem;">
                         ⚠️ {% trans 'No cost price set for this item yet. Enter the delivered price to set it.' %}
                     </div>
                 </div>
             </div>
             <!-- ─────────────────────────────────────────────────────────── -->
 
-            <!-- ── Recipient / Destination ── -->
+            <!-- ── Receiving Store / Customer ── -->
             <div class="section-divider">
                 <span id="recipientLabel">📍 {% trans 'Receiving Store' %}</span>
             </div>
 
-            <!-- Receipt → Store -->
             <div id="storeField" class="mb-4">
                 <label class="form-label">{% trans 'Receiving Store' %}</label>
                 <select name="recipient" id="storeSelect" class="form-select">
@@ -263,7 +257,6 @@
                 </select>
             </div>
 
-            <!-- Issue → Customer -->
             <div id="customerField" class="mb-4" style="display:none">
                 <label class="form-label">{% trans 'Customer / Recipient' %}</label>
                 <select name="recipient" id="customerSelect" class="form-select select2-customer"
@@ -276,11 +269,8 @@
                     {% endfor %}
                     <option value="__new__">➕ {% trans 'Add New Customer...' %}</option>
                 </select>
-
                 <div id="new-customer-fields">
-                    <p style="color:var(--gold); font-size:0.85rem; margin-bottom:0.8rem;">
-                        {% trans 'New Customer Details' %}
-                    </p>
+                    <p style="color:var(--gold); font-size:0.85rem; margin-bottom:0.8rem;">{% trans 'New Customer Details' %}</p>
                     <input type="text" name="new_customer_name" id="newCustomerName"
                            class="form-control mb-2" placeholder="{% trans 'Customer name *' %}">
                     <input type="text" name="new_customer_phone"
@@ -292,7 +282,7 @@
             <div class="section-divider"><span>🧾 {% trans 'Document' %}</span></div>
 
             <div class="mb-4">
-                <label class="form-label" id="invoiceLabel">
+                <label class="form-label">
                     {% trans 'Invoice No / Receipt No' %}
                     <span style="color:#888; font-size:0.8rem;">({% trans 'optional' %})</span>
                 </label>
@@ -306,10 +296,8 @@
                 <div class="d-flex gap-2 flex-wrap">
                     <input type="radio" class="btn-check" name="payment_method" id="pm_cash" value="cash" checked>
                     <label class="btn btn-outline-warning" for="pm_cash" style="font-weight:600;">💵 Cash</label>
-
                     <input type="radio" class="btn-check" name="payment_method" id="pm_mpesa" value="mpesa">
                     <label class="btn btn-outline-success" for="pm_mpesa" style="font-weight:600;">📱 M-Pesa</label>
-
                     <input type="radio" class="btn-check" name="payment_method" id="pm_credit" value="credit">
                     <label class="btn btn-outline-secondary" for="pm_credit" style="font-weight:600;">📒 Credit/Tab</label>
                 </div>
@@ -331,15 +319,23 @@
 <script>
 $(document).ready(function () {
 
-    const COST_PRICE_URL = "{% url 'item_cost_price' 0 %}".replace('/0/', '/');
-    const receivingStoreLabel  = "📍 {% trans 'Receiving Store' %}";
+    const receivingStoreLabel    = "📍 {% trans 'Receiving Store' %}";
     const customerRecipientLabel = "👤 {% trans 'Customer / Recipient' %}";
 
-    // ── Select2 inits ─────────────────────────────────────────────────────
-    $('#item').select2({ placeholder: "{% trans 'Type to search item...' %}", allowClear: true, width: '100%' });
-    $('.select2-customer').select2({ placeholder: "{% trans 'Select or type customer name...' %}", allowClear: true, width: '100%', tags: true });
+    // ── Select2 inits ──────────────────────────────────────────────────────
+    $('#item').select2({
+        placeholder: "{% trans 'Type to search item...' %}",
+        allowClear: true,
+        width: '100%'
+    });
+    $('.select2-customer').select2({
+        placeholder: "{% trans 'Select or type customer name...' %}",
+        allowClear: true,
+        width: '100%',
+        tags: true,
+    });
 
-    // ── Toggle Receipt/Issue fields ───────────────────────────────────────
+    // ── Toggle Receipt / Issue UI ──────────────────────────────────────────
     function toggleRecipient() {
         const type = $('#transType').val();
         if (type === 'Receipt') {
@@ -349,7 +345,6 @@ $(document).ready(function () {
             $('#customerSelect').attr('name', '');
             $('#recipientLabel').text(receivingStoreLabel);
             $('#paymentMethodRow').hide();
-            // Show cost price section if item already selected
             checkCostPriceSection();
         } else {
             $('#storeField').hide();
@@ -358,14 +353,12 @@ $(document).ready(function () {
             $('#customerSelect').attr('name', 'recipient');
             $('#recipientLabel').text(customerRecipientLabel);
             $('#paymentMethodRow').show();
-            // Hide cost price section for issues
             $('#costPriceSection').hide();
         }
     }
-
     $('#transType').on('change', toggleRecipient);
 
-    // ── New customer fields ───────────────────────────────────────────────
+    // ── New customer fields ────────────────────────────────────────────────
     $('#customerSelect').on('change', function () {
         if ($(this).val() === '__new__') {
             $('#new-customer-fields').show();
@@ -376,9 +369,9 @@ $(document).ready(function () {
         }
     });
 
-    // ── Cost price section logic ──────────────────────────────────────────
+    // ── Cost price section ─────────────────────────────────────────────────
     function checkCostPriceSection() {
-        const type = $('#transType').val();
+        const type   = $('#transType').val();
         const itemId = $('#item').val();
         if (type === 'Receipt' && itemId) {
             fetchCostPrice(itemId);
@@ -388,44 +381,49 @@ $(document).ready(function () {
     }
 
     function fetchCostPrice(itemId) {
-        $.getJSON(COST_PRICE_URL + itemId + '/cost-price/', function (data) {
+        // Build URL directly — no template tag manipulation needed
+        const url = '/api/items/' + itemId + '/cost-price/';
+        $.getJSON(url, function (data) {
             showCostPriceSection(data);
-        }).fail(function () {
-            // Silently hide section on error — never block the form
+        }).fail(function (xhr) {
+            // Silently hide on error — never block the transaction form
+            console.warn('Cost price fetch failed:', xhr.status, url);
             $('#costPriceSection').hide();
         });
     }
 
     function showCostPriceSection(data) {
-        const section = $('#costPriceSection');
         const prevDisplay = $('#prevCostDisplay');
-        const prevUnit = $('#prevCostUnit');
-        const noPrevNote = $('#noPrevCostNote');
-        const newInput = $('#newCostPrice');
+        const prevUnit    = $('#prevCostUnit');
+        const noPrevNote  = $('#noPrevCostNote');
+        const newInput    = $('#newCostPrice');
 
         if (data.cost_price !== null && data.cost_price !== undefined) {
-            prevDisplay.text('KES ' + parseFloat(data.cost_price).toLocaleString('en-KE', {minimumFractionDigits:2, maximumFractionDigits:2}));
+            prevDisplay.text('KES ' + parseFloat(data.cost_price).toLocaleString('en-KE', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }));
             prevUnit.text('per ' + (data.unit || 'unit'));
             newInput.val(parseFloat(data.cost_price).toFixed(2));
             noPrevNote.hide();
         } else {
             prevDisplay.text('—');
-            prevUnit.text('No cost price set');
+            prevUnit.text('No cost price set yet');
             newInput.val('');
             noPrevNote.show();
         }
 
-        section.show();
+        $('#costPriceSection').show();
         updateVariance();
     }
 
-    // ── Live variance calculation ─────────────────────────────────────────
+    // ── Live variance calculation ──────────────────────────────────────────
     function updateVariance() {
-        const prevText = $('#prevCostDisplay').text().replace('KES ', '').replace(/,/g, '');
-        const prev = parseFloat(prevText);
-        const newVal = parseFloat($('#newCostPrice').val());
-        const pill = $('#variancePill');
-        const note = $('#varianceNote');
+        const prevRaw = $('#prevCostDisplay').text().replace('KES ', '').replace(/,/g, '');
+        const prev    = parseFloat(prevRaw);
+        const newVal  = parseFloat($('#newCostPrice').val());
+        const pill    = $('#variancePill');
+        const note    = $('#varianceNote');
 
         if (isNaN(prev) || isNaN(newVal) || prev <= 0) {
             pill.hide();
@@ -433,37 +431,42 @@ $(document).ready(function () {
             return;
         }
 
-        const diff = newVal - prev;
-        const pct = ((diff / prev) * 100).toFixed(1);
-        const absDiff = Math.abs(diff).toLocaleString('en-KE', {minimumFractionDigits:2, maximumFractionDigits:2});
+        const diff    = newVal - prev;
+        const pct     = ((diff / prev) * 100).toFixed(1);
+        const absDiff = Math.abs(diff).toLocaleString('en-KE', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
 
         if (Math.abs(diff) < 0.005) {
             pill.text('No change').css({
-                'background': 'rgba(110,231,183,0.15)',
-                'color': '#6ee7b7',
+                background: 'rgba(110,231,183,0.15)',
+                color: '#6ee7b7'
             }).show();
-            note.text('Same as previous cost price.');
+            note.text('Same as previous cost price — no update needed.');
         } else if (diff > 0) {
             pill.text('▲ +' + pct + '%').css({
-                'background': 'rgba(248,113,113,0.15)',
-                'color': '#f87171',
+                background: 'rgba(248,113,113,0.15)',
+                color: '#f87171'
             }).show();
-            note.html('Price <strong style="color:#f87171;">increased</strong> by KES ' + absDiff + ' per unit. Your margin will decrease if selling price unchanged.');
+            note.html('Price <strong style="color:#f87171;">increased</strong> by KES ' + absDiff + ' per unit. Margin will decrease if selling price is unchanged.');
         } else {
             pill.text('▼ ' + pct + '%').css({
-                'background': 'rgba(110,231,183,0.15)',
-                'color': '#6ee7b7',
+                background: 'rgba(110,231,183,0.15)',
+                color: '#6ee7b7'
             }).show();
-            note.html('Price <strong style="color:#6ee7b7;">decreased</strong> by KES ' + absDiff + ' per unit. Your margin will improve if selling price unchanged.');
+            note.html('Price <strong style="color:#6ee7b7;">decreased</strong> by KES ' + absDiff + ' per unit. Margin will improve if selling price is unchanged.');
         }
     }
 
     $('#newCostPrice').on('input', updateVariance);
 
-    // ── Trigger on item change ────────────────────────────────────────────
-    $('#item').on('change', checkCostPriceSection);
+    // ── Trigger cost price check when item changes ─────────────────────────
+    $('#item').on('change', function () {
+        checkCostPriceSection();
+    });
 
-    // ── Init on page load ─────────────────────────────────────────────────
+    // ── Init on page load ──────────────────────────────────────────────────
     toggleRecipient();
 
 });
