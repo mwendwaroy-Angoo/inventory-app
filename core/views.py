@@ -333,31 +333,72 @@ def add_transaction(request):
 
         # ── COST PRICE UPDATE (Receipt only) ──────────────────────────────
         # When receiving stock, the delivered price may differ from the stored
-        # cost price. If the owner has entered a new price and ticked the
-        # update checkbox, we update Item.cost_price here.
+        # cost price. A delivery fee can also be entered — in that case we
+        # calculate the landed cost per unit and use that instead.
+        #
+        # Landed cost per unit = (qty × unit_price + delivery_fee) / qty
+        #
+        # If the owner ticked "update cost price", Item.cost_price is updated
+        # to the landed cost per unit (or just the unit price if no delivery fee).
         if trans_type == "Receipt":
             new_cost_price_raw = request.POST.get("new_cost_price", "").strip()
+            delivery_fee_raw = request.POST.get("delivery_fee", "0").strip()
             update_cost_price = request.POST.get("update_cost_price") == "on"
+
             if update_cost_price and new_cost_price_raw:
                 try:
                     from decimal import Decimal
 
-                    new_cost = Decimal(new_cost_price_raw)
+                    unit_price = Decimal(new_cost_price_raw)
+                    delivery_fee = (
+                        Decimal(delivery_fee_raw) if delivery_fee_raw else Decimal("0")
+                    )
+                    qty_decimal = Decimal(
+                        str(abs(quantity))
+                    )  # quantity is already negative for issues
+
+                    # Calculate landed cost per unit if there is a delivery fee
+                    if delivery_fee > 0 and qty_decimal > 0:
+                        landed_cost = (
+                            (unit_price * qty_decimal) + delivery_fee
+                        ) / qty_decimal
+                    else:
+                        landed_cost = unit_price
+
                     old_cost = item.cost_price
-                    if new_cost != old_cost:
-                        item.cost_price = new_cost
+
+                    if landed_cost != old_cost:
+                        item.cost_price = landed_cost
                         item.save(update_fields=["cost_price"])
-                        messages.info(
-                            request,
-                            _(
-                                "Cost price for %(item)s updated from KES %(old)s to KES %(new)s."
+
+                        if delivery_fee > 0:
+                            messages.info(
+                                request,
+                                _(
+                                    "Cost price for %(item)s updated to landed cost KES %(new)s/%(unit)s "
+                                    "(KES %(unit_price)s unit + KES %(fee)s delivery ÷ %(qty)s %(unit)s)."
+                                )
+                                % {
+                                    "item": item.description,
+                                    "new": f"{landed_cost:,.2f}",
+                                    "unit": item.unit,
+                                    "unit_price": f"{unit_price:,.2f}",
+                                    "fee": f"{delivery_fee:,.2f}",
+                                    "qty": f"{qty_decimal:,.0f}",
+                                },
                             )
-                            % {
-                                "item": item.description,
-                                "old": f"{old_cost:,.2f}" if old_cost else "—",
-                                "new": f"{new_cost:,.2f}",
-                            },
-                        )
+                        else:
+                            messages.info(
+                                request,
+                                _(
+                                    "Cost price for %(item)s updated from KES %(old)s to KES %(new)s."
+                                )
+                                % {
+                                    "item": item.description,
+                                    "old": f"{old_cost:,.2f}" if old_cost else "—",
+                                    "new": f"{landed_cost:,.2f}",
+                                },
+                            )
                 except Exception:
                     pass  # Never block transaction recording due to cost price update failure
         # ─────────────────────────────────────────────────────────────────
