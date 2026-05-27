@@ -21,5 +21,14 @@
 
 ## Django Templates
 
-- Never allow an HTML formatter to wrap Django template tags {{ }} or {% %} across multiple lines
-- Django template tags must always be on a single line
+- Never allow an HTML formatter (Prettier, ESLint, or any other) to touch .html files
+- Django template tags {% %} and {{ }} must always stay on a single line — never wrap them
+- {% trans 'string' %} tags must never be split across lines under any circumstances
+- Never use Bootstrap utility classes that hardcode light backgrounds on dark-themed templates:
+    - Forbidden: bg-light, bg-primary, bg-success, bg-danger, bg-warning, bg-info, bg-white
+    - Forbidden: text-muted (use explicit color styles instead, e.g. style="color: #b0b0b0")
+    - Forbidden: card bg-dark border-secondary (use inline styles for dark theme cards)
+- Never add class="text-muted" to any element — always use explicit style="color: #b0b0b0"
+- When adding helper/hint text under form fields, use style="color: #b0b0b0; font-size: 0.8rem"
+- Never change var(--muted) references without first checking if the variable is defined in base.html
+- The theme uses: --onyx, --gold, --pearl, --raspberry, --raspberry-dark as core CSS variables
