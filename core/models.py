@@ -944,3 +944,70 @@ class PurchaseOrderLine(models.Model):
 
     def __str__(self):
         return f"{self.item.description} x{self.quantity_ordered} — PO-{self.po.id}"
+
+
+# ────────────────────────────────────────────────
+# GOODS RECEIPTS — Variable Pricing
+# ────────────────────────────────────────────────
+
+class GoodsReceipt(models.Model):
+    """
+    Records one physical delivery event against a PurchaseOrder.
+    A PO can have multiple receipts (partial deliveries).
+    """
+    po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='receipts')
+    received_date = models.DateField(default=timezone.now)
+    delivery_note_no = models.CharField(max_length=50, blank=True)
+    received_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-received_date', '-created_at']
+
+    def __str__(self):
+        return f"GR-{self.id} for PO-{self.po.id} ({self.received_date})"
+
+    def total_received_value(self):
+        return sum(
+            (l.quantity_received or 0) * float(l.actual_unit_price or 0)
+            for l in self.lines.all()
+        )
+
+
+class GoodsReceiptLine(models.Model):
+    """
+    One line in a GoodsReceipt — ties back to a PurchaseOrderLine.
+    Captures the actual delivery price which may differ from the PO price.
+    """
+    receipt = models.ForeignKey(GoodsReceipt, on_delete=models.CASCADE, related_name='lines')
+    po_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.CASCADE, related_name='receipt_lines')
+    quantity_received = models.IntegerField(default=0)
+    actual_unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    update_cost_price = models.BooleanField(
+        default=False,
+        help_text=_("Tick to update this item's cost price to the actual delivery price.")
+    )
+    notes = models.CharField(max_length=200, blank=True)
+
+    def __str__(self):
+        return f"{self.po_line.item.description} x{self.quantity_received} @ {self.actual_unit_price}"
+
+    @property
+    def price_variance(self):
+        """Actual price minus PO price. Positive = more expensive than expected."""
+        po_price = self.po_line.unit_price
+        if po_price is not None:
+            return float(self.actual_unit_price) - float(po_price)
+        return 0.0
+
+    @property
+    def price_variance_pct(self):
+        po_price = self.po_line.unit_price
+        if po_price and float(po_price) > 0:
+            return (self.price_variance / float(po_price)) * 100
+        return 0.0
+
+    @property
+    def line_total(self):
+        return (self.quantity_received or 0) * float(self.actual_unit_price or 0)

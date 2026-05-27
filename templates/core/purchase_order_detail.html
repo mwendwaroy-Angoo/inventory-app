@@ -3,37 +3,226 @@
 
 {% block title %}PO-{{ po.id }} — {% trans 'Purchase Order' %}{% endblock %}
 
-{% block content %}
-<h2 class="page-title">📦 PO-{{ po.id }}</h2>
-<p><strong>{% trans 'Status' %}:</strong> {{ po.get_status_display }}</p>
-<p><strong>{% trans 'Supplier' %}:</strong> {{ po.supplier.name|default:'—' }}</p>
-<p><strong>{% trans 'Expected Delivery' %}:</strong> {{ po.expected_delivery_date|default:'—' }}</p>
-<hr class="gold-divider">
+{% block extra_css %}
+<style>
+    .po-header-card {
+        background: var(--onyx-card);
+        border: 1px solid #3a3a3a;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .po-meta-label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #b0b0b0;
+        margin-bottom: 2px;
+    }
+    .po-meta-value {
+        font-size: 1rem;
+        color: var(--pearl);
+        font-weight: 500;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 3px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .status-draft        { background: rgba(136,136,136,0.2); color: #b0b0b0; }
+    .status-ordered      { background: rgba(201,168,76,0.2);  color: var(--gold); }
+    .status-part_received{ background: rgba(243,156,18,0.2);  color: var(--warning); }
+    .status-received     { background: rgba(46,204,113,0.2);  color: var(--success); }
+    .status-cancelled    { background: rgba(231,76,60,0.2);   color: var(--danger); }
+    .lines-table th {
+        background: linear-gradient(135deg, var(--raspberry), var(--raspberry-dark));
+        color: var(--pearl);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+    }
+    .lines-table td { vertical-align: middle; color: var(--pearl); border-color: #3a3a3a; }
+    .receipts-table th {
+        background: rgba(201,168,76,0.12);
+        color: var(--gold);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .receipts-table td { vertical-align: middle; color: var(--pearl); border-color: #3a3a3a; }
+    .section-block {
+        background: var(--onyx-card);
+        border: 1px solid #3a3a3a;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 1.5rem;
+    }
+    .section-block-header {
+        padding: 0.75rem 1rem;
+        background: linear-gradient(135deg, var(--raspberry), var(--raspberry-dark));
+        color: var(--pearl);
+    }
+    .qty-badge {
+        font-size: 0.78rem;
+        background: rgba(201,168,76,0.15);
+        color: var(--gold);
+        border-radius: 6px;
+        padding: 2px 8px;
+    }
+    .remaining-zero { color: var(--success); font-weight: 600; }
+    .remaining-some { color: var(--warning); font-weight: 600; }
+</style>
+{% endblock %}
 
-<h4>{% trans 'Lines' %}</h4>
-<div class="table-responsive">
-    <table class="table table-hover">
-        <thead>
-            <tr>
-                <th>{% trans 'Item' %}</th>
-                <th>{% trans 'Ordered' %}</th>
-                <th>{% trans 'Received' %}</th>
-                <th>{% trans 'Remaining' %}</th>
-                <th>{% trans 'Unit Price' %}</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for line in po.lines.all %}
-            <tr>
-                <td>{{ line.item.description }}</td>
-                <td>{{ line.quantity_ordered }}</td>
-                <td>{{ line.quantity_received }}</td>
-                <td>{{ line.quantity_remaining }}</td>
-                <td>{{ line.unit_price|default:'—' }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+    <a href="{% url 'purchase_orders_list' %}" class="btn btn-secondary btn-sm">&#8592; {% trans 'All POs' %}</a>
+    <h2 class="page-title mb-0">PO-{{ po.id }}</h2>
+    <span class="status-badge status-{{ po.status }}">{{ po.get_status_display }}</span>
+    <div class="ms-auto d-flex gap-2 flex-wrap">
+        {% if po.status != 'received' and po.status != 'cancelled' %}
+        <a href="{% url 'purchase_order_edit' po.id %}" class="btn btn-secondary btn-sm">&#9998; {% trans 'Edit PO' %}</a>
+        {% endif %}
+        {% if po.status != 'received' and po.status != 'cancelled' %}
+        <a href="{% url 'receive_goods' po.id %}" class="btn btn-gold btn-sm">
+            &#11015; {% trans 'Record Receipt' %}
+        </a>
+        {% endif %}
+    </div>
 </div>
 
+{# ── PO Header ── #}
+<div class="po-header-card">
+    <div class="row g-3">
+        <div class="col-6 col-md-3">
+            <div class="po-meta-label">{% trans 'Supplier' %}</div>
+            <div class="po-meta-value">{{ po.supplier.name|default:'—' }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="po-meta-label">{% trans 'Order Date' %}</div>
+            <div class="po-meta-value">{{ po.order_date }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="po-meta-label">{% trans 'Expected Delivery' %}</div>
+            <div class="po-meta-value">{{ po.expected_delivery_date|default:'—' }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="po-meta-label">{% trans 'Total Ordered Value' %}</div>
+            <div class="po-meta-value" style="color: var(--gold);">KES {{ po.total_ordered_value|floatformat:2 }}</div>
+        </div>
+        {% if po.notes %}
+        <div class="col-12">
+            <div class="po-meta-label">{% trans 'Notes' %}</div>
+            <div class="po-meta-value">{{ po.notes }}</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{# ── PO Lines ── #}
+<div class="section-block">
+    <div class="section-block-header">
+        <h5 class="mb-0">{% trans 'Order Lines' %}</h5>
+    </div>
+    <div class="table-responsive">
+        <table class="table lines-table mb-0">
+            <thead>
+                <tr>
+                    <th>{% trans 'Item' %}</th>
+                    <th class="text-center">{% trans 'Ordered' %}</th>
+                    <th class="text-center">{% trans 'Received' %}</th>
+                    <th class="text-center">{% trans 'Remaining' %}</th>
+                    <th class="text-end">{% trans 'PO Unit Price' %}</th>
+                    <th class="text-end">{% trans 'Line Value' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in po.lines.all %}
+                <tr>
+                    <td>
+                        <div style="font-weight:600;">{{ line.item.description }}</div>
+                        <div style="font-size:0.78rem; color:#b0b0b0;">{{ line.item.unit }}</div>
+                    </td>
+                    <td class="text-center">{{ line.quantity_ordered }}</td>
+                    <td class="text-center">{{ line.quantity_received }}</td>
+                    <td class="text-center">
+                        {% if line.quantity_remaining == 0 %}
+                        <span class="remaining-zero">&#10003; 0</span>
+                        {% else %}
+                        <span class="remaining-some">{{ line.quantity_remaining }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if line.unit_price %}KES {{ line.unit_price }}{% else %}<span style="color:#b0b0b0;">—</span>{% endif %}
+                    </td>
+                    <td class="text-end" style="color: var(--gold);">
+                        {% if line.unit_price %}
+                        KES {{ line.quantity_ordered|floatformat:0 }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{# ── Receipts History ── #}
+<div class="section-block">
+    <div style="background: rgba(201,168,76,0.1); border-bottom: 1px solid #3a3a3a; padding: 0.75rem 1rem; display:flex; align-items:center; justify-content:space-between;">
+        <h5 class="mb-0" style="color: var(--gold);">{% trans 'Goods Receipts' %}</h5>
+        {% if po.status != 'received' and po.status != 'cancelled' %}
+        <a href="{% url 'receive_goods' po.id %}" class="btn btn-gold btn-sm">
+            + {% trans 'Record Receipt' %}
+        </a>
+        {% endif %}
+    </div>
+
+    {% with receipts=po.receipts.all %}
+    {% if receipts %}
+    <div class="table-responsive">
+        <table class="table receipts-table mb-0">
+            <thead>
+                <tr>
+                    <th>{% trans 'Receipt' %}</th>
+                    <th>{% trans 'Date' %}</th>
+                    <th>{% trans 'Delivery Note' %}</th>
+                    <th>{% trans 'Items' %}</th>
+                    <th class="text-end">{% trans 'Total Value' %}</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for receipt in receipts %}
+                <tr>
+                    <td style="color: var(--gold); font-weight:600;">GR-{{ receipt.id }}</td>
+                    <td>{{ receipt.received_date }}</td>
+                    <td>{{ receipt.delivery_note_no|default:'—' }}</td>
+                    <td><span class="qty-badge">{{ receipt.lines.count }} {% trans 'line(s)' %}</span></td>
+                    <td class="text-end">KES {{ receipt.total_received_value|floatformat:2 }}</td>
+                    <td class="text-end">
+                        <a href="{% url 'goods_receipt_detail' receipt.id %}" class="btn btn-secondary btn-sm">
+                            {% trans 'View' %}
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="p-4 text-center" style="color: #b0b0b0;">
+        {% trans 'No receipts recorded yet.' %}
+        {% if po.status != 'cancelled' %}
+        <br><a href="{% url 'receive_goods' po.id %}" style="color: var(--gold);">{% trans 'Record the first receipt' %}</a>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% endwith %}
+</div>
 {% endblock %}

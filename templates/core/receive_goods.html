@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Receive Goods' %} — PO-{{ po.id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .receipt-table th {
+        background: linear-gradient(135deg, var(--raspberry), var(--raspberry-dark));
+        color: var(--pearl);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+    }
+    .receipt-table td {
+        vertical-align: middle;
+        color: var(--pearl);
+        border-color: #3a3a3a;
+    }
+    .po-price-hint {
+        font-size: 0.78rem;
+        color: #b0b0b0;
+        display: block;
+        margin-top: 2px;
+    }
+    .variance-cell {
+        font-weight: 600;
+        font-size: 0.85rem;
+        white-space: nowrap;
+    }
+    .variance-up   { color: var(--danger); }
+    .variance-down { color: var(--success); }
+    .variance-zero { color: #b0b0b0; }
+    .section-card {
+        background: var(--onyx-card);
+        border: 1px solid #3a3a3a;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .item-name { font-weight: 600; color: var(--pearl); }
+    .item-meta { font-size: 0.78rem; color: #b0b0b0; }
+    .qty-badge {
+        font-size: 0.78rem;
+        background: rgba(201,168,76,0.15);
+        color: var(--gold);
+        border-radius: 6px;
+        padding: 2px 8px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3">
+    <a href="{% url 'purchase_order_detail' po.id %}" class="btn btn-secondary btn-sm">&#8592; {% trans 'Back to PO' %}</a>
+    <h2 class="page-title mb-0">{% trans 'Record Goods Receipt' %}</h2>
+</div>
+
+<p style="color: #b0b0b0;">
+    {% trans 'PO' %}-{{ po.id }}
+    {% if po.supplier %}&nbsp;·&nbsp;{{ po.supplier.name }}{% endif %}
+    &nbsp;·&nbsp;
+    <span class="qty-badge">{{ outstanding_lines|length }} {% trans 'outstanding line(s)' %}</span>
+</p>
+
+<form method="post" id="receipt-form">
+    {% csrf_token %}
+    {{ line_formset.management_form }}
+
+    {# ── Header card ── #}
+    <div class="section-card">
+        <h5 style="color: var(--gold); margin-bottom: 1rem;">{% trans 'Delivery Details' %}</h5>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label" style="color: var(--pearl);">{{ receipt_form.received_date.label }}</label>
+                {{ receipt_form.received_date }}
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" style="color: var(--pearl);">{{ receipt_form.delivery_note_no.label }}</label>
+                {{ receipt_form.delivery_note_no }}
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" style="color: var(--pearl);">{{ receipt_form.notes.label }}</label>
+                {{ receipt_form.notes }}
+            </div>
+        </div>
+        {% if receipt_form.errors %}
+        <div class="alert alert-danger mt-2 py-2">{{ receipt_form.errors }}</div>
+        {% endif %}
+    </div>
+
+    {# ── Lines table ── #}
+    <div class="section-card p-0 overflow-hidden">
+        <div class="px-3 py-3" style="background: linear-gradient(135deg, var(--raspberry), var(--raspberry-dark));">
+            <h5 class="mb-0" style="color: var(--pearl);">{% trans 'Items to Receive' %}</h5>
+            <small style="color: rgba(240,236,228,0.7);">{% trans 'Edit qty and price if the delivery note differs from the PO.' %}</small>
+        </div>
+        <div class="table-responsive">
+            <table class="table receipt-table mb-0">
+                <thead>
+                    <tr>
+                        <th style="min-width:180px;">{% trans 'Item' %}</th>
+                        <th class="text-center">{% trans 'Ordered' %}</th>
+                        <th class="text-center">{% trans 'Already Rcvd' %}</th>
+                        <th class="text-center">{% trans 'Remaining' %}</th>
+                        <th style="min-width:130px;">{% trans 'Qty to Receive' %}</th>
+                        <th style="min-width:140px;">{% trans 'Actual Price (KES)' %}</th>
+                        <th class="text-center" style="min-width:90px;">{% trans 'Variance' %}</th>
+                        <th class="text-center">{% trans 'Update Cost?' %}</th>
+                        <th style="min-width:150px;">{% trans 'Notes' %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for po_line, form in line_form_pairs %}
+                    <tr data-po-price="{{ po_line.unit_price|default:'0' }}">
+                        {# Hidden management fields #}
+                        {{ form.po_line_id }}
+
+                        <td>
+                            <div class="item-name">{{ po_line.item.description }}</div>
+                            <div class="item-meta">
+                                {% if po_line.item.material_no %}{{ po_line.item.material_no }} &nbsp;·&nbsp;{% endif %}
+                                {{ po_line.item.unit }}
+                            </div>
+                        </td>
+                        <td class="text-center">{{ po_line.quantity_ordered }}</td>
+                        <td class="text-center">{{ po_line.quantity_received }}</td>
+                        <td class="text-center">
+                            <span class="qty-badge">{{ po_line.quantity_remaining }}</span>
+                        </td>
+                        <td>{{ form.quantity_received }}</td>
+                        <td>
+                            {{ form.actual_unit_price }}
+                            {% if po_line.unit_price %}
+                            <span class="po-price-hint">{% trans 'PO price:' %} KES {{ po_line.unit_price }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <span class="variance-cell variance-zero" id="var-{{ forloop.counter0 }}">—</span>
+                        </td>
+                        <td class="text-center">
+                            <div class="form-check d-flex justify-content-center">
+                                {{ form.update_cost_price }}
+                            </div>
+                        </td>
+                        <td>{{ form.notes }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {# ── Summary bar ── #}
+    <div class="section-card d-flex justify-content-between align-items-center flex-wrap gap-3">
+        <div>
+            <span style="color: #b0b0b0; font-size: 0.85rem;">{% trans 'Estimated receipt total' %}:</span>
+            <strong style="color: var(--gold); font-size: 1.1rem;" id="grand-total">KES 0.00</strong>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{% url 'purchase_order_detail' po.id %}" class="btn btn-secondary">{% trans 'Cancel' %}</a>
+            <button type="submit" class="btn btn-gold">
+                &#10003; {% trans 'Confirm Receipt' %}
+            </button>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const rows = document.querySelectorAll('#receipt-form tbody tr');
+
+    function formatKES(n) {
+        return 'KES ' + n.toLocaleString('en-KE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+
+    function updateRow(row, idx) {
+        const poPrice  = parseFloat(row.dataset.poPrice) || 0;
+        const priceInput = row.querySelector('.price-input');
+        const qtyInput   = row.querySelector('.qty-input');
+        const varCell    = document.getElementById('var-' + idx);
+
+        if (!priceInput || !varCell) return;
+
+        const actualPrice = parseFloat(priceInput.value) || 0;
+        const variance    = actualPrice - poPrice;
+
+        if (poPrice === 0) {
+            varCell.textContent = '—';
+            varCell.className   = 'variance-cell variance-zero';
+        } else if (Math.abs(variance) < 0.01) {
+            varCell.textContent = '±0';
+            varCell.className   = 'variance-cell variance-zero';
+        } else if (variance > 0) {
+            varCell.textContent = '+' + formatKES(variance);
+            varCell.className   = 'variance-cell variance-up';
+        } else {
+            varCell.textContent = formatKES(variance);
+            varCell.className   = 'variance-cell variance-down';
+        }
+    }
+
+    function updateGrandTotal() {
+        let total = 0;
+        rows.forEach(function (row) {
+            const priceInput = row.querySelector('.price-input');
+            const qtyInput   = row.querySelector('.qty-input');
+            if (priceInput && qtyInput) {
+                total += (parseFloat(priceInput.value) || 0) * (parseInt(qtyInput.value) || 0);
+            }
+        });
+        document.getElementById('grand-total').textContent = formatKES(total);
+    }
+
+    rows.forEach(function (row, idx) {
+        const inputs = row.querySelectorAll('.price-input, .qty-input');
+        inputs.forEach(function (inp) {
+            inp.addEventListener('input', function () {
+                updateRow(row, idx);
+                updateGrandTotal();
+            });
+        });
+        updateRow(row, idx);
+    });
+
+    updateGrandTotal();
+})();
+</script>
+{% endblock %}

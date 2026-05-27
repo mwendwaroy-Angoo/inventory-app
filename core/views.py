@@ -6,8 +6,8 @@ from django.http import HttpResponse, JsonResponse
 from django.db.models import Q, Sum
 from django.views.decorators.http import require_POST
 from django.utils.translation import gettext as _
-from .models import Item, Transaction, Store, Customer, PurchaseOrder, PurchaseOrderLine
-from .forms import ItemForm, PurchaseOrderForm, PurchaseOrderLineForm, PurchaseOrderLineFormSet
+from .models import Item, Transaction, Store, Customer, PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine
+from .forms import ItemForm, PurchaseOrderForm, PurchaseOrderLineForm, PurchaseOrderLineFormSet, GoodsReceiptForm, GoodsReceiptLineFormSet
 from core.forecast_engine import run_ets, run_regression
 import openpyxl
 from datetime import date, timedelta
@@ -525,6 +525,154 @@ def purchase_order_edit(request, po_id):
 
     context = {'form': form, 'formset': formset, 'po': po, 'today': timezone.now().strftime('%B %d, %Y')}
     return render(request, 'core/purchase_order_form.html', context)
+
+
+# ── GOODS RECEIPTS ────────────────────────────────────────────────────────────
+
+@login_required
+@owner_required
+def receive_goods(request, po_id):
+    """
+    Record a delivery against a PurchaseOrder.
+
+    GET  — shows one form row per outstanding PO line, pre-filled with
+           the PO unit price as the 'actual price' (edit if delivery price differs).
+    POST — saves the GoodsReceipt header + lines, auto-creates Transaction records,
+           optionally updates Item cost prices, then updates PO status.
+    """
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+
+    po = get_object_or_404(PurchaseOrder, id=po_id, business=user_profile.business)
+
+    # Only allow receipt for active POs
+    if po.status in ('received', 'cancelled'):
+        messages.error(request, _('This PO is already fully received or cancelled.'))
+        return redirect('purchase_order_detail', po.id)
+
+    outstanding_lines = [line for line in po.lines.select_related('item').all() if line.quantity_remaining() > 0]
+
+    if not outstanding_lines:
+        messages.info(request, _('All items on this PO have already been received.'))
+        return redirect('purchase_order_detail', po.id)
+
+    if request.method == 'POST':
+        receipt_form = GoodsReceiptForm(request.POST)
+        line_formset = GoodsReceiptLineFormSet(request.POST)
+
+        if receipt_form.is_valid() and line_formset.is_valid():
+            receipt = receipt_form.save(commit=False)
+            receipt.po = po
+            receipt.received_by = request.user
+            receipt.save()
+
+            items_received = 0
+            for form in line_formset.forms:
+                data = form.cleaned_data
+                qty = data.get('quantity_received', 0)
+                if not qty:
+                    continue
+
+                po_line = get_object_or_404(PurchaseOrderLine, id=data['po_line_id'], po=po)
+
+                # Cap at remaining to prevent over-receipt
+                qty = min(qty, po_line.quantity_remaining())
+                if qty <= 0:
+                    continue
+
+                # Save the receipt line
+                GoodsReceiptLine.objects.create(
+                    receipt=receipt,
+                    po_line=po_line,
+                    quantity_received=qty,
+                    actual_unit_price=data['actual_unit_price'],
+                    update_cost_price=data.get('update_cost_price', False),
+                    notes=data.get('notes', ''),
+                )
+
+                # Update quantity_received on the PO line
+                po_line.quantity_received += qty
+                po_line.save()
+
+                # Optionally update item cost price
+                if data.get('update_cost_price') and data.get('actual_unit_price'):
+                    item = po_line.item
+                    item.cost_price = data['actual_unit_price']
+                    item.save()
+
+                # Auto-create a stock Transaction so the inventory balance is updated
+                invoice_ref = receipt.delivery_note_no or f'GR-{receipt.id}'
+                Transaction.objects.create(
+                    business=po.business,
+                    item=po_line.item,
+                    date=receipt.received_date,
+                    invoice_no=invoice_ref,
+                    type='Receipt',
+                    qty=qty,
+                    recipient=f'PO-{po.id}',
+                )
+                items_received += 1
+
+            # Update PO status based on cumulative receipt totals
+            po.refresh_from_db()
+            all_lines = list(po.lines.all())
+            if all_lines and all(ln.quantity_remaining() == 0 for ln in all_lines):
+                po.status = 'received'
+            else:
+                po.status = 'part_received'
+            po.save()
+
+            if items_received:
+                messages.success(request, _('Goods receipt recorded. Stock balances updated.'))
+            else:
+                messages.warning(request, _('No quantities entered — nothing was saved.'))
+            return redirect('purchase_order_detail', po.id)
+
+    else:
+        receipt_form = GoodsReceiptForm(initial={'received_date': timezone.now().date()})
+        initial_data = [
+            {
+                'po_line_id': line.id,
+                'quantity_received': line.quantity_remaining(),
+                'actual_unit_price': line.unit_price or 0,
+                'update_cost_price': False,
+            }
+            for line in outstanding_lines
+        ]
+        line_formset = GoodsReceiptLineFormSet(initial=initial_data)
+
+    # Zip lines with their matching form so the template can render them together
+    line_form_pairs = list(zip(outstanding_lines, line_formset.forms))
+
+    context = {
+        'po': po,
+        'receipt_form': receipt_form,
+        'line_formset': line_formset,
+        'line_form_pairs': line_form_pairs,
+        'today': timezone.now().strftime('%B %d, %Y'),
+    }
+    return render(request, 'core/receive_goods.html', context)
+
+
+@login_required
+@owner_required
+def goods_receipt_detail(request, receipt_id):
+    """View a single goods receipt with line-by-line variance analysis."""
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect('home')
+
+    receipt = get_object_or_404(
+        GoodsReceipt.objects.select_related('po', 'received_by').prefetch_related('lines__po_line__item'),
+        id=receipt_id,
+        po__business=user_profile.business,
+    )
+    context = {
+        'receipt': receipt,
+        'today': timezone.now().strftime('%B %d, %Y'),
+    }
+    return render(request, 'core/goods_receipt_detail.html', context)
 
 
 # ── EXPORT STOCK ──────────────────────────────────────────────────────────────

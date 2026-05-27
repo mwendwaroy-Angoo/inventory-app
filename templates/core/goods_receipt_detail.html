@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}GR-{{ receipt.id }} — {% trans 'Goods Receipt' %}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .gr-header-card {
+        background: var(--onyx-card);
+        border: 1px solid #3a3a3a;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .gr-meta-label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #b0b0b0;
+        margin-bottom: 2px;
+    }
+    .gr-meta-value {
+        font-size: 1rem;
+        color: var(--pearl);
+        font-weight: 500;
+    }
+    .lines-table th {
+        background: linear-gradient(135deg, var(--raspberry), var(--raspberry-dark));
+        color: var(--pearl);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+    }
+    .lines-table td {
+        vertical-align: middle;
+        color: var(--pearl);
+        border-color: #3a3a3a;
+    }
+    .variance-up   { color: var(--danger); font-weight: 600; }
+    .variance-down { color: var(--success); font-weight: 600; }
+    .variance-zero { color: #b0b0b0; }
+    .cost-updated-badge {
+        font-size: 0.72rem;
+        background: rgba(46,204,113,0.15);
+        color: var(--success);
+        border-radius: 6px;
+        padding: 1px 7px;
+    }
+    .total-row td { background: rgba(201,168,76,0.08); font-weight: 600; color: var(--gold); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3">
+    <a href="{% url 'purchase_order_detail' receipt.po.id %}" class="btn btn-secondary btn-sm">&#8592; {% trans 'Back to PO' %}</a>
+    <h2 class="page-title mb-0">GR-{{ receipt.id }}</h2>
+</div>
+
+{# ── Header ── #}
+<div class="gr-header-card">
+    <div class="row g-3">
+        <div class="col-6 col-md-3">
+            <div class="gr-meta-label">{% trans 'Purchase Order' %}</div>
+            <div class="gr-meta-value">
+                <a href="{% url 'purchase_order_detail' receipt.po.id %}" style="color: var(--gold);">
+                    PO-{{ receipt.po.id }}
+                </a>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="gr-meta-label">{% trans 'Received Date' %}</div>
+            <div class="gr-meta-value">{{ receipt.received_date }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="gr-meta-label">{% trans 'Delivery Note No.' %}</div>
+            <div class="gr-meta-value">{{ receipt.delivery_note_no|default:'—' }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="gr-meta-label">{% trans 'Received By' %}</div>
+            <div class="gr-meta-value">
+                {% if receipt.received_by %}{{ receipt.received_by.get_full_name|default:receipt.received_by.username }}{% else %}—{% endif %}
+            </div>
+        </div>
+        {% if receipt.notes %}
+        <div class="col-12">
+            <div class="gr-meta-label">{% trans 'Notes' %}</div>
+            <div class="gr-meta-value">{{ receipt.notes }}</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{# ── Lines ── #}
+<div style="background: var(--onyx-card); border: 1px solid #3a3a3a; border-radius: 12px; overflow: hidden;">
+    <div class="px-3 py-3" style="background: linear-gradient(135deg, var(--raspberry), var(--raspberry-dark));">
+        <h5 class="mb-0" style="color: var(--pearl);">{% trans 'Receipt Lines' %}</h5>
+    </div>
+    <div class="table-responsive">
+        <table class="table lines-table mb-0">
+            <thead>
+                <tr>
+                    <th>{% trans 'Item' %}</th>
+                    <th class="text-center">{% trans 'Qty Received' %}</th>
+                    <th class="text-end">{% trans 'PO Price' %}</th>
+                    <th class="text-end">{% trans 'Actual Price' %}</th>
+                    <th class="text-end">{% trans 'Variance' %}</th>
+                    <th class="text-end">{% trans 'Line Total' %}</th>
+                    <th class="text-center">{% trans 'Cost Updated?' %}</th>
+                    <th>{% trans 'Notes' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in receipt.lines.all %}
+                <tr>
+                    <td>
+                        <div style="font-weight:600;">{{ line.po_line.item.description }}</div>
+                        <div style="font-size:0.78rem; color:#b0b0b0;">{{ line.po_line.item.unit }}</div>
+                    </td>
+                    <td class="text-center">{{ line.quantity_received }}</td>
+                    <td class="text-end">
+                        {% if line.po_line.unit_price %}
+                        KES {{ line.po_line.unit_price }}
+                        {% else %}
+                        <span style="color:#b0b0b0;">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">KES {{ line.actual_unit_price }}</td>
+                    <td class="text-end">
+                        {% if line.po_line.unit_price %}
+                            {% if line.price_variance > 0 %}
+                            <span class="variance-up">+KES {{ line.price_variance|floatformat:2 }}</span>
+                            <small class="d-block" style="color:#b0b0b0; font-size:0.75rem;">
+                                +{{ line.price_variance_pct|floatformat:1 }}%
+                            </small>
+                            {% elif line.price_variance < 0 %}
+                            <span class="variance-down">KES {{ line.price_variance|floatformat:2 }}</span>
+                            <small class="d-block" style="color:#b0b0b0; font-size:0.75rem;">
+                                {{ line.price_variance_pct|floatformat:1 }}%
+                            </small>
+                            {% else %}
+                            <span class="variance-zero">±0</span>
+                            {% endif %}
+                        {% else %}
+                        <span style="color:#b0b0b0;">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end" style="color: var(--gold);">
+                        KES {{ line.line_total|floatformat:2 }}
+                    </td>
+                    <td class="text-center">
+                        {% if line.update_cost_price %}
+                        <span class="cost-updated-badge">&#10003; {% trans 'Updated' %}</span>
+                        {% else %}
+                        <span style="color:#b0b0b0; font-size:0.85rem;">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="color:#b0b0b0; font-size:0.85rem;">{{ line.notes|default:'—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr class="total-row">
+                    <td colspan="5" class="text-end">{% trans 'Total Receipt Value' %}:</td>
+                    <td class="text-end">KES {{ receipt.total_received_value|floatformat:2 }}</td>
+                    <td colspan="2"></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% endblock %}

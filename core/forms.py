@@ -2,8 +2,8 @@ from django import forms
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 import json
-from .models import Item, Store, PurchaseOrder, PurchaseOrderLine, Category, BusinessExpense, CapitalInvestment
-from django.forms import inlineformset_factory
+from .models import Item, Store, PurchaseOrder, PurchaseOrderLine, Category, BusinessExpense, CapitalInvestment, GoodsReceipt
+from django.forms import inlineformset_factory, formset_factory
 
 
 class ItemForm(forms.ModelForm):
@@ -233,3 +233,68 @@ class CapitalInvestmentForm(forms.ModelForm):
             'notes': forms.Textarea(attrs={'rows': 2,
                 'placeholder': 'Optional — supplier, loan details, etc.'}),
         }
+
+
+# ──────────────────────────────────────────────────────────────
+# GOODS RECEIPT FORMS
+# ──────────────────────────────────────────────────────────────
+
+class GoodsReceiptForm(forms.ModelForm):
+    """Header details for a goods receipt (delivery note, date, notes)."""
+
+    class Meta:
+        model = GoodsReceipt
+        fields = ['received_date', 'delivery_note_no', 'notes']
+        widgets = {
+            'received_date': forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
+            'delivery_note_no': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': _('e.g. DN-2025-001'),
+            }),
+            'notes': forms.Textarea(attrs={
+                'class': 'form-control',
+                'rows': 2,
+                'placeholder': _('Optional — condition notes, driver name, etc.'),
+            }),
+        }
+        labels = {
+            'received_date': _('Date Received'),
+            'delivery_note_no': _('Delivery Note No.'),
+            'notes': _('Notes'),
+        }
+
+
+class GoodsReceiptLineForm(forms.Form):
+    """
+    One row in the receipt form — one per outstanding PO line.
+    Uses a plain Form (not ModelForm) so we can pre-populate from PO lines.
+
+    The po_line_id hidden field ties each submitted row back to its PurchaseOrderLine.
+    """
+    po_line_id = forms.IntegerField(widget=forms.HiddenInput)
+    quantity_received = forms.IntegerField(
+        min_value=0,
+        widget=forms.NumberInput(attrs={'class': 'form-control qty-input', 'min': '0'}),
+        label=_('Qty Received'),
+    )
+    actual_unit_price = forms.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={'class': 'form-control price-input', 'step': '0.01', 'min': '0'}),
+        label=_('Actual Price (KES)'),
+    )
+    update_cost_price = forms.BooleanField(
+        required=False,
+        label=_('Update cost price'),
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+    )
+    notes = forms.CharField(
+        required=False,
+        max_length=200,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': _('Optional note…')}),
+        label=_('Notes'),
+    )
+
+
+# Formset — extra=0 so only the forms we explicitly provide via `initial` are rendered.
+GoodsReceiptLineFormSet = formset_factory(GoodsReceiptLineForm, extra=0)
