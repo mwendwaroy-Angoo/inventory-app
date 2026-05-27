@@ -238,6 +238,15 @@ class Item(models.Model):
     selling_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     cost_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=3, default='KES', editable=False)
+    is_yield_item = models.BooleanField(
+        default=False,
+        help_text=_('Enable if this item loses weight/volume during processing (e.g. butchery cuts, keg pints).'),
+    )
+    yield_factor = models.DecimalField(
+        max_digits=5, decimal_places=4,
+        null=True, blank=True,
+        help_text=_('Fraction of received quantity that becomes usable stock (e.g. 0.65 = 65% yield).'),
+    )
 
     def current_balance(self):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
@@ -372,6 +381,7 @@ class Transaction(models.Model):
     TYPE_CHOICES = [
         ('Receipt', _('Receipt')),
         ('Issue', _('Issue')),
+        ('Wastage', _('Wastage')),
     ]
 
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='transactions')

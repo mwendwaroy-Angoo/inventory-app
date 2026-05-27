@@ -403,6 +403,37 @@ def add_transaction(request):
                     pass  # Never block transaction recording due to cost price update failure
         # ─────────────────────────────────────────────────────────────────
 
+        # ── YIELD: auto-create Wastage transaction for yield items ────────
+        # When receiving a yield item (e.g. whole goat → sellable cuts),
+        # the usable portion is qty × yield_factor. The remainder is wastage
+        # and must be deducted from stock so the balance reflects usable qty.
+        if trans_type == 'Receipt' and item.is_yield_item and item.yield_factor:
+            received_qty = abs(quantity)  # quantity is positive for receipts
+            wastage_qty = int(round(received_qty * (1 - float(item.yield_factor))))
+            if wastage_qty > 0:
+                Transaction.objects.create(
+                    item=item,
+                    type='Wastage',
+                    qty=-wastage_qty,  # negative to reduce stock
+                    recipient='',
+                    invoice_no=invoice_no,
+                    business=user_profile.business,
+                )
+                usable_qty = received_qty - wastage_qty
+                messages.info(
+                    request,
+                    _(
+                        'Yield applied: %(usable)s %(unit)s usable, '
+                        '%(wastage)s %(unit)s wastage recorded (%(pct)s%% yield).'
+                    ) % {
+                        'usable': usable_qty,
+                        'unit': item.unit,
+                        'wastage': wastage_qty,
+                        'pct': int(float(item.yield_factor) * 100),
+                    },
+                )
+        # ─────────────────────────────────────────────────────────────────
+
         # Count today's transactions for SMS/WhatsApp decision
         daily_count = Transaction.objects.filter(
             business=user_profile.business, date=date.today()
@@ -729,6 +760,8 @@ def item_cost_price(request, item_id):
             "description": item.description,
             "unit": item.unit,
             "selling_price": float(item.selling_price) if item.selling_price else None,
+            "is_yield_item": item.is_yield_item,
+            "yield_factor": float(item.yield_factor) if item.yield_factor else None,
         }
     )
 

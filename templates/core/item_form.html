@@ -130,6 +130,29 @@
             {% bootstrap_field form.reorder_level %}
             {% bootstrap_field form.reorder_quantity %}
 
+            <!-- ── Yield / Processing Section ── -->
+            <div class="section-divider" style="margin-top:1.5rem;"><span>⚗️ {% trans 'Yield / Processing' %}</span></div>
+            <div style="background:rgba(243,156,18,0.05); border:1px solid rgba(243,156,18,0.2); border-radius:10px; padding:1rem; margin-bottom:1rem;">
+                <div class="form-check mb-2">
+                    {{ form.is_yield_item }}
+                    <label class="form-check-label" for="{{ form.is_yield_item.id_for_label }}" style="color:var(--pearl); font-size:0.9rem;">
+                        {{ form.is_yield_item.label }}
+                    </label>
+                </div>
+                <p style="color:#b0b0b0; font-size:0.78rem; margin-bottom:0.75rem; margin-left:1.75rem;">
+                    {% trans 'Enable for items that lose weight or volume during processing before sale (e.g. a whole goat yields 65% sellable cuts, a keg yields ~56 pints from 30L).' %}
+                </p>
+
+                <div id="yieldFactorRow" style="display:none; margin-left:1.75rem;">
+                    {% bootstrap_field form.yield_factor %}
+                    <p style="color:#b0b0b0; font-size:0.75rem; margin-top:-0.5rem;">
+                        {% trans 'Example: 0.65 = 65% of received quantity becomes usable stock. When you record a Receipt, a Wastage transaction for the remainder will be created automatically.' %}
+                    </p>
+                    <div id="yieldFactorHint" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.5rem 0.75rem; font-size:0.82rem; color:var(--gold); display:none;"></div>
+                </div>
+            </div>
+            <!-- ── end Yield Section ── -->
+
             <div class="d-flex gap-2 mt-4">
                 <button type="submit" class="btn btn-primary">
                     {{ action }} {% trans 'Item' %}
@@ -211,6 +234,47 @@
                     }
                 });
             });
+        })();
+        </script>
+
+        <script>
+        // ── Yield factor toggle ───────────────────────────────────────────────
+        (function () {
+            const yieldCheck = document.getElementById('id_is_yield_item');
+            const yieldRow   = document.getElementById('yieldFactorRow');
+            const yieldInput = document.getElementById('id_yield_factor');
+            const yieldHint  = document.getElementById('yieldFactorHint');
+
+            function updateYieldHint() {
+                if (!yieldInput || !yieldHint) return;
+                const val = parseFloat(yieldInput.value);
+                if (isNaN(val) || val <= 0 || val >= 1) {
+                    yieldHint.style.display = 'none';
+                    return;
+                }
+                const pct     = Math.round(val * 100);
+                const wastage = Math.round((1 - val) * 100);
+                yieldHint.textContent = pct + '% usable · ' + wastage + '% wastage — e.g. 100 kg received → ' + pct + ' kg usable, ' + wastage + ' kg wastage';
+                yieldHint.style.display = 'block';
+            }
+
+            function toggleYieldRow() {
+                if (!yieldCheck || !yieldRow) return;
+                if (yieldCheck.checked) {
+                    yieldRow.style.display = 'block';
+                    updateYieldHint();
+                } else {
+                    yieldRow.style.display = 'none';
+                }
+            }
+
+            if (yieldCheck) {
+                yieldCheck.addEventListener('change', toggleYieldRow);
+                toggleYieldRow(); // run on page load (edit mode)
+            }
+            if (yieldInput) {
+                yieldInput.addEventListener('input', updateYieldHint);
+            }
         })();
         </script>
     </div>

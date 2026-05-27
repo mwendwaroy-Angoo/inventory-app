@@ -90,6 +90,33 @@
         display: none;
     }
 
+    /* ── Yield preview ── */
+    #yieldPreview {
+        display: none;
+        background: rgba(243,156,18,0.08);
+        border: 1px solid rgba(243,156,18,0.35);
+        border-radius: 10px;
+        padding: 0.85rem 1.1rem;
+        margin-top: 0.75rem;
+    }
+    #yieldPreview .yp-label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #b0b0b0;
+        margin-bottom: 0.35rem;
+    }
+    #yieldPreview .yp-main {
+        color: var(--warning);
+        font-size: 0.95rem;
+        font-weight: 600;
+    }
+    #yieldPreview .yp-detail {
+        color: #b0b0b0;
+        font-size: 0.8rem;
+        margin-top: 0.2rem;
+    }
+
     /* ── Cost price section ── */
     #costPriceSection { display: none; }
 
@@ -212,6 +239,13 @@
                 <input type="number" name="quantity" id="quantity"
                        class="form-control" min="1" required
                        placeholder="{% trans 'Enter quantity' %}">
+
+                <!-- Yield preview — shown when item is a yield item + type = Receipt -->
+                <div id="yieldPreview">
+                    <div class="yp-label">⚗️ {% trans 'Yield Preview' %}</div>
+                    <div class="yp-main" id="yieldMain">—</div>
+                    <div class="yp-detail" id="yieldDetail"></div>
+                </div>
             </div>
 
             <!-- ════════════════════════════════════════════════════════════
@@ -406,8 +440,12 @@ $(document).ready(function () {
     // ─────────────────────────────────────────────────────────────────────
 
     // Stored previous cost price for variance calculations
-    var storedPrevCost = null;
-    var storedUnit     = '';
+    var storedPrevCost  = null;
+    var storedUnit      = '';
+
+    // Yield state — populated from cost-price AJAX response
+    var storedIsYield   = false;
+    var storedYieldFactor = null;
 
     // ── Select2 inits ──────────────────────────────────────────────────────
     $('#item').select2({
@@ -464,18 +502,52 @@ $(document).ready(function () {
             fetchCostPrice(itemId);
         } else {
             $('#costPriceSection').hide();
+            storedIsYield     = false;
+            storedYieldFactor = null;
+            $('#yieldPreview').hide();
         }
     }
 
     function fetchCostPrice(itemId) {
         $.getJSON('/api/items/' + itemId + '/cost-price/', function (data) {
-            storedPrevCost = data.cost_price;
-            storedUnit     = data.unit || '';
+            storedPrevCost    = data.cost_price;
+            storedUnit        = data.unit || '';
+            storedIsYield     = data.is_yield_item || false;
+            storedYieldFactor = data.yield_factor || null;
             showCostPriceSection(data);
+            updateYieldPreview();
         }).fail(function (xhr) {
             console.warn('Cost price fetch failed:', xhr.status);
+            storedIsYield     = false;
+            storedYieldFactor = null;
             $('#costPriceSection').hide();
+            $('#yieldPreview').hide();
         });
+    }
+
+    // ── Yield preview ──────────────────────────────────────────────────────
+    function updateYieldPreview() {
+        var type   = $('#transType').val();
+        var qty    = parseFloat($('#quantity').val()) || 0;
+        var box    = $('#yieldPreview');
+
+        if (!storedIsYield || !storedYieldFactor || type !== 'Receipt' || qty <= 0) {
+            box.hide();
+            return;
+        }
+
+        var usable  = Math.round(qty * storedYieldFactor);
+        var wastage = Math.round(qty * (1 - storedYieldFactor));
+        var pct     = Math.round(storedYieldFactor * 100);
+        var unit    = storedUnit || 'units';
+
+        $('#yieldMain').text(
+            qty + ' ' + unit + ' {% trans "received" %} → ' +
+            usable + ' ' + unit + ' {% trans "usable" %} (' +
+            wastage + ' ' + unit + ' {% trans "wastage" %})'
+        );
+        $('#yieldDetail').text(pct + '% {% trans "yield — wastage transaction will be created automatically." %}');
+        box.show();
     }
 
     function showCostPriceSection(data) {
@@ -588,7 +660,8 @@ $(document).ready(function () {
     // ── Event bindings ────────────────────────────────────────────────────
     $('#newCostPrice').on('input', recalculate);
     $('#deliveryFee').on('input', recalculate);
-    $('#quantity').on('input', recalculate);
+    $('#quantity').on('input', function () { recalculate(); updateYieldPreview(); });
+    $('#transType').on('change', updateYieldPreview);
     $('#item').on('change', checkCostPriceSection);
 
     // ── Init ──────────────────────────────────────────────────────────────

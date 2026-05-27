@@ -31,6 +31,8 @@ class ItemForm(forms.ModelForm):
             'safety_days',
             'category',
             'tags',
+            'is_yield_item',
+            'yield_factor',
         ]
         widgets = {
             'description': forms.TextInput(attrs={'placeholder': _('e.g. Cement 50kg')}),
@@ -44,6 +46,12 @@ class ItemForm(forms.ModelForm):
             'reorder_quantity': forms.NumberInput(attrs={'placeholder': '0'}),
             'lead_time_days': forms.NumberInput(attrs={'placeholder': '7'}),
             'safety_days': forms.NumberInput(attrs={'placeholder': '2'}),
+            'yield_factor': forms.NumberInput(attrs={
+                'placeholder': '0.65',
+                'step': '0.0001',
+                'min': '0.01',
+                'max': '0.9999',
+            }),
         }
 
     def __init__(self, *args, business=None, show_cost_price=False, **kwargs):
@@ -61,6 +69,8 @@ class ItemForm(forms.ModelForm):
         self.fields['reorder_quantity'].label = _('Reorder Quantity')
         self.fields['lead_time_days'].label = _('Lead Time (days)')
         self.fields['safety_days'].label = _('Safety Days')
+        self.fields['is_yield_item'].label = _('This item has a yield factor (loses weight/volume during processing)')
+        self.fields['yield_factor'].label = _('Yield Factor (0–1, e.g. 0.65 = 65%)')
 
         if business:
             self.fields['store'].queryset = Store.objects.filter(business=business)
@@ -99,6 +109,8 @@ class ItemForm(forms.ModelForm):
         self.fields['reorder_quantity'].required = False
         self.fields['lead_time_days'].required = False
         self.fields['safety_days'].required = False
+        self.fields['is_yield_item'].required = False
+        self.fields['yield_factor'].required = False
 
         # Hide cost_price from staff
         if not show_cost_price:
