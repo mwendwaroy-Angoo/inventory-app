@@ -216,7 +216,6 @@
 
             <!-- ════════════════════════════════════════════════════════════
                  COST PRICE & DELIVERY FEE SECTION (Receipt only)
-                 Shown when item is selected + type = Receipt
             ═══════════════════════════════════════════════════════════════ -->
             <div id="costPriceSection">
                 <div class="section-divider">
@@ -224,10 +223,9 @@
                 </div>
                 <div class="cost-price-box">
 
-                    <!-- Row 1: Previous → Delivered unit price ── -->
+                    <!-- Previous → Delivered unit price -->
                     <div class="d-flex align-items-start gap-3 mb-4 flex-wrap">
 
-                        <!-- Previous cost price (read-only) -->
                         <div style="min-width:140px;">
                             <span class="cp-label">{% trans 'Previous Cost Price' %}</span>
                             <div class="prev-value" id="prevCostDisplay">—</div>
@@ -236,7 +234,6 @@
 
                         <div style="color:#555; font-size:1.3rem; margin-top:1rem;">→</div>
 
-                        <!-- Delivered unit price input -->
                         <div style="flex:1; min-width:180px;">
                             <span class="cp-label">{% trans 'Delivered Unit Price' %}</span>
                             <div class="d-flex align-items-center gap-2">
@@ -250,14 +247,14 @@
 
                     </div>
 
-                    <!-- Row 2: Delivery fee ── -->
+                    <!-- Delivery fee -->
                     <div class="mb-3">
                         <div class="d-flex align-items-center gap-2 mb-1">
                             <span class="cp-label mb-0">🚚 {% trans 'Delivery / Transport Fee' %}</span>
                             <span style="color:#888; font-size:0.72rem;">({% trans 'optional' %})</span>
                         </div>
-                        <div class="d-flex align-items-center gap-2">
-                            <div style="position:relative; flex:1; max-width:220px;">
+                        <div class="d-flex align-items-center gap-3">
+                            <div style="position:relative; max-width:200px;">
                                 <span style="position:absolute; left:10px; top:50%; transform:translateY(-50%);
                                              color:#888; font-size:0.82rem; pointer-events:none;">KES</span>
                                 <input type="number" name="delivery_fee" id="deliveryFee"
@@ -265,13 +262,13 @@
                                        style="padding-left:2.5rem;"
                                        placeholder="0">
                             </div>
-                            <div style="color:#b0b0b0; font-size:0.8rem; flex:1;">
+                            <div style="color:#b0b0b0; font-size:0.8rem;">
                                 {% trans 'Total transport cost for this delivery' %}
                             </div>
                         </div>
                     </div>
 
-                    <!-- Row 3: Landed cost summary bar (shown when delivery fee > 0) ── -->
+                    <!-- Landed cost bar (visible when delivery fee > 0) -->
                     <div id="landedCostBar">
                         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
                             <div>
@@ -286,25 +283,25 @@
                         </div>
                         <div style="margin-top:0.6rem; padding-top:0.6rem; border-top:1px solid rgba(110,231,183,0.15);">
                             <div style="color:#b0b0b0; font-size:0.75rem;">
-                                💡 {% trans 'The landed cost per unit will be used to update the item\'s cost price (if checkbox below is ticked), giving you accurate profit margins in Sales & P&L.' %}
+                                💡 {% trans 'The landed cost per unit will be saved as the new cost price, giving accurate profit margins in Sales & P&L.' %}
                             </div>
                         </div>
                     </div>
 
-                    <!-- Row 4: Update cost price checkbox ── -->
+                    <!-- Update checkbox -->
                     <div class="form-check mt-3">
                         <input type="checkbox" name="update_cost_price" id="updateCostPrice"
                                class="form-check-input" checked>
                         <label class="form-check-label" for="updateCostPrice"
                                style="font-size:0.875rem; color:#d0d0d0;">
-                            <span id="updateCheckboxLabel">{% trans "Update this item's cost price with the delivered price" %}</span>
+                            <span id="updateCheckboxLabel">{% trans 'Update cost price with delivered price' %}</span>
                         </label>
                     </div>
                     <div style="color:#888; font-size:0.75rem; margin-top:0.25rem; margin-left:1.75rem;">
                         {% trans 'Affects profit margin calculations in Sales & P&L.' %}
                     </div>
 
-                    <!-- No previous price notice ── -->
+                    <!-- No previous price notice -->
                     <div id="noPrevCostNote"
                          style="display:none; margin-top:0.75rem;
                                 background:rgba(243,156,18,0.1); border:1px solid rgba(243,156,18,0.3);
@@ -394,21 +391,33 @@
 <script>
 $(document).ready(function () {
 
-    const receivingStoreLabel    = "📍 {% trans 'Receiving Store' %}";
-    const customerRecipientLabel = "👤 {% trans 'Customer / Recipient' %}";
+    // ── Translated strings declared as clean JS variables ─────────────────
+    // Rule: {% trans %} tags must NEVER appear inside function calls,
+    // string concatenations, or escaped quotes. Always declare up top.
+    var LABEL_RECEIVING_STORE    = '📍 {% trans "Receiving Store" %}';
+    var LABEL_CUSTOMER_RECIPIENT = '👤 {% trans "Customer / Recipient" %}';
+    var LABEL_SET_LANDED_COST    = '{% trans "Set cost price to landed cost" %}';
+    var LABEL_UPDATE_UNIT_PRICE  = '{% trans "Update cost price with delivered price" %}';
+    var LABEL_PRICE_UP           = '{% trans "up" %}';
+    var LABEL_PRICE_DOWN         = '{% trans "down" %}';
+    var LABEL_NO_CHANGE          = '{% trans "No change" %}';
+    var LABEL_SAME_AS_PREV       = '{% trans "Same as previous cost price." %}';
+    var LABEL_MARGIN_DECREASE    = '{% trans "Margin will decrease if selling price is unchanged." %}';
+    var LABEL_MARGIN_IMPROVE     = '{% trans "Margin will improve if selling price is unchanged." %}';
+    // ─────────────────────────────────────────────────────────────────────
 
     // Stored previous cost price for variance calculations
-    let storedPrevCost = null;
-    let storedUnit     = '';
+    var storedPrevCost = null;
+    var storedUnit     = '';
 
     // ── Select2 inits ──────────────────────────────────────────────────────
     $('#item').select2({
-        placeholder: "{% trans 'Type to search item...' %}",
+        placeholder: '{% trans "Type to search item..." %}',
         allowClear: true,
         width: '100%'
     });
     $('.select2-customer').select2({
-        placeholder: "{% trans 'Select or type customer name...' %}",
+        placeholder: '{% trans "Select or type customer name..." %}',
         allowClear: true,
         width: '100%',
         tags: true,
@@ -416,13 +425,13 @@ $(document).ready(function () {
 
     // ── Toggle Receipt / Issue UI ──────────────────────────────────────────
     function toggleRecipient() {
-        const type = $('#transType').val();
+        var type = $('#transType').val();
         if (type === 'Receipt') {
             $('#storeField').show();
             $('#customerField').hide();
             $('#storeField select').attr('name', 'recipient');
             $('#customerSelect').attr('name', '');
-            $('#recipientLabel').text(receivingStoreLabel);
+            $('#recipientLabel').text(LABEL_RECEIVING_STORE);
             $('#paymentMethodRow').hide();
             checkCostPriceSection();
         } else {
@@ -430,7 +439,7 @@ $(document).ready(function () {
             $('#customerField').show();
             $('#storeField select').attr('name', '');
             $('#customerSelect').attr('name', 'recipient');
-            $('#recipientLabel').text(customerRecipientLabel);
+            $('#recipientLabel').text(LABEL_CUSTOMER_RECIPIENT);
             $('#paymentMethodRow').show();
             $('#costPriceSection').hide();
         }
@@ -448,10 +457,10 @@ $(document).ready(function () {
         }
     });
 
-    // ── Cost price section logic ───────────────────────────────────────────
+    // ── Cost price section ─────────────────────────────────────────────────
     function checkCostPriceSection() {
-        const type   = $('#transType').val();
-        const itemId = $('#item').val();
+        var type   = $('#transType').val();
+        var itemId = $('#item').val();
         if (type === 'Receipt' && itemId) {
             fetchCostPrice(itemId);
         } else {
@@ -471,10 +480,10 @@ $(document).ready(function () {
     }
 
     function showCostPriceSection(data) {
-        const prevDisplay = $('#prevCostDisplay');
-        const prevUnit    = $('#prevCostUnit');
-        const noPrevNote  = $('#noPrevCostNote');
-        const newInput    = $('#newCostPrice');
+        var prevDisplay = $('#prevCostDisplay');
+        var prevUnit    = $('#prevCostUnit');
+        var noPrevNote  = $('#noPrevCostNote');
+        var newInput    = $('#newCostPrice');
 
         if (data.cost_price !== null && data.cost_price !== undefined) {
             prevDisplay.text('KES ' + fmt(data.cost_price));
@@ -492,80 +501,80 @@ $(document).ready(function () {
         recalculate();
     }
 
-    // ── Master recalculate — runs on any relevant input change ─────────────
+    // ── Master recalculate ────────────────────────────────────────────────
     function recalculate() {
-        const unitPrice  = parseFloat($('#newCostPrice').val())  || 0;
-        const deliveryFee = parseFloat($('#deliveryFee').val())  || 0;
-        const qty        = parseFloat($('#quantity').val())      || 0;
+        var unitPrice    = parseFloat($('#newCostPrice').val())  || 0;
+        var deliveryFee  = parseFloat($('#deliveryFee').val())   || 0;
+        var qty          = parseFloat($('#quantity').val())      || 0;
 
         updateVariancePill(unitPrice);
         updateLandedCost(unitPrice, deliveryFee, qty);
         updateCheckboxLabel(unitPrice, deliveryFee, qty);
     }
 
-    // ── Variance pill (unit price vs previous) ─────────────────────────────
+    // ── Variance pill ─────────────────────────────────────────────────────
     function updateVariancePill(unitPrice) {
-        const pill = $('#variancePill');
-        const note = $('#varianceNote');
-        const prev = storedPrevCost;
+        var pill = $('#variancePill');
+        var note = $('#varianceNote');
+        var prev = storedPrevCost;
 
         if (prev === null || isNaN(unitPrice) || unitPrice <= 0) {
             pill.hide(); note.text(''); return;
         }
 
-        const diff = unitPrice - prev;
-        const pct  = ((diff / prev) * 100).toFixed(1);
-        const absDiff = fmt(Math.abs(diff));
+        var diff    = unitPrice - prev;
+        var pct     = ((diff / prev) * 100).toFixed(1);
+        var absDiff = fmt(Math.abs(diff));
 
         if (Math.abs(diff) < 0.005) {
-            pill.text('No change').css({ background: 'rgba(110,231,183,0.15)', color: '#6ee7b7' }).show();
-            note.text('Same as previous cost price.');
+            pill.text(LABEL_NO_CHANGE).css({ background: 'rgba(110,231,183,0.15)', color: '#6ee7b7' }).show();
+            note.text(LABEL_SAME_AS_PREV);
         } else if (diff > 0) {
             pill.text('▲ +' + pct + '%').css({ background: 'rgba(248,113,113,0.15)', color: '#f87171' }).show();
-            note.html('Unit price <strong style="color:#f87171;">up</strong> KES ' + absDiff + ' — margin will decrease if selling price is unchanged.');
+            note.html('Unit price <strong style="color:#f87171;">' + LABEL_PRICE_UP + '</strong> KES ' + absDiff + ' — ' + LABEL_MARGIN_DECREASE);
         } else {
             pill.text('▼ ' + pct + '%').css({ background: 'rgba(110,231,183,0.15)', color: '#6ee7b7' }).show();
-            note.html('Unit price <strong style="color:#6ee7b7;">down</strong> KES ' + absDiff + ' — margin will improve if selling price is unchanged.');
+            note.html('Unit price <strong style="color:#6ee7b7;">' + LABEL_PRICE_DOWN + '</strong> KES ' + absDiff + ' — ' + LABEL_MARGIN_IMPROVE);
         }
     }
 
-    // ── Landed cost bar ────────────────────────────────────────────────────
+    // ── Landed cost bar ───────────────────────────────────────────────────
     function updateLandedCost(unitPrice, deliveryFee, qty) {
-        const bar = $('#landedCostBar');
+        var bar = $('#landedCostBar');
 
-        // Only show the bar when there is a delivery fee
         if (deliveryFee <= 0 || unitPrice <= 0) {
             bar.hide();
             return;
         }
 
-        const totalGoods  = unitPrice * (qty > 0 ? qty : 1);
-        const totalLanded = totalGoods + deliveryFee;
-        const landedPerUnit = qty > 0 ? totalLanded / qty : (unitPrice + deliveryFee);
+        var effectiveQty  = qty > 0 ? qty : 1;
+        var totalGoods    = unitPrice * effectiveQty;
+        var totalLanded   = totalGoods + deliveryFee;
+        var landedPerUnit = totalLanded / effectiveQty;
 
         $('#landedCostDisplay').text('KES ' + fmt(landedPerUnit) + ' / ' + (storedUnit || 'unit'));
         $('#totalLandedDisplay').text('KES ' + fmt(totalLanded));
 
-        let breakdown = 'KES ' + fmt(unitPrice) + ' × ' + (qty > 0 ? qty : '?') + ' ' + (storedUnit || 'units');
+        var breakdown = 'KES ' + fmt(unitPrice) + ' × ' + effectiveQty + ' ' + (storedUnit || 'units');
         breakdown    += ' + KES ' + fmt(deliveryFee) + ' delivery';
-        if (qty > 0) breakdown += ' = KES ' + fmt(totalLanded) + ' total';
+        if (qty > 0) { breakdown += ' = KES ' + fmt(totalLanded) + ' total'; }
         $('#landedCostBreakdown').text(breakdown);
 
         bar.show();
     }
 
-    // ── Checkbox label — reflects whether landed cost will be used ─────────
+    // ── Checkbox label ────────────────────────────────────────────────────
     function updateCheckboxLabel(unitPrice, deliveryFee, qty) {
-        const label = $('#updateCheckboxLabel');
+        var label = $('#updateCheckboxLabel');
         if (deliveryFee > 0 && unitPrice > 0 && qty > 0) {
-            const totalLanded  = (unitPrice * qty) + deliveryFee;
-            const landedPerUnit = totalLanded / qty;
+            var landedPerUnit = ((unitPrice * qty) + deliveryFee) / qty;
             label.html(
-                "{% trans \"Update this item's cost price to landed cost\" %}" +
-                ' <strong style="color:#6ee7b7;">KES ' + fmt(landedPerUnit) + ' / ' + (storedUnit || 'unit') + '</strong>'
+                LABEL_SET_LANDED_COST +
+                ' <strong style="color:#6ee7b7;">KES ' + fmt(landedPerUnit) +
+                ' / ' + (storedUnit || 'unit') + '</strong>'
             );
         } else {
-            label.text("{% trans \"Update this item's cost price with the delivered price\" %}");
+            label.text(LABEL_UPDATE_UNIT_PRICE);
         }
     }
 
@@ -577,14 +586,13 @@ $(document).ready(function () {
         });
     }
 
-    // ── Event bindings ─────────────────────────────────────────────────────
+    // ── Event bindings ────────────────────────────────────────────────────
     $('#newCostPrice').on('input', recalculate);
     $('#deliveryFee').on('input', recalculate);
     $('#quantity').on('input', recalculate);
     $('#item').on('change', checkCostPriceSection);
-    $('#transType').on('change', toggleRecipient);
 
-    // ── Init ───────────────────────────────────────────────────────────────
+    // ── Init ──────────────────────────────────────────────────────────────
     toggleRecipient();
 });
 </script>
