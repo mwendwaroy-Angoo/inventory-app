@@ -240,6 +240,8 @@ unique_together: (supplier, requirement)
 - Onboarding tutorial overlay (role-specific, 4 role variants)
 - Feedback/reviews system
 - County/Sub-county/Ward seeded geography
+  - The `County` model lives in the `core` app (not accounts).
+  - `Customer.county` is FK to `core.County`, SET_NULL, optional (migration 0036).
 
 ---
 
@@ -278,14 +280,13 @@ For businesses with waste/yield factors:
 - Keg bar reconciliation: keg volume → expected vs actual pints sold
 - Requires: yield_factor field on Item, yield tracking on transactions
 
-### 3. County-Level Sales Heatmap
-Visual map showing sales by county.
-BLOCKER: Requires adding `county` FK to Customer and Order models first.
-Steps:
-1. Add `county` FK to Customer model
-2. Add `county` FK to Order model (or derive from customer)
-3. Migration
-4. Build heatmap view using Leaflet.js + Kenya GeoJSON
+### 3. County-Level Sales Heatmap — COMPLETE
+
+- `Customer.county` FK added (migration 0036)
+- `county_heatmap` view in `core/analytics_views.py`
+- Leaflet choropleth at `/analytics/heatmap/` — gold scale, dark theme
+- Join path: `Transaction.recipient` → `Customer.name` → `Customer.county`
+- To populate map: assign counties to customers in Manage → Customers
 
 ---
 
