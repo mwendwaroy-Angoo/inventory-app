@@ -106,6 +106,7 @@ from core.analytics_views import (
     capital_investment_edit,
     capital_investment_delete,
     compliance_checklist,
+    county_heatmap,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -307,6 +308,7 @@ urlpatterns = [
     # ── Compliance & Licensing ──
     path("analytics/compliance/", compliance_checklist, name="compliance_checklist"),
     # ── Analytics ──
+    path("analytics/heatmap/", county_heatmap, name="county_heatmap"),
     path("analytics/", analytics_dashboard, name="analytics"),
     path("analytics/forecast/", forecast_api, name="forecast_api"),
     path("api/v1/analytics/trends/", analytics_api, name="analytics_api"),

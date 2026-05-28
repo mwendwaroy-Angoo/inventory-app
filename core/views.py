@@ -1169,8 +1169,12 @@ def customer_list(request):
     if not user_profile:
         return redirect("home")
 
-    customers = Customer.objects.filter(business=user_profile.business)
-    context = {"customers": customers}
+    from core.models import County as CoreCounty
+    customers = Customer.objects.filter(business=user_profile.business).select_related('county')
+    context = {
+        "customers": customers,
+        "counties": CoreCounty.objects.all().order_by('name'),
+    }
     return render(request, "core/customer_list.html", context)
 
 
@@ -1180,17 +1184,27 @@ def add_customer(request):
     if not user_profile:
         return redirect("home")
 
+    from core.models import County as CoreCounty
+
     if request.method == "POST":
         name = request.POST.get("name", "").strip()
         phone = request.POST.get("phone", "").strip()
         location = request.POST.get("location", "").strip()
+        county_id = request.POST.get("county_id", "").strip()
 
         if name:
+            county = None
+            if county_id:
+                try:
+                    county = CoreCounty.objects.get(id=county_id)
+                except CoreCounty.DoesNotExist:
+                    pass
             Customer.objects.create(
                 business=user_profile.business,
                 name=name,
                 phone=phone,
                 location=location,
+                county=county,
             )
             messages.success(
                 request,
@@ -1203,7 +1217,10 @@ def add_customer(request):
     return render(
         request,
         "core/customer_list.html",
-        {"customers": Customer.objects.filter(business=user_profile.business)},
+        {
+            "customers": Customer.objects.filter(business=user_profile.business).select_related('county'),
+            "counties": CoreCounty.objects.all().order_by('name'),
+        },
     )
 
 

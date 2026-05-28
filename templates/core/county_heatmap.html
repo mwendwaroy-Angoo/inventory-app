@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Sales Heatmap' %} — {% trans 'Kenya Counties' %}{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<style>
+    #map {
+        height: 560px;
+        border-radius: 0 0 12px 12px;
+        background: var(--onyx);
+    }
+    .map-wrapper {
+        background: var(--onyx-card);
+        border: 1px solid #3a3a3a;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 1.5rem;
+    }
+    .map-header {
+        background: linear-gradient(135deg, var(--raspberry), var(--raspberry-dark));
+        padding: 0.85rem 1.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    .map-header h5 { color: var(--pearl); margin: 0; font-size: 1rem; }
+    .map-stat {
+        font-size: 0.82rem;
+        color: rgba(240,236,228,0.75);
+    }
+    .map-stat strong { color: var(--gold); }
+
+    /* Leaflet overrides for dark theme */
+    .leaflet-container { background: #1a1a1a !important; }
+    .leaflet-tile-pane { filter: brightness(0.45) saturate(0.4); }
+    .info-box {
+        background: rgba(26,26,26,0.92);
+        border: 1px solid #3a3a3a;
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        color: var(--pearl);
+        font-size: 0.85rem;
+        min-width: 180px;
+        backdrop-filter: blur(4px);
+    }
+    .info-box .county-name { color: var(--gold); font-weight: 700; font-size: 1rem; }
+    .info-box .revenue-val { color: #6ee7b7; font-size: 1.1rem; font-weight: 700; }
+    .info-box .txn-count   { color: #b0b0b0; font-size: 0.78rem; }
+    .info-box .no-data     { color: #555; font-style: italic; }
+
+    /* Legend */
+    .map-legend {
+        background: rgba(26,26,26,0.92);
+        border: 1px solid #3a3a3a;
+        border-radius: 8px;
+        padding: 0.6rem 0.8rem;
+    }
+    .map-legend h6 { color: var(--gold); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
+    .legend-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: #b0b0b0; margin-bottom: 2px; }
+    .legend-swatch { width: 18px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+
+    /* Summary table */
+    .summary-card {
+        background: var(--onyx-card);
+        border: 1px solid #3a3a3a;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 1.5rem;
+    }
+    .summary-card-header {
+        background: rgba(201,168,76,0.1);
+        padding: 0.75rem 1.25rem;
+        border-bottom: 1px solid #3a3a3a;
+    }
+    .summary-card-header h6 { color: var(--gold); margin: 0; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .summary-table th {
+        background: transparent;
+        color: #b0b0b0;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        border-color: #3a3a3a;
+        padding: 0.5rem 1rem;
+    }
+    .summary-table td {
+        color: var(--pearl);
+        border-color: #3a3a3a;
+        padding: 0.6rem 1rem;
+        vertical-align: middle;
+    }
+    .rank-badge {
+        display: inline-block;
+        width: 22px; height: 22px;
+        border-radius: 50%;
+        background: rgba(201,168,76,0.15);
+        color: var(--gold);
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-align: center;
+        line-height: 22px;
+    }
+    .rank-1 { background: rgba(201,168,76,0.9); color: #1a1a1a; }
+    .rank-2 { background: rgba(201,168,76,0.6); color: #1a1a1a; }
+    .rank-3 { background: rgba(201,168,76,0.4); color: #1a1a1a; }
+    .revenue-bar-wrap { background: #2a2a2a; border-radius: 4px; height: 6px; width: 120px; display:inline-block; vertical-align: middle; }
+    .revenue-bar      { background: var(--gold); border-radius: 4px; height: 6px; }
+    .no-data-note {
+        background: rgba(243,156,18,0.07);
+        border: 1px solid rgba(243,156,18,0.2);
+        border-radius: 10px;
+        padding: 1.5rem;
+        color: #b0b0b0;
+        font-size: 0.9rem;
+    }
+    .no-data-note a { color: var(--gold); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+    <h2 class="page-title mb-0">🗺️ {% trans 'Sales Heatmap' %}</h2>
+    <span style="color:#b0b0b0; font-size:0.85rem;">{% trans 'Kenya Counties' %}</span>
+    <a href="{% url 'customer_list' %}" class="btn btn-secondary btn-sm ms-auto">
+        👥 {% trans 'Manage Customers' %}
+    </a>
+</div>
+
+{% if counties_with_sales == 0 %}
+<div class="no-data-note">
+    <strong style="color: var(--warning);">⚠️ {% trans 'No county data yet.' %}</strong><br>
+    {% trans 'To see sales on this map, assign counties to your customers in' %}
+    <a href="{% url 'customer_list' %}">{% trans 'Manage Customers' %}</a>.
+    {% trans 'Once customers have counties, any Issue transactions where the recipient matches a customer will appear here.' %}
+</div>
+{% endif %}
+
+{# ── Map ── #}
+<div class="map-wrapper">
+    <div class="map-header">
+        <h5>{% trans 'Revenue by County' %}</h5>
+        <span class="map-stat">
+            <strong>{{ counties_with_sales }}</strong> {% trans 'counties' %} ·
+            {% trans 'Total' %}: <strong>KES {{ total_mapped_revenue|floatformat:0 }}</strong>
+        </span>
+    </div>
+    <div id="map"></div>
+</div>
+
+{# ── Top counties table ── #}
+{% if top_counties %}
+<div class="summary-card">
+    <div class="summary-card-header">
+        <h6>{% trans 'Top Counties by Revenue' %}</h6>
+    </div>
+    <div class="table-responsive">
+        <table class="table summary-table mb-0">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>{% trans 'County' %}</th>
+                    <th class="text-end">{% trans 'Revenue (KES)' %}</th>
+                    <th class="text-end">{% trans 'Transactions' %}</th>
+                    <th>{% trans 'Share' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in top_counties %}
+                <tr>
+                    <td>
+                        <span class="rank-badge {% if forloop.counter == 1 %}rank-1{% elif forloop.counter == 2 %}rank-2{% elif forloop.counter == 3 %}rank-3{% endif %}">
+                            {{ forloop.counter }}
+                        </span>
+                    </td>
+                    <td style="font-weight:600;">{{ row.county_name }}</td>
+                    <td class="text-end" style="color: var(--gold);">
+                        {{ row.total_revenue|floatformat:2 }}
+                    </td>
+                    <td class="text-end" style="color:#b0b0b0;">{{ row.transaction_count }}</td>
+                    <td>
+                        {% if total_mapped_revenue > 0 %}
+                        {% widthratio row.total_revenue total_mapped_revenue 100 as pct %}
+                        <span class="revenue-bar-wrap">
+                            <span class="revenue-bar" style="width:{{ pct }}%;"></span>
+                        </span>
+                        <span style="color:#b0b0b0; font-size:0.78rem; margin-left:6px;">{{ pct }}%</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+(function () {
+    // ── Data from Django ──────────────────────────────────────────────────────
+    // Keys are uppercase county names; values have total_revenue + transaction_count
+    var salesData = {{ heatmap_json|safe }};
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function fmt(n) {
+        return 'KES ' + parseFloat(n).toLocaleString('en-KE', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        });
+    }
+
+    function getFeatureName(feature) {
+        // mikekamau/kenya-counties-geojson uses COUNTY_NAM; fall back to other properties
+        return (
+            feature.properties.COUNTY_NAM ||
+            feature.properties.county ||
+            feature.properties.name ||
+            ''
+        ).toString().toUpperCase().trim();
+    }
+
+    function lookupCounty(feature) {
+        var name = getFeatureName(feature);
+        return salesData[name] || null;
+    }
+
+    // ── Color scale (dark gold gradient) ─────────────────────────────────────
+    var maxRevenue = 0;
+    Object.values(salesData).forEach(function (d) {
+        if (d.total_revenue > maxRevenue) maxRevenue = d.total_revenue;
+    });
+
+    function getColor(revenue) {
+        if (!revenue || revenue <= 0 || maxRevenue === 0) {
+            return '#2a2a2a'; // no data — dark onyx
+        }
+        // Linear interpolation between low gold (0.25 opacity) and full gold
+        var ratio = Math.min(revenue / maxRevenue, 1);
+        // Interpolate alpha: 0.2 → 1.0
+        var alpha = 0.2 + ratio * 0.8;
+        return 'rgba(201,168,76,' + alpha.toFixed(3) + ')';
+    }
+
+    function style(feature) {
+        var data    = lookupCounty(feature);
+        var revenue = data ? data.total_revenue : 0;
+        return {
+            fillColor:   getColor(revenue),
+            weight:      1,
+            opacity:     1,
+            color:       '#444',
+            fillOpacity: 1,
+        };
+    }
+
+    // ── Map init ──────────────────────────────────────────────────────────────
+    var map = L.map('map', {
+        center: [0.2, 37.9], // Kenya center
+        zoom: 6,
+        minZoom: 5,
+        maxZoom: 10,
+        zoomControl: true,
+    });
+
+    // OSM tile layer (darkened via CSS filter in .leaflet-tile-pane)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19,
+    }).addTo(map);
+
+    // ── Tooltip / info panel ──────────────────────────────────────────────────
+    var info = L.control({ position: 'topright' });
+
+    info.onAdd = function () {
+        this._div = L.DomUtil.create('div', 'info-box');
+        this.update(null);
+        return this._div;
+    };
+
+    info.update = function (feature) {
+        if (!feature) {
+            this._div.innerHTML = '<span class="no-data">{% trans "Hover over a county" %}</span>';
+            return;
+        }
+        var name   = getFeatureName(feature);
+        var data   = lookupCounty(feature);
+        var html   = '<div class="county-name">' + (feature.properties.COUNTY_NAM || name) + '</div>';
+        if (data && data.total_revenue > 0) {
+            html += '<div class="revenue-val">' + fmt(data.total_revenue) + '</div>';
+            html += '<div class="txn-count">' + data.transaction_count + ' {% trans "transaction(s)" %}</div>';
+        } else {
+            html += '<div class="no-data">{% trans "No sales recorded" %}</div>';
+        }
+        this._div.innerHTML = html;
+    };
+
+    info.addTo(map);
+
+    // ── Legend ────────────────────────────────────────────────────────────────
+    var legend = L.control({ position: 'bottomright' });
+
+    legend.onAdd = function () {
+        var div = L.DomUtil.create('div', 'map-legend');
+        div.innerHTML =
+            '<h6>{% trans "Revenue" %}</h6>' +
+            '<div class="legend-row"><span class="legend-swatch" style="background:#2a2a2a;border:1px solid #444;"></span> {% trans "No data" %}</div>' +
+            '<div class="legend-row"><span class="legend-swatch" style="background:rgba(201,168,76,0.25);"></span> {% trans "Low" %}</div>' +
+            '<div class="legend-row"><span class="legend-swatch" style="background:rgba(201,168,76,0.6);"></span> {% trans "Medium" %}</div>' +
+            '<div class="legend-row"><span class="legend-swatch" style="background:rgba(201,168,76,1);"></span> {% trans "High" %}</div>';
+        return div;
+    };
+
+    legend.addTo(map);
+
+    // ── GeoJSON layer ─────────────────────────────────────────────────────────
+    function onEachFeature(feature, layer) {
+        layer.on({
+            mouseover: function (e) {
+                var l = e.target;
+                l.setStyle({ weight: 2.5, color: '#c9a84c', fillOpacity: 0.95 });
+                l.bringToFront();
+                info.update(feature);
+            },
+            mouseout: function (e) {
+                geojsonLayer.resetStyle(e.target);
+                info.update(null);
+            },
+            click: function (e) {
+                map.fitBounds(e.target.getBounds());
+            },
+        });
+    }
+
+    var geojsonLayer;
+
+    fetch('https://raw.githubusercontent.com/mikekamau/kenya-counties-geojson/master/counties.geojson')
+        .then(function (r) { return r.json(); })
+        .then(function (geojson) {
+            geojsonLayer = L.geoJSON(geojson, {
+                style: style,
+                onEachFeature: onEachFeature,
+            }).addTo(map);
+            map.fitBounds(geojsonLayer.getBounds());
+        })
+        .catch(function (err) {
+            console.error('Failed to load Kenya GeoJSON:', err);
+            document.getElementById('map').insertAdjacentHTML(
+                'afterbegin',
+                '<div style="padding:1rem;color:#f87171;font-size:0.85rem;">⚠️ {% trans "Could not load county boundaries — check your internet connection." %}</div>'
+            );
+        });
+})();
+</script>
+{% endblock %}

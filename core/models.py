@@ -136,6 +136,12 @@ class Customer(models.Model):
     name = models.CharField(max_length=200)
     phone = models.CharField(max_length=20, blank=True)
     location = models.CharField(max_length=200, blank=True)
+    county = models.ForeignKey(
+        'core.County',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='customers',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

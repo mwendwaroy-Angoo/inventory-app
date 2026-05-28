@@ -3,6 +3,7 @@ Analytics views — advanced reports and chart data.
 
 Available views:
     /analytics/                  — Full analytics dashboard (HTML)
+    /analytics/heatmap/          — County-level sales heatmap (Leaflet choropleth)
     /api/v1/analytics/trends/    — JSON: daily revenue/profit/orders for charts
     /analytics/expenses/         — List business expenses
     /analytics/expenses/add/     — Add a business expense
@@ -24,7 +25,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance
+from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County
 from core.forms import BusinessExpenseForm, CapitalInvestmentForm
 from core.views import get_user_profile, owner_required
 
@@ -861,4 +862,72 @@ def compliance_checklist(request):
         'declared_mand':   len(declared_mand),
         'remaining_mand':  total_mand - len(declared_mand),
         'has_requirements': len(checklist) > 0,
+    })
+
+
+# ── COUNTY SALES HEATMAP ──────────────────────────────────────────────────────
+
+@login_required
+@owner_required
+def county_heatmap(request):
+    """
+    Choropleth map of sales revenue by Kenya county.
+
+    Join path: Transaction.recipient (text) → Customer.name → Customer.county
+    Only Issue transactions where the recipient matches a Customer record with a county
+    set will appear on the map.
+    """
+    user_profile = request.user.userprofile
+    business = user_profile.business
+
+    # Build name → county mapping for customers of this business with county set
+    customer_county = {
+        c.name: c.county
+        for c in Customer.objects.filter(
+            business=business,
+            county__isnull=False,
+        ).select_related('county')
+    }
+
+    # Aggregate Issue transactions by county
+    county_revenue = defaultdict(lambda: {'county': None, 'revenue': 0.0, 'count': 0})
+
+    issue_txns = Transaction.objects.filter(
+        business=business,
+        type='Issue',
+    ).select_related('item')
+
+    for txn in issue_txns:
+        county = customer_county.get(txn.recipient)
+        if not county:
+            continue
+        key = county.name
+        county_revenue[key]['county'] = county
+        county_revenue[key]['revenue'] += txn.revenue()
+        county_revenue[key]['count'] += 1
+
+    # Sort by revenue descending
+    sorted_data = sorted(
+        [
+            {
+                'county_name': name,
+                'county_name_upper': name.upper(),
+                'total_revenue': round(data['revenue'], 2),
+                'transaction_count': data['count'],
+            }
+            for name, data in county_revenue.items()
+        ],
+        key=lambda x: x['total_revenue'],
+        reverse=True,
+    )
+
+    # Build a lookup dict keyed by uppercase county name for fast JS matching
+    heatmap_lookup = {row['county_name_upper']: row for row in sorted_data}
+
+    return render(request, 'core/county_heatmap.html', {
+        'heatmap_json': json.dumps(heatmap_lookup),
+        'top_counties': sorted_data[:10],
+        'total_mapped_revenue': sum(r['total_revenue'] for r in sorted_data),
+        'counties_with_sales': len(sorted_data),
+        'today': date.today().strftime('%B %d, %Y'),
     })

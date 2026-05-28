@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Customers' %} — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-card {
+        background: var(--onyx-card);
+        border: 1px solid #3a3a3a;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 1.5rem;
+    }
+    .page-card-header {
+        background: linear-gradient(135deg, var(--raspberry), var(--raspberry-dark));
+        padding: 1rem 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    .page-card-header h5 { color: var(--pearl); margin: 0; }
+    .customers-table th {
+        background: rgba(201,168,76,0.1);
+        color: var(--gold);
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        border-color: #3a3a3a;
+    }
+    .customers-table td {
+        vertical-align: middle;
+        color: var(--pearl);
+        border-color: #3a3a3a;
+    }
+    .county-badge {
+        font-size: 0.75rem;
+        background: rgba(201,168,76,0.12);
+        color: var(--gold);
+        border-radius: 6px;
+        padding: 2px 8px;
+    }
+    .no-county {
+        font-size: 0.78rem;
+        color: #b0b0b0;
+    }
+    .add-form-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #3a3a3a;
+        border-radius: 10px;
+        padding: 1.25rem;
+        margin: 1rem 1.5rem 1.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+    <h2 class="page-title mb-0">{% trans 'Customers' %}</h2>
+    <a href="{% url 'county_heatmap' %}" class="btn btn-secondary btn-sm ms-auto">
+        🗺️ {% trans 'Sales Heatmap' %}
+    </a>
+</div>
+
+{% if messages %}
+{% for message in messages %}
+<div class="alert alert-{{ message.tags }} alert-dismissible fade show">
+    {{ message }}
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
+</div>
+{% endfor %}
+{% endif %}
+
+{# ── Customer List ── #}
+<div class="page-card">
+    <div class="page-card-header">
+        <h5>{% trans 'Customer Directory' %}</h5>
+        <span style="color:rgba(240,236,228,0.7); font-size:0.85rem;">{{ customers|length }} {% trans 'customer(s)' %}</span>
+    </div>
+    {% if customers %}
+    <div class="table-responsive">
+        <table class="table customers-table mb-0">
+            <thead>
+                <tr>
+                    <th>{% trans 'Name' %}</th>
+                    <th>{% trans 'Phone' %}</th>
+                    <th>{% trans 'Location' %}</th>
+                    <th>{% trans 'County' %}</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for customer in customers %}
+                <tr>
+                    <td style="font-weight:600;">{{ customer.name }}</td>
+                    <td>{{ customer.phone|default:'—' }}</td>
+                    <td>{{ customer.location|default:'—' }}</td>
+                    <td>
+                        {% if customer.county %}
+                        <span class="county-badge">{{ customer.county.name }}</span>
+                        {% else %}
+                        <span class="no-county">{% trans 'Not set' %}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        <form method="post" action="{% url 'delete_customer' customer.id %}" style="display:inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-danger"
+                                    onclick="return confirm('{% trans "Delete this customer?" %}')">
+                                {% trans 'Delete' %}
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="p-4 text-center" style="color:#b0b0b0;">
+        {% trans 'No customers yet. Add your first customer below.' %}
+    </div>
+    {% endif %}
+</div>
+
+{# ── Add Customer Form ── #}
+<div class="page-card">
+    <div class="page-card-header">
+        <h5>➕ {% trans 'Add Customer' %}</h5>
+    </div>
+    <div class="add-form-card">
+        <form method="post" action="{% url 'add_customer' %}">
+            {% csrf_token %}
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label" style="color:var(--pearl);">{% trans 'Name' %} *</label>
+                    <input type="text" name="name" class="form-control" required
+                           placeholder="{% trans 'Customer name' %}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label" style="color:var(--pearl);">{% trans 'Phone' %}</label>
+                    <input type="text" name="phone" class="form-control"
+                           placeholder="{% trans 'e.g. 0712345678' %}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" style="color:var(--pearl);">{% trans 'Location / Area' %}</label>
+                    <input type="text" name="location" class="form-control"
+                           placeholder="{% trans 'e.g. Westlands, Nairobi' %}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" style="color:var(--pearl);">{% trans 'County' %}</label>
+                    <select name="county_id" class="form-select">
+                        <option value="">— {% trans 'Select county' %} —</option>
+                        {% for county in counties %}
+                        <option value="{{ county.id }}">{{ county.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-1 d-flex align-items-end">
+                    <button type="submit" class="btn btn-gold w-100">{% trans 'Add' %}</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
