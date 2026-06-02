@@ -161,7 +161,6 @@ def _calc_avg_payment_days(customer, business):
 
 
 @login_required
-@owner_required
 def debt_dashboard(request):
     user_profile = get_user_profile(request)
     business = user_profile.business
@@ -263,10 +262,6 @@ def record_debt_payment(request, customer_id):
 @require_POST
 def send_debt_reminder(request, customer_id):
     user_profile = get_user_profile(request)
-    if not user_profile.is_owner:
-        messages.error(request, _('Only the owner can send payment reminders.'))
-        return redirect('customer_debt_profile', customer_id=customer_id)
-
     business = user_profile.business
     customer = get_object_or_404(Customer, id=customer_id, business=business)
     data = _get_customer_debt_data(customer, business)
