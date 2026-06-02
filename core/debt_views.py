@@ -283,16 +283,23 @@ def send_debt_reminder(request, customer_id):
 
     sent = False
     try:
+        from django.conf import settings
         import africastalking
-        africastalking.initialize(
-            username=__import__('os').getenv('AT_USERNAME', ''),
-            api_key=__import__('os').getenv('AT_API_KEY', ''),
-        )
+        at_username = getattr(settings, 'AT_USERNAME', '')
+        at_api_key = getattr(settings, 'AT_API_KEY', '')
+        if not at_username or not at_api_key:
+            raise ValueError('AT_USERNAME or AT_API_KEY not configured in settings')
+        africastalking.initialize(username=at_username, api_key=at_api_key)
         sms = africastalking.SMS
-        sms.send(msg, [customer.phone])
+        response = sms.send(msg, [customer.phone])
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info('Debt reminder SMS sent to %s: %s', customer.phone, response)
         sent = True
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error('Debt reminder SMS failed to %s: %s', customer.phone, str(e))
 
     if sent:
         messages.success(
