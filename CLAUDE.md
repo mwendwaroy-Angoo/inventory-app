@@ -59,6 +59,7 @@ min_order_amount, min_order_per_km
 mpesa_till, mpesa_paybill, mpesa_paybill_account, mpesa_pochi, mpesa_phone
 preferred_payment_channel
 business_start_date, pre_app_cumulative_profit
+credit_window_days  # PositiveIntegerField, default 30 — global overdue threshold (days)
 ```
 
 ### accounts.UserProfile
@@ -95,7 +96,11 @@ business (FK), name, description
 
 ### core.Customer
 ```python
-business (FK), name, phone, email, address
+business (FK), name, phone, location, county (FK core.County, SET_NULL)
+credit_approved (BooleanField, default False)
+credit_limit (DecimalField, nullable — max outstanding KES allowed)
+expected_payment_days (PositiveIntegerField, nullable — personal window, cannot exceed business credit_window_days)
+created_at
 ```
 
 ### core.Notification
@@ -117,6 +122,25 @@ issuing_authority, approximate_cost, reference_url
 business (FK), requirement (FK to BusinessTypeRequirement)
 is_declared, notes, declared_at
 unique_together: (business, requirement)
+```
+
+### core.CustomerDebtPayment
+```python
+customer (FK), business (FK)
+amount_paid (DecimalField), payment_method (cash/mpesa)
+paid_at (DateTimeField), notes, recorded_by (FK User)
+related_name='debt_payments'
+# Outstanding balance = sum(credit Issue transactions) - sum(CustomerDebtPayments)
+# Payments reduce balance FIFO (oldest debt cleared first) — logic in debt_views.py
+```
+
+### core.RevenueTarget
+```python
+business (FK), store (FK core.Store, nullable — null = business-wide target)
+target_type (daily/weekly/monthly), amount (DecimalField)
+unique_together: (business, target_type, store)
+# Views: revenue_target_settings (GET/POST), revenue_target_progress (JSON)
+# Template tag: {% store_target lookup period store.id %} — core/templatetags/dict_extras.py
 ```
 
 ### core.SupplierRequirement (NEW — just built, not yet deployed)
@@ -229,9 +253,27 @@ unique_together: (supplier, requirement)
 - STK Push integration
 
 ### Customer & Orders
-- Customer management
+
+- Customer management (with county, credit approval, credit limit, payment days)
 - Order management and fulfillment
 - Delivery assignment to riders
+
+### Debt Tracker
+
+- Debt dashboard (`/debt/`) — all customers with outstanding balances, aged debt
+- Customer debt profile — FIFO balance, aged buckets (current / 1–30 / 31–60 / 60+ days)
+- Credit score engine: Reliable / Moderate / High Risk / New
+- Record Payment modal, Send SMS Reminder (Africa's Talking, silent if unconfigured)
+- Per-customer credit settings (expected_payment_days, credit_limit)
+- Toggle credit approval per customer (owner only)
+
+### Revenue Targets
+
+- Target settings page (`/analytics/targets/`) — daily/weekly/monthly per business and store
+- Dashboard widget on home page — colour-coded progress bars (green ≥100%, amber ≥50%, red <50%)
+- JSON progress endpoint at `/analytics/targets/progress/`
+- Credit window setting (global overdue days) on the same page
+- `core/templatetags/dict_extras.py` — `get_item` filter + `store_target` tag
 
 ### Other
 - Notification system (bell icon, polling every 30s)
@@ -265,20 +307,23 @@ Files to add/integrate:
 
 ## Pending Features (Not Yet Built — Priority Order)
 
-### 1. Receipt of Goods — Variable Pricing (NEXT)
-When supplier delivers goods, actual price on delivery note often differs from PO price.
-Requirements:
-- Accept actual delivered price per line item (not just PO price)
-- Record variance (delivered price vs PO price) — visible to owner
-- Option to update item `cost_price` when owner accepts delivery
-- Handle partial deliveries (some items delivered, others pending)
-- Affects: Transaction model or new GoodsReceipt model, PO views, receipt template
+### 1. Receipt of Goods — Variable Pricing — COMPLETE
 
-### 2. Yield-Based Items
-For businesses with waste/yield factors:
-- Butchery: animal carcass → yield of sellable cuts (e.g. 100kg cow → 65kg cuts)
-- Keg bar reconciliation: keg volume → expected vs actual pints sold
-- Requires: yield_factor field on Item, yield tracking on transactions
+- `GoodsReceipt` + `GoodsReceiptLine` models (migration 0034)
+- Actual delivery price captured per line; variance vs PO price tracked
+- `update_cost_price` flag updates `Item.cost_price` on receipt
+- Auto-creates `Transaction(type='Receipt')` per line; advances PO status
+- Views: `receive_goods`, `goods_receipt_detail` in `core/views.py`
+- URLs: `/purchase-orders/<id>/receive/`, `/goods-receipts/<id>/`
+
+### 2. Yield-Based Items — COMPLETE
+
+- `Item.is_yield_item` (BooleanField) + `Item.yield_factor` (0–1 Decimal) — migration 0035
+- `Transaction.TYPE_CHOICES` extended with `Wastage`
+- `add_transaction` auto-creates a negative `Wastage` transaction on Receipt
+- `item_cost_price` AJAX endpoint returns `is_yield_item` + `yield_factor`
+- Live yield preview in `add_transaction.html` (e.g. "100kg → 65kg usable, 35kg wastage")
+- Yield fields in `item_form.html` with toggle + inline hint
 
 ### 3. County-Level Sales Heatmap — COMPLETE
 
