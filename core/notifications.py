@@ -7,6 +7,26 @@ from django.utils.html import strip_tags
 logger = logging.getLogger(__name__)
 
 
+def normalize_ke_phone(phone):
+    """
+    Normalize a Kenyan phone number to international format for Africa's Talking.
+    Handles: 07XXXXXXXX → +2547XXXXXXXX
+              254XXXXXXXXX → +254XXXXXXXXX
+              +254XXXXXXXXX → unchanged
+    Returns None if the number cannot be normalized.
+    """
+    if not phone:
+        return None
+    phone = phone.strip().replace(' ', '').replace('-', '')
+    if phone.startswith('+254') and len(phone) == 13:
+        return phone  # Already correct
+    if phone.startswith('254') and len(phone) == 12:
+        return '+' + phone
+    if phone.startswith('0') and len(phone) == 10:
+        return '+254' + phone[1:]
+    return None  # Unrecognizable format
+
+
 def notify_transaction_async(transaction_id, business_id, daily_count=0, user_id=None):
     """Dispatch notification in a background thread so the HTTP response
     is never blocked by email / SMS / WhatsApp API calls.
@@ -78,6 +98,11 @@ def send_email_notification(to_email, subject, html_message, text_message=None):
 def send_sms_notification(message, phone_number):
     if not phone_number:
         return False
+    original_phone = phone_number
+    phone_number = normalize_ke_phone(phone_number)
+    if not phone_number:
+        logger.warning('SMS skipped — could not normalize phone number: %s', original_phone)
+        return False
     try:
         import africastalking
 
@@ -85,10 +110,6 @@ def send_sms_notification(message, phone_number):
             username=settings.AT_USERNAME, api_key=settings.AT_API_KEY
         )
         sms = africastalking.SMS
-        if phone_number.startswith("0"):
-            phone_number = "+254" + phone_number[1:]
-        elif not phone_number.startswith("+"):
-            phone_number = "+254" + phone_number
         response = sms.send(message, [phone_number])
         logger.info(f"SMS sent to {phone_number}: {response}")
         return True

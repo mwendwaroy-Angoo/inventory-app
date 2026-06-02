@@ -281,6 +281,12 @@ def send_debt_reminder(request, customer_id):
         f"Thank you for your continued patronage."
     )
 
+    from core.notifications import normalize_ke_phone
+    normalized_phone = normalize_ke_phone(customer.phone)
+    if not normalized_phone:
+        messages.error(request, _('Could not send reminder — invalid phone number format: %(phone)s') % {'phone': customer.phone})
+        return redirect('customer_debt_profile', customer_id=customer_id)
+
     sent = False
     try:
         from django.conf import settings as _settings
@@ -291,16 +297,16 @@ def send_debt_reminder(request, customer_id):
             raise ValueError('AT_USERNAME or AT_API_KEY not set in settings')
         africastalking.initialize(username=at_username, api_key=at_api_key)
         sms = africastalking.SMS
-        response = sms.send(msg, [customer.phone])
+        response = sms.send(msg, [normalized_phone])
         import logging
         logging.getLogger(__name__).info(
-            'Debt reminder SMS to %s: %s', customer.phone, response
+            'Debt reminder SMS to %s: %s', normalized_phone, response
         )
         sent = True
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(
-            'Debt reminder SMS failed to %s: %s', customer.phone, str(e)
+            'Debt reminder SMS failed to %s: %s', normalized_phone, str(e)
         )
         sent = False
 
