@@ -138,6 +138,36 @@ def home(request):
                     )[:20],
                 }
             )
+
+            # Revenue targets progress for dashboard widget
+            try:
+                from core.models import RevenueTarget
+                from datetime import date as _date
+                _today = _date.today()
+                _week_start = _today - timedelta(days=_today.weekday())
+                _month_start = _today.replace(day=1)
+
+                def _period_rev(start, end):
+                    txns = Transaction.objects.filter(
+                        business=business, type='Issue',
+                        date__gte=start, date__lte=end,
+                    ).select_related('item')
+                    return sum(t.revenue() for t in txns)
+
+                def _get_target(ttype):
+                    t = RevenueTarget.objects.filter(
+                        business=business, target_type=ttype, store__isnull=True
+                    ).first()
+                    return float(t.amount) if t else 0
+
+                context['revenue_targets'] = {
+                    'daily':   {'target': _get_target('daily'),   'actual': round(_period_rev(_today, _today), 2)},
+                    'weekly':  {'target': _get_target('weekly'),  'actual': round(_period_rev(_week_start, _today), 2)},
+                    'monthly': {'target': _get_target('monthly'), 'actual': round(_period_rev(_month_start, _today), 2)},
+                }
+            except Exception:
+                context['revenue_targets'] = None
+
         except Exception:
             context["error"] = _("Profile not found. Please contact support.")
     else:

@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Debt Tracker' %} — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .score-badge {
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 0.2rem 0.65rem;
+        border-radius: 20px;
+    }
+    .debt-table th {
+        color: var(--gold);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        border-color: #2a2a2a;
+        background: rgba(201,168,76,0.06);
+    }
+    .debt-table td {
+        vertical-align: middle;
+        border-color: #2a2a2a;
+        color: var(--pearl);
+    }
+    .overdue-row { border-left: 3px solid #f87171 !important; }
+    .clear-row   { border-left: 3px solid #6ee7b7 !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-start justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="page-title mb-1">💳 {% trans 'Debt Tracker' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem; margin-bottom:0;">
+            {% trans 'Outstanding customer credit balances' %} ·
+            {% trans 'Credit window' %}: <strong style="color:var(--gold);">{{ credit_window }} {% trans 'days' %}</strong>
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'revenue_target_settings' %}" class="btn btn-outline-secondary btn-sm">
+            ⚙️ {% trans 'Credit Settings' %}
+        </a>
+        <a href="{% url 'customer_list' %}" class="btn btn-outline-secondary btn-sm">
+            👥 {% trans 'Customers' %}
+        </a>
+    </div>
+</div>
+
+<!-- Summary cards -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card border-0" style="background:rgba(255,255,255,0.04);">
+            <div class="card-body text-center py-3">
+                <div style="font-size:1.6rem; font-weight:700; color:var(--gold);">
+                    KES {{ total_outstanding|floatformat:0 }}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em;">
+                    {% trans 'Total Outstanding' %}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card border-0" style="background:rgba(255,255,255,0.04);">
+            <div class="card-body text-center py-3">
+                <div style="font-size:1.6rem; font-weight:700; color:#f87171;">
+                    KES {{ total_overdue|floatformat:0 }}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em;">
+                    {% trans 'Overdue' %}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card border-0" style="background:rgba(255,255,255,0.04);">
+            <div class="card-body text-center py-3">
+                <div style="font-size:1.6rem; font-weight:700; color:#e0e0e0;">
+                    {{ customer_count }}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em;">
+                    {% trans 'Debtors' %}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card border-0" style="background:rgba(255,255,255,0.04);">
+            <div class="card-body text-center py-3">
+                <div style="font-size:1.6rem; font-weight:700; color:#6ee7b7;">
+                    {{ credit_window }}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em;">
+                    {% trans 'Day Window' %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if rows %}
+<div class="card border-0" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important;">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 debt-table">
+            <thead>
+                <tr>
+                    <th class="ps-4 py-3">{% trans 'Customer' %}</th>
+                    <th class="py-3">{% trans 'Outstanding' %}</th>
+                    <th class="py-3">{% trans 'Aged Debt' %}</th>
+                    <th class="py-3 text-center">{% trans 'Credit Score' %}</th>
+                    <th class="py-3 text-center">{% trans 'Credit Approved' %}</th>
+                    <th class="py-3 pe-4 text-end">{% trans 'Action' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                {% if row.outstanding > 0 %}
+                <tr class="{% if row.has_overdue %}overdue-row{% else %}clear-row{% endif %}">
+                    <td class="ps-4 py-3">
+                        <div style="font-weight:600;">{{ row.customer.name }}</div>
+                        {% if row.customer.phone %}
+                        <div style="color:#888; font-size:0.78rem;">{{ row.customer.phone }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="py-3">
+                        <div style="font-weight:700; font-size:1rem;
+                                    color:{% if row.has_overdue %}#f87171{% else %}#fbbf24{% endif %};">
+                            KES {{ row.outstanding|floatformat:2 }}
+                        </div>
+                        <div style="color:#888; font-size:0.75rem;">
+                            {% trans 'of' %} KES {{ row.total_credit|floatformat:2 }} {% trans 'total' %}
+                        </div>
+                    </td>
+                    <td class="py-3">
+                        {% if row.aged.current > 0 %}
+                        <div style="color:#fbbf24; font-size:0.8rem;">
+                            KES {{ row.aged.current|floatformat:0 }} {% trans 'current' %}
+                        </div>
+                        {% endif %}
+                        {% if row.aged.overdue_30 > 0 %}
+                        <div style="color:#f87171; font-size:0.8rem;">
+                            KES {{ row.aged.overdue_30|floatformat:0 }} {% trans '1–30 days overdue' %}
+                        </div>
+                        {% endif %}
+                        {% if row.aged.overdue_60 > 0 %}
+                        <div style="color:#ef4444; font-size:0.8rem; font-weight:600;">
+                            KES {{ row.aged.overdue_60|floatformat:0 }} {% trans '31–60 days overdue' %}
+                        </div>
+                        {% endif %}
+                        {% if row.aged.overdue_90 > 0 %}
+                        <div style="color:#dc2626; font-size:0.8rem; font-weight:700;">
+                            KES {{ row.aged.overdue_90|floatformat:0 }} {% trans '60+ days overdue' %}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td class="py-3 text-center">
+                        <span class="score-badge"
+                              style="background: rgba({{ row.score_color }}, 0.15);
+                                     color: {{ row.score_color }};
+                                     border: 1px solid {{ row.score_color }};">
+                            {{ row.score_label }}
+                        </span>
+                        <div style="margin-top:4px;">
+                            <div style="height:4px; background:#2a2a2a; border-radius:2px; width:80px; margin:0 auto;">
+                                <div style="height:100%; border-radius:2px;
+                                            background:{{ row.score_color }};
+                                            width:{{ row.score_pct }}%;"></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="py-3 text-center">
+                        {% if row.customer.credit_approved %}
+                        <span class="badge" style="background:rgba(110,231,183,0.15); color:#6ee7b7; border:1px solid rgba(110,231,183,0.3);">
+                            ✓ {% trans 'Approved' %}
+                        </span>
+                        {% else %}
+                        <span class="badge" style="background:rgba(255,255,255,0.06); color:#888;">
+                            {% trans 'Not approved' %}
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td class="py-3 pe-4 text-end">
+                        <a href="{% url 'customer_debt_profile' row.customer.id %}"
+                           class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem;">
+                            {% trans 'View Profile' %} →
+                        </a>
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% else %}
+<div class="card border-0 text-center py-5" style="background:rgba(255,255,255,0.03);">
+    <div style="font-size:2.5rem; margin-bottom:0.75rem;">🎉</div>
+    <h6 style="color:var(--gold); margin-bottom:0.4rem;">{% trans 'No Outstanding Debts' %}</h6>
+    <p style="color:#b0b0b0; font-size:0.875rem; margin-bottom:0;">
+        {% trans 'All customer accounts are clear.' %}
+    </p>
+</div>
+{% endif %}
+
+{% endblock %}

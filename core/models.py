@@ -142,6 +142,19 @@ class Customer(models.Model):
         on_delete=models.SET_NULL,
         related_name='customers',
     )
+    credit_approved = models.BooleanField(
+        default=False,
+        help_text='Is this customer approved to buy on credit?',
+    )
+    credit_limit = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        null=True, blank=True,
+        help_text='Maximum outstanding credit balance allowed (KES).',
+    )
+    expected_payment_days = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Expected days this customer takes to pay. Cannot exceed the business credit window.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -1027,3 +1040,100 @@ class GoodsReceiptLine(models.Model):
     @property
     def line_total(self):
         return (self.quantity_received or 0) * float(self.actual_unit_price or 0)
+
+
+# ────────────────────────────────────────────────
+# CUSTOMER CREDIT / DEBT
+# ────────────────────────────────────────────────
+
+class CustomerDebtPayment(models.Model):
+    """
+    Records a payment made by a customer towards their outstanding credit balance.
+
+    Outstanding balance = sum of all credit Issue transactions for the customer
+                        - sum of all CustomerDebtPayments for the customer.
+
+    Payments are not linked to specific transactions — they reduce the total
+    balance using FIFO logic (oldest debt is cleared first) in the views.
+    """
+    PAYMENT_METHOD_CHOICES = [
+        ('cash',  _('Cash')),
+        ('mpesa', _('M-Pesa')),
+    ]
+
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.CASCADE,
+        related_name='debt_payments',
+    )
+    business = models.ForeignKey(
+        'accounts.Business',
+        on_delete=models.CASCADE,
+        related_name='customer_debt_payments',
+    )
+    amount_paid = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(
+        max_length=10,
+        choices=PAYMENT_METHOD_CHOICES,
+        default='cash',
+    )
+    paid_at = models.DateTimeField(default=timezone.now)
+    notes = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='debt_payments_recorded',
+    )
+
+    class Meta:
+        ordering = ['-paid_at']
+        verbose_name = 'Customer Debt Payment'
+        verbose_name_plural = 'Customer Debt Payments'
+
+    def __str__(self):
+        return f"{self.customer.name} paid KES {self.amount_paid:,.2f} on {self.paid_at.strftime('%d %b %Y')}"
+
+
+# ────────────────────────────────────────────────
+# REVENUE TARGETS
+# ────────────────────────────────────────────────
+
+class RevenueTarget(models.Model):
+    """
+    Owner-set revenue targets per period (daily / weekly / monthly).
+    Optionally scoped to a specific store for multi-store businesses.
+    Only one active target per (business, target_type, store) combination.
+    """
+    TARGET_TYPE_CHOICES = [
+        ('daily',   _('Daily')),
+        ('weekly',  _('Weekly')),
+        ('monthly', _('Monthly')),
+    ]
+
+    business = models.ForeignKey(
+        'accounts.Business',
+        on_delete=models.CASCADE,
+        related_name='revenue_targets',
+    )
+    store = models.ForeignKey(
+        'core.Store',
+        on_delete=models.CASCADE,
+        null=True, blank=True,
+        related_name='revenue_targets',
+        help_text='Leave blank for a business-wide target.',
+    )
+    target_type = models.CharField(max_length=10, choices=TARGET_TYPE_CHOICES)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['business', 'target_type', 'store']
+        ordering = ['target_type']
+        verbose_name = 'Revenue Target'
+        verbose_name_plural = 'Revenue Targets'
+
+    def __str__(self):
+        store_label = f' ({self.store.name})' if self.store else ' (All Stores)'
+        return f"{self.business.name} — {self.get_target_type_display()} KES {self.amount:,.0f}{store_label}"

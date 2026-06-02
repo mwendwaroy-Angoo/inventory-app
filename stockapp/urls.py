@@ -107,6 +107,16 @@ from core.analytics_views import (
     capital_investment_delete,
     compliance_checklist,
     county_heatmap,
+    revenue_target_settings,
+    revenue_target_progress,
+)
+from core.debt_views import (
+    debt_dashboard,
+    customer_debt_profile,
+    record_debt_payment,
+    send_debt_reminder,
+    toggle_credit_approval,
+    update_customer_credit_settings,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -179,6 +189,16 @@ urlpatterns = [
         "customers/delete/<int:customer_id>/", delete_customer, name="delete_customer"
     ),
     path("ajax/customers/", ajax_customers, name="ajax_customers"),
+    # ── Debt Tracker ──────────────────────────────────────────────────────────
+    path("debt/", debt_dashboard, name="debt_dashboard"),
+    path("debt/<int:customer_id>/", customer_debt_profile, name="customer_debt_profile"),
+    path("debt/<int:customer_id>/payment/", record_debt_payment, name="record_debt_payment"),
+    path("debt/<int:customer_id>/reminder/", send_debt_reminder, name="send_debt_reminder"),
+    path("debt/<int:customer_id>/toggle-credit/", toggle_credit_approval, name="toggle_credit_approval"),
+    path("debt/<int:customer_id>/settings/", update_customer_credit_settings, name="update_customer_credit_settings"),
+    # ── Revenue Targets ───────────────────────────────────────────────────────
+    path("analytics/targets/", revenue_target_settings, name="revenue_target_settings"),
+    path("analytics/targets/progress/", revenue_target_progress, name="revenue_target_progress"),
     path("sales/", sales_dashboard, name="sales_dashboard"),
     path("export/sales/", export_sales_excel, name="export_sales"),
     path("notifications/", notifications_list, name="notifications"),

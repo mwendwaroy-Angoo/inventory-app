@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% load i18n dict_extras %}
+
+{% block title %}{% trans 'Revenue Targets' %} — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .target-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        margin-bottom: 1.25rem;
+    }
+    .target-card-header {
+        padding: 0.85rem 1.25rem;
+        border-bottom: 1px solid #2a2a2a;
+    }
+    .target-card-header h6 {
+        color: var(--gold);
+        font-family: 'Playfair Display', serif;
+        margin: 0;
+    }
+    .period-icon { font-size: 1.3rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-start justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="page-title mb-1">🎯 {% trans 'Revenue Targets & Credit Settings' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem; margin-bottom:0;">
+            {% trans 'Set daily, weekly, and monthly revenue goals. Track progress on your dashboard.' %}
+        </p>
+    </div>
+    <a href="{% url 'analytics' %}" class="btn btn-outline-secondary btn-sm">
+        ← {% trans 'Back to Analytics' %}
+    </a>
+</div>
+
+<form method="post">
+    {% csrf_token %}
+
+    <!-- Revenue Targets -->
+    {% for type_val, type_label in target_types %}
+    <div class="target-card">
+        <div class="target-card-header d-flex align-items-center gap-2">
+            <span class="period-icon">
+                {% if type_val == 'daily' %}📅{% elif type_val == 'weekly' %}📆{% else %}🗓️{% endif %}
+            </span>
+            <h6>{{ type_label }} {% trans 'Revenue Target' %}</h6>
+        </div>
+        <div class="p-4">
+            <div class="row g-3">
+
+                <!-- Business-wide target -->
+                <div class="col-md-4">
+                    <label style="color:#c0c0c0; font-size:0.82rem; display:block; margin-bottom:0.3rem;">
+                        🏢 {% trans 'Business-Wide' %}
+                    </label>
+                    <div style="position:relative;">
+                        <span style="position:absolute; left:10px; top:50%; transform:translateY(-50%);
+                                     color:#888; font-size:0.82rem; pointer-events:none;">KES</span>
+                        <input type="number" name="target_{{ type_val }}"
+                               class="form-control" step="100" min="0"
+                               style="padding-left:2.5rem;"
+                               value="{{ target_lookup|get_item:type_val }}"
+                               placeholder="{% trans 'No target set' %}">
+                    </div>
+                </div>
+
+                <!-- Per-store targets -->
+                {% for store in stores %}
+                <div class="col-md-4">
+                    <label style="color:#c0c0c0; font-size:0.82rem; display:block; margin-bottom:0.3rem;">
+                        🏪 {{ store.name }}
+                    </label>
+                    <div style="position:relative;">
+                        <span style="position:absolute; left:10px; top:50%; transform:translateY(-50%);
+                                     color:#888; font-size:0.82rem; pointer-events:none;">KES</span>
+                        <input type="number"
+                               name="target_{{ type_val }}_store_{{ store.id }}"
+                               class="form-control" step="100" min="0"
+                               style="padding-left:2.5rem;"
+                               value="{% store_target target_lookup type_val store.id %}"
+                               placeholder="{% trans 'No target' %}">
+                    </div>
+                </div>
+                {% endfor %}
+
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    <!-- Credit window settings -->
+    <div class="target-card">
+        <div class="target-card-header d-flex align-items-center gap-2">
+            <span class="period-icon">💳</span>
+            <h6>{% trans 'Credit Window Setting' %}</h6>
+        </div>
+        <div class="p-4">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label style="color:#c0c0c0; font-size:0.82rem; display:block; margin-bottom:0.3rem;">
+                        {% trans 'Global Credit Window (days)' %}
+                    </label>
+                    <input type="number" name="credit_window_days"
+                           class="form-control" min="1" max="365"
+                           value="{{ credit_window }}">
+                    <div style="color:#888; font-size:0.75rem; margin-top:0.3rem;">
+                        {% trans 'Maximum days any customer debt can remain outstanding before being flagged as overdue. Applies to all customers unless overridden per customer.' %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-gold px-5">
+            💾 {% trans 'Save All Settings' %}
+        </button>
+    </div>
+
+</form>
+
+{% endblock %}

@@ -1,0 +1,443 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ customer.name }} — {% trans 'Debt Profile' %}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stat-pill {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 10px;
+        padding: 0.75rem 1.1rem;
+    }
+    .stat-pill .sp-label {
+        color: #b0b0b0;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.2rem;
+    }
+    .stat-pill .sp-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .section-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        margin-bottom: 1.25rem;
+    }
+    .section-card-header {
+        padding: 0.85rem 1.25rem;
+        border-bottom: 1px solid #2a2a2a;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .section-card-header h6 {
+        color: var(--gold);
+        font-family: 'Playfair Display', serif;
+        margin: 0;
+        font-size: 0.95rem;
+    }
+    .txn-row { border-color: #2a2a2a !important; font-size: 0.85rem; }
+    .txn-row td { color: var(--pearl) !important; border-color: #2a2a2a !important; padding: 0.6rem 0.75rem !important; vertical-align: middle; }
+    .aged-bar { height: 8px; border-radius: 4px; background: #2a2a2a; overflow: hidden; }
+    .aged-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'debt_dashboard' %}" style="color:var(--gold);">{% trans 'Debt Tracker' %}</a>
+    <span class="mx-1">›</span>
+    <span>{{ customer.name }}</span>
+</nav>
+
+<!-- Header -->
+<div class="d-flex align-items-start justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="page-title mb-1">{{ customer.name }}</h1>
+        <div style="color:#b0b0b0; font-size:0.875rem;">
+            {% if customer.phone %}<span>📞 {{ customer.phone }}</span>{% endif %}
+            {% if customer.location %}<span class="ms-3">📍 {{ customer.location }}</span>{% endif %}
+        </div>
+    </div>
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+        <!-- Credit approval toggle (owner only) -->
+        {% if is_owner %}
+        <form method="post" action="{% url 'toggle_credit_approval' customer.id %}">
+            {% csrf_token %}
+            {% if customer.credit_approved %}
+            <button type="submit" class="btn btn-sm"
+                    style="background:rgba(110,231,183,0.15); color:#6ee7b7; border:1px solid rgba(110,231,183,0.3);">
+                ✓ {% trans 'Credit Approved' %} — {% trans 'Revoke' %}
+            </button>
+            {% else %}
+            <button type="submit" class="btn btn-sm btn-outline-secondary">
+                {% trans 'Approve for Credit' %}
+            </button>
+            {% endif %}
+        </form>
+        {% endif %}
+
+        <!-- Send reminder -->
+        {% if outstanding > 0 and customer.phone %}
+        <form method="post" action="{% url 'send_debt_reminder' customer.id %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-secondary">
+                📱 {% trans 'Send Reminder' %}
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Score + stat row -->
+<div class="row g-3 mb-4">
+
+    <!-- Credit score -->
+    <div class="col-12 col-md-3">
+        <div class="card border-0 h-100" style="background:rgba(255,255,255,0.04);">
+            <div class="card-body text-center py-4">
+                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; color:#b0b0b0; margin-bottom:0.5rem;">
+                    {% trans 'Credit Score' %}
+                </div>
+                <div style="font-size:1.3rem; font-weight:700; color:{{ score_color }}; margin-bottom:0.4rem;">
+                    {{ score_label }}
+                </div>
+                <div style="height:8px; background:#2a2a2a; border-radius:4px; overflow:hidden; width:100px; margin:0 auto 0.4rem;">
+                    <div style="height:100%; border-radius:4px; background:{{ score_color }}; width:{{ score_pct }}%;"></div>
+                </div>
+                <div style="font-size:0.72rem; color:#888;">{{ score_pct }}{% trans '% rating' %}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Outstanding -->
+    <div class="col-6 col-md-2">
+        <div class="stat-pill h-100 text-center">
+            <div class="sp-label">{% trans 'Outstanding' %}</div>
+            <div class="sp-value"
+                 style="color:{% if outstanding > 0 %}#fbbf24{% else %}#6ee7b7{% endif %};">
+                KES {{ outstanding|floatformat:2 }}
+            </div>
+        </div>
+    </div>
+
+    <!-- Total credit taken -->
+    <div class="col-6 col-md-2">
+        <div class="stat-pill h-100 text-center">
+            <div class="sp-label">{% trans 'Total Credit' %}</div>
+            <div class="sp-value" style="color:#e0e0e0;">KES {{ total_credit|floatformat:2 }}</div>
+        </div>
+    </div>
+
+    <!-- Total paid -->
+    <div class="col-6 col-md-2">
+        <div class="stat-pill h-100 text-center">
+            <div class="sp-label">{% trans 'Total Paid' %}</div>
+            <div class="sp-value" style="color:#6ee7b7;">KES {{ total_paid|floatformat:2 }}</div>
+        </div>
+    </div>
+
+    <!-- Window -->
+    <div class="col-6 col-md-3">
+        <div class="stat-pill h-100 text-center">
+            <div class="sp-label">{% trans 'Payment Window' %}</div>
+            <div class="sp-value" style="color:#a8c5da;">{{ effective_window }} {% trans 'days' %}</div>
+            {% if effective_window < global_window %}
+            <div style="color:#888; font-size:0.72rem; margin-top:0.2rem;">
+                {% trans 'personal (global:' %} {{ global_window }} {% trans 'days)' %}
+            </div>
+            {% else %}
+            <div style="color:#888; font-size:0.72rem; margin-top:0.2rem;">{% trans 'global default' %}</div>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+
+<!-- Aged Debt Breakdown -->
+<div class="section-card">
+    <div class="section-card-header">
+        <h6>⏳ {% trans 'Aged Debt Analysis' %}</h6>
+        <span style="color:#888; font-size:0.78rem;">{% trans 'How long the outstanding balance has been owed' %}</span>
+    </div>
+    <div class="p-4">
+        <div class="row g-3">
+            {% with total_for_pct=outstanding|default:1 %}
+            <div class="col-6 col-md-3">
+                <div style="color:#b0b0b0; font-size:0.72rem; text-transform:uppercase; margin-bottom:0.3rem;">
+                    {% trans 'Within Window' %}
+                </div>
+                <div style="color:#fbbf24; font-weight:700; margin-bottom:0.4rem;">
+                    KES {{ aged.current|floatformat:2 }}
+                </div>
+                <div class="aged-bar">
+                    <div class="aged-bar-fill" style="background:#fbbf24;
+                         width:{% if outstanding > 0 %}{% widthratio aged.current outstanding 100 %}{% else %}0{% endif %}%;"></div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div style="color:#b0b0b0; font-size:0.72rem; text-transform:uppercase; margin-bottom:0.3rem;">
+                    {% trans '1–30 Days Overdue' %}
+                </div>
+                <div style="color:#f87171; font-weight:700; margin-bottom:0.4rem;">
+                    KES {{ aged.overdue_30|floatformat:2 }}
+                </div>
+                <div class="aged-bar">
+                    <div class="aged-bar-fill" style="background:#f87171;
+                         width:{% if outstanding > 0 %}{% widthratio aged.overdue_30 outstanding 100 %}{% else %}0{% endif %}%;"></div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div style="color:#b0b0b0; font-size:0.72rem; text-transform:uppercase; margin-bottom:0.3rem;">
+                    {% trans '31–60 Days Overdue' %}
+                </div>
+                <div style="color:#ef4444; font-weight:700; margin-bottom:0.4rem;">
+                    KES {{ aged.overdue_60|floatformat:2 }}
+                </div>
+                <div class="aged-bar">
+                    <div class="aged-bar-fill" style="background:#ef4444;
+                         width:{% if outstanding > 0 %}{% widthratio aged.overdue_60 outstanding 100 %}{% else %}0{% endif %}%;"></div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div style="color:#b0b0b0; font-size:0.72rem; text-transform:uppercase; margin-bottom:0.3rem;">
+                    {% trans '60+ Days Overdue' %}
+                </div>
+                <div style="color:#dc2626; font-weight:700; margin-bottom:0.4rem;">
+                    KES {{ aged.overdue_90|floatformat:2 }}
+                </div>
+                <div class="aged-bar">
+                    <div class="aged-bar-fill" style="background:#dc2626;
+                         width:{% if outstanding > 0 %}{% widthratio aged.overdue_90 outstanding 100 %}{% else %}0{% endif %}%;"></div>
+                </div>
+            </div>
+            {% endwith %}
+        </div>
+    </div>
+</div>
+
+<!-- Record Payment button + modal -->
+{% if outstanding > 0 %}
+<div class="d-flex justify-content-end mb-3">
+    <button type="button" class="btn btn-gold px-4"
+            data-bs-toggle="modal" data-bs-target="#paymentModal">
+        💰 {% trans 'Record Payment' %}
+    </button>
+</div>
+{% endif %}
+
+<!-- Unpaid Transactions -->
+<div class="section-card">
+    <div class="section-card-header">
+        <h6>🧾 {% trans 'Unpaid Credit Transactions' %}</h6>
+        <span style="color:#888; font-size:0.78rem;">{{ unpaid_transactions|length }} {% trans 'item(s)' %}</span>
+    </div>
+    {% if unpaid_transactions %}
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead style="background:rgba(255,255,255,0.02);">
+                <tr style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--gold);">
+                    <th class="ps-4 py-2">{% trans 'Date' %}</th>
+                    <th class="py-2">{% trans 'Item' %}</th>
+                    <th class="py-2 text-end">{% trans 'Amount Owed' %}</th>
+                    <th class="py-2 text-end pe-4">{% trans 'Days Outstanding' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in unpaid_transactions %}
+                <tr class="txn-row {% if entry.is_overdue %}overdue-row{% endif %}">
+                    <td class="ps-4">{{ entry.txn.date|date:"d M Y" }}</td>
+                    <td>{{ entry.txn.item.description }}</td>
+                    <td class="text-end" style="color:{% if entry.is_overdue %}#f87171{% else %}#fbbf24{% endif %}; font-weight:600;">
+                        KES {{ entry.amount|floatformat:2 }}
+                    </td>
+                    <td class="text-end pe-4">
+                        <span style="color:{% if entry.is_overdue %}#f87171{% else %}#b0b0b0{% endif %}; font-size:0.82rem;">
+                            {{ entry.days_outstanding }} {% trans 'days' %}
+                            {% if entry.is_overdue %}
+                            <span style="color:#f87171; font-weight:600;"> ⚠️ {% trans 'OVERDUE' %}</span>
+                            {% endif %}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="p-4 text-center" style="color:#888;">
+        ✅ {% trans 'All credit transactions have been paid.' %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Payment History -->
+<div class="section-card">
+    <div class="section-card-header">
+        <h6>✅ {% trans 'Payment History' %}</h6>
+        <span style="color:#888; font-size:0.78rem;">{{ payments|length }} {% trans 'payment(s)' %}</span>
+    </div>
+    {% if payments %}
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead style="background:rgba(255,255,255,0.02);">
+                <tr style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--gold);">
+                    <th class="ps-4 py-2">{% trans 'Date' %}</th>
+                    <th class="py-2">{% trans 'Method' %}</th>
+                    <th class="py-2 text-end">{% trans 'Amount' %}</th>
+                    <th class="py-2">{% trans 'Recorded By' %}</th>
+                    <th class="py-2 pe-4">{% trans 'Notes' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for payment in payments %}
+                <tr class="txn-row">
+                    <td class="ps-4">{{ payment.paid_at|date:"d M Y, H:i" }}</td>
+                    <td>
+                        {% if payment.payment_method == 'mpesa' %}
+                        <span style="color:#6ee7b7;">📱 M-Pesa</span>
+                        {% else %}
+                        <span style="color:#fbbf24;">💵 {% trans 'Cash' %}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end" style="color:#6ee7b7; font-weight:600;">
+                        KES {{ payment.amount_paid|floatformat:2 }}
+                    </td>
+                    <td style="color:#b0b0b0; font-size:0.82rem;">
+                        {{ payment.recorded_by.get_full_name|default:payment.recorded_by.username|default:'—' }}
+                    </td>
+                    <td style="color:#888; font-size:0.82rem;" class="pe-4">
+                        {{ payment.notes|default:'—' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="p-4 text-center" style="color:#888;">
+        {% trans 'No payments recorded yet.' %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Per-customer credit settings (owner only) -->
+{% if is_owner %}
+<div class="section-card">
+    <div class="section-card-header">
+        <h6>⚙️ {% trans 'Credit Settings for This Customer' %}</h6>
+    </div>
+    <div class="p-4">
+        <form method="post" action="{% url 'update_customer_credit_settings' customer.id %}">
+            {% csrf_token %}
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:0.3rem;">
+                        {% trans 'Expected Payment Days' %}
+                        <span style="color:#888; font-size:0.75rem;"> ({% trans 'max' %}: {{ global_window }} {% trans 'days' %})</span>
+                    </label>
+                    <input type="number" name="expected_payment_days"
+                           class="form-control" min="1" max="{{ global_window }}"
+                           value="{{ customer.expected_payment_days|default:'' }}"
+                           placeholder="{{ global_window }}">
+                    <div style="color:#888; font-size:0.72rem; margin-top:0.25rem;">
+                        {% trans 'Leave blank to use the global window.' %}
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:0.3rem;">
+                        {% trans 'Credit Limit (KES)' %}
+                        <span style="color:#888; font-size:0.75rem;"> ({% trans 'optional' %})</span>
+                    </label>
+                    <input type="number" name="credit_limit"
+                           class="form-control" min="0" step="100"
+                           value="{{ customer.credit_limit|default:'' }}"
+                           placeholder="{% trans 'No limit' %}">
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="submit" class="btn btn-gold w-100">
+                        {% trans 'Save Settings' %}
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Record Payment Modal ── -->
+<div class="modal fade" id="paymentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0" style="background:#1e1e1e; border:1px solid rgba(255,255,255,0.1) !important;">
+            <div class="modal-header border-0">
+                <h6 class="modal-title" style="color:var(--gold); font-family:'Playfair Display',serif;">
+                    💰 {% trans 'Record Payment from' %} {{ customer.name }}
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'record_debt_payment' customer.id %}">
+                {% csrf_token %}
+                <div class="modal-body pt-1">
+
+                    <!-- Outstanding balance reminder -->
+                    <div style="background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.2);
+                                border-radius:8px; padding:0.6rem 0.9rem; margin-bottom:1rem;">
+                        <div style="color:#b0b0b0; font-size:0.75rem;">{% trans 'Outstanding Balance' %}</div>
+                        <div style="color:#fbbf24; font-weight:700; font-size:1.2rem;">
+                            KES {{ outstanding|floatformat:2 }}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
+                            {% trans 'Amount Received (KES)' %} *
+                        </label>
+                        <input type="number" name="amount_paid" class="form-control"
+                               step="0.01" min="0.01" max="{{ outstanding }}"
+                               value="{{ outstanding|floatformat:2 }}" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
+                            {% trans 'Payment Method' %}
+                        </label>
+                        <div class="d-flex gap-2">
+                            <input type="radio" class="btn-check" name="payment_method" id="pm_cash2" value="cash" checked>
+                            <label class="btn btn-sm btn-outline-warning" for="pm_cash2">💵 {% trans 'Cash' %}</label>
+                            <input type="radio" class="btn-check" name="payment_method" id="pm_mpesa2" value="mpesa">
+                            <label class="btn btn-sm btn-outline-success" for="pm_mpesa2">📱 M-Pesa</label>
+                        </div>
+                    </div>
+
+                    <div class="mb-1">
+                        <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
+                            {% trans 'Notes' %}
+                            <span style="color:#888; font-size:0.78rem;">({% trans 'optional' %})</span>
+                        </label>
+                        <input type="text" name="notes" class="form-control"
+                               placeholder="{% trans 'e.g. Partial payment, remainder next Friday' %}">
+                    </div>
+
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">
+                        {% trans 'Cancel' %}
+                    </button>
+                    <button type="submit" class="btn btn-gold px-4 btn-sm font-weight-600">
+                        ✅ {% trans 'Record Payment' %}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

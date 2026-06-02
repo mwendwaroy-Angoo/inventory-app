@@ -180,6 +180,39 @@
     </div>
 </div>
 
+{% if revenue_targets %}
+<div class="card mb-4 border-0" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important;">
+    <div class="card-body py-3 px-4">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+            <h6 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0;">🎯 {% trans 'Revenue Targets' %}</h6>
+            <a href="{% url 'revenue_target_settings' %}" style="color:#888; font-size:0.78rem;">⚙️ {% trans 'Edit Targets' %}</a>
+        </div>
+        <div class="row g-3">
+            {% for period, data in revenue_targets.items %}
+            <div class="col-md-4">
+                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; color:#b0b0b0; margin-bottom:0.25rem;">
+                    {% if period == 'daily' %}📅 {% trans 'Today' %}{% elif period == 'weekly' %}📆 {% trans 'This Week' %}{% else %}🗓️ {% trans 'This Month' %}{% endif %}
+                </div>
+                {% if data.target > 0 %}
+                    {% widthratio data.actual data.target 100 as progress_pct %}
+                    <div class="d-flex align-items-end justify-content-between mb-1">
+                        <span style="font-weight:700; font-size:0.95rem; color:{% if progress_pct >= 100 %}#6ee7b7{% elif progress_pct >= 50 %}#fbbf24{% else %}#f87171{% endif %};">KES {{ data.actual|floatformat:0 }}</span>
+                        <span style="color:#888; font-size:0.75rem;">/ KES {{ data.target|floatformat:0 }}</span>
+                    </div>
+                    <div style="height:6px; background:#2a2a2a; border-radius:3px; overflow:hidden;">
+                        <div style="height:100%; border-radius:3px; background:{% if progress_pct >= 100 %}#6ee7b7{% elif progress_pct >= 50 %}#fbbf24{% else %}#f87171{% endif %}; width:{{ progress_pct }}%;"></div>
+                    </div>
+                    <div style="color:#888; font-size:0.72rem; margin-top:0.2rem;">{{ progress_pct }}% {% trans 'of target' %}</div>
+                {% else %}
+                    <div style="color:#555; font-size:0.82rem;">{% trans 'No target set' %} — <a href="{% url 'revenue_target_settings' %}" style="color:var(--gold);">{% trans 'Set one' %}</a></div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
     <!-- Action Buttons -->
     <div class="d-flex flex-wrap gap-2 mb-4">
         <a href="{% url 'stock_list' %}" class="btn btn-gold action-btn">

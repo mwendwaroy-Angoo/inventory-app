@@ -15,7 +15,7 @@ import json
 import math
 from collections import defaultdict
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -25,7 +25,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County
+from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County, RevenueTarget, Store
 from core.forms import BusinessExpenseForm, CapitalInvestmentForm
 from core.views import get_user_profile, owner_required
 
@@ -930,4 +930,182 @@ def county_heatmap(request):
         'total_mapped_revenue': sum(r['total_revenue'] for r in sorted_data),
         'counties_with_sales': len(sorted_data),
         'today': date.today().strftime('%B %d, %Y'),
+    })
+
+
+# ── REVENUE TARGETS ───────────────────────────────────────────────────────────
+
+@login_required
+@owner_required
+def revenue_target_settings(request):
+    """
+    Set revenue targets per period (daily / weekly / monthly).
+    Multi-store businesses can also set per-store targets.
+    One target per (business, period, store) — upsert on save.
+    """
+    user_profile = request.user.userprofile
+    business = user_profile.business
+    stores = list(Store.objects.filter(business=business))
+
+    if request.method == 'POST':
+        updated = 0
+        for target_type in ('daily', 'weekly', 'monthly'):
+            amount_raw = request.POST.get(f'target_{target_type}', '').strip()
+            if amount_raw:
+                try:
+                    amount = Decimal(amount_raw)
+                    if amount > 0:
+                        RevenueTarget.objects.update_or_create(
+                            business=business,
+                            target_type=target_type,
+                            store=None,
+                            defaults={'amount': amount},
+                        )
+                        updated += 1
+                except (InvalidOperation, ValueError):
+                    pass
+
+            for store in stores:
+                store_amount_raw = request.POST.get(f'target_{target_type}_store_{store.id}', '').strip()
+                if store_amount_raw:
+                    try:
+                        store_amount = Decimal(store_amount_raw)
+                        if store_amount > 0:
+                            RevenueTarget.objects.update_or_create(
+                                business=business,
+                                target_type=target_type,
+                                store=store,
+                                defaults={'amount': store_amount},
+                            )
+                            updated += 1
+                    except (InvalidOperation, ValueError):
+                        pass
+
+        credit_window_raw = request.POST.get('credit_window_days', '').strip()
+        if credit_window_raw:
+            try:
+                cw = int(credit_window_raw)
+                if cw > 0:
+                    business.credit_window_days = cw
+                    business.save(update_fields=['credit_window_days'])
+            except ValueError:
+                pass
+
+        messages.success(request, _('Targets updated successfully.'))
+        return redirect('revenue_target_settings')
+
+    existing = {
+        (t.target_type, t.store_id): t
+        for t in RevenueTarget.objects.filter(business=business)
+    }
+
+    def get_target(ttype, store_id=None):
+        t = existing.get((ttype, store_id))
+        return f'{float(t.amount):,.0f}' if t else ''
+
+    # Flat dict for template lookup: 'daily', 'weekly', 'monthly',
+    # 'daily_store_1', 'weekly_store_2', etc.
+    target_lookup = {}
+    for ttype in ('daily', 'weekly', 'monthly'):
+        target_lookup[ttype] = get_target(ttype)
+        for store in stores:
+            target_lookup[f'{ttype}_store_{store.id}'] = get_target(ttype, store.id)
+
+    context = {
+        'stores': stores,
+        'target_lookup': target_lookup,
+        'target_types': [
+            ('daily',   _('Daily')),
+            ('weekly',  _('Weekly')),
+            ('monthly', _('Monthly')),
+        ],
+        'credit_window': business.credit_window_days or 30,
+        'today': date.today().strftime('%B %d, %Y'),
+    }
+    return render(request, 'core/revenue_target_settings.html', context)
+
+
+@login_required
+@owner_required
+def revenue_target_progress(request):
+    """
+    JSON endpoint — returns today's / this week's / this month's revenue
+    vs the set targets. Used by the dashboard widget.
+
+    GET /analytics/targets/progress/
+    """
+    user_profile = request.user.userprofile
+    business = user_profile.business
+    today = date.today()
+
+    week_start  = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+
+    def period_revenue(start, end):
+        sales = Transaction.objects.filter(
+            business=business,
+            type='Issue',
+            date__gte=start,
+            date__lte=end,
+        ).select_related('item')
+        return sum(t.revenue() for t in sales)
+
+    actual_daily   = period_revenue(today, today)
+    actual_weekly  = period_revenue(week_start, today)
+    actual_monthly = period_revenue(month_start, today)
+
+    def get_target_amount(ttype):
+        t = RevenueTarget.objects.filter(
+            business=business, target_type=ttype, store__isnull=True
+        ).first()
+        return float(t.amount) if t else 0
+
+    target_daily   = get_target_amount('daily')
+    target_weekly  = get_target_amount('weekly')
+    target_monthly = get_target_amount('monthly')
+
+    def pct(actual, target):
+        if target <= 0:
+            return None
+        return min(100, round(actual / target * 100, 1))
+
+    stores = Store.objects.filter(business=business)
+    store_breakdown = []
+    for store in stores:
+        store_sales = Transaction.objects.filter(
+            business=business,
+            type='Issue',
+            date=today,
+            item__store=store,
+        ).select_related('item')
+        store_actual = sum(t.revenue() for t in store_sales)
+        store_target_obj = RevenueTarget.objects.filter(
+            business=business, target_type='daily', store=store
+        ).first()
+        store_target = float(store_target_obj.amount) if store_target_obj else 0
+
+        store_breakdown.append({
+            'store': store.name,
+            'actual': round(store_actual, 2),
+            'target': store_target,
+            'pct': pct(store_actual, store_target),
+        })
+
+    return JsonResponse({
+        'daily': {
+            'target': target_daily,
+            'actual': round(actual_daily, 2),
+            'pct': pct(actual_daily, target_daily),
+            'store_breakdown': store_breakdown,
+        },
+        'weekly': {
+            'target': target_weekly,
+            'actual': round(actual_weekly, 2),
+            'pct': pct(actual_weekly, target_weekly),
+        },
+        'monthly': {
+            'target': target_monthly,
+            'actual': round(actual_monthly, 2),
+            'pct': pct(actual_monthly, target_monthly),
+        },
     })

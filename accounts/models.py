@@ -73,6 +73,12 @@ class Business(models.Model):
                   'Used to show the full break-even timeline including pre-app history.'
     )
 
+    # ── Credit Settings ──
+    credit_window_days = models.PositiveIntegerField(
+        default=30,
+        help_text='Maximum days a customer debt may remain outstanding before it is flagged as overdue.',
+    )
+
     def __str__(self):
         return self.name
 
