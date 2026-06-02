@@ -25,10 +25,16 @@
 - Django template tags {% %} and {{ }} must always stay on a single line — never wrap them
 - {% trans 'string' %} tags must never be split across lines under any circumstances
 - Never use Bootstrap utility classes that hardcode light backgrounds on dark-themed templates:
-    - Forbidden: bg-light, bg-primary, bg-success, bg-danger, bg-warning, bg-info, bg-white
-    - Forbidden: text-muted (use explicit color styles instead, e.g. style="color: #b0b0b0")
-    - Forbidden: card bg-dark border-secondary (use inline styles for dark theme cards)
+  - Forbidden: bg-light, bg-primary, bg-success, bg-danger, bg-warning, bg-info, bg-white
+  - Forbidden: text-muted (use explicit color styles instead, e.g. style="color: #b0b0b0")
+  - Forbidden: card bg-dark border-secondary (use inline styles for dark theme cards)
 - Never add class="text-muted" to any element — always use explicit style="color: #b0b0b0"
 - When adding helper/hint text under form fields, use style="color: #b0b0b0; font-size: 0.8rem"
 - Never change var(--muted) references without first checking if the variable is defined in base.html
 - The theme uses: --onyx, --gold, --pearl, --raspberry, --raspberry-dark as core CSS variables
+- NEVER use {% trans 'string with apostrophe' %} inside a single-quoted
+  JavaScript string. If the translated string contains an apostrophe
+  (e.g. "You're", "it's", "don't"), always wrap the JS string in double
+  quotes: var X = "{% trans \"You're done\" %}";
+  Better yet: declare all translated strings as JS variables at the top
+  of the script block where quote conflicts are easy to spot.
