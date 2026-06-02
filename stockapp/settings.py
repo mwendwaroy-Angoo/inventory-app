@@ -154,7 +154,7 @@ DEFAULT_FROM_EMAIL = os.getenv("GMAIL_USER", "")
 EMAIL_TIMEOUT = 5  # seconds — fail fast instead of hanging
 
 # ── AFRICA'S TALKING ──────────────────────────────────────────────────────────
-AT_USERNAME = os.getenv("AT_USERNAME", "sandbox")
+AT_USERNAME = os.getenv("AT_USERNAME", "dukamwecheche")
 AT_API_KEY = os.getenv("AT_API_KEY", "")
 
 # ── TWILIO ────────────────────────────────────────────────────────────────────

@@ -483,10 +483,10 @@ def award_bid(request, bid_id):
                             from core.notifications import send_email_notification
 
                             send_email_notification(
-                                subject,
-                                text_message,
                                 recipient_email,
-                                html_message=html_message,
+                                subject,
+                                html_message,
+                                text_message=text_message,
                             )
                     except Exception:
                         # don't block main flow if email fails

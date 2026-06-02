@@ -1,7 +1,8 @@
 import logging
 import threading
-from django.core.mail import send_mail, EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
+from django.utils.html import strip_tags
 
 logger = logging.getLogger(__name__)
 
@@ -38,36 +39,39 @@ def notify_transaction_async(transaction_id, business_id, daily_count=0, user_id
     )
 
 
-def send_email_notification(subject, message, recipient_email, html_message=None):
-    """Send an email; supports plain-text and optional HTML alternative.
-
-    Args:
-        subject: Email subject
-        message: Plain-text body
-        recipient_email: recipient address
-        html_message: optional HTML body (string)
-    """
-    if not recipient_email:
+def send_email_notification(to_email, subject, html_message, text_message=None):
+    """Send email notification. Returns True if sent, False otherwise."""
+    if not to_email:
         return False
+
+    # Pre-check: don't attempt if SMTP credentials are missing
+    email_user = getattr(settings, "EMAIL_HOST_USER", "") or ""
+    email_password = getattr(settings, "EMAIL_HOST_PASSWORD", "") or ""
+
+    if not email_user or not email_password:
+        logger.warning(
+            "Email notification skipped — EMAIL_HOST_USER or EMAIL_HOST_PASSWORD "
+            "not configured. Intended recipient: %s",
+            to_email,
+        )
+        return False
+
     try:
+        msg = EmailMultiAlternatives(
+            subject=subject,
+            body=text_message or strip_tags(html_message or ""),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[to_email],
+        )
         if html_message:
-            msg = EmailMultiAlternatives(
-                subject, message, settings.DEFAULT_FROM_EMAIL, [recipient_email]
-            )
             msg.attach_alternative(html_message, "text/html")
-            msg.send(fail_silently=True)
-        else:
-            send_mail(
-                subject=subject,
-                message=message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[recipient_email],
-                fail_silently=True,
-            )
-        logger.info(f"Email sent to {recipient_email}: {subject}")
+
+        msg.send(fail_silently=False)
+        logger.info("Email sent to %s — subject: %s", to_email, subject)
         return True
+
     except Exception as e:
-        logger.error(f"Email failed to {recipient_email}: {e}")
+        logger.error("Email failed to %s — %s: %s", to_email, type(e).__name__, e)
         return False
 
 
@@ -93,25 +97,17 @@ def send_sms_notification(message, phone_number):
         return False
 
 
-def send_whatsapp_notification(message, phone_number):
-    if not phone_number:
-        return False
-    try:
-        from twilio.rest import Client
-
-        client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-        if phone_number.startswith("0"):
-            phone_number = "+254" + phone_number[1:]
-        elif not phone_number.startswith("+"):
-            phone_number = "+254" + phone_number
-        client.messages.create(
-            from_="whatsapp:+14155238886", to=f"whatsapp:{phone_number}", body=message
-        )
-        logger.info(f"WhatsApp sent to {phone_number}")
-        return True
-    except Exception as e:
-        logger.error(f"WhatsApp failed to {phone_number}: {e}")
-        return False
+def send_whatsapp_notification(phone, message, business=None):
+    """
+    WhatsApp via Twilio — disabled until a production Twilio WhatsApp
+    sender number is configured. Logs a warning so we know it was attempted.
+    """
+    logger.warning(
+        "WhatsApp notification skipped (no production sender configured) "
+        "for phone %s",
+        phone,
+    )
+    return False
 
 
 def create_in_app_notification(user, title, message, notification_type="info"):
@@ -177,7 +173,7 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
     )
 
     # Email always
-    send_email_notification(subject, message, owner_email)
+    send_email_notification(owner_email, subject, None, text_message=message)
 
     # SMS if ≤15 transactions today, WhatsApp if >15
     if daily_count <= 15:
@@ -197,7 +193,7 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
             f"*Recorded by:* {recorded_by}\n"
             f"*Invoice:* {transaction.invoice_no or 'N/A'}"
         )
-        send_whatsapp_notification(wa_msg, owner_phone)
+        send_whatsapp_notification(owner_phone, wa_msg)
 
     if item.needs_reorder():
         notify_reorder_alert(item, business, owner, owner_email, owner_phone)
@@ -221,7 +217,7 @@ def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
         f"Balance: {item.current_balance()} {item.unit}. Reorder level: {item.reorder_level}",
         notification_type="warning",
     )
-    send_email_notification(subject, message, owner_email)
+    send_email_notification(owner_email, subject, None, text_message=message)
     send_sms_notification(
         f"[Duka Mwecheche] LOW STOCK: {item.description}. "
         f"Balance: {item.current_balance()} {item.unit}. Please reorder.",
@@ -307,7 +303,7 @@ def notify_new_order(order):
         )
 
     # Email to owner
-    send_email_notification(subject, message, owner_email)
+    send_email_notification(owner_email, subject, None, text_message=message)
 
     # SMS to owner
     sms_msg = (
@@ -320,9 +316,10 @@ def notify_new_order(order):
 
 def send_daily_summary(business):
     from datetime import date
+    from collections import defaultdict
     from core.models import Transaction
 
-    owner_profile = business.users.filter(role="owner").first()
+    owner_profile = business.users.select_related("user").filter(role="owner").first()
     if not owner_profile:
         return
 
@@ -337,16 +334,25 @@ def send_daily_summary(business):
         date=today,
     ).select_related("item")
 
-    total_revenue = sum(t.revenue() for t in sales)
-    total_cost = sum(t.cost() for t in sales)
-    total_profit = total_revenue - total_cost
-    total_transactions = sales.count()
-
     receipts = Transaction.objects.filter(
         business=business,
         type="Receipt",
         date=today,
     ).count()
+
+    # Single pass — avoids evaluating the queryset three times
+    item_sales = defaultdict(int)
+    total_revenue = 0
+    total_cost = 0
+    total_transactions = 0
+
+    for t in sales:
+        total_revenue += t.revenue()
+        total_cost += t.cost()
+        item_sales[t.item.description] += abs(t.qty)
+        total_transactions += 1
+
+    total_profit = total_revenue - total_cost
 
     subject = f"📊 Daily Summary — {business.name} — {today}"
     message = (
@@ -367,12 +373,6 @@ def send_daily_summary(business):
         f"{'='*40}\n"
     )
 
-    from collections import defaultdict
-
-    item_sales = defaultdict(int)
-    for t in sales:
-        item_sales[t.item.description] += abs(t.qty)
-
     top = sorted(item_sales.items(), key=lambda x: x[1], reverse=True)[:5]
     for item_name, qty in top:
         message += f"• {item_name}: {qty} units\n"
@@ -383,7 +383,7 @@ def send_daily_summary(business):
     )
     message += "— Duka Mwecheche"
 
-    send_email_notification(subject, message, owner_email)
+    send_email_notification(owner_email, subject, None, text_message=message)
 
     wa_msg = (
         f"*📊 Daily Summary — {business.name}*\n"
@@ -394,7 +394,7 @@ def send_daily_summary(business):
         f"*Transactions:* {total_transactions} sales\n\n"
         f"View full report: https://stock-made-simpler-sms.onrender.com/sales/"
     )
-    send_whatsapp_notification(wa_msg, owner_phone)
+    send_whatsapp_notification(owner_phone, wa_msg)
 
     # Also send reorder recommendations as part of daily summary
     try:
@@ -451,7 +451,9 @@ def notify_reorder_recommendations(business, max_items=20, create_draft=False):
     create_in_app_notification(owner, title, short_msg, notification_type="warning")
 
     # Email notification
-    send_email_notification(title, long_msg + "\n\n— Duka Mwecheche", owner_email)
+    send_email_notification(
+        owner_email, title, None, text_message=long_msg + "\n\n— Duka Mwecheche"
+    )
 
     # Optionally create a draft PO
     created_po = None
@@ -529,7 +531,9 @@ def notify_new_bid_opportunity(procurement_request):
         )
 
         # Email notification
-        send_email_notification(subject_line, message_body, supplier_email)
+        send_email_notification(
+            supplier_email, subject_line, None, text_message=message_body
+        )
 
         # SMS notification
         sms_msg = (
@@ -579,7 +583,7 @@ def notify_supplier_bid_received(bid):
     )
 
     # Email to owner
-    send_email_notification(subject, message, owner_email)
+    send_email_notification(owner_email, subject, None, text_message=message)
 
     # SMS to owner
     sms_msg = (
@@ -625,7 +629,7 @@ def notify_supplier_bid_awarded(bid):
     )
 
     # Email to supplier owner
-    send_email_notification(subject, message, owner_email)
+    send_email_notification(owner_email, subject, None, text_message=message)
 
     # SMS to supplier owner
     sms_msg = (
@@ -667,7 +671,7 @@ def notify_rider_delivery_assigned(rider_profile, order):
     )
 
     # Email to rider
-    send_email_notification(subject, message, rider_email)
+    send_email_notification(rider_email, subject, None, text_message=message)
 
     # SMS to rider
     sms_msg = (
@@ -721,7 +725,7 @@ def notify_business_rider_assigned(order, rider_profile):
     )
 
     # Email to owner
-    send_email_notification(subject, message, owner_email)
+    send_email_notification(owner_email, subject, None, text_message=message)
 
     # SMS to owner
     sms_msg = (

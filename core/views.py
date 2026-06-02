@@ -1,3 +1,4 @@
+import logging
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.contrib.auth.decorators import login_required
@@ -1505,14 +1506,17 @@ def daily_summary_webhook(request):
     from accounts.models import Business
     from .notifications import send_daily_summary
 
-    businesses = Business.objects.all()
+    logger = logging.getLogger(__name__)
+    businesses = Business.objects.all().iterator(chunk_size=10)
+    count = 0
     for business in businesses:
+        count += 1
         try:
             send_daily_summary(business)
         except Exception:
-            pass
+            logger.exception("Daily summary failed for business %s", business.id)
 
-    return JsonResponse({"status": "ok", "businesses": businesses.count()})
+    return JsonResponse({"status": "ok", "businesses": count})
 
 
 # ── QUICK SELL ────────────────────────────────────────────────────────────────
