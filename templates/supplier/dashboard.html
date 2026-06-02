@@ -118,3 +118,46 @@
     {% endif %}
 </div>
 {% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated and user.userprofile.is_supplier %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '.row.g-3.mb-4',
+            popover: {
+                title: 'Your Stats',
+                description: 'Active Clients = businesses you supply. Active Bids = awaiting decisions. Won Bids = accepted. Open Requests = new bidding opportunities right now.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: 'a[href*="procurement_browse"]',
+            popover: {
+                title: 'Browse Requests',
+                description: 'Find open procurement requests from businesses. Filter by category, search by keyword, and submit competitive bids to win supply contracts.',
+                side: 'bottom', align: 'center'
+            }
+        },
+        {
+            element: 'a[href*="my_bids"]',
+            popover: {
+                title: 'My Bids',
+                description: 'Track all submitted bids: Submitted → Shortlisted → Accepted or Rejected. Accepted bids generate a Purchase Order from the business.',
+                side: 'bottom', align: 'center'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Start by browsing open requests. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('supplier_home', steps);
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -110,6 +110,7 @@ from core.analytics_views import (
     revenue_target_settings,
     revenue_target_progress,
 )
+from core.onboarding_views import mark_section_seen
 from core.debt_views import (
     debt_dashboard,
     customer_debt_profile,
@@ -190,6 +191,7 @@ urlpatterns = [
     ),
     path("ajax/customers/", ajax_customers, name="ajax_customers"),
     # ── Debt Tracker ──────────────────────────────────────────────────────────
+    path("onboarding/seen/", mark_section_seen, name="mark_section_seen"),
     path("debt/", debt_dashboard, name="debt_dashboard"),
     path("debt/<int:customer_id>/", customer_debt_profile, name="customer_debt_profile"),
     path("debt/<int:customer_id>/payment/", record_debt_payment, name="record_debt_payment"),

@@ -123,7 +123,7 @@
 
         <!-- Export -->
         <a href="{% url 'export_transactions' %}"
-           class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
+           id="export-transactions-btn" class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <rect width="16" height="16" rx="2" fill="#1D6F42"/>
                 <rect x="8" width="8" height="16" rx="2" fill="#217346"/>
@@ -193,6 +193,57 @@
     </table>
 </div>
 
+{% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '#searchInput',
+            popover: {
+                title: 'Search Transactions',
+                description: 'Search by item name, material number, date, recipient, invoice number, or transaction type. Results filter instantly as you type.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#historyTable thead',
+            popover: {
+                title: 'Transaction History Table',
+                description: 'Every stock movement ever recorded: date, item, store, type (Receipt/Issue), quantity, recipient, invoice number, and payment method.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#historyTable tbody tr',
+            popover: {
+                title: 'Transaction Types',
+                description: 'Green pills = Receipts (stock in). Red/pink pills = Issues (stock out). Quantity shows + for receipts and negative for issues.',
+                side: 'right', align: 'start'
+            }
+        },
+        {
+            element: '#export-transactions-btn',
+            popover: {
+                title: 'Export to Excel',
+                description: 'Download the full transaction history as an Excel spreadsheet — ideal for bookkeeping, tax records, or sharing with your accountant.',
+                side: 'left', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Transaction History is your complete audit trail. Every stock movement is recorded here permanently. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('history', steps);
+})();
+</script>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}

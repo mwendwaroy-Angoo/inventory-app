@@ -528,6 +528,57 @@
 </form>
 {% endblock %}
 
+{% block page_tour %}
+{% if user.is_authenticated %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '.qs-search',
+            popover: {
+                title: 'Search Items',
+                description: 'Type to filter items instantly. The grid below updates as you type — great for finding products quickly at the counter.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '.qs-stores',
+            popover: {
+                title: 'Filter by Store',
+                description: 'Tap a store pill to show only items from that location. Useful if you run multiple stores or sections.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '.qs-grid',
+            popover: {
+                title: 'Item Grid',
+                description: 'Tap any item to add it to your cart. Tap again to increase quantity. Items with zero stock are greyed out. Price and current balance are shown on each card.',
+                side: 'top', align: 'start'
+            }
+        },
+        {
+            element: '.qs-cart-bar',
+            popover: {
+                title: 'Cart Bar',
+                description: 'As you add items, the cart bar appears at the bottom showing item count and total. Tap the cart icon to review, adjust quantities, or remove items before checkout.',
+                side: 'top', align: 'center'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Quick Sell is built for speed. Select items, choose Cash or M-Pesa, and complete the sale in seconds. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('quick_sell', steps);
+})();
+</script>
+{% endif %}
+{% endblock %}
+
 {% block extra_js %}
 <script>
 (function() {

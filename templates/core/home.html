@@ -153,7 +153,7 @@
     </div>
 
     <!-- Stats -->
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" id="dash-stats">
     <div class="col-4">
         <a href="{% url 'stock_list' %}" style="text-decoration:none">
             <div class="stat-card stat-total">
@@ -181,7 +181,7 @@
 </div>
 
 {% if revenue_targets %}
-<div class="card mb-4 border-0" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important;">
+<div class="card mb-4 border-0" id="dash-targets" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important;">
     <div class="card-body py-3 px-4">
         <div class="d-flex align-items-center justify-content-between mb-3">
             <h6 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0;">🎯 {% trans 'Revenue Targets' %}</h6>
@@ -214,7 +214,7 @@
 {% endif %}
 
     <!-- Action Buttons -->
-    <div class="d-flex flex-wrap gap-2 mb-4">
+    <div class="d-flex flex-wrap gap-2 mb-4" id="dash-actions">
         <a href="{% url 'stock_list' %}" class="btn btn-gold action-btn">
             📋 {% trans 'View Stock List' %}
         </a>
@@ -515,4 +515,63 @@
 
 {% endif %}
 
+{% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated and user.userprofile.is_owner %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '.owner-actions',
+            popover: {
+                title: 'Owner Quick Actions',
+                description: 'Fast shortcuts to manage your stores, items, and staff. These links are always visible at the top of your dashboard.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#dash-stats',
+            popover: {
+                title: 'Stock Overview',
+                description: 'Three live counters — total items in your inventory, items running low, and items that need urgent reordering. Click any card to jump to the filtered stock list.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#dash-targets',
+            popover: {
+                title: 'Revenue Targets',
+                description: 'Your daily, weekly, and monthly sales targets with colour-coded progress bars. Green = on track, amber = halfway, red = behind. Set targets under Analytics → Revenue Targets.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#dash-actions',
+            popover: {
+                title: 'Quick Navigation',
+                description: 'The most common actions: view your full stock list, browse transaction history, add a new stock movement, or export your inventory to Excel.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '.reorder-table',
+            popover: {
+                title: 'Reorder Alert',
+                description: 'Items flagged as critically low appear here. Red border = out of stock, amber = below reorder level. Click any row to open the item detail and create a Purchase Order.',
+                side: 'top', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Your dashboard is your command centre. Replay this guide anytime from your username menu at the top right.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('dashboard', steps);
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -179,6 +179,11 @@ class UserProfile(models.Model):
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='staff')
     phone = models.CharField(max_length=20, blank=True)
     has_seen_tutorial = models.BooleanField(default=False)
+    onboarding_sections_seen = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='List of section IDs whose product tour has been seen. e.g. ["dashboard", "stores", "items"]'
+    )
     preferred_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default='en')
 
     def __str__(self):

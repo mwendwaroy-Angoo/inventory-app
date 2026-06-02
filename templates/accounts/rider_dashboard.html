@@ -155,6 +155,49 @@
 
 {% endblock %}
 
+{% block page_tour %}
+{% if user.is_authenticated and user.userprofile.is_rider %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '#availToggle',
+            popover: {
+                title: 'Availability Toggle',
+                description: 'Tap to switch between Available (green) and Unavailable (red). Businesses only assign deliveries to Available riders, so keep this on when you are ready to work.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '.row.g-3.mb-4',
+            popover: {
+                title: 'Your Stats',
+                description: 'Active deliveries currently assigned to you, completed deliveries count, and your current availability status at a glance.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '.order-card',
+            popover: {
+                title: 'Active Deliveries',
+                description: 'Each card shows the order number, customer name, delivery address, items to deliver, and total amount. Mark as Delivered once you have handed over the order.',
+                side: 'top', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Stay available and check for new assignments regularly. Your rating from customers affects priority for future deliveries. Replay from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('rider_home', steps);
+})();
+</script>
+{% endif %}
+{% endblock %}
+
 {% block extra_js %}
 <script>
 function toggleAvailability() {

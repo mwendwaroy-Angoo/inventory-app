@@ -98,11 +98,11 @@
 </div>
 
 <!-- Score + stat row -->
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" id="debt-stats">
 
     <!-- Credit score -->
     <div class="col-12 col-md-3">
-        <div class="card border-0 h-100" style="background:rgba(255,255,255,0.04);">
+        <div class="card border-0 h-100" id="credit-score-card" style="background:rgba(255,255,255,0.04);">
             <div class="card-body text-center py-4">
                 <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; color:#b0b0b0; margin-bottom:0.5rem;">
                     {% trans 'Credit Score' %}
@@ -163,7 +163,7 @@
 </div>
 
 <!-- Aged Debt Breakdown -->
-<div class="section-card">
+<div class="section-card" id="aged-debt-card">
     <div class="section-card-header">
         <h6>⏳ {% trans 'Aged Debt Analysis' %}</h6>
         <span style="color:#888; font-size:0.78rem;">{% trans 'How long the outstanding balance has been owed' %}</span>
@@ -227,7 +227,7 @@
 <!-- Record Payment button + modal -->
 {% if outstanding > 0 %}
 <div class="d-flex justify-content-end mb-3">
-    <button type="button" class="btn btn-gold px-4"
+    <button type="button" class="btn btn-gold px-4" id="record-payment-btn"
             data-bs-toggle="modal" data-bs-target="#paymentModal">
         💰 {% trans 'Record Payment' %}
     </button>
@@ -440,4 +440,55 @@
     </div>
 </div>
 
+{% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '#credit-score-card',
+            popover: {
+                title: 'Credit Score',
+                description: "Calculated from this customer's payment history. Reliable = pays on time, High Risk = frequently late or overdue. Updates automatically as payments are recorded.",
+                side: 'right', align: 'start'
+            }
+        },
+        {
+            element: '#debt-stats',
+            popover: {
+                title: 'Balance Summary',
+                description: 'Outstanding = what is currently owed. Total Credit = all credit ever extended. Total Paid = all payments recorded. Payment Window = days before debt becomes overdue.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#aged-debt-card',
+            popover: {
+                title: 'Aged Debt Breakdown',
+                description: 'Outstanding balance split into time buckets: within window, 1-30 days overdue, 31-60 days, and 60+ days. Older buckets indicate higher collection risk.',
+                side: 'top', align: 'start'
+            }
+        },
+        {
+            element: '#record-payment-btn',
+            popover: {
+                title: 'Record Payment',
+                description: 'Opens the payment recording modal. Enter amount and method (Cash or M-Pesa). Payments are applied FIFO — oldest debt is cleared first automatically.',
+                side: 'top', align: 'center'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: "This profile tracks everything for this customer's credit account. Replay this guide from your username menu."
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('debt_profile', steps);
+})();
+</script>
+{% endif %}
 {% endblock %}

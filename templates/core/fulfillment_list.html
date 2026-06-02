@@ -128,6 +128,41 @@
 
 {% endblock %}
 
+{% block page_tour %}
+{% if user.is_authenticated %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '.filter-bar',
+            popover: {
+                title: 'Order Filters',
+                description: 'Filter orders by status: Pending, Confirmed, Paid, or Ready. Also filter by delivery type — Deliveries (needs a rider) or Pickups (customer collects).',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '.order-card',
+            popover: {
+                title: 'Order Cards',
+                description: 'Each card shows: order number, status badge, customer name, phone, address, total amount, and payment method. Blue left border = delivery, green = pickup.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Fulfillment is your order queue. Work through pending orders, assign riders for deliveries, and mark them ready. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('fulfillment', steps);
+})();
+</script>
+{% endif %}
+{% endblock %}
+
 {% block extra_js %}
 <script>
 function updateStatus(orderId, status) {

@@ -21,6 +21,8 @@
     {% bootstrap_css %}
     {% bootstrap_javascript %}
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+    <!-- Driver.js product tour -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.5/dist/driver.css"/>
     <style>
         :root {
             --onyx: #1a1a1a;
@@ -287,6 +289,53 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: var(--onyx); }
         ::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 3px; }
+
+        /* ── Driver.js dark luxury theme ── */
+        .driver-popover {
+            background: var(--onyx-card) !important;
+            border: 1px solid var(--gold) !important;
+            border-radius: 10px !important;
+            color: var(--pearl) !important;
+            max-width: 320px !important;
+        }
+        .driver-popover-title {
+            font-family: 'Playfair Display', serif !important;
+            color: var(--gold) !important;
+            font-size: 1rem !important;
+            font-weight: 600 !important;
+        }
+        .driver-popover-description {
+            color: #d0d0d0 !important;
+            font-size: 0.85rem !important;
+            line-height: 1.55 !important;
+        }
+        .driver-popover-progress-text {
+            color: #888 !important;
+            font-size: 0.75rem !important;
+        }
+        .driver-popover-footer button {
+            border-radius: 6px !important;
+            font-size: 0.82rem !important;
+            font-weight: 500 !important;
+            padding: 0.35rem 0.9rem !important;
+        }
+        .driver-popover-next-btn {
+            background: linear-gradient(135deg, var(--gold), var(--gold-light)) !important;
+            color: var(--onyx) !important;
+            border: none !important;
+            font-weight: 600 !important;
+        }
+        .driver-popover-next-btn:hover { opacity: 0.9 !important; }
+        .driver-popover-prev-btn {
+            background: #333 !important;
+            color: var(--pearl) !important;
+            border: 1px solid #555 !important;
+        }
+        .driver-popover-close-btn { color: #888 !important; }
+        .driver-popover-arrow-side-left .driver-popover-arrow { border-right-color: var(--gold) !important; }
+        .driver-popover-arrow-side-right .driver-popover-arrow { border-left-color: var(--gold) !important; }
+        .driver-popover-arrow-side-top .driver-popover-arrow { border-bottom-color: var(--gold) !important; }
+        .driver-popover-arrow-side-bottom .driver-popover-arrow { border-top-color: var(--gold) !important; }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -592,6 +641,56 @@
     <div class="container main-content">
         {% block content %}{% endblock %}
     </div>
+
+    <!-- Driver.js -->
+    <script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.5/dist/driver.js.iife.js"></script>
+
+    {% if user.is_authenticated %}
+    <script>
+    (function() {
+        var SEEN = {{ tour_sections_seen|safe }};
+        var CSRF = '{{ csrf_token }}';
+
+        window.startTour = function(sectionId, steps) {
+            if (SEEN.indexOf(sectionId) !== -1) return;
+            var driverJs = window.driver && window.driver.js && window.driver.js.driver;
+            if (!driverJs) return;
+
+            var driverObj = driverJs({
+                showProgress: true,
+                allowClose: true,
+                overlayOpacity: 0.65,
+                smoothScroll: true,
+                steps: steps,
+                onDestroyStarted: function() {
+                    markSeen(sectionId);
+                    driverObj.destroy();
+                },
+                onDestroyed: function() {
+                    markSeen(sectionId);
+                }
+            });
+
+            setTimeout(function() { driverObj.drive(); }, 400);
+        };
+
+        window.markSeen = function(sectionId) {
+            if (SEEN.indexOf(sectionId) !== -1) return;
+            SEEN.push(sectionId);
+            fetch('/onboarding/seen/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': CSRF,
+                },
+                body: JSON.stringify({ section: sectionId }),
+            }).catch(function() {});
+        };
+    })();
+    </script>
+    {% endif %}
+
+    {% block page_tour %}{% endblock %}
 
     {% block extra_js %}{% endblock %}
 

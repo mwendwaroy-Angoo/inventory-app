@@ -76,7 +76,7 @@
 <div class="row g-4">
     <div class="col-md-5">
         <!-- Add Store -->
-        <div class="store-card">
+        <div class="store-card" id="add-store-card">
             <div class="store-card-header">{% trans 'Add New Store' %}</div>
             <div class="store-card-body">
                 <form method="post" class="d-flex gap-2">
@@ -101,7 +101,7 @@
 
     <div class="col-md-7">
         <!-- Store List -->
-        <div class="store-card">
+        <div class="store-card" id="stores-list-card">
             <div class="store-card-header">{% trans 'Your Stores' %}</div>
             <div>
                 {% for store in stores %}
@@ -120,4 +120,39 @@
     </div>
 </div>
 
+{% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated and user.userprofile.is_owner %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '#add-store-card',
+            popover: {
+                title: 'Add a New Store',
+                description: 'Type a store name (e.g. "Main Store", "Warehouse B") and click Add. Each store is a separate location for organising your inventory.',
+                side: 'right', align: 'start'
+            }
+        },
+        {
+            element: '#stores-list-card',
+            popover: {
+                title: 'Your Stores',
+                description: 'All your current stores with item counts. Click any store name to view its stock in the Stock List pre-filtered to that location.',
+                side: 'left', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Create stores first, then add items to them. Replay this guide anytime from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('stores', steps);
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -92,7 +92,7 @@
         <a href="{% url 'manage_items' %}" class="btn btn-gold btn-sm">⚙️ {% trans 'Manage Items' %}</a>
         {% endif %}
         <a href="{% url 'export_stock' %}?store={{ request.GET.store }}"
-   class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
+   id="export-stock-btn" class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
          xmlns="http://www.w3.org/2000/svg">
         <rect width="16" height="16" rx="2" fill="#1D6F42"/>
@@ -216,6 +216,57 @@
     </table>
 </div>
 
+{% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '.filter-bar',
+            popover: {
+                title: 'Filter & Search',
+                description: 'Filter by store using the dropdown, or type in the search box to instantly find items by name, material number, or any field — no page reload needed.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#stockTable thead',
+            popover: {
+                title: 'Stock Table',
+                description: 'Every item in your inventory: balance, physical count, deficit/surplus, reorder point, and recommended order quantity. Click any row to open the item detail.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#stockTable tbody tr',
+            popover: {
+                title: 'Status Badges',
+                description: 'Green = Available, Amber = Reorder needed, Red = Out of Stock. The left border of each row also colour-codes the urgency level.',
+                side: 'right', align: 'start'
+            }
+        },
+        {
+            element: '#export-stock-btn',
+            popover: {
+                title: 'Export to Excel',
+                description: 'Download your full stock list as an Excel file — useful for audits, supplier orders, or sharing with your team offline.',
+                side: 'left', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Stock List is your inventory at a glance. Replay this guide anytime from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('stock_list', steps);
+})();
+</script>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}

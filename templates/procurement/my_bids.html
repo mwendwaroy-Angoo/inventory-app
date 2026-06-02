@@ -45,3 +45,36 @@
     {% endif %}
 </div>
 {% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '.d-flex.gap-2.mb-3',
+            popover: {
+                title: 'Filter by Status',
+                description: 'Filter bids by status: Submitted (awaiting decision), Shortlisted (under consideration), Accepted (you won!), or Rejected.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: 'Bid Status Guide',
+                description: 'Grey = Submitted and waiting. Amber = Shortlisted — good news! Green = Accepted — a Purchase Order follows. Red = Rejected. Check back regularly for updates.'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Track all your bids here. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('my_bids', steps);
+})();
+</script>
+{% endif %}
+{% endblock %}

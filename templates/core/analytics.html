@@ -127,7 +127,7 @@
 </div>
 
 <!-- Period Filter -->
-<div class="d-flex flex-wrap gap-2 mb-4">
+<div class="d-flex flex-wrap gap-2 mb-4" id="analytics-period">
   <span
     style="
       font-size: 0.8rem;
@@ -164,7 +164,7 @@
 </div>
 
 <!-- ═══ KEY METRICS ═══ -->
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" id="analytics-stats">
   <div class="col-6 col-md-3">
     <div class="stat-card" style="border-top: 3px solid var(--gold)">
       <div class="stat-label">{% trans 'Revenue' %}</div>
@@ -970,7 +970,52 @@
     </tbody>
   </table>
 </div>
-{% endif %} {% endblock %} {% block extra_js %}
+{% endif %} {% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated and user.userprofile.is_owner %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '#analytics-period',
+            popover: {
+                title: 'Period Selector',
+                description: 'Choose 7, 14, 30, 90, or 365 days. All charts, metrics, and rankings update for the selected window and compare to the previous equivalent period.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#analytics-stats',
+            popover: {
+                title: 'Key Metrics',
+                description: 'Revenue, Gross Profit, Profit Margin, and Transactions for the period — each with a change indicator (↑/↓) vs the previous period.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#trendChart',
+            popover: {
+                title: 'Sales Trend Chart',
+                description: 'Daily revenue and profit plotted over the selected period. Hover over any point to see the exact figures for that day.',
+                side: 'top', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Analytics gives you deep insight into your business trends, top products, and demand forecasts. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('analytics', steps);
+})();
+</script>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
   // ── Kenyan Seasonal Events ───────────────────────────────────────

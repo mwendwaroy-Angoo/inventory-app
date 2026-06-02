@@ -196,6 +196,41 @@
 </div>
 {% endblock %}
 
+{% block page_tour %}
+{% if user.is_authenticated %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '#pending-count',
+            popover: {
+                title: 'Pending Payment Count',
+                description: 'Number of M-Pesa payments waiting to be matched to a sale. When a customer pays via M-Pesa, the system captures it here automatically.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#prompts-container',
+            popover: {
+                title: 'Payment Prompt Cards',
+                description: 'Each card shows the M-Pesa amount, phone number, and receipt code. Select what was sold and the quantity, then Confirm to create an Issue transaction — or Dismiss if it was not a sale.',
+                side: 'top', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Payment Prompts keeps your M-Pesa sales matched to stock movements. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('payments', steps);
+})();
+</script>
+{% endif %}
+{% endblock %}
+
 {% block extra_js %}
 <script>
 // ── Auto-calculate quantity from amount ──

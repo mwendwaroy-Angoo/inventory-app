@@ -49,7 +49,7 @@
 </div>
 
 <!-- Summary cards -->
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" id="debt-summary">
     <div class="col-6 col-md-3">
         <div class="card border-0" style="background:rgba(255,255,255,0.04);">
             <div class="card-body text-center py-3">
@@ -205,4 +205,47 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated and user.userprofile.is_owner %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '#debt-summary',
+            popover: {
+                title: 'Debt Overview',
+                description: 'Four summary cards: Total Outstanding (all unpaid credit), Overdue (past the credit window), number of Debtors, and your global Credit Window in days.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '.debt-table',
+            popover: {
+                title: 'Customer Debt Table',
+                description: 'Every customer with an outstanding balance. Red left border = has overdue debt. Columns: customer name, outstanding amount, aged debt breakdown, credit score, and approval status.',
+                side: 'top', align: 'start'
+            }
+        },
+        {
+            element: '.score-badge',
+            popover: {
+                title: 'Credit Score Badges',
+                description: 'Colour-coded credit scores: Reliable (green), Moderate (amber), High Risk (red), New (grey). Scores are calculated from payment history — on-time payments improve the score.',
+                side: 'left', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Debt Tracker keeps your credit sales under control. Click any customer to see their full profile and record payments. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('debt_tracker', steps);
+})();
+</script>
+{% endif %}
 {% endblock %}

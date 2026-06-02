@@ -125,7 +125,7 @@
 </div>
 
 <!-- Period Filter -->
-<div class="chart-card mb-4">
+<div class="chart-card mb-4" id="period-filter">
     <div class="d-flex flex-wrap gap-2 align-items-center">
         <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">{% trans 'Period:' %}</span>
         <a href="?period=today" class="period-btn {% if period == 'today' %}active{% endif %}">{% trans 'Today' %}</a>
@@ -156,7 +156,7 @@
 </div>
 
 <!-- Summary Cards -->
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" id="sales-summary">
     <div class="col-6 col-md-3">
         <div class="summary-card" style="border-top: 3px solid var(--gold);">
             <div class="summary-label">{% trans 'Total Revenue' %}</div>
@@ -320,6 +320,49 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated and user.userprofile.is_owner %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: '#period-filter',
+            popover: {
+                title: 'Period Selector',
+                description: 'Choose Today, This Week, This Month, This Year, or a custom date range. All KPI cards, charts, and tables update instantly for the selected period.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#sales-summary',
+            popover: {
+                title: 'KPI Summary Cards',
+                description: 'Revenue = total sales. Cost = cost of goods sold. Gross Profit = Revenue minus Cost. Stock Value = what your current inventory is worth at cost price.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#revenueChart',
+            popover: {
+                title: 'Daily Revenue vs Profit Chart',
+                description: 'Bar chart comparing revenue (gold) and profit (green) for each day in the selected period. Hover over bars to see exact figures.',
+                side: 'top', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Sales & P&L gives you a complete financial picture. Export to Excel any time. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('sales', steps);
+})();
+</script>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}

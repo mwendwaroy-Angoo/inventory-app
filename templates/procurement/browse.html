@@ -66,3 +66,38 @@
     {% endif %}
 </div>
 {% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: 'form.mb-3',
+            popover: {
+                title: 'Search & Filter',
+                description: 'Search by keyword or filter by category. Businesses post requests when they need to restock — find ones that match your products and location.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: 'a[href*="submit_bid"]',
+            popover: {
+                title: 'Bid Now',
+                description: 'Found a match? Click Bid Now to submit your price, delivery timeline, and proposal. Bids are scored automatically on price, proximity, rating, and speed.',
+                side: 'left', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Browse regularly — new requests are posted as businesses need to restock. Replay this guide from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('browse_requests', steps);
+})();
+</script>
+{% endif %}
+{% endblock %}

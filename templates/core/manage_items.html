@@ -59,7 +59,7 @@
 
 {% if items %}
 <div class="table-responsive">
-    <table class="table table-hover align-middle">
+    <table class="table table-hover align-middle" id="items-manage-table">
         <thead>
             <tr>
                 <th>{% trans 'Material No' %}</th>
@@ -118,4 +118,47 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block page_tour %}
+{% if user.is_authenticated and user.userprofile.is_owner %}
+<script>
+(function() {
+    var steps = [
+        {
+            element: 'a[href*="add_item"]',
+            popover: {
+                title: 'Add New Item',
+                description: 'Click here to add a new product to your inventory. You will set the material number, description, unit, cost price, selling price, reorder level, and which store it belongs to.',
+                side: 'bottom', align: 'start'
+            }
+        },
+        {
+            element: '#items-manage-table',
+            popover: {
+                title: 'Items List',
+                description: 'All your inventory items with material number, store, unit, price, current balance, and reorder level. Each row has Edit and Delete actions on the right.',
+                side: 'top', align: 'start'
+            }
+        },
+        {
+            element: '#items-manage-table tbody tr td:last-child',
+            popover: {
+                title: 'Edit & Delete Actions',
+                description: 'Edit opens the item form to update prices, description, yield settings, or reorder levels. Delete permanently removes the item and its history — use with care.',
+                side: 'left', align: 'start'
+            }
+        },
+        {
+            popover: {
+                title: "You're all set!",
+                description: 'Manage Items is where you maintain your product catalogue. Replay this guide anytime from your username menu.'
+            }
+        }
+    ];
+    steps = steps.filter(function(s) { return !s.element || document.querySelector(s.element); });
+    if (typeof startTour === 'function') startTour('items', steps);
+})();
+</script>
+{% endif %}
 {% endblock %}
