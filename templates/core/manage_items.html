@@ -71,6 +71,7 @@
                 <th>{% trans 'Balance' %}</th>
                 <th>{% trans 'Reorder Lvl' %}</th>
                 <th>{% trans 'Status' %}</th>
+                <th>{% trans 'Restriction' %}</th>
                 <th>{% trans 'Actions' %}</th>
             </tr>
         </thead>
@@ -95,6 +96,13 @@
                         <span class="badge bg-warning">{% trans 'Reorder' %}</span>
                     {% else %}
                         <span class="badge bg-success">{% trans 'Available' %}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if item.is_restricted %}
+                    <span style="color:#f87171; font-size:0.85rem;" title="{{ item.restriction_notes }}">🔒 {% trans 'Restricted' %}</span>
+                    {% else %}
+                    <span style="color:#555; font-size:0.8rem;">—</span>
                     {% endif %}
                 </td>
                 <td>

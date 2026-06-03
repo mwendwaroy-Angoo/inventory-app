@@ -111,6 +111,10 @@ from core.analytics_views import (
     revenue_target_progress,
 )
 from core.onboarding_views import mark_section_seen
+from core.restricted_items_views import (
+    request_sale_approval, pending_approvals,
+    decide_approval, approval_status,
+)
 from core.debt_views import (
     debt_dashboard,
     customer_debt_profile,
@@ -144,6 +148,11 @@ urlpatterns = [
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),
     path("stock/delete/<int:item_id>/", delete_item, name="delete_item"),
     path("stock/stores/", manage_stores, name="manage_stores"),
+    # ── Restricted Items / Sale Approvals ────────────────────────────────────
+    path("approvals/", pending_approvals, name="pending_approvals"),
+    path("approvals/<int:approval_id>/decide/", decide_approval, name="decide_approval"),
+    path("approvals/<int:approval_id>/status/", approval_status, name="approval_status"),
+    path("stock/item/<int:item_id>/request-sale/", request_sale_approval, name="request_sale_approval"),
     path("add-transaction/", add_transaction, name="add_transaction"),
     path("quick-sell/", quick_sell, name="quick_sell"),
     path("item/<int:item_id>/", item_detail, name="item_detail"),

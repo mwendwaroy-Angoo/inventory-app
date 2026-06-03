@@ -266,6 +266,14 @@ class Item(models.Model):
         null=True, blank=True,
         help_text=_('Fraction of received quantity that becomes usable stock (e.g. 0.65 = 65% yield).'),
     )
+    is_restricted = models.BooleanField(
+        default=False,
+        help_text='Staff require owner approval to sell this item.'
+    )
+    restriction_notes = models.CharField(
+        max_length=200, blank=True,
+        help_text='Reason for restriction — visible to owner only. e.g. Reserved for special customer, Do not sell until market day.'
+    )
 
     def current_balance(self):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
@@ -1137,3 +1145,41 @@ class RevenueTarget(models.Model):
     def __str__(self):
         store_label = f' ({self.store.name})' if self.store else ' (All Stores)'
         return f"{self.business.name} — {self.get_target_type_display()} KES {self.amount:,.0f}{store_label}"
+
+
+# ────────────────────────────────────────────────
+# RESTRICTED ITEM APPROVAL
+# ────────────────────────────────────────────────
+
+class ItemSaleApproval(models.Model):
+    """
+    Created when staff attempts to sell a restricted item.
+    Owner approves or denies. On approval the transaction is auto-created.
+    """
+    STATUS_CHOICES = [
+        ('pending',  _('Pending Owner Approval')),
+        ('approved', _('Approved')),
+        ('denied',   _('Denied')),
+    ]
+
+    business        = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='sale_approvals')
+    item            = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='sale_approvals')
+    requested_by    = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='sale_approval_requests')
+    quantity        = models.PositiveIntegerField()
+    recipient       = models.CharField(max_length=200, blank=True)
+    invoice_no      = models.CharField(max_length=50, blank=True)
+    payment_method  = models.CharField(max_length=20, blank=True)
+    status          = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    denial_reason   = models.TextField(blank=True)
+    requested_at    = models.DateTimeField(auto_now_add=True)
+    decided_at      = models.DateTimeField(null=True, blank=True)
+    decided_by      = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='sale_approval_decisions')
+    transaction     = models.ForeignKey(Transaction, on_delete=models.SET_NULL, null=True, blank=True, related_name='approval')
+
+    class Meta:
+        ordering = ['-requested_at']
+        verbose_name = 'Item Sale Approval'
+        verbose_name_plural = 'Item Sale Approvals'
+
+    def __str__(self):
+        return f"{self.requested_by.username} → {self.item.description} x{self.quantity} ({self.status})"

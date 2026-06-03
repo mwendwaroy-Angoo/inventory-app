@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans 'Pending Approvals' %}{% endblock %}
+{% block content %}
+<div class="d-flex align-items-start justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="page-title mb-1">🔒 {% trans 'Sale Approvals' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem;">{% trans 'Review and approve or deny staff sale requests for restricted items.' %}</p>
+    </div>
+</div>
+
+{% if pending %}
+<div class="card border-0 mb-4" style="background:rgba(248,113,113,0.05); border:1px solid rgba(248,113,113,0.2) !important; border-radius:10px;">
+    <div class="p-3" style="border-bottom:1px solid rgba(248,113,113,0.15);">
+        <h6 style="color:#f87171; margin:0;">⚠️ {{ pending|length }} {% trans 'Pending' %}</h6>
+    </div>
+    {% for approval in pending %}
+    <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+            <div>
+                <div style="font-weight:600; font-size:1rem; color:var(--pearl);">
+                    {{ approval.item.description }}
+                    <span style="color:#f87171;"> × {{ approval.quantity }} {{ approval.item.unit }}</span>
+                </div>
+                <div style="color:#b0b0b0; font-size:0.82rem; margin-top:0.25rem;">
+                    {% trans 'Requested by' %} <strong>{{ approval.requested_by.get_full_name|default:approval.requested_by.username }}</strong>
+                    · {{ approval.requested_at|date:"d M Y, H:i" }}
+                </div>
+                {% if approval.recipient %}
+                <div style="color:#b0b0b0; font-size:0.82rem;">{% trans 'Customer' %}: {{ approval.recipient }}</div>
+                {% endif %}
+                {% if approval.item.restriction_notes %}
+                <div style="color:#f39c12; font-size:0.8rem; margin-top:0.3rem;">
+                    🔒 {% trans 'Restriction' %}: {{ approval.item.restriction_notes }}
+                </div>
+                {% endif %}
+            </div>
+            <div class="d-flex gap-2 align-items-start flex-wrap">
+                <form method="post" action="{% url 'decide_approval' approval.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="decision" value="approve">
+                    <button type="submit" class="btn btn-gold btn-sm px-4">✅ {% trans 'Approve' %}</button>
+                </form>
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#deny-{{ approval.id }}">
+                    ❌ {% trans 'Deny' %}
+                </button>
+            </div>
+        </div>
+        <div class="collapse mt-3" id="deny-{{ approval.id }}">
+            <form method="post" action="{% url 'decide_approval' approval.id %}">
+                {% csrf_token %}
+                <input type="hidden" name="decision" value="deny">
+                <div class="d-flex gap-2">
+                    <input type="text" name="denial_reason" class="form-control"
+                           placeholder="{% trans 'Reason for denial (optional)' %}" style="font-size:0.85rem;">
+                    <button type="submit" class="btn btn-outline-danger btn-sm px-3">{% trans 'Confirm Deny' %}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card border-0 text-center py-5" style="background:rgba(255,255,255,0.03);">
+    <div style="font-size:2.5rem; margin-bottom:0.75rem;">✅</div>
+    <h6 style="color:var(--gold);">{% trans 'No Pending Approvals' %}</h6>
+    <p style="color:#b0b0b0; font-size:0.875rem;">{% trans 'All sale requests have been handled.' %}</p>
+</div>
+{% endif %}
+
+{% if history %}
+<h6 style="color:#888; text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem; margin-bottom:1rem;">{% trans 'Recent Decisions' %}</h6>
+<div class="card border-0" style="background:rgba(255,255,255,0.02); border:1px solid #2a2a2a !important; border-radius:10px;">
+    {% for approval in history %}
+    <div class="p-3" style="border-bottom:1px solid #1e1e1e; font-size:0.85rem;">
+        <span style="color:{% if approval.status == 'approved' %}#6ee7b7{% else %}#f87171{% endif %}; font-weight:600;">
+            {% if approval.status == 'approved' %}✅{% else %}❌{% endif %}
+            {{ approval.get_status_display }}
+        </span>
+        <span style="color:var(--pearl); margin-left:0.5rem;">{{ approval.item.description }} × {{ approval.quantity }}</span>
+        <span style="color:#888;"> · {{ approval.requested_by.get_full_name|default:approval.requested_by.username }} · {{ approval.decided_at|date:"d M Y" }}</span>
+        {% if approval.denial_reason %}
+        <span style="color:#f87171;"> · {{ approval.denial_reason }}</span>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

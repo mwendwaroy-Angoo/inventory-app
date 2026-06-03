@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans 'Approval Requested' %}{% endblock %}
+{% block content %}
+<div style="max-width:500px; margin:3rem auto; text-align:center;">
+    <div class="card border-0" style="background:rgba(255,255,255,0.03); border:1px solid #333 !important; border-radius:14px; padding:2.5rem;">
+        <div style="font-size:3rem; margin-bottom:1rem;">⏳</div>
+        <h4 style="color:var(--gold); font-family:'Playfair Display',serif; margin-bottom:0.5rem;">{% trans 'Approval Request Sent' %}</h4>
+        <p style="color:#b0b0b0; margin-bottom:1.5rem;">
+            {% trans 'Your request to sell' %} <strong style="color:var(--pearl);">{{ approval.quantity }} {{ item.unit }} of {{ item.description }}</strong>
+            {% trans 'has been sent to the business owner for approval.' %}
+        </p>
+        <div style="background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:1rem; margin-bottom:1.5rem; font-size:0.85rem; color:#b0b0b0;">
+            {% trans 'The owner will receive an alert. You will be notified here once a decision is made.' %}
+        </div>
+        <div id="approvalStatusCheck" style="margin-bottom:1.5rem; font-size:0.85rem; color:#888;">
+            {% trans 'Checking for decision...' %}
+        </div>
+        <a href="{% url 'add_transaction' %}" class="btn btn-secondary">{% trans '← Back to Transactions' %}</a>
+    </div>
+</div>
+<script>
+(function() {
+    var approvalId = {{ approval.id }};
+    var statusUrl = '/approvals/' + approvalId + '/status/';
+    function checkStatus() {
+        fetch(statusUrl)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var el = document.getElementById('approvalStatusCheck');
+                if (data.status === 'approved') {
+                    el.innerHTML = '<span style="color:#6ee7b7; font-weight:600;">✅ Approved! Transaction has been recorded.</span>';
+                } else if (data.status === 'denied') {
+                    el.innerHTML = '<span style="color:#f87171; font-weight:600;">❌ Denied by owner.' + (data.message ? ' Reason: ' + data.message : '') + '</span>';
+                } else {
+                    el.innerHTML = '⏳ Still waiting for owner decision...';
+                    setTimeout(checkStatus, 10000);
+                }
+            })
+            .catch(function() { setTimeout(checkStatus, 15000); });
+    }
+    setTimeout(checkStatus, 5000);
+})();
+</script>
+{% endblock %}

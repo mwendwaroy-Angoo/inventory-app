@@ -502,7 +502,8 @@
 <script>
 $(document).ready(function () {
 
-    var IS_OWNER = {{ user.userprofile.is_owner|yesno:"true,false" }};
+    var IS_OWNER        = {{ user.userprofile.is_owner|yesno:"true,false" }};
+    var RESTRICTED_IDS  = {{ restricted_item_ids|default:"[]" }};
 
     // ── Translated strings declared as clean JS variables ─────────────────
     // string concatenations, or escaped quotes. Always declare up top.
@@ -560,7 +561,11 @@ $(document).ready(function () {
             $('#costPriceSection').hide();
         }
     }
-    $('#transType').on('change', toggleRecipient);
+    $('#transType').on('change', function () {
+        toggleRecipient();
+        updateYieldPreview();
+        checkRestrictedItem();
+    });
 
     // ── New customer fields ────────────────────────────────────────────────
     $('#customerSelect').on('change', function () {
@@ -585,6 +590,23 @@ $(document).ready(function () {
             storedIsYield     = false;
             storedYieldFactor = null;
             $('#yieldPreview').hide();
+        }
+    }
+
+    // ── Restricted item warning ────────────────────────────────────────────
+    function checkRestrictedItem() {
+        var itemId      = parseInt($('#item').val());
+        var type        = $('#transType').val();
+        var isRestricted = RESTRICTED_IDS.indexOf(itemId) !== -1;
+        var existing    = document.getElementById('restrictedWarning');
+        if (existing) existing.remove();
+        if (isRestricted && type === 'Issue') {
+            var warning = document.createElement('div');
+            warning.id  = 'restrictedWarning';
+            warning.style.cssText = 'background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;color:#f87171;font-size:0.875rem;';
+            warning.innerHTML = '🔒 This item is restricted. Submitting will send an approval request to the owner instead of completing the sale immediately.';
+            var submitBtn = document.querySelector('#transactionForm .btn-gold');
+            if (submitBtn) submitBtn.parentNode.insertBefore(warning, submitBtn);
         }
     }
 
@@ -741,8 +763,10 @@ $(document).ready(function () {
     $('#newCostPrice').on('input', recalculate);
     $('#deliveryFee').on('input', recalculate);
     $('#quantity').on('input', function () { recalculate(); updateYieldPreview(); });
-    $('#transType').on('change', updateYieldPreview);
-    $('#item').on('change', checkCostPriceSection);
+    $('#item').on('change', function () {
+        checkCostPriceSection();
+        checkRestrictedItem();
+    });
 
     // ── Init ──────────────────────────────────────────────────────────────
     toggleRecipient();

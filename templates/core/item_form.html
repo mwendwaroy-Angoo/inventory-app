@@ -153,8 +153,31 @@
             </div>
             <!-- ── end Yield Section ── -->
 
+            {% if user.userprofile.is_owner %}
+            <div class="section-divider"><span>🔒 {% trans 'Restriction Settings' %}</span></div>
+            <div class="mb-3">
+                <div class="form-check">
+                    <input type="checkbox" name="is_restricted" id="is_restricted"
+                           class="form-check-input"
+                           {% if form.instance.is_restricted %}checked{% endif %}>
+                    <label class="form-check-label" for="is_restricted">
+                        {% trans 'This item requires owner approval before staff can sell it' %}
+                    </label>
+                </div>
+            </div>
+            <div class="mb-4" id="restrictionNotesField"
+                 style="{% if not form.instance.is_restricted %}display:none;{% endif %}">
+                <label class="form-label">{% trans 'Restriction Reason' %}
+                    <span style="color:#b0b0b0; font-size:0.8rem;">({% trans 'optional, visible to owner only' %})</span>
+                </label>
+                <input type="text" name="restriction_notes" class="form-control"
+                       value="{{ form.instance.restriction_notes }}"
+                       placeholder="{% trans 'e.g. Reserved for VIP customer, Do not sell until weekend' %}">
+            </div>
+            {% endif %}
+
             <div class="d-flex gap-2 mt-4">
-                <button type="submit" class="btn btn-primary">
+                <button type="submit" class="btn btn-gold">
                     {{ action }} {% trans 'Item' %}
                 </button>
                 <a href="{% url 'manage_items' %}" class="btn btn-secondary">
@@ -162,6 +185,18 @@
                 </a>
             </div>
         </form>
+        <script>
+        // ── Restriction notes toggle ──────────────────────────────────────────
+        (function () {
+            const cb    = document.getElementById('is_restricted');
+            const notes = document.getElementById('restrictionNotesField');
+            if (cb && notes) {
+                cb.addEventListener('change', function () {
+                    notes.style.display = this.checked ? 'block' : 'none';
+                });
+            }
+        })();
+        </script>
         <script>
         (function(){
             const categories = {{ form.categories_json|safe }};
