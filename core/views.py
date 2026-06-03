@@ -488,22 +488,67 @@ def add_transaction(request):
 
         # Notify owner when staff records a receipt (cost price may need updating)
         if trans_type == 'Receipt' and not user_profile.is_owner:
-            try:
-                from .models import Notification
-                for owner_profile in item.business.users.filter(role='owner'):
+            staff_name = request.user.get_full_name() or request.user.username
+            cost_str = f'KES {item.cost_price}' if item.cost_price else 'not set'
+            notif_msg = (
+                f'{staff_name} received {abs(quantity)} {item.unit} of {item.description}. '
+                f'Current cost price: {cost_str}. Update in Manage Items if needed.'
+            )
+            sms_msg = (
+                f'COST PRICE NEEDED: {staff_name} received {abs(quantity)} {item.unit} '
+                f'of {item.description}. Cost price is {cost_str}. '
+                f'Log in to Duka Mwecheche to update it.'
+            )
+            email_subject = f'Cost price check needed — {item.description} | Duka Mwecheche'
+            email_html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;">
+        <h2 style="color:#c9a84c;">📦 Receipt Recorded — Cost Price Needed</h2>
+        <p><strong>{staff_name}</strong> has received stock:</p>
+        <div style="background:#f5f5f5;padding:1rem;border-radius:8px;margin:1rem 0;">
+            <strong style="font-size:1.1rem;">{item.description}</strong><br>
+            Quantity received: {abs(quantity)} {item.unit}<br>
+            Current cost price: {cost_str}<br>
+            Store: {item.store.name if item.store else 'N/A'}
+        </div>
+        <p>Please <a href="https://www.dukamwecheche.co.ke/manage/items/">update the cost price</a>
+        to keep your profit margin calculations accurate.</p>
+        <p style="color:#888;font-size:0.85rem;">— Duka Mwecheche</p>
+    </div>
+    """
+
+            owner_profiles = business.users.filter(role='owner')
+            for op in owner_profiles:
+                # In-app notification
+                try:
                     Notification.objects.create(
-                        user=owner_profile.user,
+                        user=op.user,
                         title='Receipt recorded — cost price check needed',
-                        message=(
-                            f'{request.user.get_full_name() or request.user.username} received '
-                            f'{abs(quantity)} {item.unit} of {item.description}. '
-                            f'Current cost price: KES {item.cost_price or "not set"}. '
-                            f'Update in Manage Items if needed.'
-                        ),
+                        message=notif_msg,
                         notification_type='info',
                     )
-            except Exception:
-                pass
+                except Exception:
+                    pass
+
+                # SMS
+                try:
+                    from core.notifications import send_sms_notification, normalize_ke_phone
+                    owner_phone = getattr(op, 'phone', '') or business.phone or ''
+                    if owner_phone:
+                        phone = normalize_ke_phone(owner_phone)
+                        if phone:
+                            send_sms_notification(sms_msg, phone)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Cost price SMS failed: %s', e)
+
+                # Email
+                try:
+                    from core.notifications import send_email_notification
+                    if op.user.email:
+                        send_email_notification(op.user.email, email_subject, email_html)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Cost price email failed: %s', e)
 
         # ── YIELD: auto-create Wastage transaction for yield items ────────
         # When receiving a yield item (e.g. whole goat → sellable cuts),
