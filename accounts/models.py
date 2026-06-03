@@ -186,6 +186,16 @@ class UserProfile(models.Model):
     )
     preferred_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default='en')
 
+    # ── Staff Permissions ──────────────────────────────────────────────
+    can_input_cost_price = models.BooleanField(
+        default=False,
+        help_text='Staff can input cost price when receiving goods. They see the input field but never the previous cost price.'
+    )
+    can_override_restrictions = models.BooleanField(
+        default=False,
+        help_text='Staff can sell restricted items without triggering an owner approval request.'
+    )
+
     def __str__(self):
         return f"{self.user.username} ({self.business.name if self.business else 'No Business'}) - {self.role}"
 

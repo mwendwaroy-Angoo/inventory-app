@@ -203,6 +203,40 @@ def staff_list(request):
 
     return render(request, 'accounts/staff_list.html', {'staff': staff})
 
+
+@login_required
+def staff_permissions(request, staff_id):
+    """Owner manages permission flags for a specific staff member."""
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        return redirect('home')
+
+    if not user_profile.is_owner:
+        messages.error(request, _("Only business owners can manage staff permissions."))
+        return redirect('home')
+
+    staff_profile = get_object_or_404(
+        UserProfile,
+        id=staff_id,
+        business=user_profile.business,
+        role='staff',
+    )
+
+    if request.method == 'POST':
+        staff_profile.can_input_cost_price = request.POST.get('can_input_cost_price') == 'on'
+        staff_profile.can_override_restrictions = request.POST.get('can_override_restrictions') == 'on'
+        staff_profile.save(update_fields=['can_input_cost_price', 'can_override_restrictions'])
+        staff_name = staff_profile.user.get_full_name() or staff_profile.user.username
+        messages.success(request, _(f'Permissions updated for {staff_name}.'))
+        return redirect('staff_permissions', staff_id=staff_id)
+
+    return render(request, 'core/staff_permissions.html', {
+        'staff_profile': staff_profile,
+        'staff_name': staff_profile.user.get_full_name() or staff_profile.user.username,
+    })
+
+
 def load_subcounties(request):
     county_id = request.GET.get('county_id')
     subcounties = SubCounty.objects.filter(

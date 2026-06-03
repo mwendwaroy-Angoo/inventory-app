@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Staff Permissions' %} — {{ staff_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="page-title mb-1">⚙️ {% trans 'Staff Permissions' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem;">
+            {% trans 'Managing permissions for' %} <strong style="color:var(--gold);">{{ staff_name }}</strong>
+        </p>
+    </div>
+    <a href="{% url 'staff_list' %}" class="btn btn-outline-secondary btn-sm">← {% trans 'Back to Staff' %}</a>
+</div>
+
+<form method="post">
+    {% csrf_token %}
+
+    <div class="card border-0 mb-3" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important; border-radius:10px;">
+
+        <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        💰 {% trans 'Cost Price Input Access' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans 'Allow this staff member to enter cost price and delivery fee when receiving goods. They will see the input field but never the previous cost price.' %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'Use this for trusted staff who physically receive deliveries with a supplier receipt.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_input_cost_price"
+                           id="can_input_cost_price"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_input_cost_price %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-4">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        🔓 {% trans 'Restricted Items Override' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans 'Allow this staff member to sell restricted items without requiring owner approval. The sale will proceed immediately.' %}
+                    </div>
+                    <div style="color:#f87171; font-size:0.78rem; margin-top:0.3rem;">
+                        ⚠️ {% trans 'Only grant this to senior or highly trusted staff members.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_override_restrictions"
+                           id="can_override_restrictions"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_override_restrictions %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-gold px-5">
+            💾 {% trans 'Save Permissions' %}
+        </button>
+    </div>
+</form>
+{% endblock %}

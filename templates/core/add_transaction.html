@@ -249,9 +249,11 @@
             </div>
 
             <!-- ════════════════════════════════════════════════════════════
-                 COST PRICE & DELIVERY FEE SECTION (Receipt only, owner only)
+                 COST PRICE & DELIVERY FEE SECTION
+                 Three states: owner (full), staff with permission (input only), none
             ═══════════════════════════════════════════════════════════════ -->
             {% if user.userprofile.is_owner %}
+            {# Owner: full section — previous cost + input + delivery #}
             <div id="costPriceSection">
                 <div class="section-divider">
                     <span>💰 {% trans 'Cost Price & Delivery' %}</span>
@@ -345,6 +347,40 @@
                         ⚠️ {% trans 'No cost price set for this item yet. Enter the delivered price to set it.' %}
                     </div>
 
+                </div>
+            </div>
+
+            {% elif show_cost_price_input_only %}
+            {# Staff with cost price permission: input only, no previous cost shown #}
+            <div id="costPriceSection" class="section-card mb-4" style="display:none;">
+                <div class="section-divider">
+                    <span>💰 {% trans 'Cost Price & Delivery' %}</span>
+                </div>
+                <div class="cost-price-box">
+                    <div class="mb-3">
+                        <label class="form-label">{% trans 'Delivered Unit Price' %} <span style="color:#b0b0b0;font-size:0.8rem;">({% trans 'from supplier receipt' %})</span></label>
+                        <div class="input-group">
+                            <span class="input-group-text">KES</span>
+                            <input type="number" name="new_cost_price" id="newCostPrice"
+                                   class="form-control" step="0.01" min="0"
+                                   placeholder="{% trans 'Enter cost price from receipt' %}">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">🚚 {% trans 'Delivery / Transport Fee' %} <span style="color:#b0b0b0;font-size:0.8rem;">({% trans 'optional' %})</span></label>
+                        <div class="input-group">
+                            <span class="input-group-text">KES</span>
+                            <input type="number" name="delivery_fee" id="deliveryFee"
+                                   class="form-control" step="0.01" min="0" value="0">
+                        </div>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" name="update_cost_price" id="updateCostPrice"
+                               class="form-check-input" checked>
+                        <label class="form-check-label" for="updateCostPrice" style="font-size:0.85rem;">
+                            {% trans 'Set this as the new cost price for this item' %}
+                        </label>
+                    </div>
                 </div>
             </div>
             {% endif %}
@@ -502,7 +538,8 @@
 <script>
 $(document).ready(function () {
 
-    var IS_OWNER        = {{ user.userprofile.is_owner|yesno:"true,false" }};
+    var IS_OWNER        = {{ is_owner|yesno:"true,false" }};
+    var CAN_INPUT_COST  = {{ can_input_cost_price|yesno:"true,false" }};
     var RESTRICTED_IDS  = {{ restricted_item_ids|default:"[]" }};
     var RESTRICTED_DATA = {{ restricted_items_data|default:"{}"|safe }};
 
@@ -581,9 +618,15 @@ $(document).ready(function () {
 
     // ── Cost price section ─────────────────────────────────────────────────
     function checkCostPriceSection() {
-        if (!IS_OWNER) return;
+        if (!IS_OWNER && !CAN_INPUT_COST) return;
         var type   = $('#transType').val();
         var itemId = $('#item').val();
+        if (!IS_OWNER) {
+            // Staff with cost price permission: simple show/hide, no dynamic fetch
+            $('#costPriceSection').toggle(type === 'Receipt');
+            return;
+        }
+        // Owner: full dynamic cost price logic
         if (type === 'Receipt' && itemId) {
             fetchCostPrice(itemId);
         } else {

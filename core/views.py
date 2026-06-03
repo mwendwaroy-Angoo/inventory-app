@@ -363,7 +363,8 @@ def add_transaction(request):
         item = get_object_or_404(Item, id=item_id)
 
         # ── RESTRICTED ITEM CHECK ─────────────────────────────────────────────
-        if trans_type == 'Issue' and item.is_restricted and not user_profile.is_owner:
+        can_override = getattr(user_profile, 'can_override_restrictions', False)
+        if trans_type == 'Issue' and item.is_restricted and not user_profile.is_owner and not can_override:
             reserved = item.restricted_quantity or 0
             balance_after = item.current_balance() - quantity
             needs_approval = reserved == 0 or balance_after < reserved
@@ -423,7 +424,7 @@ def add_transaction(request):
         #
         # If the owner ticked "update cost price", Item.cost_price is updated
         # to the landed cost per unit (or just the unit price if no delivery fee).
-        if trans_type == "Receipt" and user_profile.is_owner:
+        if trans_type == "Receipt" and (user_profile.is_owner or getattr(user_profile, 'can_input_cost_price', False)):
             new_cost_price_raw = request.POST.get("new_cost_price", "").strip()
             delivery_fee_raw = request.POST.get("delivery_fee", "0").strip()
             update_cost_price = request.POST.get("update_cost_price") == "on"
@@ -625,6 +626,8 @@ def add_transaction(request):
         for r in restricted_qs:
             restricted_items_data[r['id']] = r['restricted_quantity']
 
+    is_owner = user_profile.is_owner
+    can_input_cost = is_owner or getattr(user_profile, 'can_input_cost_price', False)
     context = {
         "items": items,
         "stores": stores,
@@ -632,6 +635,9 @@ def add_transaction(request):
         "today": timezone.now().strftime("%B %d, %Y"),
         "restricted_item_ids": list(restricted_items_data.keys()),
         "restricted_items_data": restricted_items_data,
+        "is_owner": is_owner,
+        "can_input_cost_price": can_input_cost,
+        "show_cost_price_input_only": (not is_owner) and can_input_cost,
     }
     return render(request, "core/add_transaction.html", context)
 
@@ -1697,7 +1703,8 @@ def quick_sell(request):
                 continue
 
             # ── RESTRICTED ITEM CHECK ─────────────────────────────────────
-            if item.is_restricted and not user_profile.is_owner:
+            can_override = getattr(user_profile, 'can_override_restrictions', False)
+            if item.is_restricted and not user_profile.is_owner and not can_override:
                 reserved = item.restricted_quantity or 0
                 balance_after = item.current_balance() - qty
                 if reserved == 0 or balance_after < reserved:

@@ -92,6 +92,8 @@
     <div class="d-flex gap-2 align-items-center">
         <span style="font-size:0.75rem; color:var(--muted);
                             text-transform:uppercase; letter-spacing:0.05em;">{% trans 'Staff' %}</span>
+        <a href="{% url 'staff_permissions' profile.id %}"
+              class="btn btn-sm btn-outline-secondary">⚙️ {% trans 'Permissions' %}</a>
         <a href="{% url 'edit_staff' profile.user.id %}"
               class="btn btn-sm btn-outline-primary">{% trans 'Edit' %}</a>
         <a href="{% url 'reset_staff_password' profile.user.id %}"
