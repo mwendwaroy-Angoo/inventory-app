@@ -113,6 +113,15 @@
         .dropdown-menu::-webkit-scrollbar { width: 4px; }
         .dropdown-menu::-webkit-scrollbar-track { background: var(--onyx-card); }
         .dropdown-menu::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 2px; }
+        @media (max-width: 991px) {
+            .navbar-collapse {
+                max-height: 75vh;
+                overflow-y: auto;
+            }
+            .navbar-collapse::-webkit-scrollbar { width: 3px; }
+            .navbar-collapse::-webkit-scrollbar-track { background: transparent; }
+            .navbar-collapse::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 2px; }
+        }
         .dropdown-item {
             color: var(--pearl);
             font-size: 0.85rem;
