@@ -107,7 +107,12 @@
             background: var(--onyx-card);
             border: 1px solid var(--gold);
             border-radius: 4px;
+            max-height: 80vh;
+            overflow-y: auto;
         }
+        .dropdown-menu::-webkit-scrollbar { width: 4px; }
+        .dropdown-menu::-webkit-scrollbar-track { background: var(--onyx-card); }
+        .dropdown-menu::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 2px; }
         .dropdown-item {
             color: var(--pearl);
             font-size: 0.85rem;
