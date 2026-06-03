@@ -363,20 +363,24 @@ def add_transaction(request):
         item = get_object_or_404(Item, id=item_id)
 
         # ── RESTRICTED ITEM CHECK ─────────────────────────────────────────────
-        # Staff cannot sell restricted items directly — route to approval flow.
         if trans_type == 'Issue' and item.is_restricted and not user_profile.is_owner:
-            from core.restricted_items_views import _create_approval_request
-            approval = _create_approval_request(
-                request, item, user_profile,
-                quantity=quantity,
-                recipient=recipient,
-                invoice_no=invoice_no,
-                payment_method=request.POST.get('payment_method', 'cash'),
-            )
-            return render(request, 'core/sale_approval_pending.html', {
-                'approval': approval,
-                'item': item,
-            })
+            reserved = item.restricted_quantity or 0
+            balance_after = item.current_balance() - quantity
+            needs_approval = reserved == 0 or balance_after < reserved
+            if needs_approval:
+                from core.restricted_items_views import _create_approval_request
+                approval = _create_approval_request(
+                    request, item, user_profile,
+                    quantity=quantity,
+                    recipient=recipient,
+                    invoice_no=invoice_no,
+                    payment_method=request.POST.get('payment_method', 'cash'),
+                )
+                return render(request, 'core/sale_approval_pending.html', {
+                    'approval': approval,
+                    'item': item,
+                })
+            # else: sale is within freely-sellable range — falls through below
         # ─────────────────────────────────────────────────────────────────────
 
         if trans_type == "Issue":
@@ -567,21 +571,22 @@ def add_transaction(request):
     items = Item.objects.filter(store__business=user_profile.business).order_by(
         "material_no"
     )
-    restricted_ids = []
+    restricted_items_data = {}
     if not user_profile.is_owner:
-        restricted_ids = list(
-            Item.objects.filter(
-                store__business=user_profile.business,
-                is_restricted=True,
-            ).values_list('id', flat=True)
-        )
+        restricted_qs = Item.objects.filter(
+            store__business=user_profile.business,
+            is_restricted=True,
+        ).values('id', 'restricted_quantity')
+        for r in restricted_qs:
+            restricted_items_data[r['id']] = r['restricted_quantity']
 
     context = {
         "items": items,
         "stores": stores,
         "customers": customers,
         "today": timezone.now().strftime("%B %d, %Y"),
-        "restricted_item_ids": restricted_ids,
+        "restricted_item_ids": list(restricted_items_data.keys()),
+        "restricted_items_data": restricted_items_data,
     }
     return render(request, "core/add_transaction.html", context)
 
@@ -1167,7 +1172,11 @@ def add_item(request):
             if user_profile.is_owner:
                 item.is_restricted = request.POST.get('is_restricted') == 'on'
                 item.restriction_notes = request.POST.get('restriction_notes', '').strip()
-                item.save(update_fields=['is_restricted', 'restriction_notes'])
+                try:
+                    item.restricted_quantity = max(0, int(request.POST.get('restricted_quantity', 0)))
+                except (ValueError, TypeError):
+                    item.restricted_quantity = 0
+                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity'])
             messages.success(
                 request,
                 _("'%(item_description)s' added successfully.")
@@ -1205,7 +1214,11 @@ def edit_item(request, item_id):
             if user_profile.is_owner:
                 item.is_restricted = request.POST.get('is_restricted') == 'on'
                 item.restriction_notes = request.POST.get('restriction_notes', '').strip()
-                item.save(update_fields=['is_restricted', 'restriction_notes'])
+                try:
+                    item.restricted_quantity = max(0, int(request.POST.get('restricted_quantity', 0)))
+                except (ValueError, TypeError):
+                    item.restricted_quantity = 0
+                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity'])
             messages.success(
                 request,
                 _("'%(item_description)s' updated successfully.")
@@ -1639,15 +1652,17 @@ def quick_sell(request):
                 continue
 
             # ── RESTRICTED ITEM CHECK ─────────────────────────────────────
-            # Staff cannot sell restricted items via Quick Sell.
-            # They must use Add Transaction to submit an approval request.
             if item.is_restricted and not user_profile.is_owner:
-                messages.warning(
-                    request,
-                    _(f'{item.description} is restricted and requires owner approval to sell. '
-                      f'Use Add Transaction to submit an approval request.')
-                )
-                continue
+                reserved = item.restricted_quantity or 0
+                balance_after = item.current_balance() - qty
+                if reserved == 0 or balance_after < reserved:
+                    messages.warning(
+                        request,
+                        _(f'{item.description} requires owner approval for this quantity. '
+                          f'Use Add Transaction to submit an approval request.')
+                    )
+                    continue
+                # else: sale is within freely-sellable range — falls through
             # ─────────────────────────────────────────────────────────────
 
             if item.current_balance() < qty:

@@ -274,6 +274,11 @@ class Item(models.Model):
         max_length=200, blank=True,
         help_text='Reason for restriction — visible to owner only. e.g. Reserved for special customer, Do not sell until market day.'
     )
+    restricted_quantity = models.PositiveIntegerField(
+        default=0,
+        help_text='Reserve this many units. Staff can freely sell above this threshold. '
+                  'Set to 0 to require approval for ALL sales of this item.'
+    )
 
     def current_balance(self):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0

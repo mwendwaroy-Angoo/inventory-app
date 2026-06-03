@@ -504,6 +504,7 @@ $(document).ready(function () {
 
     var IS_OWNER        = {{ user.userprofile.is_owner|yesno:"true,false" }};
     var RESTRICTED_IDS  = {{ restricted_item_ids|default:"[]" }};
+    var RESTRICTED_DATA = {{ restricted_items_data|default:"{}"|safe }};
 
     // ── Translated strings declared as clean JS variables ─────────────────
     // string concatenations, or escaped quotes. Always declare up top.
@@ -595,19 +596,38 @@ $(document).ready(function () {
 
     // ── Restricted item warning ────────────────────────────────────────────
     function checkRestrictedItem() {
-        var itemId      = parseInt($('#item').val());
-        var type        = $('#transType').val();
-        var isRestricted = RESTRICTED_IDS.indexOf(itemId) !== -1;
-        var existing    = document.getElementById('restrictedWarning');
+        var itemId  = parseInt($('#item').val());
+        var type    = $('#transType').val();
+        var existing = document.getElementById('restrictedWarning');
         if (existing) existing.remove();
-        if (isRestricted && type === 'Issue') {
-            var warning = document.createElement('div');
-            warning.id  = 'restrictedWarning';
+
+        if (!itemId || type !== 'Issue') return;
+        if (RESTRICTED_IDS.indexOf(itemId) === -1) return;
+
+        var reserved = RESTRICTED_DATA[itemId] || 0;
+        var warning  = document.createElement('div');
+        warning.id   = 'restrictedWarning';
+
+        if (reserved === 0) {
             warning.style.cssText = 'background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;color:#f87171;font-size:0.875rem;';
-            warning.innerHTML = '🔒 This item is restricted. Submitting will send an approval request to the owner instead of completing the sale immediately.';
-            var submitBtn = document.querySelector('#transactionForm .btn-gold');
-            if (submitBtn) submitBtn.parentNode.insertBefore(warning, submitBtn);
+            warning.innerHTML = '🔒 This item is restricted. Submitting will send an approval request to the owner.';
+        } else {
+            var optionText = $('#item option:selected').text();
+            var balMatch   = optionText.match(/Balance:\s*([\d,]+)/);
+            var balance    = balMatch ? parseInt(balMatch[1].replace(',', '')) : null;
+            var freeToSell = balance !== null ? Math.max(0, balance - reserved) : null;
+
+            if (freeToSell !== null && freeToSell > 0) {
+                warning.style.cssText = 'background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;color:#fbbf24;font-size:0.875rem;';
+                warning.innerHTML = '🔒 ' + reserved + ' units reserved by owner. You can freely sell up to <strong>' + freeToSell + ' units</strong>. Selling more will trigger an approval request.';
+            } else {
+                warning.style.cssText = 'background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;color:#f87171;font-size:0.875rem;';
+                warning.innerHTML = '🔒 This item is restricted — balance is at or below the reserved quantity (' + reserved + ' units). Submitting will send an approval request.';
+            }
         }
+
+        var submitBtn = document.querySelector('#transactionForm .btn-gold');
+        if (submitBtn) submitBtn.parentNode.insertBefore(warning, submitBtn);
     }
 
     function fetchCostPrice(itemId) {
