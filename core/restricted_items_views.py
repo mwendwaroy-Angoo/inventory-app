@@ -68,25 +68,27 @@ def _create_approval_request(request, item, user_profile, quantity, recipient, i
 </div>
 """
 
-    try:
-        from core.notifications import send_sms_notification, send_email_notification, normalize_ke_phone
-        owner_profiles = user_profile.business.users.filter(role='owner')
-        for op in owner_profiles:
-            # SMS — use owner's profile phone first, fall back to business phone
+    import logging
+    _logger = logging.getLogger(__name__)
+
+    owner_profiles = user_profile.business.users.filter(role='owner')
+    for op in owner_profiles:
+        # SMS
+        try:
+            from core.notifications import send_sms_notification
             owner_phone = op.phone or user_profile.business.phone or ''
             if owner_phone:
-                phone = normalize_ke_phone(owner_phone)
-                if phone:
-                    send_sms_notification(phone, sms_msg, user_profile.business)
-            # Email
+                send_sms_notification(sms_msg, owner_phone)
+        except Exception as e:
+            _logger.error('Approval SMS failed: %s', e)
+
+        # Email
+        try:
+            from core.notifications import send_email_notification
             if op.user.email:
-                send_email_notification(
-                    op.user.email,
-                    email_subject,
-                    email_html,
-                )
-    except Exception:
-        pass
+                send_email_notification(op.user.email, email_subject, email_html)
+        except Exception as e:
+            _logger.error('Approval email failed to %s: %s', op.user.email, e)
 
     return approval
 
