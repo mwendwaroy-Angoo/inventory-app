@@ -43,17 +43,48 @@ def _create_approval_request(request, item, user_profile, quantity, recipient, i
             notification_type='warning',
         )
 
+    # Notify all owners — in-app already done above
+    # Now send SMS + email to each owner
+    sms_msg = (
+        f'URGENT — APPROVAL NEEDED: {staff_name} wants to sell '
+        f'{item.description} x{quantity}. '
+        f'Log in to Duka Mwecheche to approve or deny.'
+    )
+    email_subject = f'⚠️ Approval needed — {item.description} | Duka Mwecheche'
+    customer_line = f'Customer: {approval.recipient}<br>' if approval.recipient else ''
+    restriction_line = f'Restriction: {item.restriction_notes}<br>' if item.restriction_notes else ''
+    email_html = f"""
+<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;">
+    <h2 style="color:#c9a84c;">⚠️ Sale Approval Needed</h2>
+    <p><strong>{staff_name}</strong> is requesting to sell:</p>
+    <div style="background:#f5f5f5;padding:1rem;border-radius:8px;margin:1rem 0;">
+        <strong style="font-size:1.1rem;">{item.description}</strong><br>
+        Quantity: {quantity} {item.unit}<br>
+        {customer_line}{restriction_line}
+    </div>
+    <p>Log in to <a href="https://www.dukamwecheche.co.ke/approvals/">Duka Mwecheche</a>
+    to approve or deny this request.</p>
+    <p style="color:#888;font-size:0.85rem;">— Duka Mwecheche</p>
+</div>
+"""
+
     try:
-        from core.notifications import send_sms_notification, normalize_ke_phone
-        if user_profile.business.phone:
-            phone = normalize_ke_phone(user_profile.business.phone)
-            if phone:
-                msg = (
-                    f'APPROVAL NEEDED: {staff_name} wants to sell '
-                    f'{item.description} x{quantity}. '
-                    f'Log in to Duka Mwecheche to approve or deny.'
+        from core.notifications import send_sms_notification, send_email_notification, normalize_ke_phone
+        owner_profiles = user_profile.business.users.filter(role='owner')
+        for op in owner_profiles:
+            # SMS — use owner's profile phone first, fall back to business phone
+            owner_phone = op.phone or user_profile.business.phone or ''
+            if owner_phone:
+                phone = normalize_ke_phone(owner_phone)
+                if phone:
+                    send_sms_notification(phone, sms_msg, user_profile.business)
+            # Email
+            if op.user.email:
+                send_email_notification(
+                    op.user.email,
+                    email_subject,
+                    email_html,
                 )
-                send_sms_notification(phone, msg, user_profile.business)
     except Exception:
         pass
 
@@ -168,7 +199,7 @@ def decide_approval(request, approval_id):
             message=(
                 f'Your request to sell {approval.quantity} {approval.item.unit} '
                 f'of {approval.item.description} has been approved. '
-                f'The transaction has been recorded automatically.'
+                'The transaction has been recorded automatically.'
             ),
             notification_type='info',
         )
@@ -197,7 +228,7 @@ def decide_approval(request, approval_id):
             notification_type='warning',
         )
 
-        messages.info(request, _(f'Sale request denied.'))
+        messages.info(request, _('Sale request denied.'))
 
     return redirect('pending_approvals')
 
