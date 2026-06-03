@@ -249,8 +249,9 @@
             </div>
 
             <!-- ════════════════════════════════════════════════════════════
-                 COST PRICE & DELIVERY FEE SECTION (Receipt only)
+                 COST PRICE & DELIVERY FEE SECTION (Receipt only, owner only)
             ═══════════════════════════════════════════════════════════════ -->
+            {% if user.userprofile.is_owner %}
             <div id="costPriceSection">
                 <div class="section-divider">
                     <span>💰 {% trans 'Cost Price & Delivery' %}</span>
@@ -346,6 +347,7 @@
 
                 </div>
             </div>
+            {% endif %}
             <!-- ════════════════════════════════════════════════════════════ -->
 
             <!-- ── Receiving Store / Customer ── -->
@@ -500,6 +502,8 @@
 <script>
 $(document).ready(function () {
 
+    var IS_OWNER = {{ user.userprofile.is_owner|yesno:"true,false" }};
+
     // ── Translated strings declared as clean JS variables ─────────────────
     // string concatenations, or escaped quotes. Always declare up top.
     var LABEL_RECEIVING_STORE    = '📍 {% trans "Receiving Store" %}';
@@ -571,6 +575,7 @@ $(document).ready(function () {
 
     // ── Cost price section ─────────────────────────────────────────────────
     function checkCostPriceSection() {
+        if (!IS_OWNER) return;
         var type   = $('#transType').val();
         var itemId = $('#item').val();
         if (type === 'Receipt' && itemId) {

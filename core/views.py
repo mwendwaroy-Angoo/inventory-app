@@ -140,6 +140,22 @@ def home(request):
                 }
             )
 
+            # Items received in last 7 days with no cost price set (owner dashboard alert)
+            try:
+                from datetime import timedelta as _td
+                seven_days_ago = timezone.now().date() - _td(days=7)
+                recent_receipts_no_cost = Transaction.objects.filter(
+                    business=business,
+                    type='Receipt',
+                    date__gte=seven_days_ago,
+                    item__cost_price__isnull=True,
+                ).values('item__description', 'item__id').distinct()
+                context['items_missing_cost_price'] = list(recent_receipts_no_cost)
+                context['missing_cost_price_count'] = len(context['items_missing_cost_price'])
+            except Exception:
+                context['items_missing_cost_price'] = []
+                context['missing_cost_price_count'] = 0
+
             # Revenue targets progress for dashboard widget
             try:
                 from core.models import RevenueTarget
@@ -386,7 +402,7 @@ def add_transaction(request):
         #
         # If the owner ticked "update cost price", Item.cost_price is updated
         # to the landed cost per unit (or just the unit price if no delivery fee).
-        if trans_type == "Receipt":
+        if trans_type == "Receipt" and user_profile.is_owner:
             new_cost_price_raw = request.POST.get("new_cost_price", "").strip()
             delivery_fee_raw = request.POST.get("delivery_fee", "0").strip()
             update_cost_price = request.POST.get("update_cost_price") == "on"
@@ -448,6 +464,25 @@ def add_transaction(request):
                 except Exception:
                     pass  # Never block transaction recording due to cost price update failure
         # ─────────────────────────────────────────────────────────────────
+
+        # Notify owner when staff records a receipt (cost price may need updating)
+        if trans_type == 'Receipt' and not user_profile.is_owner:
+            try:
+                from .models import Notification
+                for owner_profile in item.business.users.filter(role='owner'):
+                    Notification.objects.create(
+                        user=owner_profile.user,
+                        title='Receipt recorded — cost price check needed',
+                        message=(
+                            f'{request.user.get_full_name() or request.user.username} received '
+                            f'{abs(quantity)} {item.unit} of {item.description}. '
+                            f'Current cost price: KES {item.cost_price or "not set"}. '
+                            f'Update in Manage Items if needed.'
+                        ),
+                        notification_type='info',
+                    )
+            except Exception:
+                pass
 
         # ── YIELD: auto-create Wastage transaction for yield items ────────
         # When receiving a yield item (e.g. whole goat → sellable cuts),

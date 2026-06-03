@@ -141,6 +141,20 @@
     </div>
     {% endif %}
 
+    <!-- Cost price missing alert (owner only) -->
+    {% if user.userprofile.is_owner and missing_cost_price_count > 0 %}
+    <div class="alert alert-warning alert-dismissible fade show mb-3" role="alert"
+         style="background:rgba(243,156,18,0.12); border:1px solid rgba(243,156,18,0.3);
+                color:#f39c12; border-left:3px solid #f39c12;">
+        <strong>⚠️ Cost price needed on {{ missing_cost_price_count }} item{{ missing_cost_price_count|pluralize }}:</strong>
+        {% for item in items_missing_cost_price %}
+            <a href="{% url 'manage_items' %}" style="color:#f39c12;">{{ item.item__description }}</a>{% if not forloop.last %}, {% endif %}
+        {% endfor %}
+        — <a href="{% url 'manage_items' %}" style="color:#f39c12; font-weight:600;">Update in Manage Items →</a>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" style="filter:invert(1) sepia(1) saturate(5) hue-rotate(10deg);"></button>
+    </div>
+    {% endif %}
+
     <!-- Hero -->
     <div class="hero">
         <div class="hero-subtitle">
