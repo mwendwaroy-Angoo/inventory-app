@@ -161,10 +161,25 @@ def home(request):
                     ).first()
                     return float(t.amount) if t else 0
 
+                def _build_target_data(actual, target):
+                    actual = round(float(actual), 2)
+                    target = float(target)
+                    if target > 0:
+                        pct = min(100, round((actual / target) * 100, 1))
+                    else:
+                        pct = 0
+                    if pct >= 100:
+                        color = '#6ee7b7'
+                    elif pct >= 50:
+                        color = '#fbbf24'
+                    else:
+                        color = '#f87171'
+                    return {'actual': actual, 'target': target, 'pct': pct, 'color': color}
+
                 context['revenue_targets'] = {
-                    'daily':   {'target': _get_target('daily'),   'actual': round(_period_rev(_today, _today), 2)},
-                    'weekly':  {'target': _get_target('weekly'),  'actual': round(_period_rev(_week_start, _today), 2)},
-                    'monthly': {'target': _get_target('monthly'), 'actual': round(_period_rev(_month_start, _today), 2)},
+                    'daily':   _build_target_data(_period_rev(_today, _today),       _get_target('daily')),
+                    'weekly':  _build_target_data(_period_rev(_week_start, _today),  _get_target('weekly')),
+                    'monthly': _build_target_data(_period_rev(_month_start, _today), _get_target('monthly')),
                 }
             except Exception:
                 context['revenue_targets'] = None
