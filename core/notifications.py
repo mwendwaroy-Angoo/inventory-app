@@ -1,8 +1,6 @@
 import logging
 import threading
-from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
-from django.utils.html import strip_tags
 
 logger = logging.getLogger(__name__)
 
@@ -60,38 +58,30 @@ def notify_transaction_async(transaction_id, business_id, daily_count=0, user_id
 
 
 def send_email_notification(to_email, subject, html_message, text_message=None):
-    """Send email notification. Returns True if sent, False otherwise."""
-    if not to_email:
-        return False
-
-    # Pre-check: don't attempt if SMTP credentials are missing
-    email_user = getattr(settings, "EMAIL_HOST_USER", "") or ""
-    email_password = getattr(settings, "EMAIL_HOST_PASSWORD", "") or ""
-
-    if not email_user or not email_password:
+    """Send email via Resend API — works on Render free tier (HTTPS, not SMTP)."""
+    from django.conf import settings as _settings
+    api_key = getattr(_settings, 'RESEND_API_KEY', '') or ''
+    if not api_key:
         logger.warning(
-            "Email notification skipped — EMAIL_HOST_USER or EMAIL_HOST_PASSWORD "
-            "not configured. Intended recipient: %s",
-            to_email,
+            'Email skipped — RESEND_API_KEY not configured. Recipient: %s', to_email
         )
         return False
-
     try:
-        msg = EmailMultiAlternatives(
-            subject=subject,
-            body=text_message or strip_tags(html_message or ""),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[to_email],
-        )
-        if html_message:
-            msg.attach_alternative(html_message, "text/html")
-
-        msg.send(fail_silently=False)
-        logger.info("Email sent to %s — subject: %s", to_email, subject)
+        import resend
+        resend.api_key = api_key
+        params = {
+            'from': _settings.DEFAULT_FROM_EMAIL,
+            'to': [to_email],
+            'subject': subject,
+            'html': html_message,
+        }
+        if text_message:
+            params['text'] = text_message
+        resend.Emails.send(params)
+        logger.info('Email sent via Resend to %s — subject: %s', to_email, subject)
         return True
-
     except Exception as e:
-        logger.error("Email failed to %s — %s: %s", to_email, type(e).__name__, e)
+        logger.error('Email failed to %s — %s: %s', to_email, type(e).__name__, e)
         return False
 
 
