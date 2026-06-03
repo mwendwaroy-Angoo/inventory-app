@@ -28,6 +28,7 @@ psycopg2-binary==2.9.11
 PyJWT==2.12.1
 pytz==2026.1.post1
 PyYAML==6.0.3
+resend
 requests==2.33.1
 responses==0.26.0
 schema==0.7.8

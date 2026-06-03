@@ -152,6 +152,8 @@ EMAIL_HOST_USER = os.getenv("GMAIL_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 DEFAULT_FROM_EMAIL = os.getenv("GMAIL_USER", "")
 EMAIL_TIMEOUT = 5  # seconds — fail fast instead of hanging
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'Duka Mwecheche <onboarding@resend.dev>')
 
 # ── AFRICA'S TALKING ──────────────────────────────────────────────────────────
 AT_USERNAME = os.getenv("AT_USERNAME", "dukamwecheche")
