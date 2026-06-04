@@ -1,8 +1,102 @@
 import logging
 import threading
 from django.conf import settings
+from django.utils import timezone as _tz
+from datetime import timedelta as _td
 
 logger = logging.getLogger(__name__)
+
+
+# ── Notification Event Types ──────────────────────────────────────────────────
+class NotifEvent:
+    TRANSACTION_ISSUE   = 'transaction_issue'
+    TRANSACTION_RECEIPT = 'transaction_receipt'
+    LOW_STOCK           = 'low_stock'
+    REORDER             = 'reorder'
+    STAFF_LOGIN         = 'staff_login'
+    STAFF_LOGOUT        = 'staff_logout'
+    CUSTOMER_ORDER      = 'customer_order'
+    DAILY_SUMMARY       = 'daily_summary'
+
+
+# ── Routing Rules ─────────────────────────────────────────────────────────────
+# Each event: (send_sms, send_email, rate_limit_sms)
+# rate_limit_sms=True means obey the 10-minute bundling window
+ROUTING_RULES = {
+    NotifEvent.TRANSACTION_ISSUE:   (True,  True,  True),
+    NotifEvent.TRANSACTION_RECEIPT: (False, False, False),
+    NotifEvent.LOW_STOCK:           (False, True,  False),
+    NotifEvent.REORDER:             (False, True,  False),
+    NotifEvent.STAFF_LOGIN:         (False, True,  False),
+    NotifEvent.STAFF_LOGOUT:        (False, False, False),
+    NotifEvent.CUSTOMER_ORDER:      (True,  True,  False),
+    NotifEvent.DAILY_SUMMARY:       (True,  True,  False),
+}
+
+BUNDLE_WINDOW_MINUTES = 10
+
+
+def _sms_allowed_by_rate_limit(business):
+    """
+    Returns True if enough time has passed since the last transaction SMS.
+    Updates last_txn_sms_at on the business if allowed.
+    """
+    now = _tz.now()
+    if business.last_txn_sms_at is None:
+        business.last_txn_sms_at = now
+        business.save(update_fields=['last_txn_sms_at'])
+        return True
+    elapsed = now - business.last_txn_sms_at
+    if elapsed >= _td(minutes=BUNDLE_WINDOW_MINUTES):
+        business.last_txn_sms_at = now
+        business.save(update_fields=['last_txn_sms_at'])
+        return True
+    return False
+
+
+def route_notification(event_type, business, owner_phone, owner_email,
+                       sms_message, email_subject, email_html,
+                       text_message=None):
+    """
+    Central notification router. Fires SMS and/or email based on
+    event type routing rules. Handles 10-minute SMS bundling for
+    transaction events. Always returns (sms_sent, email_sent).
+    """
+    rules = ROUTING_RULES.get(event_type)
+    if not rules:
+        logger.warning('Unknown notification event type: %s', event_type)
+        return False, False
+
+    should_sms, should_email, rate_limited = rules
+    sms_sent = False
+    email_sent = False
+
+    # SMS
+    if should_sms and owner_phone:
+        try:
+            allowed = (not rate_limited) or _sms_allowed_by_rate_limit(business)
+            if allowed:
+                phone = normalize_ke_phone(owner_phone)
+                if phone:
+                    send_sms_notification(sms_message, phone)
+                    sms_sent = True
+            else:
+                logger.info(
+                    'SMS bundled (within %d-min window) for %s event on business %s',
+                    BUNDLE_WINDOW_MINUTES, event_type, business.id
+                )
+        except Exception as e:
+            logger.error('Router SMS failed [%s]: %s', event_type, e)
+
+    # Email
+    if should_email and owner_email:
+        try:
+            send_email_notification(owner_email, email_subject, email_html, text_message)
+            email_sent = True
+        except Exception as e:
+            logger.error('Router email failed [%s]: %s', event_type, e)
+
+    return sms_sent, email_sent
 
 
 def normalize_ke_phone(phone):
@@ -160,22 +254,7 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
         emoji = "📥"
         action = "received"
 
-    subject = f"{emoji} Transaction Alert — {business.name}"
-    message = (
-        f"Transaction recorded on Duka Mwecheche\n\n"
-        f"Business: {business.name}\n"
-        f"Item: {item.description} ({item.material_no})\n"
-        f"Type: {trans_type}\n"
-        f"Quantity: {qty} {item.unit} {action}\n"
-        f"Remaining Balance: {item.current_balance()} {item.unit}\n"
-        f"Recipient: {transaction.recipient or 'N/A'}\n"
-        f"Invoice No: {transaction.invoice_no or 'N/A'}\n"
-        f"Recorded by: {recorded_by}\n"
-        f"Date: {transaction.date}\n\n"
-        f"— Duka Mwecheche"
-    )
-
-    # In-app notification always
+    # In-app notification always (both Issue and Receipt)
     create_in_app_notification(
         owner,
         f"{emoji} {trans_type}: {item.description}",
@@ -183,28 +262,36 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
         notification_type="transaction",
     )
 
-    # Email always
-    send_email_notification(owner_email, subject, None, text_message=message)
-
-    # SMS if ≤15 transactions today, WhatsApp if >15
-    if daily_count <= 15:
+    # Issue: route through central router (SMS with 10-min bundling + email)
+    # Receipt: in-app only — cost price email is sent separately from views.py
+    if trans_type == 'Issue':
         sms_msg = (
-            f"[Duka Mwecheche] {trans_type}: {qty} {item.unit} "
-            f"of {item.description}. "
-            f"Balance: {item.current_balance()}. "
-            f"By: {recorded_by}"
+            f'{business.name}: {qty} {item.unit} of {item.description} issued'
+            f'{" to " + transaction.recipient if transaction.recipient else ""}. '
+            f'Balance: {item.current_balance()} {item.unit}.'
         )
-        send_sms_notification(sms_msg, owner_phone)
-    else:
-        wa_msg = (
-            f"*Duka Mwecheche — Transaction Alert*\n\n"
-            f"*{trans_type}:* {qty} {item.unit} of {item.description}\n"
-            f"*Balance:* {item.current_balance()} {item.unit}\n"
-            f"*Recipient:* {transaction.recipient or 'N/A'}\n"
-            f"*Recorded by:* {recorded_by}\n"
-            f"*Invoice:* {transaction.invoice_no or 'N/A'}"
+        email_subject = f'Transaction Alert — {business.name}'
+        email_html = f"""
+<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;">
+    <h2 style="color:#c9a84c;">🧾 Transaction Recorded</h2>
+    <p>Business: <strong>{business.name}</strong></p>
+    <div style="background:#f5f5f5;padding:1rem;border-radius:8px;margin:1rem 0;">
+        <strong>{item.description}</strong><br>
+        Type: Issue / Sale<br>
+        Quantity: {qty} {item.unit}<br>
+        {'Customer: ' + transaction.recipient + '<br>' if transaction.recipient else ''}
+        Remaining balance: {item.current_balance()} {item.unit}<br>
+        Recorded by: {recorded_by}<br>
+        Date: {transaction.date}
+    </div>
+    <p style="color:#888;font-size:0.85rem;">— Duka Mwecheche</p>
+</div>
+"""
+        route_notification(
+            NotifEvent.TRANSACTION_ISSUE,
+            business, owner_phone, owner_email,
+            sms_msg, email_subject, email_html,
         )
-        send_whatsapp_notification(owner_phone, wa_msg)
 
     if item.needs_reorder():
         notify_reorder_alert(item, business, owner, owner_email, owner_phone)
@@ -212,7 +299,7 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
 
 def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
     subject = f"⚠️ Low Stock Alert — {item.description}"
-    message = (
+    text_message = (
         f"Low stock alert from Duka Mwecheche\n\n"
         f"Business: {business.name}\n"
         f"Item: {item.description} ({item.material_no})\n"
@@ -228,11 +315,12 @@ def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
         f"Balance: {item.current_balance()} {item.unit}. Reorder level: {item.reorder_level}",
         notification_type="warning",
     )
-    send_email_notification(owner_email, subject, None, text_message=message)
-    send_sms_notification(
-        f"[Duka Mwecheche] LOW STOCK: {item.description}. "
-        f"Balance: {item.current_balance()} {item.unit}. Please reorder.",
-        owner_phone,
+    route_notification(
+        NotifEvent.LOW_STOCK,
+        business, owner_phone, owner_email,
+        '',  # no SMS per routing table
+        subject, None,
+        text_message=text_message,
     )
 
 
@@ -242,20 +330,46 @@ def notify_staff_login(user, business, action="logged in"):
         return
 
     owner = owner_profile.user
+    staff_name = user.get_full_name() or user.username
 
     from django.utils import timezone
 
     now = timezone.localtime(timezone.now()).strftime("%B %d, %Y at %I:%M %p")
 
     emoji = "🟢" if action == "logged in" else "🔴"
-    # Only in-app notification during login/logout — email/SMS would block
-    # the request and cause worker timeouts on Render's free tier
     create_in_app_notification(
         owner,
         f"{emoji} {user.username} {action}",
         f"Staff member {action} at {now}",
         notification_type="staff",
     )
+
+    # Email audit trail for logins only (routing rule: email only, no SMS)
+    if action == "logged in":
+        try:
+            owner_profiles = business.users.filter(role='owner')
+            for op in owner_profiles:
+                owner_phone = getattr(op, 'phone', '') or business.phone or ''
+                login_time = timezone.localtime(timezone.now()).strftime('%d %b %Y at %H:%M')
+                email_html = f"""
+<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;">
+    <h2 style="color:#c9a84c;">👤 Staff Login</h2>
+    <p><strong>{staff_name}</strong> logged in to {business.name}.</p>
+    <p style="color:#888;">Time: {login_time}</p>
+    <p style="color:#888;font-size:0.85rem;">— Duka Mwecheche</p>
+</div>
+"""
+                route_notification(
+                    NotifEvent.STAFF_LOGIN,
+                    business,
+                    owner_phone,
+                    op.user.email,
+                    '',
+                    f'Staff Login — {staff_name} | {business.name}',
+                    email_html,
+                )
+        except Exception as e:
+            logger.error('Login audit email failed: %s', e)
 
 
 def notify_new_order(order):
@@ -313,16 +427,31 @@ def notify_new_order(order):
             notification_type="order",
         )
 
-    # Email to owner
-    send_email_notification(owner_email, subject, None, text_message=message)
-
-    # SMS to owner
+    # Route email + SMS through central router (CUSTOMER_ORDER: both channels, no bundling)
     sms_msg = (
-        f"[Duka Mwecheche] New Order #{order.order_number}: "
-        f"{order.customer_name}, KES {order.total_amount:,.0f}. "
-        f"{delivery_label}."
+        f'NEW ORDER: {order.customer_name} — KES {order.total_amount:,.0f}. '
+        f'Log in to Duka Mwecheche to confirm.'
     )
-    send_sms_notification(sms_msg, owner_phone)
+    email_html = f"""
+<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;">
+    <h2 style="color:#c9a84c;">🛒 New Customer Order</h2>
+    <p>Order from <strong>{order.customer_name}</strong></p>
+    <div style="background:#f5f5f5;padding:1rem;border-radius:8px;margin:1rem 0;">
+        Order #: {order.order_number}<br>
+        Amount: KES {order.total_amount:,.0f}<br>
+        Type: {delivery_label}<br>
+        Payment: {pay_label}<br>
+        Time: {order.created_at.strftime('%d %b %Y %H:%M')}
+    </div>
+    <p><a href="https://www.dukamwecheche.co.ke/orders/">View Order</a></p>
+    <p style="color:#888;font-size:0.85rem;">— Duka Mwecheche</p>
+</div>
+"""
+    route_notification(
+        NotifEvent.CUSTOMER_ORDER,
+        business, owner_phone, owner_email,
+        sms_msg, subject, email_html,
+    )
 
 
 def send_daily_summary(business):
@@ -396,16 +525,18 @@ def send_daily_summary(business):
 
     send_email_notification(owner_email, subject, None, text_message=message)
 
-    wa_msg = (
-        f"*📊 Daily Summary — {business.name}*\n"
-        f"*Date:* {today}\n\n"
-        f"*Revenue:* KES {total_revenue:,.0f}\n"
-        f"*Cost:* KES {total_cost:,.0f}\n"
-        f"*Profit:* KES {total_profit:,.0f}\n"
-        f"*Transactions:* {total_transactions} sales\n\n"
-        f"View full report: https://stock-made-simpler-sms.onrender.com/sales/"
-    )
-    send_whatsapp_notification(owner_phone, wa_msg)
+    # SMS nudge after daily summary email
+    try:
+        if owner_phone:
+            phone = normalize_ke_phone(owner_phone)
+            if phone:
+                nudge = (
+                    f'Duka Mwecheche: Your daily summary for {business.name} '
+                    f'is ready. Check your email for the full report.'
+                )
+                send_sms_notification(nudge, phone)
+    except Exception as e:
+        logger.error('Daily summary SMS nudge failed: %s', e)
 
     # Also send reorder recommendations as part of daily summary
     try:
@@ -461,9 +592,13 @@ def notify_reorder_recommendations(business, max_items=20, create_draft=False):
     # In-app notification
     create_in_app_notification(owner, title, short_msg, notification_type="warning")
 
-    # Email notification
-    send_email_notification(
-        owner_email, title, None, text_message=long_msg + "\n\n— Duka Mwecheche"
+    # Email via router (REORDER: email only, no SMS per routing table)
+    route_notification(
+        NotifEvent.REORDER,
+        business, owner_phone, owner_email,
+        '',  # no SMS per routing table
+        title, None,
+        text_message=long_msg + "\n\n— Duka Mwecheche",
     )
 
     # Optionally create a draft PO

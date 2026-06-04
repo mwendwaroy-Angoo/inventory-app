@@ -79,6 +79,11 @@ class Business(models.Model):
         help_text='Maximum days a customer debt may remain outstanding before it is flagged as overdue.',
     )
 
+    last_txn_sms_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Timestamp of last transaction SMS sent. Used for 10-minute bundling window.'
+    )
+
     def __str__(self):
         return self.name
 
