@@ -27,7 +27,7 @@ ROUTING_RULES = {
     NotifEvent.TRANSACTION_RECEIPT: (False, False, False),
     NotifEvent.LOW_STOCK:           (False, True,  False),
     NotifEvent.REORDER:             (False, True,  False),
-    NotifEvent.STAFF_LOGIN:         (False, True,  False),
+    NotifEvent.STAFF_LOGIN:         (True,  True,  False),
     NotifEvent.STAFF_LOGOUT:        (False, False, False),
     NotifEvent.CUSTOMER_ORDER:      (True,  True,  False),
     NotifEvent.DAILY_SUMMARY:       (True,  True,  False),
@@ -359,12 +359,16 @@ def notify_staff_login(user, business, action="logged in"):
     <p style="color:#888;font-size:0.85rem;">— Duka Mwecheche</p>
 </div>
 """
+                sms_msg = (
+                    f'{staff_name} logged in to {business.name}. '
+                    f'Time: {timezone.localtime(timezone.now()).strftime("%d %b %Y %H:%M")}.'
+                )
                 route_notification(
                     NotifEvent.STAFF_LOGIN,
                     business,
                     owner_phone,
                     op.user.email,
-                    '',
+                    sms_msg,
                     f'Staff Login — {staff_name} | {business.name}',
                     email_html,
                 )
