@@ -234,10 +234,17 @@
                 </select>
             </div>
 
-            <div class="mb-4">
+            <!-- Produce preset section — shown for Issue type on produce items -->
+            <div id="producePresetSection" style="display:none;" class="mb-3">
+                <label class="form-label">🥬 {% trans 'Portion' %}</label>
+                <div id="producePresetContent"></div>
+                <input type="hidden" name="preset_id" id="selectedPresetId" value="">
+            </div>
+
+            <div id="quantitySection" class="mb-4">
                 <label class="form-label">{% trans 'Quantity' %}</label>
                 <input type="number" name="quantity" id="quantity"
-                       class="form-control" min="1" required
+                       class="form-control" min="0.0001" step="any" required
                        placeholder="{% trans 'Enter quantity' %}">
 
                 <!-- Yield preview — shown when item is a yield item + type = Receipt -->
@@ -603,6 +610,7 @@ $(document).ready(function () {
         toggleRecipient();
         updateYieldPreview();
         checkRestrictedItem();
+        checkProduceItem();
     });
 
     // ── New customer fields ────────────────────────────────────────────────
@@ -829,7 +837,72 @@ $(document).ready(function () {
     $('#item').on('change', function () {
         checkCostPriceSection();
         checkRestrictedItem();
+        checkProduceItem();
     });
+
+    // ── Produce preset section ────────────────────────────────────────────────
+    function checkProduceItem() {
+        var itemId = parseInt($('#item').val());
+        var transType = $('#transType').val();
+
+        if (!itemId || transType !== 'Issue') {
+            $('#producePresetSection').hide();
+            $('#quantitySection').show();
+            $('#selectedPresetId').val('');
+            return;
+        }
+
+        fetch('/stock/item/' + itemId + '/presets/')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.is_produce || data.presets.length === 0) {
+                    $('#producePresetSection').hide();
+                    $('#quantitySection').show();
+                    return;
+                }
+
+                var html = '<div style="margin-bottom:0.75rem; color:var(--gold); font-size:0.82rem; font-weight:600;">Select portion:</div>';
+                html += '<div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem;">';
+                data.presets.forEach(function(p) {
+                    html += '<button type="button" class="preset-btn" ' +
+                        'data-preset-id="' + p.id + '" ' +
+                        'data-qty="' + p.quantity_consumed + '" ' +
+                        'data-price="' + p.price + '" ' +
+                        'data-label="' + p.label + '" ' +
+                        'style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); ' +
+                        'color:var(--pearl); border-radius:8px; padding:0.6rem 1rem; cursor:pointer; font-size:0.85rem; text-align:center; min-width:90px;">' +
+                        '<div style="font-weight:600; color:var(--gold);">KES ' + p.price.toFixed(0) + '</div>' +
+                        '<div style="font-size:0.75rem; color:#b0b0b0;">' + p.label + '</div>' +
+                        '</button>';
+                });
+                html += '</div>';
+                html += '<div id="selectedPresetInfo" style="display:none; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.2); border-radius:6px; padding:0.5rem 0.75rem; font-size:0.82rem; color:#b0b0b0;"></div>';
+
+                $('#producePresetContent').html(html);
+                $('#producePresetSection').show();
+                $('#quantitySection').hide();
+                $('#selectedPresetId').val('');
+
+                $(document).off('click.preset').on('click.preset', '.preset-btn', function() {
+                    $('.preset-btn').css({'background': 'rgba(201,168,76,0.1)', 'border-color': 'rgba(201,168,76,0.3)', 'color': 'var(--pearl)'});
+                    $(this).css({'background': 'rgba(201,168,76,0.25)', 'border-color': 'var(--gold)', 'color': 'var(--gold)'});
+                    var qty   = $(this).data('qty');
+                    var price = $(this).data('price');
+                    var label = $(this).data('label');
+                    var pid   = $(this).data('preset-id');
+                    $('#selectedPresetId').val(pid);
+                    $('#quantity').val(qty);
+                    $('#selectedPresetInfo').html(
+                        '&#10003; <strong>' + label + '</strong> — KES ' + parseFloat(price).toFixed(2) +
+                        ' | Stock consumed: ' + parseFloat(qty).toFixed(4) + ' units'
+                    ).show();
+                });
+            })
+            .catch(function() {
+                $('#producePresetSection').hide();
+                $('#quantitySection').show();
+            });
+    }
 
     // ── Init ──────────────────────────────────────────────────────────────
     toggleRecipient();

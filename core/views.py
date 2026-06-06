@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal, InvalidOperation
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.contrib.auth.decorators import login_required
@@ -16,6 +17,7 @@ from .models import (
     PurchaseOrderLine,
     GoodsReceipt,
     GoodsReceiptLine,
+    ItemPortionPreset,
 )
 from .forms import (
     ItemForm,
@@ -347,7 +349,10 @@ def add_transaction(request):
     if request.method == "POST":
         item_id = request.POST["item"]
         trans_type = request.POST["type"]
-        quantity = int(request.POST["quantity"])
+        try:
+            quantity = Decimal(request.POST.get('quantity', '0'))
+        except InvalidOperation:
+            quantity = Decimal('0')
         invoice_no = request.POST.get("invoice_no", "")
         recipient = request.POST.get("recipient", "")
 
@@ -361,6 +366,16 @@ def add_transaction(request):
             recipient = customer.name
 
         item = get_object_or_404(Item, id=item_id)
+
+        # ── PRODUCE PRESET HANDLING ───────────────────────────────────────────
+        preset_id = request.POST.get('preset_id', '').strip()
+        if preset_id and item.is_produce:
+            try:
+                preset = ItemPortionPreset.objects.get(id=int(preset_id), item=item)
+                quantity = preset.quantity_consumed
+            except (ItemPortionPreset.DoesNotExist, ValueError):
+                pass
+        # ─────────────────────────────────────────────────────────────────────
 
         # ── RESTRICTED ITEM CHECK ─────────────────────────────────────────────
         can_override = getattr(user_profile, 'can_override_restrictions', False)
@@ -557,7 +572,7 @@ def add_transaction(request):
         # and must be deducted from stock so the balance reflects usable qty.
         if trans_type == 'Receipt' and item.is_yield_item and item.yield_factor:
             received_qty = abs(quantity)  # quantity is positive for receipts
-            wastage_qty = int(round(received_qty * (1 - float(item.yield_factor))))
+            wastage_qty = Decimal(str(round(float(received_qty) * (1 - float(item.yield_factor)), 4)))
             if wastage_qty > 0:
                 Transaction.objects.create(
                     item=item,
@@ -574,9 +589,9 @@ def add_transaction(request):
                         'Yield applied: %(usable)s %(unit)s usable, '
                         '%(wastage)s %(unit)s wastage recorded (%(pct)s%% yield).'
                     ) % {
-                        'usable': usable_qty,
+                        'usable': float(usable_qty),
                         'unit': item.unit,
-                        'wastage': wastage_qty,
+                        'wastage': float(wastage_qty),
                         'pct': int(float(item.yield_factor) * 100),
                     },
                 )
@@ -1219,7 +1234,7 @@ def add_item(request):
                 next_id = (last_item.id + 1) if last_item else 1
                 item.material_no = f"MAT-{next_id:04d}"
             item.save()
-            # Handle restriction fields (not in ItemForm — owner only)
+            # Handle owner-only fields (restrictions + produce)
             if user_profile.is_owner:
                 item.is_restricted = request.POST.get('is_restricted') == 'on'
                 item.restriction_notes = request.POST.get('restriction_notes', '').strip()
@@ -1227,7 +1242,40 @@ def add_item(request):
                     item.restricted_quantity = max(0, int(request.POST.get('restricted_quantity', 0)))
                 except (ValueError, TypeError):
                     item.restricted_quantity = 0
-                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity'])
+                item.is_produce = request.POST.get('is_produce') == 'on'
+                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity', 'is_produce'])
+
+                # ── PRODUCE PORTION PRESETS ───────────────────────────────────
+                preset_labels  = request.POST.getlist('preset_label')
+                preset_prices  = request.POST.getlist('preset_price')
+                preset_qty     = request.POST.getlist('preset_qty_consumed')
+                preset_orders  = request.POST.getlist('preset_order')
+                preset_ids     = request.POST.getlist('preset_id')
+
+                submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
+                item.portion_presets.exclude(id__in=submitted_ids).delete()
+
+                for i, label in enumerate(preset_labels):
+                    if not label.strip():
+                        continue
+                    try:
+                        price  = Decimal(preset_prices[i])
+                        qty_c  = Decimal(preset_qty[i])
+                        order  = int(preset_orders[i]) if preset_orders[i].strip() else i
+                        pid    = preset_ids[i].strip() if i < len(preset_ids) else ''
+                    except (ValueError, InvalidOperation, IndexError):
+                        continue
+                    if pid:
+                        ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
+                            label=label, price=price, quantity_consumed=qty_c, display_order=order
+                        )
+                    else:
+                        ItemPortionPreset.objects.create(
+                            item=item, label=label, price=price,
+                            quantity_consumed=qty_c, display_order=order
+                        )
+                # ─────────────────────────────────────────────────────────────
+
             messages.success(
                 request,
                 _("'%(item_description)s' added successfully.")
@@ -1261,7 +1309,7 @@ def edit_item(request, item_id):
         )
         if form.is_valid():
             item = form.save()
-            # Handle restriction fields (not in ItemForm — owner only)
+            # Handle owner-only fields (restrictions + produce)
             if user_profile.is_owner:
                 item.is_restricted = request.POST.get('is_restricted') == 'on'
                 item.restriction_notes = request.POST.get('restriction_notes', '').strip()
@@ -1269,7 +1317,40 @@ def edit_item(request, item_id):
                     item.restricted_quantity = max(0, int(request.POST.get('restricted_quantity', 0)))
                 except (ValueError, TypeError):
                     item.restricted_quantity = 0
-                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity'])
+                item.is_produce = request.POST.get('is_produce') == 'on'
+                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity', 'is_produce'])
+
+                # ── PRODUCE PORTION PRESETS ───────────────────────────────────
+                preset_labels  = request.POST.getlist('preset_label')
+                preset_prices  = request.POST.getlist('preset_price')
+                preset_qty     = request.POST.getlist('preset_qty_consumed')
+                preset_orders  = request.POST.getlist('preset_order')
+                preset_ids     = request.POST.getlist('preset_id')
+
+                submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
+                item.portion_presets.exclude(id__in=submitted_ids).delete()
+
+                for i, label in enumerate(preset_labels):
+                    if not label.strip():
+                        continue
+                    try:
+                        price  = Decimal(preset_prices[i])
+                        qty_c  = Decimal(preset_qty[i])
+                        order  = int(preset_orders[i]) if preset_orders[i].strip() else i
+                        pid    = preset_ids[i].strip() if i < len(preset_ids) else ''
+                    except (ValueError, InvalidOperation, IndexError):
+                        continue
+                    if pid:
+                        ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
+                            label=label, price=price, quantity_consumed=qty_c, display_order=order
+                        )
+                    else:
+                        ItemPortionPreset.objects.create(
+                            item=item, label=label, price=price,
+                            quantity_consumed=qty_c, display_order=order
+                        )
+                # ─────────────────────────────────────────────────────────────
+
             messages.success(
                 request,
                 _("'%(item_description)s' updated successfully.")
@@ -1698,15 +1779,22 @@ def quick_sell(request):
             if not item:
                 continue
 
-            qty = int(entry.get("qty", 0))
-            if qty < 1:
+            # stock_qty = actual stock consumed (may be fractional for produce)
+            # display_qty = what to show on receipt (1 for produce portions, integer for normal)
+            try:
+                stock_qty = Decimal(str(entry.get("stock_qty", entry.get("qty", 0))))
+            except Exception:
+                stock_qty = Decimal('0')
+            if stock_qty <= 0:
                 continue
+            display_qty = entry.get("qty", int(stock_qty))
+            display_price = float(entry.get("price", 0)) or float(item.selling_price or 0)
 
             # ── RESTRICTED ITEM CHECK ─────────────────────────────────────
             can_override = getattr(user_profile, 'can_override_restrictions', False)
             if item.is_restricted and not user_profile.is_owner and not can_override:
                 reserved = item.restricted_quantity or 0
-                balance_after = item.current_balance() - qty
+                balance_after = item.current_balance() - stock_qty
                 if reserved == 0 or balance_after < reserved:
                     messages.warning(
                         request,
@@ -1717,7 +1805,7 @@ def quick_sell(request):
                 # else: sale is within freely-sellable range — falls through
             # ─────────────────────────────────────────────────────────────
 
-            if item.current_balance() < qty:
+            if item.current_balance() < stock_qty:
                 messages.warning(
                     request,
                     _(
@@ -1734,15 +1822,15 @@ def quick_sell(request):
             last_transaction = Transaction.objects.create(
                 item=item,
                 type="Issue",
-                qty=-qty,
+                qty=-stock_qty,
                 business=user_profile.business,
                 payment_method=request.POST.get("payment_method", "cash"),
             )
             recorded.append(
                 {
                     "name": item.description,
-                    "qty": qty,
-                    "subtotal": float(item.selling_price or 0) * qty,
+                    "qty": float(display_qty),
+                    "subtotal": display_price * float(display_qty),
                 }
             )
 
@@ -1806,6 +1894,7 @@ def quick_sell(request):
                 "unit": item.unit,
                 "store_id": item.store_id,
                 "reorder_level": item.reorder_level,
+                "is_produce": item.is_produce,
             }
         )
 
@@ -1820,6 +1909,30 @@ def quick_sell(request):
             "success_data": success_data,
         },
     )
+
+
+@login_required
+def item_portion_presets(request, item_id):
+    """AJAX — returns portion presets for a produce item. Called by Quick Sell and Add Transaction."""
+    user_profile = get_user_profile(request)
+    item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
+    if not item.is_produce:
+        return JsonResponse({'is_produce': False, 'presets': []})
+
+    presets = list(item.portion_presets.values(
+        'id', 'label', 'price', 'quantity_consumed', 'display_order'
+    ))
+    for p in presets:
+        p['price'] = float(p['price'])
+        p['quantity_consumed'] = float(p['quantity_consumed'])
+
+    return JsonResponse({
+        'is_produce': True,
+        'item_name': item.description,
+        'unit': item.unit,
+        'presets': presets,
+        'balance': float(item.current_balance()),
+    })
 
 
 @login_required

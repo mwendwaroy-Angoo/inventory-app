@@ -41,6 +41,7 @@ from core.views import (
     manifest_json,
     service_worker,
     forecast_api,
+    item_portion_presets,
 )
 from core.ussd import ussd_callback
 from core.customer_ussd import customer_ussd_callback
@@ -147,6 +148,7 @@ urlpatterns = [
     path("stock/add/", add_item, name="add_item"),
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),
     path("stock/delete/<int:item_id>/", delete_item, name="delete_item"),
+    path("stock/item/<int:item_id>/presets/", item_portion_presets, name="item_portion_presets"),
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────
     path("approvals/", pending_approvals, name="pending_approvals"),

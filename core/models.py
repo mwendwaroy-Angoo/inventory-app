@@ -279,6 +279,10 @@ class Item(models.Model):
         help_text='Reserve this many units. Staff can freely sell above this threshold. '
                   'Set to 0 to require approval for ALL sales of this item.'
     )
+    is_produce = models.BooleanField(
+        default=False,
+        help_text='Enable portion-based selling. Owner defines price presets (e.g. KES 40 = quarter head). Used for vegetables, produce, and gorogoro items.'
+    )
 
     def current_balance(self):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
@@ -420,7 +424,11 @@ class Transaction(models.Model):
     date = models.DateField(default=timezone.now)
     invoice_no = models.CharField(max_length=50, blank=True)
     type = models.CharField(max_length=20, choices=TYPE_CHOICES)
-    qty = models.IntegerField()
+    qty = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        help_text='Signed quantity. Negative for Issue/Wastage, positive for Receipt. Supports fractional values for produce items.'
+    )
     recipient = models.CharField(max_length=200, blank=True)
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='transactions', null=True, blank=True)
     PAYMENT_METHOD_CHOICES = [
@@ -1188,3 +1196,51 @@ class ItemSaleApproval(models.Model):
 
     def __str__(self):
         return f"{self.requested_by.username} → {self.item.description} x{self.quantity} ({self.status})"
+
+
+# ────────────────────────────────────────────────
+# PRODUCE / PORTION PRESETS
+# ────────────────────────────────────────────────
+
+class ItemPortionPreset(models.Model):
+    """
+    Defines a price point for a produce item.
+    Owner configures these per item — e.g. "Quarter cabbage = KES 40 = 0.25 units consumed".
+    Staff selects a preset in Quick Sell or Add Transaction instead of entering quantity.
+
+    Examples:
+      Cabbage:  KES 10 → 0.0833 heads | KES 20 → 0.1667 | KES 40 → 0.25 | KES 70 → 0.5
+      Kale:     KES 10 → 4 stems (quantity_consumed=4) | KES 20 → 8 stems
+      Gorogoro: KES 70 → 1 small gorogoro (qty=1) | KES 130 → 1 medium
+    """
+    item = models.ForeignKey(
+        'Item',
+        on_delete=models.CASCADE,
+        related_name='portion_presets',
+    )
+    label = models.CharField(
+        max_length=100,
+        help_text='Display name shown to staff. e.g. "Quarter head", "4 stems", "Small gorogoro"'
+    )
+    price = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        help_text='Amount the customer pays (KES).'
+    )
+    quantity_consumed = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        help_text='Stock units consumed. For fractional items: 0.25 = quarter head. For count items: 4 = four stems.'
+    )
+    display_order = models.PositiveIntegerField(
+        default=0,
+        help_text='Lower numbers appear first. Use to sort presets by ascending price.'
+    )
+
+    class Meta:
+        ordering = ['display_order', 'price']
+        verbose_name = 'Item Portion Preset'
+        verbose_name_plural = 'Item Portion Presets'
+
+    def __str__(self):
+        return f"{self.item.description}: {self.label} — KES {self.price}"

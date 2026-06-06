@@ -190,6 +190,96 @@
             </div>
             {% endif %}
 
+            {% if user.userprofile.is_owner %}
+            <div class="section-divider"><span>🥬 {% trans 'Produce Settings' %}</span></div>
+
+            <div class="mb-3">
+                <div class="form-check">
+                    <input type="checkbox" name="is_produce" id="is_produce"
+                           class="form-check-input"
+                           {% if form.instance.is_produce %}checked{% endif %}>
+                    <label class="form-check-label" for="is_produce">
+                        {% trans 'This is a produce item — sell by portion presets instead of fixed quantity' %}
+                    </label>
+                </div>
+                <div style="color:#b0b0b0; font-size:0.78rem; margin-top:0.25rem;">
+                    {% trans 'Use for vegetables, gorogoro items, or any item sold by customer-requested value.' %}
+                </div>
+            </div>
+
+            <div id="portionPresetsSection" style="{% if not form.instance.is_produce %}display:none;{% endif %}">
+                <div style="color:var(--gold); font-size:0.85rem; font-weight:600; margin-bottom:0.75rem;">
+                    📋 {% trans 'Portion Presets' %}
+                    <span style="color:#b0b0b0; font-weight:400; font-size:0.78rem; margin-left:0.5rem;">
+                        {% trans 'Define what each price point gives the customer.' %}
+                    </span>
+                </div>
+
+                <div style="background:rgba(255,255,255,0.02); border:1px solid #2a2a2a; border-radius:8px; overflow:hidden; margin-bottom:0.75rem;">
+                    <div style="display:grid; grid-template-columns:2fr 1fr 1fr 0.5fr auto; gap:0; padding:0.5rem 0.75rem; border-bottom:1px solid #2a2a2a; font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em;">
+                        <span>{% trans 'Label' %}</span>
+                        <span>{% trans 'Customer Pays (KES)' %}</span>
+                        <span>{% trans 'Stock Used' %}</span>
+                        <span>{% trans 'Order' %}</span>
+                        <span></span>
+                    </div>
+                    <div id="presetRows">
+                        {% for preset in form.instance.portion_presets.all %}
+                        <div class="preset-row" style="display:grid; grid-template-columns:2fr 1fr 1fr 0.5fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;">
+                            <input type="hidden" name="preset_id" value="{{ preset.id }}">
+                            <input type="text" name="preset_label" value="{{ preset.label }}"
+                                   class="form-control form-control-sm" placeholder="{% trans 'e.g. Quarter head' %}">
+                            <input type="number" name="preset_price" value="{{ preset.price }}"
+                                   class="form-control form-control-sm" step="0.01" min="0" placeholder="40">
+                            <input type="number" name="preset_qty_consumed" value="{{ preset.quantity_consumed }}"
+                                   class="form-control form-control-sm" step="0.0001" min="0" placeholder="0.25">
+                            <input type="number" name="preset_order" value="{{ preset.display_order }}"
+                                   class="form-control form-control-sm" min="0" placeholder="0">
+                            <button type="button" onclick="this.closest('.preset-row').remove()"
+                                    style="background:none; border:none; color:#f87171; font-size:1.1rem; cursor:pointer; padding:0.25rem;">✕</button>
+                        </div>
+                        {% empty %}
+                        <div id="presetEmptyMsg" style="color:#555; font-size:0.82rem; padding:0.75rem; text-align:center;">
+                            {% trans 'No presets yet — add one below.' %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <button type="button" id="addPresetBtn"
+                        style="background:rgba(201,168,76,0.1); border:1px dashed var(--gold); color:var(--gold); border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:1rem;">
+                    + {% trans 'Add Portion Preset' %}
+                </button>
+
+                <div style="color:#b0b0b0; font-size:0.75rem; margin-bottom:1rem;">
+                    <strong style="color:var(--gold);">{% trans 'Stock Used' %} tip:</strong>
+                    {% trans 'Enter the fraction of one stock unit this portion consumes.' %}
+                    {% trans 'Example: cabbage sold as quarter head = 0.25. Kale stems: 4 stems = 4 (if unit is "stem").' %}
+                </div>
+            </div>
+
+            <script>
+            document.getElementById('is_produce').addEventListener('change', function() {
+                document.getElementById('portionPresetsSection').style.display = this.checked ? 'block' : 'none';
+            });
+
+            document.getElementById('addPresetBtn').addEventListener('click', function() {
+                var empty = document.getElementById('presetEmptyMsg');
+                if (empty) empty.remove();
+                var row = document.createElement('div');
+                row.className = 'preset-row';
+                row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr 0.5fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
+                row.innerHTML = '<input type="hidden" name="preset_id" value="">' +
+                    '<input type="text" name="preset_label" class="form-control form-control-sm" placeholder="{% trans "e.g. Quarter head" %}">' +
+                    '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="40">' +
+                    '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" placeholder="0.25">' +
+                    '<input type="number" name="preset_order" class="form-control form-control-sm" min="0" value="0">' +
+                    '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
+                document.getElementById('presetRows').appendChild(row);
+            });
+            </script>
+            {% endif %}
+
             <div class="d-flex gap-2 mt-4">
                 <button type="submit" class="btn btn-gold">
                     {{ action }} {% trans 'Item' %}

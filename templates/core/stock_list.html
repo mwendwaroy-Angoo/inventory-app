@@ -172,7 +172,7 @@
                 <td><strong>{{ item.material_no }}</strong></td>
                 <td>{{ item.description }}</td>
                 <td>{{ item.unit }}</td>
-                <td>{{ item.current_balance }}</td>
+                <td>{% if item.is_produce %}{{ item.current_balance|floatformat:2 }}{% else %}{{ item.current_balance|floatformat:0 }}{% endif %}</td>
                 <td>{{ item.physical_balance }}</td>
                 <td>{% if item.deficit > 0 %}<span style="color:var(--danger)">{{ item.deficit }}</span>{% else %}—{% endif %}</td>
                 <td>{% if item.surplus > 0 %}<span style="color:var(--success)">{{ item.surplus }}</span>{% else %}—{% endif %}</td>

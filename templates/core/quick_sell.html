@@ -422,7 +422,8 @@
              data-price="{{ item.selling_price|default:'0' }}"
              data-balance="{{ item.balance }}"
              data-unit="{{ item.unit }}"
-             data-store="{{ item.store_id }}">
+             data-store="{{ item.store_id }}"
+             data-is-produce="{{ item.is_produce|yesno:'true,false' }}">
             <div class="qs-item-name">{{ item.description }}</div>
             <div class="qs-item-price">
                 {% if item.selling_price %}
@@ -432,7 +433,7 @@
                 {% endif %}
             </div>
             <div class="qs-item-stock {% if item.balance <= 0 %}out{% elif item.balance <= item.reorder_level %}low{% endif %}">
-                {{ item.balance }} {{ item.unit }}
+                {{ item.balance|floatformat:-2 }} {{ item.unit }}
             </div>
         </div>
         {% empty %}
@@ -473,6 +474,21 @@
         <button class="qs-modal-add w-100 mt-3" onclick="document.getElementById('qsSuccessModal').classList.remove('active')">
             {% trans 'Continue Selling' %}
         </button>
+    </div>
+</div>
+
+<!-- Produce Portion Modal -->
+<div class="modal fade" id="produceModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:var(--onyx-card); border:1px solid var(--gold); border-radius:12px;">
+            <div class="modal-header" style="border-bottom:1px solid #2a2a2a;">
+                <h6 class="modal-title" style="color:var(--gold); font-family:'Playfair Display',serif;">
+                    🥬 {% trans 'Select Portion' %}
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="produceModalBody"></div>
+        </div>
     </div>
 </div>
 
@@ -597,27 +613,77 @@
     const cartTotal = document.getElementById('qsCartTotal');
     const cartItemsEl = document.getElementById('qsCartItems');
 
-    // ── ITEM TAP ──
-    grid.addEventListener('click', function(e) {
-        const itemEl = e.target.closest('.qs-item');
-        if (!itemEl || itemEl.classList.contains('out-of-stock')) return;
+    // ── PRODUCE HELPERS ──
+    function showProduceModal(itemId, itemName, presets, balance, unit) {
+        var html = '<div style="margin-bottom:0.75rem;">' +
+            '<strong style="color:var(--gold);">' + itemName + '</strong>' +
+            '<span style="color:#b0b0b0; font-size:0.82rem; margin-left:0.5rem;">Balance: ' + parseFloat(balance).toFixed(2) + ' ' + unit + '</span>' +
+            '</div>';
+        html += '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(110px,1fr)); gap:0.5rem;">';
+        presets.forEach(function(p) {
+            var safeId   = String(itemId);
+            var safeName = itemName.replace(/\/g,'\\').replace(/'/g,'&#39;');
+            var safeLbl  = p.label.replace(/\/g,'\\').replace(/'/g,'&#39;');
+            html += '<button type="button" ' +
+                'onclick="addPresetToCart('' + safeId + '','' + safeName + '',' + p.price + ',' + p.quantity_consumed + ','' + safeLbl + '')" ' +
+                'style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); ' +
+                'color:var(--pearl); border-radius:8px; padding:0.75rem 0.5rem; cursor:pointer; text-align:center;">' +
+                '<div style="font-weight:700; font-size:1.05rem; color:var(--gold);">KES ' + p.price.toFixed(0) + '</div>' +
+                '<div style="font-size:0.75rem; color:#b0b0b0; margin-top:0.2rem;">' + p.label + '</div>' +
+                '</button>';
+        });
+        html += '</div>';
+        document.getElementById('produceModalBody').innerHTML = html;
+        var bsModal = new bootstrap.Modal(document.getElementById('produceModal'));
+        bsModal.show();
+    }
 
-        currentItem = {
-            id: itemEl.dataset.id,
-            name: itemEl.dataset.name,
-            price: parseFloat(itemEl.dataset.price) || 0,
-            balance: parseInt(itemEl.dataset.balance) || 0,
-            unit: itemEl.dataset.unit,
-        };
+    window.addPresetToCart = function(itemId, itemName, price, qtyConsumed, label) {
+        var bsModal = bootstrap.Modal.getInstance(document.getElementById('produceModal'));
+        if (bsModal) bsModal.hide();
+        cart.push({id: String(itemId), name: itemName + ' (' + label + ')', price: price, unit: '', qty: 1, stock_qty: qtyConsumed});
+        updateCart();
+    };
 
+    function openQtyModal(itemId, itemName, itemPrice, itemBalance, itemUnit) {
+        currentItem = {id: itemId, name: itemName, price: itemPrice, balance: itemBalance, unit: itemUnit};
         modalName.textContent = currentItem.name;
         modalPrice.textContent = currentItem.price
-            ? 'KES ' + currentItem.price + ' per ' + currentItem.unit + ' \u00B7 ' + currentItem.balance + ' in stock'
+            ? 'KES ' + currentItem.price + ' per ' + currentItem.unit + ' · ' + currentItem.balance + ' in stock'
             : currentItem.balance + ' ' + currentItem.unit + ' in stock';
         qtyInput.value = 1;
         updateModalSubtotal();
         modal.classList.add('active');
         qtyInput.focus();
+    }
+
+    // ── ITEM TAP ──
+    grid.addEventListener('click', function(e) {
+        const itemEl = e.target.closest('.qs-item');
+        if (!itemEl || itemEl.classList.contains('out-of-stock')) return;
+
+        const isProduce   = itemEl.dataset.isProduce === 'true';
+        const itemId      = itemEl.dataset.id;
+        const itemName    = itemEl.dataset.name;
+        const itemPrice   = parseFloat(itemEl.dataset.price) || 0;
+        const itemBalance = parseFloat(itemEl.dataset.balance) || 0;
+        const itemUnit    = itemEl.dataset.unit;
+
+        if (isProduce) {
+            fetch('/stock/item/' + itemId + '/presets/')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.is_produce && data.presets.length > 0) {
+                        showProduceModal(itemId, itemName, data.presets, data.balance, itemUnit);
+                    } else {
+                        openQtyModal(itemId, itemName, itemPrice, itemBalance, itemUnit);
+                    }
+                })
+                .catch(function() { openQtyModal(itemId, itemName, itemPrice, itemBalance, itemUnit); });
+            return;
+        }
+
+        openQtyModal(itemId, itemName, itemPrice, itemBalance, itemUnit);
     });
 
     // ── QUANTITY CONTROLS ──
