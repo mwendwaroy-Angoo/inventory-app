@@ -224,25 +224,31 @@
                         <span></span>
                     </div>
                     <div id="presetRows">
-                        {% for preset in form.instance.portion_presets.all %}
-                        <div class="preset-row" style="display:grid; grid-template-columns:2fr 1fr 1fr 0.5fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;">
-                            <input type="hidden" name="preset_id" value="{{ preset.id }}">
-                            <input type="text" name="preset_label" value="{{ preset.label }}"
-                                   class="form-control form-control-sm" placeholder="{% trans 'e.g. Quarter head' %}">
-                            <input type="number" name="preset_price" value="{{ preset.price }}"
-                                   class="form-control form-control-sm" step="0.01" min="0" placeholder="40">
-                            <input type="number" name="preset_qty_consumed" value="{{ preset.quantity_consumed }}"
-                                   class="form-control form-control-sm" step="0.0001" min="0" placeholder="0.25">
-                            <input type="number" name="preset_order" value="{{ preset.display_order }}"
-                                   class="form-control form-control-sm" min="0" placeholder="0">
-                            <button type="button" onclick="this.closest('.preset-row').remove()"
-                                    style="background:none; border:none; color:#f87171; font-size:1.1rem; cursor:pointer; padding:0.25rem;">✕</button>
-                        </div>
-                        {% empty %}
+                        {% if form.instance.pk %}
+                            {% for preset in form.instance.portion_presets.all %}
+                            <div class="preset-row" style="display:grid; grid-template-columns:2fr 1fr 1fr 0.5fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;">
+                                <input type="hidden" name="preset_id" value="{{ preset.id }}">
+                                <input type="text" name="preset_label" value="{{ preset.label }}"
+                                       class="form-control form-control-sm" placeholder="{% trans 'e.g. Quarter head' %}">
+                                <input type="number" name="preset_price" value="{{ preset.price }}"
+                                       class="form-control form-control-sm" step="0.01" min="0" placeholder="40">
+                                <input type="number" name="preset_qty_consumed" value="{{ preset.quantity_consumed }}"
+                                       class="form-control form-control-sm" step="0.0001" min="0" placeholder="0.25">
+                                <input type="number" name="preset_order" value="{{ preset.display_order }}"
+                                       class="form-control form-control-sm" min="0" placeholder="0">
+                                <button type="button" onclick="this.closest('.preset-row').remove()"
+                                        style="background:none; border:none; color:#f87171; font-size:1.1rem; cursor:pointer; padding:0.25rem;">✕</button>
+                            </div>
+                            {% empty %}
+                            <div id="presetEmptyMsg" style="color:#555; font-size:0.82rem; padding:0.75rem; text-align:center;">
+                                {% trans 'No presets yet — add one below.' %}
+                            </div>
+                            {% endfor %}
+                        {% else %}
                         <div id="presetEmptyMsg" style="color:#555; font-size:0.82rem; padding:0.75rem; text-align:center;">
                             {% trans 'No presets yet — add one below.' %}
                         </div>
-                        {% endfor %}
+                        {% endif %}
                     </div>
                 </div>
 
