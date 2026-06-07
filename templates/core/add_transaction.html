@@ -891,17 +891,55 @@ $(document).ready(function () {
                     var label = $(this).data('label');
                     var pid   = $(this).data('preset-id');
                     $('#selectedPresetId').val(pid);
-                    $('#quantity').val(qty);
                     $('#selectedPresetInfo').html(
                         '&#10003; <strong>' + label + '</strong> — KES ' + parseFloat(price).toFixed(2) +
                         ' | Stock consumed: ' + parseFloat(qty).toFixed(4) + ' units'
                     ).show();
+
+                    // After preset is selected, show multiplier
+                    var existingMultiplier = document.getElementById('presetMultiplier');
+                    if (existingMultiplier) existingMultiplier.remove();
+
+                    var multiplierHtml = '<div id="presetMultiplier" style="margin-top:0.75rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">' +
+                        '<span style="color:#b0b0b0; font-size:0.82rem;">How many of this portion?</span>' +
+                        '<div style="display:flex; align-items:center; gap:0.4rem;">' +
+                        '<button type="button" onclick="adjustMultiplier(-1)" style="background:#333; border:none; color:var(--pearl); border-radius:4px; width:28px; height:28px; cursor:pointer; font-size:1rem;">−</button>' +
+                        '<span id="multiplierVal" style="min-width:28px; text-align:center; font-weight:700; color:var(--gold); font-size:1.1rem;">1</span>' +
+                        '<button type="button" onclick="adjustMultiplier(1)" style="background:#333; border:none; color:var(--pearl); border-radius:4px; width:28px; height:28px; cursor:pointer; font-size:1rem;">+</button>' +
+                        '</div>' +
+                        '<span id="multiplierTotal" style="color:#6ee7b7; font-size:0.85rem; font-weight:600;"></span>' +
+                        '</div>';
+
+                    document.getElementById('selectedPresetInfo').insertAdjacentHTML('afterend', multiplierHtml);
+
+                    // Store base values for multiplication
+                    window._presetBaseQty   = parseFloat($(this).data('qty'));
+                    window._presetBasePrice = parseFloat($(this).data('price'));
+                    updateMultiplierDisplay();
                 });
             })
             .catch(function() {
                 $('#producePresetSection').hide();
                 $('#quantitySection').show();
             });
+    }
+
+    function adjustMultiplier(delta) {
+        var el  = document.getElementById('multiplierVal');
+        var val = Math.max(1, parseInt(el.textContent) + delta);
+        el.textContent = val;
+        updateMultiplierDisplay();
+    }
+
+    function updateMultiplierDisplay() {
+        var qty         = window._presetBaseQty   || 0;
+        var price       = window._presetBasePrice || 0;
+        var mult        = parseInt(document.getElementById('multiplierVal').textContent) || 1;
+        var total       = (qty * mult).toFixed(4);
+        var total_price = (price * mult).toFixed(2);
+        $('input[name="quantity"]').val(total);
+        var el = document.getElementById('multiplierTotal');
+        if (el) el.textContent = mult + ' × KES ' + price.toFixed(0) + ' = KES ' + total_price + ' | ' + total + ' units consumed';
     }
 
     // ── Init ──────────────────────────────────────────────────────────────
