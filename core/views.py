@@ -446,8 +446,6 @@ def add_transaction(request):
 
             if update_cost_price and new_cost_price_raw:
                 try:
-                    from decimal import Decimal
-
                     unit_price = Decimal(new_cost_price_raw)
                     delivery_fee = (
                         Decimal(delivery_fee_raw) if delivery_fee_raw else Decimal("0")
