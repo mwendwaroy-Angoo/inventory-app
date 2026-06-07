@@ -543,6 +543,26 @@
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
+// GLOBAL SCOPE — must be outside any wrapper for onclick= handlers to reach them
+function adjustMultiplier(delta) {
+    var el  = document.getElementById('multiplierVal');
+    if (!el) return;
+    var val = Math.max(1, parseInt(el.textContent) + delta);
+    el.textContent = val;
+    updateMultiplierDisplay();
+}
+
+function updateMultiplierDisplay() {
+    var qty         = window._presetBaseQty   || 0;
+    var price       = window._presetBasePrice || 0;
+    var mult        = parseInt(document.getElementById('multiplierVal').textContent) || 1;
+    var total       = (qty * mult).toFixed(4);
+    var total_price = (price * mult).toFixed(2);
+    $('input[name="quantity"]').val(total);
+    var el = document.getElementById('multiplierTotal');
+    if (el) el.textContent = mult + ' × KES ' + price.toFixed(0) + ' = KES ' + total_price + ' | ' + total + ' units consumed';
+}
+
 $(document).ready(function () {
 
     var IS_OWNER        = {{ is_owner|yesno:"true,false" }};
@@ -922,24 +942,6 @@ $(document).ready(function () {
                 $('#producePresetSection').hide();
                 $('#quantitySection').show();
             });
-    }
-
-    function adjustMultiplier(delta) {
-        var el  = document.getElementById('multiplierVal');
-        var val = Math.max(1, parseInt(el.textContent) + delta);
-        el.textContent = val;
-        updateMultiplierDisplay();
-    }
-
-    function updateMultiplierDisplay() {
-        var qty         = window._presetBaseQty   || 0;
-        var price       = window._presetBasePrice || 0;
-        var mult        = parseInt(document.getElementById('multiplierVal').textContent) || 1;
-        var total       = (qty * mult).toFixed(4);
-        var total_price = (price * mult).toFixed(2);
-        $('input[name="quantity"]').val(total);
-        var el = document.getElementById('multiplierTotal');
-        if (el) el.textContent = mult + ' × KES ' + price.toFixed(0) + ' = KES ' + total_price + ' | ' + total + ' units consumed';
     }
 
     // ── Init ──────────────────────────────────────────────────────────────
