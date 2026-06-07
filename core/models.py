@@ -1,4 +1,5 @@
 import datetime
+from decimal import Decimal
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -284,6 +285,38 @@ class Item(models.Model):
         help_text='Enable portion-based selling. Owner defines price presets (e.g. KES 40 = quarter head). Used for vegetables, produce, and gorogoro items.'
     )
 
+    # ── Greens / bunch-based produce (Kibanda Produce Module) ──────────────
+    PRODUCE_MODE_CHOICES = [
+        ('PORTION', _('Portion / fraction (cabbage, gorogoro)')),
+        ('BUNCH', _('Bunch — revenue envelope (greens / mboga)')),
+    ]
+    produce_mode = models.CharField(
+        max_length=10, choices=PRODUCE_MODE_CHOICES, default='PORTION',
+        help_text=_('PORTION = a fixed quantity per price (cabbage = 0.25 head, gorogoro = 1 tin). '
+                    'BUNCH = each bunch is a money target depleted by price-point sales '
+                    '(sukuma, spinach, kienyeji).'),
+    )
+    mix_group = models.CharField(
+        max_length=40, blank=True, default='',
+        help_text=_('Tag greens that can be sold together as one generic order — e.g. "kienyeji". '
+                    'Items sharing a tag appear under a single mix tile and a generic '
+                    '"mboga za kienyeji ya 20" is split across them. Leave blank for greens '
+                    'only ever sold by name (e.g. sukuma, spinach).'),
+    )
+    revenue_multiplier = models.DecimalField(
+        max_digits=4, decimal_places=2, default=Decimal('1.70'),
+        help_text=_('Default markup used to pre-fill a bunch target from its market cost '
+                    '(1.70 → a 40/= bunch targets 68/=). Overridable per bunch by eye.'),
+    )
+
+    def default_bunch_target(self, cost):
+        """Suggested envelope for a freshly received bunch: cost × multiplier."""
+        try:
+            mult = self.revenue_multiplier or Decimal('1.70')
+            return (Decimal(str(cost)) * mult).quantize(Decimal('1'))
+        except Exception:
+            return Decimal('0')
+
     def current_balance(self):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
         return self.opening_bin_balance + total_movement
@@ -442,15 +475,34 @@ class Transaction(models.Model):
         default='cash',
         blank=True,
     )
+    sale_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text=_('Actual cash taken for this sale line. Set for produce / bunch portion '
+                    'sales where the price is NOT selling_price × qty. Preferred by revenue().'),
+    )
+    produce_bunch = models.ForeignKey(
+        'ProduceBunch', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sales',
+        help_text=_('The greens bunch this portion sale was drawn from, if any.'),
+    )
 
     def revenue(self):
-        if self.type == 'Issue' and self.item.selling_price:
-            return abs(self.qty) * float(self.item.selling_price)
+        if self.type != 'Issue':
+            return 0
+        if self.sale_amount is not None:
+            return float(self.sale_amount)
+        if self.item.selling_price:
+            return abs(float(self.qty)) * float(self.item.selling_price)
         return 0
 
     def cost(self):
-        if self.type == 'Issue' and self.item.cost_price:
-            return abs(self.qty) * float(self.item.cost_price)
+        if self.type != 'Issue':
+            return 0
+        # Bunch sales carry their cost on the bunch, not the item.
+        if self.produce_bunch_id and self.produce_bunch and self.produce_bunch.cost_price:
+            return abs(float(self.qty)) * float(self.produce_bunch.cost_price)
+        if self.item.cost_price:
+            return abs(float(self.qty)) * float(self.item.cost_price)
         return 0
 
     def profit(self):
@@ -1244,3 +1296,187 @@ class ItemPortionPreset(models.Model):
 
     def __str__(self):
         return f"{self.item.description}: {self.label} — KES {self.price}"
+
+
+# ────────────────────────────────────────────────
+# GREENS — BUNCH / REVENUE-ENVELOPE MODEL (Kibanda Produce Module)
+# ────────────────────────────────────────────────
+
+class ProduceBunch(models.Model):
+    """
+    A single physical bunch (shada / fungu) of greens bought at the market.
+
+    The kibanda vendor does NOT count stems. She thinks: "I paid 40/= for this
+    bunch, it must give me ~70/= before it is finished." So a bunch is modelled
+    as a *revenue envelope*: it carries a cost and a target, and it is depleted
+    by price-point sales (10/=, 20/=, 30/=) until the target is reached.
+
+    The stems handed over per sale (2 for a large bunch, 4 for a small one) are
+    the vendor's physical judgement and never enter the system — only money does.
+    """
+    SIZE_CHOICES = [
+        ('SMALL', _('Small')),
+        ('MEDIUM', _('Medium')),
+        ('LARGE', _('Large')),
+    ]
+    STATUS_CHOICES = [
+        ('OPEN', _('Open')),
+        ('DEPLETED', _('Depleted')),
+        ('DISCARDED', _('Discarded / wilted')),
+    ]
+
+    item = models.ForeignKey('Item', on_delete=models.CASCADE, related_name='bunches')
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE,
+        related_name='produce_bunches', null=True, blank=True,
+    )
+    size = models.CharField(max_length=10, choices=SIZE_CHOICES, default='MEDIUM')
+    cost_price = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text=_('What this bunch cost at the market this morning.'),
+    )
+    target_revenue = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text=_('Total money this bunch must give before it is finished. '
+                    'Pre-filled from cost × the item multiplier; override per bunch by eye.'),
+    )
+    revenue_collected = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='OPEN')
+    received_on = models.DateField(
+        default=timezone.localdate,
+        help_text=_('Market day this bunch was bought — drives sell-oldest-first and wilting alerts.'),
+    )
+    opened_on = models.DateTimeField(null=True, blank=True)
+    closed_on = models.DateTimeField(null=True, blank=True)
+    note = models.CharField(max_length=200, blank=True, default='')
+
+    class Meta:
+        ordering = ['received_on', 'id']  # oldest first → sell-oldest / FIFO
+        verbose_name = 'Produce Bunch'
+        verbose_name_plural = 'Produce Bunches'
+
+    def __str__(self):
+        return (f"{self.item.description} — {self.get_size_display()} bunch "
+                f"({self.revenue_collected}/{self.target_revenue})")
+
+    # ── envelope maths ────────────────────────────────────────────────────
+    def remaining(self):
+        target = self.target_revenue or Decimal('0')
+        collected = self.revenue_collected or Decimal('0')
+        return max(Decimal('0'), target - collected)
+
+    def is_sold_out(self):
+        return self.remaining() <= 0
+
+    def realized_markup(self):
+        if self.cost_price and self.cost_price > 0:
+            return float(self.revenue_collected or 0) / float(self.cost_price)
+        return 0.0
+
+    def age_days(self):
+        return (timezone.localdate() - self.received_on).days
+
+    def is_wilting(self, threshold_days=1):
+        """Still open and older than threshold — should be cleared first."""
+        return self.status == 'OPEN' and self.age_days() > threshold_days
+
+    def _fraction(self, amount):
+        """Money amount → fraction of this bunch's envelope (for stock depletion)."""
+        target = self.target_revenue or Decimal('0')
+        if target <= 0:
+            return Decimal('0')
+        return (Decimal(str(amount)) / target).quantize(Decimal('0.0001'))
+
+    # ── selling ───────────────────────────────────────────────────────────
+    def record_sale(self, amount, payment_method='cash', recipient=''):
+        """
+        Deplete this bunch by `amount` shillings. Creates the stock Transaction
+        (Issue, real cash on sale_amount) and updates the envelope. Returns the
+        Transaction. Selling past target is allowed — the surplus is tracked.
+        """
+        amount = Decimal(str(amount))
+        if amount <= 0:
+            return None
+        txn = Transaction.objects.create(
+            item=self.item,
+            business=self.business or self.item.business,
+            type='Issue',
+            qty=-self._fraction(amount),
+            sale_amount=amount,
+            payment_method=payment_method or 'cash',
+            recipient=recipient or '',
+            produce_bunch=self,
+        )
+        self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
+        if self.opened_on is None:
+            self.opened_on = timezone.now()
+        if self.remaining() <= 0 and self.status == 'OPEN':
+            self.status = 'DEPLETED'
+            self.closed_on = timezone.now()
+        self.save(update_fields=['revenue_collected', 'opened_on', 'status', 'closed_on'])
+        return txn
+
+    def discard(self, reason='Wilted / end of day'):
+        """Write off the unsold remainder of this bunch as wastage."""
+        if self.status == 'DISCARDED':
+            return None
+        leftover = self.remaining()
+        txn = None
+        if leftover > 0:
+            txn = Transaction.objects.create(
+                item=self.item,
+                business=self.business or self.item.business,
+                type='Wastage',
+                qty=-self._fraction(leftover),
+                sale_amount=Decimal('0'),
+                recipient=(reason or '')[:200],
+                produce_bunch=self,
+            )
+        self.status = 'DISCARDED'
+        self.closed_on = timezone.now()
+        self.note = (self.note + ' | ' if self.note else '') + (reason or '')
+        self.save(update_fields=['status', 'closed_on', 'note'])
+        return txn
+
+    # ── generic mix sale: "mboga za kienyeji ya 20" ────────────────────────
+    @classmethod
+    def sell_mix(cls, business, mix_group, amount, payment_method='cash', recipient=''):
+        """
+        Customer doesn't care which kienyeji — just "kienyeji ya 20". Spreads
+        `amount` proportionally across the OPEN bunches in this mix group
+        (weighted by remaining envelope so they run down together) and records a
+        sale against each. Returns (transactions, breakdown); ([], []) if none open.
+        """
+        amount = Decimal(str(amount))
+        bunches = list(
+            cls.objects.filter(
+                business=business, status='OPEN', item__mix_group=mix_group,
+            ).select_related('item').order_by('received_on', 'id')
+        )
+        bunches = [b for b in bunches if b.remaining() > 0]
+        if not bunches or amount <= 0:
+            return [], []
+
+        total_remaining = sum((b.remaining() for b in bunches), Decimal('0'))
+        # Proportional split, rounded to whole shillings; remainder to fullest bunch.
+        allocations = []
+        allocated = Decimal('0')
+        for b in bunches:
+            share = ((amount * b.remaining() / total_remaining).quantize(Decimal('1'))
+                     if total_remaining > 0 else Decimal('0'))
+            allocations.append([b, share])
+            allocated += share
+        remainder = amount - allocated
+        if remainder != 0 and allocations:
+            allocations.sort(key=lambda pair: pair[0].remaining(), reverse=True)
+            allocations[0][1] += remainder
+
+        txns, breakdown = [], []
+        for b, share in allocations:
+            if share <= 0:
+                continue
+            t = b.record_sale(share, payment_method=payment_method, recipient=recipient)
+            if t:
+                txns.append(t)
+                breakdown.append({'item': b.item.description, 'amount': float(share)})
+        return txns, breakdown

@@ -1792,6 +1792,20 @@ def quick_sell(request):
         last_transaction = None
 
         for entry in cart:
+            # ── Greens / bunch (revenue-envelope) lines ──────────────────
+            if entry.get("mode") in ("bunch", "mix"):
+                from .produce_views import handle_bunch_cart_entry
+                line, txn = handle_bunch_cart_entry(
+                    entry,
+                    user_profile.business,
+                    request.POST.get("payment_method", "cash"),
+                )
+                if line:
+                    recorded.append(line)
+                    if txn:
+                        last_transaction = txn
+                continue
+            # ─────────────────────────────────────────────────────────────
             item = Item.objects.filter(
                 id=entry.get("id"), store__business=user_profile.business
             ).first()
@@ -1883,6 +1897,7 @@ def quick_sell(request):
 
     items_qs = list(
         Item.objects.filter(store__business=user_profile.business)
+        .exclude(is_produce=True, produce_mode="BUNCH")  # greens render in their own board
         .select_related("store")
         .order_by("description")
     )

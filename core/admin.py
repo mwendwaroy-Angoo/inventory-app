@@ -18,6 +18,7 @@ from .models import (
 )
 from .models import PurchaseOrder, PurchaseOrderLine, SupplierBidLine, Category
 from .models import ImportJob
+from .models import ProduceBunch, ItemPortionPreset
 
 
 @admin.register(Store)
@@ -331,3 +332,39 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
 @admin.register(PurchaseOrderLine)
 class PurchaseOrderLineAdmin(admin.ModelAdmin):
     list_display = ('po', 'item', 'quantity_ordered', 'quantity_received', 'unit_price')
+
+# ────────────────────────────────────────────────
+# KIBANDA PRODUCE MODULE — greens bunches & presets
+# ────────────────────────────────────────────────
+
+@admin.register(ProduceBunch)
+class ProduceBunchAdmin(admin.ModelAdmin):
+    list_display = ('item', 'business', 'size', 'cost_price', 'target_revenue',
+                    'revenue_collected', 'remaining_display', 'markup_display',
+                    'status', 'received_on')
+    list_filter = ('status', 'size', 'business', 'received_on')
+    search_fields = ('item__description',)
+    date_hierarchy = 'received_on'
+    readonly_fields = ('revenue_collected', 'opened_on', 'closed_on')
+    actions = ('action_discard',)
+
+    def remaining_display(self, obj):
+        return obj.remaining()
+    remaining_display.short_description = 'Remaining'
+
+    def markup_display(self, obj):
+        return f"{obj.realized_markup():.2f}x"
+    markup_display.short_description = 'Realized'
+
+    @admin.action(description='Discard selected bunches (write off as wastage)')
+    def action_discard(self, request, queryset):
+        n = sum(1 for b in queryset if b.discard('Discarded from admin'))
+        self.message_user(request, f'{n} bunch(es) written off as wastage.')
+
+
+@admin.register(ItemPortionPreset)
+class ItemPortionPresetAdmin(admin.ModelAdmin):
+    list_display = ('item', 'label', 'price', 'quantity_consumed', 'display_order')
+    list_filter = ('item__business',)
+    search_fields = ('item__description', 'label')
+    ordering = ('item', 'display_order', 'price')

@@ -44,6 +44,7 @@ from core.views import (
     item_portion_presets,
 )
 from core.ussd import ussd_callback
+from core.produce_views import produce_board, receive_bunches, discard_bunch
 from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import (
     mpesa_callback,
@@ -149,6 +150,10 @@ urlpatterns = [
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),
     path("stock/delete/<int:item_id>/", delete_item, name="delete_item"),
     path("stock/item/<int:item_id>/presets/", item_portion_presets, name="item_portion_presets"),
+    # ── Kibanda Produce Module — greens / bunch selling ──────────────────────
+    path("stock/produce/board/", produce_board, name="produce_board"),
+    path("stock/produce/receive/", receive_bunches, name="receive_bunches"),
+    path("stock/produce/bunch/<int:bunch_id>/discard/", discard_bunch, name="discard_bunch"),
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────
     path("approvals/", pending_approvals, name="pending_approvals"),
