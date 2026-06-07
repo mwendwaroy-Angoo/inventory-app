@@ -11,6 +11,14 @@ def get_item(dictionary, key):
     return dictionary.get(str(key), '')
 
 
+@register.filter
+def multiply(value, arg):
+    try:
+        return float(value) * float(arg)
+    except (ValueError, TypeError):
+        return ''
+
+
 @register.simple_tag
 def store_target(lookup_dict, period, store_id):
     """Return a pre-built revenue target value for a specific store + period.

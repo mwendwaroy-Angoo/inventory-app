@@ -1233,6 +1233,17 @@ def add_item(request):
                 )
                 next_id = (last_item.id + 1) if last_item else 1
                 item.material_no = f"MAT-{next_id:04d}"
+            # Handle yield_factor from percentage input
+            if request.POST.get('is_yield_item') == 'on':
+                item.is_yield_item = True
+                try:
+                    yield_pct = Decimal(request.POST.get('yield_percentage', '0'))
+                    item.yield_factor = yield_pct / Decimal('100')
+                except (InvalidOperation, ValueError):
+                    item.yield_factor = Decimal('1.0')
+            else:
+                item.is_yield_item = False
+                item.yield_factor = None
             item.save()
             # Handle owner-only fields (restrictions + produce)
             if user_profile.is_owner:
@@ -1249,7 +1260,6 @@ def add_item(request):
                 preset_labels  = request.POST.getlist('preset_label')
                 preset_prices  = request.POST.getlist('preset_price')
                 preset_qty     = request.POST.getlist('preset_qty_consumed')
-                preset_orders  = request.POST.getlist('preset_order')
                 preset_ids     = request.POST.getlist('preset_id')
 
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
@@ -1261,7 +1271,7 @@ def add_item(request):
                     try:
                         price  = Decimal(preset_prices[i])
                         qty_c  = Decimal(preset_qty[i])
-                        order  = int(preset_orders[i]) if preset_orders[i].strip() else i
+                        order  = i
                         pid    = preset_ids[i].strip() if i < len(preset_ids) else ''
                     except (ValueError, InvalidOperation, IndexError):
                         continue
@@ -1309,6 +1319,18 @@ def edit_item(request, item_id):
         )
         if form.is_valid():
             item = form.save()
+            # Handle yield_factor from percentage input
+            if request.POST.get('is_yield_item') == 'on':
+                item.is_yield_item = True
+                try:
+                    yield_pct = Decimal(request.POST.get('yield_percentage', '0'))
+                    item.yield_factor = yield_pct / Decimal('100')
+                except (InvalidOperation, ValueError):
+                    item.yield_factor = Decimal('1.0')
+            else:
+                item.is_yield_item = False
+                item.yield_factor = None
+            item.save(update_fields=['is_yield_item', 'yield_factor'])
             # Handle owner-only fields (restrictions + produce)
             if user_profile.is_owner:
                 item.is_restricted = request.POST.get('is_restricted') == 'on'
@@ -1324,7 +1346,6 @@ def edit_item(request, item_id):
                 preset_labels  = request.POST.getlist('preset_label')
                 preset_prices  = request.POST.getlist('preset_price')
                 preset_qty     = request.POST.getlist('preset_qty_consumed')
-                preset_orders  = request.POST.getlist('preset_order')
                 preset_ids     = request.POST.getlist('preset_id')
 
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
@@ -1336,7 +1357,7 @@ def edit_item(request, item_id):
                     try:
                         price  = Decimal(preset_prices[i])
                         qty_c  = Decimal(preset_qty[i])
-                        order  = int(preset_orders[i]) if preset_orders[i].strip() else i
+                        order  = i
                         pid    = preset_ids[i].strip() if i < len(preset_ids) else ''
                     except (ValueError, InvalidOperation, IndexError):
                         continue

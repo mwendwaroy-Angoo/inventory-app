@@ -97,7 +97,7 @@ class ItemForm(forms.ModelForm):
         # Required fields
         self.fields['description'].required = True
         self.fields['store'].required = True
-        self.fields['selling_price'].required = True
+        self.fields['selling_price'].required = False
 
         # Optional fields
         self.fields['material_no'].required = False

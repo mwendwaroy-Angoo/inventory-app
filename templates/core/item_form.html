@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% load django_bootstrap5 %}
 {% load i18n %}
+{% load dict_extras %}
 
 {% block title %}{{ action }} {% trans 'Item' %} — Duka Mwecheche{% endblock %}
 
@@ -56,7 +57,7 @@
 {% block content %}
 
 <!-- Breadcrumb -->
-<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
     <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
     <a href="{% url 'manage_stores' %}" style="color:var(--gold)">{% trans 'Stores' %}</a>
@@ -79,37 +80,106 @@
         <div class="alert alert-danger">{% trans 'Please correct the errors below.' %}</div>
         {% endif %}
 
-        <form method="post">
+        <form method="post" id="itemForm">
             {% csrf_token %}
 
             <div class="section-divider"><span>⭐ {% trans 'Required Fields' %}</span></div>
             {% bootstrap_field form.description %}
             {% bootstrap_field form.store %}
-            {% bootstrap_field form.selling_price %}
+
+            <!-- CHANGE 1: selling price wrapped — hidden when is_produce is checked -->
+            <div id="sellingPriceSection">
+                {% bootstrap_field form.selling_price %}
+            </div>
+            <div id="produceSellingNote" style="display:none; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.2); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.82rem; color:#b0b0b0; margin-bottom:1rem;">
+                💰 {% trans 'Price is set per portion preset below. No single selling price needed.' %}
+            </div>
 
             {% if form.cost_price %}
-           <div style="background:rgba(192,57,90,0.06); border:1px solid #333;
-                       border-left: 3px solid var(--raspberry); border-radius:8px;
-                       padding:1rem; margin-bottom:1rem;">
-             <p style="color:var(--raspberry); font-size:0.8rem; margin-bottom:0.5rem;">
-                 🔒 {% trans 'Cost price is only visible to you as the owner' %}
-            </p>
-            {% bootstrap_field form.cost_price %}
-        </div>
-        {% endif %}
-        
+            <div style="background:rgba(192,57,90,0.06); border:1px solid #333;
+                        border-left: 3px solid var(--raspberry); border-radius:8px;
+                        padding:1rem; margin-bottom:1rem;">
+                <p style="color:var(--raspberry); font-size:0.8rem; margin-bottom:0.5rem;">
+                    🔒 {% trans 'Cost price is only visible to you as the owner' %}
+                </p>
+                {% bootstrap_field form.cost_price %}
+            </div>
+            {% endif %}
+
             <div class="section-divider"><span>📋 {% trans 'Optional Fields' %}</span></div>
             {% bootstrap_field form.material_no %}
-            {% bootstrap_field form.unit %}
 
+            <!-- CHANGE 3: Unit field with datalist suggestions -->
             <div class="mb-3">
-                <label class="form-label">{% trans 'Category' %}</label>
-                <div class="d-flex gap-2">
-                    <div style="flex:1">{% bootstrap_field form.category_level1 %}</div>
-                    <div style="flex:1">{% bootstrap_field form.category_level2 %}</div>
-                    <div style="flex:1">{% bootstrap_field form.category_level3 %}</div>
-                </div>
-                {# hidden raw category field that will receive the selected category id #}
+                <label class="form-label" for="id_unit">{% trans 'Unit' %}</label>
+                <input type="text" name="unit" id="id_unit" class="form-control"
+                       value="{{ form.instance.unit|default:'' }}"
+                       placeholder="{% trans 'e.g. Pcs, Kg, Bundle, Head' %}"
+                       list="unitSuggestions" autocomplete="off">
+                <datalist id="unitSuggestions">
+                    <option value="Pcs">
+                    <option value="Kg">
+                    <option value="Litres">
+                    <option value="Box">
+                    <option value="Carton">
+                    <option value="Crate">
+                    <option value="Bag">
+                    <option value="Sack">
+                    <option value="Packet">
+                    <option value="Tin">
+                    <option value="Jar">
+                    <option value="Bottle">
+                    <option value="Bundle">
+                    <option value="Bunch">
+                    <option value="Stem">
+                    <option value="Head">
+                    <option value="Piece">
+                    <option value="Heap">
+                    <option value="Gorogoro (Small)">
+                    <option value="Gorogoro (Medium)">
+                    <option value="Gorogoro (Large)">
+                    <option value="Pair">
+                    <option value="Set">
+                    <option value="250ml">
+                    <option value="500ml">
+                    <option value="1 Litre">
+                    <option value="Glass">
+                    <option value="Shot">
+                    <option value="Strip">
+                    <option value="Tablet">
+                    <option value="Sachet">
+                </datalist>
+            </div>
+
+            <!-- CHANGE 4: Category simplified to single text input -->
+            <div class="mb-3">
+                <label class="form-label" for="cat_text_input">
+                    {% trans 'Category' %}
+                    <span style="color:#b0b0b0; font-size:0.8rem;">({% trans 'optional' %})</span>
+                </label>
+                <input type="text" name="cat_text_input" id="cat_text_input" class="form-control"
+                       value="{{ form.instance.category.level1|default:'' }}"
+                       placeholder="{% trans 'e.g. Vegetables, Beverages, Dry Goods' %}"
+                       list="categorySuggestions" autocomplete="off">
+                <datalist id="categorySuggestions">
+                    <option value="Vegetables">
+                    <option value="Greens / Produce">
+                    <option value="Dry Goods">
+                    <option value="Cereals">
+                    <option value="Beverages">
+                    <option value="Dairy">
+                    <option value="Meat &amp; Poultry">
+                    <option value="Snacks">
+                    <option value="Household">
+                    <option value="Hardware">
+                    <option value="Electronics">
+                    <option value="Clothing">
+                    <option value="Stationery">
+                    <option value="Personal Care">
+                    <option value="Medicines">
+                    <option value="Alcohol">
+                    <option value="Tobacco">
+                </datalist>
                 <div style="display:none">{% bootstrap_field form.category %}</div>
             </div>
 
@@ -125,8 +195,20 @@
             {% endif %}
 
             {% bootstrap_field form.tags %}
-            {% bootstrap_field form.opening_bin_balance %}
-            {% bootstrap_field form.opening_physical %}
+
+            <!-- CHANGE 5: Single opening balance field (mirrors to opening_physical via JS) -->
+            <div class="mb-3">
+                <label class="form-label" for="id_opening_bin_balance">
+                    {% trans 'Opening Stock' %}
+                    <span style="color:#b0b0b0; font-size:0.78rem;">({% trans 'how many units you currently have' %})</span>
+                </label>
+                <input type="number" name="opening_bin_balance" id="id_opening_bin_balance"
+                       class="form-control" min="0" placeholder="0"
+                       value="{{ form.instance.opening_bin_balance|default:0 }}">
+                <input type="hidden" name="opening_physical" id="id_opening_physical"
+                       value="{{ form.instance.opening_physical|default:0 }}">
+            </div>
+
             {% bootstrap_field form.reorder_level %}
             {% bootstrap_field form.reorder_quantity %}
 
@@ -143,12 +225,21 @@
                     {% trans 'Enable for items that lose weight or volume during processing before sale (e.g. a whole goat yields 65% sellable cuts, a keg yields ~56 pints from 30L).' %}
                 </p>
 
+                <!-- CHANGE 6: Percentage input replaces decimal yield_factor -->
                 <div id="yieldFactorRow" style="display:none; margin-left:1.75rem;">
-                    {% bootstrap_field form.yield_factor %}
-                    <p style="color:#b0b0b0; font-size:0.75rem; margin-top:-0.5rem;">
-                        {% trans 'Example: 0.65 = 65% of received quantity becomes usable stock. When you record a Receipt, a Wastage transaction for the remainder will be created automatically.' %}
-                    </p>
-                    <div id="yieldFactorHint" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.5rem 0.75rem; font-size:0.82rem; color:var(--gold); display:none;"></div>
+                    <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.3rem;">
+                        <input type="number" name="yield_percentage" id="yieldPercentage"
+                               class="form-control" min="1" max="99" step="1"
+                               value="{% if form.instance.yield_factor %}{{ form.instance.yield_factor|multiply:100|floatformat:0 }}{% endif %}"
+                               placeholder="e.g. 80">
+                        <span style="color:#b0b0b0; font-size:0.9rem; white-space:nowrap;">%</span>
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'What percentage of this item is usable after processing or preparation?' %}
+                        {% trans 'Example: a head of cabbage might be 80% usable after removing outer leaves.' %}
+                        {% trans 'A whole chicken might be 65% usable meat after cleaning.' %}
+                    </div>
+                    <div id="yieldFactorHint" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.5rem 0.75rem; font-size:0.82rem; color:var(--gold); display:none; margin-top:0.5rem;"></div>
                 </div>
             </div>
             <!-- ── end Yield Section ── -->
@@ -207,6 +298,7 @@
                 </div>
             </div>
 
+            <!-- CHANGE 2: Preset table — label dropdown, no Order column -->
             <div id="portionPresetsSection" style="{% if not form.instance.is_produce %}display:none;{% endif %}">
                 <div style="color:var(--gold); font-size:0.85rem; font-weight:600; margin-bottom:0.75rem;">
                     📋 {% trans 'Portion Presets' %}
@@ -216,26 +308,52 @@
                 </div>
 
                 <div style="background:rgba(255,255,255,0.02); border:1px solid #2a2a2a; border-radius:8px; overflow:hidden; margin-bottom:0.75rem;">
-                    <div style="display:grid; grid-template-columns:2fr 1fr 1fr 0.5fr auto; gap:0; padding:0.5rem 0.75rem; border-bottom:1px solid #2a2a2a; font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em;">
-                        <span>{% trans 'Label' %}</span>
+                    <div style="display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0; padding:0.5rem 0.75rem; border-bottom:1px solid #2a2a2a; font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em;">
+                        <span>{% trans 'Portion' %}</span>
                         <span>{% trans 'Customer Pays (KES)' %}</span>
-                        <span>{% trans 'Stock Used' %}</span>
-                        <span>{% trans 'Order' %}</span>
+                        <div>
+                            <div>{% trans 'Stock Used' %}</div>
+                            <div style="color:#b0b0b0; font-size:0.68rem; text-transform:none; letter-spacing:0;">({% trans 'auto-filled — or choose Custom to set manually' %})</div>
+                        </div>
                         <span></span>
                     </div>
                     <div id="presetRows">
                         {% if form.instance.pk %}
                             {% for preset in form.instance.portion_presets.all %}
-                            <div class="preset-row" style="display:grid; grid-template-columns:2fr 1fr 1fr 0.5fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;">
+                            <div class="preset-row" style="display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;">
                                 <input type="hidden" name="preset_id" value="{{ preset.id }}">
-                                <input type="text" name="preset_label" value="{{ preset.label }}"
-                                       class="form-control form-control-sm" placeholder="{% trans 'e.g. Quarter head' %}">
+                                <select name="preset_label" class="form-select form-select-sm"
+                                        onchange="onPresetLabelChange(this)"
+                                        data-existing-value="{{ preset.label }}">
+                                    <option value="">-- {% trans 'Select label' %} --</option>
+                                    <optgroup label="{% trans 'Fractional' %}">
+                                        <option value="Small Portion">{% trans 'Small Portion' %}</option>
+                                        <option value="Quarter">{% trans 'Quarter' %}</option>
+                                        <option value="Half">{% trans 'Half' %}</option>
+                                        <option value="Three-Quarters">{% trans 'Three-Quarters' %}</option>
+                                        <option value="Full">{% trans 'Full' %}</option>
+                                    </optgroup>
+                                    <optgroup label="{% trans 'Count-based' %}">
+                                        <option value="Single Piece">{% trans 'Single Piece' %}</option>
+                                        <option value="Pair (2)">{% trans 'Pair (2)' %}</option>
+                                        <option value="Small Bundle (4 units)">{% trans 'Small Bundle (4 units)' %}</option>
+                                        <option value="Large Bundle (8 units)">{% trans 'Large Bundle (8 units)' %}</option>
+                                    </optgroup>
+                                    <optgroup label="{% trans 'Gorogoro / Heap' %}">
+                                        <option value="Small Gorogoro">{% trans 'Small Gorogoro' %}</option>
+                                        <option value="Medium Gorogoro">{% trans 'Medium Gorogoro' %}</option>
+                                        <option value="Large Gorogoro">{% trans 'Large Gorogoro' %}</option>
+                                        <option value="Small Heap">{% trans 'Small Heap' %}</option>
+                                        <option value="Large Heap">{% trans 'Large Heap' %}</option>
+                                    </optgroup>
+                                    <optgroup label="{% trans 'Other' %}">
+                                        <option value="Custom">{% trans 'Custom (enter manually)' %}</option>
+                                    </optgroup>
+                                </select>
                                 <input type="number" name="preset_price" value="{{ preset.price }}"
                                        class="form-control form-control-sm" step="0.01" min="0" placeholder="40">
                                 <input type="number" name="preset_qty_consumed" value="{{ preset.quantity_consumed }}"
                                        class="form-control form-control-sm" step="0.0001" min="0" placeholder="0.25">
-                                <input type="number" name="preset_order" value="{{ preset.display_order }}"
-                                       class="form-control form-control-sm" min="0" placeholder="0">
                                 <button type="button" onclick="this.closest('.preset-row').remove()"
                                         style="background:none; border:none; color:#f87171; font-size:1.1rem; cursor:pointer; padding:0.25rem;">✕</button>
                             </div>
@@ -265,21 +383,102 @@
             </div>
 
             <script>
-            document.getElementById('is_produce').addEventListener('change', function() {
-                document.getElementById('portionPresetsSection').style.display = this.checked ? 'block' : 'none';
+            // CHANGE 1: is_produce toggles selling price section + presets section
+            (function() {
+                var produceCheck = document.getElementById('is_produce');
+                function applyProduceToggle(checked) {
+                    document.getElementById('portionPresetsSection').style.display = checked ? 'block' : 'none';
+                    document.getElementById('sellingPriceSection').style.display   = checked ? 'none'  : 'block';
+                    document.getElementById('produceSellingNote').style.display    = checked ? 'block' : 'none';
+                }
+                produceCheck.addEventListener('change', function() { applyProduceToggle(this.checked); });
+                applyProduceToggle(produceCheck.checked);
+            })();
+
+            // CHANGE 2c: auto-fill qty_consumed from standard label, editable only for Custom
+            var PRESET_AUTOFILL = {
+                'Small Portion':          '0.0833',
+                'Quarter':                '0.25',
+                'Half':                   '0.5',
+                'Three-Quarters':         '0.75',
+                'Full':                   '1.0',
+                'Single Piece':           '1.0',
+                'Pair (2)':               '2.0',
+                'Small Bundle (4 units)': '4.0',
+                'Large Bundle (8 units)': '8.0',
+                'Small Gorogoro':         '1.0',
+                'Medium Gorogoro':        '1.0',
+                'Large Gorogoro':         '1.0',
+                'Small Heap':             '1.0',
+                'Large Heap':             '2.0'
+            };
+
+            function onPresetLabelChange(selectEl, isInit) {
+                var val = selectEl.value;
+                var row = selectEl.closest('.preset-row');
+                var qtyInput = row.querySelector('input[name="preset_qty_consumed"]');
+                if (val === 'Custom') {
+                    qtyInput.readOnly = false;
+                    qtyInput.style.opacity = '1';
+                    if (!isInit) { qtyInput.value = ''; }
+                    qtyInput.placeholder = 'e.g. 0.33';
+                } else if (PRESET_AUTOFILL[val] !== undefined) {
+                    qtyInput.value = PRESET_AUTOFILL[val];
+                    qtyInput.readOnly = true;
+                    qtyInput.style.opacity = '0.55';
+                } else {
+                    qtyInput.readOnly = false;
+                    qtyInput.style.opacity = '1';
+                }
+            }
+
+            // On page load, pre-select label for existing presets (edit form)
+            document.querySelectorAll('.preset-row select[name="preset_label"]').forEach(function(sel) {
+                var existingVal = sel.dataset.existingValue;
+                if (existingVal) { sel.value = existingVal; }
+                onPresetLabelChange(sel, true);
             });
+
+            // Build the label select HTML for dynamically added rows
+            function buildLabelSelectHtml() {
+                return '<select name="preset_label" class="form-select form-select-sm" onchange="onPresetLabelChange(this)">' +
+                    '<option value="">-- {% trans "Select label" %} --</option>' +
+                    '<optgroup label="{% trans "Fractional" %}">' +
+                    '<option value="Small Portion">{% trans "Small Portion" %}</option>' +
+                    '<option value="Quarter">{% trans "Quarter" %}</option>' +
+                    '<option value="Half">{% trans "Half" %}</option>' +
+                    '<option value="Three-Quarters">{% trans "Three-Quarters" %}</option>' +
+                    '<option value="Full">{% trans "Full" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="{% trans "Count-based" %}">' +
+                    '<option value="Single Piece">{% trans "Single Piece" %}</option>' +
+                    '<option value="Pair (2)">{% trans "Pair (2)" %}</option>' +
+                    '<option value="Small Bundle (4 units)">{% trans "Small Bundle (4 units)" %}</option>' +
+                    '<option value="Large Bundle (8 units)">{% trans "Large Bundle (8 units)" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="{% trans "Gorogoro / Heap" %}">' +
+                    '<option value="Small Gorogoro">{% trans "Small Gorogoro" %}</option>' +
+                    '<option value="Medium Gorogoro">{% trans "Medium Gorogoro" %}</option>' +
+                    '<option value="Large Gorogoro">{% trans "Large Gorogoro" %}</option>' +
+                    '<option value="Small Heap">{% trans "Small Heap" %}</option>' +
+                    '<option value="Large Heap">{% trans "Large Heap" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="{% trans "Other" %}">' +
+                    '<option value="Custom">{% trans "Custom (enter manually)" %}</option>' +
+                    '</optgroup>' +
+                    '</select>';
+            }
 
             document.getElementById('addPresetBtn').addEventListener('click', function() {
                 var empty = document.getElementById('presetEmptyMsg');
                 if (empty) empty.remove();
                 var row = document.createElement('div');
                 row.className = 'preset-row';
-                row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr 0.5fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
+                row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
                 row.innerHTML = '<input type="hidden" name="preset_id" value="">' +
-                    '<input type="text" name="preset_label" class="form-control form-control-sm" placeholder="{% trans "e.g. Quarter head" %}">' +
+                    buildLabelSelectHtml() +
                     '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="40">' +
-                    '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" placeholder="0.25">' +
-                    '<input type="number" name="preset_order" class="form-control form-control-sm" min="0" value="0">' +
+                    '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" placeholder="—" readonly style="opacity:0.55;">' +
                     '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
                 document.getElementById('presetRows').appendChild(row);
             });
@@ -295,101 +494,60 @@
                 </a>
             </div>
         </form>
+
         <script>
         // ── Restriction fields toggle ─────────────────────────────────────────
         (function () {
-            const cb    = document.getElementById('is_restricted');
-            const notes = document.getElementById('restrictionNotesField');
-            const qty   = document.getElementById('restrictedQtyField');
+            var cb    = document.getElementById('is_restricted');
+            var notes = document.getElementById('restrictionNotesField');
+            var qty   = document.getElementById('restrictedQtyField');
             if (cb) {
                 cb.addEventListener('change', function () {
-                    const show = this.checked ? 'block' : 'none';
+                    var show = this.checked ? 'block' : 'none';
                     if (notes) notes.style.display = show;
                     if (qty)   qty.style.display   = show;
                 });
             }
-            const qtyInput = document.querySelector('[name="restricted_quantity"]');
-            const hint     = document.getElementById('reservedQtyHint');
+            var qtyInput = document.querySelector('[name="restricted_quantity"]');
+            var hint     = document.getElementById('reservedQtyHint');
             if (qtyInput && hint) {
                 qtyInput.addEventListener('input', function () {
-                    const val = parseInt(this.value) || 0;
-                    if (val > 0) {
-                        hint.textContent = val + ' units will be reserved. Staff can sell the rest freely without approval.';
-                    } else {
-                        hint.textContent = 'All sales of this item will require your approval.';
-                    }
+                    var val = parseInt(this.value) || 0;
+                    hint.textContent = val > 0
+                        ? val + ' units will be reserved. Staff can sell the rest freely without approval.'
+                        : 'All sales of this item will require your approval.';
                     hint.style.display = 'block';
                 });
             }
         })();
         </script>
+
         <script>
-        (function(){
-            const categories = {{ form.categories_json|safe }};
-            const lvl1 = document.getElementById('id_category_level1');
-            const lvl2 = document.getElementById('id_category_level2');
-            const lvl3 = document.getElementById('id_category_level3');
-            const hiddenCat = document.getElementById('id_category');
-            const tagsInput = document.getElementById('id_tags');
+        // CHANGE 4: Category text input resolves to hidden category FK
+        (function() {
+            var categories = {{ form.categories_json|safe }};
+            var catInput   = document.getElementById('cat_text_input');
+            var hiddenCat  = document.getElementById('id_category');
+            var tagsInput  = document.getElementById('id_tags');
 
-            function unique(arr){ return [...new Set(arr)].filter(v=>v).sort(); }
-            function populateSelect(select, values, includeBlank=true){
-                if(!select) return;
-                select.innerHTML = '';
-                if(includeBlank){ const opt=document.createElement('option'); opt.value=''; opt.text='—'; select.appendChild(opt); }
-                values.forEach(v=>{ const o=document.createElement('option'); o.value=v; o.text=v; select.appendChild(o); });
+            function resolveCategory(val) {
+                if (!hiddenCat) return;
+                var found = categories.find(function(c) { return c.level1 === val; });
+                hiddenCat.value = found ? found.id : '';
             }
 
-            const level1Values = unique(categories.map(c=>c.level1));
-            if(lvl1) populateSelect(lvl1, level1Values);
-
-            function updateLevel2(){
-                const sel1 = lvl1.value;
-                const level2Values = unique(categories.filter(c=>c.level1===sel1).map(c=>c.level2));
-                populateSelect(lvl2, level2Values);
-                updateLevel3();
-                resolveCategory();
-            }
-            function updateLevel3(){
-                const sel1 = lvl1.value, sel2 = lvl2.value;
-                const level3Values = unique(categories.filter(c=>c.level1===sel1 && c.level2===sel2).map(c=>c.level3));
-                populateSelect(lvl3, level3Values);
-                resolveCategory();
-            }
-            function resolveCategory(){
-                const sel1 = lvl1 ? lvl1.value : '';
-                const sel2 = lvl2 ? lvl2.value : '';
-                const sel3 = lvl3 ? lvl3.value : '';
-                const found = categories.find(c=>c.level1===sel1 && (sel2?c.level2===sel2:(c.level2===''||!c.level2)) && (sel3?c.level3===sel3:(c.level3===''||!c.level3)));
-                if(found && hiddenCat) hiddenCat.value = found.id;
-                else if(hiddenCat) hiddenCat.value = '';
+            if (catInput) {
+                catInput.addEventListener('change', function() { resolveCategory(this.value); });
+                catInput.addEventListener('input',  function() { resolveCategory(this.value); });
+                resolveCategory(catInput.value);
             }
 
-            if(lvl1) lvl1.addEventListener('change', updateLevel2);
-            if(lvl2) lvl2.addEventListener('change', updateLevel3);
-            if(lvl3) lvl3.addEventListener('change', resolveCategory);
-
-            try{
-                const initialCatId = hiddenCat ? hiddenCat.value : '';
-                if(initialCatId){
-                    const c = categories.find(x=>String(x.id)===String(initialCatId));
-                    if(c){
-                        if(lvl1){ lvl1.value = c.level1; }
-                        updateLevel2();
-                        if(lvl2){ lvl2.value = c.level2 || ''; }
-                        updateLevel3();
-                        if(lvl3){ lvl3.value = c.level3 || ''; }
-                        resolveCategory();
-                    }
-                }
-            }catch(e){console.error(e);}
-
-            document.querySelectorAll('.suggested-tag').forEach(btn=>{
-                btn.addEventListener('click', function(){
-                    const tag = this.dataset.tag;
-                    if(!tagsInput) return;
-                    const existing = tagsInput.value.split(',').map(s=>s.trim()).filter(s=>s);
-                    if(!existing.includes(tag)){
+            document.querySelectorAll('.suggested-tag').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var tag = this.dataset.tag;
+                    if (!tagsInput) return;
+                    var existing = tagsInput.value.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
+                    if (!existing.includes(tag)) {
                         existing.push(tag);
                         tagsInput.value = existing.join(', ');
                     }
@@ -399,39 +557,48 @@
         </script>
 
         <script>
-        // ── Yield factor toggle ───────────────────────────────────────────────
+        // CHANGE 5: Mirror opening_bin_balance to opening_physical on form submit
+        (function() {
+            var form = document.getElementById('itemForm');
+            var ob   = document.getElementById('id_opening_bin_balance');
+            var op   = document.getElementById('id_opening_physical');
+            if (form && ob && op) {
+                form.addEventListener('submit', function() {
+                    op.value = ob.value || '0';
+                });
+            }
+        })();
+        </script>
+
+        <script>
+        // CHANGE 6: Yield percentage toggle
         (function () {
-            const yieldCheck = document.getElementById('id_is_yield_item');
-            const yieldRow   = document.getElementById('yieldFactorRow');
-            const yieldInput = document.getElementById('id_yield_factor');
-            const yieldHint  = document.getElementById('yieldFactorHint');
+            var yieldCheck = document.getElementById('id_is_yield_item');
+            var yieldRow   = document.getElementById('yieldFactorRow');
+            var yieldInput = document.getElementById('yieldPercentage');
+            var yieldHint  = document.getElementById('yieldFactorHint');
 
             function updateYieldHint() {
                 if (!yieldInput || !yieldHint) return;
-                const val = parseFloat(yieldInput.value);
-                if (isNaN(val) || val <= 0 || val >= 1) {
+                var pct = parseInt(yieldInput.value);
+                if (isNaN(pct) || pct <= 0 || pct >= 100) {
                     yieldHint.style.display = 'none';
                     return;
                 }
-                const pct     = Math.round(val * 100);
-                const wastage = Math.round((1 - val) * 100);
+                var wastage = 100 - pct;
                 yieldHint.textContent = pct + '% usable · ' + wastage + '% wastage — e.g. 100 kg received → ' + pct + ' kg usable, ' + wastage + ' kg wastage';
                 yieldHint.style.display = 'block';
             }
 
             function toggleYieldRow() {
                 if (!yieldCheck || !yieldRow) return;
-                if (yieldCheck.checked) {
-                    yieldRow.style.display = 'block';
-                    updateYieldHint();
-                } else {
-                    yieldRow.style.display = 'none';
-                }
+                yieldRow.style.display = yieldCheck.checked ? 'block' : 'none';
+                if (yieldCheck.checked) updateYieldHint();
             }
 
             if (yieldCheck) {
                 yieldCheck.addEventListener('change', toggleYieldRow);
-                toggleYieldRow(); // run on page load (edit mode)
+                toggleYieldRow();
             }
             if (yieldInput) {
                 yieldInput.addEventListener('input', updateYieldHint);
