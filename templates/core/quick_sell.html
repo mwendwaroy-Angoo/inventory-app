@@ -1092,7 +1092,7 @@
         GREENS.mixes.forEach(function(m) {
             var empty = m.remaining <= 0;
             var mixStatus = empty
-                ? (m.has_history ? '<span class="gone">imeisha</span>' : '<span style="color:#888;font-size:0.72rem;">bado na stok</span>')
+                ? (m.has_history ? '<span class="gone">imeisha</span>' : '<span style="color:#888;font-size:0.72rem;">bado stock iko</span>')
                 : money(m.remaining) + ' · ' + m.members + ' aina';
             html += '<div class="qs-green-tile mix' + (empty ? ' empty' : '') + '" '
                  +  'data-kind="mix" data-group="' + esc(m.mix_group) + '">'
@@ -1110,7 +1110,7 @@
                  +  '<div class="qs-green-name">' + esc(g.name) + '</div>'
                  +  '<div class="qs-green-meter">'
                  +     (empty
-                            ? (g.has_history ? '<span class="gone">imeisha</span>' : '<span style="color:#888;font-size:0.72rem;">bado na stok</span>')
+                            ? (g.has_history ? '<span class="gone">imeisha</span>' : '<span style="color:#888;font-size:0.72rem;">bado stock iko</span>')
                             : money(g.remaining) + ' / ' + money(g.target_open) + ' left')
                  +  '</div>'
                  +  (empty ? '' : '<div class="qs-green-bar"><span style="width:' + pct + '%"></span></div>')
