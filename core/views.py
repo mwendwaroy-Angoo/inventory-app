@@ -1252,7 +1252,16 @@ def add_item(request):
                 except (ValueError, TypeError):
                     item.restricted_quantity = 0
                 item.is_produce = request.POST.get('is_produce') == 'on'
-                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity', 'is_produce'])
+                pmode = request.POST.get('produce_mode', 'PORTION')
+                item.produce_mode = pmode if pmode in ('PORTION', 'BUNCH') else 'PORTION'
+                item.mix_group = request.POST.get('mix_group', '').strip()
+                try:
+                    rm = Decimal(request.POST.get('revenue_multiplier') or '1.70')
+                    item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')
+                except (ValueError, InvalidOperation):
+                    item.revenue_multiplier = Decimal('1.70')
+                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
+                                         'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier'])
 
                 # ── PRODUCE PORTION PRESETS ───────────────────────────────────
                 preset_labels  = request.POST.getlist('preset_label')
@@ -1263,16 +1272,26 @@ def add_item(request):
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
                 item.portion_presets.exclude(id__in=submitted_ids).delete()
 
+                is_bunch = item.produce_mode == 'BUNCH'
                 for i, label in enumerate(preset_labels):
-                    if not label.strip():
-                        continue
+                    label = label.strip()
                     try:
-                        price  = Decimal(preset_prices[i])
-                        qty_c  = Decimal(preset_qty[i])
-                        order  = i
-                        pid    = preset_ids[i].strip() if i < len(preset_ids) else ''
+                        price = Decimal(preset_prices[i])
                     except (ValueError, InvalidOperation, IndexError):
                         continue
+                    if not label:
+                        if is_bunch:
+                            label = f"KES {price:g}"   # greens: label is just the price point
+                        else:
+                            continue
+                    try:
+                        qty_c = (Decimal(preset_qty[i])
+                                 if i < len(preset_qty) and str(preset_qty[i]).strip()
+                                 else Decimal('0'))
+                    except (ValueError, InvalidOperation, IndexError):
+                        qty_c = Decimal('0')
+                    order = i
+                    pid = preset_ids[i].strip() if i < len(preset_ids) else ''
                     if pid:
                         ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
                             label=label, price=price, quantity_consumed=qty_c, display_order=order
@@ -1338,7 +1357,16 @@ def edit_item(request, item_id):
                 except (ValueError, TypeError):
                     item.restricted_quantity = 0
                 item.is_produce = request.POST.get('is_produce') == 'on'
-                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity', 'is_produce'])
+                pmode = request.POST.get('produce_mode', 'PORTION')
+                item.produce_mode = pmode if pmode in ('PORTION', 'BUNCH') else 'PORTION'
+                item.mix_group = request.POST.get('mix_group', '').strip()
+                try:
+                    rm = Decimal(request.POST.get('revenue_multiplier') or '1.70')
+                    item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')
+                except (ValueError, InvalidOperation):
+                    item.revenue_multiplier = Decimal('1.70')
+                item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
+                                         'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier'])
 
                 # ── PRODUCE PORTION PRESETS ───────────────────────────────────
                 preset_labels  = request.POST.getlist('preset_label')
@@ -1349,16 +1377,26 @@ def edit_item(request, item_id):
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
                 item.portion_presets.exclude(id__in=submitted_ids).delete()
 
+                is_bunch = item.produce_mode == 'BUNCH'
                 for i, label in enumerate(preset_labels):
-                    if not label.strip():
-                        continue
+                    label = label.strip()
                     try:
-                        price  = Decimal(preset_prices[i])
-                        qty_c  = Decimal(preset_qty[i])
-                        order  = i
-                        pid    = preset_ids[i].strip() if i < len(preset_ids) else ''
+                        price = Decimal(preset_prices[i])
                     except (ValueError, InvalidOperation, IndexError):
                         continue
+                    if not label:
+                        if is_bunch:
+                            label = f"KES {price:g}"   # greens: label is just the price point
+                        else:
+                            continue
+                    try:
+                        qty_c = (Decimal(preset_qty[i])
+                                 if i < len(preset_qty) and str(preset_qty[i]).strip()
+                                 else Decimal('0'))
+                    except (ValueError, InvalidOperation, IndexError):
+                        qty_c = Decimal('0')
+                    order = i
+                    pid = preset_ids[i].strip() if i < len(preset_ids) else ''
                     if pid:
                         ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
                             label=label, price=price, quantity_consumed=qty_c, display_order=order

@@ -298,8 +298,56 @@
                 </div>
             </div>
 
+            <!-- Selling mode: Portion (fraction) vs Bunch (greens / revenue envelope) -->
+            <div id="produceModeSection" style="{% if not form.instance.is_produce %}display:none;{% endif %} margin-bottom:1rem;">
+                <div style="color:var(--gold); font-size:0.85rem; font-weight:600; margin-bottom:0.5rem;">
+                    {% trans 'How is it sold?' %}
+                </div>
+                <div class="d-flex gap-2">
+                    <input type="radio" class="btn-check" name="produce_mode" id="pm_portion" value="PORTION"
+                           {% if form.instance.produce_mode != 'BUNCH' %}checked{% endif %}>
+                    <label class="btn btn-outline-warning flex-fill text-center" for="pm_portion" style="line-height:1.2;">
+                        {% trans 'Portion / fraction' %}<br>
+                        <small style="opacity:0.65;">{% trans 'cabbage, gorogoro' %}</small>
+                    </label>
+                    <input type="radio" class="btn-check" name="produce_mode" id="pm_bunch" value="BUNCH"
+                           {% if form.instance.produce_mode == 'BUNCH' %}checked{% endif %}>
+                    <label class="btn btn-outline-success flex-fill text-center" for="pm_bunch" style="line-height:1.2;">
+                        🥬 {% trans 'Bunch (greens)' %}<br>
+                        <small style="opacity:0.65;">{% trans 'sukuma, spinach, kienyeji' %}</small>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Bunch-only settings: mix tag + default markup -->
+            <div id="bunchSettingsSection" style="{% if form.instance.produce_mode != 'BUNCH' %}display:none;{% endif %} margin-bottom:1rem; background:rgba(120,180,90,0.06); border:1px solid rgba(120,180,90,0.25); border-radius:8px; padding:0.9rem;">
+                <div class="mb-3">
+                    <label class="form-label" style="color:#9fcaa0; font-size:0.8rem;" for="mix_group_input">
+                        {% trans 'Kienyeji mix tag' %} <span style="opacity:0.6;">({% trans 'optional' %})</span>
+                    </label>
+                    <input type="text" name="mix_group" id="mix_group_input" class="form-control"
+                           value="{{ form.instance.mix_group }}" placeholder="kienyeji">
+                    <div style="color:#b0b0b0; font-size:0.75rem; margin-top:0.25rem;">
+                        {% trans 'Greens sharing this tag can be sold as one generic order (e.g. "kienyeji" for managu + terere). Leave blank for greens sold only by name.' %}
+                    </div>
+                </div>
+                <div>
+                    <label class="form-label" style="color:#9fcaa0; font-size:0.8rem;" for="revenue_multiplier_input">
+                        {% trans 'Default markup' %}
+                    </label>
+                    <input type="number" name="revenue_multiplier" id="revenue_multiplier_input" class="form-control"
+                           step="0.05" min="1" value="{{ form.instance.revenue_multiplier|default:'1.70' }}">
+                    <div style="color:#b0b0b0; font-size:0.75rem; margin-top:0.25rem;">
+                        {% trans 'Suggests a bunch target from its cost (1.70 → a 40/= bunch targets 68/=). You can override per bunch when receiving from the market.' %}
+                    </div>
+                </div>
+            </div>
+
             <!-- CHANGE 2: Preset table — label dropdown, no Order column -->
             <div id="portionPresetsSection" style="{% if not form.instance.is_produce %}display:none;{% endif %}">
+                <div id="bunchPresetHint" style="display:none; background:rgba(120,180,90,0.08); border:1px solid rgba(120,180,90,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#9fcaa0; margin-bottom:0.75rem;">
+                    🥬 {% trans 'Greens mode: each row is just a price point the customer can ask for (e.g. 10, 20, 30). Leave the label blank to auto-name it, and ignore "Stock Used" — bunches deplete by money, not stems.' %}
+                </div>
                 <div style="color:var(--gold); font-size:0.85rem; font-weight:600; margin-bottom:0.75rem;">
                     📋 {% trans 'Portion Presets' %}
                     <span style="color:#b0b0b0; font-weight:400; font-size:0.78rem; margin-left:0.5rem;">
@@ -386,12 +434,37 @@
             // CHANGE 1: is_produce toggles selling price section + presets section
             (function() {
                 var produceCheck = document.getElementById('is_produce');
+                var modeSection  = document.getElementById('produceModeSection');
+                var bunchSection = document.getElementById('bunchSettingsSection');
+
+                function isBunch() {
+                    var b = document.getElementById('pm_bunch');
+                    return !!(b && b.checked);
+                }
+                function applyModeToggle() {
+                    var bunch = isBunch();
+                    if (bunchSection) bunchSection.style.display = bunch ? 'block' : 'none';
+                    // In bunch mode the "Stock Used" column is ignored — only the price matters.
+                    document.querySelectorAll('input[name="preset_qty_consumed"]').forEach(function(inp) {
+                        inp.readOnly = bunch;
+                        inp.style.opacity = bunch ? '0.35' : '';
+                        if (bunch) inp.placeholder = 'n/a';
+                    });
+                    var hint = document.getElementById('bunchPresetHint');
+                    if (hint) hint.style.display = bunch ? 'block' : 'none';
+                }
                 function applyProduceToggle(checked) {
                     document.getElementById('portionPresetsSection').style.display = checked ? 'block' : 'none';
                     document.getElementById('sellingPriceSection').style.display   = checked ? 'none'  : 'block';
                     document.getElementById('produceSellingNote').style.display    = checked ? 'block' : 'none';
+                    if (modeSection) modeSection.style.display = checked ? 'block' : 'none';
+                    if (checked) applyModeToggle();
                 }
                 produceCheck.addEventListener('change', function() { applyProduceToggle(this.checked); });
+                var pmP = document.getElementById('pm_portion');
+                var pmB = document.getElementById('pm_bunch');
+                if (pmP) pmP.addEventListener('change', applyModeToggle);
+                if (pmB) pmB.addEventListener('change', applyModeToggle);
                 applyProduceToggle(produceCheck.checked);
             })();
 
