@@ -113,7 +113,9 @@ def produce_board(request):
 
     greens, mix_map = [], {}
     for it in items:
-        open_b = [b for b in it.bunches.all() if b.status == 'OPEN' and b.remaining() > 0]
+        all_bunches = list(it.bunches.filter(business=business))
+        open_b = [b for b in all_bunches if b.status == 'OPEN' and b.remaining() > 0]
+        has_history = len(all_bunches) > 0
         remaining = float(sum((b.remaining() for b in open_b), Decimal('0')))
         target_open = float(sum((b.target_revenue or Decimal('0') for b in open_b), Decimal('0')))
         presets = [{'label': p.label, 'price': float(p.price)}
@@ -129,13 +131,16 @@ def produce_board(request):
             'target_open': target_open,
             'wilting': bool(oldest and oldest.is_wilting()),
             'oldest_bunch_id': oldest.id if oldest else None,
+            'has_history': has_history,
         })
         if it.mix_group:
             g = mix_map.setdefault(it.mix_group, {
                 'mix_group': it.mix_group, 'remaining': 0.0, 'presets': [], 'members': 0,
+                'has_history': False,
             })
             g['remaining'] += remaining
             g['members'] += 1
+            if has_history: g['has_history'] = True
             if not g['presets'] and presets:
                 g['presets'] = presets
 

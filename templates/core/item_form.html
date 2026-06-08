@@ -418,6 +418,10 @@
                     </div>
                 </div>
 
+                <button type="button" id="quickFillPresets"
+                        style="background:rgba(120,180,90,0.12); border:1px dashed rgba(120,180,90,0.4); color:#9fcaa0; border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:0.5rem; display:none;">
+                    🥬 {% trans 'Quick-fill standard presets (10 / 20 / 30 / 50)' %}
+                </button>
                 <button type="button" id="addPresetBtn"
                         style="background:rgba(201,168,76,0.1); border:1px dashed var(--gold); color:var(--gold); border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:1rem;">
                     + {% trans 'Add Portion Preset' %}
@@ -452,6 +456,30 @@
                     });
                     var hint = document.getElementById('bunchPresetHint');
                     if (hint) hint.style.display = bunch ? 'block' : 'none';
+                    var qfBtn = document.getElementById('quickFillPresets');
+                    if (qfBtn) qfBtn.style.display = bunch ? 'block' : 'none';
+                }
+
+                // Quick-fill standard presets for bunch mode
+                var quickFillBtn = document.getElementById('quickFillPresets');
+                if (quickFillBtn) {
+                    quickFillBtn.addEventListener('click', function() {
+                        var prices = [10, 20, 30, 50];
+                        var rows = document.getElementById('presetRows');
+                        var empty = document.getElementById('presetEmptyMsg');
+                        if (empty) empty.style.display = 'none';
+                        prices.forEach(function(price) {
+                            var row = document.createElement('div');
+                            row.className = 'preset-row';
+                            row.style = 'display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
+                            row.innerHTML = '<input type="hidden" name="preset_id" value="">'
+                                + '<select name="preset_label" class="form-select form-select-sm" onchange="onPresetLabelChange(this)"><option value="">KES ' + price + '</option></select>'
+                                + '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" value="' + price + '">'
+                                + '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" placeholder="n/a" readonly style="opacity:0.35;">'
+                                + '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
+                            rows.appendChild(row);
+                        });
+                    });
                 }
                 function applyProduceToggle(checked) {
                     document.getElementById('portionPresetsSection').style.display = checked ? 'block' : 'none';
@@ -560,7 +588,7 @@
 
             <div class="d-flex gap-2 mt-4">
                 <button type="submit" class="btn btn-gold">
-                    {{ action }} {% trans 'Item' %}
+                    {% if is_add %}{{ action }} {% trans 'Item' %}{% else %}{% trans 'Save Changes' %}{% endif %}
                 </button>
                 <a href="{% url 'manage_items' %}" class="btn btn-secondary">
                     {% trans 'Cancel' %}

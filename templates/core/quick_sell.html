@@ -1091,11 +1091,13 @@
         // generic mix tiles first (kienyeji)
         GREENS.mixes.forEach(function(m) {
             var empty = m.remaining <= 0;
+            var mixStatus = empty
+                ? (m.has_history ? '<span class="gone">imeisha</span>' : '<span style="color:#888;font-size:0.72rem;">bado na stok</span>')
+                : money(m.remaining) + ' · ' + m.members + ' aina';
             html += '<div class="qs-green-tile mix' + (empty ? ' empty' : '') + '" '
                  +  'data-kind="mix" data-group="' + esc(m.mix_group) + '">'
                  +  '<div class="qs-green-name">🌿 ' + esc('Mboga za ' + m.mix_group) + '</div>'
-                 +  '<div class="qs-green-meter">' + (empty ? '<span class="gone">imeisha</span>'
-                        : money(m.remaining) + ' · ' + m.members + ' aina') + '</div>'
+                 +  '<div class="qs-green-meter">' + mixStatus + '</div>'
                  +  '</div>';
         });
         // named greens
@@ -1107,8 +1109,9 @@
                  +  (g.wilting ? '<div class="qs-green-badge">' + esc('uza kwanza') + '</div>' : '')
                  +  '<div class="qs-green-name">' + esc(g.name) + '</div>'
                  +  '<div class="qs-green-meter">'
-                 +     (empty ? '<span class="gone">imeisha</span>'
-                              : money(g.remaining) + ' / ' + money(g.target_open) + ' left')
+                 +     (empty
+                            ? (g.has_history ? '<span class="gone">imeisha</span>' : '<span style="color:#888;font-size:0.72rem;">bado na stok</span>')
+                            : money(g.remaining) + ' / ' + money(g.target_open) + ' left')
                  +  '</div>'
                  +  (empty ? '' : '<div class="qs-green-bar"><span style="width:' + pct + '%"></span></div>')
                  +  '</div>';
@@ -1148,7 +1151,11 @@
         if (kind === 'mix') {
             var m = findMix(tile.dataset.group);
             if (!m) return;
-            if (m.remaining <= 0) { alert('{% trans "Out of kienyeji — receive more bunches." %}'); return; }
+            if (m.remaining <= 0) {
+                if (GREENS.can_receive) { openReceive(null); }
+                else { alert('Imeisha — muulize mwenye duka apokee stok zaidi.'); }
+                return;
+            }
             currentGreen = { mode: 'mix', group: m.mix_group, name: 'Mboga za ' + m.mix_group };
             document.getElementById('bunchModalTitle').textContent = '🌿 ' + currentGreen.name;
             document.getElementById('bunchModalBody').innerHTML =
