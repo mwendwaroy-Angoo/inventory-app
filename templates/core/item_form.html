@@ -467,8 +467,14 @@
                         var prices = [10, 20, 30, 50];
                         var rows = document.getElementById('presetRows');
                         var empty = document.getElementById('presetEmptyMsg');
+                        // Skip price points that already have a row (idempotent on repeat taps)
+                        var existing = Array.prototype.map.call(
+                            document.querySelectorAll('input[name="preset_price"]'),
+                            function(inp) { return parseFloat(inp.value); }
+                        ).filter(function(v) { return !isNaN(v); });
                         if (empty) empty.style.display = 'none';
                         prices.forEach(function(price) {
+                            if (existing.indexOf(price) !== -1) return;
                             var row = document.createElement('div');
                             row.className = 'preset-row';
                             row.style = 'display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';

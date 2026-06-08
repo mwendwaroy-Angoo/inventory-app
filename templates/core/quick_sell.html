@@ -1152,7 +1152,7 @@
             var m = findMix(tile.dataset.group);
             if (!m) return;
             if (m.remaining <= 0) {
-                if (GREENS.can_receive) { openReceive(null); }
+                if (GREENS.can_receive) { openReceive(null, m.mix_group); }
                 else { alert('Imeisha — muulize mwenye duka apokee stok zaidi.'); }
                 return;
             }
@@ -1228,9 +1228,13 @@
     }
 
     // ── RECEIVE BUNCHES (owner) ──
-    function openReceive(preselectId) {
+    function openReceive(preselectId, mixGroup) {
         var sel = document.getElementById('rcvItem');
-        sel.innerHTML = GREENS.greens.map(function(g) {
+        var list = GREENS.greens;
+        if (mixGroup) {
+            list = list.filter(function(g) { return g.mix_group === mixGroup; });
+        }
+        sel.innerHTML = list.map(function(g) {
             return '<option value="' + g.id + '">' + esc(g.name) + '</option>';
         }).join('');
         if (preselectId) sel.value = String(preselectId);

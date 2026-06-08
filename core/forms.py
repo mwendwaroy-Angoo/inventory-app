@@ -115,12 +115,16 @@ class ItemForm(forms.ModelForm):
         # Hide cost_price from staff
         if not show_cost_price:
             del self.fields['cost_price']
-        # Initialize tags field for editing (comma separated)
+        # Initialize tags field for editing (comma separated).
+        # Must set self.initial (form-level) — Django's ModelForm fills self.initial
+        # from the instance via model_to_dict, and that takes priority over field.initial.
         if self.instance and getattr(self.instance, 'tags', None):
-            try:
-                self.fields['tags'].initial = ', '.join(self.instance.tags)
-            except Exception:
-                self.fields['tags'].initial = self.instance.tags
+            raw = self.instance.tags
+            if not isinstance(raw, (list, tuple)):
+                raw = [raw]
+            clean = [str(t).strip().strip("[]'\"").strip() for t in raw]
+            clean = [t for t in clean if t]
+            self.initial['tags'] = ', '.join(clean)
 
         # Build category hierarchy JSON for client-side picker
         try:
@@ -155,12 +159,14 @@ class ItemForm(forms.ModelForm):
 
     def clean_tags(self):
         val = self.cleaned_data.get('tags', '')
-        if isinstance(val, str):
-            tags = [t.strip().lower() for t in val.replace(';', ',').split(',') if t.strip()]
-            return tags
-        if isinstance(val, list):
-            return val
-        return []
+        if isinstance(val, (list, tuple)):
+            val = ','.join(str(v) for v in val)
+        tags = []
+        for t in str(val).replace(';', ',').split(','):
+            t = t.strip().strip("[]'\"").strip().lower()
+            if t:
+                tags.append(t)
+        return tags
 
     def save(self, commit=True):
         # Ensure category FK is set from hidden/category field (form has category field)

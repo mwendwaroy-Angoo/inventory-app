@@ -18,6 +18,7 @@ from .models import (
     GoodsReceipt,
     GoodsReceiptLine,
     ItemPortionPreset,
+    Category,
 )
 from .forms import (
     ItemForm,
@@ -1213,6 +1214,27 @@ def manage_items(request):
 
 @login_required
 @owner_required
+def _resolve_category(cat_text):
+    """Resolve a free-text category name to a Category, creating one if it doesn't exist.
+
+    Fixes the bug where a typed category (e.g. "Vegetables") was silently dropped
+    when it didn't already match an existing Category record.
+    """
+    from django.utils.text import slugify
+    cat_text = (cat_text or '').strip()
+    if not cat_text:
+        return None
+    cat = Category.objects.filter(level1__iexact=cat_text).first()
+    if cat:
+        return cat
+    base = (slugify(cat_text) or 'category')[:40]
+    code, n = base, 1
+    while Category.objects.filter(code=code).exists():
+        n += 1
+        code = f"{base}-{n}"[:50]
+    return Category.objects.create(code=code, level1=cat_text)
+
+
 def add_item(request):
     user_profile = request.user.userprofile
 
@@ -1242,6 +1264,10 @@ def add_item(request):
             else:
                 item.is_yield_item = False
                 item.yield_factor = None
+            # Resolve / create category from the free-text input
+            cat_obj = _resolve_category(request.POST.get('cat_text_input'))
+            if cat_obj:
+                item.category = cat_obj
             item.save()
             # Handle owner-only fields (restrictions + produce)
             if user_profile.is_owner:
@@ -1336,6 +1362,11 @@ def edit_item(request, item_id):
         )
         if form.is_valid():
             item = form.save()
+            # Resolve / create category from the free-text input
+            cat_obj = _resolve_category(request.POST.get('cat_text_input'))
+            if cat_obj:
+                item.category = cat_obj
+                item.save(update_fields=['category'])
             # Handle yield_factor from percentage input
             if request.POST.get('is_yield_item') == 'on':
                 item.is_yield_item = True
