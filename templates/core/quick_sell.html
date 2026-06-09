@@ -1226,10 +1226,10 @@
              + '{% trans "Done" %} ✓</button>';
     }
 
-    function closeBunchModal() {
+    window.closeBunchModal = function() {
         var inst = bootstrap.Modal.getInstance(document.getElementById('bunchModal'));
         if (inst) inst.hide();
-    }
+    };
 
     function addGreensLine(amount) {
         amount = Math.round(Number(amount));
@@ -1247,7 +1247,7 @@
         // Flash confirmation — modal stays open so the next green can be added immediately
         var flashEl = document.getElementById('bunchAddedFlash');
         if (flashEl) {
-            flashEl.textContent = '✓ Kimeongezwa — KES ' + amount;
+            flashEl.textContent = '✓ imeongezwa — KES ' + amount;
             flashEl.style.opacity = '1';
             clearTimeout(flashEl._t);
             flashEl._t = setTimeout(function(){ flashEl.style.opacity = '0'; }, 1600);
