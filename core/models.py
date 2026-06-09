@@ -403,7 +403,7 @@ class Item(models.Model):
 
     def stock_value(self):
         if self.cost_price and self.current_balance() > 0:
-            return float(self.cost_price) * self.current_balance()
+            return float(self.cost_price) * float(self.current_balance())
         return 0
 
     def profit_per_unit(self):
