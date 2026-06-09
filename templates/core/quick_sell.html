@@ -1218,8 +1218,17 @@
     function customRow() {
         return '<div class="qs-custom-row">'
              + '<input type="number" id="bunchCustomAmt" inputmode="numeric" placeholder="{% trans "Other amount" %}">'
-             + '<button type="button" class="qs-amt-btn" id="bunchCustomAdd" style="flex:0 0 auto; padding:0.7rem 1rem;">{% trans "Add" %}</button>'
-             + '</div>';
+             + '<button type="button" class="qs-amt-btn" id="bunchCustomAdd" style="flex:0 0 auto;padding:0.7rem 1rem;">+ {% trans "Add" %}</button>'
+             + '</div>'
+             + '<div id="bunchAddedFlash" style="color:#6fae4f;font-size:0.8rem;font-weight:600;text-align:center;min-height:1.2rem;transition:opacity 0.4s;opacity:0;margin-bottom:0.3rem;"></div>'
+             + '<button type="button" id="bunchDoneBtn" onclick="closeBunchModal()" '
+             +   'style="width:100%;background:linear-gradient(135deg,#4a7c3f,#2d5a23);border:none;color:#fff;font-weight:700;font-size:0.95rem;padding:0.65rem;border-radius:10px;cursor:pointer;letter-spacing:0.03em;">'
+             + '{% trans "Done" %} ✓</button>';
+    }
+
+    function closeBunchModal() {
+        var inst = bootstrap.Modal.getInstance(document.getElementById('bunchModal'));
+        if (inst) inst.hide();
     }
 
     function addGreensLine(amount) {
@@ -1234,9 +1243,15 @@
             }
         } else { line.mode = 'bunch'; line.id = String(currentGreen.id); }
         cart.push(line);
-        var inst = bootstrap.Modal.getInstance(document.getElementById('bunchModal'));
-        if (inst) inst.hide();
         updateCart();
+        // Flash confirmation — modal stays open so the next green can be added immediately
+        var flashEl = document.getElementById('bunchAddedFlash');
+        if (flashEl) {
+            flashEl.textContent = '✓ Kimeongezwa — KES ' + amount;
+            flashEl.style.opacity = '1';
+            clearTimeout(flashEl._t);
+            flashEl._t = setTimeout(function(){ flashEl.style.opacity = '0'; }, 1600);
+        }
     }
 
     // delegated handlers inside the bunch modal body
