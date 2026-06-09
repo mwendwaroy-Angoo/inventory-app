@@ -1921,12 +1921,22 @@ def quick_sell(request):
                 )
                 continue
 
+            # For portion-preset sales the cart supplies an explicit price that may
+            # differ from selling_price × stock_qty (e.g. Tatu mbao: 3 onions for KES 20
+            # instead of 3 × KES 10 = KES 30). Store it as sale_amount so revenue() is
+            # correct. Only set when stock_qty is explicitly in the cart entry (i.e. a
+            # preset tap) — normal item taps omit stock_qty.
+            sale_amt = None
+            if entry.get("stock_qty") is not None and display_price:
+                sale_amt = Decimal(str(round(display_price * float(display_qty), 2)))
+
             last_transaction = Transaction.objects.create(
                 item=item,
                 type="Issue",
                 qty=-stock_qty,
                 business=user_profile.business,
                 payment_method=request.POST.get("payment_method", "cash"),
+                sale_amount=sale_amt,
             )
             recorded.append(
                 {

@@ -34,11 +34,14 @@ from core.views import get_user_profile, owner_required
 def _units(t):
     """Unit count for a transaction.
 
-    For bunch-mode greens, qty is a fractional bunch amount (e.g. -0.2857) which is
-    meaningless as a 'units sold' figure. When sale_amount is set it means this was a
-    money-based bunch sale — count it as 1 customer portion instead of a fraction.
+    Bunch-mode greens: qty is a fractional bundle deduction (e.g. -0.2857) which is
+    meaningless as 'units sold'. Identified by produce_bunch_id being set — count as
+    1 customer portion instead.
+
+    Portion-preset multi-piece (e.g. Tatu mbao = 3 for KES 20): qty IS meaningful
+    (3 items deducted) and sale_amount is set for correct revenue. Return abs(qty).
     """
-    if getattr(t, 'sale_amount', None) is not None:
+    if getattr(t, 'produce_bunch_id', None) is not None:
         return 1.0
     return float(abs(t.qty or 0))
 

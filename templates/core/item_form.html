@@ -387,6 +387,14 @@
                                         <option value="Small Bundle (4 units)">{% trans 'Small Bundle (4 units)' %}</option>
                                         <option value="Large Bundle (8 units)">{% trans 'Large Bundle (8 units)' %}</option>
                                     </optgroup>
+                                    <optgroup label="{% trans 'Kibanda / Multi-piece' %}">
+                                        <option value="Kimoja">{% trans 'Kimoja (1 piece)' %}</option>
+                                        <option value="Mbili mbao">{% trans 'Mbili mbao (2 for price)' %}</option>
+                                        <option value="Tatu mbao">{% trans 'Tatu mbao (3 for price)' %}</option>
+                                        <option value="Nne mbao">{% trans 'Nne mbao (4 for price)' %}</option>
+                                        <option value="Tano mbao">{% trans 'Tano mbao (5 for price)' %}</option>
+                                        <option value="Sita mbao">{% trans 'Sita mbao (6 for price)' %}</option>
+                                    </optgroup>
                                     <optgroup label="{% trans 'Gorogoro / Heap' %}">
                                         <option value="Small Gorogoro">{% trans 'Small Gorogoro' %}</option>
                                         <option value="Medium Gorogoro">{% trans 'Medium Gorogoro' %}</option>
@@ -517,19 +525,42 @@
                 'Medium Gorogoro':        '1.0',
                 'Large Gorogoro':         '1.0',
                 'Small Heap':             '1.0',
-                'Large Heap':             '2.0'
+                'Large Heap':             '2.0',
+                'Kimoja':                 '1',
+                'Mbili mbao':             '2',
+                'Tatu mbao':              '3',
+                'Nne mbao':               '4',
+                'Tano mbao':              '5',
+                'Sita mbao':              '6'
             };
+
+            // Replace a label <select> with a free-text <input> for custom labels
+            function _toCustomInput(sel, existingVal) {
+                var txt = document.createElement('input');
+                txt.type = 'text';
+                txt.name = 'preset_label';
+                txt.className = 'form-select form-select-sm';
+                txt.placeholder = '{% trans "e.g. Tatu mbao, Refu..." %}';
+                txt.value = existingVal || '';
+                sel.parentNode.replaceChild(txt, sel);
+                return txt;
+            }
 
             function onPresetLabelChange(selectEl, isInit) {
                 var val = selectEl.value;
                 var row = selectEl.closest('.preset-row');
                 var qtyInput = row.querySelector('input[name="preset_qty_consumed"]');
                 if (val === 'Custom') {
+                    // Replace the <select> with a free-text <input name="preset_label">
+                    var txt = _toCustomInput(selectEl, '');
+                    if (!isInit) { txt.focus(); }
                     qtyInput.readOnly = false;
                     qtyInput.style.opacity = '1';
                     if (!isInit) { qtyInput.value = ''; }
-                    qtyInput.placeholder = 'e.g. 0.33';
-                } else if (PRESET_AUTOFILL[val] !== undefined) {
+                    qtyInput.placeholder = 'e.g. 3';
+                    return;
+                }
+                if (PRESET_AUTOFILL[val] !== undefined) {
                     qtyInput.value = PRESET_AUTOFILL[val];
                     qtyInput.readOnly = true;
                     qtyInput.style.opacity = '0.55';
@@ -541,8 +572,15 @@
 
             // On page load, pre-select label for existing presets (edit form)
             document.querySelectorAll('.preset-row select[name="preset_label"]').forEach(function(sel) {
-                var existingVal = sel.dataset.existingValue;
-                if (existingVal) { sel.value = existingVal; }
+                var existingVal = sel.dataset.existingValue || '';
+                if (existingVal) {
+                    sel.value = existingVal;
+                    if (sel.value !== existingVal) {
+                        // Saved label isn't in the dropdown — it's a custom label
+                        _toCustomInput(sel, existingVal);
+                        return; // sel replaced — skip onPresetLabelChange
+                    }
+                }
                 onPresetLabelChange(sel, true);
             });
 
@@ -562,6 +600,14 @@
                     '<option value="Pair (2)">{% trans "Pair (2)" %}</option>' +
                     '<option value="Small Bundle (4 units)">{% trans "Small Bundle (4 units)" %}</option>' +
                     '<option value="Large Bundle (8 units)">{% trans "Large Bundle (8 units)" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="{% trans "Kibanda / Multi-piece" %}">' +
+                    '<option value="Kimoja">{% trans "Kimoja (1 piece)" %}</option>' +
+                    '<option value="Mbili mbao">{% trans "Mbili mbao (2 for price)" %}</option>' +
+                    '<option value="Tatu mbao">{% trans "Tatu mbao (3 for price)" %}</option>' +
+                    '<option value="Nne mbao">{% trans "Nne mbao (4 for price)" %}</option>' +
+                    '<option value="Tano mbao">{% trans "Tano mbao (5 for price)" %}</option>' +
+                    '<option value="Sita mbao">{% trans "Sita mbao (6 for price)" %}</option>' +
                     '</optgroup>' +
                     '<optgroup label="{% trans "Gorogoro / Heap" %}">' +
                     '<option value="Small Gorogoro">{% trans "Small Gorogoro" %}</option>' +
