@@ -403,7 +403,7 @@ class Item(models.Model):
 
     def stock_value(self):
         if self.cost_price and self.current_balance() > 0:
-            return float(self.cost_price) * float(self.current_balance())
+            return float(self.cost_price) * self.current_balance()
         return 0
 
     def profit_per_unit(self):
@@ -1440,7 +1440,7 @@ class ProduceBunch(models.Model):
 
     # ── generic mix sale: "mboga za kienyeji ya 20" ────────────────────────
     @classmethod
-    def sell_mix(cls, business, mix_group, amount, payment_method='cash', recipient=''):
+    def sell_mix(cls, business, mix_group, amount, payment_method='cash', recipient='', item_ids=None):
         """
         Customer doesn't care which kienyeji — just "kienyeji ya 20". Spreads
         `amount` proportionally across the OPEN bunches in this mix group
@@ -1454,6 +1454,10 @@ class ProduceBunch(models.Model):
             ).select_related('item').order_by('received_on', 'id')
         )
         bunches = [b for b in bunches if b.remaining() > 0]
+        # Restrict to specific items the kibanda lady chose for this order
+        if item_ids:
+            ids = set(int(i) for i in item_ids if str(i).isdigit() or isinstance(i, int))
+            bunches = [b for b in bunches if b.item_id in ids]
         if not bunches or amount <= 0:
             return [], []
 

@@ -1212,6 +1212,8 @@ def manage_items(request):
     return render(request, "core/manage_items.html", context)
 
 
+@login_required
+@owner_required
 def _resolve_category(cat_text):
     """Resolve a free-text category name to a Category, creating one if it doesn't exist.
 
@@ -2008,6 +2010,7 @@ def quick_sell(request):
             "items": items,
             "stores": stores,
             "success_data": success_data,
+            "is_owner": user_profile.is_owner if user_profile else False,
         },
     )
 

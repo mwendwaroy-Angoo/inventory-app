@@ -74,7 +74,9 @@ def handle_bunch_cart_entry(entry, business, payment_method):
         group = (entry.get('mix_group') or '').strip()
         if not group:
             return None, None
-        txns, _breakdown = ProduceBunch.sell_mix(business, group, amount, payment_method)
+        raw_ids = entry.get('selected_ids') or []
+        item_ids = [int(x) for x in raw_ids if str(x).isdigit() or isinstance(x, int)] or None
+        txns, _breakdown = ProduceBunch.sell_mix(business, group, amount, payment_method, item_ids=item_ids)
         if not txns:
             return None, None
         name = entry.get('label') or f"Mboga za kienyeji ({group})"
