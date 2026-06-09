@@ -1227,13 +1227,13 @@
              + '{% trans "Done" %} ✓</button>';
     }
 
-    function closeBunchModal() {
+    window.closeBunchModal = function() {
         var inst = bootstrap.Modal.getInstance(document.getElementById('bunchModal'));
         if (inst) inst.hide();
         // Clear the undo flash when the modal is deliberately closed
         var flashEl = document.getElementById('bunchAddedFlash');
         if (flashEl) { flashEl.style.opacity = '0'; flashEl.innerHTML = ''; }
-    }
+    };
 
     function addGreensLine(amount) {
         amount = Math.round(Number(amount));
