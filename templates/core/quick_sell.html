@@ -1230,6 +1230,9 @@
     function closeBunchModal() {
         var inst = bootstrap.Modal.getInstance(document.getElementById('bunchModal'));
         if (inst) inst.hide();
+        // Clear the undo flash when the modal is deliberately closed
+        var flashEl = document.getElementById('bunchAddedFlash');
+        if (flashEl) { flashEl.style.opacity = '0'; flashEl.innerHTML = ''; }
     }
 
     function addGreensLine(amount) {
@@ -1249,17 +1252,18 @@
         // Flash confirmation with undo link
         var flashEl = document.getElementById('bunchAddedFlash');
         if (flashEl) {
-            flashEl.innerHTML = '✓ Kimeongezwa — KES ' + amount
-                + ' &nbsp;<span id="bunchUndoLink" style="color:#f87171;cursor:pointer;font-size:0.75rem;text-decoration:underline;">↩ Futa</span>';
-            flashEl.style.opacity = '1';
             clearTimeout(flashEl._t);
-            flashEl._t = setTimeout(function(){ flashEl.style.opacity = '0'; }, 3000);
+            flashEl.innerHTML = '✓ Kimeongezwa — KES ' + amount
+                + ' &nbsp;<span id="bunchUndoLink" style="color:#f87171;cursor:pointer;font-size:0.78rem;text-decoration:underline;">↩ Futa</span>';
+            flashEl.style.opacity = '1';
+            // No auto-fade — stays visible until next add or Done is tapped
             var undoEl = document.getElementById('bunchUndoLink');
             if (undoEl) {
                 undoEl.onclick = function() {
                     var pos = cart.indexOf(lastAddedLine);
                     if (pos !== -1) { cart.splice(pos, 1); updateCart(); }
                     flashEl.style.opacity = '0';
+                    flashEl.innerHTML = '';
                 };
             }
         }

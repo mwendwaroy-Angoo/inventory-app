@@ -491,7 +491,109 @@
 </div>
 
 <!-- ═══ MARKET DAY INTELLIGENCE ═══ -->
-<div class="section-title">📅 Market Day Intelligence</div>
+<!-- ── GREENS (Kibanda Produce) PERFORMANCE ─────────────────────────── -->
+{% if greens_items %}
+<div class="section-title">🥬 {% trans "Greens Performance" %}</div>
+<div class="row g-3 mb-4">
+
+  <!-- Summary cards -->
+  <div class="col-6 col-md-3">
+    <div style="background:var(--onyx-card);border:1px solid rgba(120,180,90,0.3);border-radius:10px;padding:1rem;text-align:center;">
+      <div style="color:#9fcaa0;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Greens Revenue" %}</div>
+      <div style="color:#9fcaa0;font-size:1.4rem;font-weight:700;font-family:'Playfair Display',serif;">KES {{ total_greens_revenue|floatformat:0 }}</div>
+      <div style="color:#b0b0b0;font-size:0.8rem;">{{ greens_share }}% {% trans "of total" %}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div style="background:var(--onyx-card);border:1px solid rgba(120,180,90,0.3);border-radius:10px;padding:1rem;text-align:center;">
+      <div style="color:#9fcaa0;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Types Sold" %}</div>
+      <div style="color:var(--gold);font-size:1.4rem;font-weight:700;font-family:'Playfair Display',serif;">{{ greens_items|length }}</div>
+      <div style="color:#b0b0b0;font-size:0.8rem;">{% trans "greens tracked" %}</div>
+    </div>
+  </div>
+  {% if greens_items %}
+  <div class="col-6 col-md-3">
+    <div style="background:var(--onyx-card);border:1px solid rgba(120,180,90,0.3);border-radius:10px;padding:1rem;text-align:center;">
+      <div style="color:#9fcaa0;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Top Earner" %}</div>
+      <div style="color:var(--pearl);font-size:1rem;font-weight:700;font-family:'Playfair Display',serif;">{{ greens_items.0.item__description }}</div>
+      <div style="color:#b0b0b0;font-size:0.8rem;">KES {{ greens_items.0.revenue|floatformat:0 }}</div>
+    </div>
+  </div>
+  {% endif %}
+  <div class="col-6 col-md-3">
+    <div style="background:var(--onyx-card);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:1rem;text-align:center;">
+      <div style="color:#c9a84c;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Wastage" %}</div>
+      {% with total_wastage=0 %}
+      {% for g in greens_items %}
+      {% endfor %}
+      {% endwith %}
+      <div style="color:var(--raspberry);font-size:1.1rem;font-weight:700;font-family:'Playfair Display',serif;">
+        KES {% for g in greens_items %}{% if forloop.first %}{{ g.wastage|floatformat:0 }}{% endif %}{% endfor %}
+      </div>
+      <div style="color:#b0b0b0;font-size:0.8rem;">{% trans "unsold revenue lost" %}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Per-green table -->
+<div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(120,180,90,0.2);overflow:hidden;margin-bottom:1.5rem;">
+  <div style="padding:0.75rem 1rem;border-bottom:1px solid #222;font-weight:600;color:#9fcaa0;font-size:0.85rem;">
+    {% trans "Per-Green Breakdown" %} — {{ start_date }} {% trans "to" %} {{ end_date }}
+  </div>
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+      <thead>
+        <tr style="background:rgba(120,180,90,0.08);color:#8aa;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;">
+          <th style="padding:0.6rem 1rem;text-align:left;">{% trans "Green" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Bunches In" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Revenue" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Cost" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Markup" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Wastage" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in greens_items %}
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+          <td style="padding:0.6rem 1rem;color:var(--pearl);font-weight:600;">{{ g.item__description }}</td>
+          <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">{{ g.bunches_in }}</td>
+          <td style="padding:0.6rem;text-align:right;color:#9fcaa0;font-weight:700;">KES {{ g.revenue|floatformat:0 }}</td>
+          <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">KES {{ g.cost|floatformat:0 }}</td>
+          <td style="padding:0.6rem;text-align:right;{% if g.markup >= 1.7 %}color:#6fae4f;{% elif g.markup >= 1.3 %}color:#c9a84c;{% else %}color:var(--raspberry);{% endif %}font-weight:600;">
+            {{ g.markup }}×
+          </td>
+          <td style="padding:0.6rem;text-align:right;{% if g.wastage > 0 %}color:var(--raspberry);{% else %}color:#6fae4f;{% endif %}">
+            {% if g.wastage > 0 %}KES {{ g.wastage|floatformat:0 }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr style="background:rgba(120,180,90,0.06);font-weight:700;">
+          <td style="padding:0.6rem 1rem;color:#9fcaa0;">{% trans "Total" %}</td>
+          <td></td>
+          <td style="padding:0.6rem;text-align:right;color:#9fcaa0;">KES {{ total_greens_revenue|floatformat:0 }}</td>
+          <td colspan="3"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- Daily greens revenue chart -->
+{% if greens_daily_values != "[]" %}
+<div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(120,180,90,0.2);padding:1rem;margin-bottom:2rem;">
+  <div style="color:#9fcaa0;font-weight:600;font-size:0.9rem;margin-bottom:0.75rem;">
+    📈 {% trans "Daily Greens Revenue" %}
+  </div>
+  <canvas id="greensDailyChart" height="100"></canvas>
+</div>
+{% endif %}
+
+{% endif %}
+<!-- ────────────────────────────────────────────────────────────────────── -->
+
+<div class="section-title">📅 {% trans "Market Day Intelligence" %}</div>
 <div class="row g-4 mb-4">
   <div class="col-lg-8">
     <div class="chart-box">
@@ -1106,6 +1208,36 @@
   const gridColor = '#2a2a2a';
 
   // Revenue & Profit trend
+    // Greens Daily Revenue chart
+  {% if greens_daily_values != "[]" and greens_items %}
+  (function() {
+    var ctx = document.getElementById('greensDailyChart');
+    if (!ctx) return;
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: {{ greens_daily_labels|safe }},
+        datasets: [{
+          label: 'Greens Revenue (KES)',
+          data: {{ greens_daily_values|safe }},
+          backgroundColor: 'rgba(111,174,79,0.45)',
+          borderColor: '#6fae4f',
+          borderWidth: 1,
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#8aa', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          y: { ticks: { color: '#8aa', callback: function(v){ return 'KES ' + v.toLocaleString(); } }, grid: { color: 'rgba(255,255,255,0.06)' } }
+        }
+      }
+    });
+  })();
+  {% endif %}
+
   new Chart(document.getElementById('trendChart'), {
       plugins: [seasonalPlugin],
       type: 'line',

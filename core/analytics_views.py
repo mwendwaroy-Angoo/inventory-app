@@ -19,13 +19,14 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.db.models import Sum, Count, Q, F
+from django.db.models import Sum, Count, Q, F, Avg
+from django.db.models.functions import TruncDate
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County, RevenueTarget, Store
+from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County, RevenueTarget, Store, ProduceBunch
 from core.forms import BusinessExpenseForm, CapitalInvestmentForm
 from core.views import get_user_profile, owner_required
 
@@ -472,6 +473,50 @@ def analytics_dashboard(request):
             'business_start_date': business.business_start_date.strftime('%d %b %Y') if business.business_start_date else None,
         }
 
+    # ── Greens (Kibanda Produce Module) Analytics ──────────────────────────────
+    # Per-item: bunches received in period, revenue collected, cost, wastage
+    greens_items = list(
+        ProduceBunch.objects
+        .filter(business=business, received_on__gte=start_date, received_on__lte=today)
+        .values('item__description')
+        .annotate(
+            bunches_in=Count('id'),
+            bunches_done=Count('id', filter=Q(status__in=['DEPLETED', 'DISCARDED'])),
+            total_revenue=Sum('revenue_collected'),
+            total_cost=Sum('cost_price'),
+            total_target=Sum('target_revenue'),
+        )
+        .filter(total_cost__gt=0)
+        .order_by('-total_revenue')
+    )
+    for g in greens_items:
+        rev = float(g['total_revenue'] or 0)
+        cost = float(g['total_cost'] or 1)
+        target = float(g['total_target'] or 0)
+        g['revenue'] = round(rev, 2)
+        g['cost'] = round(float(g['total_cost'] or 0), 2)
+        g['markup'] = round(rev / cost, 2) if cost > 0 else 0
+        g['wastage'] = round(max(0, target - rev), 2)
+
+    total_greens_revenue = round(sum(g['revenue'] for g in greens_items), 2)
+    greens_share = round(100 * total_greens_revenue / float(cur_revenue), 1) if cur_revenue > 0 else 0
+
+    # Daily greens revenue for sparkline (use Transaction.sale_amount which is set for all bunch sales)
+    greens_daily_raw = list(
+        Transaction.objects
+        .filter(
+            business=business, type='Issue',
+            sale_amount__isnull=False,
+            date__gte=start_date, date__lte=today,
+        )
+        .annotate(day=TruncDate('date'))
+        .values('day')
+        .annotate(revenue=Sum('sale_amount'))
+        .order_by('day')
+    )
+    greens_daily_labels = json.dumps([str(r['day']) for r in greens_daily_raw])
+    greens_daily_values = json.dumps([float(r['revenue'] or 0) for r in greens_daily_raw])
+
     context = {
         'period': days,
         'start_date': start_date,
@@ -540,6 +585,12 @@ def analytics_dashboard(request):
         'best_market_day_avg': round(best_market_day_avg, 2),
         # Product filter
         'items': items,
+        # Greens (produce) analytics
+        'greens_items': greens_items,
+        'total_greens_revenue': total_greens_revenue,
+        'greens_share': greens_share,
+        'greens_daily_labels': greens_daily_labels,
+        'greens_daily_values': greens_daily_values,
         'selected_product': selected_product,
         # Break-Even Analysis
         'breakeven_data': breakeven_data,
