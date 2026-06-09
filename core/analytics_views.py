@@ -79,12 +79,12 @@ def analytics_dashboard(request):
     cur_revenue = sum(t.revenue() for t in current_sales)
     cur_cost = sum(t.cost() for t in current_sales)
     cur_profit = cur_revenue - cur_cost
-    cur_units = sum(abs(t.qty) for t in current_sales)
+    cur_units = sum(float(abs(t.qty)) for t in current_sales)
     cur_txn_count = current_sales.count()
 
     prev_revenue = sum(t.revenue() for t in prev_sales)
     prev_profit = prev_revenue - sum(t.cost() for t in prev_sales)
-    prev_units = sum(abs(t.qty) for t in prev_sales)
+    prev_units = sum(float(abs(t.qty)) for t in prev_sales)
 
     def pct_change(current, previous):
         if previous == 0:
@@ -114,7 +114,7 @@ def analytics_dashboard(request):
         d = str(t.date)
         daily_data[d]['revenue'] += t.revenue()
         daily_data[d]['profit'] += t.profit()
-        daily_data[d]['units'] += abs(t.qty)
+        daily_data[d]['units'] += float(abs(t.qty))
         daily_data[d]['txns'] += 1
 
     all_dates = []
@@ -126,7 +126,7 @@ def analytics_dashboard(request):
     chart_labels = all_dates
     chart_revenue = [round(daily_data[d]['revenue'], 2) for d in all_dates]
     chart_profit = [round(daily_data[d]['profit'], 2) for d in all_dates]
-    chart_units = [daily_data[d]['units'] for d in all_dates]
+    chart_units = [float(daily_data[d]['units']) for d in all_dates]
 
     # ── Market Day Intelligence ──
     day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -160,7 +160,7 @@ def analytics_dashboard(request):
     for t in current_sales:
         key = t.item.id
         product_stats[key]['name'] = t.item.description
-        product_stats[key]['units'] += abs(t.qty)
+        product_stats[key]['units'] += float(abs(t.qty))
         product_stats[key]['revenue'] += t.revenue()
         product_stats[key]['profit'] += t.profit()
 
@@ -216,7 +216,7 @@ def analytics_dashboard(request):
         sid = t.item.store_id
         store_stats[sid]['name'] = t.item.store.name if t.item.store else 'Unknown'
         store_stats[sid]['revenue'] += t.revenue()
-        store_stats[sid]['units'] += abs(t.qty)
+        store_stats[sid]['units'] += float(abs(t.qty))
 
     store_list = sorted(store_stats.values(), key=lambda x: x['revenue'], reverse=True)
 
@@ -557,7 +557,7 @@ def analytics_api(request):
         d = str(t.date)
         daily[d]['revenue'] += t.revenue()
         daily[d]['profit'] += t.profit()
-        daily[d]['units'] += abs(t.qty)
+        daily[d]['units'] += float(abs(t.qty))
 
     data = []
     d = start_date
