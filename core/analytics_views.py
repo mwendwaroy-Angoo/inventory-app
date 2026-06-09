@@ -30,6 +30,18 @@ from core.forms import BusinessExpenseForm, CapitalInvestmentForm
 from core.views import get_user_profile, owner_required
 
 
+def _units(t):
+    """Unit count for a transaction.
+
+    For bunch-mode greens, qty is a fractional bunch amount (e.g. -0.2857) which is
+    meaningless as a 'units sold' figure. When sale_amount is set it means this was a
+    money-based bunch sale — count it as 1 customer portion instead of a fraction.
+    """
+    if getattr(t, 'sale_amount', None) is not None:
+        return 1.0
+    return float(abs(t.qty or 0))
+
+
 @login_required
 @owner_required
 def analytics_dashboard(request):
@@ -79,12 +91,12 @@ def analytics_dashboard(request):
     cur_revenue = sum(t.revenue() for t in current_sales)
     cur_cost = sum(t.cost() for t in current_sales)
     cur_profit = cur_revenue - cur_cost
-    cur_units = sum(float(abs(t.qty)) for t in current_sales)
+    cur_units = sum(_units(t) for t in current_sales)
     cur_txn_count = current_sales.count()
 
     prev_revenue = sum(t.revenue() for t in prev_sales)
     prev_profit = prev_revenue - sum(t.cost() for t in prev_sales)
-    prev_units = sum(float(abs(t.qty)) for t in prev_sales)
+    prev_units = sum(_units(t) for t in prev_sales)
 
     def pct_change(current, previous):
         if previous == 0:
@@ -114,7 +126,7 @@ def analytics_dashboard(request):
         d = str(t.date)
         daily_data[d]['revenue'] += t.revenue()
         daily_data[d]['profit'] += t.profit()
-        daily_data[d]['units'] += float(abs(t.qty))
+        daily_data[d]['units'] += _units(t)
         daily_data[d]['txns'] += 1
 
     all_dates = []
@@ -160,7 +172,7 @@ def analytics_dashboard(request):
     for t in current_sales:
         key = t.item.id
         product_stats[key]['name'] = t.item.description
-        product_stats[key]['units'] += float(abs(t.qty))
+        product_stats[key]['units'] += _units(t)
         product_stats[key]['revenue'] += t.revenue()
         product_stats[key]['profit'] += t.profit()
 
@@ -216,7 +228,7 @@ def analytics_dashboard(request):
         sid = t.item.store_id
         store_stats[sid]['name'] = t.item.store.name if t.item.store else 'Unknown'
         store_stats[sid]['revenue'] += t.revenue()
-        store_stats[sid]['units'] += float(abs(t.qty))
+        store_stats[sid]['units'] += _units(t)
 
     store_list = sorted(store_stats.values(), key=lambda x: x['revenue'], reverse=True)
 
@@ -247,7 +259,7 @@ def analytics_dashboard(request):
     # Build per-item units sold lookup from already-evaluated current_sales
     item_units_sold = defaultdict(float)
     for t in current_sales:
-        item_units_sold[t.item_id] += abs(float(t.qty or 0))
+        item_units_sold[t.item_id] += _units(t)
 
     velocity_data = []
     for item in all_items:
@@ -557,7 +569,7 @@ def analytics_api(request):
         d = str(t.date)
         daily[d]['revenue'] += t.revenue()
         daily[d]['profit'] += t.profit()
-        daily[d]['units'] += float(abs(t.qty))
+        daily[d]['units'] += _units(t)
 
     data = []
     d = start_date

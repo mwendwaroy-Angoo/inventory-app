@@ -1153,27 +1153,28 @@
     // Build kienyeji member chip selector for the mix modal
     function buildMixMemberChips(m) {
         var members = GREENS.greens.filter(function(g) { return g.mix_group === m.mix_group; });
-        // Default: all members with stock are selected
-        currentMixSelectedIds = members
-            .filter(function(g) { return g.open_bunches > 0; })
-            .map(function(g) { return g.id; });
+        // Start with nothing selected — she taps to INCLUDE specific types.
+        // If nothing tapped when price is chosen → auto-all with stock (smart default).
+        currentMixSelectedIds = [];
         var html = '<div style="margin-bottom:0.8rem;">'
-            + '<div style="color:#8aa;font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.45rem;">Chagua mboga:</div>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:0.4rem;">';
+            + '<div style="color:#8aa;font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.35rem;">Chagua mboga:</div>'
+            + '<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.3rem;">';
         members.forEach(function(g) {
             var hasStock = g.open_bunches > 0;
-            var sel = hasStock ? '1' : '0';
-            html += '<div class="qs-mix-chip" data-id="' + g.id + '" data-stock="' + sel + '" data-sel="' + sel + '"'
-                + ' style="padding:0.3rem 0.9rem;border-radius:20px;font-size:0.82rem;font-weight:600;'
+            html += '<div class="qs-mix-chip" data-id="' + g.id + '" data-stock="' + (hasStock ? '1' : '0') + '" data-sel="0"'
+                + ' style="padding:0.3rem 0.9rem;border-radius:20px;font-size:0.82rem;font-weight:600;transition:all 0.12s;'
                 + (hasStock
-                    ? 'background:rgba(120,180,90,0.15);border:1px solid rgba(120,180,90,0.5);color:#9fcaa0;cursor:pointer;outline:2px solid rgba(120,180,90,0.65);'
-                    : 'background:rgba(80,80,80,0.15);border:1px solid #333;color:#444;cursor:not-allowed;')
+                    ? 'background:rgba(80,80,80,0.15);border:1px solid rgba(150,200,150,0.3);color:#7a9a7a;cursor:pointer;'
+                    : 'background:rgba(60,60,60,0.1);border:1px solid #2a2a2a;color:#444;cursor:not-allowed;')
                 + '">'
                 + esc(g.name)
-                + (hasStock ? '' : ' <span style="font-size:0.62rem;opacity:0.55;">imeisha</span>')
+                + (hasStock ? '' : ' <span style="font-size:0.62rem;opacity:0.5;">imeisha</span>')
                 + '</div>';
         });
-        html += '</div></div>';
+        html += '</div>'
+            + '<div id="mixAutoHint" style="color:#6a8a6a;font-size:0.68rem;font-style:italic;margin-bottom:0.1rem;">'
+            + '(bila kuchagua = aina zote zinajumuishwa)</div>'
+            + '</div>';
         return html;
     }
 
@@ -1226,10 +1227,10 @@
              + '{% trans "Done" %} ✓</button>';
     }
 
-    window.closeBunchModal = function() {
+    function closeBunchModal() {
         var inst = bootstrap.Modal.getInstance(document.getElementById('bunchModal'));
         if (inst) inst.hide();
-    };
+    }
 
     function addGreensLine(amount) {
         amount = Math.round(Number(amount));
@@ -1242,15 +1243,25 @@
                 line.selected_ids = currentMixSelectedIds.slice();
             }
         } else { line.mode = 'bunch'; line.id = String(currentGreen.id); }
+        var lastAddedLine = line;
         cart.push(line);
         updateCart();
-        // Flash confirmation — modal stays open so the next green can be added immediately
+        // Flash confirmation with undo link
         var flashEl = document.getElementById('bunchAddedFlash');
         if (flashEl) {
-            flashEl.textContent = '✓ imeongezwa — KES ' + amount;
+            flashEl.innerHTML = '✓ Kimeongezwa — KES ' + amount
+                + ' &nbsp;<span id="bunchUndoLink" style="color:#f87171;cursor:pointer;font-size:0.75rem;text-decoration:underline;">↩ Futa</span>';
             flashEl.style.opacity = '1';
             clearTimeout(flashEl._t);
-            flashEl._t = setTimeout(function(){ flashEl.style.opacity = '0'; }, 1600);
+            flashEl._t = setTimeout(function(){ flashEl.style.opacity = '0'; }, 3000);
+            var undoEl = document.getElementById('bunchUndoLink');
+            if (undoEl) {
+                undoEl.onclick = function() {
+                    var pos = cart.indexOf(lastAddedLine);
+                    if (pos !== -1) { cart.splice(pos, 1); updateCart(); }
+                    flashEl.style.opacity = '0';
+                };
+            }
         }
     }
 
@@ -1260,17 +1271,25 @@
         if (chip) {
             var cid = parseInt(chip.dataset.id);
             var idx = currentMixSelectedIds.indexOf(cid);
+            var hint = document.getElementById('mixAutoHint');
             if (idx === -1) {
+                // SELECT — light up green
                 currentMixSelectedIds.push(cid);
                 chip.setAttribute('data-sel', '1');
-                chip.style.opacity = '1';
+                chip.style.background = 'rgba(120,180,90,0.2)';
+                chip.style.border = '1px solid rgba(120,180,90,0.65)';
+                chip.style.color = '#9fcaa0';
                 chip.style.outline = '2px solid rgba(120,180,90,0.7)';
             } else {
+                // DESELECT — back to neutral
                 currentMixSelectedIds.splice(idx, 1);
                 chip.setAttribute('data-sel', '0');
-                chip.style.opacity = '0.45';
+                chip.style.background = 'rgba(80,80,80,0.15)';
+                chip.style.border = '1px solid rgba(150,200,150,0.3)';
+                chip.style.color = '#7a9a7a';
                 chip.style.outline = 'none';
             }
+            if (hint) hint.style.display = currentMixSelectedIds.length > 0 ? 'none' : '';
             return;
         }
         var amtBtn = e.target.closest('.qs-amt-btn');
