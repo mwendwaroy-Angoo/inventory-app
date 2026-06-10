@@ -9,13 +9,14 @@ Deployed on: Render (free tier web service) with PostgreSQL database
 ## Developer
 - Name: Collins (goes by Roy), based in Nairobi, Kenya
 - Business account username on live app: RoyMwendwa
+- Staff test account: Morrine
 - Learning Django through building — explain concepts when introducing new patterns
 
 ---
 
 ## Tech Stack
 - Python 3.13+
-- Django (latest)
+- Django 4.2.x
 - Bootstrap 5 via django-bootstrap5
 - Chart.js (dashboards and analytics)
 - Driver.js 1.3.5 (product tours / spotlight onboarding)
@@ -85,14 +86,90 @@ restriction_notes (CharField)    # reason — owner only
 restricted_quantity (PositiveIntegerField default 0)
 # 0 = ALL sales need approval
 # N = staff can sell freely until balance would drop below N
+
+# ── Kibanda Produce Module fields (migration 0041) ──────────────────────
+is_produce (BooleanField default False)
+# True = portion-based selling. Owner sets price presets in ItemPortionPreset.
+
+PRODUCE_MODE_CHOICES = [('PORTION', ...), ('BUNCH', ...)]
+produce_mode (CharField max_length=10 default='PORTION')
+# PORTION = fixed qty per price (cabbage, gorogoro, multi-piece like tatu mbao)
+# BUNCH   = each bunch is a money target depleted by price-point sales
+#           (sukuma, spinach, kienyeji greens)
+
+mix_group (CharField max_length=40 blank=True)
+# Tag for greens that can be sold as one generic "mboga za X" order.
+# Items sharing the same tag pool into a mix tile in Quick Sell.
+# Blank = sold only by name (sukuma, spinach).
+
+revenue_multiplier (DecimalField max_digits=4 decimal_places=2 default=1.70)
+# Suggests bunch target from cost (1.75 → 40/= bunch targets 70/=).
+# Overridable per bunch at receive time.
+
+def default_bunch_target(self, cost): ...
+# Returns cost × revenue_multiplier, quantized to 1 shilling.
+```
+
+### core.ItemPortionPreset
+```python
+item (FK), label (CharField), price (DecimalField), quantity_consumed (DecimalField)
+display_order (IntegerField default 0)
+# PORTION mode: label = "Kimoja", "Tatu mbao", "Quarter head"; qty_consumed = pieces/fraction
+# BUNCH mode: label = "KES 20" (auto-filled if blank); qty_consumed ignored
 ```
 
 ### core.Transaction
 ```python
 business (FK), item (FK), type (Receipt/Issue/Wastage)
-qty, recipient, invoice_no
+qty (DecimalField), recipient, invoice_no
 date, recorded_by
-# revenue() method returns selling_price * abs(qty) for Issue
+payment_method (CharField choices cash/mpesa/credit)
+
+# ── Kibanda Produce Module additions (migration 0041) ─────────────────
+sale_amount (DecimalField null=True blank=True)
+# Actual cash for this sale line. Set for:
+# (a) BUNCH greens: portion sale (e.g. 20/= from a 70/= envelope)
+# (b) PORTION presets: preset price when it differs from qty × selling_price
+#     (e.g. Tatu mbao: 3 onions for KES 20, not 3 × KES 10 = KES 30)
+# revenue() prefers sale_amount when set.
+
+produce_bunch (FK ProduceBunch null=True blank=True)
+# Links bunch-mode sales to the specific ProduceBunch they depleted.
+# Used as discriminator in analytics _units() — see analytics_views.py.
+
+def revenue(self): ...  # Returns sale_amount if set, else selling_price × abs(qty)
+def cost(self): ...     # Uses produce_bunch.cost_price for bunch sales, else item.cost_price × qty
+def profit(self): ...   # revenue() - cost()
+```
+
+### core.ProduceBunch
+```python
+# A single physical bunch (shada/fungu) of greens bought at the market.
+# Models a REVENUE ENVELOPE: bought at cost, depletes by price-point sales,
+# closed when target_revenue is reached. Stems never enter the system.
+item (FK Item), business (FK accounts.Business)
+size (CharField choices SMALL/MEDIUM/LARGE)
+cost_price (DecimalField)       # what this bunch cost at market
+target_revenue (DecimalField)   # must earn this before bunch is "finished"
+revenue_collected (DecimalField default=0)
+status (CharField choices OPEN/DEPLETED/DISCARDED)
+received_on (DateField default=today)
+opened_on, closed_on (DateTimeField null=True)
+note (CharField blank=True)
+
+# Key methods:
+def remaining(self):     → max(0, target - collected)
+def is_sold_out(self):   → remaining() <= 0
+def realized_markup(self): → revenue_collected / cost_price
+def age_days(self):
+def is_wilting(self, threshold_days=1): → open and older than threshold
+def record_sale(self, amount, payment_method, recipient): → creates Transaction, updates envelope
+def discard(self, reason): → writes off unsold remainder as Wastage transaction
+
+@classmethod
+def sell_mix(cls, business, mix_group, amount, payment_method, item_ids=None):
+    # "Mboga za kienyeji ya 20" — spreads amount across OPEN bunches in the mix group,
+    # weighted by remaining envelope. item_ids = optional subset (kibanda lady's selection).
 ```
 
 ### core.Store
@@ -141,6 +218,75 @@ related_name='app_notifications'  # ALWAYS use this related_name
 
 ---
 
+## Kibanda Produce Module (BUILT — migrations 0041, 0042)
+
+### Design Philosophy
+A kibanda sells produce in three distinct models:
+
+**BUNCH mode (greens / mboga):** The mama mboga does NOT count stems. She buys a bunch
+at market cost and expects the bunch to earn a target revenue before it's "finished."
+Each sale is a price point ("ya 20") — the system tracks money in/out of the bunch
+envelope. Examples: sukuma, spinach, managu, terere, kunde.
+
+**PORTION mode (multi-piece / gorogoro):** Fixed qty per price point. Examples:
+- Cabbage: "Quarter head" / KES 40 / quantity_consumed 0.25
+- Onions: "Kimoja" / KES 10 / qty 1; "Tatu mbao" / KES 20 / qty 3
+- Potatoes: gorogoro sizes with KES prices per tin
+
+### Selling Flow (Quick Sell)
+- Bunch items appear in the **🥬 Mboga / Greens** board at the top of Quick Sell,
+  SEPARATE from the normal item grid (they're excluded from the grid via
+  `.exclude(is_produce=True, produce_mode='BUNCH')` in the view query).
+- Each bunch tile shows: remaining/target meter, depletion bar, "uza kwanza" badge if wilting.
+- Mix tile: items sharing a mix_group appear as one "Mboga za kienyeji" tile.
+  Tap → member chip selector → choose price → proportional sell_mix().
+- Cart: Add stays open (modal persists), Done closes. "↩ Futa" undo link after each add.
+- Portion items appear in the normal grid and open the existing "Select Portion" modal.
+
+### Endpoints (produce_views.py)
+```
+GET  /stock/produce/board/           → produce_board (greens tile data; can_receive=is_owner)
+POST /stock/produce/receive/         → receive_bunches (owner only; creates ProduceBunch + Receipt)
+POST /stock/produce/bunch/<id>/discard/ → discard_bunch (writes wastage)
+```
+
+### Key Business Rules
+- Selling PAST target is allowed (tracks surplus as bonus margin)
+- Bunch items deplete in fractional bundle units: qty = -sale_amount / target_revenue
+- sell_mix(): proportional split across open bunches weighted by remaining envelope
+- Chips in mix modal start UNSELECTED; no selection = all with stock (auto mode)
+- Staff never sees "+From market" or bunch discard (QS_IS_OWNER from template context)
+
+### Analytics (_units discriminator — analytics_views.py)
+```python
+def _units(t):
+    # Bunch greens: produce_bunch_id is set → count as 1 customer portion (not the qty fraction)
+    if getattr(t, 'produce_bunch_id', None) is not None:
+        return 1.0
+    # All other items (incl. portion presets): use qty (e.g. Tatu mbao = 3 onions)
+    return float(abs(t.qty or 0))
+```
+Analytics section "🛒 Kibanda Produce Performance" shows:
+- Greens (BUNCH): ProduceBunch data — bunches in/done, revenue, cost, markup×, wastage
+- Other produce (PORTION): Transaction data — units sold, revenue, cost, margin%
+
+### Label Dropdown (item_form.html — fbff5b4)
+Preset label field includes optgroup "Kibanda / Multi-piece":
+Kimoja, Mbili, Tatu kumi, Tatu mbao, Nne kumi, Nne mbao, Tano mbao, Sita mbao, Custom.
+"Custom" triggers `_toCustomInput()` which replaces the select with a text field.
+
+### Known Watch Points for Produce Module
+- NEVER confuse `sale_amount` discriminator with `produce_bunch_id` discriminator.
+  sale_amount is set for BOTH bunch and portion preset sales (since fbff5b4).
+  produce_bunch_id is ONLY set for bunch greens. Use produce_bunch_id to identify greens.
+- float() * Decimal() raises TypeError. stock_value() uses float(self.current_balance()).
+  Always cast both operands when mixing float and Decimal arithmetic.
+- The greens board fetch (AJAX to /stock/produce/board/) uses QS_IS_OWNER from
+  Django template context, NOT from the AJAX response, to avoid race conditions
+  where staff saw the owner's receive modal before the board had loaded.
+
+---
+
 ## Notification System (Complete)
 
 ### Channels
@@ -186,11 +332,6 @@ Per-staff permission toggles managed at `/staff/<id>/permissions/` (owner only).
 | Cost Price Input | `can_input_cost_price` | False | Sees input field (not previous cost) on Receipt |
 | Restricted Override | `can_override_restrictions` | False | Sells restricted items without approval |
 
-Add Transaction (Receipt) cost price section is three-state:
-1. Owner → full section (previous cost + input + delivery fee)
-2. Staff with `can_input_cost_price` → input only (no previous cost shown)
-3. Staff without → hidden entirely
-
 ---
 
 ## Reserved / Protected Items System
@@ -202,7 +343,6 @@ Owner marks items as restricted in Edit Item form.
 - Staff sees live-polling waiting screen (10s interval)
 - `restricted_quantity = 0` → ALL sales need approval
 - `restricted_quantity = N` → staff can sell freely until balance would drop below N
-- Three-state warning in add_transaction template: all-restricted (red), partial with free units (amber), at/below threshold (red)
 
 ---
 
@@ -215,11 +355,7 @@ Infrastructure:
 - `window.startTour(sectionId, steps)` and `window.markSeen(sectionId)` in base.html
 - Dark luxury theme overrides for Driver.js popovers (gold border, onyx background)
 
-Tours implemented across 17 templates:
-- Owner: dashboard, stock_list, add_transaction, quick_sell, history, sales, analytics,
-  stores, items, fulfillment, payments, debt_tracker, debt_profile
-- Supplier: supplier_home, browse_requests, my_bids
-- Rider: rider_home
+Tours implemented across 17 templates (owner, supplier, rider sections).
 
 ---
 
@@ -244,7 +380,7 @@ Fonts: Playfair Display (headings), DM Sans (body)
 4. NEVER Gmail SMTP — use Resend API only
 5. NEVER `{% trans %}` tags inside single-quoted JS strings (apostrophes crash parser)
    → Always use double-quoted JS strings: `"{% trans \"You're done\" %}"`
-6. All translated strings with apostrophes must use double-quoted JS strings
+6. All translated strings with apostrophes must use double-quoted JS string wrapper
 7. `btn-gold` for primary actions, never `btn-primary`
 8. `style="color: #b0b0b0"` for hint/muted text, never `var(--muted)` (#888 is invisible)
 9. `.dropdown-menu` has `max-height: 80vh; overflow-y: auto` — never remove this
@@ -276,97 +412,64 @@ Fonts: Playfair Display (headings), DM Sans (body)
 - Transaction history with Excel export
 - Quick Sell POS (cart-based, M-Pesa/cash/credit)
 
+### Kibanda Produce Module (BUILT — see section above)
+- BUNCH mode: revenue-envelope selling for greens (ProduceBunch model)
+- PORTION mode: multi-piece + gorogoro presets (ItemPortionPreset model)
+- Greens board in Quick Sell: tiles, mix picker, member chip selection, Done/Futa UX
+- +From market modal: owner receives bunches, sets cost + target per bunch
+- Wastage tracking: discard bunches, write off remainder
+- Wilting alerts: "uza kwanza" badge on old open bunches
+
 ### Analytics & Reporting
 - Sales & P&L dashboard (daily bar chart, top items)
 - Analytics with ETS/Holt-Winters demand forecasting
-- Break-even analysis
-- Capital investments tracker
+- 🛒 Kibanda Produce Performance section (greens by ProduceBunch + portion produce by Transaction)
+- Break-even analysis, Capital investments tracker
 - County-level sales heatmap (Leaflet choropleth)
 
 ### Revenue Targets
 - Daily/weekly/monthly targets per business and per store
-- Dashboard widget — colour-coded progress bars (≥100% green, ≥50% amber, <50% red)
-  Colors computed in view via `_build_target_data()` — NOT in template (widthratio unreliable)
-- `core/templatetags/dict_extras.py` — `get_item` filter + `store_target` tag
+- Dashboard widget — colour-coded progress bars computed in view via `_build_target_data()`
 
 ### Debt Tracker
-- Dashboard at `/debt/` — all customers with outstanding balances, aged debt
-- Customer debt profile — FIFO balance, aged buckets, credit score engine
-- Record Payment modal, Send SMS Reminder
-- Per-customer credit settings (limit, expected_payment_days)
-- Toggle credit approval (owner only); staff can record payments and send reminders
+- Dashboard, customer debt profile, FIFO balance, aged buckets, credit score engine
+- Record Payment modal, SMS reminder, per-customer credit settings
 
 ### Staff Permissions Panel
-- `/staff/<id>/permissions/` — owner manages per-staff toggles
-- `can_input_cost_price`: staff sees cost price input but not previous cost
-- `can_override_restrictions`: staff bypasses restricted item approval
+- `/staff/<id>/permissions/` — per-staff toggles: can_input_cost_price, can_override_restrictions
 
 ### Reserved / Protected Items
-- Owner marks items restricted in Edit Item form
-- Staff intercepted → approval request created → owner notified
 - Full approval workflow with approve/deny, auto-transaction on approval
-- Reserved quantity threshold for partial restrictions
 
 ### Business Management
-- Multi-store support
-- Staff management with Permissions button per staff member
-- Role-based access (owner/staff/rider/supplier)
+- Multi-store support, staff management, role-based access
 - Business settings with Leaflet map
 
-### Compliance System
-- 182+ requirements across 60+ business types
-- Tier system: micro/semi-formal/formal
-
 ### Supply Chain
-- Supplier portal, rider portal
-- Procurement system (POs, bids, bid scoring)
+- Supplier portal, rider portal, procurement system (POs, bids, bid scoring)
 
 ### Payments
 - Till, Paybill, Pochi la Biashara, Personal M-Pesa settings
-- Payment prompts (confirm/dismiss M-Pesa)
-- STK Push integration
+- STK Push integration, payment method tracking per transaction
 
 ### Onboarding
 - Modal tutorial overlay (role-specific, 4 variants, one-time)
 - Driver.js spotlight tours (17 templates, auto-trigger first visit, never repeat)
-- Both systems coexist — modal on first login, spotlight tours on each section
 
 ---
 
-## Pending Features — Next Sprint
+## Pending / In Progress
 
-### Kibanda / Produce Module (PLANNED — NOT YET BUILT)
+### Sack-to-Portion Yield Model (PLANNED)
+Potatoes (sack → gorogoro), carrots (pile/sack → bundles), beans, maize — bought in bulk,
+sold in portions. Proposed: extend "+From market" modal to PORTION items:
+- Fields: "Units you received" + "Total batch cost"
+- Creates: Receipt transaction for units, updates item.cost_price = total/units
+- No new model needed for MVP; owner enters yield count directly
 
-**Business context:** Kibanda (vegetable stall) operators sell produce using three models:
-
-**Model 1 — Value-based (cabbage, skuma, spinach):**
-Customer requests by value ("niongezee mboga za 40 bob"). Seller portions accordingly.
-Cabbage bought for KES 30/head, total sold portions = KES 100-120.
-
-**Model 2 — Count-based greens (kale, skuma stems):**
-Bundle bought whole, sold by stem count. 4 stems = KES 10, 8 stems = KES 20.
-
-**Model 3 — Unit-conversion dry goods (potatoes, beans, maize):**
-Bought by sack, sold by gorogoro (recycled 2kg tin). 1 sack ≈ 40 small gorogoros.
-
-**Single piece items:** Bell pepper KES 10/piece, coriander KES 10/bunch, beetroot KES 10/piece.
-
-**Multi-piece pricing:** Big onion/tomato KES 10/piece; small ones 3 for KES 20-25.
-
-**Carrots:** Sold in bundles of a few for KES 20. Bought per kg from market.
-
-**Models to build:**
-- `Item.is_produce` (BooleanField) — enables portion-based selling mode
-- `ItemPortionPreset` — price points per item:
-  - `item` (FK), `label` (e.g. "Quarter head"), `price` (KES amount), `quantity_consumed` (fraction of stock unit), `order` (display order)
-
-**Units to add:** Bundle, Bunch, Heap, Piece, Gorogoro (Small/Medium/Large)
-
-**UI changes:**
-- Item form: produce toggle + portion preset table (owner builds price menu)
-- Quick Sell: produce items show price-point buttons instead of quantity field
-- Add Transaction: produce items show preset selector
-- Fractional stock display (0.75 of a head remaining)
+### Comprehensive Kibanda Produce Analytics (IN PROGRESS)
+Currently: greens (ProduceBunch) + PORTION produce (Transaction).
+Next: better wastage tracking for PORTION items, per-day PORTION breakdown.
 
 ---
 
@@ -383,6 +486,7 @@ Bought by sack, sold by gorogoro (recycled 2kg tin). 1 sack ≈ 40 small gorogor
 - `reset_superuser` management command runs on every deploy
 - Static files served by WhiteNoise
 - Free tier: worker SIGKILL risk on memory-heavy operations — use `iterator(chunk_size=10)`
+- Free tier: NO shell access. No SMTP. Spin-down on inactivity (~50s cold start).
 
 ---
 
@@ -394,9 +498,7 @@ Every queryset scoped to `request.user.userprofile.business`. Never query withou
 ### Notification Creation
 ```python
 Notification.objects.create(
-    business=business,
-    user=user,
-    message="...",
+    business=business, user=user, message="...",
 )
 # Query: user.app_notifications.filter(is_read=False)
 ```
@@ -417,12 +519,6 @@ from core.notifications import normalize_ke_phone
 phone = normalize_ke_phone('0712345678')  # returns '+254712345678'
 ```
 
-### Cost Price Sections in add_transaction.html
-Three-state based on context variables:
-- `is_owner=True` → full section
-- `show_cost_price_input_only=True` → input only
-- Neither → hidden
-
 ### Revenue Target Colors
 Always compute in view via `_build_target_data(actual, target)` returning `color` and `pct`.
 Never use `{% widthratio %}` for color comparisons — unreliable in Django templates.
@@ -438,3 +534,12 @@ Never use `{% widthratio %}` for color comparisons — unreliable in Django temp
 - Daily cron uses `iterator(chunk_size=10)` to prevent SIGKILL
 - `UserInBlacklist` AT error on Safaricom = no Sender ID registered (KES 8,700 one-time)
 - AT default sender works for Airtel only without Sender ID
+- `float * Decimal` raises TypeError in Python 3. Always cast both sides:
+  `float(x) * float(y)` — never `float(x) * self.current_balance()` since
+  current_balance() returns Decimal when transactions exist.
+- `_units()` in analytics_views.py uses `produce_bunch_id` (not `sale_amount`) to
+  identify bunch greens. Both bunch and portion preset sales have `sale_amount` set
+  (since fbff5b4), so `sale_amount` is no longer a unique discriminator.
+- `analytics_dashboard` view must have `@login_required` and `@owner_required`
+  decorators directly above it — never insert helper functions between the decorators
+  and the view function or the decorators apply to the helper, not the view.

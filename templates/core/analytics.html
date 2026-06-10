@@ -493,15 +493,15 @@
 <!-- ═══ MARKET DAY INTELLIGENCE ═══ -->
 <!-- ── GREENS (Kibanda Produce) PERFORMANCE ─────────────────────────── -->
 {% if greens_items %}
-<div class="section-title">🥬 {% trans "Greens Performance" %}</div>
+<div class="section-title">🛒 {% trans "Kibanda Produce Performance" %}</div>
 <div class="row g-3 mb-4">
 
   <!-- Summary cards -->
   <div class="col-6 col-md-3">
     <div style="background:var(--onyx-card);border:1px solid rgba(120,180,90,0.3);border-radius:10px;padding:1rem;text-align:center;">
-      <div style="color:#9fcaa0;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Greens Revenue" %}</div>
-      <div style="color:#9fcaa0;font-size:1.4rem;font-weight:700;font-family:'Playfair Display',serif;">KES {{ total_greens_revenue|floatformat:0 }}</div>
-      <div style="color:#b0b0b0;font-size:0.8rem;">{{ greens_share }}% {% trans "of total" %}</div>
+      <div style="color:#9fcaa0;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Total Produce" %}</div>
+      <div style="color:#9fcaa0;font-size:1.4rem;font-weight:700;font-family:'Playfair Display',serif;">KES {{ total_produce_revenue|floatformat:0 }}</div>
+      <div style="color:#b0b0b0;font-size:0.8rem;">{{ produce_share }}% {% trans "of all sales" %}</div>
     </div>
   </div>
   <div class="col-6 col-md-3">
@@ -538,7 +538,7 @@
 <!-- Per-green table -->
 <div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(120,180,90,0.2);overflow:hidden;margin-bottom:1.5rem;">
   <div style="padding:0.75rem 1rem;border-bottom:1px solid #222;font-weight:600;color:#9fcaa0;font-size:0.85rem;">
-    {% trans "Per-Green Breakdown" %} — {{ start_date }} {% trans "to" %} {{ end_date }}
+    🥬 {% trans "Mboga / Greens Breakdown" %} — {{ start_date }} {% trans "to" %} {{ end_date }}
   </div>
   <div style="overflow-x:auto;">
     <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
@@ -590,6 +590,48 @@
 </div>
 {% endif %}
 
+{% endif %}
+
+{% if portion_produce %}
+<div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(201,168,76,0.2);overflow:hidden;margin-bottom:2rem;">
+  <div style="padding:0.75rem 1rem;border-bottom:1px solid #222;font-weight:600;color:var(--gold);font-size:0.85rem;">
+    🧅 {% trans "Other Produce (viazi, nyanya, vitunguu...)" %} — {{ start_date }} {% trans "to" %} {{ end_date }}
+  </div>
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+      <thead>
+        <tr style="background:rgba(201,168,76,0.06);color:#8aa;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;">
+          <th style="padding:0.6rem 1rem;text-align:left;">{% trans "Item" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Units Sold" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Revenue" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Cost" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Margin" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in portion_produce %}
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+          <td style="padding:0.6rem 1rem;color:var(--pearl);font-weight:600;">{{ p.description }}</td>
+          <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">{{ p.units|floatformat:0 }} {{ p.unit }}</td>
+          <td style="padding:0.6rem;text-align:right;color:#c9a84c;font-weight:700;">KES {{ p.revenue|floatformat:0 }}</td>
+          <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">KES {{ p.cost|floatformat:0 }}</td>
+          <td style="padding:0.6rem;text-align:right;{% if p.margin >= 30 %}color:#6fae4f;{% elif p.margin >= 15 %}color:#c9a84c;{% else %}color:var(--raspberry);{% endif %}font-weight:600;">
+            {{ p.margin }}%
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr style="background:rgba(201,168,76,0.04);font-weight:700;">
+          <td style="padding:0.6rem 1rem;color:var(--gold);">{% trans "Total" %}</td>
+          <td></td>
+          <td style="padding:0.6rem;text-align:right;color:var(--gold);">KES {{ total_portion_revenue|floatformat:0 }}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
 {% endif %}
 <!-- ────────────────────────────────────────────────────────────────────── -->
 

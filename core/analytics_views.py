@@ -509,7 +509,7 @@ def analytics_dashboard(request):
         Transaction.objects
         .filter(
             business=business, type='Issue',
-            sale_amount__isnull=False,
+            produce_bunch__isnull=False,   # only BUNCH greens have a produce_bunch FK
             date__gte=start_date, date__lte=today,
         )
         .annotate(day=TruncDate('date'))
@@ -519,6 +519,40 @@ def analytics_dashboard(request):
     )
     greens_daily_labels = json.dumps([str(r['day']) for r in greens_daily_raw])
     greens_daily_values = json.dumps([float(r['revenue'] or 0) for r in greens_daily_raw])
+
+    # ── PORTION produce analytics (onions, tomatoes, potatoes, etc.) ──────────────
+    portion_txns = list(
+        Transaction.objects
+        .filter(
+            business=business, type='Issue',
+            item__is_produce=True, item__produce_mode='PORTION',
+            date__gte=start_date, date__lte=today,
+        )
+        .select_related('item')
+    )
+    from collections import defaultdict as _dd
+    _pm = _dd(lambda: {'description': '', 'units': 0.0, 'revenue': 0.0, 'cost': 0.0, 'unit': ''})
+    for t in portion_txns:
+        k = t.item_id
+        _pm[k]['description'] = t.item.description
+        _pm[k]['unit'] = t.item.unit or 'Pcs'
+        qty_abs = abs(float(t.qty or 0))
+        rev = (float(t.sale_amount) if t.sale_amount is not None
+               else qty_abs * float(t.item.selling_price or 0))
+        _pm[k]['units']   += qty_abs
+        _pm[k]['revenue'] += rev
+        _pm[k]['cost']    += qty_abs * float(t.item.cost_price or 0)
+    portion_produce = sorted(_pm.values(), key=lambda x: -x['revenue'])
+    for p in portion_produce:
+        p['revenue'] = round(p['revenue'], 2)
+        p['cost']    = round(p['cost'], 2)
+        p['units']   = round(p['units'], 1)
+        p['margin']  = (round((p['revenue'] - p['cost']) / p['revenue'] * 100, 1)
+                        if p['revenue'] > 0 else 0)
+
+    total_portion_revenue = round(sum(p['revenue'] for p in portion_produce), 2)
+    total_produce_revenue = round(total_greens_revenue + total_portion_revenue, 2)
+    produce_share = round(100 * total_produce_revenue / float(cur_revenue), 1) if cur_revenue > 0 else 0
 
     context = {
         'period': days,
@@ -594,6 +628,10 @@ def analytics_dashboard(request):
         'greens_share': greens_share,
         'greens_daily_labels': greens_daily_labels,
         'greens_daily_values': greens_daily_values,
+        'portion_produce': portion_produce,
+        'total_portion_revenue': total_portion_revenue,
+        'total_produce_revenue': total_produce_revenue,
+        'produce_share': produce_share,
         'selected_product': selected_product,
         # Break-Even Analysis
         'breakeven_data': breakeven_data,
