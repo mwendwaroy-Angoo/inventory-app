@@ -21,11 +21,6 @@ from .models import Item, Transaction, ProduceBunch
 # SALE HELPERS (called from quick_sell)
 # ──────────────────────────────────────────────────────────────────────────
 def _sell_item_amount(business, item, amount, payment_method='cash', recipient=''):
-    """
-    Sell `amount` of a single named green, FIFO across its OPEN bunches
-    (oldest first = sell-before-it-wilts). Spills into the next bunch if the
-    oldest can't absorb the whole amount. Returns (transactions, total_sold).
-    """
     amount = Decimal(str(amount))
     bunches = [
         b for b in item.bunches.filter(business=business, status='OPEN')
@@ -46,8 +41,6 @@ def _sell_item_amount(business, item, amount, payment_method='cash', recipient='
             sold += take
             amount -= take
 
-    # All bunches hit target mid-request: let the last open bunch absorb the rest
-    # (a generous "ongeza" rather than refusing the customer).
     if amount > 0 and bunches:
         t = bunches[-1].record_sale(amount, payment_method, recipient)
         if t:
@@ -57,10 +50,6 @@ def _sell_item_amount(business, item, amount, payment_method='cash', recipient='
 
 
 def handle_bunch_cart_entry(entry, business, payment_method):
-    """
-    Process one Quick Sell cart line with mode 'bunch' or 'mix'.
-    Returns (recorded_dict_or_None, last_transaction_or_None).
-    """
     try:
         amount = Decimal(str(entry.get('amount', 0)))
     except Exception:
@@ -99,14 +88,17 @@ def handle_bunch_cart_entry(entry, business, payment_method):
 # ──────────────────────────────────────────────────────────────────────────
 @login_required
 def produce_board(request):
-    """Greens tiles for the current business: each bunch-item + each mix group,
-    with live remaining envelope, price-point presets, and wilting flags."""
+    """Greens tiles + PORTION produce items for the current business.
+    Returns greens (BUNCH tiles), mixes, can_receive flag, and portion_items
+    (all PORTION-mode produce for the unified +From market dropdown)."""
     from .views import get_user_profile
     up = get_user_profile(request)
     if not up:
-        return JsonResponse({'greens': [], 'mixes': []})
+        return JsonResponse({'greens': [], 'mixes': [], 'portion_items': []})
 
     business = up.business
+
+    # ── BUNCH-mode greens ─────────────────────────────────────────────
     items = (
         Item.objects.filter(store__business=business, is_produce=True, produce_mode='BUNCH')
         .prefetch_related('bunches', 'portion_presets')
@@ -134,6 +126,9 @@ def produce_board(request):
             'wilting': bool(oldest and oldest.is_wilting()),
             'oldest_bunch_id': oldest.id if oldest else None,
             'has_history': has_history,
+            # For the "empty tile" tap — pre-fill receive modal
+            'item_balance': float(it.current_balance()),
+            'cost_price': float(it.cost_price or 0),
         })
         if it.mix_group:
             g = mix_map.setdefault(it.mix_group, {
@@ -142,25 +137,45 @@ def produce_board(request):
             })
             g['remaining'] += remaining
             g['members'] += 1
-            if has_history: g['has_history'] = True
+            if has_history:
+                g['has_history'] = True
             if not g['presets'] and presets:
                 g['presets'] = presets
+
+    # ── PORTION-mode produce (onions, tomatoes, potatoes, etc.) ──────
+    portion_items = []
+    for it in (Item.objects
+               .filter(store__business=business, is_produce=True, produce_mode='PORTION')
+               .order_by('description')):
+        portion_items.append({
+            'id': it.id,
+            'name': it.description,
+            'unit': it.unit or 'Pcs',
+            'produce_mode': 'PORTION',
+            'cost_price': float(it.cost_price or 0),
+        })
 
     return JsonResponse({
         'greens': greens,
         'mixes': list(mix_map.values()),
         'can_receive': bool(getattr(up, 'is_owner', False)),
+        'portion_items': portion_items,
     })
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# OWNER ACTIONS — receive bunches from the market, discard wilted ones
+# OWNER ACTIONS — receive stock from the market (bunches + dry goods)
 # ──────────────────────────────────────────────────────────────────────────
 @login_required
 @require_POST
 def receive_bunches(request):
-    """Owner logs bunches bought at the market. Creates ProduceBunch rows and a
-    Receipt transaction (+1 each) so Item stock reflects the bunch count."""
+    """Owner logs produce bought at the market.
+
+    For BUNCH mode (greens): creates ProduceBunch rows + Receipt transactions.
+    For PORTION mode (potatoes, onions, etc.): creates a single Receipt
+    transaction for the total units received and updates item.cost_price
+    to total_batch_cost / units so margins are computed correctly.
+    """
     from .views import get_user_profile
     up = get_user_profile(request)
     if not up or not getattr(up, 'is_owner', False):
@@ -171,6 +186,46 @@ def receive_bunches(request):
     if not item:
         return JsonResponse({'ok': False, 'error': 'Item not found'}, status=404)
 
+    produce_mode_req = request.POST.get('produce_mode', 'BUNCH')
+
+    # ── PORTION mode: Receipt + update cost_price ────────────────────
+    if produce_mode_req == 'PORTION':
+        try:
+            units = Decimal(str(request.POST.get('units', '0')))
+            total_cost = Decimal(str(request.POST.get('total_cost', '0')))
+        except Exception:
+            return JsonResponse({'ok': False, 'error': 'Bad units or cost'}, status=400)
+
+        if units <= 0 or total_cost <= 0:
+            return JsonResponse(
+                {'ok': False, 'error': 'Enter the number of units received and total cost'},
+                status=400
+            )
+
+        # Per-unit cost: mama mboga paid total_cost for all units
+        unit_cost = (total_cost / units).quantize(Decimal('0.01'))
+        item.cost_price = unit_cost
+        item.save(update_fields=['cost_price'])
+
+        Transaction.objects.create(
+            item=item,
+            business=business,
+            type='Receipt',
+            qty=units,
+            recipient=(
+                f"Market — {int(units)} {item.unit or 'units'}, "
+                f"batch cost KES {float(total_cost):.2f} "
+                f"(KES {float(unit_cost):.2f} per {item.unit or 'unit'})"
+            ),
+        )
+        return JsonResponse({
+            'ok': True,
+            'mode': 'PORTION',
+            'units': float(units),
+            'unit_cost': float(unit_cost),
+        })
+
+    # ── BUNCH mode: ProduceBunch + Receipt ───────────────────────────
     try:
         count = max(1, int(request.POST.get('count', 1)))
         cost = Decimal(str(request.POST.get('cost_price')))

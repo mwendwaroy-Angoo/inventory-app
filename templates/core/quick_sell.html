@@ -660,44 +660,63 @@
     </div>
 </div>
 
-<!-- Receive bunches (owner) Modal -->
+<!-- From market modal — BUNCH greens + PORTION dry goods (owner only) -->
 <div class="modal fade" id="receiveModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content" style="background:var(--onyx-card); border:1px solid rgba(196,30,106,0.5); border-radius:12px;">
             <div class="modal-header" style="border-bottom:1px solid #2a2a2a;">
                 <h6 class="modal-title" style="color:#e06; font-family:'Playfair Display',serif;">
-                    🛒 {% trans 'Bunches from the market' %}
+                    🛒 {% trans 'Kutoka Sokoni — Pata Stok' %}
                 </h6>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <div class="qs-receive-field">
-                    <label>{% trans 'Green' %}</label>
+                    <label>{% trans 'Item' %}</label>
                     <select id="rcvItem"></select>
                 </div>
-                <div class="qs-receive-field">
-                    <label>{% trans 'Bunch size' %}</label>
-                    <select id="rcvSize">
-                        <option value="SMALL">{% trans 'Small' %}</option>
-                        <option value="MEDIUM" selected>{% trans 'Medium' %}</option>
-                        <option value="LARGE">{% trans 'Large' %}</option>
-                    </select>
-                </div>
-                <div class="d-flex gap-2">
-                    <div class="qs-receive-field flex-fill">
-                        <label>{% trans 'Cost / bunch' %}</label>
-                        <input type="number" id="rcvCost" inputmode="numeric" placeholder="40">
+
+                <!-- BUNCH (greens) fields -->
+                <div id="rcvBunchFields">
+                    <div class="qs-receive-field">
+                        <label>{% trans 'Bunch size' %}</label>
+                        <select id="rcvSize">
+                            <option value="SMALL">{% trans 'Small' %}</option>
+                            <option value="MEDIUM" selected>{% trans 'Medium' %}</option>
+                            <option value="LARGE">{% trans 'Large' %}</option>
+                        </select>
                     </div>
-                    <div class="qs-receive-field flex-fill">
-                        <label>{% trans 'How many' %}</label>
-                        <input type="number" id="rcvCount" inputmode="numeric" value="1" min="1">
+                    <div class="d-flex gap-2">
+                        <div class="qs-receive-field flex-fill">
+                            <label>{% trans 'Cost / bunch' %}</label>
+                            <input type="number" id="rcvCost" inputmode="numeric" placeholder="40">
+                        </div>
+                        <div class="qs-receive-field flex-fill">
+                            <label>{% trans 'How many bunches' %}</label>
+                            <input type="number" id="rcvCount" inputmode="numeric" value="1" min="1">
+                        </div>
+                    </div>
+                    <div class="qs-receive-field">
+                        <label>{% trans 'Target / bunch (optional)' %}</label>
+                        <input type="number" id="rcvTarget" inputmode="numeric" placeholder="auto">
+                        <div class="qs-receive-hint">{% trans 'Leave blank to auto-fill from cost × markup.' %}</div>
                     </div>
                 </div>
-                <div class="qs-receive-field">
-                    <label>{% trans 'Target / bunch (optional)' %}</label>
-                    <input type="number" id="rcvTarget" inputmode="numeric" placeholder="auto">
-                    <div class="qs-receive-hint" id="rcvTargetHint">{% trans 'Leave blank to auto-fill from cost × markup.' %}</div>
+
+                <!-- PORTION (dry goods) fields -->
+                <div id="rcvPortionFields" style="display:none;">
+                    <div class="qs-receive-field">
+                        <label id="rcvUnitsLabel">{% trans 'How many units did you receive?' %}</label>
+                        <input type="number" id="rcvUnits" inputmode="numeric" placeholder="e.g. 150">
+                        <div class="qs-receive-hint">{% trans 'The selling unit you will have after sorting (gorogoros, pieces, bundles).' %}</div>
+                    </div>
+                    <div class="qs-receive-field">
+                        <label>{% trans 'Total batch cost (KES)' %}</label>
+                        <input type="number" id="rcvTotalCost" inputmode="numeric" placeholder="e.g. 7000">
+                        <div class="qs-receive-hint" id="rcvCostPerUnit" style="color:#c9a84c;"></div>
+                    </div>
                 </div>
+
                 <button type="button" class="qs-sell-btn w-100" id="rcvSubmit">{% trans 'Add bunches' %}</button>
             </div>
         </div>
@@ -1322,19 +1341,79 @@
     }
 
     // ── RECEIVE BUNCHES (owner) ──
+    function onRcvItemChange() {
+        var sel = document.getElementById('rcvItem');
+        var opt = sel ? sel.options[sel.selectedIndex] : null;
+        var mode = opt ? (opt.getAttribute('data-mode') || 'BUNCH') : 'BUNCH';
+        var unit = opt ? (opt.getAttribute('data-unit') || 'units') : 'units';
+        document.getElementById('rcvBunchFields').style.display = mode === 'BUNCH' ? '' : 'none';
+        document.getElementById('rcvPortionFields').style.display = mode === 'PORTION' ? '' : 'none';
+        var lbl = document.getElementById('rcvUnitsLabel');
+        if (lbl) lbl.textContent = 'Ngapi ' + (unit || 'units') + ' ulizopata?';
+        var btn = document.getElementById('rcvSubmit');
+        if (btn) btn.textContent = mode === 'PORTION' ? 'Ongeza Stok' : 'Ongeza Machunda';
+    }
+
+    function updatePortionCostHint() {
+        var units = parseFloat(document.getElementById('rcvUnits').value);
+        var cost  = parseFloat(document.getElementById('rcvTotalCost').value);
+        var hint  = document.getElementById('rcvCostPerUnit');
+        if (!hint) return;
+        if (units > 0 && cost > 0) {
+            var sel = document.getElementById('rcvItem');
+            var opt = sel ? sel.options[sel.selectedIndex] : null;
+            var unit = opt ? (opt.getAttribute('data-unit') || 'unit') : 'unit';
+            hint.textContent = '= KES ' + (cost / units).toFixed(2) + ' kwa kila ' + unit;
+        } else {
+            hint.textContent = '';
+        }
+    }
+
+    (function() {
+        var unitsEl = document.getElementById('rcvUnits');
+        var costEl  = document.getElementById('rcvTotalCost');
+        if (unitsEl) unitsEl.addEventListener('input', updatePortionCostHint);
+        if (costEl)  costEl.addEventListener('input', updatePortionCostHint);
+        var selEl = document.getElementById('rcvItem');
+        if (selEl) selEl.addEventListener('change', onRcvItemChange);
+    })();
+
     function openReceive(preselectId, mixGroup, prefillCost) {
         var sel = document.getElementById('rcvItem');
-        var list = GREENS.greens;
+        // Build dropdown: BUNCH greens + PORTION dry goods (all produce items)
+        var bunchItems = GREENS.greens.map(function(g) {
+            return {id: g.id, name: g.name, mode: 'BUNCH', unit: 'Bunch',
+                    cost_price: g.cost_price || 0};
+        });
+        var portionItems = (GREENS.portion_items || []).map(function(p) {
+            return {id: p.id, name: p.name + ' (' + (p.unit || 'Pcs') + ')',
+                    mode: 'PORTION', unit: p.unit || 'Pcs', cost_price: p.cost_price || 0};
+        });
+        var allItems = bunchItems.concat(portionItems);
         if (mixGroup) {
-            list = list.filter(function(g) { return g.mix_group === mixGroup; });
+            allItems = allItems.filter(function(item) {
+                var g = findGreen(item.id);
+                return !!(g && g.mix_group === mixGroup);
+            });
         }
-        sel.innerHTML = list.map(function(g) {
-            return '<option value="' + g.id + '">' + esc(g.name) + '</option>';
+        sel.innerHTML = allItems.map(function(item) {
+            return '<option value="' + item.id + '"'
+                +  ' data-mode="' + item.mode + '"'
+                +  ' data-unit="' + esc(item.unit) + '">'
+                +  esc(item.name) + '</option>';
         }).join('');
         if (preselectId) sel.value = String(preselectId);
+        // Reset all fields
         document.getElementById('rcvCost').value = prefillCost || '';
         document.getElementById('rcvCount').value = 1;
         document.getElementById('rcvTarget').value = '';
+        var unitsEl = document.getElementById('rcvUnits');
+        if (unitsEl) unitsEl.value = '';
+        var costEl = document.getElementById('rcvTotalCost');
+        if (costEl) costEl.value = '';
+        var hint = document.getElementById('rcvCostPerUnit');
+        if (hint) hint.textContent = '';
+        onRcvItemChange();  // show correct fields for pre-selected item
         new bootstrap.Modal(document.getElementById('receiveModal')).show();
     }
 
@@ -1343,16 +1422,34 @@
     }
 
     document.getElementById('rcvSubmit').addEventListener('click', function() {
-        var itemId = document.getElementById('rcvItem').value;
-        var cost   = document.getElementById('rcvCost').value;
-        if (!itemId || !(Number(cost) > 0)) { alert('{% trans "Enter a cost." %}'); return; }
-        var body = new URLSearchParams({
-            item_id: itemId,
-            size: document.getElementById('rcvSize').value,
-            cost_price: cost,
-            count: document.getElementById('rcvCount').value || '1',
-            target_revenue: document.getElementById('rcvTarget').value || ''
-        });
+        var sel  = document.getElementById('rcvItem');
+        var opt  = sel ? sel.options[sel.selectedIndex] : null;
+        var mode = opt ? (opt.getAttribute('data-mode') || 'BUNCH') : 'BUNCH';
+        var itemId = sel ? sel.value : '';
+        if (!itemId) { alert('Chagua bidhaa.'); return; }
+
+        var body;
+        if (mode === 'PORTION') {
+            var units     = document.getElementById('rcvUnits').value;
+            var totalCost = document.getElementById('rcvTotalCost').value;
+            if (!(Number(units) > 0) || !(Number(totalCost) > 0)) {
+                alert('Weka idadi ya units ulizopata na jumla ya gharama.');
+                return;
+            }
+            body = new URLSearchParams({
+                item_id: itemId, produce_mode: 'PORTION',
+                units: units, total_cost: totalCost
+            });
+        } else {
+            var cost = document.getElementById('rcvCost').value;
+            if (!(Number(cost) > 0)) { alert('Weka gharama ya shada.'); return; }
+            body = new URLSearchParams({
+                item_id: itemId, size: document.getElementById('rcvSize').value,
+                cost_price: cost, count: document.getElementById('rcvCount').value || '1',
+                target_revenue: document.getElementById('rcvTarget').value || ''
+            });
+        }
+
         fetch('/stock/produce/receive/', {
             method: 'POST',
             headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1362,7 +1459,7 @@
               var inst = bootstrap.Modal.getInstance(document.getElementById('receiveModal'));
               if (inst) inst.hide();
               if (res && res.ok) { loadGreensBoard(); }
-              else { alert((res && res.error) || '{% trans "Could not add bunches." %}'); }
+              else { alert((res && res.error) || 'Hitilafu — jaribu tena.'); }
           });
     });
 
