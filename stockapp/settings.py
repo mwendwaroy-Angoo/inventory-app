@@ -29,6 +29,15 @@ ALLOWED_HOSTS = [
 if "testserver" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append("testserver")
 
+# Django 4.0+ requires CSRF_TRUSTED_ORIGINS for HTTPS form submissions.
+# Without this, any HTTPS POST can fail CSRF validation — especially after
+# Render free-tier cold starts where the process/cookie context resets.
+CSRF_TRUSTED_ORIGINS = [
+    'https://dukamwecheche.co.ke',
+    'https://www.dukamwecheche.co.ke',
+    'https://stock-made-simpler-sms.onrender.com',
+]
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -174,8 +183,9 @@ MPESA_SHORTCODE = os.getenv("MPESA_SHORTCODE", "")
 MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "")
 
 # ── SESSION ───────────────────────────────────────────────────────────────────
-SESSION_COOKIE_AGE = 7200  # 2 hours in seconds
-SESSION_SAVE_EVERY_REQUEST = False  # Only save session when modified — reduces DB writes
+SESSION_COOKIE_AGE = 86400        # 24 hours — keeps retail owners logged in all day
+SESSION_SAVE_EVERY_REQUEST = True  # Refresh session expiry on every request (prevents CSRF
+                                    # token/session mismatch after Render free-tier cold start)
 
 # ── REST FRAMEWORK ────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {

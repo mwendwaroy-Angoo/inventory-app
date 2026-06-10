@@ -150,6 +150,10 @@
                     <option value="Sachet">
                 </datalist>
             </div>
+            <!-- Smart unit hint — JS populates this based on item description -->
+            <div id="unitHint" style="display:none; margin-top:0.3rem; padding:0.45rem 0.75rem;
+                 background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3);
+                 border-radius:6px; font-size:0.8rem; color:#c9a84c;"></div>
 
             <!-- CHANGE 4: Category simplified to single text input -->
             <div class="mb-3">
@@ -207,6 +211,14 @@
                        value="{{ form.instance.opening_bin_balance|default:0 }}">
                 <input type="hidden" name="opening_physical" id="id_opening_physical"
                        value="{{ form.instance.opening_physical|default:0 }}">
+                <!-- Hint for PORTION produce: directing owner to +From Market -->
+                <div id="produceStockHint" style="display:none; margin-top:0.35rem; padding:0.4rem 0.7rem;
+                     background:rgba(120,180,90,0.07); border:1px solid rgba(120,180,90,0.25);
+                     border-radius:6px; font-size:0.78rem; color:#9fcaa0;">
+                    💡 For produce items sold by portion (gorogoro, piece, bundle): leave this as
+                    <strong>0</strong> and use <strong>+ From Market</strong> in Quick Sell to add
+                    stock — it will also set the correct unit cost from your batch price.
+                </div>
             </div>
 
             {% bootstrap_field form.reorder_level %}
@@ -443,7 +455,86 @@
             </div>
 
             <script>
-            // CHANGE 1: is_produce toggles selling price section + presets section
+            // ── SMART UNIT HINTS (based on item description) ────────────────────────
+    (function() {
+        var UNIT_MAP = [
+            { keys: ['potato','viazi'],                   unit: 'Gorogoro (Small)', note: 'Sold by gorogoro tin — use Gorogoro as unit, not Sack' },
+            { keys: ['bean','maharagwe','ndengu','lentil','green gram'],
+                                                          unit: 'Gorogoro (Small)', note: 'Sold by gorogoro tin' },
+            { keys: ['maize','mahindi','rice','mchele','flour','unga'],
+                                                          unit: 'Gorogoro (Small)', note: 'Sold by gorogoro tin' },
+            { keys: ['tomato','nyanya'],                  unit: 'Pcs',             note: 'Sold by piece — use Pcs (kimoja/tatu mbao)' },
+            { keys: ['onion','vitunguu','kitunguu'],      unit: 'Pcs',             note: 'Sold by piece — use Pcs (kimoja/tatu mbao)' },
+            { keys: ['carrot','karoti'],                  unit: 'Bundle',          note: 'Sold in small bundles (3-5 per bag)' },
+            { keys: ['cabbage','kabichi'],                unit: 'Head',            note: 'Sold by head — quarter/half/full' },
+            { keys: ['sukuma','kale','collard','spinach','mchicha','managu','terere','kunde','mrenda'],
+                                                          unit: 'Bunch',           note: 'Greens — use Bunch mode in Produce Settings' },
+            { keys: ['mango','embe','avocado','parachichi','pawpaw','papai'],
+                                                          unit: 'Pcs',             note: 'Sold by piece' },
+            { keys: ['banana','ndizi'],                   unit: 'Pcs',             note: 'Sold by piece or small bunch' },
+            { keys: ['chilli','pilipili'],                unit: 'Heap',            note: 'Sold in small heaps or bundles' },
+            { keys: ['coriander','dhania'],               unit: 'Bundle',          note: 'Sold in small bundles' },
+            { keys: ['garlic','kitunguu saumu'],          unit: 'Pcs',             note: 'Sold per head/clove' },
+        ];
+
+        function getUnitHint(desc) {
+            var lower = desc.toLowerCase();
+            for (var i = 0; i < UNIT_MAP.length; i++) {
+                for (var j = 0; j < UNIT_MAP[i].keys.length; j++) {
+                    if (lower.indexOf(UNIT_MAP[i].keys[j]) !== -1) {
+                        return UNIT_MAP[i];
+                    }
+                }
+            }
+            return null;
+        }
+
+        var descEl = document.getElementById('id_description');
+        var hintEl = document.getElementById('unitHint');
+        var unitEl = document.getElementById('id_unit');
+        if (!descEl || !hintEl) return;
+
+        function updateUnitHint() {
+            var hint = getUnitHint(descEl.value);
+            if (hint) {
+                hintEl.innerHTML = '💡 <strong>' + hint.unit + '</strong> — ' + hint.note;
+                hintEl.style.display = 'block';
+                // Auto-fill unit if field is empty
+                if (unitEl && !unitEl.value) unitEl.value = hint.unit;
+            } else {
+                hintEl.style.display = 'none';
+            }
+        }
+        descEl.addEventListener('input', updateUnitHint);
+        // Run on load for edit form (description already filled)
+        if (descEl.value) updateUnitHint();
+    })();
+
+    // ── PRODUCE STOCK HINT ────────────────────────────────────────────────────
+    (function() {
+        var stockHint = document.getElementById('produceStockHint');
+        if (!stockHint) return;
+        function updateStockHint() {
+            var isProduce = document.getElementById('is_produce') &&
+                            document.getElementById('is_produce').checked;
+            var isBunch   = document.getElementById('pm_bunch') &&
+                            document.getElementById('pm_bunch').checked;
+            if (isProduce && !isBunch) {
+                stockHint.style.display = 'block';
+            } else {
+                stockHint.style.display = 'none';
+            }
+        }
+        var isProdEl = document.getElementById('is_produce');
+        var pmPEl = document.getElementById('pm_portion');
+        var pmBEl = document.getElementById('pm_bunch');
+        if (isProdEl) isProdEl.addEventListener('change', updateStockHint);
+        if (pmPEl) pmPEl.addEventListener('change', updateStockHint);
+        if (pmBEl) pmBEl.addEventListener('change', updateStockHint);
+        updateStockHint();
+    })();
+
+    // CHANGE 1: is_produce toggles selling price section + presets section
             (function() {
                 var produceCheck = document.getElementById('is_produce');
                 var modeSection  = document.getElementById('produceModeSection');
