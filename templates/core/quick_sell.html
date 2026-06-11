@@ -676,28 +676,50 @@
                     <select id="rcvItem"></select>
                 </div>
 
-                <!-- BUNCH (greens) fields -->
+                <!-- BUNCH / BATCH fields (greens + sack goods) -->
                 <div id="rcvBunchFields">
-                    <div class="qs-receive-field">
-                        <label>{% trans 'Bunch size' %}</label>
+
+                    <!-- Purchase-type toggle — hidden for greens (unit=Bunch), shown for sack/gorogoro items -->
+                    <div id="rcvPurchaseTypeRow" style="display:none; margin-bottom:0.9rem;">
+                        <div style="color:var(--gold);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">
+                            Ulinunua vipi sokoni?
+                        </div>
+                        <div class="d-flex gap-2">
+                            <input type="radio" class="btn-check" name="rcvPurchaseType" id="rcvByGunia" value="gunia" checked>
+                            <label class="btn btn-outline-warning flex-fill text-center" for="rcvByGunia" style="font-size:0.8rem;line-height:1.3;">
+                                🛍 {% trans 'Gunia / Sack' %}<br>
+                                <small style="opacity:0.65;">{% trans 'whole sack, cost per sack' %}</small>
+                            </label>
+                            <input type="radio" class="btn-check" name="rcvPurchaseType" id="rcvByGorogoro" value="gorogoro">
+                            <label class="btn btn-outline-secondary flex-fill text-center" for="rcvByGorogoro" style="font-size:0.8rem;line-height:1.3;">
+                                🥫 {% trans 'Gorogoro' %}<br>
+                                <small style="opacity:0.65;">{% trans 'pre-portioned, cost total' %}</small>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Size field — hidden for gunia mode (a sack is a sack) -->
+                    <div id="rcvSizeField" class="qs-receive-field">
+                        <label id="rcvSizeLabel">{% trans 'Bunch size' %}</label>
                         <select id="rcvSize">
                             <option value="SMALL">{% trans 'Small' %}</option>
                             <option value="MEDIUM" selected>{% trans 'Medium' %}</option>
                             <option value="LARGE">{% trans 'Large' %}</option>
                         </select>
                     </div>
+
                     <div class="d-flex gap-2">
                         <div class="qs-receive-field flex-fill">
-                            <label>{% trans 'Cost / bunch' %}</label>
+                            <label id="rcvCostLabel">{% trans 'Cost / bunch' %}</label>
                             <input type="number" id="rcvCost" inputmode="numeric" placeholder="40">
                         </div>
                         <div class="qs-receive-field flex-fill">
-                            <label>{% trans 'How many bunches' %}</label>
+                            <label id="rcvCountLabel">{% trans 'How many' %}</label>
                             <input type="number" id="rcvCount" inputmode="numeric" value="1" min="1">
                         </div>
                     </div>
                     <div class="qs-receive-field">
-                        <label>{% trans 'Target / bunch (optional)' %}</label>
+                        <label>{% trans 'Target (optional)' %}</label>
                         <input type="number" id="rcvTarget" inputmode="numeric" placeholder="auto">
                         <div class="qs-receive-hint">{% trans 'Leave blank to auto-fill from cost × markup.' %}</div>
                     </div>
@@ -1341,17 +1363,59 @@
     }
 
     // ── RECEIVE BUNCHES (owner) ──
+    function _isGreenUnit(unit) { return unit === 'Bunch' || unit === 'bunch'; }
+
+    function updateBunchPurchaseType() {
+        var typeInput = document.querySelector('input[name="rcvPurchaseType"]:checked');
+        var isGunia = typeInput && typeInput.value === 'gunia';
+        var sf = document.getElementById('rcvSizeField');
+        if (sf) sf.style.display = isGunia ? 'none' : '';
+        var costLbl  = document.getElementById('rcvCostLabel');
+        var countLbl = document.getElementById('rcvCountLabel');
+        if (isGunia) {
+            if (costLbl)  costLbl.textContent  = 'Gharama kwa gunia moja (KES)';
+            if (countLbl) countLbl.textContent = 'Gunia ngapi?';
+        } else {
+            if (costLbl)  costLbl.textContent  = 'Gharama yote (KES)';
+            if (countLbl) countLbl.textContent = 'Gorogoro ngapi?';
+        }
+    }
+
     function onRcvItemChange() {
         var sel = document.getElementById('rcvItem');
         var opt = sel ? sel.options[sel.selectedIndex] : null;
         var mode = opt ? (opt.getAttribute('data-mode') || 'BUNCH') : 'BUNCH';
-        var unit = opt ? (opt.getAttribute('data-unit') || 'units') : 'units';
+        var unit = opt ? (opt.getAttribute('data-unit') || 'Bunch') : 'Bunch';
         document.getElementById('rcvBunchFields').style.display = mode === 'BUNCH' ? '' : 'none';
         document.getElementById('rcvPortionFields').style.display = mode === 'PORTION' ? '' : 'none';
+
+        if (mode === 'BUNCH') {
+            var isGreens = _isGreenUnit(unit);
+            // Show gunia/gorogoro toggle only for non-greens batch items
+            var typeRow = document.getElementById('rcvPurchaseTypeRow');
+            if (typeRow) typeRow.style.display = isGreens ? 'none' : '';
+            // Size label for context
+            var sizeLbl = document.getElementById('rcvSizeLabel');
+            if (sizeLbl) sizeLbl.textContent = isGreens ? 'Ukubwa wa shada' : 'Ukubwa wa gorogoro';
+            // For greens: always show size field; for sacks reset to gunia (hide size)
+            if (isGreens) {
+                var sf = document.getElementById('rcvSizeField');
+                if (sf) sf.style.display = '';
+                var costLbl = document.getElementById('rcvCostLabel');
+                var countLbl = document.getElementById('rcvCountLabel');
+                if (costLbl)  costLbl.textContent  = 'Gharama kwa shada (KES)';
+                if (countLbl) countLbl.textContent = 'Mashada ngapi?';
+            } else {
+                updateBunchPurchaseType();
+            }
+            var btn = document.getElementById('rcvSubmit');
+            if (btn) btn.textContent = isGreens ? 'Weka Mashada' : 'Weka Bidhaa';
+        }
+
         var lbl = document.getElementById('rcvUnitsLabel');
         if (lbl) lbl.textContent = 'Ngapi ' + (unit || 'units') + ' ulizopata?';
         var btn = document.getElementById('rcvSubmit');
-        if (btn) btn.textContent = mode === 'PORTION' ? 'Weka Bidhaa' : 'Weka Mashada';
+        if (btn && mode === 'PORTION') btn.textContent = 'Weka Bidhaa';
     }
 
     function updatePortionCostHint() {
@@ -1376,13 +1440,19 @@
         if (costEl)  costEl.addEventListener('input', updatePortionCostHint);
         var selEl = document.getElementById('rcvItem');
         if (selEl) selEl.addEventListener('change', onRcvItemChange);
+        // Purchase-type radios
+        var guniaEl = document.getElementById('rcvByGunia');
+        var goroEl  = document.getElementById('rcvByGorogoro');
+        if (guniaEl) guniaEl.addEventListener('change', updateBunchPurchaseType);
+        if (goroEl)  goroEl.addEventListener('change', updateBunchPurchaseType);
     })();
 
     function openReceive(preselectId, mixGroup, prefillCost) {
         var sel = document.getElementById('rcvItem');
         // Build dropdown: BUNCH greens + PORTION dry goods (all produce items)
         var bunchItems = GREENS.greens.map(function(g) {
-            return {id: g.id, name: g.name, mode: 'BUNCH', unit: 'Bunch',
+            return {id: g.id, name: g.name, mode: 'BUNCH',
+                    unit: g.unit || 'Bunch',   // real unit from board (Bunch for greens, Gorogoro for sacks)
                     cost_price: g.cost_price || 0};
         });
         var portionItems = (GREENS.portion_items || []).map(function(p) {
@@ -1441,13 +1511,34 @@
                 units: units, total_cost: totalCost
             });
         } else {
-            var cost = document.getElementById('rcvCost').value;
-            if (!(Number(cost) > 0)) { alert('Weka gharama ya shada.'); return; }
-            body = new URLSearchParams({
-                item_id: itemId, size: document.getElementById('rcvSize').value,
-                cost_price: cost, count: document.getElementById('rcvCount').value || '1',
-                target_revenue: document.getElementById('rcvTarget').value || ''
-            });
+            var opt2   = sel ? sel.options[sel.selectedIndex] : null;
+            var unit2  = opt2 ? (opt2.getAttribute('data-unit') || 'Bunch') : 'Bunch';
+            var typeIn = document.querySelector('input[name="rcvPurchaseType"]:checked');
+            var pType  = (!_isGreenUnit(unit2) && typeIn) ? typeIn.value : 'bunch';
+            var cost   = document.getElementById('rcvCost').value;
+            if (!(Number(cost) > 0)) { alert('Weka gharama.'); return; }
+            if (pType === 'gunia') {
+                // Whole sack(s): one ProduceBunch per sack, cost = per-sack price
+                body = new URLSearchParams({
+                    item_id: itemId, size: 'LARGE',
+                    cost_price: cost, count: document.getElementById('rcvCount').value || '1',
+                    target_revenue: document.getElementById('rcvTarget').value || ''
+                });
+            } else if (pType === 'gorogoro') {
+                // Pre-portioned gorogoros: one ProduceBunch for the whole batch, cost = total
+                body = new URLSearchParams({
+                    item_id: itemId, size: document.getElementById('rcvSize').value,
+                    cost_price: cost, count: '1',
+                    target_revenue: document.getElementById('rcvTarget').value || ''
+                });
+            } else {
+                // Greens bunch: normal flow
+                body = new URLSearchParams({
+                    item_id: itemId, size: document.getElementById('rcvSize').value,
+                    cost_price: cost, count: document.getElementById('rcvCount').value || '1',
+                    target_revenue: document.getElementById('rcvTarget').value || ''
+                });
+            }
         }
 
         fetch('/stock/produce/receive/', {

@@ -320,8 +320,8 @@
                     <input type="radio" class="btn-check" name="produce_mode" id="pm_portion" value="PORTION"
                            {% if form.instance.produce_mode != 'BUNCH' %}checked{% endif %}>
                     <label class="btn btn-outline-warning flex-fill text-center" for="pm_portion" style="line-height:1.2;">
-                        {% trans 'Portion / fraction' %}<br>
-                        <small style="opacity:0.65;">{% trans 'cabbage, gorogoro' %}</small>
+                        {% trans 'Portion / piece' %}<br>
+                        <small style="opacity:0.65;">{% trans 'cabbage, pieces, pre-portioned' %}</small>
                     </label>
                     <input type="radio" class="btn-check" name="produce_mode" id="pm_bunch" value="BUNCH"
                            {% if form.instance.produce_mode == 'BUNCH' %}checked{% endif %}>
@@ -359,7 +359,7 @@
             <!-- CHANGE 2: Preset table — label dropdown, no Order column -->
             <div id="portionPresetsSection" style="{% if not form.instance.is_produce %}display:none;{% endif %}">
                 <div id="bunchPresetHint" style="display:none; background:rgba(120,180,90,0.08); border:1px solid rgba(120,180,90,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#9fcaa0; margin-bottom:0.75rem;">
-                    🥬 {% trans 'Greens mode: each row is just a price point the customer can ask for (e.g. 10, 20, 30). Leave the label blank to auto-name it, and ignore "Stock Used" — bunches deplete by money, not stems.' %}
+                    📦 {% trans 'Batch mode: each row is a price point the customer asks for (e.g. KES 80 gorogoro, KES 140 gorogoro, KES 30 per shada). Label = name shown on the tile. Stock Used column is ignored — each sale depletes the batch envelope by the price amount, not a unit count.' %}
                 </div>
                 <div style="color:var(--gold); font-size:0.85rem; font-weight:600; margin-bottom:0.75rem;">
                     📋 {% trans 'Portion Presets' %}

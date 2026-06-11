@@ -129,6 +129,7 @@ def produce_board(request):
             # For the "empty tile" tap — pre-fill receive modal
             'item_balance': float(it.current_balance()),
             'cost_price': float(it.cost_price or 0),
+            'unit': it.unit or 'Bunch',   # lets the receive modal detect greens vs sack items
         })
         if it.mix_group:
             g = mix_map.setdefault(it.mix_group, {
