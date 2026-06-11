@@ -135,9 +135,10 @@
                     <option value="Head">
                     <option value="Piece">
                     <option value="Heap">
-                    <option value="Gorogoro (Small)">
-                    <option value="Gorogoro (Medium)">
-                    <option value="Gorogoro (Large)">
+                    <option value="Gorogoro">
+                    <option value="Bundle">
+                    <option value="Bunch">
+                    <option value="Sack">
                     <option value="Pair">
                     <option value="Set">
                     <option value="250ml">
@@ -325,8 +326,8 @@
                     <input type="radio" class="btn-check" name="produce_mode" id="pm_bunch" value="BUNCH"
                            {% if form.instance.produce_mode == 'BUNCH' %}checked{% endif %}>
                     <label class="btn btn-outline-success flex-fill text-center" for="pm_bunch" style="line-height:1.2;">
-                        🥬 {% trans 'Bunch (greens)' %}<br>
-                        <small style="opacity:0.65;">{% trans 'sukuma, spinach, kienyeji' %}</small>
+                        📦 {% trans 'Batch / Bunch' %}<br>
+                        <small style="opacity:0.65;">{% trans 'greens, sacks (viazi, maharagwe...)' %}</small>
                     </label>
                 </div>
             </div>
@@ -458,23 +459,54 @@
             // ── SMART UNIT HINTS (based on item description) ────────────────────────
     (function() {
         var UNIT_MAP = [
-            { keys: ['potato','viazi'],                   unit: 'Gorogoro (Small)', note: 'Sold by gorogoro tin — use Gorogoro as unit, not Sack' },
-            { keys: ['bean','maharagwe','ndengu','lentil','green gram'],
-                                                          unit: 'Gorogoro (Small)', note: 'Sold by gorogoro tin' },
-            { keys: ['maize','mahindi','rice','mchele','flour','unga'],
-                                                          unit: 'Gorogoro (Small)', note: 'Sold by gorogoro tin' },
-            { keys: ['tomato','nyanya'],                  unit: 'Pcs',             note: 'Sold by piece — use Pcs (kimoja/tatu mbao)' },
-            { keys: ['onion','vitunguu','kitunguu'],      unit: 'Pcs',             note: 'Sold by piece — use Pcs (kimoja/tatu mbao)' },
-            { keys: ['carrot','karoti'],                  unit: 'Bundle',          note: 'Sold in small bundles (3-5 per bag)' },
-            { keys: ['cabbage','kabichi'],                unit: 'Head',            note: 'Sold by head — quarter/half/full' },
-            { keys: ['sukuma','kale','collard','spinach','mchicha','managu','terere','kunde','mrenda'],
-                                                          unit: 'Bunch',           note: 'Greens — use Bunch mode in Produce Settings' },
-            { keys: ['mango','embe','avocado','parachichi','pawpaw','papai'],
-                                                          unit: 'Pcs',             note: 'Sold by piece' },
-            { keys: ['banana','ndizi'],                   unit: 'Pcs',             note: 'Sold by piece or small bunch' },
-            { keys: ['chilli','pilipili'],                unit: 'Heap',            note: 'Sold in small heaps or bundles' },
-            { keys: ['coriander','dhania'],               unit: 'Bundle',          note: 'Sold in small bundles' },
-            { keys: ['garlic','kitunguu saumu'],          unit: 'Pcs',             note: 'Sold per head/clove' },
+            // ── Dry goods: sack → gorogoro (use BATCH/BUNCH mode — she sells by price, not count) ──
+            { keys: ['potato','viazi'],
+              unit: 'Gorogoro', note: 'Sold by gorogoro tin from a sack — use Batch mode (not Portion)' },
+            { keys: ['bean','maharagwe'],
+              unit: 'Gorogoro', note: 'Sold by gorogoro from a sack — use Batch mode' },
+            { keys: ['ndengu','green gram','green pea'],
+              unit: 'Gorogoro', note: 'Sold by gorogoro from a sack — use Batch mode' },
+            { keys: ['maize','mahindi','corn'],
+              unit: 'Gorogoro', note: 'Sold by gorogoro from a sack — use Batch mode' },
+            { keys: ['rice','mchele'],
+              unit: 'Gorogoro', note: 'Sold by gorogoro from a bag — use Batch mode' },
+            { keys: ['flour','unga','wheat'],
+              unit: 'Gorogoro', note: 'Sold by gorogoro from a bag — use Batch mode' },
+            { keys: ['lentil','dengu'],
+              unit: 'Gorogoro', note: 'Sold by gorogoro from a sack — use Batch mode' },
+            { keys: ['sugar','sukari'],
+              unit: 'Gorogoro', note: 'Sold by gorogoro or kg — use Batch mode' },
+            // ── Carrots: pile/sack → small bundles (also Batch mode) ──
+            { keys: ['carrot','karoti'],
+              unit: 'Bundle', note: 'Sorted into bundles from a pile/sack — use Batch mode' },
+            // ── Piece-count items: PORTION mode is correct ──
+            { keys: ['tomato','nyanya'],
+              unit: 'Pcs', note: 'Sold by piece — kimoja/tatu mbao. Portion mode is correct.' },
+            { keys: ['onion','vitunguu','kitunguu'],
+              unit: 'Pcs', note: 'Sold by piece — kimoja/tatu mbao. Portion mode is correct.' },
+            { keys: ['cabbage','kabichi'],
+              unit: 'Head', note: 'Sold by head — quarter/half/full. Portion mode is correct.' },
+            { keys: ['mango','embe'],
+              unit: 'Pcs', note: 'Sold by piece. Portion mode is correct.' },
+            { keys: ['avocado','parachichi'],
+              unit: 'Pcs', note: 'Sold by piece. Portion mode is correct.' },
+            { keys: ['banana','ndizi'],
+              unit: 'Pcs', note: 'Sold by piece or small bunch. Portion mode is correct.' },
+            { keys: ['pawpaw','papai','passion'],
+              unit: 'Pcs', note: 'Sold by piece. Portion mode is correct.' },
+            { keys: ['chilli','pilipili'],
+              unit: 'Heap',  note: 'Sold in small heaps or bundles' },
+            { keys: ['coriander','dhania'],
+              unit: 'Bundle', note: 'Sold in small bundles' },
+            { keys: ['garlic','kitunguu saumu'],
+              unit: 'Pcs', note: 'Sold per head' },
+            // ── Greens: Bunch mode ──
+            { keys: ['sukuma','kale','collard'],
+              unit: 'Bunch', note: 'Greens — use Batch/Bunch mode, sell by price (ya 20, ya 30)' },
+            { keys: ['spinach','mchicha'],
+              unit: 'Bunch', note: 'Greens — use Batch/Bunch mode' },
+            { keys: ['managu','terere','kunde','mrende','saga','mchicha'],
+              unit: 'Bunch', note: 'Kienyeji greens — use Batch/Bunch mode' },
         ];
 
         function getUnitHint(desc) {
