@@ -389,3 +389,6 @@ Never use `{% widthratio %}` — unreliable in Django templates.
 - `produce_board()` must include `unit` in the greens dict for the receive modal to
   correctly detect greens (unit=Bunch) vs sack items (unit=Gorogoro) and show the
   appropriate gunia/gorogoro toggle.
+
+## End-of-sprint ritual:
+run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file." 
