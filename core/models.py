@@ -318,6 +318,16 @@ class Item(models.Model):
         null=True, blank=True,
         help_text='Bottle volume for single-piece liquor (750=mzinga, 350/375=half, 250=quarter).'
     )
+    keg_type = models.CharField(
+        max_length=8,
+        choices=[
+            ('REGULAR', 'Regular (Lager)'),
+            ('DARK',    'Dark / Stout'),
+            ('GOLD',    'Gold (Premium)'),
+        ],
+        blank=True,
+        help_text='Keg items only — beer type for analytics grouping (Regular, Dark, Gold).',
+    )
 
     def default_bunch_target(self, cost):
         """Suggested envelope for a freshly received bunch: cost × multiplier."""
@@ -1789,3 +1799,58 @@ class BarTabEntry(models.Model):
     def __str__(self):
         status = 'paid' if self.is_paid else 'open'
         return f"{self.tab.customer_name} — {self.description} KES {self.amount} ({status})"
+
+
+class BarCupLog(models.Model):
+    """Records one batch of disposable cups purchased for a specific barrel."""
+    CUP_SIZES = [
+        ('300', '300 ml'),
+        ('500', '500 ml'),
+    ]
+    barrel     = models.ForeignKey(KegBarrel, on_delete=models.CASCADE, related_name='cup_logs')
+    business   = models.ForeignKey('accounts.Business', on_delete=models.CASCADE)
+    cup_size   = models.CharField(max_length=3, choices=CUP_SIZES, default='300')
+    qty        = models.PositiveIntegerField()
+    unit_cost  = models.DecimalField(max_digits=8, decimal_places=2)
+    total_cost = models.DecimalField(max_digits=10, decimal_places=2)
+    date       = models.DateField(default=timezone.localdate)
+    note       = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        ordering = ['-date', '-id']
+        verbose_name = 'Bar Cup Log'
+        verbose_name_plural = 'Bar Cup Logs'
+
+    def __str__(self):
+        return f"Barrel #{self.barrel_id} — {self.qty}× {self.cup_size}ml cups @ KES {self.unit_cost}"
+
+
+class ProduceOverhead(models.Model):
+    """Operational overhead for the kibanda produce section — bags, water, transport."""
+    OVERHEAD_TYPES = [
+        ('BAGS',      'Polythene Bags'),
+        ('WATER',     'Water (washing greens)'),
+        ('TRANSPORT', 'Transport'),
+        ('OTHER',     'Other'),
+    ]
+    business      = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='produce_overheads'
+    )
+    bunch         = models.ForeignKey(
+        'ProduceBunch', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='overheads',
+        help_text='Optional link to a specific batch/bunch this cost relates to.',
+    )
+    overhead_type = models.CharField(max_length=12, choices=OVERHEAD_TYPES, default='OTHER')
+    qty           = models.PositiveIntegerField(default=1)
+    cost          = models.DecimalField(max_digits=8, decimal_places=2)
+    date          = models.DateField(default=timezone.localdate)
+    note          = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        ordering = ['-date', '-id']
+        verbose_name = 'Produce Overhead'
+        verbose_name_plural = 'Produce Overheads'
+
+    def __str__(self):
+        return f"{self.get_overhead_type_display()} — KES {self.cost} ({self.date})"

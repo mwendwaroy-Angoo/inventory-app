@@ -54,6 +54,7 @@ from core.keg_views import (
     weigh_barrel,
     discard_barrel,
     edit_barrel,
+    add_cups,
     tabs_list,
     tick_entry,
     settle_tab,
@@ -178,6 +179,8 @@ urlpatterns = [
     path("stock/bar/weigh/<int:barrel_id>/", weigh_barrel, name="weigh_barrel"),
     path("stock/bar/discard/<int:barrel_id>/", discard_barrel, name="discard_barrel"),
     path("stock/bar/edit/<int:barrel_id>/", edit_barrel, name="edit_barrel"),
+    # ── Bar Cups (Sprint 4) ──────────────────────────────────────────────────
+    path("bar/barrel/<int:barrel_id>/cups/", add_cups, name="add_cups"),
     # ── Bar Tabs (Sprint 3) ───────────────────────────────────────────────────
     path("bar/tabs/", tabs_list, name="tabs_list"),
     path("bar/tabs/<int:tab_id>/settle/", settle_tab, name="settle_tab"),

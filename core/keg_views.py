@@ -14,7 +14,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .models import BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Transaction
+from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Transaction
 
 
 def _get_up(request):
@@ -36,7 +36,7 @@ def bar_board_api(request):
     keg_items = (
         Item.objects
         .filter(store__business=business, is_keg=True)
-        .prefetch_related('portion_presets', 'keg_barrels')
+        .prefetch_related('portion_presets', 'keg_barrels', 'keg_barrels__cup_logs')
         .order_by('description')
     )
 
@@ -60,10 +60,29 @@ def bar_board_api(request):
             for p in it.portion_presets.all().order_by('display_order', 'id')
         ]
 
+        # ── Cup stats for the tapped barrel ──────────────────────────────
+        cup_300_bought = 0
+        cup_500_bought = 0
+        cup_300_cost   = 0.0
+        cup_500_cost   = 0.0
+        if primary:
+            for log in primary.cup_logs.all():
+                if log.cup_size == '300':
+                    cup_300_bought += log.qty
+                    cup_300_cost   += float(log.total_cost)
+                else:
+                    cup_500_bought += log.qty
+                    cup_500_cost   += float(log.total_cost)
+            # cups used = number of sale transactions on this barrel
+            cups_used = primary.transactions.filter(type='Issue').count()
+        else:
+            cups_used = 0
+
         kegs.append({
             'item_id': it.id,
             'name': it.description,
             'unit': it.unit or 'Ml',
+            'keg_type': it.keg_type or '',
             'presets': presets,
             'open_barrels': len(tapped),
             'sealed_barrels': len(sealed),
@@ -84,6 +103,12 @@ def bar_board_api(request):
             'next_sealed_target':   float(next_sealed.target_revenue) if next_sealed else 0.0,
             'next_sealed_gross':    float(next_sealed.gross_weight_kg) if next_sealed else 0.0,
             'next_sealed_tare':     float(next_sealed.tare_weight_kg) if next_sealed else 0.0,
+            # Cup tracking
+            'cups_300_bought': cup_300_bought,
+            'cups_500_bought': cup_500_bought,
+            'cups_300_cost':   round(cup_300_cost, 2),
+            'cups_500_cost':   round(cup_500_cost, 2),
+            'cups_used':       cups_used,
         })
 
     open_tabs_qs = BarTab.objects.filter(business=business, status='OPEN')
@@ -273,9 +298,14 @@ def receive_barrel(request):
         )
         created_ids.append(barrel.id)
 
-    # Update item.cost_price to latest barrel cost for P&L reference
+    # Update item fields — cost_price for P&L reference, keg_type if supplied
+    update_item_fields = ['cost_price']
+    keg_type_val = (request.POST.get('keg_type') or '').strip().upper()
+    if keg_type_val in ('REGULAR', 'DARK', 'GOLD'):
+        item.keg_type = keg_type_val
+        update_item_fields.append('keg_type')
     item.cost_price = cost
-    item.save(update_fields=['cost_price'])
+    item.save(update_fields=update_item_fields)
 
     return JsonResponse({
         'ok': True,
@@ -642,4 +672,56 @@ def convert_tab_to_debt(request, tab_id):
         'customer_name': customer.name,
         'unpaid_total': unpaid_total,
         'debt_url': f'/debt/{customer.id}/',
+    })
+
+
+# ── Cup tracking ──────────────────────────────────────────────────────────────
+
+@login_required
+@require_POST
+def add_cups(request, barrel_id):
+    """Owner logs a cup purchase for a specific barrel (300ml or 500ml)."""
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner', False):
+        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+
+    barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
+
+    try:
+        cup_size  = request.POST.get('cup_size', '300')
+        if cup_size not in ('300', '500'):
+            cup_size = '300'
+        qty       = max(1, int(request.POST.get('qty', 1)))
+        unit_cost = Decimal(str(request.POST.get('unit_cost', '0')))
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'Nambari si sahihi'}, status=400)
+
+    if unit_cost <= 0:
+        return JsonResponse({'ok': False, 'error': 'Weka bei ya kikombe kimoja'}, status=400)
+
+    total_cost = (unit_cost * qty).quantize(Decimal('0.01'))
+    note = (request.POST.get('note') or '').strip()
+
+    BarCupLog.objects.create(
+        barrel=barrel,
+        business=up.business,
+        cup_size=cup_size,
+        qty=qty,
+        unit_cost=unit_cost,
+        total_cost=total_cost,
+        note=note,
+    )
+
+    # Return updated cup stats for this barrel
+    logs = barrel.cup_logs.all()
+    cups_300 = sum(l.qty for l in logs if l.cup_size == '300')
+    cups_500 = sum(l.qty for l in logs if l.cup_size == '500')
+    cups_used = barrel.transactions.filter(type='Issue').count()
+
+    return JsonResponse({
+        'ok': True,
+        'cups_300_bought': cups_300,
+        'cups_500_bought': cups_500,
+        'cups_used': cups_used,
+        'total_cost': float(total_cost),
     })

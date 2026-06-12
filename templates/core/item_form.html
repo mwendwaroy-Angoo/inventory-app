@@ -159,6 +159,11 @@
                     <option value="Bottled Beer">
                     <option value="Canned Beer">
                     <option value="Draft Beer">
+                    <!-- ── Bar / Keg (barrel — separate module) ── -->
+                    <option value="Keg">
+                    <option value="Keg Regular">
+                    <option value="Keg Dark">
+                    <option value="Keg Gold">
                     <!-- ── Bar / Mixers ── -->
                     <option value="Cocktails">
                     <option value="Soft Drinks">
@@ -603,6 +608,8 @@
               unit: '750ml', note: 'Wine — sold by glass, half or full bottle. Select category to quick-fill presets.' },
             { keys: ['beer', 'tusker', 'pilsner', 'guinness', 'heineken', 'white cap', 'senator', 'kingfisher'],
               unit: '500ml', note: 'Beer — sold as full bottle or can.' },
+            { keys: ['keg regular', 'keg dark', 'keg gold', 'keg'],
+              unit: 'Ml', note: 'Keg barrel — tick "This is a keg item" below. Stock tracked by barrel weight; presets define serving sizes (Kikombe 300ml, Jug 1250ml).' },
             { keys: ['baileys', 'amarula', 'kahlua', 'liqueur', 'schnapps'],
               unit: '750ml', note: 'Liqueur — sold by shot. Select category to quick-fill presets.' },
         ];
