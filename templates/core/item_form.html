@@ -422,6 +422,14 @@
                                         <option value="Small Heap">{% trans 'Small Heap' %}</option>
                                         <option value="Large Heap">{% trans 'Large Heap' %}</option>
                                     </optgroup>
+                                    <optgroup label="🍺 {% trans 'Bar / Keg' %}">
+                                        <option value="Shot">{% trans 'Shot (30ml)' %}</option>
+                                        <option value="Double">{% trans 'Double (60ml)' %}</option>
+                                        <option value="Kikombe">{% trans 'Kikombe (300ml)' %}</option>
+                                        <option value="Half Pint">{% trans 'Half Pint (284ml)' %}</option>
+                                        <option value="Pint">{% trans 'Pint (568ml)' %}</option>
+                                        <option value="Jug">{% trans 'Jug (1250ml)' %}</option>
+                                    </optgroup>
                                     <optgroup label="{% trans 'Other' %}">
                                         <option value="Custom">{% trans 'Custom (enter manually)' %}</option>
                                     </optgroup>
@@ -626,9 +634,14 @@
                     });
                 }
                 function applyProduceToggle(checked) {
-                    document.getElementById('portionPresetsSection').style.display = checked ? 'block' : 'none';
-                    document.getElementById('sellingPriceSection').style.display   = checked ? 'none'  : 'block';
-                    document.getElementById('produceSellingNote').style.display    = checked ? 'block' : 'none';
+                    var kegCb = document.getElementById('is_keg');
+                    var kegOn = kegCb && kegCb.checked;
+                    // Preset table stays visible if either produce OR keg is on
+                    document.getElementById('portionPresetsSection').style.display = (checked || kegOn) ? 'block' : 'none';
+                    if (!kegOn) {
+                        document.getElementById('sellingPriceSection').style.display = checked ? 'none' : 'block';
+                        document.getElementById('produceSellingNote').style.display  = checked ? 'block' : 'none';
+                    }
                     if (modeSection) modeSection.style.display = checked ? 'block' : 'none';
                     if (checked) applyModeToggle();
                 }
@@ -642,6 +655,12 @@
 
             // CHANGE 2c: auto-fill qty_consumed from standard label, editable only for Custom
             var PRESET_AUTOFILL = {
+                'Shot':                   '30',
+                'Double':                 '60',
+                'Kikombe':                '300',
+                'Half Pint':              '284',
+                'Pint':                   '568',
+                'Jug':                    '1250',
                 'Small Portion':          '0.0833',
                 'Quarter':                '0.25',
                 'Half':                   '0.5',
@@ -745,6 +764,14 @@
                     '<option value="Large Gorogoro">{% trans "Large Gorogoro" %}</option>' +
                     '<option value="Small Heap">{% trans "Small Heap" %}</option>' +
                     '<option value="Large Heap">{% trans "Large Heap" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="🍺 {% trans "Bar / Keg" %}">' +
+                    '<option value="Shot">{% trans "Shot (30ml)" %}</option>' +
+                    '<option value="Double">{% trans "Double (60ml)" %}</option>' +
+                    '<option value="Kikombe">{% trans "Kikombe (300ml)" %}</option>' +
+                    '<option value="Half Pint">{% trans "Half Pint (284ml)" %}</option>' +
+                    '<option value="Pint">{% trans "Pint (568ml)" %}</option>' +
+                    '<option value="Jug">{% trans "Jug (1250ml)" %}</option>' +
                     '</optgroup>' +
                     '<optgroup label="{% trans "Other" %}">' +
                     '<option value="Custom">{% trans "Custom (enter manually)" %}</option>' +
