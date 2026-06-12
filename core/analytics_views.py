@@ -34,14 +34,13 @@ from core.views import get_user_profile, owner_required
 def _units(t):
     """Unit count for a transaction.
 
-    Bunch-mode greens: qty is a fractional bundle deduction (e.g. -0.2857) which is
-    meaningless as 'units sold'. Identified by produce_bunch_id being set — count as
-    1 customer portion instead.
-
-    Portion-preset multi-piece (e.g. Tatu mbao = 3 for KES 20): qty IS meaningful
-    (3 items deducted) and sale_amount is set for correct revenue. Return abs(qty).
+    Bunch-mode greens: qty is a fractional bundle deduction — count as 1 customer portion.
+    Keg barrel pours: qty is stored in ml (e.g. -500 for a pint) — count as 1 serving.
+    Regular items: return abs(qty).
     """
     if getattr(t, 'produce_bunch_id', None) is not None:
+        return 1.0
+    if getattr(t, 'keg_barrel_id', None) is not None:
         return 1.0
     return float(abs(t.qty or 0))
 
@@ -80,12 +79,12 @@ def analytics_dashboard(request):
     current_sales = Transaction.objects.filter(
         business=business, type='Issue',
         date__gte=start_date, date__lte=today,
-    ).select_related('item')
+    ).select_related('item', 'keg_barrel', 'produce_bunch')
 
     prev_sales = Transaction.objects.filter(
         business=business, type='Issue',
         date__gte=prev_start, date__lte=prev_end,
-    ).select_related('item')
+    ).select_related('item', 'keg_barrel', 'produce_bunch')
 
     if selected_product:
         current_sales = current_sales.filter(item_id=selected_product)
@@ -267,6 +266,8 @@ def analytics_dashboard(request):
 
     velocity_data = []
     for item in all_items:
+        if item.is_keg:
+            continue  # keg stock tracked via barrel weight/envelope, not item balance
         balance    = float(item.current_balance())
         units_sold = item_units_sold.get(item.id, 0.0)
         daily_rate = units_sold / days if days > 0 else 0.0
@@ -390,7 +391,7 @@ def analytics_dashboard(request):
         # All-time sales and expenses — not period filtered
         all_sales = Transaction.objects.filter(
             business=business, type='Issue'
-        ).select_related('item').order_by('date')
+        ).select_related('item', 'keg_barrel', 'produce_bunch').order_by('date')
 
         all_expenses = BusinessExpense.objects.filter(
             business=business

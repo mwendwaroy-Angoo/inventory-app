@@ -412,6 +412,13 @@ class Item(models.Model):
             return self.current_balance() <= self.reorder_level
 
     def stock_value(self):
+        if self.is_keg:
+            # Keg stock is tracked via barrel envelopes, not item balance.
+            # Count only sealed (unopened) barrels at cost.
+            sealed = self.keg_barrels.filter(status='SEALED').aggregate(
+                total=models.Sum('cost_price')
+            )['total'] or 0
+            return float(sealed)
         if self.cost_price and self.current_balance() > 0:
             return float(self.cost_price) * float(self.current_balance())
         return 0
@@ -512,6 +519,13 @@ class Transaction(models.Model):
 
     def cost(self):
         if self.type != 'Issue':
+            return 0
+        # Keg barrel pours: qty is stored in ml — must NOT be multiplied by KES cost_price.
+        # Use proportional cost: sale_amount * (barrel_cost / barrel_target).
+        if self.keg_barrel_id:
+            barrel = self.keg_barrel
+            if barrel and float(barrel.target_revenue or 0) > 0 and self.sale_amount is not None:
+                return float(self.sale_amount) * float(barrel.cost_price) / float(barrel.target_revenue)
             return 0
         # Bunch sales carry their cost on the bunch, not the item.
         if self.produce_bunch_id and self.produce_bunch and self.produce_bunch.cost_price:

@@ -2038,13 +2038,22 @@ def next_material_no(request):
     prefix = (request.GET.get('prefix') or '').strip().upper()
     if not prefix or len(prefix) > 4 or not prefix[0].isalpha():
         return JsonResponse({'next': ''})
-    pattern = f'{prefix}-'
     business = up.business
-    count = Item.objects.filter(
+    existing = Item.objects.filter(
         store__business=business,
-        material_no__istartswith=pattern,
-    ).count()
-    return JsonResponse({'next': f'{prefix}-{count + 1:02d}'})
+        material_no__istartswith=prefix + '-',
+    ).values_list('material_no', flat=True)
+
+    max_num = 0
+    for mn in existing:
+        try:
+            suffix = mn.split('-', 1)[1]
+            if suffix.isdigit():
+                max_num = max(max_num, int(suffix))
+        except (IndexError, ValueError):
+            pass
+
+    return JsonResponse({'next': f'{prefix}-{max_num + 1:02d}'})
 
 
 @login_required
