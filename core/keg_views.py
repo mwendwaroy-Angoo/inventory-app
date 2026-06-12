@@ -76,6 +76,13 @@ def bar_board_api(request):
             'stale': primary.is_stale() if primary else False,
             'has_history': bool(all_barrels),
             'cost_price': float(it.cost_price or 0),
+            # Per-barrel data for the edit modal
+            'tapped_barrel_cost':   float(primary.cost_price) if primary else 0.0,
+            'tapped_barrel_target': float(primary.target_revenue) if primary else 0.0,
+            'next_sealed_cost':     float(next_sealed.cost_price) if next_sealed else 0.0,
+            'next_sealed_target':   float(next_sealed.target_revenue) if next_sealed else 0.0,
+            'next_sealed_gross':    float(next_sealed.gross_weight_kg) if next_sealed else 0.0,
+            'next_sealed_tare':     float(next_sealed.tare_weight_kg) if next_sealed else 0.0,
         })
 
     return JsonResponse({
@@ -345,6 +352,52 @@ def weigh_barrel(request, barrel_id):
         'weight_kg': float(weight_kg),
         'remaining_envelope': round(barrel.remaining_envelope(), 0),
     })
+
+
+# ── Edit barrel parameters ───────────────────────────────────────────────────
+
+@login_required
+@require_POST
+def edit_barrel(request, barrel_id):
+    """Owner corrects a barrel's financial parameters (cost, target, weight)."""
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner', False):
+        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+
+    barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
+
+    if barrel.status not in ('SEALED', 'TAPPED'):
+        return JsonResponse({'ok': False, 'error': 'Barrel imekwisha au imetupwa'}, status=400)
+
+    updates = {}
+    try:
+        cost_raw = (request.POST.get('cost_price') or '').strip()
+        if cost_raw:
+            updates['cost_price'] = Decimal(cost_raw)
+
+        target_raw = (request.POST.get('target_revenue') or '').strip()
+        if target_raw:
+            updates['target_revenue'] = Decimal(target_raw)
+
+        if barrel.status == 'SEALED':
+            gross_raw = (request.POST.get('gross_weight_kg') or '').strip()
+            if gross_raw:
+                updates['gross_weight_kg'] = Decimal(gross_raw)
+
+            tare_raw = (request.POST.get('tare_weight_kg') or '').strip()
+            if tare_raw:
+                updates['tare_weight_kg'] = Decimal(tare_raw)
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'Nambari si sahihi'}, status=400)
+
+    if not updates:
+        return JsonResponse({'ok': False, 'error': 'Hakuna mabadiliko ya kuingiza'}, status=400)
+
+    for field, value in updates.items():
+        setattr(barrel, field, value)
+    barrel.save(update_fields=list(updates.keys()))
+
+    return JsonResponse({'ok': True})
 
 
 # ── Discard / return a barrel ─────────────────────────────────────────────────

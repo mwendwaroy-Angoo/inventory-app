@@ -51,7 +51,7 @@
   white-space: nowrap;
 }
 
-/* ── Owner action buttons on tile ──────────────────── */
+/* ── Action buttons on tile ─────────────────────────── */
 .keg-owner-actions {
   display: flex;
   gap: 5px;
@@ -100,6 +100,24 @@
 }
 .preset-label { color: #b0b0b0; font-size: 0.85rem; }
 
+/* ── Qty stepper in cart ────────────────────────────── */
+.keg-qty-btn {
+  background: rgba(201,168,76,0.12);
+  border: 1px solid rgba(201,168,76,0.3);
+  color: #c9a84c;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.keg-qty-btn:hover { background: rgba(201,168,76,0.28); }
+
 /* ── Cart bar ───────────────────────────────────────── */
 #keg-cart-bar {
   position: fixed;
@@ -147,7 +165,6 @@
 }
 .bar-modal label      { color: #b0b0b0; font-size: 0.85rem; }
 .bar-modal .form-text { color: #666; font-size: 0.78rem; }
-.bar-modal .form-check-label { color: #b0b0b0; }
 
 /* ── Variance report colours ────────────────────────── */
 .var-ok      { color: #4caf50; }
@@ -155,14 +172,31 @@
 .var-danger  { color: #c0395a; }
 
 /* ── Sell modal cart lines ──────────────────────────── */
-#sell-cart-lines { max-height: 160px; overflow-y: auto; }
+#sell-cart-lines { max-height: 200px; overflow-y: auto; }
 .sell-cart-line {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   font-size: 0.83rem;
-  padding: 3px 0;
+  padding: 4px 0;
   border-bottom: 1px solid #333;
   color: #f0ece4;
+}
+
+/* ── Toast ──────────────────────────────────────────── */
+#keg-toast {
+  display: none;
+  position: fixed;
+  top: 80px; right: 20px;
+  z-index: 2000;
+  background: #2a2a2a;
+  border: 1px solid #c9a84c;
+  border-radius: 10px;
+  padding: 0.75rem 1.25rem;
+  color: #f0ece4;
+  font-size: 0.88rem;
+  max-width: 300px;
+  transition: opacity 0.4s;
 }
 </style>
 {% endblock %}
@@ -191,6 +225,9 @@
   </div>
 
 </div><!-- /container -->
+
+<!-- Toast notification -->
+<div id="keg-toast"></div>
 
 <!-- ════════════════════════════════════════════════════
      CART BAR (fixed bottom)
@@ -237,9 +274,9 @@
                 style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; line-height:1;">✕</button>
       </div>
       <div class="modal-body">
-        <!-- Preset buttons -->
+        <!-- Preset buttons — tap to add to cart -->
         <div id="sell-presets" class="d-grid gap-2 mb-3"></div>
-        <!-- Running cart for this sale session -->
+        <!-- Running cart with qty steppers -->
         <div id="sell-cart-lines"></div>
       </div>
       <div class="modal-footer justify-content-between">
@@ -374,7 +411,7 @@
           <input type="number" step="0.01" id="recv-scale" class="form-control"
                  placeholder="e.g. 58.4">
           <div class="form-text">
-            Ikiwa scale inasema uzito tofauti na default, ingiza hapa. Hiyo ndiyo itakayohifadhiwa.
+            Ikiwa scale inasema uzito tofauti na default, ingiza hapa.
           </div>
         </div>
         <div class="mb-2">
@@ -392,6 +429,58 @@
                 class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Funga</button>
         <button type="button" onclick="window.submitReceive()" class="btn btn-gold"
                 id="recv-submit-btn">Pokea Barrel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     EDIT BARREL MODAL (owner only)
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="editBarrelModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" style="font-family:'Playfair Display',serif; color:#c9a84c;">
+          Hariri Barrel — <span id="edit-barrel-label"></span>
+        </h5>
+        <button type="button" onclick="window.closeEditModal()"
+                style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; line-height:1;">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edit-barrel-id">
+        <input type="hidden" id="edit-barrel-status">
+        <div class="mb-3">
+          <label class="form-label">Bei ya barrel (KES)</label>
+          <input type="number" id="edit-cost" class="form-control" placeholder="Gharama ya ununuzi">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Target revenue (KES)</label>
+          <input type="number" id="edit-target" class="form-control" placeholder="Matarajio ya mapato">
+        </div>
+        <!-- Weight fields — sealed barrels only -->
+        <div id="edit-weight-fields">
+          <div class="row g-2 mb-2">
+            <div class="col-6">
+              <label class="form-label">Uzito jumla (kg)</label>
+              <input type="number" step="0.01" id="edit-gross" class="form-control">
+            </div>
+            <div class="col-6">
+              <label class="form-label">Tare (kg)</label>
+              <input type="number" step="0.01" id="edit-tare" class="form-control">
+            </div>
+          </div>
+          <div class="form-text" style="margin-bottom:0.5rem;">
+            Uzito wa chombo (tare) unarekebisha volume yote ya barrel.
+          </div>
+        </div>
+        <div id="edit-error" style="display:none; color:#c0395a; font-size:0.85rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" onclick="window.closeEditModal()"
+                class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Funga</button>
+        <button type="button" onclick="window.submitEdit()" class="btn btn-gold btn-sm"
+                id="edit-submit-btn">Hifadhi</button>
       </div>
     </div>
   </div>
@@ -451,10 +540,13 @@
   var CSRF        = "{{ csrf_token }}";
 
   /* ── State ─────────────────────────────────────────────── */
-  var _boardData    = {};   // item_id → keg data from board API
-  var kegCart       = [];
-  var _pendingTapId = null; // barrel_id awaiting tap confirm
-  var _weighBarrel  = null; // barrel_id for current weigh action
+  var _boardData  = {};   // item_id → keg data from board API
+  var _presetData = {};   // preset_id → {id, label, price, quantity_consumed}
+  // Cart: keyed by 'barrelId:presetId' for grouping — avoids duplicate lines
+  var kegCart     = {};
+  var _lastKey    = null; // last modified cart key (for Futa undo)
+  var _pendingTapId = null;
+  var _weighBarrel  = null;
 
   /* ── Bootstrap modal helpers ───────────────────────────── */
   function showModal(id) {
@@ -485,6 +577,19 @@
     return Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0});
   }
 
+  /* ── Toast notification ────────────────────────────────── */
+  function showToast(msg) {
+    var el = document.getElementById('keg-toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = 'block';
+    el.style.opacity = '1';
+    setTimeout(function () {
+      el.style.opacity = '0';
+      setTimeout(function () { el.style.display = 'none'; }, 400);
+    }, 5000);
+  }
+
   /* ════════════════════════════════════════════════════════
      BOARD LOAD
   ════════════════════════════════════════════════════════ */
@@ -503,18 +608,21 @@
     var board = document.getElementById('keg-board');
     var kegs  = data.kegs || [];
 
-    // Cache board data for onClick lookups
-    _boardData = {};
-    kegs.forEach(function (kg) { _boardData[kg.item_id] = kg; });
+    // Rebuild caches
+    _boardData  = {};
+    _presetData = {};
+    kegs.forEach(function (kg) {
+      _boardData[kg.item_id] = kg;
+      (kg.presets || []).forEach(function (p) { _presetData[p.id] = p; });
+    });
 
-    // Populate receive modal item dropdown
     _populateReceiveItems(kegs);
 
     if (kegs.length === 0) {
       board.innerHTML =
         '<div class="col-12 text-center py-5" style="color:#b0b0b0;">' +
         (QS_IS_OWNER
-          ? 'Hakuna keg items bado. <a href="/stock/add/" style="color:#c9a84c;">Ongeza keg item kwenye Manage Items</a> kwanza.'
+          ? 'Hakuna keg items bado. <a href="/stock/add/" style="color:#c9a84c;">Ongeza keg item</a> kwanza.'
           : 'Hakuna keg items bado. Omba mmiliki aongeze.') +
         '</div>';
       return;
@@ -540,24 +648,37 @@
         }
       }
 
-      // Owner action buttons
-      var ownerHtml = '';
-      if (QS_IS_OWNER) {
-        if (hasTap) {
-          ownerHtml = '<div class="keg-owner-actions">' +
-            '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openWeighModal(' + kg.item_id + ')">Pima</button>' +
-            (kg.next_sealed_barrel_id
-              ? '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openTapModal(' + kg.item_id + ',' + kg.next_sealed_barrel_id + ')">+ Barrel</button>'
-              : '') +
-            '<button class="keg-owner-btn btn-rs" onclick="event.stopPropagation();window.openDiscardModal(' + kg.item_id + ',' + kg.tapped_barrel_id + ')">Tupa</button>' +
-            '</div>';
-        } else if (kg.next_sealed_barrel_id) {
-          ownerHtml = '<div class="keg-owner-actions">' +
-            '<button class="keg-owner-btn" style="flex:unset;padding:3px 12px;" ' +
-            'onclick="event.stopPropagation();window.openTapModal(' + kg.item_id + ',' + kg.next_sealed_barrel_id + ')">' +
-            'Fungua Barrel (' + kg.sealed_barrels + ' sealed)</button>' +
-            '</div>';
+      // Action buttons:
+      // • Pima — visible to ALL staff (staff do shift weigh-ins too)
+      // • Hariri, + Barrel, Tupa — owner only
+      var actionHtml = '';
+      if (hasTap) {
+        actionHtml = '<div class="keg-owner-actions">';
+        // Pima: everyone
+        actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openWeighModal(' + kg.item_id + ')">Pima</button>';
+        if (QS_IS_OWNER) {
+          actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openEditModal(' +
+            kg.tapped_barrel_id + ',\'TAPPED\',' + kg.tapped_barrel_cost + ',' + kg.tapped_barrel_target +
+            ')">Hariri</button>';
+          if (kg.next_sealed_barrel_id) {
+            actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openTapModal(' +
+              kg.item_id + ',' + kg.next_sealed_barrel_id + ')">+ Barrel</button>';
+          }
+          actionHtml += '<button class="keg-owner-btn btn-rs" onclick="event.stopPropagation();window.openDiscardModal(' +
+            kg.item_id + ',' + kg.tapped_barrel_id + ')">Tupa</button>';
         }
+        actionHtml += '</div>';
+      } else if (kg.next_sealed_barrel_id && QS_IS_OWNER) {
+        actionHtml = '<div class="keg-owner-actions">' +
+          '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openEditModal(' +
+            kg.next_sealed_barrel_id + ',\'SEALED\',' +
+            kg.next_sealed_cost + ',' + kg.next_sealed_target + ',' +
+            kg.next_sealed_gross + ',' + kg.next_sealed_tare +
+          ')">Hariri</button>' +
+          '<button class="keg-owner-btn" style="flex:unset;padding:3px 10px;" ' +
+          'onclick="event.stopPropagation();window.openTapModal(' + kg.item_id + ',' + kg.next_sealed_barrel_id + ')">' +
+          'Fungua Barrel (' + kg.sealed_barrels + ' sealed)</button>' +
+          '</div>';
       }
 
       if (hasTap) {
@@ -569,7 +690,7 @@
           '<div class="keg-remaining">KES ' + fmt(kg.remaining) + '</div>' +
           '<div class="keg-meta">' + kg.latest_weight_kg + ' kg · Target ' + fmt(kg.target_open) + badge + '</div>' +
           '<div class="mt-2">' + presetChips + '</div>' +
-          ownerHtml +
+          actionHtml +
           '</div></div>';
       } else {
         html +=
@@ -578,11 +699,11 @@
           '<div class="keg-name">' + kg.name + '</div>' +
           '<div class="mt-1" style="color:#b0b0b0; font-size:0.85rem;">' +
           (kg.sealed_barrels > 0
-            ? kg.sealed_barrels + ' barrel(s) sealed'
+            ? kg.sealed_barrels + ' barrel(s) sealed — bonyeza Fungua'
             : 'Hakuna barrel') +
           '</div>' +
           '<div class="mt-2">' + presetChips + '</div>' +
-          ownerHtml +
+          actionHtml +
           '</div></div>';
       }
     });
@@ -613,18 +734,13 @@
 
     document.getElementById('sell-modal-title').textContent = kg.name;
 
-    // Build preset buttons
+    // Build preset buttons — pass ONLY numeric IDs (no string labels in onclick)
+    // Labels are looked up from _presetData to avoid attribute quoting issues
     var presHtml = '';
     (kg.presets || []).forEach(function (p) {
       presHtml +=
         '<button class="preset-sell-btn" ' +
-        'onclick="window.addToKegCart(' +
-          kg.tapped_barrel_id + ',' +
-          p.id + ',' +
-          p.price + ',' +
-          p.quantity_consumed + ',' +
-          JSON.stringify(p.label) +
-        ')">' +
+        'onclick="window.addToKegCart(' + kg.tapped_barrel_id + ',' + p.id + ')">' +
         '<span class="preset-label">' + p.label + '</span>' +
         '<span class="preset-price">' + fmt(p.price) + '/=</span>' +
         '</button>';
@@ -638,41 +754,72 @@
 
   window.closeSellModal = function () { hideModal('sellModal'); };
 
-  window.addToKegCart = function (barrelId, presetId, price, qtyConsumeMl, label) {
-    kegCart.push({
-      barrel_id: barrelId,
-      preset_id: presetId,
-      label:     label,
-      price:     price,
-      qty_consumed_ml: qtyConsumeMl,
-      qty:       1,
-      subtotal:  price,
-    });
+  /* ── Cart: map keyed by 'barrelId:presetId' ─────────────── */
+  window.addToKegCart = function (barrelId, presetId) {
+    var p = _presetData[presetId];
+    if (!p) return;
+    var key = barrelId + ':' + presetId;
+    _lastKey = key;
+    if (kegCart[key]) {
+      kegCart[key].qty += 1;
+    } else {
+      kegCart[key] = {
+        barrel_id: barrelId,
+        preset_id: presetId,
+        label:     p.label,
+        price:     p.price,
+        qty:       1,
+      };
+    }
     _renderSellCartLines();
     _updateCartBar();
 
     var flash = document.getElementById('sell-futa-flash');
-    flash.textContent = '↩ Futa — ' + label;
+    flash.textContent = '↩ Futa — ' + p.label;
     flash.style.display = 'inline-block';
 
     var gf = document.getElementById('futa-flash');
-    gf.textContent = '↩ Futa — ' + label;
+    gf.textContent = '↩ Futa — ' + p.label;
     gf.style.display = 'inline-block';
+  };
+
+  window.kegCartQtyChange = function (key, delta) {
+    if (!kegCart[key]) return;
+    kegCart[key].qty += delta;
+    if (kegCart[key].qty <= 0) {
+      delete kegCart[key];
+      if (_lastKey === key) _lastKey = null;
+    }
+    _renderSellCartLines();
+    _updateCartBar();
   };
 
   function _renderSellCartLines() {
     var el = document.getElementById('sell-cart-lines');
     if (!el) return;
-    if (kegCart.length === 0) { el.innerHTML = ''; return; }
-    var total = kegCart.reduce(function (s, l) { return s + l.subtotal; }, 0);
+    var entries = Object.entries(kegCart);
+    if (entries.length === 0) { el.innerHTML = ''; return; }
+    var total = 0;
     var html  = '';
-    kegCart.forEach(function (l) {
-      html += '<div class="sell-cart-line"><span>' + l.label + '</span>' +
-              '<span style="color:#c9a84c;">KES ' + fmt(l.subtotal) + '</span></div>';
+    entries.forEach(function (entry) {
+      var key = entry[0];
+      var l   = entry[1];
+      var sub = l.price * l.qty;
+      total  += sub;
+      html   +=
+        '<div class="sell-cart-line">' +
+        '<span>' + l.label + '</span>' +
+        '<span style="display:flex;align-items:center;gap:6px;">' +
+        '<button class="keg-qty-btn" onclick="window.kegCartQtyChange(\'' + key + '\',-1)">−</button>' +
+        '<span style="color:#e2c36e;min-width:22px;text-align:center;font-weight:600;">' + l.qty + '</span>' +
+        '<button class="keg-qty-btn" onclick="window.kegCartQtyChange(\'' + key + '\',1)">+</button>' +
+        '<span style="color:#c9a84c;min-width:68px;text-align:right;">KES ' + fmt(sub) + '</span>' +
+        '</span></div>';
     });
-    html += '<div class="sell-cart-line" style="font-weight:700;">' +
-            '<span style="color:#f0ece4;">Jumla</span>' +
-            '<span style="color:#c9a84c;">KES ' + fmt(total) + '</span></div>';
+    html +=
+      '<div class="sell-cart-line" style="font-weight:700;border-top:1px solid #3a3a3a;margin-top:4px;padding-top:5px;border-bottom:none;">' +
+      '<span style="color:#f0ece4;">Jumla</span>' +
+      '<span style="color:#c9a84c;">KES ' + fmt(total) + '</span></div>';
     el.innerHTML = html;
   }
 
@@ -682,32 +829,42 @@
      CART BAR
   ════════════════════════════════════════════════════════ */
   function _updateCartBar() {
-    var bar = document.getElementById('keg-cart-bar');
-    if (kegCart.length === 0) {
+    var bar  = document.getElementById('keg-cart-bar');
+    var keys = Object.keys(kegCart);
+    if (keys.length === 0) {
       bar.style.display = 'none';
       return;
     }
     bar.style.display = 'flex';
-    var total = kegCart.reduce(function (s, l) { return s + l.subtotal; }, 0);
-    document.getElementById('keg-cart-count').textContent = kegCart.length + ' item(s)';
+    var total = 0;
+    var count = 0;
+    keys.forEach(function (k) {
+      total += kegCart[k].price * kegCart[k].qty;
+      count += kegCart[k].qty;
+    });
+    document.getElementById('keg-cart-count').textContent = count + ' item(s)';
     document.getElementById('keg-cart-total').textContent = 'KES ' + fmt(total);
   }
 
   window.futaLast = function () {
-    if (kegCart.length === 0) return;
-    kegCart.pop();
+    if (!_lastKey || !kegCart[_lastKey]) return;
+    kegCart[_lastKey].qty -= 1;
+    if (kegCart[_lastKey].qty <= 0) delete kegCart[_lastKey];
+    _lastKey = null;
     _renderSellCartLines();
     _updateCartBar();
-    var gf = document.getElementById('futa-flash');
-    gf.style.display = 'none';
+    document.getElementById('futa-flash').style.display = 'none';
     var sf = document.getElementById('sell-futa-flash');
     if (sf) sf.style.display = 'none';
   };
 
   window.completeSale = function () {
-    if (kegCart.length === 0) return;
-    var method = document.querySelector('input[name="keg_payment"]:checked').value;
-    document.getElementById('keg-cart-input').value  = JSON.stringify(kegCart);
+    if (Object.keys(kegCart).length === 0) return;
+    var method    = document.querySelector('input[name="keg_payment"]:checked').value;
+    var cartArray = Object.values(kegCart).map(function (l) {
+      return {barrel_id: l.barrel_id, preset_id: l.preset_id, qty: l.qty};
+    });
+    document.getElementById('keg-cart-input').value   = JSON.stringify(cartArray);
     document.getElementById('keg-payment-input').value = method;
     document.getElementById('keg-sale-form').submit();
   };
@@ -725,11 +882,11 @@
       'Scale ya mwisho: ' + kg.latest_weight_kg + ' kg' +
       ' · Envelope iliyobaki: KES ' + fmt(kg.remaining);
     document.getElementById('weigh-kg-input').value = '';
-    document.getElementById('weigh-report').style.display = 'none';
-    document.getElementById('weigh-report').innerHTML = '';
+    document.getElementById('weigh-report').style.display  = 'none';
+    document.getElementById('weigh-report').innerHTML      = '';
     var btn = document.getElementById('weigh-submit-btn');
     btn.textContent = 'Pima';
-    btn.disabled = false;
+    btn.disabled    = false;
     document.getElementById('weigh-spot').checked = true;
 
     showModal('weighModal');
@@ -745,7 +902,7 @@
     }
     var readingType = document.querySelector('input[name="weigh_type"]:checked').value;
     var btn = document.getElementById('weigh-submit-btn');
-    btn.disabled = true;
+    btn.disabled    = true;
     btn.textContent = 'Inapima...';
 
     post('/stock/bar/weigh/' + _weighBarrel + '/', {
@@ -755,37 +912,30 @@
       .then(function (r) { return r.json(); })
       .then(function (d) {
         btn.textContent = 'Pima tena';
-        btn.disabled = false;
+        btn.disabled    = false;
         var rep = document.getElementById('weigh-report');
         rep.style.display = 'block';
         if (!d.ok) {
           rep.innerHTML = '<div style="color:#c0395a;">' + d.error + '</div>';
           return;
         }
-        var fc    = d.flag === 'ok' ? 'var-ok' : (d.flag === 'warning' ? 'var-warning' : 'var-danger');
-        var icon  = d.flag === 'ok' ? '✓' : (d.flag === 'warning' ? '⚠' : '🚨');
+        var fc   = d.flag === 'ok' ? 'var-ok' : (d.flag === 'warning' ? 'var-warning' : 'var-danger');
+        var icon = d.flag === 'ok' ? '✓' : (d.flag === 'warning' ? '⚠' : '🚨');
         var varSign = d.variance_kes >= 0 ? '+' : '';
         rep.innerHTML =
           '<div style="background:#1a1a1a; border-radius:10px; padding:0.85rem; border:1px solid #3a3a3a;">' +
-          '<div style="color:#f0ece4; margin-bottom:4px;">' +
-          '<strong>Scale:</strong> ' + d.dispensed_l + 'L imetoka (≈ KES ' + fmt(d.expected_rev) + ')' +
-          '</div>' +
-          '<div style="color:#f0ece4; margin-bottom:4px;">' +
-          '<strong>Vitabu:</strong> KES ' + fmt(d.recorded_rev) +
-          '</div>' +
+          '<div style="color:#f0ece4; margin-bottom:4px;"><strong>Scale:</strong> ' +
+          d.dispensed_l + 'L imetoka (≈ KES ' + fmt(d.expected_rev) + ')</div>' +
+          '<div style="color:#f0ece4; margin-bottom:4px;"><strong>Vitabu:</strong> KES ' + fmt(d.recorded_rev) + '</div>' +
           '<div class="' + fc + '" style="font-weight:700; font-size:1rem;">' +
-          'Tofauti: ' + varSign + 'KES ' + fmt(d.variance_kes) + ' (' + d.variance_pct + '%) ' + icon +
-          '</div>' +
-          '<div style="color:#b0b0b0; font-size:0.78rem; margin-top:6px;">' +
-          'Envelope iliyobaki: KES ' + fmt(d.remaining_envelope) +
-          '</div>' +
-          '</div>';
-        // Refresh board so latest_weight_kg updates
+          'Tofauti: ' + varSign + 'KES ' + fmt(d.variance_kes) + ' (' + d.variance_pct + '%) ' + icon + '</div>' +
+          '<div style="color:#b0b0b0; font-size:0.78rem; margin-top:6px;">Envelope iliyobaki: KES ' +
+          fmt(d.remaining_envelope) + '</div></div>';
         loadBarBoard();
       })
       .catch(function () {
         btn.textContent = 'Pima';
-        btn.disabled = false;
+        btn.disabled    = false;
       });
   };
 
@@ -798,7 +948,7 @@
     document.getElementById('tap-confirm-text').textContent =
       'Fungua barrel ya ' + (kg ? kg.name : 'keg') + '? Barrel itakuwa tayari kuuza.';
     document.getElementById('tap-confirm-btn').textContent = 'Fungua';
-    document.getElementById('tap-confirm-btn').disabled = false;
+    document.getElementById('tap-confirm-btn').disabled    = false;
     showModal('tapModal');
   };
 
@@ -807,7 +957,7 @@
   window.confirmTap = function () {
     if (!_pendingTapId) return;
     var btn = document.getElementById('tap-confirm-btn');
-    btn.disabled = true;
+    btn.disabled    = true;
     btn.textContent = 'Inafungua...';
     post('/stock/bar/tap/' + _pendingTapId + '/', {})
       .then(function (r) { return r.json(); })
@@ -815,24 +965,25 @@
         hideModal('tapModal');
         if (d.ok) {
           loadBarBoard();
+          showToast('✓ Barrel imefunguliwa! Weza kuanza kuuza sasa.');
         } else {
           alert(d.error || 'Hitilafu ya kufungua barrel.');
         }
       })
       .catch(function () {
-        btn.disabled = false;
+        btn.disabled    = false;
         btn.textContent = 'Fungua';
       });
   };
 
   /* ════════════════════════════════════════════════════════
-     DISCARD (browser confirm — no dedicated modal in Sprint 2)
+     DISCARD
   ════════════════════════════════════════════════════════ */
   window.openDiscardModal = function (itemId, barrelId) {
     var kg     = _boardData[itemId];
     var name   = kg ? kg.name : 'barrel hii';
     var reason = window.prompt('Sababu ya kutupa ' + name + ':', 'Imerudishwa kwa distributor');
-    if (reason === null) return; // cancelled
+    if (reason === null) return;
     post('/stock/bar/discard/' + barrelId + '/', {reason: reason || 'Discarded'})
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -851,8 +1002,8 @@
   window.closeReceiveModal = function () { hideModal('receiveModal'); };
 
   window.autoCalcTarget = function () {
-    var cost      = parseFloat(document.getElementById('recv-cost').value) || 0;
-    var targetEl  = document.getElementById('recv-target');
+    var cost     = parseFloat(document.getElementById('recv-cost').value) || 0;
+    var targetEl = document.getElementById('recv-target');
     if (!targetEl) return;
     if (cost > 0 && !targetEl.dataset.userEdited) {
       targetEl.value = Math.round(cost * KegRevMult);
@@ -887,40 +1038,114 @@
     }
 
     var btn = document.getElementById('recv-submit-btn');
-    btn.disabled = true;
+    btn.disabled    = true;
     btn.textContent = 'Inahifadhi...';
 
     var data = {
-      item_id:       itemId,
-      count:         count  || '1',
+      item_id:         itemId,
+      count:           count  || '1',
       cost_per_barrel: cost,
-      gross_kg:      gross,
-      tare_kg:       tare,
+      gross_kg:        gross,
+      tare_kg:         tare,
     };
-    if (scale)  data.scale_reading    = scale;
+    if (scale)  data.scale_reading     = scale;
     if (target) data.target_per_barrel = target;
 
     post('/stock/bar/receive/', data)
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        btn.disabled = false;
+        btn.disabled    = false;
         btn.textContent = 'Pokea Barrel';
         if (d.ok) {
           hideModal('receiveModal');
-          // Reset target user-edited flag
           if (_recvTargetEl) {
             _recvTargetEl.value = '';
             delete _recvTargetEl.dataset.userEdited;
           }
           loadBarBoard();
+          showToast('✓ Barrels ' + d.count + ' zimepokelewa! Bonyeza "Fungua Barrel" ili uanze kuuza.');
         } else {
           if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
         }
       })
       .catch(function () {
-        btn.disabled = false;
+        btn.disabled    = false;
         btn.textContent = 'Pokea Barrel';
         if (errEl) { errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; }
+      });
+  };
+
+  /* ════════════════════════════════════════════════════════
+     EDIT BARREL MODAL
+  ════════════════════════════════════════════════════════ */
+  window.openEditModal = function (barrelId, status, costPrice, targetRevenue, grossKg, tareKg) {
+    document.getElementById('edit-barrel-id').value     = barrelId;
+    document.getElementById('edit-barrel-status').value = status;
+    document.getElementById('edit-barrel-label').textContent =
+      status === 'TAPPED' ? 'Inauzwa sasa' : 'Sealed';
+    document.getElementById('edit-cost').value   = costPrice   || '';
+    document.getElementById('edit-target').value = targetRevenue || '';
+
+    var weightFields = document.getElementById('edit-weight-fields');
+    if (weightFields) {
+      weightFields.style.display = (status === 'SEALED') ? 'block' : 'none';
+      if (status === 'SEALED') {
+        document.getElementById('edit-gross').value = grossKg || '';
+        document.getElementById('edit-tare').value  = tareKg  || '';
+      }
+    }
+
+    var errEl = document.getElementById('edit-error');
+    if (errEl) errEl.style.display = 'none';
+
+    showModal('editBarrelModal');
+  };
+
+  window.closeEditModal = function () { hideModal('editBarrelModal'); };
+
+  window.submitEdit = function () {
+    var barrelId = document.getElementById('edit-barrel-id').value;
+    var status   = document.getElementById('edit-barrel-status').value;
+    var cost     = (document.getElementById('edit-cost').value   || '').trim();
+    var target   = (document.getElementById('edit-target').value || '').trim();
+    var errEl    = document.getElementById('edit-error');
+    if (errEl) errEl.style.display = 'none';
+
+    var data = {};
+    if (cost)   data.cost_price     = cost;
+    if (target) data.target_revenue = target;
+    if (status === 'SEALED') {
+      var gross = (document.getElementById('edit-gross').value || '').trim();
+      var tare  = (document.getElementById('edit-tare').value  || '').trim();
+      if (gross) data.gross_weight_kg = gross;
+      if (tare)  data.tare_weight_kg  = tare;
+    }
+
+    if (Object.keys(data).length === 0) {
+      if (errEl) { errEl.textContent = 'Ingiza angalau mabadiliko moja.'; errEl.style.display = 'block'; }
+      return;
+    }
+
+    var btn = document.getElementById('edit-submit-btn');
+    btn.disabled    = true;
+    btn.textContent = 'Inahifadhi...';
+
+    post('/stock/bar/edit/' + barrelId + '/', data)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled    = false;
+        btn.textContent = 'Hifadhi';
+        if (d.ok) {
+          hideModal('editBarrelModal');
+          loadBarBoard();
+          showToast('✓ Barrel imeharirishwa.');
+        } else {
+          if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
+        }
+      })
+      .catch(function () {
+        btn.disabled    = false;
+        btn.textContent = 'Hifadhi';
       });
   };
 
@@ -929,13 +1154,11 @@
   ════════════════════════════════════════════════════════ */
   loadBarBoard();
 
-  // Reload board when tab becomes visible again (staff could be on another tab)
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) loadBarBoard();
   });
 
   {% if success_data %}
-  // Show receipt modal after a successful POST sale
   showModal('successModal');
   {% endif %}
 

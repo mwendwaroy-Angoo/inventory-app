@@ -52,6 +52,7 @@ from core.keg_views import (
     tap_barrel,
     weigh_barrel,
     discard_barrel,
+    edit_barrel,
 )
 from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import (
@@ -169,6 +170,7 @@ urlpatterns = [
     path("stock/bar/tap/<int:barrel_id>/", tap_barrel, name="tap_barrel"),
     path("stock/bar/weigh/<int:barrel_id>/", weigh_barrel, name="weigh_barrel"),
     path("stock/bar/discard/<int:barrel_id>/", discard_barrel, name="discard_barrel"),
+    path("stock/bar/edit/<int:barrel_id>/", edit_barrel, name="edit_barrel"),
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────
     path("approvals/", pending_approvals, name="pending_approvals"),
