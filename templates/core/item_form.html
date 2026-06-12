@@ -115,7 +115,6 @@
             <div class="mb-3">
                 <label class="form-label" for="cat_text_input">
                     {% trans 'Category' %}
-                    <span style="color:#b0b0b0; font-size:0.8rem;">({% trans 'optional' %})</span>
                 </label>
                 <input type="text" name="cat_text_input" id="cat_text_input" class="form-control"
                        value="{{ form.instance.category.level1|default:'' }}"
@@ -219,6 +218,20 @@
             <div id="unitHint" style="display:none; margin-top:-0.5rem; margin-bottom:1rem; padding:0.45rem 0.75rem;
                  background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3);
                  border-radius:6px; font-size:0.8rem; color:#c9a84c;"></div>
+
+            <!-- Bar preset actions — appear when a bar category is detected (outside presets section) -->
+            <div id="barPresetActions" style="display:none; margin-bottom:1.25rem;">
+                <div style="font-size:0.8rem; color:#e2c36e; margin-bottom:0.4rem;">
+                    📦 <strong>{% trans 'Bottle size' %}</strong> — {% trans 'select one:' %}
+                </div>
+                <div id="barUnitChips" style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:0.65rem;">
+                    <!-- chips populated by JS per category -->
+                </div>
+                <button type="button" id="quickFillBarPresets"
+                        style="display:none; background:rgba(201,168,76,0.12); border:1px solid rgba(201,168,76,0.5); color:#e2c36e; border-radius:6px; padding:0.45rem 1.1rem; font-size:0.83rem; cursor:pointer; width:100%;">
+                    🥃 <span id="quickFillBarLabel">{% trans 'Quick-fill bar presets' %}</span>
+                </button>
+            </div>
 
             {% if form.recommended_tags %}
             <div class="mb-2">
@@ -518,10 +531,6 @@
                 <button type="button" id="quickFillPresets"
                         style="background:rgba(120,180,90,0.12); border:1px dashed rgba(120,180,90,0.4); color:#9fcaa0; border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:0.5rem; display:none;">
                     🥬 {% trans 'Quick-fill standard presets (10 / 20 / 30 / 50)' %}
-                </button>
-                <button type="button" id="quickFillBarPresets"
-                        style="display:none; background:rgba(201,168,76,0.10); border:1px dashed rgba(201,168,76,0.45); color:#e2c36e; border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:0.5rem;">
-                    🥃 <span id="quickFillBarLabel">{% trans 'Quick-fill bar presets' %}</span>
                 </button>
                 <button type="button" id="addPresetBtn"
                         style="background:rgba(201,168,76,0.1); border:1px dashed var(--gold); color:var(--gold); border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:1rem;">
@@ -888,7 +897,8 @@
             };
 
             // ── Quick-fill bar presets (driven by category detection) ─────────
-            window._barCatConfig  = null;  // set by category resolution script
+            window._barCatConfig    = null;  // set by category resolution script
+            window._barCatName      = '';
             window._barPresetsActive = false; // true when bar category drives the preset section
 
             function _showBarPresetsSection(cfg) {
@@ -947,8 +957,14 @@
                         }
                     ).filter(Boolean);
 
+                    var sizeMl = (cfg._selectedSizeMl || cfg.defaultSizeMl || 750);
+
                     cfg.presets.forEach(function(preset) {
                         if (existingLabels.indexOf(preset.label) !== -1) return;
+                        // Compute qty: fraction stays constant; volume is ml / bottle size
+                        var qty = preset.type === 'volume'
+                            ? Math.round(preset.ml / sizeMl * 10000) / 10000
+                            : preset.qty;
                         var row = document.createElement('div');
                         row.className = 'preset-row';
                         row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
@@ -956,7 +972,7 @@
                             '<input type="hidden" name="preset_id" value="">' +
                             buildLabelSelectHtml() +
                             '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="KES">' +
-                            '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" value="' + preset.qty + '" readonly style="opacity:0.55;">' +
+                            '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" value="' + qty + '" readonly style="opacity:0.55;">' +
                             '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
                         rows.appendChild(row);
                         var sel = row.querySelector('select[name="preset_label"]');
@@ -1086,56 +1102,61 @@
             }
 
             // ── BAR CATEGORY INTELLIGENCE ─────────────────────────────────────
+            // presets: fraction = constant ratio of 1 bottle; volume = ml poured (fraction computed from bottle size)
             var BAR_CAT_CONFIG = [
                 {
                     type: 'spirit',
                     match: ['gin','vodka','rum','bourbon','whiskey','whisky','tequila','brandy','cognac','schnapps','jenever'],
                     label: 'Spirit',
-                    bottleMl: 750,
-                    unit: '750ml',
+                    sizes: [200, 250, 500, 700, 750, 1000],
+                    sizeLabels: ['200ml','250ml','500ml','700ml','750ml','1L'],
+                    defaultSizeMl: 750,
                     presets: [
-                        { label: 'Full Bottle',    qty: 1.0  },
-                        { label: 'Half Bottle',    qty: 0.5  },
-                        { label: 'Quarter Bottle', qty: 0.25 },
-                        { label: 'Double',         qty: 0.08 },
-                        { label: 'Shot',           qty: 0.04 }
+                        { label: 'Full Bottle',    type: 'fraction', qty: 1.0  },
+                        { label: 'Half Bottle',    type: 'fraction', qty: 0.5  },
+                        { label: 'Quarter Bottle', type: 'fraction', qty: 0.25 },
+                        { label: 'Double',         type: 'volume',   ml: 60    },
+                        { label: 'Shot',           type: 'volume',   ml: 30    }
                     ]
                 },
                 {
                     type: 'liqueur',
-                    match: ['liqueur','baileys','amarula','kahlua','schnapps'],
+                    match: ['liqueur','baileys','amarula','kahlua'],
                     label: 'Liqueur',
-                    bottleMl: 750,
-                    unit: '750ml',
+                    sizes: [500, 700, 750, 1000],
+                    sizeLabels: ['500ml','700ml','750ml','1L'],
+                    defaultSizeMl: 750,
                     presets: [
-                        { label: 'Full Bottle', qty: 1.0  },
-                        { label: 'Half Bottle', qty: 0.5  },
-                        { label: 'Double',      qty: 0.08 },
-                        { label: 'Shot',        qty: 0.04 }
+                        { label: 'Full Bottle', type: 'fraction', qty: 1.0  },
+                        { label: 'Half Bottle', type: 'fraction', qty: 0.5  },
+                        { label: 'Double',      type: 'volume',   ml: 60    },
+                        { label: 'Shot',        type: 'volume',   ml: 30    }
                     ]
                 },
                 {
                     type: 'wine',
                     match: ['wine','champagne','sparkling','prosecco'],
                     label: 'Wine',
-                    bottleMl: 750,
-                    unit: '750ml',
+                    sizes: [187, 375, 750, 1500],
+                    sizeLabels: ['187ml','375ml','750ml','1.5L'],
+                    defaultSizeMl: 750,
                     presets: [
-                        { label: 'Full Bottle',    qty: 1.0  },
-                        { label: 'Half Bottle',    qty: 0.5  },
-                        { label: 'Quarter Bottle', qty: 0.25 },
-                        { label: 'Wine Glass',     qty: 0.2  }
+                        { label: 'Full Bottle',    type: 'fraction', qty: 1.0  },
+                        { label: 'Half Bottle',    type: 'fraction', qty: 0.5  },
+                        { label: 'Quarter Bottle', type: 'fraction', qty: 0.25 },
+                        { label: 'Wine Glass',     type: 'volume',   ml: 150   }
                     ]
                 },
                 {
                     type: 'beer',
                     match: ['beer'],
                     label: 'Beer',
-                    bottleMl: 500,
-                    unit: '500ml',
+                    sizes: [250, 330, 500],
+                    sizeLabels: ['250ml','330ml','500ml'],
+                    defaultSizeMl: 500,
                     presets: [
-                        { label: 'Full Bottle', qty: 1.0 },
-                        { label: 'Half',        qty: 0.5 }
+                        { label: 'Full Bottle', type: 'fraction', qty: 1.0 },
+                        { label: 'Half',        type: 'fraction', qty: 0.5 }
                     ]
                 }
             ];
@@ -1151,32 +1172,101 @@
                 return null;
             }
 
-            function _onBarCategoryChange(catValue) {
-                var cfg = _detectBarCat(catValue);
+            // Called when a size chip is clicked
+            window._onBarUnitChipClick = function(sizeMl, sizeLabel) {
+                var cfg = window._barCatConfig;
+                if (!cfg) return;
+                cfg._selectedSizeMl = sizeMl;
+                // Fill unit field
+                var unitEl = document.getElementById('id_unit');
+                if (unitEl) unitEl.value = sizeLabel;
+                // Update chip highlight
+                document.querySelectorAll('#barUnitChips button').forEach(function(chip) {
+                    chip.style.background = chip.dataset.ml == sizeMl
+                        ? 'rgba(201,168,76,0.3)' : 'rgba(201,168,76,0.08)';
+                    chip.style.borderColor = chip.dataset.ml == sizeMl
+                        ? '#c9a84c' : 'rgba(201,168,76,0.35)';
+                });
+                // Show / update the quick-fill button
                 var btn = document.getElementById('quickFillBarPresets');
                 var lbl = document.getElementById('quickFillBarLabel');
-                var catHint = document.getElementById('barCategoryHint');
-                window._barCatConfig = cfg;
-                if (!btn) return;
-                if (cfg) {
-                    var presetNames = cfg.presets.map(function(p) { return p.label; }).join(', ');
-                    if (lbl) lbl.textContent = 'Quick-fill ' + catValue + ' presets — ' + presetNames;
+                if (btn && lbl) {
+                    var names = cfg.presets.map(function(p) { return p.label; }).join(', ');
+                    lbl.textContent = 'Quick-fill ' + (window._barCatName || cfg.label) + ' presets (' + sizeLabel + ') — ' + names;
                     btn.style.display = 'block';
+                }
+            };
+
+            function _renderBarUnitChips(cfg, catName) {
+                var chipsDiv = document.getElementById('barUnitChips');
+                if (!chipsDiv) return;
+                chipsDiv.innerHTML = '';
+                cfg.sizes.forEach(function(ml, i) {
+                    var lbl = cfg.sizeLabels[i];
+                    var chip = document.createElement('button');
+                    chip.type = 'button';
+                    chip.textContent = lbl;
+                    chip.dataset.ml = ml;
+                    chip.style.cssText = 'background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.35); color:#e2c36e; border-radius:20px; padding:0.25rem 0.75rem; font-size:0.82rem; cursor:pointer;';
+                    chip.addEventListener('click', function() {
+                        window._onBarUnitChipClick(ml, lbl);
+                    });
+                    chipsDiv.appendChild(chip);
+                });
+            }
+
+            function _onBarCategoryChange(catValue) {
+                var cfg = _detectBarCat(catValue);
+                var actionsDiv = document.getElementById('barPresetActions');
+                var catHint    = document.getElementById('barCategoryHint');
+                var btn        = document.getElementById('quickFillBarPresets');
+                window._barCatConfig = cfg;
+                window._barCatName   = catValue;
+                if (cfg) {
+                    cfg._selectedSizeMl = null; // reset size selection
+                    if (actionsDiv) actionsDiv.style.display = 'block';
+                    if (btn) btn.style.display = 'none'; // hide until size is chosen
                     if (catHint) {
-                        catHint.innerHTML = '🥃 <strong>' + catValue + '</strong> detected — click the gold button below to auto-add standard serving presets. Unit will be set to <strong>' + cfg.unit + '</strong>.';
+                        catHint.innerHTML = '🥃 <strong>' + catValue + '</strong> detected — select the bottle size below, then click Quick-fill to add serving presets.';
                         catHint.style.display = 'block';
                     }
-                    // Suggest unit if blank
+                    _renderBarUnitChips(cfg, catValue);
+                    // Auto-click default size if unit field is already filled to a known size
                     var unitEl = document.getElementById('id_unit');
-                    if (unitEl && !unitEl.value) unitEl.value = cfg.unit;
+                    if (unitEl && unitEl.value) {
+                        var existing = unitEl.value.toLowerCase().replace(/\s/g,'');
+                        cfg.sizes.forEach(function(ml, i) {
+                            if (cfg.sizeLabels[i].toLowerCase().replace(/\s/g,'') === existing) {
+                                window._onBarUnitChipClick(ml, cfg.sizeLabels[i]);
+                            }
+                        });
+                    }
+                    // Auto-fill Material No from category prefix
+                    _autoFillMaterialNo(catValue);
                 } else {
-                    btn.style.display = 'none';
+                    if (actionsDiv) actionsDiv.style.display = 'none';
+                    if (btn) btn.style.display = 'none';
                     if (catHint) catHint.style.display = 'none';
-                    // If bar presets were the only reason section was visible, hide it
                     if (window._barPresetsActive) {
                         if (typeof _hideBarPresetsSection === 'function') _hideBarPresetsSection();
                     }
                 }
+            }
+
+            // Auto-fill Material No with the next available prefix-NN for this category
+            function _autoFillMaterialNo(catValue) {
+                var matEl = document.getElementById('id_material_no');
+                if (!matEl || matEl.value) return; // don't overwrite existing
+                var prefix = catValue.trim().charAt(0).toUpperCase();
+                if (!prefix.match(/[A-Z]/)) return;
+                fetch('/api/next-material-no/?prefix=' + encodeURIComponent(prefix), {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.next && !matEl.value) matEl.value = data.next;
+                })
+                .catch(function() {});
             }
 
             if (catInput) {

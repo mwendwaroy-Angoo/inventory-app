@@ -42,6 +42,7 @@ from core.views import (
     service_worker,
     forecast_api,
     item_portion_presets,
+    next_material_no,
 )
 from core.ussd import ussd_callback
 from core.produce_views import produce_board, receive_bunches, discard_bunch
@@ -159,6 +160,7 @@ urlpatterns = [
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),
     path("stock/delete/<int:item_id>/", delete_item, name="delete_item"),
     path("stock/item/<int:item_id>/presets/", item_portion_presets, name="item_portion_presets"),
+    path("api/next-material-no/", next_material_no, name="next_material_no"),
     # ── Kibanda Produce Module — greens / bunch selling ──────────────────────
     path("stock/produce/board/", produce_board, name="produce_board"),
     path("stock/produce/receive/", receive_bunches, name="receive_bunches"),

@@ -2029,6 +2029,25 @@ def quick_sell(request):
 
 
 @login_required
+def next_material_no(request):
+    """AJAX — returns the next available material_no for a given single-letter prefix.
+    Used by the item form to auto-suggest G-01, G-02 … when category is Gin."""
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'next': ''})
+    prefix = (request.GET.get('prefix') or '').strip().upper()
+    if not prefix or len(prefix) > 4 or not prefix[0].isalpha():
+        return JsonResponse({'next': ''})
+    pattern = f'{prefix}-'
+    business = up.business
+    count = Item.objects.filter(
+        store__business=business,
+        material_no__istartswith=pattern,
+    ).count()
+    return JsonResponse({'next': f'{prefix}-{count + 1:02d}'})
+
+
+@login_required
 def item_portion_presets(request, item_id):
     """AJAX — returns portion presets for a produce item. Called by Quick Sell and Add Transaction."""
     user_profile = get_user_profile(request)
