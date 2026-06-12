@@ -111,58 +111,7 @@
             <div class="section-divider"><span>📋 {% trans 'Optional Fields' %}</span></div>
             {% bootstrap_field form.material_no %}
 
-            <!-- CHANGE 3: Unit field with datalist suggestions -->
-            <div class="mb-3">
-                <label class="form-label" for="id_unit">{% trans 'Unit' %}</label>
-                <input type="text" name="unit" id="id_unit" class="form-control"
-                       value="{{ form.instance.unit|default:'' }}"
-                       placeholder="{% trans 'e.g. Pcs, Kg, Bundle, Head' %}"
-                       list="unitSuggestions" autocomplete="off">
-                <datalist id="unitSuggestions">
-                    <option value="Pcs">
-                    <option value="Kg">
-                    <option value="Litres">
-                    <option value="Box">
-                    <option value="Carton">
-                    <option value="Crate">
-                    <option value="Bag">
-                    <option value="Sack">
-                    <option value="Packet">
-                    <option value="Tin">
-                    <option value="Jar">
-                    <option value="Bottle">
-                    <option value="Bundle">
-                    <option value="Bunch">
-                    <option value="Stem">
-                    <option value="Head">
-                    <option value="Piece">
-                    <option value="Heap">
-                    <option value="Gorogoro">
-                    <option value="Bundle">
-                    <option value="Bunch">
-                    <option value="Sack">
-                    <option value="Pair">
-                    <option value="Set">
-                    <option value="250ml">
-                    <option value="330ml">
-                    <option value="500ml">
-                    <option value="700ml">
-                    <option value="750ml">
-                    <option value="1L">
-                    <option value="1 Litre">
-                    <option value="Glass">
-                    <option value="Shot">
-                    <option value="Strip">
-                    <option value="Tablet">
-                    <option value="Sachet">
-                </datalist>
-            </div>
-            <!-- Smart unit hint — JS populates this based on item description -->
-            <div id="unitHint" style="display:none; margin-top:0.3rem; padding:0.45rem 0.75rem;
-                 background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3);
-                 border-radius:6px; font-size:0.8rem; color:#c9a84c;"></div>
-
-            <!-- CHANGE 4: Category simplified to single text input -->
+            <!-- Category — drives bar preset intelligence; shown before Unit so user picks category first -->
             <div class="mb-3">
                 <label class="form-label" for="cat_text_input">
                     {% trans 'Category' %}
@@ -170,7 +119,7 @@
                 </label>
                 <input type="text" name="cat_text_input" id="cat_text_input" class="form-control"
                        value="{{ form.instance.category.level1|default:'' }}"
-                       placeholder="{% trans 'e.g. Vegetables, Beverages, Dry Goods' %}"
+                       placeholder="{% trans 'e.g. Gin, Vodka, Vegetables, Dry Goods' %}"
                        list="categorySuggestions" autocomplete="off">
                 <datalist id="categorySuggestions">
                     <option value="Vegetables">
@@ -217,7 +166,59 @@
                     <option value="Mixers">
                 </datalist>
                 <div style="display:none">{% bootstrap_field form.category %}</div>
+                <!-- Bar category hint — shown when a spirit/wine/beer category is typed -->
+                <div id="barCategoryHint" style="display:none; margin-top:0.4rem; padding:0.45rem 0.75rem;
+                     background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3);
+                     border-radius:6px; font-size:0.8rem; color:#e2c36e;"></div>
             </div>
+
+            <!-- Unit field — suggestions auto-populated from category -->
+            <div class="mb-3">
+                <label class="form-label" for="id_unit">{% trans 'Unit' %}</label>
+                <input type="text" name="unit" id="id_unit" class="form-control"
+                       value="{{ form.instance.unit|default:'' }}"
+                       placeholder="{% trans 'e.g. Pcs, Kg, Bundle, 750ml' %}"
+                       list="unitSuggestions" autocomplete="off">
+                <datalist id="unitSuggestions">
+                    <option value="Pcs">
+                    <option value="Kg">
+                    <option value="Litres">
+                    <option value="Box">
+                    <option value="Carton">
+                    <option value="Crate">
+                    <option value="Bag">
+                    <option value="Sack">
+                    <option value="Packet">
+                    <option value="Tin">
+                    <option value="Jar">
+                    <option value="Bottle">
+                    <option value="Bundle">
+                    <option value="Bunch">
+                    <option value="Stem">
+                    <option value="Head">
+                    <option value="Piece">
+                    <option value="Heap">
+                    <option value="Gorogoro">
+                    <option value="Pair">
+                    <option value="Set">
+                    <option value="250ml">
+                    <option value="330ml">
+                    <option value="500ml">
+                    <option value="700ml">
+                    <option value="750ml">
+                    <option value="1L">
+                    <option value="1 Litre">
+                    <option value="Glass">
+                    <option value="Shot">
+                    <option value="Strip">
+                    <option value="Tablet">
+                    <option value="Sachet">
+                </datalist>
+            </div>
+            <!-- Smart unit hint — JS populates this based on item description -->
+            <div id="unitHint" style="display:none; margin-top:-0.5rem; margin-bottom:1rem; padding:0.45rem 0.75rem;
+                 background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3);
+                 border-radius:6px; font-size:0.8rem; color:#c9a84c;"></div>
 
             {% if form.recommended_tags %}
             <div class="mb-2">
@@ -414,6 +415,9 @@
                 </div>
                 <div id="bunchPresetHint" style="display:none; background:rgba(120,180,90,0.08); border:1px solid rgba(120,180,90,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#9fcaa0; margin-bottom:0.75rem;">
                     📦 {% trans 'Batch mode: each row is a price point the customer asks for (e.g. KES 80 gorogoro, KES 140 gorogoro, KES 30 per shada). Label = name shown on the tile. Stock Used column is ignored — each sale depletes the batch envelope by the price amount, not a unit count.' %}
+                </div>
+                <div id="barSpiritPresetHint" style="display:none; background:rgba(201,168,76,0.07); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#e2c36e; margin-bottom:0.75rem;">
+                    🥃 {% trans 'Bar serving presets: each row is a serving size. Stock Used = fraction of 1 bottle consumed (Shot = 0.04, Double = 0.08, Half Bottle = 0.5, Full Bottle = 1.0 — based on a standard 750ml bottle).' %}
                 </div>
                 <div style="color:var(--gold); font-size:0.85rem; font-weight:600; margin-bottom:0.75rem;">
                     <span id="presetSectionTitle">{% if form.instance.is_keg %}🍺 {% trans 'Serving Presets' %}{% else %}📋 {% trans 'Portion Presets' %}{% endif %}</span>
@@ -706,9 +710,9 @@
                 function applyProduceToggle(checked) {
                     var kegCb = document.getElementById('is_keg');
                     var kegOn = kegCb && kegCb.checked;
-                    // Preset table stays visible if either produce OR keg is on
+                    // Preset table stays visible if produce, keg, OR bar category preset mode is on
                     var presSection = document.getElementById('portionPresetsSection');
-                    if (presSection) presSection.style.display = (checked || kegOn) ? 'block' : 'none';
+                    if (presSection) presSection.style.display = (checked || kegOn || window._barPresetsActive) ? 'block' : 'none';
                     if (!kegOn) {
                         document.getElementById('sellingPriceSection').style.display = checked ? 'none' : 'block';
                         document.getElementById('produceSellingNote').style.display  = checked ? 'block' : 'none';
@@ -884,28 +888,51 @@
             };
 
             // ── Quick-fill bar presets (driven by category detection) ─────────
-            window._barCatConfig = null; // set by category resolution script
+            window._barCatConfig  = null;  // set by category resolution script
+            window._barPresetsActive = false; // true when bar category drives the preset section
+
+            function _showBarPresetsSection(cfg) {
+                window._barPresetsActive = true;
+                var section = document.getElementById('portionPresetsSection');
+                if (section) section.style.display = 'block';
+                var spiritHint = document.getElementById('barSpiritPresetHint');
+                if (spiritHint) spiritHint.style.display = 'block';
+                // Make sure produce and keg hints are hidden (not a produce/keg item)
+                var kegHint = document.getElementById('kegPresetHint');
+                var bunchHint = document.getElementById('bunchPresetHint');
+                if (kegHint) kegHint.style.display = 'none';
+                if (bunchHint) bunchHint.style.display = 'none';
+                // Update section title
+                var titleEl = document.getElementById('presetSectionTitle');
+                if (titleEl) titleEl.textContent = '🥃 Serving Presets';
+            }
+
+            function _hideBarPresetsSection() {
+                window._barPresetsActive = false;
+                // Re-evaluate visibility based on checkboxes
+                var produceCb = document.getElementById('is_produce');
+                var kegCb     = document.getElementById('is_keg');
+                var section   = document.getElementById('portionPresetsSection');
+                if (section) {
+                    var show = (produceCb && produceCb.checked) || (kegCb && kegCb.checked);
+                    section.style.display = show ? 'block' : 'none';
+                }
+                var spiritHint = document.getElementById('barSpiritPresetHint');
+                if (spiritHint) spiritHint.style.display = 'none';
+                var titleEl = document.getElementById('presetSectionTitle');
+                if (titleEl) titleEl.textContent = '📋 Portion Presets';
+            }
 
             var quickFillBarBtn = document.getElementById('quickFillBarPresets');
             if (quickFillBarBtn) {
                 quickFillBarBtn.addEventListener('click', function() {
                     var cfg = window._barCatConfig;
                     if (!cfg) return;
-
-                    // Auto-check is_produce → Portion mode
-                    var produceCb = document.getElementById('is_produce');
-                    var pmPortion = document.getElementById('pm_portion');
-                    var kegCb    = document.getElementById('is_keg');
+                    var kegCb = document.getElementById('is_keg');
                     if (kegCb && kegCb.checked) return; // keg items use different flow
 
-                    if (produceCb && !produceCb.checked) {
-                        produceCb.checked = true;
-                        produceCb.dispatchEvent(new Event('change'));
-                    }
-                    if (pmPortion && !pmPortion.checked) {
-                        pmPortion.checked = true;
-                        pmPortion.dispatchEvent(new Event('change'));
-                    }
+                    // Show preset section directly — do NOT touch is_produce (spirits ≠ produce)
+                    _showBarPresetsSection(cfg);
 
                     var rows  = document.getElementById('presetRows');
                     var empty = document.getElementById('presetEmptyMsg');
@@ -932,7 +959,6 @@
                             '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" value="' + preset.qty + '" readonly style="opacity:0.55;">' +
                             '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
                         rows.appendChild(row);
-                        // Pre-select the label in the dropdown
                         var sel = row.querySelector('select[name="preset_label"]');
                         if (sel) {
                             sel.value = preset.label;
@@ -997,7 +1023,7 @@
                 var produceCb      = document.getElementById('is_produce');
                 var titleEl        = document.getElementById('presetSectionTitle');
                 if (presetsSection) {
-                    presetsSection.style.display = (isKeg || (produceCb && produceCb.checked)) ? 'block' : 'none';
+                    presetsSection.style.display = (isKeg || (produceCb && produceCb.checked) || window._barPresetsActive) ? 'block' : 'none';
                 }
                 if (kegHint) kegHint.style.display = isKeg ? 'block' : 'none';
                 if (titleEl) titleEl.textContent = isKeg ? '🍺 Serving Presets' : '📋 Portion Presets';
@@ -1129,24 +1155,27 @@
                 var cfg = _detectBarCat(catValue);
                 var btn = document.getElementById('quickFillBarPresets');
                 var lbl = document.getElementById('quickFillBarLabel');
+                var catHint = document.getElementById('barCategoryHint');
                 window._barCatConfig = cfg;
                 if (!btn) return;
                 if (cfg) {
                     var presetNames = cfg.presets.map(function(p) { return p.label; }).join(', ');
                     if (lbl) lbl.textContent = 'Quick-fill ' + catValue + ' presets — ' + presetNames;
                     btn.style.display = 'block';
+                    if (catHint) {
+                        catHint.innerHTML = '🥃 <strong>' + catValue + '</strong> detected — click the gold button below to auto-add standard serving presets. Unit will be set to <strong>' + cfg.unit + '</strong>.';
+                        catHint.style.display = 'block';
+                    }
                     // Suggest unit if blank
                     var unitEl = document.getElementById('id_unit');
-                    if (unitEl && !unitEl.value) {
-                        unitEl.value = cfg.unit;
-                        var hintEl = document.getElementById('unitHint');
-                        if (hintEl) {
-                            hintEl.innerHTML = '💡 <strong>' + cfg.unit + '</strong> — Stock tracked per bottle. Presets are fractions of 1 unit (Shot = 0.04, Full Bottle = 1.0).';
-                            hintEl.style.display = 'block';
-                        }
-                    }
+                    if (unitEl && !unitEl.value) unitEl.value = cfg.unit;
                 } else {
                     btn.style.display = 'none';
+                    if (catHint) catHint.style.display = 'none';
+                    // If bar presets were the only reason section was visible, hide it
+                    if (window._barPresetsActive) {
+                        if (typeof _hideBarPresetsSection === 'function') _hideBarPresetsSection();
+                    }
                 }
             }
 
@@ -1217,6 +1246,33 @@
             if (yieldInput) {
                 yieldInput.addEventListener('input', updateYieldHint);
             }
+        })();
+        </script>
+
+        <script>
+        // ── Unsaved changes warning — prompt before navigating away ──────────
+        (function () {
+            var form     = document.getElementById('itemForm');
+            var isDirty  = false;
+            var submitted = false;
+
+            if (!form) return;
+
+            // Mark dirty on any input/change inside the form
+            form.addEventListener('input',  function() { isDirty = true; });
+            form.addEventListener('change', function() { isDirty = true; });
+
+            // Clear flag on submit so the warning doesn't fire after the user saves
+            form.addEventListener('submit', function() { submitted = true; });
+
+            window.addEventListener('beforeunload', function(e) {
+                if (isDirty && !submitted) {
+                    var msg = 'You have unsaved changes. Leave without saving?';
+                    e.preventDefault();
+                    e.returnValue = msg;
+                    return msg;
+                }
+            });
         })();
         </script>
     </div>
