@@ -440,13 +440,18 @@
                                         <option value="Small Heap">{% trans 'Small Heap' %}</option>
                                         <option value="Large Heap">{% trans 'Large Heap' %}</option>
                                     </optgroup>
-                                    <optgroup label="🍺 {% trans 'Bar / Keg' %}">
-                                        <option value="Shot">{% trans 'Shot (30ml)' %}</option>
-                                        <option value="Double">{% trans 'Double (60ml)' %}</option>
+                                    <optgroup label="🍺 {% trans 'Keg / Draught' %}" class="bar-keg-opts">
                                         <option value="Kikombe">{% trans 'Kikombe (300ml)' %}</option>
                                         <option value="Half Pint">{% trans 'Half Pint (284ml)' %}</option>
                                         <option value="Pint">{% trans 'Pint (568ml)' %}</option>
                                         <option value="Jug">{% trans 'Jug (1250ml)' %}</option>
+                                    </optgroup>
+                                    <optgroup label="🥃 {% trans 'Spirits & Wines' %}" class="bar-spirit-opts">
+                                        <option value="Nip">{% trans 'Nip (25ml)' %}</option>
+                                        <option value="Shot">{% trans 'Shot (30ml)' %}</option>
+                                        <option value="Double">{% trans 'Double (60ml)' %}</option>
+                                        <option value="Wine Glass">{% trans 'Wine Glass (150ml)' %}</option>
+                                        <option value="Small Bottle">{% trans 'Small Bottle (200ml)' %}</option>
                                     </optgroup>
                                     <optgroup label="{% trans 'Other' %}">
                                         <option value="Custom">{% trans 'Custom (enter manually)' %}</option>
@@ -677,12 +682,15 @@
 
             // CHANGE 2c: auto-fill qty_consumed from standard label, editable only for Custom
             var PRESET_AUTOFILL = {
+                'Nip':                    '25',
                 'Shot':                   '30',
                 'Double':                 '60',
                 'Kikombe':                '300',
                 'Half Pint':              '284',
                 'Pint':                   '568',
                 'Jug':                    '1250',
+                'Wine Glass':             '150',
+                'Small Bottle':           '200',
                 'Small Portion':          '0.0833',
                 'Quarter':                '0.25',
                 'Half':                   '0.5',
@@ -787,19 +795,37 @@
                     '<option value="Small Heap">{% trans "Small Heap" %}</option>' +
                     '<option value="Large Heap">{% trans "Large Heap" %}</option>' +
                     '</optgroup>' +
-                    '<optgroup label="🍺 {% trans "Bar / Keg" %}">' +
-                    '<option value="Shot">{% trans "Shot (30ml)" %}</option>' +
-                    '<option value="Double">{% trans "Double (60ml)" %}</option>' +
+                    '<optgroup label="🍺 {% trans "Keg / Draught" %}" class="bar-keg-opts">' +
                     '<option value="Kikombe">{% trans "Kikombe (300ml)" %}</option>' +
                     '<option value="Half Pint">{% trans "Half Pint (284ml)" %}</option>' +
                     '<option value="Pint">{% trans "Pint (568ml)" %}</option>' +
                     '<option value="Jug">{% trans "Jug (1250ml)" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="🥃 {% trans "Spirits & Wines" %}" class="bar-spirit-opts">' +
+                    '<option value="Nip">{% trans "Nip (25ml)" %}</option>' +
+                    '<option value="Shot">{% trans "Shot (30ml)" %}</option>' +
+                    '<option value="Double">{% trans "Double (60ml)" %}</option>' +
+                    '<option value="Wine Glass">{% trans "Wine Glass (150ml)" %}</option>' +
+                    '<option value="Small Bottle">{% trans "Small Bottle (200ml)" %}</option>' +
                     '</optgroup>' +
                     '<optgroup label="{% trans "Other" %}">' +
                     '<option value="Custom">{% trans "Custom (enter manually)" %}</option>' +
                     '</optgroup>' +
                     '</select>';
             }
+
+            // Show/hide bar-specific optgroups based on is_keg state
+            // Assigned to window so the keg toggle script (separate block) can call it
+            window._applyBarPresetFilter = function(isKeg) {
+                document.querySelectorAll('select[name="preset_label"]').forEach(function(sel) {
+                    sel.querySelectorAll('.bar-keg-opts').forEach(function(og) {
+                        og.style.display = isKeg ? '' : 'none';
+                    });
+                    sel.querySelectorAll('.bar-spirit-opts').forEach(function(og) {
+                        og.style.display = isKeg ? 'none' : '';
+                    });
+                });
+            };
 
             document.getElementById('addPresetBtn').addEventListener('click', function() {
                 var empty = document.getElementById('presetEmptyMsg');
@@ -813,6 +839,9 @@
                     '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" placeholder="—" readonly style="opacity:0.55;">' +
                     '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
                 document.getElementById('presetRows').appendChild(row);
+                // Apply current filter to the newly added row's dropdown
+                var kegCb = document.getElementById('is_keg');
+                if (window._applyBarPresetFilter) window._applyBarPresetFilter(!!(kegCb && kegCb.checked));
             });
             </script>
 
@@ -852,6 +881,8 @@
                 }
                 if (kegHint) kegHint.style.display = isKeg ? 'block' : 'none';
                 if (titleEl) titleEl.textContent = isKeg ? '🍺 Serving Presets' : '📋 Portion Presets';
+                // Filter bar optgroups to show only relevant measures
+                if (typeof _applyBarPresetFilter === 'function') _applyBarPresetFilter(isKeg);
                 // Keg and produce are mutually exclusive
                 if (isKeg && produceCb && produceCb.checked) {
                     produceCb.checked = false;
