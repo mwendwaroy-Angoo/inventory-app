@@ -759,6 +759,22 @@
                 document.getElementById('presetRows').appendChild(row);
             });
             </script>
+
+            <div class="section-divider"><span>🍺 {% trans 'Keg Settings' %}</span></div>
+            <div class="mb-3">
+                <div class="form-check">
+                    <input type="checkbox" name="is_keg" id="is_keg"
+                           class="form-check-input"
+                           {% if form.instance.is_keg %}checked{% endif %}>
+                    <label class="form-check-label" for="is_keg">
+                        {% trans 'This is a keg item — stock tracked by barrel weight, sold by volume presets (Kikombe, Jug)' %}
+                    </label>
+                </div>
+                <div style="color:#b0b0b0; font-size:0.78rem; margin-top:0.35rem; margin-left:1.75rem;">
+                    {% trans 'Keg items appear on the Bar Board, not in the normal stock list or Quick Sell grid. Add serving sizes (Kikombe, Jug) as presets after saving.' %}
+                </div>
+            </div>
+
             {% endif %}
 
             <div class="d-flex gap-2 mt-4">

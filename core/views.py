@@ -1284,8 +1284,10 @@ def add_item(request):
                     item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')
                 except (ValueError, InvalidOperation):
                     item.revenue_multiplier = Decimal('1.70')
+                item.is_keg = request.POST.get('is_keg') == 'on'
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
-                                         'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier'])
+                                         'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier',
+                                         'is_keg'])
 
                 # ── PRODUCE PORTION PRESETS ───────────────────────────────────
                 preset_labels  = request.POST.getlist('preset_label')
@@ -1394,8 +1396,10 @@ def edit_item(request, item_id):
                     item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')
                 except (ValueError, InvalidOperation):
                     item.revenue_multiplier = Decimal('1.70')
+                item.is_keg = request.POST.get('is_keg') == 'on'
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
-                                         'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier'])
+                                         'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier',
+                                         'is_keg'])
 
                 # ── PRODUCE PORTION PRESETS ───────────────────────────────────
                 preset_labels  = request.POST.getlist('preset_label')
