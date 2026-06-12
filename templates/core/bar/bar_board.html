@@ -384,15 +384,18 @@
   margin-top: 0.45rem;
 }
 .tab-action-btn {
-  flex: 1;
+  flex: 1 1 calc(50% - 6px);
   min-width: 0;
-  padding: 4px 5px;
+  padding: 5px 6px;
   border-radius: 6px;
-  font-size: 0.71rem;
+  font-size: 0.72rem;
   cursor: pointer;
   border: 1px solid;
   white-space: nowrap;
   background: transparent;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tab-btn-cash  { border-color: rgba(76,175,80,0.4);   color: #4caf50; }
 .tab-btn-mpesa { border-color: rgba(33,150,243,0.4);  color: #64b5f6; }
