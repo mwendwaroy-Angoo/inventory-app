@@ -362,6 +362,9 @@
 
             <!-- CHANGE 2: Preset table — label dropdown, no Order column -->
             <div id="portionPresetsSection" style="{% if not form.instance.is_produce %}display:none;{% endif %}">
+                <div id="kegPresetHint" style="display:none; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#e2c36e; margin-bottom:0.75rem;">
+                    🍺 {% trans 'Keg presets: each row is one serving size. Label = name on the Bar Board tile (e.g. Kikombe, Jug). Customer Pays = KES price. Stock Used = millilitres poured (e.g. 300 for a 300ml kikombe, 1250 for a jug).' %}
+                </div>
                 <div id="bunchPresetHint" style="display:none; background:rgba(120,180,90,0.08); border:1px solid rgba(120,180,90,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#9fcaa0; margin-bottom:0.75rem;">
                     📦 {% trans 'Batch mode: each row is a price point the customer asks for (e.g. KES 80 gorogoro, KES 140 gorogoro, KES 30 per shada). Label = name shown on the tile. Stock Used column is ignored — each sale depletes the batch envelope by the price amount, not a unit count.' %}
                 </div>
@@ -777,21 +780,9 @@
                 <div style="color:#b0b0b0; font-size:0.78rem; margin-top:0.35rem; margin-left:1.75rem;">
                     {% trans 'Keg items appear on the Bar Board, not in the stock list or Quick Sell grid. Cost is entered per barrel when you receive stock. Selling price, opening stock and reorder fields are hidden — they are not used.' %}
                 </div>
-                {% if form.instance.pk %}
-                <div style="margin-top:0.75rem; margin-left:1.75rem;">
-                    <a href="{% url 'item_portion_presets' form.instance.pk %}"
-                       class="btn btn-gold btn-sm">
-                        🍺 Add / Edit Serving Presets (Kikombe, Jug, Pint…)
-                    </a>
-                    <div style="color:#b0b0b0; font-size:0.75rem; margin-top:0.3rem;">
-                        {% trans 'Define what you pour and how much it costs — these appear as buttons on the Bar Board.' %}
-                    </div>
-                </div>
-                {% else %}
                 <div style="color:#b0b0b0; font-size:0.75rem; margin-top:0.4rem; margin-left:1.75rem;">
-                    💡 {% trans 'After saving, come back to Edit this item to add serving presets (Kikombe, Jug).' %}
+                    💡 {% trans 'Add your serving sizes below in the Serving Presets table — Kikombe (300ml, KES 70), Jug (1250ml, KES 210), etc.' %}
                 </div>
-                {% endif %}
             </div>
 
             {% endif %}
@@ -821,8 +812,19 @@
                 KEG_HIDE.forEach(function (el) {
                     if (el) el.style.display = isKeg ? 'none' : '';
                 });
+                // Show preset table + keg hint when is_keg; hide keg hint when not
+                var presetsSection = document.getElementById('portionPresetsSection');
+                var kegHint        = document.getElementById('kegPresetHint');
+                var produceCb      = document.getElementById('is_produce');
+                if (presetsSection) {
+                    if (isKeg) {
+                        presetsSection.style.display = 'block';
+                    } else {
+                        presetsSection.style.display = (produceCb && produceCb.checked) ? 'block' : 'none';
+                    }
+                }
+                if (kegHint) kegHint.style.display = isKeg ? 'block' : 'none';
                 // Keg and produce are mutually exclusive
-                var produceCb = document.getElementById('is_produce');
                 if (isKeg && produceCb && produceCb.checked) {
                     produceCb.checked = false;
                     produceCb.dispatchEvent(new Event('change'));
