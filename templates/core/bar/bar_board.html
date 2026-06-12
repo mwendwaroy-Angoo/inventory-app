@@ -1508,14 +1508,31 @@
     body.innerHTML =
       '<div class="text-center py-4" style="color:#b0b0b0;">' +
       '<div class="spinner-border spinner-border-sm me-2"></div></div>';
-    fetch('/bar/tabs/')
-      .then(function (r) { return r.json(); })
-      .then(function (d) { window.renderTabs(d.tabs || []); })
-      .catch(function () {
+    fetch('/bar/tabs/', {credentials: 'same-origin'})
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        try {
+          window.renderTabs(d.tabs || []);
+        } catch (e) {
+          var b = document.getElementById('tabs-drawer-body');
+          if (b) b.innerHTML = _tabsErrHtml('Hitilafu ya kuonyesha tabs.');
+        }
+      })
+      .catch(function (err) {
         var b = document.getElementById('tabs-drawer-body');
-        if (b) b.innerHTML = '<div style="color:#c0395a; padding:1rem;">Hitilafu ya kuload tabs.</div>';
+        if (b) b.innerHTML = _tabsErrHtml('Tabs hazikupakia. Jaribu tena.');
       });
   };
+
+  function _tabsErrHtml(msg) {
+    return '<div style="color:#c0395a; padding:1rem 0.75rem;">' + msg +
+      '<br><button onclick="window.loadTabs()" style="margin-top:0.5rem;background:none;' +
+      'border:1px solid rgba(192,57,90,0.4);color:#c0395a;border-radius:6px;' +
+      'padding:3px 12px;font-size:0.8rem;cursor:pointer;">↺ Jaribu Tena</button></div>';
+  }
 
   window.renderTabs = function (tabs) {
     var body = document.getElementById('tabs-drawer-body');
@@ -1594,7 +1611,8 @@
         } else {
           showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
         }
-      });
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao. Jaribu tena.'); });
   };
 
   window.settleTab = function (tabId, payMethod) {
@@ -1608,7 +1626,8 @@
         } else {
           showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
         }
-      });
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao. Jaribu tena.'); });
   };
 
   window.openVoidModal = function (tabId, custName) {
@@ -1633,7 +1652,8 @@
         } else {
           showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
         }
-      });
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao. Jaribu tena.'); });
   };
 
   window.openDebtModal = function (tabId, custName) {
