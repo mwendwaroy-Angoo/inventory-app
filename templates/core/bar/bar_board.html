@@ -1,0 +1,944 @@
+{% extends "base.html" %}
+{% block title %}Bar Board — {{ business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Keg tiles ─────────────────────────────────────── */
+.keg-tile {
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 12px;
+  padding: 1rem;
+  cursor: pointer;
+  transition: border-color 0.18s, transform 0.1s;
+  position: relative;
+  height: 100%;
+}
+.keg-tile:hover:not(.keg-no-tap) {
+  border-color: #c9a84c;
+  transform: translateY(-1px);
+}
+.keg-tile.stale    { border-color: rgba(192,57,90,0.6); }
+.keg-tile.keg-no-tap { cursor: default; opacity: 0.72; }
+
+.keg-name {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.95rem;
+  color: #e2c36e;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.keg-remaining {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #f0ece4;
+  margin-top: 0.25rem;
+}
+.keg-meta {
+  font-size: 0.76rem;
+  color: #b0b0b0;
+  margin-top: 0.2rem;
+}
+.keg-preset-chip {
+  display: inline-block;
+  background: rgba(201,168,76,0.1);
+  border: 1px solid rgba(201,168,76,0.25);
+  color: #c9a84c;
+  border-radius: 20px;
+  padding: 2px 9px;
+  font-size: 0.72rem;
+  margin: 2px 2px 0 0;
+  white-space: nowrap;
+}
+
+/* ── Owner action buttons on tile ──────────────────── */
+.keg-owner-actions {
+  display: flex;
+  gap: 5px;
+  margin-top: 0.65rem;
+  flex-wrap: wrap;
+}
+.keg-owner-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 0;
+  border: 1px solid #3a3a3a;
+  background: transparent;
+  color: #b0b0b0;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.keg-owner-btn:hover               { border-color: #c9a84c; color: #c9a84c; }
+.keg-owner-btn.btn-rs              { border-color: rgba(192,57,90,0.35); color: #c0395a; }
+.keg-owner-btn.btn-rs:hover        { border-color: #c0395a; }
+
+/* ── Sell modal preset rows ────────────────────────── */
+.preset-sell-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 10px;
+  color: #f0ece4;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.preset-sell-btn:hover {
+  border-color: #c9a84c;
+  background: rgba(201,168,76,0.07);
+}
+.preset-price {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #c9a84c;
+}
+.preset-label { color: #b0b0b0; font-size: 0.85rem; }
+
+/* ── Cart bar ───────────────────────────────────────── */
+#keg-cart-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: #1a1a1a;
+  border-top: 1px solid #c9a84c;
+  padding: 0.65rem 1rem;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 1050;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.futa-flash {
+  background: rgba(201,168,76,0.12);
+  border: 1px solid rgba(201,168,76,0.35);
+  border-radius: 8px;
+  padding: 3px 10px;
+  font-size: 0.82rem;
+  color: #e2c36e;
+  cursor: pointer;
+}
+
+/* ── Modals ─────────────────────────────────────────── */
+.bar-modal .modal-content {
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 16px;
+}
+.bar-modal .modal-header         { border-bottom: 1px solid #3a3a3a; }
+.bar-modal .modal-footer         { border-top:    1px solid #3a3a3a; }
+.bar-modal .form-control,
+.bar-modal .form-select {
+  background: #1a1a1a;
+  border-color: #3a3a3a;
+  color: #f0ece4;
+}
+.bar-modal .form-control:focus,
+.bar-modal .form-select:focus {
+  border-color: #c9a84c;
+  box-shadow: 0 0 0 3px rgba(201,168,76,0.15);
+  background: #1a1a1a;
+  color: #f0ece4;
+}
+.bar-modal label      { color: #b0b0b0; font-size: 0.85rem; }
+.bar-modal .form-text { color: #666; font-size: 0.78rem; }
+.bar-modal .form-check-label { color: #b0b0b0; }
+
+/* ── Variance report colours ────────────────────────── */
+.var-ok      { color: #4caf50; }
+.var-warning { color: #ff9800; }
+.var-danger  { color: #c0395a; }
+
+/* ── Sell modal cart lines ──────────────────────────── */
+#sell-cart-lines { max-height: 160px; overflow-y: auto; }
+.sell-cart-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.83rem;
+  padding: 3px 0;
+  border-bottom: 1px solid #333;
+  color: #f0ece4;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 pt-3" style="padding-bottom: 100px;">
+
+  <!-- Page header -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">
+      🍺 Bar Board
+    </h4>
+    {% if is_owner %}
+    <button class="btn btn-gold btn-sm" onclick="window.openReceiveModal()">
+      + Pokea Barrel
+    </button>
+    {% endif %}
+  </div>
+
+  <!-- Keg tile grid — rendered by JS after board API call -->
+  <div id="keg-board" class="row g-3">
+    <div class="col-12 text-center py-5" style="color:#b0b0b0;">
+      <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+      Inapakia...
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<!-- ════════════════════════════════════════════════════
+     CART BAR (fixed bottom)
+════════════════════════════════════════════════════ -->
+<div id="keg-cart-bar">
+  <div class="d-flex align-items-center gap-2">
+    <span id="keg-cart-count" style="color:#b0b0b0; font-size:0.83rem;"></span>
+    <span id="keg-cart-total" style="color:#e2c36e; font-size:1.05rem; font-weight:700;"></span>
+    <span id="futa-flash" class="futa-flash" style="display:none;"
+          onclick="window.futaLast()"></span>
+  </div>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <div class="btn-group btn-group-sm" role="group">
+      <input type="radio" class="btn-check" name="keg_payment" id="pay-cash" value="cash" checked>
+      <label class="btn btn-outline-secondary" for="pay-cash"
+             style="border-color:#444; color:#f0ece4; font-size:0.8rem;">Cash</label>
+      <input type="radio" class="btn-check" name="keg_payment" id="pay-mpesa" value="mpesa">
+      <label class="btn btn-outline-secondary" for="pay-mpesa"
+             style="border-color:#444; color:#4caf50; font-size:0.8rem;">M-Pesa</label>
+    </div>
+    <button class="btn btn-gold btn-sm" onclick="window.completeSale()">Maliza Mauzo</button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     HIDDEN SALE FORM
+════════════════════════════════════════════════════ -->
+<form method="POST" id="keg-sale-form" action="{% url 'bar_board' %}" style="display:none;">
+  {% csrf_token %}
+  <input type="hidden" name="keg_cart"       id="keg-cart-input">
+  <input type="hidden" name="payment_method" id="keg-payment-input">
+</form>
+
+<!-- ════════════════════════════════════════════════════
+     SELL MODAL
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="sellModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="sell-modal-title"
+            style="font-family:'Playfair Display',serif; color:#c9a84c;"></h5>
+        <button type="button" onclick="window.closeSellModal()"
+                style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; line-height:1;">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- Preset buttons -->
+        <div id="sell-presets" class="d-grid gap-2 mb-3"></div>
+        <!-- Running cart for this sale session -->
+        <div id="sell-cart-lines"></div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <span id="sell-futa-flash" class="futa-flash" style="display:none;"
+              onclick="window.futaLast()"></span>
+        <button class="btn btn-gold" onclick="window.doneSell()">Done ✓</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     WEIGH MODAL
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="weighModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" style="font-family:'Playfair Display',serif; color:#c9a84c;">
+          Pima Barrel — <span id="weigh-item-name"></span>
+        </h5>
+        <button type="button" onclick="window.closeWeighModal()"
+                style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; line-height:1;">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="weigh-current-info" style="color:#b0b0b0; font-size:0.85rem;"></p>
+        <div class="mb-3">
+          <label class="form-label">Scale inasoma (kg)</label>
+          <input type="number" step="0.1" min="0.1" id="weigh-kg-input" class="form-control"
+                 placeholder="e.g. 42.5">
+        </div>
+        <div class="mb-3">
+          <label class="form-label d-block">Aina ya kipimo</label>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="weigh_type"
+                   id="weigh-spot" value="SPOT" checked>
+            <label class="form-check-label" for="weigh-spot">Spot check</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="weigh_type"
+                   id="weigh-close" value="SHIFT_CLOSE">
+            <label class="form-check-label" for="weigh-close">Mwisho wa shift</label>
+          </div>
+        </div>
+        <!-- Variance report injected here after submit -->
+        <div id="weigh-report" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" onclick="window.closeWeighModal()"
+                class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Funga</button>
+        <button type="button" onclick="window.submitWeigh()"
+                class="btn btn-gold btn-sm" id="weigh-submit-btn">Pima</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     TAP CONFIRM MODAL
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="tapModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" style="font-family:'Playfair Display',serif; color:#c9a84c;">
+          Fungua Barrel
+        </h5>
+      </div>
+      <div class="modal-body">
+        <p id="tap-confirm-text" style="color:#f0ece4; margin:0;"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" onclick="window.closeTapModal()"
+                class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Hapana</button>
+        <button type="button" onclick="window.confirmTap()" class="btn btn-gold btn-sm"
+                id="tap-confirm-btn">Fungua</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if is_owner %}
+<!-- ════════════════════════════════════════════════════
+     RECEIVE MODAL (owner only)
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="receiveModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" style="font-family:'Playfair Display',serif; color:#c9a84c;">
+          Pokea Barrel — Kutoka Distributor
+        </h5>
+        <button type="button" onclick="window.closeReceiveModal()"
+                style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; line-height:1;">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Bidhaa (keg item)</label>
+          <select id="recv-item-id" class="form-select">
+            <option value="">— Chagua Keg —</option>
+          </select>
+        </div>
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label">Idadi ya barrels</label>
+            <input type="number" id="recv-count" class="form-control"
+                   value="1" min="1" max="20">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Bei kwa barrel (KES)</label>
+            <input type="number" id="recv-cost" class="form-control"
+                   placeholder="e.g. 5000" min="1" oninput="window.autoCalcTarget()">
+          </div>
+        </div>
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label">Uzito jumla (kg)</label>
+            <input type="number" step="0.01" id="recv-gross" class="form-control"
+                   value="{{ business.keg_default_gross_kg }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Uzito chombo — tare (kg)</label>
+            <input type="number" step="0.01" id="recv-tare" class="form-control"
+                   value="{{ business.keg_default_tare_kg }}">
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">
+            Scale inasoma (kg)
+            <span style="color:#666;">— optional</span>
+          </label>
+          <input type="number" step="0.01" id="recv-scale" class="form-control"
+                 placeholder="e.g. 58.4">
+          <div class="form-text">
+            Ikiwa scale inasema uzito tofauti na default, ingiza hapa. Hiyo ndiyo itakayohifadhiwa.
+          </div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Target kwa barrel (KES)</label>
+          <input type="number" id="recv-target" class="form-control"
+                 placeholder="Auto: bei × {{ business.keg_revenue_multiplier }}">
+          <div class="form-text">
+            Default: bei × {{ business.keg_revenue_multiplier }}. Badilisha ikiwa unafahamu lengo lako.
+          </div>
+        </div>
+        <div id="recv-error" style="display:none; color:#c0395a; font-size:0.85rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" onclick="window.closeReceiveModal()"
+                class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Funga</button>
+        <button type="button" onclick="window.submitReceive()" class="btn btn-gold"
+                id="recv-submit-btn">Pokea Barrel</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ════════════════════════════════════════════════════
+     SUCCESS RECEIPT MODAL
+════════════════════════════════════════════════════ -->
+{% if success_data %}
+<div class="modal fade bar-modal" id="successModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" style="font-family:'Playfair Display',serif; color:#4caf50;">
+          ✓ Mauzo Yamehifadhiwa — {{ success_data.timestamp }}
+        </h5>
+      </div>
+      <div class="modal-body">
+        {% for line in success_data.lines %}
+        <div class="d-flex justify-content-between mb-1">
+          <span style="color:#f0ece4; font-size:0.88rem;">{{ line.name }}</span>
+          <span style="color:#e2c36e; font-weight:600;">KES {{ line.subtotal|floatformat:0 }}</span>
+        </div>
+        {% endfor %}
+        <hr style="border-color:#3a3a3a; margin:0.6rem 0;">
+        <div class="d-flex justify-content-between">
+          <strong style="color:#f0ece4;">Jumla</strong>
+          <strong style="color:#c9a84c; font-size:1.1rem;">KES {{ success_data.total|floatformat:0 }}</strong>
+        </div>
+        <div class="text-center mt-2" style="color:#b0b0b0; font-size:0.82rem;">
+          Malipo:
+          {% if success_data.payment_method == 'mpesa' %}M-Pesa{% else %}Cash{% endif %}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-gold"
+                onclick="bootstrap.Modal.getInstance(document.getElementById('successModal')).hide()">
+          Sawa ✓
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  /* ── Constants from template context ───────────────────── */
+  var KegRevMult  = {{ business.keg_revenue_multiplier }};
+  var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
+  var CSRF        = "{{ csrf_token }}";
+
+  /* ── State ─────────────────────────────────────────────── */
+  var _boardData    = {};   // item_id → keg data from board API
+  var kegCart       = [];
+  var _pendingTapId = null; // barrel_id awaiting tap confirm
+  var _weighBarrel  = null; // barrel_id for current weigh action
+
+  /* ── Bootstrap modal helpers ───────────────────────────── */
+  function showModal(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    (bootstrap.Modal.getInstance(el) || new bootstrap.Modal(el)).show();
+  }
+  function hideModal(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var m = bootstrap.Modal.getInstance(el);
+    if (m) m.hide();
+  }
+
+  /* ── AJAX POST helper ──────────────────────────────────── */
+  function post(url, data) {
+    var body = new URLSearchParams(data);
+    body.append('csrfmiddlewaretoken', CSRF);
+    return fetch(url, {
+      method: 'POST',
+      body: body,
+      headers: {'X-CSRFToken': CSRF},
+    });
+  }
+
+  /* ── Number formatter ──────────────────────────────────── */
+  function fmt(n) {
+    return Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0});
+  }
+
+  /* ════════════════════════════════════════════════════════
+     BOARD LOAD
+  ════════════════════════════════════════════════════════ */
+  function loadBarBoard() {
+    fetch('/stock/bar/board/')
+      .then(function (r) { return r.json(); })
+      .then(function (data) { renderTiles(data); })
+      .catch(function () {
+        document.getElementById('keg-board').innerHTML =
+          '<div class="col-12 text-center py-5" style="color:#c0395a;">' +
+          'Hitilafu ya kuload board. Reload ukurasa.</div>';
+      });
+  }
+
+  function renderTiles(data) {
+    var board = document.getElementById('keg-board');
+    var kegs  = data.kegs || [];
+
+    // Cache board data for onClick lookups
+    _boardData = {};
+    kegs.forEach(function (kg) { _boardData[kg.item_id] = kg; });
+
+    // Populate receive modal item dropdown
+    _populateReceiveItems(kegs);
+
+    if (kegs.length === 0) {
+      board.innerHTML =
+        '<div class="col-12 text-center py-5" style="color:#b0b0b0;">' +
+        (QS_IS_OWNER
+          ? 'Hakuna keg items bado. <a href="/stock/add/" style="color:#c9a84c;">Ongeza keg item kwenye Manage Items</a> kwanza.'
+          : 'Hakuna keg items bado. Omba mmiliki aongeze.') +
+        '</div>';
+      return;
+    }
+
+    var html = '';
+    kegs.forEach(function (kg) {
+      var hasTap = !!kg.tapped_barrel_id;
+
+      var presetChips = (kg.presets || []).map(function (p) {
+        return '<span class="keg-preset-chip">' + p.label + ' ' + fmt(p.price) + '/=</span>';
+      }).join('');
+
+      // Status badge
+      var badge = '';
+      if (hasTap) {
+        if (kg.stale) {
+          badge = ' <span class="badge" style="background:rgba(192,57,90,0.18);color:#c0395a;' +
+                  'border:1px solid rgba(192,57,90,0.4);font-size:0.68rem;">Siku ' + kg.days_tapped + ' ⚠</span>';
+        } else {
+          badge = ' <span class="badge" style="background:rgba(76,175,80,0.1);color:#4caf50;' +
+                  'border:1px solid rgba(76,175,80,0.3);font-size:0.68rem;">Siku ' + kg.days_tapped + '</span>';
+        }
+      }
+
+      // Owner action buttons
+      var ownerHtml = '';
+      if (QS_IS_OWNER) {
+        if (hasTap) {
+          ownerHtml = '<div class="keg-owner-actions">' +
+            '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openWeighModal(' + kg.item_id + ')">Pima</button>' +
+            (kg.next_sealed_barrel_id
+              ? '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openTapModal(' + kg.item_id + ',' + kg.next_sealed_barrel_id + ')">+ Barrel</button>'
+              : '') +
+            '<button class="keg-owner-btn btn-rs" onclick="event.stopPropagation();window.openDiscardModal(' + kg.item_id + ',' + kg.tapped_barrel_id + ')">Tupa</button>' +
+            '</div>';
+        } else if (kg.next_sealed_barrel_id) {
+          ownerHtml = '<div class="keg-owner-actions">' +
+            '<button class="keg-owner-btn" style="flex:unset;padding:3px 12px;" ' +
+            'onclick="event.stopPropagation();window.openTapModal(' + kg.item_id + ',' + kg.next_sealed_barrel_id + ')">' +
+            'Fungua Barrel (' + kg.sealed_barrels + ' sealed)</button>' +
+            '</div>';
+        }
+      }
+
+      if (hasTap) {
+        html +=
+          '<div class="col-6 col-md-4 col-lg-3">' +
+          '<div class="keg-tile' + (kg.stale ? ' stale' : '') + '" ' +
+          'onclick="window.openSellModal(' + kg.item_id + ')">' +
+          '<div class="keg-name">' + kg.name + '</div>' +
+          '<div class="keg-remaining">KES ' + fmt(kg.remaining) + '</div>' +
+          '<div class="keg-meta">' + kg.latest_weight_kg + ' kg · Target ' + fmt(kg.target_open) + badge + '</div>' +
+          '<div class="mt-2">' + presetChips + '</div>' +
+          ownerHtml +
+          '</div></div>';
+      } else {
+        html +=
+          '<div class="col-6 col-md-4 col-lg-3">' +
+          '<div class="keg-tile keg-no-tap">' +
+          '<div class="keg-name">' + kg.name + '</div>' +
+          '<div class="mt-1" style="color:#b0b0b0; font-size:0.85rem;">' +
+          (kg.sealed_barrels > 0
+            ? kg.sealed_barrels + ' barrel(s) sealed'
+            : 'Hakuna barrel') +
+          '</div>' +
+          '<div class="mt-2">' + presetChips + '</div>' +
+          ownerHtml +
+          '</div></div>';
+      }
+    });
+
+    board.innerHTML = html;
+  }
+
+  function _populateReceiveItems(kegs) {
+    var sel = document.getElementById('recv-item-id');
+    if (!sel) return;
+    var cur = sel.value;
+    sel.innerHTML = '<option value="">— Chagua Keg —</option>';
+    kegs.forEach(function (kg) {
+      var opt = document.createElement('option');
+      opt.value = kg.item_id;
+      opt.textContent = kg.name;
+      if (String(kg.item_id) === String(cur)) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  /* ════════════════════════════════════════════════════════
+     SELL MODAL
+  ════════════════════════════════════════════════════════ */
+  window.openSellModal = function (itemId) {
+    var kg = _boardData[itemId];
+    if (!kg || !kg.tapped_barrel_id) return;
+
+    document.getElementById('sell-modal-title').textContent = kg.name;
+
+    // Build preset buttons
+    var presHtml = '';
+    (kg.presets || []).forEach(function (p) {
+      presHtml +=
+        '<button class="preset-sell-btn" ' +
+        'onclick="window.addToKegCart(' +
+          kg.tapped_barrel_id + ',' +
+          p.id + ',' +
+          p.price + ',' +
+          p.quantity_consumed + ',' +
+          JSON.stringify(p.label) +
+        ')">' +
+        '<span class="preset-label">' + p.label + '</span>' +
+        '<span class="preset-price">' + fmt(p.price) + '/=</span>' +
+        '</button>';
+    });
+    document.getElementById('sell-presets').innerHTML = presHtml;
+    _renderSellCartLines();
+    document.getElementById('sell-futa-flash').style.display = 'none';
+
+    showModal('sellModal');
+  };
+
+  window.closeSellModal = function () { hideModal('sellModal'); };
+
+  window.addToKegCart = function (barrelId, presetId, price, qtyConsumeMl, label) {
+    kegCart.push({
+      barrel_id: barrelId,
+      preset_id: presetId,
+      label:     label,
+      price:     price,
+      qty_consumed_ml: qtyConsumeMl,
+      qty:       1,
+      subtotal:  price,
+    });
+    _renderSellCartLines();
+    _updateCartBar();
+
+    var flash = document.getElementById('sell-futa-flash');
+    flash.textContent = '↩ Futa — ' + label;
+    flash.style.display = 'inline-block';
+
+    var gf = document.getElementById('futa-flash');
+    gf.textContent = '↩ Futa — ' + label;
+    gf.style.display = 'inline-block';
+  };
+
+  function _renderSellCartLines() {
+    var el = document.getElementById('sell-cart-lines');
+    if (!el) return;
+    if (kegCart.length === 0) { el.innerHTML = ''; return; }
+    var total = kegCart.reduce(function (s, l) { return s + l.subtotal; }, 0);
+    var html  = '';
+    kegCart.forEach(function (l) {
+      html += '<div class="sell-cart-line"><span>' + l.label + '</span>' +
+              '<span style="color:#c9a84c;">KES ' + fmt(l.subtotal) + '</span></div>';
+    });
+    html += '<div class="sell-cart-line" style="font-weight:700;">' +
+            '<span style="color:#f0ece4;">Jumla</span>' +
+            '<span style="color:#c9a84c;">KES ' + fmt(total) + '</span></div>';
+    el.innerHTML = html;
+  }
+
+  window.doneSell = function () { hideModal('sellModal'); };
+
+  /* ════════════════════════════════════════════════════════
+     CART BAR
+  ════════════════════════════════════════════════════════ */
+  function _updateCartBar() {
+    var bar = document.getElementById('keg-cart-bar');
+    if (kegCart.length === 0) {
+      bar.style.display = 'none';
+      return;
+    }
+    bar.style.display = 'flex';
+    var total = kegCart.reduce(function (s, l) { return s + l.subtotal; }, 0);
+    document.getElementById('keg-cart-count').textContent = kegCart.length + ' item(s)';
+    document.getElementById('keg-cart-total').textContent = 'KES ' + fmt(total);
+  }
+
+  window.futaLast = function () {
+    if (kegCart.length === 0) return;
+    kegCart.pop();
+    _renderSellCartLines();
+    _updateCartBar();
+    var gf = document.getElementById('futa-flash');
+    gf.style.display = 'none';
+    var sf = document.getElementById('sell-futa-flash');
+    if (sf) sf.style.display = 'none';
+  };
+
+  window.completeSale = function () {
+    if (kegCart.length === 0) return;
+    var method = document.querySelector('input[name="keg_payment"]:checked').value;
+    document.getElementById('keg-cart-input').value  = JSON.stringify(kegCart);
+    document.getElementById('keg-payment-input').value = method;
+    document.getElementById('keg-sale-form').submit();
+  };
+
+  /* ════════════════════════════════════════════════════════
+     WEIGH MODAL
+  ════════════════════════════════════════════════════════ */
+  window.openWeighModal = function (itemId) {
+    var kg = _boardData[itemId];
+    if (!kg || !kg.tapped_barrel_id) return;
+    _weighBarrel = kg.tapped_barrel_id;
+
+    document.getElementById('weigh-item-name').textContent = kg.name;
+    document.getElementById('weigh-current-info').textContent =
+      'Scale ya mwisho: ' + kg.latest_weight_kg + ' kg' +
+      ' · Envelope iliyobaki: KES ' + fmt(kg.remaining);
+    document.getElementById('weigh-kg-input').value = '';
+    document.getElementById('weigh-report').style.display = 'none';
+    document.getElementById('weigh-report').innerHTML = '';
+    var btn = document.getElementById('weigh-submit-btn');
+    btn.textContent = 'Pima';
+    btn.disabled = false;
+    document.getElementById('weigh-spot').checked = true;
+
+    showModal('weighModal');
+  };
+
+  window.closeWeighModal = function () { hideModal('weighModal'); };
+
+  window.submitWeigh = function () {
+    var kg = document.getElementById('weigh-kg-input').value;
+    if (!kg || parseFloat(kg) <= 0) {
+      alert('Ingiza uzito kutoka kwenye scale.');
+      return;
+    }
+    var readingType = document.querySelector('input[name="weigh_type"]:checked').value;
+    var btn = document.getElementById('weigh-submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Inapima...';
+
+    post('/stock/bar/weigh/' + _weighBarrel + '/', {
+      weight_kg:    kg,
+      reading_type: readingType,
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.textContent = 'Pima tena';
+        btn.disabled = false;
+        var rep = document.getElementById('weigh-report');
+        rep.style.display = 'block';
+        if (!d.ok) {
+          rep.innerHTML = '<div style="color:#c0395a;">' + d.error + '</div>';
+          return;
+        }
+        var fc    = d.flag === 'ok' ? 'var-ok' : (d.flag === 'warning' ? 'var-warning' : 'var-danger');
+        var icon  = d.flag === 'ok' ? '✓' : (d.flag === 'warning' ? '⚠' : '🚨');
+        var varSign = d.variance_kes >= 0 ? '+' : '';
+        rep.innerHTML =
+          '<div style="background:#1a1a1a; border-radius:10px; padding:0.85rem; border:1px solid #3a3a3a;">' +
+          '<div style="color:#f0ece4; margin-bottom:4px;">' +
+          '<strong>Scale:</strong> ' + d.dispensed_l + 'L imetoka (≈ KES ' + fmt(d.expected_rev) + ')' +
+          '</div>' +
+          '<div style="color:#f0ece4; margin-bottom:4px;">' +
+          '<strong>Vitabu:</strong> KES ' + fmt(d.recorded_rev) +
+          '</div>' +
+          '<div class="' + fc + '" style="font-weight:700; font-size:1rem;">' +
+          'Tofauti: ' + varSign + 'KES ' + fmt(d.variance_kes) + ' (' + d.variance_pct + '%) ' + icon +
+          '</div>' +
+          '<div style="color:#b0b0b0; font-size:0.78rem; margin-top:6px;">' +
+          'Envelope iliyobaki: KES ' + fmt(d.remaining_envelope) +
+          '</div>' +
+          '</div>';
+        // Refresh board so latest_weight_kg updates
+        loadBarBoard();
+      })
+      .catch(function () {
+        btn.textContent = 'Pima';
+        btn.disabled = false;
+      });
+  };
+
+  /* ════════════════════════════════════════════════════════
+     TAP MODAL
+  ════════════════════════════════════════════════════════ */
+  window.openTapModal = function (itemId, barrelId) {
+    var kg = _boardData[itemId];
+    _pendingTapId = barrelId;
+    document.getElementById('tap-confirm-text').textContent =
+      'Fungua barrel ya ' + (kg ? kg.name : 'keg') + '? Barrel itakuwa tayari kuuza.';
+    document.getElementById('tap-confirm-btn').textContent = 'Fungua';
+    document.getElementById('tap-confirm-btn').disabled = false;
+    showModal('tapModal');
+  };
+
+  window.closeTapModal = function () { hideModal('tapModal'); };
+
+  window.confirmTap = function () {
+    if (!_pendingTapId) return;
+    var btn = document.getElementById('tap-confirm-btn');
+    btn.disabled = true;
+    btn.textContent = 'Inafungua...';
+    post('/stock/bar/tap/' + _pendingTapId + '/', {})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        hideModal('tapModal');
+        if (d.ok) {
+          loadBarBoard();
+        } else {
+          alert(d.error || 'Hitilafu ya kufungua barrel.');
+        }
+      })
+      .catch(function () {
+        btn.disabled = false;
+        btn.textContent = 'Fungua';
+      });
+  };
+
+  /* ════════════════════════════════════════════════════════
+     DISCARD (browser confirm — no dedicated modal in Sprint 2)
+  ════════════════════════════════════════════════════════ */
+  window.openDiscardModal = function (itemId, barrelId) {
+    var kg     = _boardData[itemId];
+    var name   = kg ? kg.name : 'barrel hii';
+    var reason = window.prompt('Sababu ya kutupa ' + name + ':', 'Imerudishwa kwa distributor');
+    if (reason === null) return; // cancelled
+    post('/stock/bar/discard/' + barrelId + '/', {reason: reason || 'Discarded'})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          loadBarBoard();
+        } else {
+          alert(d.error || 'Hitilafu ya kutupa barrel.');
+        }
+      });
+  };
+
+  /* ════════════════════════════════════════════════════════
+     RECEIVE MODAL
+  ════════════════════════════════════════════════════════ */
+  window.openReceiveModal  = function () { showModal('receiveModal'); };
+  window.closeReceiveModal = function () { hideModal('receiveModal'); };
+
+  window.autoCalcTarget = function () {
+    var cost      = parseFloat(document.getElementById('recv-cost').value) || 0;
+    var targetEl  = document.getElementById('recv-target');
+    if (!targetEl) return;
+    if (cost > 0 && !targetEl.dataset.userEdited) {
+      targetEl.value = Math.round(cost * KegRevMult);
+    }
+  };
+
+  var _recvTargetEl = document.getElementById('recv-target');
+  if (_recvTargetEl) {
+    _recvTargetEl.addEventListener('input', function () {
+      _recvTargetEl.dataset.userEdited = '1';
+    });
+  }
+
+  window.submitReceive = function () {
+    var itemId = (document.getElementById('recv-item-id')  || {}).value;
+    var count  = (document.getElementById('recv-count')    || {}).value;
+    var cost   = (document.getElementById('recv-cost')     || {}).value;
+    var gross  = (document.getElementById('recv-gross')    || {}).value;
+    var tare   = (document.getElementById('recv-tare')     || {}).value;
+    var scale  = (document.getElementById('recv-scale')    || {}).value;
+    var target = (document.getElementById('recv-target')   || {}).value;
+    var errEl  = document.getElementById('recv-error');
+    if (errEl) errEl.style.display = 'none';
+
+    if (!itemId) {
+      if (errEl) { errEl.textContent = 'Chagua keg item.'; errEl.style.display = 'block'; }
+      return;
+    }
+    if (!cost || parseFloat(cost) <= 0) {
+      if (errEl) { errEl.textContent = 'Ingiza bei ya barrel.'; errEl.style.display = 'block'; }
+      return;
+    }
+
+    var btn = document.getElementById('recv-submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Inahifadhi...';
+
+    var data = {
+      item_id:       itemId,
+      count:         count  || '1',
+      cost_per_barrel: cost,
+      gross_kg:      gross,
+      tare_kg:       tare,
+    };
+    if (scale)  data.scale_reading    = scale;
+    if (target) data.target_per_barrel = target;
+
+    post('/stock/bar/receive/', data)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false;
+        btn.textContent = 'Pokea Barrel';
+        if (d.ok) {
+          hideModal('receiveModal');
+          // Reset target user-edited flag
+          if (_recvTargetEl) {
+            _recvTargetEl.value = '';
+            delete _recvTargetEl.dataset.userEdited;
+          }
+          loadBarBoard();
+        } else {
+          if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
+        }
+      })
+      .catch(function () {
+        btn.disabled = false;
+        btn.textContent = 'Pokea Barrel';
+        if (errEl) { errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; }
+      });
+  };
+
+  /* ════════════════════════════════════════════════════════
+     INIT
+  ════════════════════════════════════════════════════════ */
+  loadBarBoard();
+
+  // Reload board when tab becomes visible again (staff could be on another tab)
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) loadBarBoard();
+  });
+
+  {% if success_data %}
+  // Show receipt modal after a successful POST sale
+  showModal('successModal');
+  {% endif %}
+
+})();
+</script>
+{% endblock %}

@@ -45,6 +45,14 @@ from core.views import (
 )
 from core.ussd import ussd_callback
 from core.produce_views import produce_board, receive_bunches, discard_bunch
+from core.keg_views import (
+    bar_board,
+    bar_board_api,
+    receive_barrel,
+    tap_barrel,
+    weigh_barrel,
+    discard_barrel,
+)
 from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import (
     mpesa_callback,
@@ -154,6 +162,13 @@ urlpatterns = [
     path("stock/produce/board/", produce_board, name="produce_board"),
     path("stock/produce/receive/", receive_bunches, name="receive_bunches"),
     path("stock/produce/bunch/<int:bunch_id>/discard/", discard_bunch, name="discard_bunch"),
+    # ── Bar & Club Module — keg lifecycle + bar board ─────────────────────────
+    path("bar/", bar_board, name="bar_board"),
+    path("stock/bar/board/", bar_board_api, name="bar_board_api"),
+    path("stock/bar/receive/", receive_barrel, name="receive_barrel"),
+    path("stock/bar/tap/<int:barrel_id>/", tap_barrel, name="tap_barrel"),
+    path("stock/bar/weigh/<int:barrel_id>/", weigh_barrel, name="weigh_barrel"),
+    path("stock/bar/discard/<int:barrel_id>/", discard_barrel, name="discard_barrel"),
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────
     path("approvals/", pending_approvals, name="pending_approvals"),
