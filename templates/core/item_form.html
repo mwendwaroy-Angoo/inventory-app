@@ -1248,8 +1248,6 @@
                             }
                         });
                     }
-                    // Auto-fill Material No from category prefix
-                    _autoFillMaterialNo(catValue);
                 } else {
                     if (actionsDiv) actionsDiv.style.display = 'none';
                     if (btn) btn.style.display = 'none';
@@ -1258,6 +1256,8 @@
                         if (typeof _hideBarPresetsSection === 'function') _hideBarPresetsSection();
                     }
                 }
+                // Auto-fill Material No for ALL categories, not just bar ones
+                _autoFillMaterialNo(catValue);
             }
 
             // Auto-fill Material No with the next available prefix-NN for this category
