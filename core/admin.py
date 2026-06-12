@@ -19,6 +19,7 @@ from .models import (
 from .models import PurchaseOrder, PurchaseOrderLine, SupplierBidLine, Category
 from .models import ImportJob
 from .models import ProduceBunch, ItemPortionPreset
+from .models import Shift, KegBarrel, KegWeightReading, BarTab, BarTabEntry
 
 
 @admin.register(Store)
@@ -368,3 +369,79 @@ class ItemPortionPresetAdmin(admin.ModelAdmin):
     list_filter = ('item__business',)
     search_fields = ('item__description', 'label')
     ordering = ('item', 'display_order', 'price')
+
+
+# ────────────────────────────────────────────────
+# BAR MODULE — Shift, KegBarrel, KegWeightReading, BarTab, BarTabEntry
+# ────────────────────────────────────────────────
+
+@admin.register(Shift)
+class ShiftAdmin(admin.ModelAdmin):
+    list_display = ('staff', 'business', 'store', 'status', 'started_at', 'ended_at', 'opening_float')
+    list_filter = ('status', 'business')
+    search_fields = ('staff__username', 'staff__first_name', 'business__name')
+    date_hierarchy = 'started_at'
+
+
+class KegWeightReadingInline(admin.TabularInline):
+    model = KegWeightReading
+    extra = 0
+    readonly_fields = ('recorded_at',)
+
+
+@admin.register(KegBarrel)
+class KegBarrelAdmin(admin.ModelAdmin):
+    list_display = ('item', 'business', 'store', 'status', 'cost_price', 'target_revenue',
+                    'revenue_collected', 'remaining_display', 'markup_display', 'received_on')
+    list_filter = ('status', 'business', 'received_on')
+    search_fields = ('item__description', 'business__name')
+    date_hierarchy = 'received_on'
+    readonly_fields = ('revenue_collected', 'volume_dispensed_ml', 'tapped_at', 'closed_at')
+    inlines = [KegWeightReadingInline]
+
+    def remaining_display(self, obj):
+        return f"KES {obj.remaining_envelope():,.0f}"
+    remaining_display.short_description = 'Remaining'
+
+    def markup_display(self, obj):
+        return f"{obj.realized_markup():.2f}x"
+    markup_display.short_description = 'Realized'
+
+
+@admin.register(KegWeightReading)
+class KegWeightReadingAdmin(admin.ModelAdmin):
+    list_display = ('barrel', 'weight_kg', 'reading_type', 'recorded_by', 'confirmed_by', 'recorded_at')
+    list_filter = ('reading_type', 'barrel__business')
+    search_fields = ('barrel__item__description',)
+    readonly_fields = ('recorded_at',)
+
+
+class BarTabEntryInline(admin.TabularInline):
+    model = BarTabEntry
+    extra = 0
+    readonly_fields = ('paid_at',)
+
+
+@admin.register(BarTab)
+class BarTabAdmin(admin.ModelAdmin):
+    list_display = ('customer_name', 'business', 'shift', 'served_by', 'server_name',
+                    'status', 'total_display', 'unpaid_display', 'opened_at')
+    list_filter = ('status', 'business')
+    search_fields = ('customer_name', 'server_name', 'business__name')
+    date_hierarchy = 'opened_at'
+    inlines = [BarTabEntryInline]
+
+    def total_display(self, obj):
+        return f"KES {obj.total():,.0f}"
+    total_display.short_description = 'Total'
+
+    def unpaid_display(self, obj):
+        return f"KES {obj.unpaid_total():,.0f}"
+    unpaid_display.short_description = 'Unpaid'
+
+
+@admin.register(BarTabEntry)
+class BarTabEntryAdmin(admin.ModelAdmin):
+    list_display = ('tab', 'description', 'amount', 'is_paid', 'payment_method', 'paid_at')
+    list_filter = ('is_paid', 'payment_method', 'tab__business')
+    search_fields = ('description', 'tab__customer_name')

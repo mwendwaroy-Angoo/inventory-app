@@ -307,9 +307,9 @@ def stock_list(request):
     selected_store_id = request.GET.get("store")
     status_filter = request.GET.get("status")
 
-    items = Item.objects.filter(store__business=user_profile.business).order_by(
-        "material_no"
-    )
+    items = Item.objects.filter(store__business=user_profile.business).exclude(
+        is_keg=True
+    ).order_by("material_no")
 
     if selected_store_id:
         try:
@@ -628,9 +628,9 @@ def add_transaction(request):
         )
         return redirect("add_transaction")
 
-    items = Item.objects.filter(store__business=user_profile.business).order_by(
-        "material_no"
-    )
+    items = Item.objects.filter(store__business=user_profile.business).exclude(
+        is_keg=True
+    ).order_by("material_no")
     restricted_items_data = {}
     if not user_profile.is_owner:
         restricted_qs = Item.objects.filter(
@@ -895,7 +895,7 @@ def item_search(request):
         return JsonResponse({"results": []})
 
     q = request.GET.get("q", "").strip()
-    items_qs = Item.objects.filter(business=user_profile.business)
+    items_qs = Item.objects.filter(business=user_profile.business).exclude(is_keg=True)
     if q:
         items_qs = items_qs.filter(
             Q(material_no__icontains=q) | Q(description__icontains=q)
@@ -1975,6 +1975,7 @@ def quick_sell(request):
     items_qs = list(
         Item.objects.filter(store__business=user_profile.business)
         .exclude(is_produce=True, produce_mode="BUNCH")  # greens render in their own board
+        .exclude(is_keg=True)  # keg items render in the bar board
         .select_related("store")
         .order_by("description")
     )

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import models
 from django.contrib.auth.models import User
 from django.db.models.signals import post_save
@@ -82,6 +84,22 @@ class Business(models.Model):
     last_txn_sms_at = models.DateTimeField(
         null=True, blank=True,
         help_text='Timestamp of last transaction SMS sent. Used for 10-minute bundling window.'
+    )
+
+    # ── Keg Bar Settings ──────────────────────────────────────────────────
+    keg_variance_tolerance_pct = models.DecimalField(
+        max_digits=4, decimal_places=1, default=Decimal('3.0'),
+        help_text='Allowed % gap between weight-implied revenue and recorded keg sales before a shift is flagged.'
+    )
+    keg_default_gross_kg = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('60.00')
+    )
+    keg_default_tare_kg = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('10.00')
+    )
+    keg_revenue_multiplier = models.DecimalField(
+        max_digits=4, decimal_places=2, default=Decimal('1.50'),
+        help_text='Suggested barrel target = cost × this. 5000 × 1.5 = 7500, matching common owner targets.'
     )
 
     def __str__(self):

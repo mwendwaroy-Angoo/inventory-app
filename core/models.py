@@ -309,6 +309,16 @@ class Item(models.Model):
                     '(1.70 → a 40/= bunch targets 68/=). Overridable per bunch by eye.'),
     )
 
+    # ── Bar / Keg Module fields (migration 0043) ───────────────────────────
+    is_keg = models.BooleanField(
+        default=False,
+        help_text='Keg item sold from a barrel by weight/volume. Stock tracked via KegBarrel envelopes, not normal balance.'
+    )
+    volume_ml = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Bottle volume for single-piece liquor (750=mzinga, 350/375=half, 250=quarter).'
+    )
+
     def default_bunch_target(self, cost):
         """Suggested envelope for a freshly received bunch: cost × multiplier."""
         try:
@@ -484,6 +494,11 @@ class Transaction(models.Model):
         'ProduceBunch', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='sales',
         help_text=_('The greens bunch this portion sale was drawn from, if any.'),
+    )
+    keg_barrel = models.ForeignKey(
+        'KegBarrel', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transactions',
+        help_text='The keg barrel this pour was drawn from. Discriminator for keg analytics — parallel to produce_bunch_id.',
     )
 
     def revenue(self):
@@ -1484,3 +1499,279 @@ class ProduceBunch(models.Model):
                 txns.append(t)
                 breakdown.append({'item': b.item.description, 'amount': float(share)})
         return txns, breakdown
+
+
+# ────────────────────────────────────────────────
+# BAR MODULE — Shift, KegBarrel, KegWeightReading, BarTab, BarTabEntry
+# (migration 0043_bar_module)
+# ────────────────────────────────────────────────
+
+class Shift(models.Model):
+    STATUS_CHOICES = [
+        ('OPEN',      _('Open')),
+        ('CLOSED',    _('Closed — awaiting confirmation')),
+        ('CONFIRMED', _('Confirmed by incoming staff')),
+    ]
+
+    business      = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='shifts')
+    store         = models.ForeignKey('Store', on_delete=models.CASCADE, null=True, blank=True)
+    staff         = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='shifts')
+    status        = models.CharField(max_length=10, choices=STATUS_CHOICES, default='OPEN')
+    started_at    = models.DateTimeField(default=timezone.now)
+    ended_at      = models.DateTimeField(null=True, blank=True)
+    opening_float = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    closing_cash_counted = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    confirmed_by  = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='shifts_confirmed'
+    )
+    notes         = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+        verbose_name = 'Shift'
+        verbose_name_plural = 'Shifts'
+
+    def __str__(self):
+        return f"{self.staff.get_full_name() or self.staff.username} — {self.started_at.strftime('%d %b %Y %H:%M')} ({self.status})"
+
+
+class KegBarrel(models.Model):
+    STATUS_CHOICES = [
+        ('SEALED',   _('Sealed — received, not tapped')),
+        ('TAPPED',   _('Tapped — selling')),
+        ('DEPLETED', _('Depleted — target reached / empty')),
+        ('RETURNED', _('Returned / discarded')),
+    ]
+
+    business        = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='keg_barrels')
+    store           = models.ForeignKey('Store', on_delete=models.CASCADE, null=True, blank=True)
+    item            = models.ForeignKey('Item', on_delete=models.CASCADE, related_name='keg_barrels')
+    gross_weight_kg = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('60.00'))
+    tare_weight_kg  = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('10.00'))
+    cost_price      = models.DecimalField(max_digits=10, decimal_places=2)
+    target_revenue  = models.DecimalField(max_digits=10, decimal_places=2)
+    revenue_collected   = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    volume_dispensed_ml = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0'),
+        help_text='Sum of preset volumes sold — the BOOK figure. Compare with weight.'
+    )
+    status      = models.CharField(max_length=10, choices=STATUS_CHOICES, default='SEALED')
+    received_on = models.DateField(default=timezone.localdate)
+    received_by = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='kegs_received'
+    )
+    tapped_at  = models.DateTimeField(null=True, blank=True)
+    closed_at  = models.DateTimeField(null=True, blank=True)
+    note       = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        ordering = ['-received_on', '-id']
+        verbose_name = 'Keg Barrel'
+        verbose_name_plural = 'Keg Barrels'
+
+    def __str__(self):
+        return f"{self.item.description} — {self.get_status_display()} (barrel #{self.id})"
+
+    # ── volume helpers ────────────────────────────────────────────────────
+
+    @property
+    def net_volume_l(self):
+        return float(self.gross_weight_kg) - float(self.tare_weight_kg)
+
+    @property
+    def net_volume_ml(self):
+        return self.net_volume_l * 1000.0
+
+    def latest_weight(self):
+        r = self.weight_readings.order_by('-recorded_at').first()
+        return float(r.weight_kg) if r else float(self.gross_weight_kg)
+
+    def weight_implied_dispensed_ml(self):
+        """GROUND TRUTH: ml dispensed per the scale."""
+        return max(0.0, (float(self.gross_weight_kg) - self.latest_weight()) * 1000.0)
+
+    def revenue_rate_per_ml(self):
+        return float(self.target_revenue) / self.net_volume_ml if self.net_volume_ml else 0.0
+
+    def expected_revenue_from_weight(self):
+        return self.weight_implied_dispensed_ml() * self.revenue_rate_per_ml()
+
+    def remaining_envelope(self):
+        return max(0.0, float(self.target_revenue) - float(self.revenue_collected))
+
+    def realized_markup(self):
+        if self.cost_price:
+            return float(self.revenue_collected) / float(self.cost_price)
+        return 0.0
+
+    def age_days(self):
+        if self.tapped_at:
+            return (timezone.localdate() - self.tapped_at.date()).days
+        return 0
+
+    def is_stale(self, threshold_days=2):
+        return self.status == 'TAPPED' and self.age_days() > threshold_days
+
+    # ── lifecycle ─────────────────────────────────────────────────────────
+
+    def tap(self, user):
+        if self.status == 'SEALED':
+            self.status = 'TAPPED'
+            self.tapped_at = timezone.now()
+            self.save(update_fields=['status', 'tapped_at'])
+
+    def close(self, reason=''):
+        if self.status in ('SEALED', 'TAPPED'):
+            self.status = 'RETURNED' if reason else 'DEPLETED'
+            self.closed_at = timezone.now()
+            update_fields = ['status', 'closed_at']
+            if reason:
+                self.note = (self.note + ' | ' if self.note else '') + reason
+                update_fields.append('note')
+            self.save(update_fields=update_fields)
+
+    def record_sale(self, preset, qty, payment_method, recorded_by, tab=None, server_name=''):
+        """
+        One pour. Creates Transaction(type=Issue) and updates the envelope.
+        If tab is provided, payment_method is set to 'credit' and a BarTabEntry is created.
+        Auto-DEPLETED when envelope reached AND latest weight ≤ tare + 0.5 kg.
+        """
+        ml = Decimal(str(float(preset.quantity_consumed) * qty))
+        amount = Decimal(str(float(preset.price) * qty))
+        pay = 'credit' if tab else (payment_method or 'cash')
+
+        txn = Transaction.objects.create(
+            item=self.item,
+            business=self.business,
+            type='Issue',
+            qty=-ml,
+            sale_amount=amount,
+            payment_method=pay,
+            keg_barrel=self,
+        )
+
+        self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
+        self.volume_dispensed_ml = (self.volume_dispensed_ml or Decimal('0')) + ml
+        update_fields = ['revenue_collected', 'volume_dispensed_ml']
+
+        if (self.remaining_envelope() <= 0
+                and self.latest_weight() <= float(self.tare_weight_kg) + 0.5
+                and self.status == 'TAPPED'):
+            self.status = 'DEPLETED'
+            self.closed_at = timezone.now()
+            update_fields += ['status', 'closed_at']
+
+        self.save(update_fields=update_fields)
+
+        if tab is not None:
+            BarTabEntry.objects.create(
+                tab=tab,
+                transaction=txn,
+                description=f"{preset.label} ×{qty}",
+                amount=amount,
+            )
+
+        return txn
+
+
+class KegWeightReading(models.Model):
+    READING_TYPES = [
+        ('RECEIVE',     _('Received — verify 60 kg')),
+        ('SHIFT_OPEN',  _('Shift opening check')),
+        ('SHIFT_CLOSE', _('Shift closing check')),
+        ('SPOT',        _('Spot check')),
+        ('FINAL',       _('Final / barrel empty')),
+    ]
+
+    barrel       = models.ForeignKey(KegBarrel, on_delete=models.CASCADE, related_name='weight_readings')
+    shift        = models.ForeignKey(Shift, null=True, blank=True, on_delete=models.SET_NULL,
+                                     related_name='keg_readings')
+    weight_kg    = models.DecimalField(max_digits=6, decimal_places=2)
+    reading_type = models.CharField(max_length=12, choices=READING_TYPES)
+    recorded_by  = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True,
+        related_name='keg_readings_recorded'
+    )
+    confirmed_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='keg_readings_confirmed',
+        help_text='Incoming staff who verified this reading at handover.'
+    )
+    recorded_at  = models.DateTimeField(auto_now_add=True)
+    note         = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        ordering = ['-recorded_at']
+        verbose_name = 'Keg Weight Reading'
+        verbose_name_plural = 'Keg Weight Readings'
+
+    def __str__(self):
+        return f"{self.barrel} — {self.weight_kg} kg ({self.get_reading_type_display()})"
+
+
+class BarTab(models.Model):
+    STATUS_CHOICES = [
+        ('OPEN',     _('Open')),
+        ('SETTLED',  _('Settled')),
+        ('VOID',     _('Void')),
+    ]
+
+    business      = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='bar_tabs')
+    store         = models.ForeignKey('Store', on_delete=models.CASCADE, null=True, blank=True)
+    shift         = models.ForeignKey(Shift, null=True, blank=True, on_delete=models.SET_NULL,
+                                      related_name='tabs')
+    customer_name = models.CharField(max_length=80)
+    customer      = models.ForeignKey(
+        'Customer', null=True, blank=True, on_delete=models.SET_NULL,
+        help_text='Optional link to a registered customer — enables debt tracker integration.'
+    )
+    served_by     = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='tabs_served'
+    )
+    server_name   = models.CharField(
+        max_length=80, blank=True,
+        help_text='Waitress name when she has no login.'
+    )
+    status        = models.CharField(max_length=8, choices=STATUS_CHOICES, default='OPEN')
+    opened_at     = models.DateTimeField(auto_now_add=True)
+    settled_at    = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-opened_at']
+        verbose_name = 'Bar Tab'
+        verbose_name_plural = 'Bar Tabs'
+
+    def __str__(self):
+        return f"Tab — {self.customer_name} ({self.status})"
+
+    def total(self):
+        result = self.entries.aggregate(t=models.Sum('amount'))['t']
+        return result or Decimal('0')
+
+    def unpaid_total(self):
+        result = self.entries.filter(is_paid=False).aggregate(t=models.Sum('amount'))['t']
+        return result or Decimal('0')
+
+
+class BarTabEntry(models.Model):
+    tab         = models.ForeignKey(BarTab, on_delete=models.CASCADE, related_name='entries')
+    transaction = models.OneToOneField(
+        Transaction, on_delete=models.CASCADE, related_name='tab_entry'
+    )
+    description    = models.CharField(max_length=80)
+    amount         = models.DecimalField(max_digits=10, decimal_places=2)
+    is_paid        = models.BooleanField(default=False)
+    paid_at        = models.DateTimeField(null=True, blank=True)
+    payment_method = models.CharField(max_length=10, blank=True)
+
+    class Meta:
+        ordering = ['id']
+        verbose_name = 'Bar Tab Entry'
+        verbose_name_plural = 'Bar Tab Entries'
+
+    def __str__(self):
+        status = 'paid' if self.is_paid else 'open'
+        return f"{self.tab.customer_name} — {self.description} KES {self.amount} ({status})"
