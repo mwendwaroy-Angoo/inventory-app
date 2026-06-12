@@ -1256,17 +1256,22 @@
             // Auto-fill Material No with the next available prefix-NN for this category
             function _autoFillMaterialNo(catValue) {
                 var matEl = document.getElementById('id_material_no');
-                if (!matEl || matEl.value) return; // don't overwrite existing
+                if (!matEl || matEl.value.trim()) return; // don't overwrite existing
                 var prefix = catValue.trim().charAt(0).toUpperCase();
                 if (!prefix.match(/[A-Z]/)) return;
-                fetch('/api/next-material-no/?prefix=' + encodeURIComponent(prefix), {
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                })
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data.next && !matEl.value) matEl.value = data.next;
-                })
-                .catch(function() {});
+                fetch('/api/next-material-no/?prefix=' + encodeURIComponent(prefix))
+                    .then(function(r) {
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        return r.json();
+                    })
+                    .then(function(data) {
+                        if (!matEl.value.trim()) {
+                            matEl.value = data.next || (prefix + '-01');
+                        }
+                    })
+                    .catch(function() {
+                        if (!matEl.value.trim()) matEl.value = prefix + '-01';
+                    });
             }
 
             if (catInput) {

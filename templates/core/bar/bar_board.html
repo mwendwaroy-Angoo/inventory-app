@@ -198,6 +198,103 @@
   max-width: 300px;
   transition: opacity 0.4s;
 }
+
+/* ── Animated keg barrel visualizer ─────────────────── */
+.keg-tile-body {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+}
+.keg-tile-info { flex: 1; min-width: 0; }
+
+.keg-barrel-wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+.keg-barrel-body {
+  width: 34px;
+  height: 82px;
+  background: linear-gradient(90deg, #180f05 0%, #2c1c0a 40%, #3a240e 60%, #180f05 100%);
+  border-radius: 9px 9px 7px 7px;
+  border: 2px solid #3d2808;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: inset 2px 0 5px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.35);
+}
+.keg-barrel-body::before,
+.keg-barrel-body::after {
+  content: '';
+  position: absolute;
+  left: -2px; right: -2px;
+  height: 4px;
+  background: #4a3210;
+  border-top: 1px solid #6a4a18;
+  border-bottom: 1px solid #291a06;
+  z-index: 3;
+}
+.keg-barrel-body::before { top: 15px; }
+.keg-barrel-body::after  { bottom: 15px; }
+
+.keg-liquid {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  transition: height 1.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  z-index: 1;
+  border-radius: 0 0 5px 5px;
+}
+.keg-liquid.lvl-high { background: linear-gradient(180deg, rgba(201,168,76,0.88) 0%, rgba(145,92,8,0.96) 100%); }
+.keg-liquid.lvl-med  { background: linear-gradient(180deg, rgba(255,165,0,0.85) 0%, rgba(170,80,0,0.96) 100%); }
+.keg-liquid.lvl-low  { background: linear-gradient(180deg, rgba(192,57,90,0.82) 0%, rgba(110,15,35,0.96) 100%); }
+
+.keg-foam {
+  position: absolute;
+  top: -2px; left: 1px; right: 1px;
+  height: 7px;
+  background: rgba(255,255,255,0.22);
+  border-radius: 50%;
+  z-index: 2;
+  animation: keg-foam 2.8s ease-in-out infinite;
+}
+@keyframes keg-foam {
+  0%, 100% { transform: scaleY(1);   opacity: 0.3; }
+  50%       { transform: scaleY(1.6); opacity: 0.5; }
+}
+
+.keg-gauge {
+  width: 5px;
+  height: 82px;
+  background: #111;
+  border: 1px solid #252525;
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+}
+.keg-gauge-fill {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  transition: height 1.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  border-radius: 0 0 2px 2px;
+}
+.keg-gauge-fill.lvl-high { background: #c9a84c; }
+.keg-gauge-fill.lvl-med  { background: #ff9800; }
+.keg-gauge-fill.lvl-low  { background: #c0395a; animation: gauge-pulse 1.6s ease-in-out infinite; }
+
+@keyframes gauge-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.keg-bottom-warn {
+  font-size: 0.7rem;
+  color: #c0395a;
+  margin-top: 2px;
+  line-height: 1.3;
+}
 </style>
 {% endblock %}
 
@@ -682,14 +779,39 @@
       }
 
       if (hasTap) {
+        var pct = kg.target_open > 0
+          ? Math.round(Math.max(0, Math.min(100, kg.remaining / kg.target_open * 100)))
+          : 0;
+        var lvlClass = pct >= 35 ? 'lvl-high' : (pct >= 15 ? 'lvl-med' : 'lvl-low');
+        var bottomWarn = pct < 20
+          ? '<div class="keg-bottom-warn">⚠ Karibu mwisho — tahadhari na mwisho wa barrel</div>'
+          : '';
+        var barrelViz =
+          '<div class="keg-barrel-wrap" title="' + pct + '% iliyobaki">' +
+            '<div class="keg-barrel-body">' +
+              '<div class="keg-liquid ' + lvlClass + '" style="height:' + pct + '%;">' +
+                '<div class="keg-foam"></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="keg-gauge">' +
+              '<div class="keg-gauge-fill ' + lvlClass + '" style="height:' + pct + '%;"></div>' +
+            '</div>' +
+          '</div>';
+
         html +=
           '<div class="col-6 col-md-4 col-lg-3">' +
           '<div class="keg-tile' + (kg.stale ? ' stale' : '') + '" ' +
           'onclick="window.openSellModal(' + kg.item_id + ')">' +
-          '<div class="keg-name">' + kg.name + '</div>' +
-          '<div class="keg-remaining">KES ' + fmt(kg.remaining) + '</div>' +
-          '<div class="keg-meta">' + kg.latest_weight_kg + ' kg · Target ' + fmt(kg.target_open) + badge + '</div>' +
-          '<div class="mt-2">' + presetChips + '</div>' +
+          '<div class="keg-tile-body">' +
+            barrelViz +
+            '<div class="keg-tile-info">' +
+              '<div class="keg-name">' + kg.name + '</div>' +
+              '<div class="keg-remaining">KES ' + fmt(kg.remaining) + '</div>' +
+              '<div class="keg-meta">' + kg.latest_weight_kg + ' kg · Target ' + fmt(kg.target_open) + badge + '</div>' +
+              bottomWarn +
+              '<div class="mt-2">' + presetChips + '</div>' +
+            '</div>' +
+          '</div>' +
           actionHtml +
           '</div></div>';
       } else {
