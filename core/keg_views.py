@@ -2,7 +2,8 @@
 Bar & Club Module — Keg lifecycle views and Bar Board.
 
 Sprint 2: board API, receive/tap/weigh/discard, Bar Board HTML + sell (cash/mpesa).
-Sprint 3: tab sell path.  Sprint 4: shift handover.
+Sprint 3: tab sell path — BarTab CRUD, tabs drawer, tick-to-pay, convert-to-debt.
+Sprint 4: shift handover.
 """
 import json
 from decimal import Decimal
@@ -13,7 +14,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .models import Item, ItemPortionPreset, KegBarrel, KegWeightReading, Transaction
+from .models import BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Transaction
 
 
 def _get_up(request):
@@ -85,9 +86,12 @@ def bar_board_api(request):
             'next_sealed_tare':     float(next_sealed.tare_weight_kg) if next_sealed else 0.0,
         })
 
+    open_tabs_qs = BarTab.objects.filter(business=business, status='OPEN')
     return JsonResponse({
         'kegs': kegs,
         'can_receive': bool(getattr(up, 'is_owner', False)),
+        'open_tabs': open_tabs_qs.count(),
+        'open_tab_names': list(open_tabs_qs.values_list('customer_name', flat=True).distinct()),
     })
 
 
@@ -107,11 +111,39 @@ def bar_board(request):
     if request.method == 'POST':
         cart_json = request.POST.get('keg_cart', '[]')
         payment_method = request.POST.get('payment_method', 'cash')
+        tab_customer = (request.POST.get('tab_customer') or '').strip()
+        tab_server = (request.POST.get('tab_server') or '').strip()
 
         try:
             cart = json.loads(cart_json)
         except Exception:
             cart = []
+
+        # Resolve tab for tab-payment sales
+        active_tab = None
+        if payment_method == 'tab' and tab_customer:
+            active_tab = BarTab.objects.filter(
+                business=business,
+                customer_name__iexact=tab_customer,
+                status='OPEN',
+            ).first()
+            if not active_tab:
+                first_barrel = None
+                for entry in cart:
+                    try:
+                        bid = int(entry.get('barrel_id', 0))
+                        first_barrel = KegBarrel.objects.filter(id=bid, business=business).first()
+                        if first_barrel:
+                            break
+                    except (TypeError, ValueError):
+                        pass
+                active_tab = BarTab.objects.create(
+                    business=business,
+                    store=first_barrel.store if first_barrel else None,
+                    customer_name=tab_customer,
+                    server_name=tab_server,
+                    served_by=request.user if not tab_server else None,
+                )
 
         receipt_lines = []
         total_revenue = Decimal('0')
@@ -139,7 +171,7 @@ def bar_board(request):
             if not preset:
                 continue
 
-            barrel.record_sale(preset, qty, payment_method, request.user)
+            barrel.record_sale(preset, qty, payment_method, request.user, tab=active_tab)
             amount = Decimal(str(float(preset.price) * qty))
             total_revenue += amount
             receipt_lines.append({
@@ -152,6 +184,7 @@ def bar_board(request):
                 'lines': receipt_lines,
                 'total': float(total_revenue),
                 'payment_method': payment_method,
+                'tab_customer': tab_customer if active_tab else '',
                 'timestamp': timezone.localtime(timezone.now()).strftime('%H:%M'),
             }
 
@@ -418,3 +451,195 @@ def discard_barrel(request, barrel_id):
     reason = (request.POST.get('reason') or 'Imerudishwa / discarded').strip()
     barrel.close(reason=reason)
     return JsonResponse({'ok': True, 'status': barrel.status})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SPRINT 3 — Tabs: list, tick, settle, void, convert-to-debt
+# ══════════════════════════════════════════════════════════════════════════════
+
+@login_required
+def tabs_list(request):
+    """AJAX GET — returns all OPEN tabs for this business with their entries."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'tabs': []})
+
+    tabs = (
+        BarTab.objects
+        .filter(business=up.business, status='OPEN')
+        .prefetch_related('entries')
+        .order_by('-opened_at')
+    )
+
+    result = []
+    for tab in tabs:
+        entries = []
+        for e in tab.entries.all():
+            entries.append({
+                'id': e.id,
+                'description': e.description,
+                'amount': float(e.amount),
+                'is_paid': e.is_paid,
+                'payment_method': e.payment_method,
+            })
+        result.append({
+            'id': tab.id,
+            'customer_name': tab.customer_name,
+            'server_name': tab.server_name,
+            'total': float(tab.total()),
+            'unpaid_total': float(tab.unpaid_total()),
+            'entries': entries,
+            'opened_at': tab.opened_at.strftime('%H:%M'),
+        })
+
+    return JsonResponse({'tabs': result})
+
+
+@login_required
+@require_POST
+def tick_entry(request, entry_id):
+    """Mark a single BarTabEntry as paid."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    entry = get_object_or_404(
+        BarTabEntry.objects.select_related('tab', 'transaction'),
+        id=entry_id,
+        tab__business=up.business,
+        is_paid=False,
+    )
+
+    pay = (request.POST.get('payment_method') or 'cash').strip()
+    if pay not in ('cash', 'mpesa'):
+        pay = 'cash'
+
+    now = timezone.now()
+    entry.is_paid = True
+    entry.paid_at = now
+    entry.payment_method = pay
+    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+
+    entry.transaction.payment_method = pay
+    entry.transaction.save(update_fields=['payment_method'])
+
+    tab = entry.tab
+    tab_settled = not tab.entries.filter(is_paid=False).exists()
+    if tab_settled:
+        tab.status = 'SETTLED'
+        tab.settled_at = now
+        tab.save(update_fields=['status', 'settled_at'])
+
+    return JsonResponse({
+        'ok': True,
+        'unpaid_total': float(tab.unpaid_total()),
+        'tab_settled': tab_settled,
+    })
+
+
+@login_required
+@require_POST
+def settle_tab(request, tab_id):
+    """Settle all unpaid entries on a tab at once."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
+
+    pay = (request.POST.get('payment_method') or 'cash').strip()
+    if pay not in ('cash', 'mpesa'):
+        pay = 'cash'
+
+    now = timezone.now()
+    for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
+        entry.is_paid = True
+        entry.paid_at = now
+        entry.payment_method = pay
+        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+        entry.transaction.payment_method = pay
+        entry.transaction.save(update_fields=['payment_method'])
+
+    tab.status = 'SETTLED'
+    tab.settled_at = now
+    tab.save(update_fields=['status', 'settled_at'])
+
+    return JsonResponse({'ok': True, 'total': float(tab.total())})
+
+
+@login_required
+@require_POST
+def void_tab(request, tab_id):
+    """Void a tab — owner only. Marks all unpaid entries as written off."""
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner', False):
+        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+
+    tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
+    reason = (request.POST.get('reason') or 'Imetupwa').strip()
+
+    now = timezone.now()
+    for entry in tab.entries.filter(is_paid=False):
+        entry.is_paid = True
+        entry.paid_at = now
+        entry.payment_method = 'void'
+        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+
+    tab.status = 'VOID'
+    tab.settled_at = now
+    tab.save(update_fields=['status', 'settled_at'])
+
+    return JsonResponse({'ok': True, 'reason': reason})
+
+
+@login_required
+@require_POST
+def convert_tab_to_debt(request, tab_id):
+    """Convert a tab's unpaid balance to the debt tracker under a Customer."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
+
+    customer_name = (request.POST.get('customer_name') or tab.customer_name).strip()
+    phone = (request.POST.get('phone') or '').strip()
+
+    # Find or create the Customer record
+    if phone:
+        customer, _ = Customer.objects.get_or_create(
+            business=up.business,
+            phone=phone,
+            defaults={'name': customer_name},
+        )
+    else:
+        customer = Customer.objects.filter(
+            business=up.business,
+            name__iexact=customer_name,
+        ).first()
+        if not customer:
+            customer = Customer.objects.create(
+                business=up.business,
+                name=customer_name,
+                phone=phone,
+            )
+
+    unpaid_total = float(tab.unpaid_total())
+
+    # Link the transactions to this customer so the debt tracker sees them
+    for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
+        txn = entry.transaction
+        txn.recipient = customer.name
+        txn.save(update_fields=['recipient'])
+
+    tab.customer = customer
+    tab.status = 'SETTLED'
+    tab.settled_at = timezone.now()
+    tab.save(update_fields=['customer', 'status', 'settled_at'])
+
+    return JsonResponse({
+        'ok': True,
+        'customer_name': customer.name,
+        'unpaid_total': unpaid_total,
+        'debt_url': f'/debt/{customer.id}/',
+    })

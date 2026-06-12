@@ -54,6 +54,11 @@ from core.keg_views import (
     weigh_barrel,
     discard_barrel,
     edit_barrel,
+    tabs_list,
+    tick_entry,
+    settle_tab,
+    void_tab,
+    convert_tab_to_debt,
 )
 from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import (
@@ -173,6 +178,12 @@ urlpatterns = [
     path("stock/bar/weigh/<int:barrel_id>/", weigh_barrel, name="weigh_barrel"),
     path("stock/bar/discard/<int:barrel_id>/", discard_barrel, name="discard_barrel"),
     path("stock/bar/edit/<int:barrel_id>/", edit_barrel, name="edit_barrel"),
+    # ── Bar Tabs (Sprint 3) ───────────────────────────────────────────────────
+    path("bar/tabs/", tabs_list, name="tabs_list"),
+    path("bar/tabs/<int:tab_id>/settle/", settle_tab, name="settle_tab"),
+    path("bar/tabs/<int:tab_id>/void/", void_tab, name="void_tab"),
+    path("bar/tabs/<int:tab_id>/debt/", convert_tab_to_debt, name="convert_tab_to_debt"),
+    path("bar/tabs/entry/<int:entry_id>/tick/", tick_entry, name="tick_entry"),
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────
     path("approvals/", pending_approvals, name="pending_approvals"),
