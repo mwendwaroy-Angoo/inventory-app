@@ -144,7 +144,11 @@
                     <option value="Pair">
                     <option value="Set">
                     <option value="250ml">
+                    <option value="330ml">
                     <option value="500ml">
+                    <option value="700ml">
+                    <option value="750ml">
+                    <option value="1L">
                     <option value="1 Litre">
                     <option value="Glass">
                     <option value="Shot">
@@ -186,6 +190,31 @@
                     <option value="Medicines">
                     <option value="Alcohol">
                     <option value="Tobacco">
+                    <!-- ── Bar / Spirits ── -->
+                    <option value="Gin">
+                    <option value="Vodka">
+                    <option value="Rum">
+                    <option value="Whiskey">
+                    <option value="Whisky">
+                    <option value="Brandy">
+                    <option value="Cognac">
+                    <option value="Tequila">
+                    <option value="Schnapps">
+                    <option value="Liqueur">
+                    <!-- ── Bar / Wines ── -->
+                    <option value="Red Wine">
+                    <option value="White Wine">
+                    <option value="Rosé Wine">
+                    <option value="Champagne">
+                    <option value="Sparkling Wine">
+                    <!-- ── Bar / Beer ── -->
+                    <option value="Bottled Beer">
+                    <option value="Canned Beer">
+                    <option value="Draft Beer">
+                    <!-- ── Bar / Mixers ── -->
+                    <option value="Cocktails">
+                    <option value="Soft Drinks">
+                    <option value="Mixers">
                 </datalist>
                 <div style="display:none">{% bootstrap_field form.category %}</div>
             </div>
@@ -446,7 +475,12 @@
                                         <option value="Pint">{% trans 'Pint (568ml)' %}</option>
                                         <option value="Jug">{% trans 'Jug (1250ml)' %}</option>
                                     </optgroup>
-                                    <optgroup label="🥃 {% trans 'Spirits & Wines' %}" class="bar-spirit-opts">
+                                    <optgroup label="🥃 {% trans 'Bottle Portions' %}" class="bar-spirit-opts">
+                                        <option value="Full Bottle">{% trans 'Full Bottle (1.0)' %}</option>
+                                        <option value="Half Bottle">{% trans 'Half Bottle (0.5)' %}</option>
+                                        <option value="Quarter Bottle">{% trans 'Quarter Bottle (0.25)' %}</option>
+                                    </optgroup>
+                                    <optgroup label="🥃 {% trans 'Volume Measures' %}" class="bar-spirit-opts">
                                         <option value="Nip">{% trans 'Nip (25ml)' %}</option>
                                         <option value="Shot">{% trans 'Shot (30ml)' %}</option>
                                         <option value="Double">{% trans 'Double (60ml)' %}</option>
@@ -480,6 +514,10 @@
                 <button type="button" id="quickFillPresets"
                         style="background:rgba(120,180,90,0.12); border:1px dashed rgba(120,180,90,0.4); color:#9fcaa0; border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:0.5rem; display:none;">
                     🥬 {% trans 'Quick-fill standard presets (10 / 20 / 30 / 50)' %}
+                </button>
+                <button type="button" id="quickFillBarPresets"
+                        style="display:none; background:rgba(201,168,76,0.10); border:1px dashed rgba(201,168,76,0.45); color:#e2c36e; border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:0.5rem;">
+                    🥃 <span id="quickFillBarLabel">{% trans 'Quick-fill bar presets' %}</span>
                 </button>
                 <button type="button" id="addPresetBtn"
                         style="background:rgba(201,168,76,0.1); border:1px dashed var(--gold); color:var(--gold); border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:1rem;">
@@ -545,6 +583,15 @@
               unit: 'Bunch', note: 'Greens — use Batch/Bunch mode' },
             { keys: ['managu','terere','kunde','mrende','saga','mchicha'],
               unit: 'Bunch', note: 'Kienyeji greens — use Batch/Bunch mode' },
+            // ── Bar: spirits / wines / beer ──────────────────────────────────
+            { keys: ['gin', 'vodka', 'rum', 'bourbon', 'whiskey', 'whisky', 'tequila', 'brandy', 'cognac', 'schnapps', 'jenever'],
+              unit: '750ml', note: 'Spirit — stock per bottle. Select category to quick-fill Shot/Double/Half/Full presets.' },
+            { keys: ['wine', 'champagne', 'prosecco', 'merlot', 'chardonnay', 'sauvignon', 'cabernet', 'pinot'],
+              unit: '750ml', note: 'Wine — sold by glass, half or full bottle. Select category to quick-fill presets.' },
+            { keys: ['beer', 'tusker', 'pilsner', 'guinness', 'heineken', 'white cap', 'senator', 'kingfisher'],
+              unit: '500ml', note: 'Beer — sold as full bottle or can.' },
+            { keys: ['baileys', 'amarula', 'kahlua', 'liqueur', 'schnapps'],
+              unit: '750ml', note: 'Liqueur — sold by shot. Select category to quick-fill presets.' },
         ];
 
         function getUnitHint(desc) {
@@ -710,7 +757,11 @@
                 'Tatu mbao':              '3',
                 'Nne mbao':               '4',
                 'Tano mbao':              '5',
-                'Sita mbao':              '6'
+                'Sita mbao':              '6',
+                // ── Bottle portions (Portion mode — fraction of 1 bottle/unit) ──
+                'Full Bottle':            '1.0',
+                'Half Bottle':            '0.5',
+                'Quarter Bottle':         '0.25'
             };
 
             // Replace a label <select> with a free-text <input> for custom labels
@@ -801,7 +852,12 @@
                     '<option value="Pint">{% trans "Pint (568ml)" %}</option>' +
                     '<option value="Jug">{% trans "Jug (1250ml)" %}</option>' +
                     '</optgroup>' +
-                    '<optgroup label="🥃 {% trans "Spirits & Wines" %}" class="bar-spirit-opts">' +
+                    '<optgroup label="🥃 {% trans "Bottle Portions" %}" class="bar-spirit-opts">' +
+                    '<option value="Full Bottle">{% trans "Full Bottle (1.0)" %}</option>' +
+                    '<option value="Half Bottle">{% trans "Half Bottle (0.5)" %}</option>' +
+                    '<option value="Quarter Bottle">{% trans "Quarter Bottle (0.25)" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="🥃 {% trans "Volume Measures" %}" class="bar-spirit-opts">' +
                     '<option value="Nip">{% trans "Nip (25ml)" %}</option>' +
                     '<option value="Shot">{% trans "Shot (30ml)" %}</option>' +
                     '<option value="Double">{% trans "Double (60ml)" %}</option>' +
@@ -826,6 +882,70 @@
                     });
                 });
             };
+
+            // ── Quick-fill bar presets (driven by category detection) ─────────
+            window._barCatConfig = null; // set by category resolution script
+
+            var quickFillBarBtn = document.getElementById('quickFillBarPresets');
+            if (quickFillBarBtn) {
+                quickFillBarBtn.addEventListener('click', function() {
+                    var cfg = window._barCatConfig;
+                    if (!cfg) return;
+
+                    // Auto-check is_produce → Portion mode
+                    var produceCb = document.getElementById('is_produce');
+                    var pmPortion = document.getElementById('pm_portion');
+                    var kegCb    = document.getElementById('is_keg');
+                    if (kegCb && kegCb.checked) return; // keg items use different flow
+
+                    if (produceCb && !produceCb.checked) {
+                        produceCb.checked = true;
+                        produceCb.dispatchEvent(new Event('change'));
+                    }
+                    if (pmPortion && !pmPortion.checked) {
+                        pmPortion.checked = true;
+                        pmPortion.dispatchEvent(new Event('change'));
+                    }
+
+                    var rows  = document.getElementById('presetRows');
+                    var empty = document.getElementById('presetEmptyMsg');
+                    if (empty) empty.remove();
+
+                    var existingLabels = Array.prototype.map.call(
+                        document.querySelectorAll('.preset-row'),
+                        function(r) {
+                            var s = r.querySelector('select[name="preset_label"]');
+                            var i = r.querySelector('input[name="preset_label"]');
+                            return (s ? s.value : '') || (i ? i.value : '');
+                        }
+                    ).filter(Boolean);
+
+                    cfg.presets.forEach(function(preset) {
+                        if (existingLabels.indexOf(preset.label) !== -1) return;
+                        var row = document.createElement('div');
+                        row.className = 'preset-row';
+                        row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
+                        row.innerHTML =
+                            '<input type="hidden" name="preset_id" value="">' +
+                            buildLabelSelectHtml() +
+                            '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="KES">' +
+                            '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" value="' + preset.qty + '" readonly style="opacity:0.55;">' +
+                            '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
+                        rows.appendChild(row);
+                        // Pre-select the label in the dropdown
+                        var sel = row.querySelector('select[name="preset_label"]');
+                        if (sel) {
+                            sel.value = preset.label;
+                            if (sel.value !== preset.label) {
+                                _toCustomInput(sel, preset.label);
+                            }
+                        }
+                    });
+
+                    // Show the spirit optgroups (not keg)
+                    if (window._applyBarPresetFilter) window._applyBarPresetFilter(false);
+                });
+            }
 
             document.getElementById('addPresetBtn').addEventListener('click', function() {
                 var empty = document.getElementById('presetEmptyMsg');
@@ -937,6 +1057,103 @@
                 catInput.addEventListener('change', function() { resolveCategory(this.value); });
                 catInput.addEventListener('input',  function() { resolveCategory(this.value); });
                 resolveCategory(catInput.value);
+            }
+
+            // ── BAR CATEGORY INTELLIGENCE ─────────────────────────────────────
+            var BAR_CAT_CONFIG = [
+                {
+                    type: 'spirit',
+                    match: ['gin','vodka','rum','bourbon','whiskey','whisky','tequila','brandy','cognac','schnapps','jenever'],
+                    label: 'Spirit',
+                    bottleMl: 750,
+                    unit: '750ml',
+                    presets: [
+                        { label: 'Full Bottle',    qty: 1.0  },
+                        { label: 'Half Bottle',    qty: 0.5  },
+                        { label: 'Quarter Bottle', qty: 0.25 },
+                        { label: 'Double',         qty: 0.08 },
+                        { label: 'Shot',           qty: 0.04 }
+                    ]
+                },
+                {
+                    type: 'liqueur',
+                    match: ['liqueur','baileys','amarula','kahlua','schnapps'],
+                    label: 'Liqueur',
+                    bottleMl: 750,
+                    unit: '750ml',
+                    presets: [
+                        { label: 'Full Bottle', qty: 1.0  },
+                        { label: 'Half Bottle', qty: 0.5  },
+                        { label: 'Double',      qty: 0.08 },
+                        { label: 'Shot',        qty: 0.04 }
+                    ]
+                },
+                {
+                    type: 'wine',
+                    match: ['wine','champagne','sparkling','prosecco'],
+                    label: 'Wine',
+                    bottleMl: 750,
+                    unit: '750ml',
+                    presets: [
+                        { label: 'Full Bottle',    qty: 1.0  },
+                        { label: 'Half Bottle',    qty: 0.5  },
+                        { label: 'Quarter Bottle', qty: 0.25 },
+                        { label: 'Wine Glass',     qty: 0.2  }
+                    ]
+                },
+                {
+                    type: 'beer',
+                    match: ['beer'],
+                    label: 'Beer',
+                    bottleMl: 500,
+                    unit: '500ml',
+                    presets: [
+                        { label: 'Full Bottle', qty: 1.0 },
+                        { label: 'Half',        qty: 0.5 }
+                    ]
+                }
+            ];
+
+            function _detectBarCat(catValue) {
+                var lower = catValue.toLowerCase();
+                for (var i = 0; i < BAR_CAT_CONFIG.length; i++) {
+                    var cfg = BAR_CAT_CONFIG[i];
+                    for (var j = 0; j < cfg.match.length; j++) {
+                        if (lower.indexOf(cfg.match[j]) !== -1) return cfg;
+                    }
+                }
+                return null;
+            }
+
+            function _onBarCategoryChange(catValue) {
+                var cfg = _detectBarCat(catValue);
+                var btn = document.getElementById('quickFillBarPresets');
+                var lbl = document.getElementById('quickFillBarLabel');
+                window._barCatConfig = cfg;
+                if (!btn) return;
+                if (cfg) {
+                    var presetNames = cfg.presets.map(function(p) { return p.label; }).join(', ');
+                    if (lbl) lbl.textContent = 'Quick-fill ' + catValue + ' presets — ' + presetNames;
+                    btn.style.display = 'block';
+                    // Suggest unit if blank
+                    var unitEl = document.getElementById('id_unit');
+                    if (unitEl && !unitEl.value) {
+                        unitEl.value = cfg.unit;
+                        var hintEl = document.getElementById('unitHint');
+                        if (hintEl) {
+                            hintEl.innerHTML = '💡 <strong>' + cfg.unit + '</strong> — Stock tracked per bottle. Presets are fractions of 1 unit (Shot = 0.04, Full Bottle = 1.0).';
+                            hintEl.style.display = 'block';
+                        }
+                    }
+                } else {
+                    btn.style.display = 'none';
+                }
+            }
+
+            if (catInput) {
+                catInput.addEventListener('change', function() { _onBarCategoryChange(this.value); });
+                catInput.addEventListener('input',  function() { _onBarCategoryChange(this.value); });
+                if (catInput.value) _onBarCategoryChange(catInput.value);
             }
 
             document.querySelectorAll('.suggested-tag').forEach(function(btn) {
