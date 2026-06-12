@@ -96,6 +96,7 @@
             </div>
 
             {% if form.cost_price %}
+            <div id="costPriceSection">
             <div style="background:rgba(192,57,90,0.06); border:1px solid #333;
                         border-left: 3px solid var(--raspberry); border-radius:8px;
                         padding:1rem; margin-bottom:1rem;">
@@ -103,6 +104,7 @@
                     🔒 {% trans 'Cost price is only visible to you as the owner' %}
                 </p>
                 {% bootstrap_field form.cost_price %}
+            </div>
             </div>
             {% endif %}
 
@@ -202,7 +204,7 @@
             {% bootstrap_field form.tags %}
 
             <!-- CHANGE 5: Single opening balance field (mirrors to opening_physical via JS) -->
-            <div class="mb-3">
+            <div id="openingStockSection" class="mb-3">
                 <label class="form-label" for="id_opening_bin_balance">
                     {% trans 'Opening Stock' %}
                     <span style="color:#b0b0b0; font-size:0.78rem;">({% trans 'how many units you currently have' %})</span>
@@ -222,8 +224,10 @@
                 </div>
             </div>
 
+            <div id="reorderSection">
             {% bootstrap_field form.reorder_level %}
             {% bootstrap_field form.reorder_quantity %}
+            </div>
 
             <!-- ── Yield / Processing Section ── -->
             <div class="section-divider" style="margin-top:1.5rem;"><span>⚗️ {% trans 'Yield / Processing' %}</span></div>
@@ -771,8 +775,23 @@
                     </label>
                 </div>
                 <div style="color:#b0b0b0; font-size:0.78rem; margin-top:0.35rem; margin-left:1.75rem;">
-                    {% trans 'Keg items appear on the Bar Board, not in the normal stock list or Quick Sell grid. Add serving sizes (Kikombe, Jug) as presets after saving.' %}
+                    {% trans 'Keg items appear on the Bar Board, not in the stock list or Quick Sell grid. Cost is entered per barrel when you receive stock. Selling price, opening stock and reorder fields are hidden — they are not used.' %}
                 </div>
+                {% if form.instance.pk %}
+                <div style="margin-top:0.75rem; margin-left:1.75rem;">
+                    <a href="{% url 'item_portion_presets' form.instance.pk %}"
+                       class="btn btn-gold btn-sm">
+                        🍺 Add / Edit Serving Presets (Kikombe, Jug, Pint…)
+                    </a>
+                    <div style="color:#b0b0b0; font-size:0.75rem; margin-top:0.3rem;">
+                        {% trans 'Define what you pour and how much it costs — these appear as buttons on the Bar Board.' %}
+                    </div>
+                </div>
+                {% else %}
+                <div style="color:#b0b0b0; font-size:0.75rem; margin-top:0.4rem; margin-left:1.75rem;">
+                    💡 {% trans 'After saving, come back to Edit this item to add serving presets (Kikombe, Jug).' %}
+                </div>
+                {% endif %}
             </div>
 
             {% endif %}
@@ -788,6 +807,31 @@
         </form>
 
         <script>
+        // ── Keg toggle — hide fields irrelevant to keg items ─────────────────
+        (function () {
+            var kegCb = document.getElementById('is_keg');
+            if (!kegCb) return;
+            var KEG_HIDE = [
+                document.getElementById('sellingPriceSection'),
+                document.getElementById('costPriceSection'),
+                document.getElementById('openingStockSection'),
+                document.getElementById('reorderSection'),
+            ];
+            function applyKegToggle(isKeg) {
+                KEG_HIDE.forEach(function (el) {
+                    if (el) el.style.display = isKeg ? 'none' : '';
+                });
+                // Keg and produce are mutually exclusive
+                var produceCb = document.getElementById('is_produce');
+                if (isKeg && produceCb && produceCb.checked) {
+                    produceCb.checked = false;
+                    produceCb.dispatchEvent(new Event('change'));
+                }
+            }
+            applyKegToggle(kegCb.checked);
+            kegCb.addEventListener('change', function () { applyKegToggle(this.checked); });
+        })();
+
         // ── Restriction fields toggle ─────────────────────────────────────────
         (function () {
             var cb    = document.getElementById('is_restricted');
