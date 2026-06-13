@@ -136,18 +136,32 @@ def bar_board(request):
     success_data = None
 
     if request.method == 'POST':
-        # Shift enforcement — staff must have an open shift to sell
+        # Shift enforcement — staff must have personally opened an active shift
         if not is_owner:
             from .models import Shift as _Shift
-            active_shift = _Shift.objects.filter(
-                business=business, status='OPEN'
+            from django.contrib import messages as _msg
+            my_shift = _Shift.objects.filter(
+                business=business,
+                status='OPEN',
+                staff=request.user,
             ).first()
-            if not active_shift:
-                from django.contrib import messages
-                messages.error(
-                    request,
-                    'Hakuna shift iliyofunguliwa. Fungua shift kwanza kabla ya kuuza.'
-                )
+            if not my_shift:
+                # Check if there's any open shift so we can give a specific message
+                any_shift = _Shift.objects.filter(
+                    business=business, status='OPEN'
+                ).first()
+                if any_shift:
+                    owner_name = any_shift.staff.get_full_name() or any_shift.staff.username
+                    _msg.error(
+                        request,
+                        f'Shift imefunguliwa na {owner_name}. '
+                        f'Fungua shift yako mwenyewe kwanza kabla ya kuuza.'
+                    )
+                else:
+                    _msg.error(
+                        request,
+                        'Hakuna shift iliyofunguliwa. Fungua shift kwanza kabla ya kuuza.'
+                    )
                 return redirect('bar_board')
 
         cart_json = request.POST.get('keg_cart', '[]')

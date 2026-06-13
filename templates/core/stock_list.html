@@ -84,6 +84,12 @@
 
 {% block content %}
 
+<!-- Shift running meter — injected by JS if a bar shift is active -->
+<div id="shift-meter" style="display:none; background:#1a1a1a; border:1px solid #333;
+     border-radius:10px; padding:.6rem 1rem; margin-bottom:1rem;
+     align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem;">
+</div>
+
 <div class="stock-header">
     <h2 class="page-title">📋 {% trans 'Stock List' %}</h2>
     <div class="d-flex gap-2 flex-wrap">
@@ -282,5 +288,34 @@
             });
         }, 200);
     });
+
+    // ── Shift running meter ──────────────────────────────────────────────────
+    (function () {
+        var meter = document.getElementById('shift-meter');
+        if (!meter) return;
+        fetch('/bar/shift/active/')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d.shift || d.shift.status !== 'OPEN') return;
+                var s = d.shift;
+                var dotColor = '#5dde7a';
+                meter.style.display = 'flex';
+                meter.innerHTML =
+                    '<div style="display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">' +
+                    '<span style="width:8px; height:8px; border-radius:50%; background:' + dotColor + '; display:inline-block; flex-shrink:0;"></span>' +
+                    '<span style="color:#5dde7a; font-size:.78rem; font-weight:700;">BAR SHIFT OPEN</span>' +
+                    '<span style="color:#b0b0b0; font-size:.8rem;">' + s.staff_name + '</span>' +
+                    '<span style="color:#555; font-size:.78rem;">·</span>' +
+                    '<span style="color:#888; font-size:.78rem;">started ' + s.started_at + ' (' + s.elapsed + ')</span>' +
+                    '</div>' +
+                    '<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center;">' +
+                    '<span style="font-size:.78rem; color:#b0b0b0;">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong></span>' +
+                    '<span style="font-size:.78rem; color:#b0b0b0;">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong></span>' +
+                    '<span style="font-size:.78rem; color:#c9a84c; font-weight:700;">Jumla KES ' + Math.round(s.total_sales) + '</span>' +
+                    '<a href="/bar/" style="font-size:.75rem; color:#888; text-decoration:none;">Bar Board ›</a>' +
+                    '</div>';
+            })
+            .catch(function () {});
+    })();
 </script>
 {% endblock %}
