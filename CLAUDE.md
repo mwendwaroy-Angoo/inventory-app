@@ -391,4 +391,7 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   appropriate gunia/gorogoro toggle.
 
 ## End-of-sprint ritual:
-run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file." 
+run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
+
+## Sprint Status Log
+- Sprint 4 (2026-06-13): Shift Handover Module complete — middleware enforcement, barrel weigh-in at shift change (SHIFT_CLOSE/SHIFT_OPEN), offline sales capture (Option A: shift-level adjustment), backdated transaction entry (Option B: created_at override), shift history with reconciliation. Next: Waitress Order Queue.
