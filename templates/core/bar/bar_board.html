@@ -1360,7 +1360,7 @@
             '<div class="keg-tile-info">' +
               '<div class="keg-name">' + kg.name + typeBadge + '</div>' +
               '<div class="keg-remaining">KES ' + fmt(kg.remaining) + '</div>' +
-              '<div class="keg-meta">' + kg.net_liters + ' L · Target ' + fmt(kg.target_open) + badge + '</div>' +
+              '<div class="keg-meta">' + kg.net_liters + ' L' + (_isOwner ? ' · Target ' + fmt(kg.target_open) : '') + badge + '</div>' +
               bottomWarn +
               '<div class="mt-2">' + presetChips + '</div>' +
               cupPanel +
@@ -1578,6 +1578,10 @@
      WEIGH MODAL
   ════════════════════════════════════════════════════════ */
   window.openWeighModal = function (itemId) {
+    if (!_isOwner && !_myShiftOpen) {
+      showToast('Fungua shift yako kwanza ili uweze kupima barrel.');
+      return;
+    }
     var kg = _boardData[itemId];
     if (!kg || !kg.tapped_barrel_id) return;
     _weighBarrel = kg.tapped_barrel_id;
@@ -2177,6 +2181,7 @@
   ════════════════════════════════════════════════════════ */
   var _activeShiftId   = null;
   var _shiftBlockMsg   = null;   // set when another staff's shift is running
+  var _myShiftOpen     = false;  // true only when THIS user's own shift is OPEN
   var _currentUserId   = {{ current_user_id|default:0 }};
   var _isOwner         = {{ is_owner|yesno:"true,false" }};
 
@@ -2204,6 +2209,7 @@
       // No active shift — show Open button
       _activeShiftId  = null;
       _shiftBlockMsg  = null;
+      _myShiftOpen    = false;
       panel.style.display = 'block';
       panel.innerHTML =
         '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem;">' +
@@ -2215,6 +2221,7 @@
 
     var s = d.shift;
     _activeShiftId = s.id;
+    _myShiftOpen   = (s.is_mine && s.status === 'OPEN');
     // Block non-owner staff from selling if this shift belongs to someone else
     if (!_isOwner && !s.is_mine && s.status === 'OPEN') {
       _shiftBlockMsg = 'Shift imefunguliwa na ' + s.staff_name +
