@@ -765,11 +765,17 @@
         checkNotifications();
         setInterval(checkNotifications, 30000);
 
-        // ── Service Worker ──
-        if ('serviceWorker' in navigator) {
+        // ── Service Worker — only on production (never on localhost/dev) ──
+        var _isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        if ('serviceWorker' in navigator && !_isLocal) {
             navigator.serviceWorker.register('/sw.js', { scope: '/' })
                 .then(reg => console.log('SW registered:', reg.scope))
                 .catch(err => console.log('SW registration failed:', err));
+        } else if ('serviceWorker' in navigator && _isLocal) {
+            // Unregister any previously installed SW so dev server loads directly
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+                regs.forEach(function(r) { r.unregister(); });
+            });
         }
 
         // ── PWA Install ──
