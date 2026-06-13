@@ -617,6 +617,15 @@
           <input type="text" id="close-shift-notes" class="form-control"
                  placeholder="e.g. Kila kitu sawa">
         </div>
+        <!-- Barrel weighing — populated by openCloseShiftModal if TAPPED barrels exist -->
+        <div id="close-shift-barrels" style="display:none;">
+          <hr style="border-color:#333; margin:.75rem 0;">
+          <div style="color:#c9a84c; font-size:.82rem; font-weight:600; margin-bottom:.25rem;">⚖ Pima Mabarel (optional)</div>
+          <p style="font-size:.75rem; color:#888; margin-bottom:.6rem;">
+            Pima kila barrel kwenye scale. Nambari kutoka scale = gross (chombo + kinywaji).
+          </p>
+          <div id="close-shift-barrel-list"></div>
+        </div>
         <!-- Variance result shown after submit -->
         <div id="close-shift-result" style="display:none;"></div>
         <div id="close-shift-error" style="display:none; color:#c0395a; font-size:.85rem;"></div>
@@ -725,22 +734,11 @@
       <div class="modal-body">
         <p id="weigh-current-info" style="color:#b0b0b0; font-size:0.85rem;"></p>
         <div class="mb-3">
-          <label class="form-label">Scale inasoma (kg)</label>
+          <label class="form-label">Scale inasoma — gross (kg)</label>
           <input type="number" step="0.1" min="0.1" id="weigh-kg-input" class="form-control"
                  placeholder="e.g. 42.5">
-        </div>
-        <div class="mb-3">
-          <label class="form-label d-block">Aina ya kipimo</label>
-          <div class="form-check form-check-inline">
-            <input class="form-check-input" type="radio" name="weigh_type"
-                   id="weigh-spot" value="SPOT" checked>
-            <label class="form-check-label" for="weigh-spot">Spot check</label>
-          </div>
-          <div class="form-check form-check-inline">
-            <input class="form-check-input" type="radio" name="weigh_type"
-                   id="weigh-close" value="SHIFT_CLOSE">
-            <label class="form-check-label" for="weigh-close">Mwisho wa shift</label>
-          </div>
+          <div id="weigh-net-preview" style="font-size:.8rem; color:#c9a84c; margin-top:4px; min-height:1.2em;"></div>
+          <input type="hidden" id="weigh-tare-store" value="0">
         </div>
         <!-- Variance report injected here after submit -->
         <div id="weigh-report" style="display:none;"></div>
@@ -1585,16 +1583,27 @@
     _weighBarrel = kg.tapped_barrel_id;
 
     document.getElementById('weigh-item-name').textContent = kg.name;
-    document.getElementById('weigh-current-info').textContent =
-      'Scale ya mwisho: ' + kg.latest_weight_kg + ' kg' +
-      ' · Envelope iliyobaki: KES ' + fmt(kg.remaining);
+    var tare = kg.tapped_barrel_tare || 0;
+    var lastNet = Math.max(0, kg.latest_weight_kg - tare).toFixed(2);
+    document.getElementById('weigh-current-info').innerHTML =
+      'Inayobaki (NET): <strong style="color:#c9a84c;">' + lastNet + ' kg</strong>' +
+      ' &nbsp;·&nbsp; Tare: ' + tare + ' kg' +
+      ' &nbsp;·&nbsp; Envelope: KES ' + fmt(kg.remaining);
+    document.getElementById('weigh-tare-store').value = tare;
     document.getElementById('weigh-kg-input').value = '';
+    document.getElementById('weigh-net-preview').textContent = '';
     document.getElementById('weigh-report').style.display  = 'none';
     document.getElementById('weigh-report').innerHTML      = '';
     var btn = document.getElementById('weigh-submit-btn');
     btn.textContent = 'Pima';
     btn.disabled    = false;
-    document.getElementById('weigh-spot').checked = true;
+    // Wire live net preview
+    document.getElementById('weigh-kg-input').oninput = function () {
+      var gross = parseFloat(this.value) || 0;
+      var net = Math.max(0, gross - tare).toFixed(2);
+      document.getElementById('weigh-net-preview').textContent =
+        gross > 0 ? 'NET itakayobaki: ' + net + ' kg' : '';
+    };
 
     showModal('weighModal');
   };
@@ -1602,20 +1611,16 @@
   window.closeWeighModal = function () { hideModal('weighModal'); };
 
   window.submitWeigh = function () {
-    var kg = document.getElementById('weigh-kg-input').value;
-    if (!kg || parseFloat(kg) <= 0) {
+    var grossKg = document.getElementById('weigh-kg-input').value;
+    if (!grossKg || parseFloat(grossKg) <= 0) {
       alert('Ingiza uzito kutoka kwenye scale.');
       return;
     }
-    var readingType = document.querySelector('input[name="weigh_type"]:checked').value;
     var btn = document.getElementById('weigh-submit-btn');
     btn.disabled    = true;
     btn.textContent = 'Inapima...';
 
-    post('/stock/bar/weigh/' + _weighBarrel + '/', {
-      weight_kg:    kg,
-      reading_type: readingType,
-    })
+    post('/stock/bar/weigh/' + _weighBarrel + '/', { weight_kg: grossKg })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         btn.textContent = 'Pima tena';
@@ -1626,13 +1631,15 @@
           rep.innerHTML = '<div style="color:#c0395a;">' + d.error + '</div>';
           return;
         }
-        var fc   = d.flag === 'ok' ? 'var-ok' : (d.flag === 'warning' ? 'var-warning' : 'var-danger');
-        var icon = d.flag === 'ok' ? '✓' : (d.flag === 'warning' ? '⚠' : '🚨');
+        var fc      = d.flag === 'ok' ? 'var-ok' : (d.flag === 'warning' ? 'var-warning' : 'var-danger');
+        var icon    = d.flag === 'ok' ? '✓' : (d.flag === 'warning' ? '⚠' : '🚨');
         var varSign = d.variance_kes >= 0 ? '+' : '';
         rep.innerHTML =
           '<div style="background:#1a1a1a; border-radius:10px; padding:0.85rem; border:1px solid #3a3a3a;">' +
-          '<div style="color:#f0ece4; margin-bottom:4px;"><strong>Scale:</strong> ' +
-          d.dispensed_l + 'L imetoka (≈ KES ' + fmt(d.expected_rev) + ')</div>' +
+          '<div style="color:#c9a84c; font-size:.9rem; font-weight:700; margin-bottom:6px;">' +
+          'NET iliyobaki: ' + d.net_remaining_kg + ' kg &nbsp;<span style="color:#555; font-weight:400; font-size:.78rem;">(gross ' + d.weight_kg + ' − tare ' + d.tare_kg + ')</span></div>' +
+          '<div style="color:#f0ece4; margin-bottom:4px;"><strong>Imetoka:</strong> ' +
+          d.dispensed_l + ' L (≈ KES ' + fmt(d.expected_rev) + ')</div>' +
           '<div style="color:#f0ece4; margin-bottom:4px;"><strong>Vitabu:</strong> KES ' + fmt(d.recorded_rev) + '</div>' +
           '<div class="' + fc + '" style="font-weight:700; font-size:1rem;">' +
           'Tofauti: ' + varSign + 'KES ' + fmt(d.variance_kes) + ' (' + d.variance_pct + '%) ' + icon + '</div>' +
@@ -2313,6 +2320,115 @@
       ' = Float KES ' + newFloat.toLocaleString();
   }
 
+  /* ── Open shift step 2: confirm barrel weights ─────────────────────────── */
+  function _showBarrelConfirmStep(tappedBarrels, openingFloat) {
+    var modalBody  = document.querySelector('#openShiftModal .modal-body');
+    var modalTitle = document.querySelector('#openShiftModal .modal-title');
+    var btn        = document.getElementById('open-shift-btn');
+    modalTitle.textContent = 'Thibitisha Uzito wa Mabarel';
+    var html = '<p style="font-size:.82rem; color:#b0b0b0; margin-bottom:.75rem;">' +
+      'Pima kila barrel kwenye scale. Linganisha na kipimo cha shift iliyoisha.</p>';
+    tappedBarrels.forEach(function (b) {
+      html += '<div class="confirm-barrel-row" data-barrel-id="' + b.barrel_id + '"' +
+        ' style="margin-bottom:.8rem; padding:.65rem; background:#111; border:1px solid #333; border-radius:8px;">';
+      html += '<div style="font-size:.84rem; color:#c9a84c; font-weight:700; margin-bottom:4px;">' + b.name + '</div>';
+      if (b.last_close_kg !== null && b.last_close_kg !== undefined) {
+        html += '<div style="font-size:.75rem; color:#888; margin-bottom:6px;">' +
+          'Shift iliyoisha: gross <strong style="color:#b0b0b0;">' + b.last_close_kg.toFixed(2) + ' kg</strong>' +
+          ' → NET <strong style="color:#c9a84c;">' + (b.last_close_net !== null ? b.last_close_net.toFixed(2) : '?') + ' kg</strong>';
+        if (b.last_close_by) html += ' — ' + b.last_close_by;
+        if (b.last_close_at) html += ' @ ' + b.last_close_at;
+        html += '</div>';
+      } else {
+        html += '<div style="font-size:.75rem; color:#555; margin-bottom:6px;">Hakuna kipimo cha shift iliyoisha.</div>';
+      }
+      html += '<div style="display:flex; align-items:center; gap:.5rem;">' +
+        '<input type="number" step="0.1" min="0" placeholder="Gross kutoka scale (kg)"' +
+        ' class="form-control form-control-sm confirm-barrel-weight" data-tare="' + b.tare_kg + '"' +
+        ' style="max-width:165px;">' +
+        '<span class="confirm-barrel-net" style="font-size:.78rem; color:#c9a84c;"></span>' +
+        '</div></div>';
+    });
+    html += '<p style="font-size:.75rem; color:#555; margin-top:.4rem;">Unaweza ruka hii ukibonyeza "Ruka".</p>';
+    modalBody.innerHTML = html;
+    // Live net preview
+    modalBody.querySelectorAll('.confirm-barrel-weight').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var gross = parseFloat(this.value) || 0;
+        var tare  = parseFloat(this.dataset.tare) || 0;
+        var net   = Math.max(0, gross - tare).toFixed(2);
+        this.parentNode.querySelector('.confirm-barrel-net').textContent =
+          gross > 0 ? 'NET: ' + net + ' kg' : '';
+      });
+    });
+    // Swap footer buttons
+    var footer = document.querySelector('#openShiftModal .modal-footer');
+    footer.innerHTML =
+      '<button type="button" class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;"' +
+      ' onclick="window._skipBarrelConfirm(' + openingFloat + ')">Ruka</button>' +
+      '<button type="button" id="open-shift-btn" class="btn btn-gold btn-sm"' +
+      ' onclick="window._submitConfirmBarrelWeights(' + openingFloat + ')">Thibitisha</button>';
+  }
+
+  window._skipBarrelConfirm = function (openingFloat) {
+    hideModal('openShiftModal');
+    loadShift();
+    showToast('✓ Shift imefunguliwa na float ya KES ' + Math.round(parseFloat(openingFloat)));
+  };
+
+  window._submitConfirmBarrelWeights = function (openingFloat) {
+    var btn = document.getElementById('open-shift-btn');
+    var barrelWeights = [];
+    document.querySelectorAll('.confirm-barrel-row').forEach(function (row) {
+      var inp = row.querySelector('.confirm-barrel-weight');
+      var wkg = inp ? parseFloat(inp.value) : 0;
+      if (wkg > 0) {
+        barrelWeights.push({ barrel_id: parseInt(row.dataset.barrelId), weight_kg: wkg.toFixed(2) });
+      }
+    });
+    if (barrelWeights.length === 0) {
+      window._skipBarrelConfirm(openingFloat);
+      return;
+    }
+    btn.disabled = true; btn.textContent = 'Inathibitisha...';
+    var fd = new FormData();
+    fd.append('barrel_weights', JSON.stringify(barrelWeights));
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('/bar/shift/confirm-weights/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false;
+        if (!d.ok) {
+          btn.textContent = 'Thibitisha';
+          showToast((d.error || 'Hitilafu.'));
+          return;
+        }
+        // Show comparison results
+        var modalBody = document.querySelector('#openShiftModal .modal-body');
+        var html = '<div style="color:#4caf50; font-size:.83rem; font-weight:600; margin-bottom:.5rem;">✓ Uzito umethibitishwa</div>';
+        d.readings.forEach(function (r) {
+          var flagColor = r.flag === 'ok' ? '#4caf50' : (r.flag === 'warn' ? '#ff9800' : '#c0395a');
+          var icon      = r.flag === 'ok' ? '✓' : (r.flag === 'warn' ? '⚠' : '🚨');
+          html += '<div style="margin-bottom:.5rem; padding:.5rem; background:#111; border:1px solid #2a2a2a; border-radius:6px;">';
+          html += '<div style="font-size:.83rem; color:#f0ece4;">' + r.name + '</div>';
+          html += '<div style="font-size:.78rem; color:#b0b0b0;">NET unaoona: <strong style="color:#c9a84c;">' + r.net_kg.toFixed(2) + ' kg</strong>';
+          if (r.last_close_kg !== null && r.diff_kg !== null) {
+            var sign = r.diff_kg >= 0 ? '+' : '';
+            html += ' &nbsp;·&nbsp; Tofauti: <strong style="color:' + flagColor + ';">' +
+              sign + r.diff_kg.toFixed(2) + ' kg ' + icon + '</strong>';
+          }
+          html += '</div></div>';
+        });
+        modalBody.innerHTML = html;
+        var footer = document.querySelector('#openShiftModal .modal-footer');
+        footer.innerHTML = '<button class="btn btn-gold btn-sm" onclick="window._skipBarrelConfirm(' + openingFloat + ')">Done</button>';
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Thibitisha';
+        showToast('Hitilafu ya mtandao.');
+      });
+  };
+
   window.submitOpenShift = function () {
     var btn = document.getElementById('open-shift-btn');
     var errEl = document.getElementById('open-shift-error');
@@ -2336,9 +2452,14 @@
       .then(function (d) {
         btn.disabled = false; btn.textContent = 'Fungua Shift';
         if (d.ok) {
-          hideModal('openShiftModal');
-          loadShift();
-          showToast('✓ Shift imefunguliwa na float ya KES ' + Math.round(parseFloat(d.opening_float)));
+          // If there are tapped barrels, show step 2 — confirm barrel weights
+          if (d.tapped_barrels && d.tapped_barrels.length > 0) {
+            _showBarrelConfirmStep(d.tapped_barrels, d.opening_float);
+          } else {
+            hideModal('openShiftModal');
+            loadShift();
+            showToast('✓ Shift imefunguliwa na float ya KES ' + Math.round(parseFloat(d.opening_float)));
+          }
         } else {
           if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
         }
@@ -2353,12 +2474,17 @@
     if (!_activeShiftId) return;
     document.getElementById('close-shift-cash').value = '';
     document.getElementById('close-shift-notes').value = '';
-    var summEl = document.getElementById('close-shift-summary');
-    var resEl  = document.getElementById('close-shift-result');
-    var errEl  = document.getElementById('close-shift-error');
-    if (resEl)  { resEl.style.display = 'none'; resEl.innerHTML = ''; }
-    if (errEl)  errEl.style.display = 'none';
-    if (summEl) summEl.innerHTML = '<span style="color:#888; font-size:.82rem;">Inapakia muhtasari...</span>';
+    var summEl      = document.getElementById('close-shift-summary');
+    var resEl       = document.getElementById('close-shift-result');
+    var errEl       = document.getElementById('close-shift-error');
+    var barrelSect  = document.getElementById('close-shift-barrels');
+    var barrelList  = document.getElementById('close-shift-barrel-list');
+    if (resEl)      { resEl.style.display = 'none'; resEl.innerHTML = ''; }
+    if (errEl)      errEl.style.display = 'none';
+    if (barrelSect) barrelSect.style.display = 'none';
+    if (barrelList) barrelList.innerHTML = '';
+    if (summEl)     summEl.innerHTML = '<span style="color:#888; font-size:.82rem;">Inapakia muhtasari...</span>';
+
     // Pull current live numbers
     fetch('/bar/shift/active/')
       .then(function (r) { return r.json(); })
@@ -2372,6 +2498,42 @@
           '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(s.expected_cash) + '</span></div>' +
           '</div><p style="font-size:.78rem; color:#888;">Hesabu pesa zote zilizopo mkononi sasa hivi, kisha ingiza hapo chini.</p>';
       });
+
+    // Populate barrel weighing section
+    fetch('/stock/bar/board/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var tapped = (d.kegs || []).filter(function (k) { return k.tapped_barrel_id; });
+        if (tapped.length === 0 || !barrelSect || !barrelList) return;
+        barrelSect.style.display = 'block';
+        barrelList.innerHTML = tapped.map(function (k) {
+          var lastNet = Math.max(0, k.latest_weight_kg - k.tapped_barrel_tare).toFixed(2);
+          return '<div class="close-barrel-row" data-barrel-id="' + k.tapped_barrel_id + '"' +
+            ' style="margin-bottom:.75rem; padding:.6rem; background:#111; border:1px solid #2a2a2a; border-radius:8px;">' +
+            '<div style="font-size:.82rem; color:#f0ece4; font-weight:600; margin-bottom:3px;">' + k.name + '</div>' +
+            '<div style="font-size:.75rem; color:#888; margin-bottom:5px;">' +
+            'NET iliyobaki (kipimo cha mwisho): <strong style="color:#c9a84c;">' + lastNet + ' kg</strong>' +
+            ' &nbsp;·&nbsp; Tare: ' + k.tapped_barrel_tare + ' kg</div>' +
+            '<div style="display:flex; align-items:center; gap:.5rem;">' +
+            '<input type="number" step="0.1" min="0" placeholder="Gross kutoka scale (kg)"' +
+            ' class="form-control form-control-sm close-barrel-weight" data-tare="' + k.tapped_barrel_tare + '"' +
+            ' style="max-width:160px;">' +
+            '<span class="close-barrel-net" style="font-size:.78rem; color:#c9a84c;"></span>' +
+            '</div></div>';
+        }).join('');
+        // Live net preview per barrel
+        barrelList.querySelectorAll('.close-barrel-weight').forEach(function (inp) {
+          inp.addEventListener('input', function () {
+            var gross = parseFloat(this.value) || 0;
+            var tare  = parseFloat(this.dataset.tare) || 0;
+            var net   = Math.max(0, gross - tare).toFixed(2);
+            this.parentNode.querySelector('.close-barrel-net').textContent =
+              gross > 0 ? 'NET: ' + net + ' kg' : '';
+          });
+        });
+      })
+      .catch(function () {});
+
     showModal('closeShiftModal');
   };
 
@@ -2388,9 +2550,19 @@
     }
     if (errEl) errEl.style.display = 'none';
     btn.disabled = true; btn.textContent = 'Inafunga...';
+    // Collect barrel weights (optional)
+    var barrelWeights = [];
+    document.querySelectorAll('#close-shift-barrel-list .close-barrel-row').forEach(function (row) {
+      var inp = row.querySelector('.close-barrel-weight');
+      var wkg = inp ? parseFloat(inp.value) : 0;
+      if (wkg > 0) {
+        barrelWeights.push({ barrel_id: parseInt(row.dataset.barrelId), weight_kg: wkg.toFixed(2) });
+      }
+    });
     var fd = new FormData();
     fd.append('closing_cash_counted', cash);
     fd.append('notes', notes);
+    fd.append('barrel_weights', JSON.stringify(barrelWeights));
     fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
     fetch('/bar/shift/' + _activeShiftId + '/close/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
@@ -2401,6 +2573,17 @@
           var vc = _varColor(d.variance);
           if (resEl) {
             resEl.style.display = 'block';
+            var barrelHtml = '';
+            if (d.weight_readings && d.weight_readings.length > 0) {
+              barrelHtml = '<div style="margin-top:.5rem; padding-top:.5rem; border-top:1px solid #2a2a2a;">' +
+                '<div style="font-size:.75rem; color:#888; margin-bottom:.3rem;">⚖ Uzito wa Mabarel (SHIFT_CLOSE):</div>';
+              d.weight_readings.forEach(function (r) {
+                barrelHtml += '<div style="font-size:.78rem; color:#b0b0b0; margin-bottom:2px;">' +
+                  r.name + ' — NET: <strong style="color:#c9a84c;">' + r.net_kg + ' kg</strong>' +
+                  ' <span style="color:#555;">(gross ' + r.weight_kg + ' − tare ' + r.tare_kg + ')</span></div>';
+              });
+              barrelHtml += '</div>';
+            }
             resEl.innerHTML =
               '<div style="background:#111; border-radius:8px; padding:.75rem; margin-bottom:.75rem;">' +
               '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
@@ -2412,6 +2595,7 @@
               (Math.abs(parseFloat(d.variance)) > 50
                 ? '<p style="font-size:.78rem; color:#ff9800; margin:.5rem 0 0;">⚠ Tofauti kubwa — angalia kwa uangalifu.</p>'
                 : '<p style="font-size:.78rem; color:#4caf50; margin:.5rem 0 0;">✓ Hesabu iko sawa.</p>') +
+              barrelHtml +
               '</div>';
           }
           // Hide close button, replace with Done

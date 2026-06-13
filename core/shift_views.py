@@ -1,13 +1,15 @@
 """
 Sprint 4 — Shift Handover Module.
 
-Flow: staff opens shift (opening float) → sells → closes shift (counts cash)
+Flow: staff opens shift (opening float) → sells → closes shift (counts cash + weighs barrels)
       → owner / incoming staff confirms → CONFIRMED.
+      Incoming staff opens their shift → confirms barrel weights (SHIFT_OPEN) vs SHIFT_CLOSE.
 
 Reconciliation:
   expected_closing_cash = opening_float + cash_sales_during_shift
   variance = closing_cash_counted − expected_closing_cash
 """
+import json
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
@@ -17,7 +19,7 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .models import Shift, Transaction
+from .models import KegBarrel, KegWeightReading, Shift, Transaction
 
 
 def _get_up(request):
@@ -57,6 +59,28 @@ def _reconcile(shift):
         'elapsed':       f"{hours}h {mins:02d}m",
         'elapsed_mins':  elapsed_secs // 60,
     }
+
+
+def _tapped_barrels_for_business(business):
+    """Return list of dicts for each TAPPED barrel, with last SHIFT_CLOSE reading."""
+    barrels = KegBarrel.objects.filter(
+        business=business, status='TAPPED'
+    ).select_related('item')
+    result = []
+    for barrel in barrels:
+        last_close = KegWeightReading.objects.filter(
+            barrel=barrel, reading_type='SHIFT_CLOSE'
+        ).order_by('-recorded_at').first()
+        result.append({
+            'barrel_id':       barrel.id,
+            'name':            barrel.item.description,
+            'tare_kg':         float(barrel.tare_weight_kg),
+            'last_close_kg':   float(last_close.weight_kg) if last_close else None,
+            'last_close_net':  round(float(last_close.weight_kg) - float(barrel.tare_weight_kg), 2) if last_close else None,
+            'last_close_by':   (last_close.recorded_by.get_full_name() or last_close.recorded_by.username) if last_close and last_close.recorded_by else None,
+            'last_close_at':   timezone.localtime(last_close.recorded_at).strftime('%H:%M') if last_close else None,
+        })
+    return result
 
 
 # ── Active shift API (for bar board polling) ──────────────────────────────────
@@ -184,12 +208,16 @@ def open_shift(request):
         except Exception:
             pass
 
+    # Return tapped barrels so the frontend can show the confirmation step
+    tapped = _tapped_barrels_for_business(up.business)
+
     return JsonResponse({
         'ok': True,
         'shift_id': shift.id,
         'staff_name': request.user.get_full_name() or request.user.username,
         'opening_float': float(opening_float),
         'started_at': timezone.localtime(shift.started_at).strftime('%H:%M'),
+        'tapped_barrels': tapped,
     })
 
 
@@ -221,15 +249,126 @@ def close_shift(request, shift_id):
         shift.notes = (shift.notes + '\n' + notes_add).strip()
     shift.save(update_fields=['closing_cash_counted', 'ended_at', 'status', 'notes'])
 
+    # Process barrel weights (SHIFT_CLOSE readings)
+    barrel_weights_raw = request.POST.get('barrel_weights', '[]')
+    try:
+        barrel_weights_list = json.loads(barrel_weights_raw)
+    except Exception:
+        barrel_weights_list = []
+
+    weight_readings = []
+    for entry in barrel_weights_list:
+        try:
+            bid  = int(entry.get('barrel_id', 0))
+            wkg  = Decimal(str(entry.get('weight_kg', '0') or '0'))
+            if wkg <= 0:
+                continue
+            barrel = KegBarrel.objects.filter(
+                id=bid, business=up.business, status='TAPPED'
+            ).select_related('item').first()
+            if not barrel:
+                continue
+            KegWeightReading.objects.create(
+                barrel=barrel,
+                shift=shift,
+                weight_kg=wkg,
+                reading_type='SHIFT_CLOSE',
+                recorded_by=request.user,
+                note='Mwisho wa shift',
+            )
+            net_kg = round(float(wkg) - float(barrel.tare_weight_kg), 2)
+            weight_readings.append({
+                'barrel_id': barrel.id,
+                'name':      barrel.item.description,
+                'weight_kg': float(wkg),
+                'net_kg':    net_kg,
+                'tare_kg':   float(barrel.tare_weight_kg),
+            })
+        except Exception:
+            continue
+
     rec = _reconcile(shift)
     return JsonResponse({
         'ok': True,
-        'expected_cash': rec['expected_cash'],
-        'variance':      rec['variance'],
-        'total_sales':   rec['total_sales'],
-        'cash_sales':    rec['cash_sales'],
-        'mpesa_sales':   rec['mpesa_sales'],
+        'expected_cash':   rec['expected_cash'],
+        'variance':        rec['variance'],
+        'total_sales':     rec['total_sales'],
+        'cash_sales':      rec['cash_sales'],
+        'mpesa_sales':     rec['mpesa_sales'],
+        'weight_readings': weight_readings,
     })
+
+
+# ── Confirm barrel weights (incoming staff after opening their shift) ─────────
+
+@login_required
+@require_POST
+def confirm_barrel_weights(request):
+    """
+    Incoming staff saves SHIFT_OPEN readings right after opening their shift.
+    Compares with the last SHIFT_CLOSE per barrel and returns a verdict.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    # Must have their own OPEN shift
+    shift = Shift.objects.filter(
+        business=up.business, status='OPEN', staff=request.user
+    ).first()
+    if not shift:
+        return JsonResponse({'ok': False, 'error': 'Hakuna shift iliyofunguliwa'}, status=400)
+
+    barrel_weights_raw = request.POST.get('barrel_weights', '[]')
+    try:
+        barrel_weights_list = json.loads(barrel_weights_raw)
+    except Exception:
+        barrel_weights_list = []
+
+    results = []
+    for entry in barrel_weights_list:
+        try:
+            bid  = int(entry.get('barrel_id', 0))
+            wkg  = Decimal(str(entry.get('weight_kg', '0') or '0'))
+            if wkg <= 0:
+                continue
+            barrel = KegBarrel.objects.filter(
+                id=bid, business=up.business, status='TAPPED'
+            ).select_related('item').first()
+            if not barrel:
+                continue
+            KegWeightReading.objects.create(
+                barrel=barrel,
+                shift=shift,
+                weight_kg=wkg,
+                reading_type='SHIFT_OPEN',
+                recorded_by=request.user,
+                note='Uthibitisho wa kufungua shift',
+            )
+            net_kg = round(float(wkg) - float(barrel.tare_weight_kg), 2)
+            last_close = KegWeightReading.objects.filter(
+                barrel=barrel, reading_type='SHIFT_CLOSE'
+            ).order_by('-recorded_at').first()
+            if last_close:
+                diff = round(float(wkg) - float(last_close.weight_kg), 2)
+                flag = 'ok' if abs(diff) <= 0.3 else ('warn' if abs(diff) <= 1.0 else 'danger')
+            else:
+                diff = None
+                flag = 'ok'
+            results.append({
+                'barrel_id':     barrel.id,
+                'name':          barrel.item.description,
+                'weight_kg':     float(wkg),
+                'net_kg':        net_kg,
+                'tare_kg':       float(barrel.tare_weight_kg),
+                'last_close_kg': float(last_close.weight_kg) if last_close else None,
+                'diff_kg':       diff,
+                'flag':          flag,
+            })
+        except Exception:
+            continue
+
+    return JsonResponse({'ok': True, 'readings': results})
 
 
 # ── Confirm shift (incoming staff / owner) ────────────────────────────────────
@@ -284,9 +423,9 @@ def shift_history(request):
         else:
             var_class = 'danger'
         rows.append({
-            'shift':      shift,
-            'rec':        rec,
-            'var_class':  var_class,
+            'shift':     shift,
+            'rec':       rec,
+            'var_class': var_class,
         })
 
     return render(request, 'core/bar/shift_history.html', {

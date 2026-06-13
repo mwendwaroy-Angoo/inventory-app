@@ -13,7 +13,8 @@ from django.urls import resolve
 _SHIFT_EXEMPT_NAMES = {
     'login', 'logout', 'home',
     # shift endpoints themselves
-    'open_shift', 'close_shift', 'confirm_shift', 'active_shift_api', 'shift_history',
+    'open_shift', 'close_shift', 'confirm_shift', 'confirm_barrel_weights',
+    'active_shift_api', 'shift_history',
     # bar board (needed to open shift)
     'bar_board', 'bar_board_api',
     # auth / misc

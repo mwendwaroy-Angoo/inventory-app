@@ -384,7 +384,7 @@ def tap_barrel(request, barrel_id):
 @login_required
 @require_POST
 def weigh_barrel(request, barrel_id):
-    """Record a weight reading and return a variance mini-report."""
+    """Record a SPOT weight reading and return a variance mini-report."""
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
@@ -397,6 +397,21 @@ def weigh_barrel(request, barrel_id):
     if barrel.status != 'TAPPED':
         return JsonResponse({'ok': False, 'error': 'Barrel si TAPPED — haiwezi kupimwa'}, status=400)
 
+    # Staff must have their own OPEN shift to do spot checks
+    from .models import Shift as _Shift
+    if not up.is_owner:
+        my_shift = _Shift.objects.filter(
+            business=up.business, status='OPEN', staff=request.user
+        ).first()
+        if not my_shift:
+            return JsonResponse(
+                {'ok': False, 'error': 'Fungua shift yako kwanza ili uweze kupima barrel.'},
+                status=403,
+            )
+        linked_shift = my_shift
+    else:
+        linked_shift = _Shift.objects.filter(business=up.business, status='OPEN').first()
+
     try:
         weight_kg = Decimal(str(request.POST.get('weight_kg', '0')))
     except Exception:
@@ -405,21 +420,20 @@ def weigh_barrel(request, barrel_id):
     if weight_kg <= 0:
         return JsonResponse({'ok': False, 'error': 'Ingiza uzito kutoka kwenye scale'}, status=400)
 
-    reading_type = request.POST.get('reading_type', 'SPOT')
-    if reading_type not in ('SPOT', 'SHIFT_CLOSE', 'SHIFT_OPEN'):
-        reading_type = 'SPOT'
-
     note = (request.POST.get('note') or '').strip()
 
     KegWeightReading.objects.create(
         barrel=barrel,
+        shift=linked_shift,
         weight_kg=weight_kg,
-        reading_type=reading_type,
+        reading_type='SPOT',
         recorded_by=request.user,
         note=note,
     )
 
     # Variance: scale is ground truth
+    tare_kg = float(barrel.tare_weight_kg)
+    net_remaining_kg = max(0.0, float(weight_kg) - tare_kg)
     dispensed_l = max(0.0, float(barrel.gross_weight_kg) - float(weight_kg))
     net_vol_l = barrel.net_volume_l
     rate = float(barrel.target_revenue) / net_vol_l if net_vol_l else 0.0
@@ -438,13 +452,15 @@ def weigh_barrel(request, barrel_id):
 
     return JsonResponse({
         'ok': True,
-        'dispensed_l': round(dispensed_l, 1),
-        'expected_rev': round(expected_rev, 0),
-        'recorded_rev': round(recorded_rev, 0),
-        'variance_kes': round(variance_kes, 0),
-        'variance_pct': round(variance_pct, 1),
-        'flag': flag,
-        'weight_kg': float(weight_kg),
+        'dispensed_l':       round(dispensed_l, 1),
+        'net_remaining_kg':  round(net_remaining_kg, 2),
+        'tare_kg':           tare_kg,
+        'expected_rev':      round(expected_rev, 0),
+        'recorded_rev':      round(recorded_rev, 0),
+        'variance_kes':      round(variance_kes, 0),
+        'variance_pct':      round(variance_pct, 1),
+        'flag':              flag,
+        'weight_kg':         float(weight_kg),
         'remaining_envelope': round(barrel.remaining_envelope(), 0),
     })
 
