@@ -75,6 +75,7 @@ MIDDLEWARE = [
     "accounts.middleware.UserLanguageMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "core.middleware.ShiftEnforcementMiddleware",
 ]
 
 ROOT_URLCONF = "stockapp.urls"
