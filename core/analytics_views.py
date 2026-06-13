@@ -562,7 +562,6 @@ def analytics_dashboard(request):
         'GOLD':    'Gold (Premium)',
         '':        'Aina haijawekwa',
     }
-    _keg_map = {}  # keg_type → stats dict
     keg_barrels_period = (
         KegBarrel.objects
         .filter(
@@ -573,55 +572,24 @@ def analytics_dashboard(request):
         .select_related('item')
         .prefetch_related('cup_logs')
     )
-    for barrel in keg_barrels_period:
-        kt = barrel.item.keg_type or ''
-        if kt not in _keg_map:
-            _keg_map[kt] = {
-                'type_label': keg_type_labels.get(kt, kt or 'Aina haijawekwa'),
-                'barrels':    0,
-                'revenue':    0.0,
-                'cost':       0.0,
-                'cup_cost':   0.0,
-                'target':     0.0,
-            }
-            # also track per-item within this keg type
-        _keg_map[kt]['barrels'] += 1
-        _keg_map[kt]['revenue'] += float(barrel.revenue_collected or 0)
-        _keg_map[kt]['cost']    += float(barrel.cost_price or 0)
-        _keg_map[kt]['target']  += float(barrel.target_revenue or 0)
-        for log in barrel.cup_logs.all():
-            _keg_map[kt]['cup_cost'] += float(log.total_cost or 0)
 
-    keg_type_rows = []
-    for kt, row in sorted(_keg_map.items(), key=lambda x: -x[1]['revenue']):
-        rev  = row['revenue']
-        cost = row['cost']
-        cup  = row['cup_cost']
-        net  = rev - cost - cup
-        keg_type_rows.append({
-            'type_label': row['type_label'],
-            'barrels':    row['barrels'],
-            'revenue':    round(rev, 2),
-            'cost':       round(cost, 2),
-            'cup_cost':   round(cup, 2),
-            'net_margin': round(net, 2),
-            'markup':     round(rev / cost, 2) if cost > 0 else 0,
-            'wastage':    round(max(0, row['target'] - rev), 2),
-        })
-
-    # Per-item keg breakdown (shows each keg item's performance regardless of type)
+    # Per-item keg breakdown with status breakdown per barrel
     _ki_map = {}
     for barrel in keg_barrels_period:
         iid = barrel.item_id
         if iid not in _ki_map:
             _ki_map[iid] = {
-                'name':     barrel.item.description,
-                'keg_type': barrel.item.keg_type or '',
-                'barrels':  0,
-                'revenue':  0.0,
-                'cost':     0.0,
-                'cup_cost': 0.0,
-                'target':   0.0,
+                'name':      barrel.item.description,
+                'keg_type':  barrel.item.keg_type or '',
+                'barrels':   0,
+                'active':    0,    # TAPPED or SEALED (still selling)
+                'returned':  0,    # RETURNED (write-off)
+                'completed': 0,    # DEPLETED (fully sold)
+                'revenue':   0.0,
+                'cost':      0.0,
+                'cup_cost':  0.0,
+                'target':    0.0,
+                'wastage':   0.0,  # only from RETURNED/DEPLETED barrels
             }
         _ki_map[iid]['barrels'] += 1
         _ki_map[iid]['revenue'] += float(barrel.revenue_collected or 0)
@@ -629,6 +597,20 @@ def analytics_dashboard(request):
         _ki_map[iid]['target']  += float(barrel.target_revenue or 0)
         for log in barrel.cup_logs.all():
             _ki_map[iid]['cup_cost'] += float(log.total_cost or 0)
+        if barrel.status in ('TAPPED', 'SEALED'):
+            _ki_map[iid]['active'] += 1
+        elif barrel.status == 'RETURNED':
+            _ki_map[iid]['returned'] += 1
+            # Revenue shortfall on a returned barrel = real business loss
+            _ki_map[iid]['wastage'] += max(
+                0, float(barrel.target_revenue or 0) - float(barrel.revenue_collected or 0)
+            )
+        elif barrel.status == 'DEPLETED':
+            _ki_map[iid]['completed'] += 1
+            # Rare: depleted but below target
+            _ki_map[iid]['wastage'] += max(
+                0, float(barrel.target_revenue or 0) - float(barrel.revenue_collected or 0)
+            )
 
     keg_item_rows = []
     for iid, row in sorted(_ki_map.items(), key=lambda x: -x[1]['revenue']):
@@ -636,19 +618,34 @@ def analytics_dashboard(request):
         cost = row['cost']
         cup  = row['cup_cost']
         net  = rev - cost - cup
+        # Build a human-readable barrel status label
+        parts = []
+        if row['active'] > 0:
+            parts.append(f"{row['active']} selling")
+        if row['returned'] > 0:
+            parts.append(f"{row['returned']} returned")
+        if row['completed'] > 0:
+            parts.append(f"{row['completed']} done")
+        barrels_label = f"{row['barrels']} ({', '.join(parts)})" if parts else str(row['barrels'])
         keg_item_rows.append({
-            'name':       row['name'],
-            'keg_type':   keg_type_labels.get(row['keg_type'], row['keg_type'] or '—'),
-            'barrels':    row['barrels'],
-            'revenue':    round(rev, 2),
-            'cost':       round(cost, 2),
-            'cup_cost':   round(cup, 2),
-            'net_margin': round(net, 2),
-            'markup':     round(rev / cost, 2) if cost > 0 else 0,
-            'wastage':    round(max(0, row['target'] - rev), 2),
+            'name':          row['name'],
+            'keg_type':      keg_type_labels.get(row['keg_type'], row['keg_type'] or '—'),
+            'barrels':       row['barrels'],
+            'barrels_label': barrels_label,
+            'has_active':    row['active'] > 0,
+            'has_returned':  row['returned'] > 0,
+            'revenue':       round(rev, 2),
+            'cost':          round(cost, 2),
+            'cup_cost':      round(cup, 2),
+            'net_margin':    round(net, 2),
+            'markup':        round(rev / cost, 2) if cost > 0 else 0,
+            'wastage':       round(row['wastage'], 2),
         })
 
-    total_keg_revenue = round(sum(r['revenue'] for r in keg_type_rows), 2)
+    total_keg_revenue  = round(sum(r['revenue']  for r in keg_item_rows), 2)
+    total_keg_cup_cost = round(sum(r['cup_cost'] for r in keg_item_rows), 2)
+    total_keg_barrels  = sum(r['barrels'] for r in keg_item_rows)
+    keg_type_rows = []  # kept for backward compat — template no longer uses it
     keg_share = round(100 * total_keg_revenue / float(cur_revenue), 1) if cur_revenue > 0 else 0
 
     context = {
@@ -731,10 +728,11 @@ def analytics_dashboard(request):
         'produce_share': produce_share,
         'selected_product': selected_product,
         # Bar / Keg analytics
-        'keg_type_rows':    keg_type_rows,
-        'keg_item_rows':    keg_item_rows,
-        'total_keg_revenue': total_keg_revenue,
-        'keg_share':        keg_share,
+        'keg_item_rows':      keg_item_rows,
+        'total_keg_revenue':  total_keg_revenue,
+        'total_keg_cup_cost': total_keg_cup_cost,
+        'total_keg_barrels':  total_keg_barrels,
+        'keg_share':          keg_share,
         # Break-Even Analysis
         'breakeven_data': breakeven_data,
     }

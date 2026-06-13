@@ -647,9 +647,7 @@
   <div class="col-6 col-md-3">
     <div style="background:var(--onyx-card);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:1rem;text-align:center;">
       <div style="color:#c9a84c;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Barrels" %}</div>
-      <div style="color:var(--pearl);font-size:1.4rem;font-weight:700;font-family:'Playfair Display',serif;">
-        {% for r in keg_item_rows %}{% if forloop.first %}{{ r.barrels }}{% endif %}{% endfor %}
-      </div>
+      <div style="color:var(--pearl);font-size:1.4rem;font-weight:700;font-family:'Playfair Display',serif;">{{ total_keg_barrels }}</div>
       <div style="color:#b0b0b0;font-size:0.8rem;">{% trans "received this period" %}</div>
     </div>
   </div>
@@ -666,7 +664,7 @@
     <div style="background:var(--onyx-card);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:1rem;text-align:center;">
       <div style="color:#c9a84c;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Cup Cost" %}</div>
       <div style="color:var(--raspberry);font-size:1.1rem;font-weight:700;font-family:'Playfair Display',serif;">
-        KES {% for r in keg_item_rows %}{{ r.cup_cost|add:0 }}{% endfor %}
+        KES {{ total_keg_cup_cost|floatformat:0 }}
       </div>
       <div style="color:#b0b0b0;font-size:0.8rem;">{% trans "total cups expense" %}</div>
     </div>
@@ -674,7 +672,7 @@
 </div>
 
 <!-- Per-item keg breakdown -->
-<div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(201,168,76,0.2);overflow:hidden;margin-bottom:2rem;">
+<div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(201,168,76,0.2);overflow:hidden;margin-bottom:0.5rem;">
   <div style="padding:0.75rem 1rem;border-bottom:1px solid #222;font-weight:600;color:var(--gold);font-size:0.85rem;">
     🍺 {% trans "Per Keg Item" %} — {{ start_date }} {% trans "to" %} {{ end_date }}
   </div>
@@ -684,13 +682,13 @@
         <tr style="background:rgba(201,168,76,0.06);color:#8aa;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;">
           <th style="padding:0.6rem 1rem;text-align:left;">{% trans "Keg Item" %}</th>
           <th style="padding:0.6rem;text-align:left;">{% trans "Type" %}</th>
-          <th style="padding:0.6rem;text-align:right;">{% trans "Barrels" %}</th>
+          <th style="padding:0.6rem;text-align:left;">{% trans "Barrels" %}</th>
           <th style="padding:0.6rem;text-align:right;">{% trans "Revenue" %}</th>
           <th style="padding:0.6rem;text-align:right;">{% trans "Cost" %}</th>
           <th style="padding:0.6rem;text-align:right;">{% trans "Cup Cost" %}</th>
-          <th style="padding:0.6rem;text-align:right;">{% trans "Net Margin" %}</th>
+          <th style="padding:0.6rem;text-align:right;">{% trans "Net Margin" %} †</th>
           <th style="padding:0.6rem;text-align:right;">{% trans "Markup" %}</th>
-          <th style="padding:0.6rem;text-align:right;">{% trans "Wastage" %}</th>
+          <th style="padding:0.6rem;text-align:right;" title="{% trans "Revenue lost on returned/discarded barrels only" %}">{% trans "Loss (returned)" %}</th>
         </tr>
       </thead>
       <tbody>
@@ -698,17 +696,20 @@
         <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
           <td style="padding:0.6rem 1rem;color:var(--pearl);font-weight:600;">{{ r.name }}</td>
           <td style="padding:0.6rem;color:#b0b0b0;font-size:0.8rem;">{{ r.keg_type }}</td>
-          <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">{{ r.barrels }}</td>
+          <td style="padding:0.6rem;font-size:0.78rem;color:#b0b0b0;">
+            {{ r.barrels_label }}
+            {% if r.has_returned %}<span style="color:var(--raspberry);margin-left:4px;">⚠</span>{% endif %}
+          </td>
           <td style="padding:0.6rem;text-align:right;color:#c9a84c;font-weight:700;">KES {{ r.revenue|floatformat:0 }}</td>
           <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">KES {{ r.cost|floatformat:0 }}</td>
           <td style="padding:0.6rem;text-align:right;color:var(--raspberry);">{% if r.cup_cost > 0 %}KES {{ r.cup_cost|floatformat:0 }}{% else %}—{% endif %}</td>
           <td style="padding:0.6rem;text-align:right;{% if r.net_margin > 0 %}color:#6fae4f;{% else %}color:var(--raspberry);{% endif %}font-weight:600;">
-            KES {{ r.net_margin|floatformat:0 }}
+            KES {{ r.net_margin|floatformat:0 }}{% if r.has_active %} †{% endif %}
           </td>
           <td style="padding:0.6rem;text-align:right;{% if r.markup >= 1.5 %}color:#6fae4f;{% elif r.markup >= 1.2 %}color:#c9a84c;{% else %}color:var(--raspberry);{% endif %}font-weight:600;">
             {{ r.markup }}×
           </td>
-          <td style="padding:0.6rem;text-align:right;{% if r.wastage > 0 %}color:var(--raspberry);{% else %}color:#6fae4f;{% endif %}">
+          <td style="padding:0.6rem;text-align:right;{% if r.wastage > 0 %}color:var(--raspberry);font-weight:600;{% else %}color:#555;{% endif %}">
             {% if r.wastage > 0 %}KES {{ r.wastage|floatformat:0 }}{% else %}—{% endif %}
           </td>
         </tr>
@@ -723,6 +724,10 @@
       </tfoot>
     </table>
   </div>
+</div>
+<div style="font-size:0.75rem;color:#555;margin-bottom:2rem;padding:0 0.25rem;">
+  † {% trans "Net Margin is interim for barrels still selling — will improve as sales continue." %}
+  {% trans "Loss (returned) shows revenue shortfall on barrels returned or discarded before fully selling out." %}
 </div>
 {% endif %}
 <!-- ────────────────────────────────────────────────────────────────────── -->
