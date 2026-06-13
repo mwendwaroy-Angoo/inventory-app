@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Shift History{% endblock %}
+
+{% block extra_css %}
+<style>
+  .shift-card {
+    background: var(--onyx-card);
+    border: 1px solid #333;
+    border-radius: 10px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+  }
+  .shift-header {
+    padding: .75rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+  }
+  .shift-body { padding: .75rem 1rem; }
+  .badge-open      { background: #1a5c2a; color: #5dde7a; }
+  .badge-closed    { background: #5c3a00; color: #f0a840; }
+  .badge-confirmed { background: #1a3a5c; color: #5da8f0; }
+  .var-ok      { color: #5dde7a; }
+  .var-warn    { color: #f0a840; }
+  .var-danger  { color: #c0395a; }
+  .var-pending { color: #888; }
+  .stat-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: .5rem; }
+  .stat-box { flex: 1; min-width: 110px; background: #111; border-radius: 8px; padding: .5rem .75rem; }
+  .stat-box .label { font-size: .7rem; color: #888; text-transform: uppercase; letter-spacing: .05em; }
+  .stat-box .value { font-size: 1.05rem; font-weight: 600; color: var(--pearl); }
+  .confirm-btn {
+    background: transparent;
+    border: 1px solid var(--gold);
+    color: var(--gold);
+    border-radius: 6px;
+    padding: .3rem .8rem;
+    font-size: .82rem;
+    cursor: pointer;
+    transition: .2s;
+  }
+  .confirm-btn:hover { background: var(--gold); color: #111; }
+  .note-text { font-size: .8rem; color: #888; margin-top: .4rem; white-space: pre-line; }
+  .back-btn {
+    display: inline-block;
+    margin-bottom: 1rem;
+    color: var(--gold);
+    text-decoration: none;
+    font-size: .9rem;
+  }
+  .back-btn:hover { color: var(--gold-light); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3" style="max-width:760px; margin:0 auto;">
+  <a href="{% url 'bar_board' %}" class="back-btn">&#8592; Bar Board</a>
+  <h4 style="color:var(--gold); font-family:'Playfair Display',serif; margin-bottom:1.25rem;">
+    Shift History
+  </h4>
+
+  {% if not rows %}
+    <p style="color:#888; text-align:center; padding:3rem 0;">Hakuna shifts bado.</p>
+  {% endif %}
+
+  {% for row in rows %}
+  {% with s=row.shift r=row.rec vc=row.var_class %}
+  <div class="shift-card">
+    <div class="shift-header">
+      <div>
+        <span style="font-weight:600; color:var(--pearl);">
+          {{ s.staff.get_full_name|default:s.staff.username }}
+        </span>
+        <span style="color:#888; font-size:.8rem; margin-left:.5rem;">
+          {{ s.started_at|date:"d M Y H:i" }}
+          {% if s.ended_at %} – {{ s.ended_at|date:"H:i" }}{% endif %}
+        </span>
+      </div>
+      <div style="display:flex; align-items:center; gap:.5rem;">
+        {% if s.status == 'OPEN' %}
+          <span class="badge badge-open px-2 py-1 rounded-pill" style="font-size:.75rem;">OPEN</span>
+        {% elif s.status == 'CLOSED' %}
+          <span class="badge badge-closed px-2 py-1 rounded-pill" style="font-size:.75rem;">CLOSED</span>
+          {% if is_owner %}
+          <button class="confirm-btn" onclick="doConfirm({{ s.id }}, this)">Thibitisha</button>
+          {% endif %}
+        {% else %}
+          <span class="badge badge-confirmed px-2 py-1 rounded-pill" style="font-size:.75rem;">CONFIRMED</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="shift-body">
+      <div class="stat-row">
+        <div class="stat-box">
+          <div class="label">Float ya Kuanza</div>
+          <div class="value">KES {{ s.opening_float|floatformat:0 }}</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Cash Sales</div>
+          <div class="value">KES {{ r.cash_sales|floatformat:0 }}</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">M-Pesa</div>
+          <div class="value">KES {{ r.mpesa_sales|floatformat:0 }}</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Credit</div>
+          <div class="value">KES {{ r.credit_sales|floatformat:0 }}</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Jumla Mauzo</div>
+          <div class="value">KES {{ r.total_sales|floatformat:0 }}</div>
+        </div>
+        {% if s.closing_cash_counted is not None %}
+        <div class="stat-box">
+          <div class="label">Inayotarajiwa</div>
+          <div class="value">KES {{ r.expected_cash|floatformat:0 }}</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Ilihesabiwa</div>
+          <div class="value">KES {{ s.closing_cash_counted|floatformat:0 }}</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Tofauti</div>
+          <div class="value {{ vc }}">
+            {% if r.variance >= 0 %}+{% endif %}KES {{ r.variance|floatformat:0 }}
+          </div>
+        </div>
+        {% endif %}
+        <div class="stat-box">
+          <div class="label">Muda</div>
+          <div class="value">{{ r.elapsed }}</div>
+        </div>
+      </div>
+      {% if s.confirmed_by %}
+      <p style="font-size:.8rem; color:#5da8f0; margin-top:.5rem;">
+        &#10003; Imethibitishwa na {{ s.confirmed_by.get_full_name|default:s.confirmed_by.username }}
+      </p>
+      {% endif %}
+      {% if s.notes %}
+      <p class="note-text">{{ s.notes }}</p>
+      {% endif %}
+    </div>
+  </div>
+  {% endwith %}
+  {% endfor %}
+</div>
+
+<div id="confirm-toast" style="
+  position:fixed; bottom:1.5rem; left:50%; transform:translateX(-50%);
+  background:#1a5c2a; color:#5dde7a; padding:.6rem 1.4rem;
+  border-radius:8px; font-size:.9rem; display:none; z-index:9999;">
+  Shift imethibitishwa!
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function doConfirm(shiftId, btn) {
+  if (!confirm('Thibitisha shift hii?')) return;
+  btn.disabled = true;
+  fetch('/bar/shift/' + shiftId + '/confirm/', {
+    method: 'POST',
+    headers: {'X-CSRFToken': '{{ csrf_token }}'},
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      var toast = document.getElementById('confirm-toast');
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; location.reload(); }, 1800);
+    } else {
+      alert(d.error || 'Imeshindikana');
+      btn.disabled = false;
+    }
+  })
+  .catch(() => { alert('Network error'); btn.disabled = false; });
+}
+</script>
+{% endblock %}

@@ -338,6 +338,39 @@
   line-height: 1.5;
 }
 
+/* ── Shift panel ─────────────────────────────────────── */
+#shift-panel {
+  background: var(--onyx-card, #2a2a2a);
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: .75rem 1rem;
+  margin-bottom: 1rem;
+}
+.shift-stat { display:inline-flex; flex-direction:column; min-width:80px; }
+.shift-stat .s-label { font-size:.68rem; color:#888; text-transform:uppercase; letter-spacing:.04em; }
+.shift-stat .s-val   { font-size:.95rem; font-weight:600; color:#f0ece4; }
+.shift-var-ok     { color:#4caf50; }
+.shift-var-warn   { color:#ff9800; }
+.shift-var-danger { color:#c0395a; }
+.shift-open-btn {
+  background: rgba(201,168,76,.1);
+  border: 1px solid rgba(201,168,76,.35);
+  color: #c9a84c;
+  border-radius: 8px;
+  padding: 5px 14px;
+  font-size: .82rem;
+  cursor: pointer;
+}
+.shift-close-btn {
+  background: rgba(192,57,90,.12);
+  border: 1px solid rgba(192,57,90,.4);
+  color: #c0395a;
+  border-radius: 8px;
+  padding: 5px 14px;
+  font-size: .82rem;
+  cursor: pointer;
+}
+
 /* ── Tabs drawer ─────────────────────────────────────── */
 .tab-card {
   background: #2a2a2a;
@@ -431,6 +464,9 @@
     </div>
   </div>
 
+  <!-- Shift panel — populated by loadShift() -->
+  <div id="shift-panel" style="display:none;"></div>
+
   <!-- Keg tile grid — rendered by JS after board API call -->
   <div id="keg-board" class="row g-3">
     <div class="col-12 text-center py-5" style="color:#b0b0b0;">
@@ -443,6 +479,82 @@
 
 <!-- Toast notification -->
 <div id="keg-toast"></div>
+
+<!-- ════════════════════════════════════════════════════
+     OPEN SHIFT MODAL
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="openShiftModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"
+            style="font-family:'Playfair Display',serif; color:#c9a84c;">Fungua Shift</h5>
+        <button type="button" data-bs-dismiss="modal"
+                style="background:none; border:none; color:#b0b0b0; font-size:1.3rem;">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Float ya Kuanza (KES)</label>
+          <input type="number" step="1" min="0" id="open-shift-float" class="form-control"
+                 placeholder="e.g. 500" value="0">
+          <div class="form-text">Pesa zilizopo kwenye kasabuni unapoanza shift.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Maelezo (optional)</label>
+          <input type="text" id="open-shift-notes" class="form-control"
+                 placeholder="e.g. Evening shift">
+        </div>
+        <div id="open-shift-error" style="display:none; color:#c0395a; font-size:.85rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" data-bs-dismiss="modal"
+                class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Funga</button>
+        <button type="button" id="open-shift-btn" class="btn btn-gold btn-sm"
+                onclick="window.submitOpenShift()">Fungua Shift</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     CLOSE SHIFT MODAL
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="closeShiftModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"
+            style="font-family:'Playfair Display',serif; color:#c9a84c;">Funga Shift</h5>
+        <button type="button" data-bs-dismiss="modal"
+                style="background:none; border:none; color:#b0b0b0; font-size:1.3rem;">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- Pre-close summary injected here -->
+        <div id="close-shift-summary" style="margin-bottom:1rem;"></div>
+        <div class="mb-3">
+          <label class="form-label">Hesabu Pesa Mkononi (KES)</label>
+          <input type="number" step="1" min="0" id="close-shift-cash" class="form-control"
+                 placeholder="Hesabu kila noti na koin">
+          <div class="form-text">Jumla ya pesa zote zilizopo ndani ya kasabuni sasa hivi.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Maelezo (optional)</label>
+          <input type="text" id="close-shift-notes" class="form-control"
+                 placeholder="e.g. Kila kitu sawa">
+        </div>
+        <!-- Variance result shown after submit -->
+        <div id="close-shift-result" style="display:none;"></div>
+        <div id="close-shift-error" style="display:none; color:#c0395a; font-size:.85rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" data-bs-dismiss="modal"
+                class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Funga</button>
+        <button type="button" id="close-shift-btn" class="btn btn-gold btn-sm"
+                onclick="window.submitCloseShift()">Funga Shift</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ════════════════════════════════════════════════════
      CART BAR (fixed bottom)
@@ -1963,12 +2075,211 @@
   };
 
   /* ════════════════════════════════════════════════════════
+     SHIFT HANDOVER MODULE
+  ════════════════════════════════════════════════════════ */
+  var _activeShiftId = null;
+
+  function loadShift() {
+    fetch('/bar/shift/active/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) { renderShiftPanel(d); })
+      .catch(function () {});
+  }
+
+  function _varColor(v) {
+    if (v === null || v === undefined) return '';
+    v = parseFloat(v);
+    if (Math.abs(v) <= 50)  return 'shift-var-ok';
+    if (Math.abs(v) <= 200) return 'shift-var-warn';
+    return 'shift-var-danger';
+  }
+  function _fmt(n) { return 'KES ' + (Math.round(parseFloat(n) || 0)).toLocaleString(); }
+
+  function renderShiftPanel(d) {
+    var panel = document.getElementById('shift-panel');
+    if (!panel) return;
+
+    if (!d.shift) {
+      // No active shift — show Open button
+      _activeShiftId = null;
+      panel.style.display = 'block';
+      panel.innerHTML =
+        '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem;">' +
+        '<span style="color:#888; font-size:.83rem;">Hakuna shift iliyofunguliwa</span>' +
+        '<button class="shift-open-btn" onclick="window.openShiftModal()">+ Fungua Shift</button>' +
+        '</div>';
+      return;
+    }
+
+    var s = d.shift;
+    _activeShiftId = s.id;
+    panel.style.display = 'block';
+
+    var statusColor = s.status === 'OPEN' ? '#5dde7a' : '#f0a840';
+    var statusLabel = s.status === 'OPEN' ? 'OPEN' : 'CLOSED';
+    var varHtml = '';
+    if (s.variance !== null && s.variance !== undefined) {
+      var sign = parseFloat(s.variance) >= 0 ? '+' : '';
+      varHtml = '<div class="shift-stat"><span class="s-label">Tofauti</span>' +
+        '<span class="s-val ' + _varColor(s.variance) + '">' + sign + 'KES ' + Math.round(parseFloat(s.variance)) + '</span></div>';
+    }
+    var closeBtnHtml = '';
+    if (s.is_mine && s.status === 'OPEN') {
+      closeBtnHtml = '<button class="shift-close-btn" onclick="window.openCloseShiftModal()">Funga Shift</button>';
+    }
+    var histLink = '<a href="/bar/shift/history/" style="color:#888; font-size:.75rem; white-space:nowrap;">Historia ›</a>';
+
+    panel.innerHTML =
+      '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem; margin-bottom:.5rem;">' +
+        '<div style="display:flex; align-items:center; gap:.5rem;">' +
+          '<span style="width:8px; height:8px; border-radius:50%; background:' + statusColor + '; display:inline-block;"></span>' +
+          '<span style="color:' + statusColor + '; font-size:.78rem; font-weight:700;">' + statusLabel + '</span>' +
+          '<span style="color:#b0b0b0; font-size:.8rem;">' + s.staff_name + ' · started ' + s.started_at + ' (' + s.elapsed + ')</span>' +
+        '</div>' +
+        '<div style="display:flex; align-items:center; gap:.5rem;">' +
+          closeBtnHtml + histLink +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
+        '<div class="shift-stat"><span class="s-label">Float</span><span class="s-val">' + _fmt(s.opening_float) + '</span></div>' +
+        '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(s.cash_sales) + '</span></div>' +
+        '<div class="shift-stat"><span class="s-label">M-Pesa</span><span class="s-val">' + _fmt(s.mpesa_sales) + '</span></div>' +
+        (s.credit_sales > 0 ? '<div class="shift-stat"><span class="s-label">Credit</span><span class="s-val">' + _fmt(s.credit_sales) + '</span></div>' : '') +
+        '<div class="shift-stat"><span class="s-label">Jumla</span><span class="s-val">' + _fmt(s.total_sales) + '</span></div>' +
+        (s.variance !== null && s.variance !== undefined
+          ? '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(s.expected_cash) + '</span></div>'
+          : '') +
+        varHtml +
+      '</div>';
+  }
+
+  window.openShiftModal = function () {
+    document.getElementById('open-shift-float').value = '0';
+    document.getElementById('open-shift-notes').value = '';
+    var errEl = document.getElementById('open-shift-error');
+    if (errEl) errEl.style.display = 'none';
+    showModal('openShiftModal');
+  };
+
+  window.submitOpenShift = function () {
+    var btn = document.getElementById('open-shift-btn');
+    var errEl = document.getElementById('open-shift-error');
+    var fl = (document.getElementById('open-shift-float').value || '0').trim();
+    var notes = (document.getElementById('open-shift-notes').value || '').trim();
+    if (errEl) errEl.style.display = 'none';
+    btn.disabled = true; btn.textContent = 'Inafungua...';
+    var fd = new FormData();
+    fd.append('opening_float', fl);
+    fd.append('notes', notes);
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('/bar/shift/open/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false; btn.textContent = 'Fungua Shift';
+        if (d.ok) {
+          hideModal('openShiftModal');
+          loadShift();
+          showToast('✓ Shift imefunguliwa na float ya KES ' + Math.round(parseFloat(d.opening_float)));
+        } else {
+          if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
+        }
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Fungua Shift';
+        if (errEl) { errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; }
+      });
+  };
+
+  window.openCloseShiftModal = function () {
+    if (!_activeShiftId) return;
+    document.getElementById('close-shift-cash').value = '';
+    document.getElementById('close-shift-notes').value = '';
+    var summEl = document.getElementById('close-shift-summary');
+    var resEl  = document.getElementById('close-shift-result');
+    var errEl  = document.getElementById('close-shift-error');
+    if (resEl)  { resEl.style.display = 'none'; resEl.innerHTML = ''; }
+    if (errEl)  errEl.style.display = 'none';
+    if (summEl) summEl.innerHTML = '<span style="color:#888; font-size:.82rem;">Inapakia muhtasari...</span>';
+    // Pull current live numbers
+    fetch('/bar/shift/active/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.shift || !summEl) return;
+        var s = d.shift;
+        summEl.innerHTML =
+          '<div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:.5rem;">' +
+          '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(s.cash_sales) + '</span></div>' +
+          '<div class="shift-stat"><span class="s-label">Float</span><span class="s-val">' + _fmt(s.opening_float) + '</span></div>' +
+          '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(s.expected_cash) + '</span></div>' +
+          '</div><p style="font-size:.78rem; color:#888;">Hesabu pesa zote zilizopo mkononi sasa hivi, kisha ingiza hapo chini.</p>';
+      });
+    showModal('closeShiftModal');
+  };
+
+  window.submitCloseShift = function () {
+    if (!_activeShiftId) return;
+    var btn   = document.getElementById('close-shift-btn');
+    var errEl = document.getElementById('close-shift-error');
+    var resEl = document.getElementById('close-shift-result');
+    var cash  = (document.getElementById('close-shift-cash').value || '').trim();
+    var notes = (document.getElementById('close-shift-notes').value || '').trim();
+    if (!cash) {
+      if (errEl) { errEl.textContent = 'Tafadhali ingiza pesa zilizohesabiwa.'; errEl.style.display = 'block'; }
+      return;
+    }
+    if (errEl) errEl.style.display = 'none';
+    btn.disabled = true; btn.textContent = 'Inafunga...';
+    var fd = new FormData();
+    fd.append('closing_cash_counted', cash);
+    fd.append('notes', notes);
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('/bar/shift/' + _activeShiftId + '/close/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false; btn.textContent = 'Funga Shift';
+        if (d.ok) {
+          var sign = parseFloat(d.variance) >= 0 ? '+' : '';
+          var vc = _varColor(d.variance);
+          if (resEl) {
+            resEl.style.display = 'block';
+            resEl.innerHTML =
+              '<div style="background:#111; border-radius:8px; padding:.75rem; margin-bottom:.75rem;">' +
+              '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
+              '<div class="shift-stat"><span class="s-label">Mauzo Yote</span><span class="s-val">' + _fmt(d.total_sales) + '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(d.cash_sales) + '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(d.expected_cash) + '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">Tofauti</span><span class="s-val ' + vc + '">' + sign + 'KES ' + Math.round(parseFloat(d.variance)) + '</span></div>' +
+              '</div>' +
+              (Math.abs(parseFloat(d.variance)) > 50
+                ? '<p style="font-size:.78rem; color:#ff9800; margin:.5rem 0 0;">⚠ Tofauti kubwa — angalia kwa uangalifu.</p>'
+                : '<p style="font-size:.78rem; color:#4caf50; margin:.5rem 0 0;">✓ Hesabu iko sawa.</p>') +
+              '</div>';
+          }
+          // Hide close button, replace with Done
+          btn.style.display = 'none';
+          var doneBtn = document.createElement('button');
+          doneBtn.className = 'btn btn-gold btn-sm';
+          doneBtn.textContent = 'Done';
+          doneBtn.onclick = function () { hideModal('closeShiftModal'); loadShift(); };
+          btn.parentNode.insertBefore(doneBtn, btn);
+        } else {
+          if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
+        }
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Funga Shift';
+        if (errEl) { errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; }
+      });
+  };
+
+  /* ════════════════════════════════════════════════════════
      INIT
   ════════════════════════════════════════════════════════ */
   loadBarBoard();
+  loadShift();
 
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) loadBarBoard();
+    if (!document.hidden) { loadBarBoard(); loadShift(); }
   });
 
   // Show/hide tab fields when Tab payment is selected

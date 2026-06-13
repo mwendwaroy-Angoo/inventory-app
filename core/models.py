@@ -517,6 +517,10 @@ class Transaction(models.Model):
         related_name='transactions',
         help_text='The keg barrel this pour was drawn from. Discriminator for keg analytics — parallel to produce_bunch_id.',
     )
+    created_at = models.DateTimeField(
+        auto_now_add=True, null=True, blank=True,
+        help_text='Exact timestamp — used for shift-level reconciliation.',
+    )
 
     def revenue(self):
         if self.type != 'Issue':

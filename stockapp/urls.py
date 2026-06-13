@@ -61,6 +61,13 @@ from core.keg_views import (
     void_tab,
     convert_tab_to_debt,
 )
+from core.shift_views import (
+    open_shift,
+    close_shift,
+    confirm_shift,
+    active_shift_api,
+    shift_history,
+)
 from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import (
     mpesa_callback,
@@ -187,6 +194,12 @@ urlpatterns = [
     path("bar/tabs/<int:tab_id>/void/", void_tab, name="void_tab"),
     path("bar/tabs/<int:tab_id>/debt/", convert_tab_to_debt, name="convert_tab_to_debt"),
     path("bar/tabs/entry/<int:entry_id>/tick/", tick_entry, name="tick_entry"),
+    # ── Shift Handover Module (Sprint 4) ─────────────────────────────────────
+    path("bar/shift/open/",               open_shift,       name="open_shift"),
+    path("bar/shift/<int:shift_id>/close/",   close_shift,  name="close_shift"),
+    path("bar/shift/<int:shift_id>/confirm/", confirm_shift,name="confirm_shift"),
+    path("bar/shift/active/",             active_shift_api, name="active_shift_api"),
+    path("bar/shift/history/",            shift_history,    name="shift_history"),
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────
     path("approvals/", pending_approvals, name="pending_approvals"),
