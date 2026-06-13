@@ -136,6 +136,20 @@ def bar_board(request):
     success_data = None
 
     if request.method == 'POST':
+        # Shift enforcement — staff must have an open shift to sell
+        if not is_owner:
+            from .models import Shift as _Shift
+            active_shift = _Shift.objects.filter(
+                business=business, status='OPEN'
+            ).first()
+            if not active_shift:
+                from django.contrib import messages
+                messages.error(
+                    request,
+                    'Hakuna shift iliyofunguliwa. Fungua shift kwanza kabla ya kuuza.'
+                )
+                return redirect('bar_board')
+
         cart_json = request.POST.get('keg_cart', '[]')
         payment_method = request.POST.get('payment_method', 'cash')
         tab_customer = (request.POST.get('tab_customer') or '').strip()
@@ -204,6 +218,7 @@ def bar_board(request):
             receipt_lines.append({
                 'name': f"{barrel.item.description} — {preset.label} ×{qty}",
                 'subtotal': float(amount),
+                'barrel_id': barrel.id,
             })
 
         if receipt_lines:

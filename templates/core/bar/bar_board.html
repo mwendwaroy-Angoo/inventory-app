@@ -246,9 +246,54 @@
   z-index: 1;
   border-radius: 0 0 5px 5px;
 }
+/* ── Liquid colours by keg TYPE (override level for dark/gold/regular) ── */
+/* Default fallback (no type set) — amber lager */
 .keg-liquid.lvl-high { background: linear-gradient(180deg, rgba(201,168,76,0.88) 0%, rgba(145,92,8,0.96) 100%); }
 .keg-liquid.lvl-med  { background: linear-gradient(180deg, rgba(255,165,0,0.85) 0%, rgba(170,80,0,0.96) 100%); }
 .keg-liquid.lvl-low  { background: linear-gradient(180deg, rgba(192,57,90,0.82) 0%, rgba(110,15,35,0.96) 100%); }
+
+/* DARK — near-black stout/porter, very dark brown */
+.keg-liquid.keg-liq-dark.lvl-high { background: linear-gradient(180deg, rgba(42,18,6,0.97) 0%, rgba(20,7,2,0.99) 100%); }
+.keg-liquid.keg-liq-dark.lvl-med  { background: linear-gradient(180deg, rgba(55,22,6,0.97) 0%, rgba(25,9,2,0.99) 100%); }
+.keg-liquid.keg-liq-dark.lvl-low  { background: linear-gradient(180deg, rgba(80,25,8,0.95) 0%, rgba(40,10,2,0.99) 100%); }
+.keg-gauge-fill.keg-liq-dark { background: #2a1204 !important; filter: brightness(1.6); }
+
+/* GOLD — deep rich amber, darker/richer than regular */
+.keg-liquid.keg-liq-gold.lvl-high { background: linear-gradient(180deg, rgba(220,155,25,0.92) 0%, rgba(160,95,5,0.97) 100%); }
+.keg-liquid.keg-liq-gold.lvl-med  { background: linear-gradient(180deg, rgba(200,130,15,0.90) 0%, rgba(140,80,5,0.97) 100%); }
+.keg-liquid.keg-liq-gold.lvl-low  { background: linear-gradient(180deg, rgba(192,57,90,0.82) 0%, rgba(110,15,35,0.96) 100%); }
+.keg-gauge-fill.keg-liq-gold { background: #dc9b19 !important; }
+
+/* REGULAR — pale straw/golden lager, lighter and more yellow than gold */
+.keg-liquid.keg-liq-regular.lvl-high { background: linear-gradient(180deg, rgba(245,215,90,0.88) 0%, rgba(200,160,40,0.95) 100%); }
+.keg-liquid.keg-liq-regular.lvl-med  { background: linear-gradient(180deg, rgba(230,195,70,0.86) 0%, rgba(180,140,30,0.95) 100%); }
+.keg-liquid.keg-liq-regular.lvl-low  { background: linear-gradient(180deg, rgba(192,57,90,0.82) 0%, rgba(110,15,35,0.96) 100%); }
+.keg-gauge-fill.keg-liq-regular { background: #e8cc42 !important; }
+
+/* ── Dark keg foam — slightly brownish tint ── */
+.keg-liq-dark ~ .keg-foam, .keg-liquid.keg-liq-dark .keg-foam {
+  background: rgba(180,120,60,0.18);
+}
+
+/* ── Liquid surge animation (on tap + after sale) ── */
+@keyframes keg-surge {
+  0%   { transform: translateY(0)    scaleX(1);    }
+  15%  { transform: translateY(-5px) scaleX(1.04); }
+  35%  { transform: translateY(-3px) scaleX(0.98); }
+  55%  { transform: translateY(-6px) scaleX(1.03); }
+  75%  { transform: translateY(-2px) scaleX(1.01); }
+  100% { transform: translateY(0)    scaleX(1);    }
+}
+@keyframes keg-surface-wave {
+  0%,100% { border-radius: 0 0 5px 5px; }
+  25%     { border-radius: 4px 1px 4px 5px; }
+  50%     { border-radius: 1px 4px 5px 4px; }
+  75%     { border-radius: 4px 1px 4px 5px; }
+}
+.keg-liquid.surging {
+  animation: keg-surge 0.9s cubic-bezier(0.36,0.07,0.19,0.97),
+             keg-surface-wave 0.9s ease-in-out !important;
+}
 
 .keg-foam {
   position: absolute;
@@ -1261,18 +1306,22 @@
           ? Math.round(Math.max(0, Math.min(100, kg.remaining / kg.target_open * 100)))
           : 0;
         var lvlClass = pct >= 35 ? 'lvl-high' : (pct >= 15 ? 'lvl-med' : 'lvl-low');
+        var typeClass = { DARK: 'keg-liq-dark', GOLD: 'keg-liq-gold', REGULAR: 'keg-liq-regular' }[kg.keg_type] || '';
         var bottomWarn = pct < 20
           ? '<div class="keg-bottom-warn">⚠ Karibu mwisho — tahadhari na mwisho wa barrel</div>'
           : '';
         var barrelViz =
-          '<div class="keg-barrel-wrap" title="' + pct + '% iliyobaki">' +
+          '<div class="keg-barrel-wrap" title="' + pct + '% iliyobaki"' +
+               ' onclick="window._surgeLiquid(' + kg.tapped_barrel_id + ')">' +
             '<div class="keg-barrel-body">' +
-              '<div class="keg-liquid ' + lvlClass + '" style="height:' + pct + '%;">' +
+              '<div class="keg-liquid ' + lvlClass + ' ' + typeClass + '"' +
+                   ' id="keg-liq-' + kg.tapped_barrel_id + '"' +
+                   ' style="height:' + pct + '%;">' +
                 '<div class="keg-foam"></div>' +
               '</div>' +
             '</div>' +
             '<div class="keg-gauge">' +
-              '<div class="keg-gauge-fill ' + lvlClass + '" style="height:' + pct + '%;"></div>' +
+              '<div class="keg-gauge-fill ' + lvlClass + ' ' + typeClass + '" style="height:' + pct + '%;"></div>' +
             '</div>' +
           '</div>';
 
@@ -1384,7 +1433,18 @@
   window.closeSellModal = function () { hideModal('sellModal'); };
 
   /* ── Cart: map keyed by 'barrelId:presetId' ─────────────── */
+  /* ── Liquid surge animation ────────────────────────────── */
+  window._surgeLiquid = function (barrelId) {
+    var el = document.getElementById('keg-liq-' + barrelId);
+    if (!el) return;
+    el.classList.remove('surging');
+    void el.offsetWidth; // reflow to restart animation
+    el.classList.add('surging');
+    setTimeout(function () { el.classList.remove('surging'); }, 950);
+  };
+
   window.addToKegCart = function (barrelId, presetId) {
+    window._surgeLiquid(barrelId);
     var p = _presetData[presetId];
     if (!p) return;
     var key = barrelId + ':' + presetId;
@@ -2379,8 +2439,13 @@
 
   {% if success_data %}
   showModal('successModal');
+  // Surge the barrels that were just sold after board renders
+  setTimeout(function () {
+    {% for line in success_data.lines %}
+    window._surgeLiquid({{ line.barrel_id }});
+    {% endfor %}
+  }, 600);
   {% if success_data.payment_method == 'tab' %}
-  // Auto-open tabs drawer after a tab sale so staff can see the running tab
   setTimeout(function () { window.openTabsDrawer(); }, 2000);
   {% endif %}
   {% endif %}

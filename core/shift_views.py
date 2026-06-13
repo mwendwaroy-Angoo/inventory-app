@@ -162,6 +162,28 @@ def open_shift(request):
         opening_float=opening_float,
         notes=full_notes,
     )
+
+    # Notify owner when a non-owner opens a shift
+    if not up.is_owner:
+        staff_name = request.user.get_full_name() or request.user.username
+        float_str = f"KES {int(opening_float)}"
+        try:
+            from .models import Notification
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            owners = User.objects.filter(
+                userprofile__business=up.business,
+                userprofile__role='owner',
+            )
+            for owner in owners:
+                Notification.objects.create(
+                    business=up.business,
+                    user=owner,
+                    message=f"{staff_name} amefungua shift na float ya {float_str}.",
+                )
+        except Exception:
+            pass
+
     return JsonResponse({
         'ok': True,
         'shift_id': shift.id,
