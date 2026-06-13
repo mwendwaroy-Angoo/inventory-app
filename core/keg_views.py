@@ -248,6 +248,7 @@ def bar_board(request):
         'is_owner': is_owner,
         'business': business,
         'success_data': success_data,
+        'current_user_id': request.user.id,
     })
 
 

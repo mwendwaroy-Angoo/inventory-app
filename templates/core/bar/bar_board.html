@@ -1407,6 +1407,7 @@
      SELL MODAL
   ════════════════════════════════════════════════════════ */
   window.openSellModal = function (itemId) {
+    if (_shiftBlockMsg) { showToast(_shiftBlockMsg); return; }
     var kg = _boardData[itemId];
     if (!kg || !kg.tapped_barrel_id) return;
 
@@ -2167,7 +2168,10 @@
   /* ════════════════════════════════════════════════════════
      SHIFT HANDOVER MODULE
   ════════════════════════════════════════════════════════ */
-  var _activeShiftId = null;
+  var _activeShiftId   = null;
+  var _shiftBlockMsg   = null;   // set when another staff's shift is running
+  var _currentUserId   = {{ current_user_id|default:0 }};
+  var _isOwner         = {{ is_owner|yesno:"true,false" }};
 
   function loadShift() {
     fetch('/bar/shift/active/')
@@ -2191,7 +2195,8 @@
 
     if (!d.shift) {
       // No active shift — show Open button
-      _activeShiftId = null;
+      _activeShiftId  = null;
+      _shiftBlockMsg  = null;
       panel.style.display = 'block';
       panel.innerHTML =
         '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem;">' +
@@ -2203,6 +2208,13 @@
 
     var s = d.shift;
     _activeShiftId = s.id;
+    // Block non-owner staff from selling if this shift belongs to someone else
+    if (!_isOwner && !s.is_mine && s.status === 'OPEN') {
+      _shiftBlockMsg = 'Shift imefunguliwa na ' + s.staff_name +
+                       '. Fungua shift yako mwenyewe kwanza.';
+    } else {
+      _shiftBlockMsg = null;
+    }
     panel.style.display = 'block';
 
     var statusColor = s.status === 'OPEN' ? '#5dde7a' : '#f0a840';

@@ -1853,6 +1853,36 @@ def quick_sell(request):
     success_data = None
 
     if request.method == "POST":
+        # Shift enforcement — staff in a bar business must have their own open shift
+        if not user_profile.is_owner:
+            has_keg = Item.objects.filter(
+                store__business=user_profile.business, is_keg=True
+            ).exists()
+            if has_keg:
+                from .models import Shift as _Shift
+                my_shift = _Shift.objects.filter(
+                    business=user_profile.business,
+                    status='OPEN',
+                    staff=request.user,
+                ).first()
+                if not my_shift:
+                    any_shift = _Shift.objects.filter(
+                        business=user_profile.business, status='OPEN'
+                    ).first()
+                    if any_shift:
+                        owner_name = any_shift.staff.get_full_name() or any_shift.staff.username
+                        messages.error(
+                            request,
+                            f'Shift imefunguliwa na {owner_name}. '
+                            f'Fungua shift yako mwenyewe kwanza kabla ya kuuza.'
+                        )
+                    else:
+                        messages.error(
+                            request,
+                            'Hakuna shift iliyofunguliwa. Fungua shift kwanza kabla ya kuuza.'
+                        )
+                    return redirect('quick_sell')
+
         cart_json = request.POST.get("cart", "[]")
         try:
             cart = json.loads(cart_json)
