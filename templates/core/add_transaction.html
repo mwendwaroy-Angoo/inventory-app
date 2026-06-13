@@ -454,6 +454,32 @@
                 </div>
             </div>
 
+            <!-- ── Backdated entry (Option B offline sales) ── -->
+            <div id="backdateSection" style="display:none; margin-bottom:1rem;">
+              <div class="section-divider"><span>🕐 {% trans 'Wakati Halisi wa Mauzo' %}</span></div>
+              <div style="background:rgba(255,152,0,0.06); border:1px solid rgba(255,152,0,0.25);
+                          border-radius:8px; padding:.85rem 1rem;">
+                <p style="font-size:.8rem; color:#ff9800; margin-bottom:.5rem;">
+                  📵 {% trans 'Mauzo haya yalifanyika bila app (mtandao ulikatika, n.k.). Weka wakati sahihi ili yaingie kwenye hesabu ya shift husika.' %}
+                </p>
+                <label class="form-label" style="font-size:.85rem;">{% trans 'Tarehe na saa halisi ya mauzo' %}</label>
+                <input type="datetime-local" name="backdated_at" id="backdatedAt"
+                       class="form-control"
+                       style="max-width:280px; background:#1a1a1a; border:1px solid #555; color:#f0ece4;">
+                <div class="form-text" style="color:#888; font-size:.75rem; margin-top:.3rem;">
+                  {% trans 'Ikiwa imejazwa, transaction itaingia kwenye reconciliation ya shift iliyokuwa wazi wakati huo.' %}
+                </div>
+              </div>
+            </div>
+
+            <div id="backdateToggle" style="margin-bottom:.75rem; display:none;">
+              <button type="button" class="btn btn-sm"
+                      style="background:transparent; border:1px solid #444; color:#888; font-size:.78rem;"
+                      onclick="window._toggleBackdate()">
+                🕐 {% trans 'Ilifanyika wakati mwingine? (mauzo ya offline)' %}
+              </button>
+            </div>
+
             <button type="submit" class="btn btn-gold w-100 py-2 mt-2">
                 {% trans 'Submit Transaction' %}
             </button>
@@ -563,6 +589,15 @@ function updateMultiplierDisplay() {
     if (el) el.textContent = mult + ' × KES ' + price.toFixed(0) + ' = KES ' + total_price + ' | ' + total + ' units consumed';
 }
 
+window._toggleBackdate = function() {
+    var section = document.getElementById('backdateSection');
+    var isHidden = section.style.display === 'none' || section.style.display === '';
+    section.style.display = isHidden ? 'block' : 'none';
+    if (!isHidden) {
+        document.getElementById('backdatedAt').value = '';
+    }
+};
+
 $(document).ready(function () {
 
     var IS_OWNER        = {{ is_owner|yesno:"true,false" }};
@@ -615,6 +650,9 @@ $(document).ready(function () {
             $('#customerSelect').attr('name', '');
             $('#recipientLabel').text(LABEL_RECEIVING_STORE);
             $('#paymentMethodRow').hide();
+            $('#backdateToggle').hide();
+            $('#backdateSection').hide();
+            $('#backdatedAt').val('');
             checkCostPriceSection();
         } else {
             $('#storeField').hide();
@@ -624,6 +662,14 @@ $(document).ready(function () {
             $('#recipientLabel').text(LABEL_CUSTOMER_RECIPIENT);
             $('#paymentMethodRow').show();
             $('#costPriceSection').hide();
+            // Backdate toggle only relevant for Issue (offline sale), not Wastage
+            if (type === 'Issue') {
+                $('#backdateToggle').show();
+            } else {
+                $('#backdateToggle').hide();
+                $('#backdateSection').hide();
+                $('#backdatedAt').val('');
+            }
         }
     }
     $('#transType').on('change', function () {

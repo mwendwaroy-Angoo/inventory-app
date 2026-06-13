@@ -132,6 +132,14 @@
           <div class="value">{{ r.elapsed }}</div>
         </div>
       </div>
+      {% if s.offline_sales_amount %}
+      <div style="margin-top:.5rem; padding:.3rem .65rem; background:rgba(255,152,0,0.08);
+                  border:1px solid rgba(255,152,0,0.25); border-radius:6px; display:inline-block;">
+        <span style="color:#ff9800; font-size:.76rem;">
+          📵 Mauzo yasiyorekodiwa: <strong>KES {{ s.offline_sales_amount|floatformat:0 }}</strong>{% if s.offline_sales_note %} — {{ s.offline_sales_note }}{% endif %}
+        </span>
+      </div>
+      {% endif %}
       {% if s.confirmed_by %}
       <p style="font-size:.8rem; color:#5da8f0; margin-top:.5rem;">
         &#10003; Imethibitishwa na {{ s.confirmed_by.get_full_name|default:s.confirmed_by.username }}

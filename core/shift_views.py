@@ -42,7 +42,9 @@ def _reconcile(shift):
     mpesa_sales = float(txns.filter(payment_method='mpesa').aggregate(t=Sum('sale_amount'))['t'] or 0)
     credit_sales= float(txns.filter(payment_method='credit').aggregate(t=Sum('sale_amount'))['t'] or 0)
     total_sales  = cash_sales + mpesa_sales + credit_sales
-    expected_cash = float(shift.opening_float) + cash_sales
+    offline_adj  = float(shift.offline_sales_amount or 0)
+    # expected_cash includes any offline cash that staff declared but didn't enter in the system
+    expected_cash = float(shift.opening_float) + cash_sales + offline_adj
     variance = None
     if shift.closing_cash_counted is not None:
         variance = round(float(shift.closing_cash_counted) - expected_cash, 2)
@@ -55,9 +57,11 @@ def _reconcile(shift):
         'credit_sales':  round(credit_sales, 2),
         'total_sales':   round(total_sales, 2),
         'expected_cash': round(expected_cash, 2),
-        'variance':      variance,
-        'elapsed':       f"{hours}h {mins:02d}m",
-        'elapsed_mins':  elapsed_secs // 60,
+        'variance':           variance,
+        'elapsed':            f"{hours}h {mins:02d}m",
+        'elapsed_mins':       elapsed_secs // 60,
+        'offline_adj':        round(offline_adj, 2),
+        'offline_sales_note': shift.offline_sales_note or '',
     }
 
 
@@ -241,13 +245,23 @@ def close_shift(request, shift_id):
         return JsonResponse({'ok': False, 'error': 'Nambari si sahihi'}, status=400)
 
     notes_add = (request.POST.get('notes') or '').strip()
+    try:
+        offline_amt = Decimal(str(request.POST.get('offline_sales_amount', '0') or '0'))
+    except Exception:
+        offline_amt = Decimal('0')
+    offline_note = (request.POST.get('offline_sales_note') or '').strip()
 
-    shift.closing_cash_counted = closing_cash
-    shift.ended_at = timezone.now()
-    shift.status = 'CLOSED'
+    shift.closing_cash_counted  = closing_cash
+    shift.ended_at              = timezone.now()
+    shift.status                = 'CLOSED'
+    shift.offline_sales_amount  = offline_amt
+    shift.offline_sales_note    = offline_note
     if notes_add:
         shift.notes = (shift.notes + '\n' + notes_add).strip()
-    shift.save(update_fields=['closing_cash_counted', 'ended_at', 'status', 'notes'])
+    shift.save(update_fields=[
+        'closing_cash_counted', 'ended_at', 'status', 'notes',
+        'offline_sales_amount', 'offline_sales_note',
+    ])
 
     # Process barrel weights (SHIFT_CLOSE readings)
     barrel_weights_raw = request.POST.get('barrel_weights', '[]')
@@ -290,12 +304,14 @@ def close_shift(request, shift_id):
     rec = _reconcile(shift)
     return JsonResponse({
         'ok': True,
-        'expected_cash':   rec['expected_cash'],
-        'variance':        rec['variance'],
-        'total_sales':     rec['total_sales'],
-        'cash_sales':      rec['cash_sales'],
-        'mpesa_sales':     rec['mpesa_sales'],
-        'weight_readings': weight_readings,
+        'expected_cash':        rec['expected_cash'],
+        'variance':             rec['variance'],
+        'total_sales':          rec['total_sales'],
+        'cash_sales':           rec['cash_sales'],
+        'mpesa_sales':          rec['mpesa_sales'],
+        'offline_sales_amount': float(offline_amt),
+        'offline_sales_note':   offline_note,
+        'weight_readings':      weight_readings,
     })
 
 

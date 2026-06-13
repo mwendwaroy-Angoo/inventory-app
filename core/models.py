@@ -518,8 +518,8 @@ class Transaction(models.Model):
         help_text='The keg barrel this pour was drawn from. Discriminator for keg analytics — parallel to produce_bunch_id.',
     )
     created_at = models.DateTimeField(
-        auto_now_add=True, null=True, blank=True,
-        help_text='Exact timestamp — used for shift-level reconciliation.',
+        default=timezone.now, null=True, blank=True,
+        help_text='Exact timestamp — used for shift-level reconciliation. Can be backdated for offline sales.',
     )
 
     def revenue(self):
@@ -1549,6 +1549,11 @@ class Shift(models.Model):
     ended_at      = models.DateTimeField(null=True, blank=True)
     opening_float = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
     closing_cash_counted = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    offline_sales_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0'),
+        help_text='Cash collected offline (no app/no internet) during this shift, not yet in transactions.',
+    )
+    offline_sales_note = models.CharField(max_length=200, blank=True)
     confirmed_by  = models.ForeignKey(
         'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='shifts_confirmed'

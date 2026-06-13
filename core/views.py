@@ -417,6 +417,18 @@ def add_transaction(request):
                 return redirect("add_transaction")
             quantity = -quantity
 
+        # Backdated timestamp (Option B offline sales)
+        backdated_at = None
+        backdated_raw = request.POST.get('backdated_at', '').strip()
+        if backdated_raw:
+            try:
+                from datetime import datetime as _dt
+                naive = _dt.strptime(backdated_raw, '%Y-%m-%dT%H:%M')
+                from django.utils import timezone as _tz
+                backdated_at = _tz.make_aware(naive, _tz.get_current_timezone())
+            except Exception:
+                backdated_at = None
+
         transaction = Transaction.objects.create(
             item=item,
             type=trans_type,
@@ -429,6 +441,7 @@ def add_transaction(request):
                 if trans_type == "Issue"
                 else ""
             ),
+            **({"created_at": backdated_at} if backdated_at else {}),
         )
 
         # ── COST PRICE UPDATE (Receipt only) ──────────────────────────────

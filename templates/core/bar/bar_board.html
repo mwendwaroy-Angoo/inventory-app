@@ -617,6 +617,28 @@
           <input type="text" id="close-shift-notes" class="form-control"
                  placeholder="e.g. Kila kitu sawa">
         </div>
+        <!-- Offline sales adjustment (Option A) -->
+        <div>
+          <hr style="border-color:#333; margin:.75rem 0;">
+          <div style="color:#c9a84c; font-size:.82rem; font-weight:600; margin-bottom:.25rem;">📵 Mauzo Yasiyorekodiwa (Optional)</div>
+          <p style="font-size:.75rem; color:#888; margin-bottom:.5rem;">
+            Ulikusanya pesa bila kuingiza kwenye app? Ingiza jumla yake hapa.<br>
+            <strong style="color:#ff9800;">Kumbuka:</strong> ukishaingiza transactions hizo baadaye kwa wakati sahihi, futa nambari hii ili usihesabu mara mbili.
+          </p>
+          <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+            <div style="flex:0 0 120px;">
+              <label style="font-size:.76rem; color:#b0b0b0; display:block; margin-bottom:3px;">Pesa za ziada (KES)</label>
+              <input type="number" step="1" min="0" id="close-offline-amount"
+                     class="form-control form-control-sm" placeholder="0" value="0">
+            </div>
+            <div style="flex:1; min-width:150px;">
+              <label style="font-size:.76rem; color:#b0b0b0; display:block; margin-bottom:3px;">Maelezo (optional)</label>
+              <input type="text" id="close-offline-note" class="form-control form-control-sm"
+                     placeholder="e.g. Pints 3, mtandao ulikatika 3-5pm">
+            </div>
+          </div>
+        </div>
+
         <!-- Barrel weighing — populated by openCloseShiftModal if TAPPED barrels exist -->
         <div id="close-shift-barrels" style="display:none;">
           <hr style="border-color:#333; margin:.75rem 0;">
@@ -2490,6 +2512,10 @@
     if (errEl)      errEl.style.display = 'none';
     if (barrelSect) barrelSect.style.display = 'none';
     if (barrelList) barrelList.innerHTML = '';
+    var offAmtEl = document.getElementById('close-offline-amount');
+    var offNoteEl = document.getElementById('close-offline-note');
+    if (offAmtEl)  offAmtEl.value  = '0';
+    if (offNoteEl) offNoteEl.value = '';
     if (summEl)     summEl.innerHTML = '<span style="color:#888; font-size:.82rem;">Inapakia muhtasari...</span>';
 
     // Pull current live numbers
@@ -2566,11 +2592,15 @@
         barrelWeights.push({ barrel_id: parseInt(row.dataset.barrelId), weight_kg: wkg.toFixed(2) });
       }
     });
+    var offlineAmt  = (document.getElementById('close-offline-amount').value  || '0').trim();
+    var offlineNote = (document.getElementById('close-offline-note').value   || '').trim();
     var fd = new FormData();
-    fd.append('closing_cash_counted', cash);
-    fd.append('notes', notes);
-    fd.append('barrel_weights', JSON.stringify(barrelWeights));
-    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fd.append('closing_cash_counted',  cash);
+    fd.append('notes',                 notes);
+    fd.append('offline_sales_amount',  offlineAmt);
+    fd.append('offline_sales_note',    offlineNote);
+    fd.append('barrel_weights',        JSON.stringify(barrelWeights));
+    fd.append('csrfmiddlewaretoken',   '{{ csrf_token }}');
     fetch('/bar/shift/' + _activeShiftId + '/close/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -2591,6 +2621,14 @@
               });
               barrelHtml += '</div>';
             }
+            var offlineHtml = '';
+            if (parseFloat(d.offline_sales_amount) > 0) {
+              offlineHtml =
+                '<div style="margin-top:.4rem; padding:.4rem .6rem; background:rgba(255,152,0,0.08); border:1px solid rgba(255,152,0,0.25); border-radius:6px;">' +
+                '<span style="color:#ff9800; font-size:.76rem;">📵 Mauzo yasiyorekodiwa: <strong>KES ' + Math.round(d.offline_sales_amount) + '</strong>' +
+                (d.offline_sales_note ? ' — ' + d.offline_sales_note : '') +
+                '</span></div>';
+            }
             resEl.innerHTML =
               '<div style="background:#111; border-radius:8px; padding:.75rem; margin-bottom:.75rem;">' +
               '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
@@ -2599,6 +2637,7 @@
               '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(d.expected_cash) + '</span></div>' +
               '<div class="shift-stat"><span class="s-label">Tofauti</span><span class="s-val ' + vc + '">' + sign + 'KES ' + Math.round(parseFloat(d.variance)) + '</span></div>' +
               '</div>' +
+              offlineHtml +
               (Math.abs(parseFloat(d.variance)) > 50
                 ? '<p style="font-size:.78rem; color:#ff9800; margin:.5rem 0 0;">⚠ Tofauti kubwa — angalia kwa uangalifu.</p>'
                 : '<p style="font-size:.78rem; color:#4caf50; margin:.5rem 0 0;">✓ Hesabu iko sawa.</p>') +
