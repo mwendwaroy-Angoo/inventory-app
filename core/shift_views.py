@@ -74,7 +74,14 @@ def active_shift_api(request):
     ).order_by('-started_at').first()
 
     if not shift:
-        return JsonResponse({'shift': None, 'can_open': True})
+        # No active shift — find the last CONFIRMED shift's closing count as float suggestion
+        last = Shift.objects.filter(
+            business=up.business,
+            status='CONFIRMED',
+            closing_cash_counted__isnull=False,
+        ).order_by('-ended_at').first()
+        last_closing = float(last.closing_cash_counted) if last else None
+        return JsonResponse({'shift': None, 'can_open': True, 'last_closing': last_closing})
 
     rec = _reconcile(shift)
     return JsonResponse({
@@ -124,14 +131,36 @@ def open_shift(request):
     except Exception:
         opening_float = Decimal('0')
 
+    try:
+        banked = Decimal(str(request.POST.get('banked_amount', '0') or '0'))
+    except Exception:
+        banked = Decimal('0')
+
+    prev_closing_raw = request.POST.get('prev_closing', '').strip()
     notes = (request.POST.get('notes') or '').strip()
+
+    # Build automatic audit note for the cash handover chain
+    auto_note_parts = []
+    if prev_closing_raw:
+        try:
+            prev = Decimal(str(prev_closing_raw))
+            auto_note_parts.append(f"Shift iliyopita iliisha na KES {int(prev)}")
+            if banked > 0:
+                auto_note_parts.append(f"KES {int(banked)} iliondolewa/kubanked")
+            auto_note_parts.append(f"Float ya kuanza: KES {int(opening_float)}")
+        except Exception:
+            pass
+
+    full_notes = ' · '.join(auto_note_parts)
+    if notes:
+        full_notes = (full_notes + '\n' + notes).strip() if full_notes else notes
 
     shift = Shift.objects.create(
         business=up.business,
         store=up.business.stores.first() if up.business.stores.exists() else None,
         staff=request.user,
         opening_float=opening_float,
-        notes=notes,
+        notes=full_notes,
     )
     return JsonResponse({
         'ok': True,

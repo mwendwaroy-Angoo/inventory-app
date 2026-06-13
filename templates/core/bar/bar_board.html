@@ -493,8 +493,38 @@
                 style="background:none; border:none; color:#b0b0b0; font-size:1.3rem;">✕</button>
       </div>
       <div class="modal-body">
+        <!-- Handover suggestion box — shown when previous shift has a closing count -->
+        <div id="open-shift-suggestion" style="display:none; background:#111; border:1px solid #333;
+             border-radius:8px; padding:.75rem; margin-bottom:1rem;">
+          <p style="font-size:.8rem; color:#888; margin:0 0 .5rem;">
+            Shift iliyopita iliisha na:
+            <strong id="open-shift-prev-amount" style="color:#c9a84c;"></strong>
+          </p>
+          <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+            <button type="button" id="open-shift-use-prev"
+                    style="flex:1; background:rgba(201,168,76,.12); border:1px solid rgba(201,168,76,.4);
+                           color:#c9a84c; border-radius:6px; padding:5px 10px; font-size:.8rem; cursor:pointer;">
+              Tumia kiasi hiki kama float
+            </button>
+            <button type="button" id="open-shift-manual-entry"
+                    style="flex:1; background:transparent; border:1px solid #444;
+                           color:#b0b0b0; border-radius:6px; padding:5px 10px; font-size:.8rem; cursor:pointer;">
+              Ingiza manually
+            </button>
+          </div>
+        </div>
+
+        <!-- Banking deduction row — shown after "Use this amount" is clicked -->
+        <div id="open-shift-banking-row" style="display:none; margin-bottom:.75rem;">
+          <label class="form-label">Kiasi kilichoondolewa / kubanked (KES)</label>
+          <input type="number" step="1" min="0" id="open-shift-banked" class="form-control"
+                 placeholder="0 — kama hakuna kilichoondolewa" value="0">
+          <div class="form-text" id="open-shift-float-preview"
+               style="color:#c9a84c; font-size:.8rem; margin-top:4px;"></div>
+        </div>
+
         <div class="mb-3">
-          <label class="form-label">Float ya Kuanza (KES)</label>
+          <label class="form-label" id="open-shift-float-label">Float ya Kuanza (KES)</label>
           <input type="number" step="1" min="0" id="open-shift-float" class="form-control"
                  placeholder="e.g. 500" value="0">
           <div class="form-text">Pesa zilizopo kwenye kasabuni unapoanza shift.</div>
@@ -2153,24 +2183,81 @@
       '</div>';
   }
 
-  window.openShiftModal = function () {
+  var _prevClosing = null;   // last confirmed shift's closing_cash_counted
+
+  function _resetOpenShiftModal() {
     document.getElementById('open-shift-float').value = '0';
     document.getElementById('open-shift-notes').value = '';
+    document.getElementById('open-shift-suggestion').style.display = 'none';
+    document.getElementById('open-shift-banking-row').style.display = 'none';
     var errEl = document.getElementById('open-shift-error');
     if (errEl) errEl.style.display = 'none';
+    _prevClosing = null;
+  }
+
+  window.openShiftModal = function () {
+    _resetOpenShiftModal();
     showModal('openShiftModal');
+    // Fetch previous shift's closing count
+    fetch('/bar/shift/active/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.last_closing !== null && d.last_closing !== undefined) {
+          _prevClosing = d.last_closing;
+          var amtEl = document.getElementById('open-shift-prev-amount');
+          if (amtEl) amtEl.textContent = 'KES ' + Math.round(_prevClosing).toLocaleString();
+          document.getElementById('open-shift-suggestion').style.display = 'block';
+          // Wire up the two buttons
+          document.getElementById('open-shift-use-prev').onclick = function () {
+            document.getElementById('open-shift-suggestion').style.display = 'none';
+            document.getElementById('open-shift-banking-row').style.display = 'block';
+            document.getElementById('open-shift-float').value = Math.round(_prevClosing);
+            document.getElementById('open-shift-float-label').textContent = 'Float ya Kuanza (KES) — imefikiriwa';
+            _updateFloatPreview();
+          };
+          document.getElementById('open-shift-manual-entry').onclick = function () {
+            document.getElementById('open-shift-suggestion').style.display = 'none';
+            document.getElementById('open-shift-banking-row').style.display = 'none';
+            document.getElementById('open-shift-float').value = '';
+            document.getElementById('open-shift-float-label').textContent = 'Float ya Kuanza (KES)';
+            _prevClosing = null;
+          };
+          // Live-update float preview when banked amount changes
+          var bankedEl = document.getElementById('open-shift-banked');
+          if (bankedEl) bankedEl.addEventListener('input', _updateFloatPreview);
+        }
+      })
+      .catch(function () {});
   };
+
+  function _updateFloatPreview() {
+    if (_prevClosing === null) return;
+    var banked = parseFloat(document.getElementById('open-shift-banked').value) || 0;
+    var newFloat = Math.max(0, Math.round(_prevClosing - banked));
+    document.getElementById('open-shift-float').value = newFloat;
+    var prevEl = document.getElementById('open-shift-float-preview');
+    if (prevEl) prevEl.textContent = 'KES ' + Math.round(_prevClosing).toLocaleString() +
+      ' − KES ' + Math.round(banked).toLocaleString() +
+      ' = Float KES ' + newFloat.toLocaleString();
+  }
 
   window.submitOpenShift = function () {
     var btn = document.getElementById('open-shift-btn');
     var errEl = document.getElementById('open-shift-error');
     var fl = (document.getElementById('open-shift-float').value || '0').trim();
     var notes = (document.getElementById('open-shift-notes').value || '').trim();
+    var banked = '0';
+    var bankingRow = document.getElementById('open-shift-banking-row');
+    if (bankingRow && bankingRow.style.display !== 'none') {
+      banked = (document.getElementById('open-shift-banked').value || '0').trim();
+    }
     if (errEl) errEl.style.display = 'none';
     btn.disabled = true; btn.textContent = 'Inafungua...';
     var fd = new FormData();
     fd.append('opening_float', fl);
     fd.append('notes', notes);
+    fd.append('banked_amount', banked);
+    if (_prevClosing !== null) fd.append('prev_closing', String(_prevClosing));
     fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
     fetch('/bar/shift/open/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
