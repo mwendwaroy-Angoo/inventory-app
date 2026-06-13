@@ -1580,6 +1580,10 @@ class KegBarrel(models.Model):
         max_digits=10, decimal_places=2, default=Decimal('0'),
         help_text='Sum of preset volumes sold — the BOOK figure. Compare with weight.'
     )
+    cups_dispensed = models.PositiveIntegerField(
+        default=0,
+        help_text='Running count of servings (cups) poured. Incremented by record_sale qty.',
+    )
     status      = models.CharField(max_length=10, choices=STATUS_CHOICES, default='SEALED')
     received_on = models.DateField(default=timezone.localdate)
     received_by = models.ForeignKey(
@@ -1678,7 +1682,8 @@ class KegBarrel(models.Model):
 
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
         self.volume_dispensed_ml = (self.volume_dispensed_ml or Decimal('0')) + ml
-        update_fields = ['revenue_collected', 'volume_dispensed_ml']
+        self.cups_dispensed = (self.cups_dispensed or 0) + int(qty)
+        update_fields = ['revenue_collected', 'volume_dispensed_ml', 'cups_dispensed']
 
         if (self.remaining_envelope() <= 0
                 and self.latest_weight() <= float(self.tare_weight_kg) + 0.5

@@ -73,8 +73,8 @@ def bar_board_api(request):
                 else:
                     cup_500_bought += log.qty
                     cup_500_cost   += float(log.total_cost)
-            # cups used = number of sale transactions on this barrel
-            cups_used = primary.transactions.filter(type='Issue').count()
+            # cups_dispensed incremented by record_sale qty — accurate even for batch sells
+            cups_used = primary.cups_dispensed or 0
         else:
             cups_used = 0
 
@@ -97,6 +97,8 @@ def bar_board_api(request):
             'has_history': bool(all_barrels),
             'cost_price': float(it.cost_price or 0),
             # Per-barrel data for the edit modal
+            'net_liters':           round(primary.net_volume_l, 1) if primary else 0.0,
+            'tapped_barrel_tare':   float(primary.tare_weight_kg) if primary else 0.0,
             'tapped_barrel_cost':   float(primary.cost_price) if primary else 0.0,
             'tapped_barrel_target': float(primary.target_revenue) if primary else 0.0,
             'next_sealed_cost':     float(next_sealed.cost_price) if next_sealed else 0.0,
@@ -453,7 +455,16 @@ def edit_barrel(request, barrel_id):
     except Exception:
         return JsonResponse({'ok': False, 'error': 'Nambari si sahihi'}, status=400)
 
+    # keg_type lives on Item, not Barrel — update it separately
+    keg_type_raw = (request.POST.get('keg_type') or '').strip().upper()
+    if keg_type_raw in ('REGULAR', 'DARK', 'GOLD', ''):
+        barrel.item.keg_type = keg_type_raw
+        barrel.item.save(update_fields=['keg_type'])
+
     if not updates:
+        # keg_type-only edit is still valid
+        if keg_type_raw in ('REGULAR', 'DARK', 'GOLD', ''):
+            return JsonResponse({'ok': True})
         return JsonResponse({'ok': False, 'error': 'Hakuna mabadiliko ya kuingiza'}, status=400)
 
     for field, value in updates.items():
@@ -716,7 +727,7 @@ def add_cups(request, barrel_id):
     logs = barrel.cup_logs.all()
     cups_300 = sum(l.qty for l in logs if l.cup_size == '300')
     cups_500 = sum(l.qty for l in logs if l.cup_size == '500')
-    cups_used = barrel.transactions.filter(type='Issue').count()
+    cups_used = barrel.cups_dispensed or 0
 
     return JsonResponse({
         'ok': True,

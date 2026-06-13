@@ -673,47 +673,6 @@
   </div>
 </div>
 
-{% if keg_type_rows|length > 1 %}
-<!-- By keg type (only when more than one type) -->
-<div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(201,168,76,0.2);overflow:hidden;margin-bottom:1.5rem;">
-  <div style="padding:0.75rem 1rem;border-bottom:1px solid #222;font-weight:600;color:var(--gold);font-size:0.85rem;">
-    📊 {% trans "By Keg Type" %} — {{ start_date }} {% trans "to" %} {{ end_date }}
-  </div>
-  <div style="overflow-x:auto;">
-    <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-      <thead>
-        <tr style="background:rgba(201,168,76,0.06);color:#8aa;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;">
-          <th style="padding:0.6rem 1rem;text-align:left;">{% trans "Type" %}</th>
-          <th style="padding:0.6rem;text-align:right;">{% trans "Barrels" %}</th>
-          <th style="padding:0.6rem;text-align:right;">{% trans "Revenue" %}</th>
-          <th style="padding:0.6rem;text-align:right;">{% trans "Cost" %}</th>
-          <th style="padding:0.6rem;text-align:right;">{% trans "Cup Cost" %}</th>
-          <th style="padding:0.6rem;text-align:right;">{% trans "Net Margin" %}</th>
-          <th style="padding:0.6rem;text-align:right;">{% trans "Markup" %}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in keg_type_rows %}
-        <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-          <td style="padding:0.6rem 1rem;color:var(--pearl);font-weight:600;">{{ r.type_label }}</td>
-          <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">{{ r.barrels }}</td>
-          <td style="padding:0.6rem;text-align:right;color:#c9a84c;font-weight:700;">KES {{ r.revenue|floatformat:0 }}</td>
-          <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">KES {{ r.cost|floatformat:0 }}</td>
-          <td style="padding:0.6rem;text-align:right;color:var(--raspberry);">KES {{ r.cup_cost|floatformat:0 }}</td>
-          <td style="padding:0.6rem;text-align:right;{% if r.net_margin > 0 %}color:#6fae4f;{% else %}color:var(--raspberry);{% endif %}font-weight:600;">
-            KES {{ r.net_margin|floatformat:0 }}
-          </td>
-          <td style="padding:0.6rem;text-align:right;{% if r.markup >= 1.5 %}color:#6fae4f;{% elif r.markup >= 1.2 %}color:#c9a84c;{% else %}color:var(--raspberry);{% endif %}font-weight:600;">
-            {{ r.markup }}×
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
-
 <!-- Per-item keg breakdown -->
 <div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(201,168,76,0.2);overflow:hidden;margin-bottom:2rem;">
   <div style="padding:0.75rem 1rem;border-bottom:1px solid #222;font-weight:600;color:var(--gold);font-size:0.85rem;">

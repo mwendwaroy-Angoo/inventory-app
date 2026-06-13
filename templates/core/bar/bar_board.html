@@ -704,6 +704,16 @@
           <label class="form-label">Target revenue (KES)</label>
           <input type="number" id="edit-target" class="form-control" placeholder="Matarajio ya mapato">
         </div>
+        <div class="mb-3">
+          <label class="form-label">Aina ya keg</label>
+          <select id="edit-keg-type" class="form-select"
+                  style="background:#333; border:1px solid #444; color:#f0ece4;">
+            <option value="">— Haijachaguliwa —</option>
+            <option value="REGULAR">Regular (Lager)</option>
+            <option value="DARK">Dark / Stout</option>
+            <option value="GOLD">Gold (Premium)</option>
+          </select>
+        </div>
         <!-- Weight fields — sealed barrels only -->
         <div id="edit-weight-fields">
           <div class="row g-2 mb-2">
@@ -717,7 +727,7 @@
             </div>
           </div>
           <div class="form-text" style="margin-bottom:0.5rem;">
-            Uzito wa chombo (tare) unarekebisha volume yote ya barrel.
+            Tare = uzito wa chombo tupu. Net ya beer = jumla − tare (e.g. 60 kg − 10 kg = 50 L).
           </div>
         </div>
         <div id="edit-error" style="display:none; color:#c0395a; font-size:0.85rem;"></div>
@@ -1082,7 +1092,7 @@
         if (QS_IS_OWNER) {
           actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openEditModal(' +
             kg.tapped_barrel_id + ',\'TAPPED\',' + kg.tapped_barrel_cost + ',' + kg.tapped_barrel_target +
-            ')">Hariri</button>';
+            ',0,0,\'' + (kg.keg_type || '') + '\')">Hariri</button>';
           if (kg.next_sealed_barrel_id) {
             actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openTapModal(' +
               kg.item_id + ',' + kg.next_sealed_barrel_id + ')">+ Barrel</button>';
@@ -1097,7 +1107,7 @@
             kg.next_sealed_barrel_id + ',\'SEALED\',' +
             kg.next_sealed_cost + ',' + kg.next_sealed_target + ',' +
             kg.next_sealed_gross + ',' + kg.next_sealed_tare +
-          ')">Hariri</button>' +
+            ',\'' + (kg.keg_type || '') + '\')">Hariri</button>' +
           '<button class="keg-owner-btn" style="flex:unset;padding:3px 10px;" ' +
           'onclick="event.stopPropagation();window.openTapModal(' + kg.item_id + ',' + kg.next_sealed_barrel_id + ')">' +
           'Fungua Barrel (' + kg.sealed_barrels + ' sealed)</button>' +
@@ -1161,7 +1171,7 @@
             '<div class="keg-tile-info">' +
               '<div class="keg-name">' + kg.name + typeBadge + '</div>' +
               '<div class="keg-remaining">KES ' + fmt(kg.remaining) + '</div>' +
-              '<div class="keg-meta">' + kg.latest_weight_kg + ' kg · Target ' + fmt(kg.target_open) + badge + '</div>' +
+              '<div class="keg-meta">' + kg.net_liters + ' L · Target ' + fmt(kg.target_open) + badge + '</div>' +
               bottomWarn +
               '<div class="mt-2">' + presetChips + '</div>' +
               cupPanel +
@@ -1785,9 +1795,11 @@
   /* ════════════════════════════════════════════════════════
      EDIT BARREL MODAL
   ════════════════════════════════════════════════════════ */
-  window.openEditModal = function (barrelId, status, costPrice, targetRevenue, grossKg, tareKg) {
+  window.openEditModal = function (barrelId, status, costPrice, targetRevenue, grossKg, tareKg, kegType) {
     document.getElementById('edit-barrel-id').value     = barrelId;
     document.getElementById('edit-barrel-status').value = status;
+    var kegTypeSel = document.getElementById('edit-keg-type');
+    if (kegTypeSel) kegTypeSel.value = kegType || '';
     document.getElementById('edit-barrel-label').textContent =
       status === 'TAPPED' ? 'Inauzwa sasa' : 'Sealed';
     document.getElementById('edit-cost').value   = costPrice   || '';
@@ -1818,9 +1830,11 @@
     var errEl    = document.getElementById('edit-error');
     if (errEl) errEl.style.display = 'none';
 
+    var kegType = (document.getElementById('edit-keg-type').value || '').trim();
     var data = {};
-    if (cost)   data.cost_price     = cost;
-    if (target) data.target_revenue = target;
+    if (cost)    data.cost_price     = cost;
+    if (target)  data.target_revenue = target;
+    if (kegType) data.keg_type       = kegType;
     if (status === 'SEALED') {
       var gross = (document.getElementById('edit-gross').value || '').trim();
       var tare  = (document.getElementById('edit-tare').value  || '').trim();
