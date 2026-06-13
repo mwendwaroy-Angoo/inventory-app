@@ -1,0 +1,622 @@
+{% extends "base.html" %}
+{% block title %}Order Queue{% endblock %}
+
+{% block extra_css %}
+<style>
+  :root {
+    --gold: #c9a84c;
+    --gold-light: #e2c36e;
+    --onyx: #1a1a1a;
+    --onyx-card: #2a2a2a;
+    --pearl: #f0ece4;
+    --raspberry: #c0395a;
+  }
+
+  .ws-header {
+    background: var(--onyx-card);
+    border-bottom: 1px solid #333;
+    padding: .75rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .ws-title {
+    font-family: 'Playfair Display', serif;
+    color: var(--gold);
+    font-size: 1.15rem;
+    margin: 0;
+  }
+
+  /* Table selector */
+  .table-chips { display: flex; flex-wrap: wrap; gap: .4rem; padding: .75rem 1rem; }
+  .table-chip {
+    border: 1px solid #444;
+    background: transparent;
+    color: #aaa;
+    border-radius: 20px;
+    padding: .3rem .85rem;
+    font-size: .85rem;
+    cursor: pointer;
+    transition: .15s;
+  }
+  .table-chip.active { border-color: var(--gold); background: rgba(201,168,76,.12); color: var(--gold); font-weight: 600; }
+  .table-custom-row { padding: 0 1rem .75rem; }
+  .table-custom-row input {
+    background: #1a1a1a;
+    border: 1px solid #444;
+    color: var(--pearl);
+    border-radius: 8px;
+    padding: .4rem .75rem;
+    font-size: .9rem;
+    width: 100%;
+    max-width: 220px;
+  }
+  .table-custom-row input::placeholder { color: #666; }
+
+  /* Item section header */
+  .section-label {
+    font-size: .72rem;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    padding: .5rem 1rem .25rem;
+    border-top: 1px solid #2a2a2a;
+  }
+
+  /* Item grid */
+  .item-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: .5rem;
+    padding: .5rem 1rem;
+  }
+  .item-tile {
+    background: var(--onyx-card);
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: .6rem .75rem;
+    cursor: pointer;
+    transition: border-color .15s;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .item-tile:hover, .item-tile:active { border-color: var(--gold); }
+  .item-tile .name { font-size: .82rem; color: var(--pearl); font-weight: 500; line-height: 1.3; }
+  .item-tile .price {
+    font-size: .78rem;
+    color: var(--gold);
+    margin-top: .25rem;
+    font-weight: 600;
+  }
+  .item-tile .sub  { font-size: .7rem; color: #888; margin-top: .15rem; }
+
+  /* Cart drawer */
+  #cart-drawer {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: var(--onyx-card);
+    border-top: 1px solid #444;
+    z-index: 200;
+    transition: transform .25s ease;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+  }
+  #cart-drawer.collapsed { transform: translateY(calc(100% - 52px)); }
+  .cart-handle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .7rem 1rem;
+    cursor: pointer;
+    border-bottom: 1px solid #333;
+    min-height: 52px;
+  }
+  .cart-handle-left { display: flex; align-items: center; gap: .6rem; }
+  .cart-badge {
+    background: var(--gold);
+    color: #111;
+    border-radius: 50%;
+    width: 22px; height: 22px;
+    font-size: .75rem;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cart-handle-title { color: var(--pearl); font-weight: 600; font-size: .92rem; }
+  .cart-handle-total { color: var(--gold); font-size: .9rem; font-weight: 600; }
+  .cart-body {
+    overflow-y: auto;
+    flex: 1;
+    padding: .5rem 1rem;
+  }
+  .cart-item-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .4rem 0;
+    border-bottom: 1px solid #2a2a2a;
+  }
+  .cart-item-label { color: var(--pearl); font-size: .84rem; flex: 1; }
+  .cart-item-price { color: var(--gold); font-size: .82rem; margin: 0 .5rem; white-space: nowrap; }
+  .qty-ctrl { display: flex; align-items: center; gap: .35rem; }
+  .qty-btn {
+    background: #333;
+    border: none;
+    color: var(--pearl);
+    width: 26px; height: 26px;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .qty-num { color: var(--pearl); font-size: .88rem; min-width: 18px; text-align: center; }
+  .cart-footer {
+    padding: .75rem 1rem;
+    border-top: 1px solid #333;
+  }
+  .cart-footer-row { display: flex; gap: .5rem; }
+  .cart-pm-select {
+    background: #1a1a1a;
+    border: 1px solid #444;
+    color: var(--pearl);
+    border-radius: 8px;
+    padding: .4rem .6rem;
+    font-size: .85rem;
+    flex: 1;
+  }
+  .btn-place {
+    background: linear-gradient(135deg, var(--gold), var(--gold-light));
+    color: #111;
+    border: none;
+    border-radius: 8px;
+    padding: .5rem 1.25rem;
+    font-weight: 700;
+    font-size: .9rem;
+    cursor: pointer;
+    flex: 2;
+  }
+  .btn-place:disabled { opacity: .5; cursor: default; }
+
+  /* Orders history */
+  .orders-section { padding: .75rem 1rem 100px; }
+  .order-card {
+    background: var(--onyx-card);
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: .65rem .85rem;
+    margin-bottom: .5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .order-card-left { flex: 1; }
+  .order-table { font-weight: 600; color: var(--pearl); font-size: .92rem; }
+  .order-summary { font-size: .76rem; color: #888; margin-top: .15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+  .order-time { font-size: .72rem; color: #666; margin-top: .1rem; }
+  .status-badge {
+    border-radius: 12px;
+    padding: .2rem .55rem;
+    font-size: .72rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .status-PENDING  { background: rgba(255,152,0,.15); color: #ff9800; }
+  .status-ACCEPTED { background: rgba(33,150,243,.15); color: #64b5f6; }
+  .status-READY    { background: rgba(201,168,76,.15); color: var(--gold); }
+  .status-SERVED   { background: rgba(93,222,122,.15); color: #5dde7a; }
+  .status-CANCELLED{ background: rgba(192,57,90,.12); color: #c0395a; }
+
+  /* toast */
+  #ws-toast {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a5c2a;
+    color: #5dde7a;
+    padding: .5rem 1.2rem;
+    border-radius: 8px;
+    font-size: .88rem;
+    display: none;
+    z-index: 9999;
+    white-space: nowrap;
+  }
+
+  /* spacer so content doesn't hide behind cart */
+  .cart-spacer { height: 70px; }
+
+  /* payment badge */
+  .pm-cash { color: #5dde7a; }
+  .pm-mpesa { color: #64b5f6; }
+  .pm-credit { color: #ff9800; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ws-header">
+  <h1 class="ws-title">🍺 Order Desk</h1>
+  <a href="{% url 'bar_board' %}" style="color:#888; font-size:.82rem; text-decoration:none;">
+    ← Bar Board
+  </a>
+</div>
+
+<!-- Table selector -->
+<div>
+  <div class="table-chips">
+    {% for n in "12345678" %}
+    <button class="table-chip" onclick="window.selectTable('T{{ n }}')">T{{ n }}</button>
+    {% endfor %}
+    <button class="table-chip" onclick="window.selectTable('VIP')">VIP</button>
+    <button class="table-chip" id="chip-custom" onclick="window.focusCustomTable()">
+      + Custom
+    </button>
+  </div>
+  <div class="table-custom-row">
+    <input type="text" id="customTableInput" placeholder="Jina/nambari ya meza..."
+           oninput="window.onCustomTable()" onblur="window.onCustomTable()"
+           style="display:none;">
+  </div>
+</div>
+
+<!-- Selected table indicator -->
+<div id="selectedTableBanner" style="display:none; padding:.35rem 1rem;
+     background:rgba(201,168,76,.08); border-bottom:1px solid rgba(201,168,76,.2);">
+  <span style="color:var(--gold); font-size:.85rem; font-weight:600;">
+    Meza: <span id="selectedTableText"></span>
+  </span>
+</div>
+
+<!-- Keg items section -->
+{% if keg_items %}
+<div class="section-label">🍺 Bia (from tap)</div>
+<div class="item-grid">
+  {% for entry in keg_items %}
+    {% if entry.presets %}
+      {% for preset in entry.presets %}
+      <div class="item-tile"
+           onclick="window.addToCart({{ entry.item.id }}, '{{ preset.id }}',
+                    '{{ entry.item.description|escapejs }} — {{ preset.label|escapejs }}',
+                    {{ preset.price }}, true)">
+        <div class="name">{{ entry.item.description }}</div>
+        <div class="price">KES {{ preset.price|floatformat:0 }}</div>
+        <div class="sub">{{ preset.label }}</div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="item-tile"
+           onclick="window.addToCart({{ entry.item.id }}, '',
+                    '{{ entry.item.description|escapejs }}',
+                    {{ entry.item.selling_price }}, true)">
+        <div class="name">{{ entry.item.description }}</div>
+        <div class="price">KES {{ entry.item.selling_price|floatformat:0 }}</div>
+        <div class="sub">{{ entry.item.unit }}</div>
+      </div>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Other items section -->
+{% if other_items %}
+<div class="section-label">🧃 Mengine</div>
+<div class="item-grid">
+  {% for item in other_items %}
+  <div class="item-tile"
+       onclick="window.addToCart({{ item.id }}, '',
+                '{{ item.description|escapejs }}',
+                {{ item.selling_price }}, false)">
+    <div class="name">{{ item.description }}</div>
+    <div class="price">KES {{ item.selling_price|floatformat:0 }}</div>
+    <div class="sub">{{ item.unit }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if not keg_items and not other_items %}
+<div style="text-align:center; padding:3rem 1rem; color:#666;">
+  Hakuna bidhaa za kuagiza kwa sasa.
+</div>
+{% endif %}
+
+<!-- Today's orders -->
+<div class="orders-section">
+  <div style="font-size:.78rem; color:#888; margin-bottom:.5rem; text-transform:uppercase; letter-spacing:.05em;">
+    Maagizo ya Leo
+  </div>
+  <div id="orders-list">
+    {% for order in recent_orders %}
+    <div class="order-card" id="order-{{ order.id }}">
+      <div class="order-card-left">
+        <div class="order-table">{{ order.table_label }}</div>
+        <div class="order-summary">{{ order.item_summary }}</div>
+        <div class="order-time">{{ order.created_at|date:"H:i" }} · KES {{ order.total_amount|floatformat:0 }}</div>
+      </div>
+      <div style="display:flex; flex-direction:column; align-items:flex-end; gap:.35rem;">
+        <span class="status-badge status-{{ order.status }}">{{ order.get_status_display }}</span>
+        {% if order.status in "PENDING,ACCEPTED" %}
+        <button style="background:transparent; border:none; color:#c0395a; font-size:.72rem; cursor:pointer; padding:0;"
+                onclick="window.cancelOrder({{ order.id }})">Futa</button>
+        {% endif %}
+      </div>
+    </div>
+    {% empty %}
+    <div id="no-orders-msg" style="color:#666; font-size:.85rem; text-align:center; padding:1.5rem 0;">
+      Bado hakuna maagizo leo.
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="cart-spacer"></div>
+
+<!-- Cart drawer -->
+<div id="cart-drawer" class="collapsed">
+  <div class="cart-handle" onclick="window.toggleCart()">
+    <div class="cart-handle-left">
+      <div class="cart-badge" id="cart-badge">0</div>
+      <span class="cart-handle-title">Kapu</span>
+    </div>
+    <span class="cart-handle-total" id="cart-handle-total">KES 0</span>
+  </div>
+  <div class="cart-body" id="cart-body">
+    <!-- rows rendered by JS -->
+  </div>
+  <div class="cart-footer">
+    <div style="margin-bottom:.5rem;">
+      <input type="text" id="cart-notes" placeholder="Maelezo (optional)..."
+             style="background:#1a1a1a; border:1px solid #444; color:var(--pearl);
+                    border-radius:8px; padding:.35rem .65rem; font-size:.82rem; width:100%;">
+    </div>
+    <div class="cart-footer-row">
+      <select class="cart-pm-select" id="cart-pm">
+        <option value="cash">💵 Cash</option>
+        <option value="mpesa">📱 M-Pesa</option>
+        <option value="credit">📒 Credit</option>
+      </select>
+      <button class="btn-place" id="btn-place" onclick="window.placeOrder()">
+        Tuma Agizo
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="ws-toast"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  var CSRF = '{{ csrf_token }}';
+  var _table = '';
+  var _cart  = [];  // [{item_id, preset_id, label, unit_price, is_keg, qty}]
+  var _cartOpen = false;
+
+  // ── Table selection ────────────────────────────────────────────────────────
+  window.selectTable = function(label) {
+    _table = label;
+    document.querySelectorAll('.table-chip').forEach(function(c) {
+      c.classList.toggle('active', c.textContent.trim() === label);
+    });
+    var ci = document.getElementById('customTableInput');
+    if (label !== ci.value && label !== 'custom') {
+      ci.style.display = 'none';
+      ci.value = '';
+    }
+    document.getElementById('chip-custom').classList.remove('active');
+    updateTableBanner();
+  };
+
+  window.focusCustomTable = function() {
+    document.querySelectorAll('.table-chip').forEach(function(c) { c.classList.remove('active'); });
+    document.getElementById('chip-custom').classList.add('active');
+    var ci = document.getElementById('customTableInput');
+    ci.style.display = 'block';
+    ci.focus();
+  };
+
+  window.onCustomTable = function() {
+    var val = document.getElementById('customTableInput').value.trim();
+    _table = val;
+    updateTableBanner();
+  };
+
+  function updateTableBanner() {
+    var banner = document.getElementById('selectedTableBanner');
+    var txt    = document.getElementById('selectedTableText');
+    if (_table) {
+      banner.style.display = 'block';
+      txt.textContent = _table;
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+
+  // ── Cart logic ─────────────────────────────────────────────────────────────
+  window.addToCart = function(itemId, presetId, label, price, isKeg) {
+    if (!_table) {
+      showToast('Chagua meza kwanza!', false);
+      return;
+    }
+    var key = itemId + '_' + (presetId || '0');
+    var existing = _cart.find(function(c) { return c.key === key; });
+    if (existing) {
+      existing.qty += 1;
+    } else {
+      _cart.push({ key: key, item_id: itemId, preset_id: presetId, label: label,
+                   unit_price: price, is_keg: isKeg, qty: 1 });
+    }
+    renderCart();
+    if (!_cartOpen) openCart();
+    showToast('✓ ' + label.split('—')[0].trim() + ' imeongezwa');
+  };
+
+  window.changeQty = function(key, delta) {
+    var idx = _cart.findIndex(function(c) { return c.key === key; });
+    if (idx === -1) return;
+    _cart[idx].qty += delta;
+    if (_cart[idx].qty <= 0) _cart.splice(idx, 1);
+    renderCart();
+    if (_cart.length === 0) closeCart();
+  };
+
+  function renderCart() {
+    var body  = document.getElementById('cart-body');
+    var badge = document.getElementById('cart-badge');
+    var total = document.getElementById('cart-handle-total');
+    var totalAmt = _cart.reduce(function(s, c) { return s + c.qty * c.unit_price; }, 0);
+    var totalQty = _cart.reduce(function(s, c) { return s + c.qty; }, 0);
+    badge.textContent = totalQty;
+    total.textContent = 'KES ' + Math.round(totalAmt).toLocaleString();
+
+    if (_cart.length === 0) {
+      body.innerHTML = '<p style="color:#666; text-align:center; padding:1rem;">Kapu tupu</p>';
+      return;
+    }
+    var html = '';
+    _cart.forEach(function(c) {
+      var lineTotal = c.qty * c.unit_price;
+      html += '<div class="cart-item-row">'
+        + '<span class="cart-item-label">' + escHtml(c.label) + '</span>'
+        + '<span class="cart-item-price">KES ' + Math.round(lineTotal).toLocaleString() + '</span>'
+        + '<div class="qty-ctrl">'
+        + '<button class="qty-btn" onclick="window.changeQty(\'' + c.key + '\', -1)">−</button>'
+        + '<span class="qty-num">' + c.qty + '</span>'
+        + '<button class="qty-btn" onclick="window.changeQty(\'' + c.key + '\', +1)">+</button>'
+        + '</div></div>';
+    });
+    body.innerHTML = html;
+  }
+
+  window.toggleCart = function() { _cartOpen ? closeCart() : openCart(); };
+  function openCart()  { _cartOpen = true;  document.getElementById('cart-drawer').classList.remove('collapsed'); }
+  function closeCart() { _cartOpen = false; document.getElementById('cart-drawer').classList.add('collapsed'); }
+
+  // ── Place order ────────────────────────────────────────────────────────────
+  window.placeOrder = function() {
+    if (!_table) { showToast('Chagua meza kwanza!', false); return; }
+    if (_cart.length === 0) { showToast('Ongeza bidhaa kwanza!', false); return; }
+
+    var btn = document.getElementById('btn-place');
+    btn.disabled = true;
+    btn.textContent = 'Inatumwa...';
+
+    var items = _cart.map(function(c) {
+      return {
+        item_id:      c.item_id,
+        preset_id:    c.preset_id || '',
+        preset_label: c.label,
+        item_name:    c.label,
+        unit_price:   c.unit_price,
+        quantity:     c.qty,
+      };
+    });
+
+    var fd = new FormData();
+    fd.append('csrfmiddlewaretoken', CSRF);
+    fd.append('table_label', _table);
+    fd.append('payment_method', document.getElementById('cart-pm').value);
+    fd.append('notes', document.getElementById('cart-notes').value);
+    fd.append('items', JSON.stringify(items));
+
+    fetch('/bar/orders/place/', { method: 'POST', body: fd })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        btn.disabled = false;
+        btn.textContent = 'Tuma Agizo';
+        if (d.ok) {
+          showToast('✓ Agizo limetumwa — ' + d.table_label, true);
+          _cart = [];
+          renderCart();
+          closeCart();
+          document.getElementById('cart-notes').value = '';
+          loadMyOrders();
+        } else {
+          showToast(d.error || 'Imeshindikana', false);
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        btn.textContent = 'Tuma Agizo';
+        showToast('Network error', false);
+      });
+  };
+
+  // ── Cancel order ───────────────────────────────────────────────────────────
+  window.cancelOrder = function(orderId) {
+    if (!confirm('Futa agizo hili?')) return;
+    var fd = new FormData();
+    fd.append('csrfmiddlewaretoken', CSRF);
+    fetch('/bar/orders/' + orderId + '/cancel/', { method: 'POST', body: fd })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) { loadMyOrders(); showToast('Agizo limefutwa'); }
+        else showToast(d.error || 'Imeshindikana', false);
+      });
+  };
+
+  // ── Load today's orders ────────────────────────────────────────────────────
+  function loadMyOrders() {
+    fetch('/bar/orders/mine/')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var list = document.getElementById('orders-list');
+        if (!d.orders.length) {
+          list.innerHTML = '<div style="color:#666; font-size:.85rem; text-align:center; padding:1.5rem 0;">Bado hakuna maagizo leo.</div>';
+          return;
+        }
+        var html = '';
+        var pmIcons = { cash: '💵', mpesa: '📱', credit: '📒' };
+        var cancelStatuses = ['PENDING', 'ACCEPTED'];
+        d.orders.forEach(function(o) {
+          var cancelBtn = cancelStatuses.indexOf(o.status) >= 0
+            ? '<button style="background:transparent;border:none;color:#c0395a;font-size:.72rem;cursor:pointer;padding:0;" onclick="window.cancelOrder(' + o.id + ')">Futa</button>'
+            : '';
+          html += '<div class="order-card" id="order-' + o.id + '">'
+            + '<div class="order-card-left">'
+            + '<div class="order-table">' + escHtml(o.table_label) + '</div>'
+            + '<div class="order-summary">' + escHtml(o.summary) + '</div>'
+            + '<div class="order-time">' + o.created_at + ' · KES ' + Math.round(o.total).toLocaleString() + '</div>'
+            + '</div>'
+            + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:.35rem;">'
+            + '<span class="status-badge status-' + o.status + '">' + statusLabel(o.status) + '</span>'
+            + cancelBtn
+            + '</div>'
+            + '</div>';
+        });
+        list.innerHTML = html;
+      });
+  }
+
+  function statusLabel(s) {
+    var map = { PENDING:'Inasubiri', ACCEPTED:'Inatengenezwa', READY:'Iko tayari', SERVED:'Imetolewa', CANCELLED:'Imefutwa' };
+    return map[s] || s;
+  }
+
+  // Auto-refresh orders every 20 seconds
+  loadMyOrders();
+  setInterval(loadMyOrders, 20000);
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function showToast(msg, success) {
+    var el = document.getElementById('ws-toast');
+    el.textContent = msg;
+    el.style.background = (success === false) ? '#5c1a2a' : '#1a5c2a';
+    el.style.color = (success === false) ? '#f87171' : '#5dde7a';
+    el.style.display = 'block';
+    setTimeout(function() { el.style.display = 'none'; }, 2200);
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Initialise
+  renderCart();
+})();
+</script>
+{% endblock %}

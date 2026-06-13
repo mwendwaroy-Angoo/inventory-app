@@ -397,6 +397,19 @@
 .shift-var-ok     { color:#4caf50; }
 .shift-var-warn   { color:#ff9800; }
 .shift-var-danger { color:#c0395a; }
+/* Order Queue */
+.oq-card {
+  background:#1a1a1a; border:1px solid #333; border-radius:10px;
+  padding:.7rem .85rem; margin-bottom:.6rem;
+}
+.oq-btn {
+  border:none; border-radius:7px; padding:.3rem .7rem;
+  font-size:.78rem; font-weight:600; cursor:pointer;
+}
+.oq-btn-accept { background:rgba(33,150,243,.18); color:#64b5f6; }
+.oq-btn-ready  { background:rgba(201,168,76,.18); color:#c9a84c; }
+.oq-btn-serve  { background:rgba(93,222,122,.18); color:#5dde7a; }
+.oq-btn-cancel { background:rgba(192,57,90,.12);  color:#c0395a; }
 .shift-open-btn {
   background: rgba(201,168,76,.1);
   border: 1px solid rgba(201,168,76,.35);
@@ -491,6 +504,16 @@
       🍺 Bar Board
     </h4>
     <div class="d-flex gap-2 align-items-center">
+      <button onclick="window.openOrderQueue()"
+              style="background:rgba(255,152,0,0.1); border:1px solid rgba(255,152,0,0.3);
+                     color:#ff9800; border-radius:8px; padding:4px 12px; font-size:0.82rem;
+                     cursor:pointer; position:relative;">
+        📋 Orders
+        <span id="oq-header-badge"
+              style="display:none; position:absolute; top:-7px; right:-7px;
+                     background:#c0395a; color:#fff; border-radius:50%; width:18px; height:18px;
+                     font-size:0.65rem; line-height:18px; text-align:center; font-weight:700;"></span>
+      </button>
       <button onclick="window.openTabsDrawer()"
               style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3);
                      color:#e2c36e; border-radius:8px; padding:4px 12px; font-size:0.82rem;
@@ -524,6 +547,41 @@
 
 <!-- Toast notification -->
 <div id="keg-toast"></div>
+
+<!-- ════════════════════════════════════════════════════
+     ORDER QUEUE DRAWER (Sprint 5 — Waitress Order Queue)
+════════════════════════════════════════════════════ -->
+<div id="order-queue-drawer" style="
+  position:fixed; bottom:0; left:0; right:0;
+  background:#2a2a2a; border-top:2px solid #444;
+  transform:translateY(100%); transition:transform .25s ease;
+  z-index:800; max-height:78vh; display:flex; flex-direction:column;">
+
+  <!-- Header bar -->
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:.7rem 1rem; border-bottom:1px solid #333; cursor:pointer;"
+       onclick="window.closeOrderQueue()">
+    <div style="display:flex; align-items:center; gap:.6rem;">
+      <span style="font-weight:600; color:#f0ece4; font-size:.95rem;">📋 Maagizo ya Meza</span>
+      <span id="oq-drawer-badge" style="display:none; background:#ff9800; color:#111;
+            border-radius:10px; padding:.1rem .5rem; font-size:.72rem; font-weight:700;"></span>
+    </div>
+    <div style="display:flex; align-items:center; gap:.75rem;">
+      <a href="{% url 'waitress_screen' %}"
+         style="color:#c9a84c; font-size:.78rem; text-decoration:none;">
+        Eka agizo jipya ↗
+      </a>
+      <span style="color:#888; font-size:.85rem;">✕</span>
+    </div>
+  </div>
+
+  <!-- Order list -->
+  <div id="oq-body" style="overflow-y:auto; flex:1; padding:.5rem 1rem 1rem;">
+    <div style="text-align:center; color:#666; padding:2rem 0; font-size:.85rem;">
+      Inapakia...
+    </div>
+  </div>
+</div>
 
 <!-- ════════════════════════════════════════════════════
      OPEN SHIFT MODAL
@@ -2678,6 +2736,135 @@
       if (tf) tf.style.display = this.value === 'tab' ? 'block' : 'none';
     });
   });
+
+  /* ════════════════════════════════════════════════════════
+     ORDER QUEUE MODULE
+  ════════════════════════════════════════════════════════ */
+  var _oqOpen = false;
+
+  window.openOrderQueue = function () {
+    _oqOpen = true;
+    document.getElementById('order-queue-drawer').style.transform = 'translateY(0)';
+    loadOrderQueue();
+  };
+  window.closeOrderQueue = function () {
+    _oqOpen = false;
+    document.getElementById('order-queue-drawer').style.transform = 'translateY(100%)';
+  };
+
+  function updateOqBadge(count) {
+    var hdr = document.getElementById('oq-header-badge');
+    var drw = document.getElementById('oq-drawer-badge');
+    if (count > 0) {
+      hdr.textContent = count; hdr.style.display = 'inline-block';
+      drw.textContent = count + ' inasubiri'; drw.style.display = 'inline-block';
+    } else {
+      hdr.style.display = 'none';
+      drw.style.display = 'none';
+    }
+  }
+
+  function loadOrderQueue() {
+    fetch('/bar/orders/queue/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        updateOqBadge(d.pending_count || 0);
+        if (_oqOpen) renderOrderQueue(d.orders || []);
+      })
+      .catch(function () {});
+  }
+
+  function renderOrderQueue(orders) {
+    var body = document.getElementById('oq-body');
+    if (!orders.length) {
+      body.innerHTML = '<div style="text-align:center; color:#666; padding:2.5rem 0; font-size:.85rem;">Hakuna maagizo ya sasa.</div>';
+      return;
+    }
+
+    var pmIcon = { cash: '💵', mpesa: '📱', credit: '📒' };
+    var statusColors = {
+      PENDING:  { bg: 'rgba(255,152,0,.12)', color: '#ff9800' },
+      ACCEPTED: { bg: 'rgba(33,150,243,.12)', color: '#64b5f6' },
+      READY:    { bg: 'rgba(201,168,76,.12)', color: '#c9a84c' },
+    };
+    var statusLabels = { PENDING: 'Inasubiri', ACCEPTED: 'Inatengenezwa', READY: 'Iko tayari' };
+
+    var html = '';
+    orders.forEach(function (o) {
+      var sc = statusColors[o.status] || { bg: '#333', color: '#888' };
+      var sl = statusLabels[o.status] || o.status;
+      var elapsed = o.elapsed_mins < 60
+        ? o.elapsed_mins + ' min'
+        : Math.floor(o.elapsed_mins / 60) + 'h ' + (o.elapsed_mins % 60) + 'm';
+      var itemsHtml = o.items.map(function (i) {
+        var note = i.notes ? ' <em style="color:#888;">(' + escOq(i.notes) + ')</em>' : '';
+        return escOq(i.label) + ' ×' + i.quantity + note;
+      }).join(', ');
+
+      // Action buttons by status
+      var actions = '';
+      if (o.status === 'PENDING') {
+        actions = '<button class="oq-btn oq-btn-accept" onclick="window.oqUpdate(' + o.id + ',\'ACCEPTED\')">✓ Pokea</button>'
+                + '<button class="oq-btn oq-btn-cancel" onclick="window.oqUpdate(' + o.id + ',\'CANCELLED\')">✕</button>';
+      } else if (o.status === 'ACCEPTED') {
+        actions = '<button class="oq-btn oq-btn-ready" onclick="window.oqUpdate(' + o.id + ',\'READY\')">🔔 Tayari</button>'
+                + '<button class="oq-btn oq-btn-cancel" onclick="window.oqUpdate(' + o.id + ',\'CANCELLED\')">✕</button>';
+      } else if (o.status === 'READY') {
+        actions = '<button class="oq-btn oq-btn-serve" onclick="window.oqUpdate(' + o.id + ',\'SERVED\')">✓ Toa</button>';
+      }
+
+      html += '<div class="oq-card" id="oq-card-' + o.id + '">'
+        + '<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:.4rem;">'
+        + '<div>'
+        + '<span style="font-weight:700; color:#f0ece4; font-size:.95rem;">' + escOq(o.table_label) + '</span>'
+        + '<span style="color:#888; font-size:.74rem; margin-left:.5rem;">' + escOq(o.waitress) + ' · ' + o.created_at + ' (' + elapsed + ')</span>'
+        + '</div>'
+        + '<span style="background:' + sc.bg + '; color:' + sc.color + '; border-radius:10px; padding:.15rem .5rem; font-size:.72rem; font-weight:600;">' + sl + '</span>'
+        + '</div>'
+        + '<div style="font-size:.82rem; color:#b0b0b0; margin-bottom:.5rem;">' + itemsHtml + '</div>'
+        + '<div style="display:flex; justify-content:space-between; align-items:center;">'
+        + '<span style="color:#c9a84c; font-size:.85rem; font-weight:600;">KES ' + Math.round(o.total).toLocaleString() + ' ' + (pmIcon[o.payment_method] || '') + '</span>'
+        + '<div style="display:flex; gap:.4rem;">' + actions + '</div>'
+        + '</div>'
+        + (o.notes ? '<div style="font-size:.75rem; color:#888; margin-top:.3rem; font-style:italic;">' + escOq(o.notes) + '</div>' : '')
+        + '</div>';
+    });
+    body.innerHTML = html;
+  }
+
+  window.oqUpdate = function (orderId, newStatus) {
+    var card = document.getElementById('oq-card-' + orderId);
+    if (card) card.style.opacity = '.4';
+    var fd = new FormData();
+    fd.append('csrfmiddlewaretoken', CSRF);
+    fd.append('status', newStatus);
+    fetch('/bar/orders/' + orderId + '/update/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          if (newStatus === 'SERVED') showToast('✓ Imetolewa! Transactions zimeandikwa.');
+          else if (newStatus === 'CANCELLED') showToast('Agizo limefutwa.');
+          else if (newStatus === 'READY') showToast('🔔 Iko tayari — ' + orderId);
+          else showToast('✓ Imepokewa.');
+          loadOrderQueue();
+        } else {
+          if (card) card.style.opacity = '1';
+          showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+        }
+      })
+      .catch(function () {
+        if (card) card.style.opacity = '1';
+        showToast('Hitilafu ya mtandao.');
+      });
+  };
+
+  function escOq(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Poll every 20 seconds for new orders
+  loadOrderQueue();
+  setInterval(loadOrderQueue, 20000);
 
   {% if success_data %}
   showModal('successModal');

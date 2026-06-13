@@ -30,6 +30,7 @@ _SHIFT_EXEMPT_PREFIXES = (
     '/accounts/',
     '/business/',
     '/bar/shift/',
+    '/bar/orders/',   # waitress order queue
     '/bar/',          # bar board
     '/stock/bar/',    # board API
     '/sw.js',
@@ -77,6 +78,10 @@ class ShiftEnforcementMiddleware:
 
         # Owners are never blocked
         if up.is_owner:
+            return False
+
+        # Waitresses don't have shifts — never block them
+        if getattr(up, 'role', '') == 'waitress':
             return False
 
         # Only enforce for bar businesses (has keg items)

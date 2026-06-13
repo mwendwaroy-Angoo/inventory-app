@@ -69,6 +69,14 @@ from core.shift_views import (
     active_shift_api,
     shift_history,
 )
+from core.order_views import (
+    waitress_screen,
+    place_table_order,
+    table_order_queue_api,
+    update_table_order,
+    cancel_table_order,
+    my_orders_api,
+)
 from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import (
     mpesa_callback,
@@ -202,6 +210,13 @@ urlpatterns = [
     path("bar/shift/confirm-weights/",        confirm_barrel_weights, name="confirm_barrel_weights"),
     path("bar/shift/active/",                 active_shift_api,       name="active_shift_api"),
     path("bar/shift/history/",                shift_history,          name="shift_history"),
+    # ── Waitress Order Queue (Sprint 5) ──────────────────────────────────────
+    path("bar/orders/",                       waitress_screen,        name="waitress_screen"),
+    path("bar/orders/place/",                 place_table_order,      name="place_table_order"),
+    path("bar/orders/queue/",                 table_order_queue_api,  name="table_order_queue_api"),
+    path("bar/orders/mine/",                  my_orders_api,          name="my_orders_api"),
+    path("bar/orders/<int:order_id>/update/", update_table_order,     name="update_table_order"),
+    path("bar/orders/<int:order_id>/cancel/", cancel_table_order,     name="cancel_table_order"),
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────
     path("approvals/", pending_approvals, name="pending_approvals"),

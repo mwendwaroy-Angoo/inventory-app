@@ -1868,3 +1868,81 @@ class ProduceOverhead(models.Model):
 
     def __str__(self):
         return f"{self.get_overhead_type_display()} — KES {self.cost} ({self.date})"
+
+
+# ── Waitress Order Queue (Sprint 5) ───────────────────────────────────────────
+
+class TableOrder(models.Model):
+    STATUS_CHOICES = [
+        ('PENDING',   _('Pending — waiting at bar')),
+        ('ACCEPTED',  _('Accepted — being prepared')),
+        ('READY',     _('Ready for pickup')),
+        ('SERVED',    _('Served — delivered to table')),
+        ('CANCELLED', _('Cancelled')),
+    ]
+    PAYMENT_CHOICES = [
+        ('cash',   'Cash'),
+        ('mpesa',  'M-Pesa'),
+        ('credit', 'Credit / Tab'),
+    ]
+
+    business       = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='table_orders')
+    table_label    = models.CharField(max_length=30)
+    waitress       = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='table_orders_placed',
+    )
+    shift          = models.ForeignKey(
+        'Shift', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='table_orders',
+    )
+    status         = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    payment_method = models.CharField(max_length=10, choices=PAYMENT_CHOICES, default='cash')
+    notes          = models.CharField(max_length=200, blank=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+    served_at      = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Table Order'
+        verbose_name_plural = 'Table Orders'
+
+    def __str__(self):
+        return f"{self.table_label} — {self.get_status_display()} ({self.created_at.strftime('%H:%M')})"
+
+    def total_amount(self):
+        return sum(i.line_total() for i in self.items.all())
+
+    def item_summary(self):
+        return ', '.join(
+            f"{i.preset_label or i.item.description} ×{int(i.quantity) if i.quantity == int(i.quantity) else i.quantity}"
+            for i in self.items.select_related('item')
+        )
+
+
+class TableOrderItem(models.Model):
+    order        = models.ForeignKey(TableOrder, on_delete=models.CASCADE, related_name='items')
+    item         = models.ForeignKey('Item', on_delete=models.PROTECT, related_name='table_order_items')
+    preset       = models.ForeignKey(
+        'ItemPortionPreset', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='table_order_items',
+        help_text='For keg/portion items — the cup size / portion preset ordered.',
+    )
+    quantity     = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('1'))
+    unit_price   = models.DecimalField(max_digits=10, decimal_places=2)
+    preset_label = models.CharField(max_length=60, blank=True)
+    item_name    = models.CharField(max_length=120, blank=True)
+    notes        = models.CharField(max_length=100, blank=True)
+
+    class Meta:
+        ordering = ['id']
+        verbose_name = 'Table Order Item'
+        verbose_name_plural = 'Table Order Items'
+
+    def __str__(self):
+        label = self.preset_label or self.item_name or self.item.description
+        return f"{label} ×{self.quantity} @ KES {self.unit_price}"
+
+    def line_total(self):
+        return self.quantity * self.unit_price

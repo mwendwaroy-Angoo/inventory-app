@@ -397,6 +397,14 @@ class AddStaffForm(forms.Form):
         required=False,
         widget=forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'})
     )
+    role = forms.ChoiceField(
+        choices=[
+            ('staff',    'Staff (bartender / general)'),
+            ('waitress', 'Waitress / Waiter'),
+        ],
+        initial='staff',
+        label='Role',
+    )
     password1 = forms.CharField(
         widget=forms.PasswordInput(attrs={'placeholder': 'Create a password'}),
         label='Password'

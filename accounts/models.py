@@ -172,9 +172,10 @@ class DeliveryTier(models.Model):
 
 class UserProfile(models.Model):
     ROLE_CHOICES = [
-        ('owner', _('Owner')),
-        ('staff', _('Staff')),
-        ('rider', _('Rider')),
+        ('owner',    _('Owner')),
+        ('staff',    _('Staff')),
+        ('waitress', _('Waitress / Waiter')),
+        ('rider',    _('Rider')),
         ('supplier', _('Supplier')),
     ]
     LANGUAGE_CHOICES = [
@@ -237,6 +238,10 @@ class UserProfile(models.Model):
     @property
     def is_supplier(self):
         return self.role == 'supplier'
+
+    @property
+    def is_waitress(self):
+        return self.role == 'waitress'
 
 
 class AccountDeletionLog(models.Model):

@@ -170,8 +170,8 @@ def add_staff(request):
             UserProfile.objects.create(
                 user=staff_user,
                 business=user_profile.business,
-                role='staff',
-                phone=form.cleaned_data.get('phone', ''),  # ← added
+                role=form.cleaned_data.get('role', 'staff'),
+                phone=form.cleaned_data.get('phone', ''),
             )
 
             messages.success(
