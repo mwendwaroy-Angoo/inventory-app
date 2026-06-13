@@ -763,20 +763,22 @@
           </div>
         </div>
         <div class="row g-2 mb-2">
-          <div class="col-6">
-            <label class="form-label">Idadi ya vikombe</label>
-            <input type="number" id="cups-qty" class="form-control" value="100" min="1">
+          <div class="col-4">
+            <label class="form-label">Pakiti (packs)</label>
+            <input type="number" id="cups-packs" class="form-control" value="1" min="1">
           </div>
-          <div class="col-6">
-            <label class="form-label">Bei kwa kikombe (KES)</label>
-            <input type="number" step="0.01" id="cups-unit-cost" class="form-control"
-                   placeholder="e.g. 3">
+          <div class="col-4">
+            <label class="form-label">Bei/pakiti (KES)</label>
+            <input type="number" step="0.01" id="cups-pack-cost" class="form-control"
+                   placeholder="e.g. 150">
+          </div>
+          <div class="col-4">
+            <label class="form-label">Vikombe/pakiti</label>
+            <input type="number" id="cups-per-pack" class="form-control" value="300" min="1">
           </div>
         </div>
-        <div class="mb-2">
-          <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">
-            Jumla: KES <span id="cups-total-preview">—</span>
-          </label>
+        <div class="mb-2" style="font-size:0.78rem; color:#b0b0b0;">
+          Jumla: <strong id="cups-cups-preview">—</strong> vikombe · KES <span id="cups-total-preview">—</span>
         </div>
         <div class="mb-2">
           <input type="text" id="cups-note" class="form-control form-control-sm"
@@ -1861,45 +1863,73 @@
     document.getElementById('cups-barrel-id').value = barrelId;
     var errEl = document.getElementById('cups-error');
     if (errEl) errEl.style.display = 'none';
+    document.getElementById('cups-cups-preview').textContent = '—';
     document.getElementById('cups-total-preview').textContent = '—';
+    // reset to 300ml defaults
+    var perPackEl = document.getElementById('cups-per-pack');
+    if (perPackEl) perPackEl.value = '300';
+    var radio300 = document.getElementById('cup-300');
+    if (radio300) radio300.checked = true;
     showModal('addCupsModal');
   };
   window.closeAddCupsModal = function () { hideModal('addCupsModal'); };
 
-  // Live total preview
-  ['cups-qty', 'cups-unit-cost'].forEach(function (id) {
+  // Live total preview (pack-based)
+  function _updateCupsPreview() {
+    var packs   = parseInt(document.getElementById('cups-packs').value) || 0;
+    var cost    = parseFloat(document.getElementById('cups-pack-cost').value) || 0;
+    var perPack = parseInt(document.getElementById('cups-per-pack').value) || 0;
+    document.getElementById('cups-cups-preview').textContent = (packs * perPack).toLocaleString();
+    document.getElementById('cups-total-preview').textContent = (packs * cost).toFixed(2);
+  }
+  ['cups-packs', 'cups-pack-cost', 'cups-per-pack'].forEach(function (id) {
     var el = document.getElementById(id);
-    if (el) el.addEventListener('input', function () {
-      var qty  = parseFloat(document.getElementById('cups-qty').value) || 0;
-      var cost = parseFloat(document.getElementById('cups-unit-cost').value) || 0;
-      document.getElementById('cups-total-preview').textContent = (qty * cost).toFixed(2);
+    if (el) el.addEventListener('input', _updateCupsPreview);
+  });
+  // Set per-pack default when cup size changes (300ml=300 cups/pack, 500ml=100 cups/pack)
+  document.querySelectorAll('input[name="cup_size_radio"]').forEach(function (radio) {
+    radio.addEventListener('change', function () {
+      var perPackEl = document.getElementById('cups-per-pack');
+      if (perPackEl) perPackEl.value = this.value === '300' ? '300' : '100';
+      _updateCupsPreview();
     });
   });
 
   window.submitAddCups = function () {
-    var barrelId = (document.getElementById('cups-barrel-id') || {}).value;
-    var qty      = (document.getElementById('cups-qty')        || {}).value;
-    var unitCost = (document.getElementById('cups-unit-cost')  || {}).value;
-    var note     = (document.getElementById('cups-note')       || {}).value;
+    var barrelId = (document.getElementById('cups-barrel-id')  || {}).value;
+    var packs    = parseInt((document.getElementById('cups-packs')    || {}).value) || 0;
+    var packCost = parseFloat((document.getElementById('cups-pack-cost') || {}).value) || 0;
+    var perPack  = parseInt((document.getElementById('cups-per-pack')  || {}).value) || 0;
+    var noteVal  = (document.getElementById('cups-note') || {}).value || '';
     var cupSize  = (document.querySelector('input[name="cup_size_radio"]:checked') || {}).value || '300';
     var errEl    = document.getElementById('cups-error');
     if (errEl) errEl.style.display = 'none';
 
     if (!barrelId) return;
-    if (!qty || parseInt(qty) < 1) {
-      if (errEl) { errEl.textContent = 'Ingiza idadi.'; errEl.style.display = 'block'; }
+    if (!packs || packs < 1) {
+      if (errEl) { errEl.textContent = 'Ingiza idadi ya pakiti.'; errEl.style.display = 'block'; }
       return;
     }
-    if (!unitCost || parseFloat(unitCost) <= 0) {
-      if (errEl) { errEl.textContent = 'Ingiza bei ya kikombe.'; errEl.style.display = 'block'; }
+    if (!perPack || perPack < 1) {
+      if (errEl) { errEl.textContent = 'Ingiza vikombe kwa pakiti.'; errEl.style.display = 'block'; }
       return;
     }
+    if (!packCost || packCost <= 0) {
+      if (errEl) { errEl.textContent = 'Ingiza bei ya pakiti.'; errEl.style.display = 'block'; }
+      return;
+    }
+
+    var totalCups      = packs * perPack;
+    var unitCostPerCup = packCost / perPack;
+    var autoNote = packs + ' pakiti × ' + perPack + ' vikombe/pakiti (' + cupSize + 'ml)';
+    if (noteVal.trim()) autoNote += ' — ' + noteVal.trim();
 
     var btn = document.getElementById('cups-submit-btn');
     btn.disabled = true; btn.textContent = 'Inahifadhi...';
 
     post('/bar/barrel/' + barrelId + '/cups/', {
-      cup_size: cupSize, qty: qty, unit_cost: unitCost, note: note,
+      cup_size: cupSize, qty: totalCups,
+      unit_cost: unitCostPerCup.toFixed(4), note: autoNote,
     })
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -1907,7 +1937,7 @@
         if (d.ok) {
           hideModal('addCupsModal');
           loadBarBoard();
-          showToast('✓ Vikombe ' + qty + ' × ' + cupSize + 'ml vimehifadhiwa!');
+          showToast('✓ Pakiti ' + packs + ' (' + totalCups + ' vikombe ' + cupSize + 'ml) zimehifadhiwa!');
         } else {
           if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
         }
