@@ -60,6 +60,7 @@ from core.keg_views import (
     settle_tab,
     void_tab,
     convert_tab_to_debt,
+    bar_daily_report,
 )
 from core.shift_views import (
     open_shift,
@@ -189,6 +190,7 @@ urlpatterns = [
     path("stock/produce/bunch/<int:bunch_id>/discard/", discard_bunch, name="discard_bunch"),
     # ── Bar & Club Module — keg lifecycle + bar board ─────────────────────────
     path("bar/", bar_board, name="bar_board"),
+    path("bar/daily-report/", bar_daily_report, name="bar_daily_report"),
     path("stock/bar/board/", bar_board_api, name="bar_board_api"),
     path("stock/bar/receive/", receive_barrel, name="receive_barrel"),
     path("stock/bar/tap/<int:barrel_id>/", tap_barrel, name="tap_barrel"),

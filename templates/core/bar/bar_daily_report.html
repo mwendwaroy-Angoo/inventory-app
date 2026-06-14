@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Bar Daily Report — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-card {
+        background: var(--onyx-card);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 1.25rem;
+    }
+    .report-card-header {
+        background: linear-gradient(135deg, #1a1a1a, #2a2a2a);
+        border-bottom: 1px solid #333;
+        padding: 0.75rem 1.25rem;
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1rem;
+    }
+    .stat-box {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+    }
+    .stat-box .stat-num {
+        font-size: 2rem;
+        font-weight: 700;
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        line-height: 1.1;
+    }
+    .stat-box .stat-label {
+        font-size: 0.78rem;
+        color: #b0b0b0;
+        margin-top: 0.25rem;
+    }
+    .barrel-row {
+        display: grid;
+        grid-template-columns: 1fr auto auto auto auto;
+        gap: 0.75rem;
+        align-items: center;
+        padding: 0.75rem 1.25rem;
+        border-bottom: 1px solid #1e1e1e;
+        font-size: 0.88rem;
+    }
+    .barrel-row:last-child { border-bottom: none; }
+    .barrel-name { color: var(--pearl); font-weight: 500; }
+    .barrel-stat { text-align: center; color: #b0b0b0; }
+    .barrel-stat strong { color: var(--gold); }
+    .date-nav { display: flex; align-items: center; gap: 0.75rem; }
+    .date-nav a { color: var(--gold); font-size: 0.9rem; text-decoration: none; }
+    .date-nav a:hover { text-decoration: underline; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'bar_board' %}" style="color:var(--gold)">Bar Board</a>
+    <span class="mx-1">›</span>
+    <span>Daily Report</span>
+</nav>
+
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">
+        📊 Bar Daily Report
+    </h4>
+    <a href="{% url 'bar_board' %}" class="btn btn-secondary btn-sm">← Bar Board</a>
+</div>
+
+<!-- Date picker -->
+<div class="report-card">
+    <div class="report-card-header">📅 Select Date</div>
+    <div style="padding:1rem 1.25rem;">
+        <form method="get" class="d-flex align-items-center gap-3 flex-wrap">
+            <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}"
+                   max="{{ today|date:'Y-m-d' }}"
+                   style="background:#1a1a1a; color:#f0ece4; border:1px solid #444; border-radius:6px; padding:6px 10px; font-size:0.9rem;">
+            <button type="submit" class="btn btn-gold btn-sm">View Report</button>
+            <div class="date-nav">
+                {% with prev_day=report_date|date:'Y-m-d' %}
+                <a href="?date={{ report_date|date:'Y-m-d' }}" id="prev-link">← Prev</a>
+                <a href="?date={{ today|date:'Y-m-d' }}" style="color:#b0b0b0;">Today</a>
+                {% endwith %}
+            </div>
+        </form>
+        <script>
+        (function() {
+            var d = new Date('{{ report_date|date:"Y-m-d" }}');
+            var prev = new Date(d); prev.setDate(prev.getDate() - 1);
+            var next = new Date(d); next.setDate(next.getDate() + 1);
+            function fmt(dt) { return dt.toISOString().slice(0,10); }
+            document.getElementById('prev-link').href = '?date=' + fmt(prev);
+            var nextLink = document.createElement('a');
+            nextLink.href = '?date=' + fmt(next);
+            nextLink.textContent = 'Next →';
+            nextLink.style.color = 'var(--gold)';
+            if (fmt(next) <= '{{ today|date:"Y-m-d" }}') {
+                document.getElementById('prev-link').parentNode.appendChild(nextLink);
+            }
+        })();
+        </script>
+    </div>
+</div>
+
+<!-- Summary stats -->
+<div class="report-card">
+    <div class="report-card-header">
+        📈 {{ report_date|date:"l, d F Y" }}
+        {% if report_date == today %}<span style="font-size:0.72rem; color:#81c784; margin-left:0.75rem;">● Live</span>{% endif %}
+    </div>
+    <div style="padding:1.25rem;">
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-md-3">
+                <div class="stat-box">
+                    <div class="stat-num">{{ barrels_opened|length }}</div>
+                    <div class="stat-label">🛢 Barrels Opened</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-box">
+                    <div class="stat-num">{{ cups }}</div>
+                    <div class="stat-label">☕ Cups / Kikombe</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-box">
+                    <div class="stat-num">{{ pints }}</div>
+                    <div class="stat-label">🍺 Pints</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-box">
+                    <div class="stat-num">{{ jugs }}</div>
+                    <div class="stat-label">🫙 Jugs</div>
+                </div>
+            </div>
+        </div>
+        <div style="background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:0.75rem 1.25rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+            <span style="color:#b0b0b0; font-size:0.88rem;">Total Keg Revenue</span>
+            <span style="font-size:1.25rem; font-weight:700; color:var(--gold); font-family:'Playfair Display',serif;">
+                KES {{ total_revenue|floatformat:0 }}
+            </span>
+        </div>
+        {% if cups == 0 and pints == 0 and jugs == 0 and total_revenue == 0 %}
+        <p style="color:#555; font-size:0.85rem; text-align:center; margin-top:1rem; margin-bottom:0;">
+            No keg sales recorded for this date.
+            {% if report_date < today %}
+            Serving-type tracking started after this date — only data from when the feature was enabled will appear here.
+            {% endif %}
+        </p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Barrels opened today -->
+{% if barrels_opened %}
+<div class="report-card">
+    <div class="report-card-header">🛢 Barrels Opened on This Day</div>
+    {% for barrel in barrels_opened %}
+    <div class="barrel-row">
+        <div class="barrel-name">{{ barrel.item.description }}</div>
+        <div class="barrel-stat"><strong>KES {{ barrel.cost_price }}</strong><br><span style="font-size:0.72rem;">cost</span></div>
+        <div class="barrel-stat"><strong>KES {{ barrel.target_revenue }}</strong><br><span style="font-size:0.72rem;">target</span></div>
+        <div class="barrel-stat"><strong>{{ barrel.get_status_display }}</strong><br><span style="font-size:0.72rem;">status</span></div>
+        <div class="barrel-stat"><strong>{{ barrel.net_volume_l|floatformat:1 }} L</strong><br><span style="font-size:0.72rem;">volume</span></div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Per-barrel breakdown -->
+{% if per_barrel %}
+<div class="report-card">
+    <div class="report-card-header">🍺 Sales Breakdown by Barrel</div>
+    <div style="padding:0.5rem 0;">
+        <div style="display:grid; grid-template-columns:1fr auto auto auto auto; gap:0.75rem; padding:0.4rem 1.25rem; font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid #2a2a2a;">
+            <span>Barrel / Item</span>
+            <span>☕ Cups</span>
+            <span>🍺 Pints</span>
+            <span>🫙 Jugs</span>
+            <span>Revenue</span>
+        </div>
+        {% for row in per_barrel %}
+        <div class="barrel-row">
+            <div class="barrel-name">{{ row.barrel.item.description }}</div>
+            <div class="barrel-stat"><strong>{{ row.cups }}</strong></div>
+            <div class="barrel-stat"><strong>{{ row.pints }}</strong></div>
+            <div class="barrel-stat"><strong>{{ row.jugs }}</strong></div>
+            <div class="barrel-stat" style="color:var(--gold);"><strong>KES {{ row.revenue|floatformat:0 }}</strong></div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

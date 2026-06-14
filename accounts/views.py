@@ -198,7 +198,7 @@ def staff_list(request):
 
     staff = UserProfile.objects.filter(
         business=user_profile.business,
-        role='staff'
+        role__in=['staff', 'waitress']
     ).select_related('user')
 
     return render(request, 'accounts/staff_list.html', {'staff': staff})
@@ -220,7 +220,7 @@ def staff_permissions(request, staff_id):
         UserProfile,
         id=staff_id,
         business=user_profile.business,
-        role='staff',
+        role__in=['staff', 'waitress'],
     )
 
     if request.method == 'POST':

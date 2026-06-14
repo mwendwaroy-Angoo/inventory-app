@@ -83,6 +83,11 @@
         <div>
             <div class="staff-name">
                 {{ profile.user.get_full_name|default:profile.user.username }}
+                {% if profile.role == 'waitress' %}
+                <span style="font-size:0.7rem; background:rgba(201,168,76,0.15); color:#c9a84c; border:1px solid rgba(201,168,76,0.3); border-radius:4px; padding:1px 6px; margin-left:4px; vertical-align:middle;">Waitress</span>
+                {% else %}
+                <span style="font-size:0.7rem; background:rgba(192,57,90,0.15); color:#c0395a; border:1px solid rgba(192,57,90,0.3); border-radius:4px; padding:1px 6px; margin-left:4px; vertical-align:middle;">Staff</span>
+                {% endif %}
             </div>
             <div class="staff-detail">
                 @{{ profile.user.username }}

@@ -6,9 +6,11 @@ Sprint 3: tab sell path — BarTab CRUD, tabs drawer, tick-to-pay, convert-to-de
 Sprint 4: shift handover.
 """
 import json
+from datetime import date as date_type
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -73,11 +75,13 @@ def bar_board_api(request):
                 else:
                     cup_500_bought += log.qty
                     cup_500_cost   += float(log.total_cost)
-            cups_used = primary.cups_dispensed or 0
-            jugs_used = primary.jugs_dispensed or 0
+            cups_used  = primary.cups_dispensed or 0
+            jugs_used  = primary.jugs_dispensed or 0
+            pints_used = primary.pints_dispensed or 0
         else:
-            cups_used = 0
-            jugs_used = 0
+            cups_used  = 0
+            jugs_used  = 0
+            pints_used = 0
 
         kegs.append({
             'item_id': it.id,
@@ -113,6 +117,7 @@ def bar_board_api(request):
             'cups_500_cost':   round(cup_500_cost, 2),
             'cups_used':       cups_used,
             'jugs_used':       jugs_used,
+            'pints_used':      pints_used,
         })
 
     open_tabs_qs = BarTab.objects.filter(business=business, status='OPEN')
@@ -775,14 +780,76 @@ def add_cups(request, barrel_id):
     logs = barrel.cup_logs.all()
     cups_300 = sum(l.qty for l in logs if l.cup_size == '300')
     cups_500 = sum(l.qty for l in logs if l.cup_size == '500')
-    cups_used = barrel.cups_dispensed or 0
-    jugs_used = barrel.jugs_dispensed or 0
+    cups_used  = barrel.cups_dispensed or 0
+    jugs_used  = barrel.jugs_dispensed or 0
+    pints_used = barrel.pints_dispensed or 0
 
     return JsonResponse({
         'ok': True,
         'cups_300_bought': cups_300,
         'cups_500_bought': cups_500,
-        'cups_used': cups_used,
-        'jugs_used': jugs_used,
+        'cups_used':   cups_used,
+        'jugs_used':   jugs_used,
+        'pints_used':  pints_used,
         'total_cost': float(total_cost),
+    })
+
+
+# ── Daily Bar Report ───────────────────────────────────────────────────────────
+
+@login_required
+def bar_daily_report(request):
+    """Owner-only daily summary: barrels opened, cups/pints/jugs sold, revenue."""
+    up = _get_up(request)
+    if not up or not up.is_owner:
+        return redirect('bar_board')
+
+    date_str = request.GET.get('date', timezone.localdate().isoformat())
+    try:
+        report_date = date_type.fromisoformat(date_str)
+    except (ValueError, AttributeError):
+        report_date = timezone.localdate()
+
+    business = up.business
+
+    # Barrels that were opened (received) on this date
+    barrels_opened = KegBarrel.objects.filter(
+        business=business, received_on=report_date
+    ).select_related('item').order_by('item__description')
+
+    # All keg transactions on this date
+    txns = Transaction.objects.filter(
+        business=business,
+        item__is_keg=True,
+        date=report_date,
+        keg_barrel__isnull=False,
+    )
+
+    cups  = txns.filter(keg_serving='cup').aggregate(n=Sum('keg_qty'))['n'] or 0
+    jugs  = txns.filter(keg_serving='jug').aggregate(n=Sum('keg_qty'))['n'] or 0
+    pints = txns.filter(keg_serving='pint').aggregate(n=Sum('keg_qty'))['n'] or 0
+    total_revenue = float(txns.aggregate(r=Sum('sale_amount'))['r'] or 0)
+
+    # Per-barrel breakdown (only barrels that had sales that day)
+    per_barrel = []
+    barrel_ids = txns.values_list('keg_barrel_id', flat=True).distinct()
+    for barrel in KegBarrel.objects.filter(id__in=barrel_ids).select_related('item'):
+        bt = txns.filter(keg_barrel=barrel)
+        per_barrel.append({
+            'barrel': barrel,
+            'cups':    bt.filter(keg_serving='cup').aggregate(n=Sum('keg_qty'))['n'] or 0,
+            'jugs':    bt.filter(keg_serving='jug').aggregate(n=Sum('keg_qty'))['n'] or 0,
+            'pints':   bt.filter(keg_serving='pint').aggregate(n=Sum('keg_qty'))['n'] or 0,
+            'revenue': float(bt.aggregate(r=Sum('sale_amount'))['r'] or 0),
+        })
+
+    return render(request, 'core/bar/bar_daily_report.html', {
+        'report_date':    report_date,
+        'barrels_opened': barrels_opened,
+        'cups':           cups,
+        'jugs':           jugs,
+        'pints':          pints,
+        'total_revenue':  total_revenue,
+        'per_barrel':     per_barrel,
+        'today':          timezone.localdate(),
     })

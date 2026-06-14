@@ -1303,12 +1303,11 @@ def add_item(request):
                                          'is_keg'])
 
                 # ── PRODUCE PORTION PRESETS ───────────────────────────────────
-                preset_labels  = request.POST.getlist('preset_label')
-                preset_prices  = request.POST.getlist('preset_price')
-                preset_qty     = request.POST.getlist('preset_qty_consumed')
-                preset_ids     = request.POST.getlist('preset_id')
-                # preset_is_jug contains position indices (0-based) of checked jug rows
-                jug_positions  = set(int(v) for v in request.POST.getlist('preset_is_jug') if v.isdigit())
+                preset_labels   = request.POST.getlist('preset_label')
+                preset_prices   = request.POST.getlist('preset_price')
+                preset_qty      = request.POST.getlist('preset_qty_consumed')
+                preset_ids      = request.POST.getlist('preset_id')
+                preset_servings = request.POST.getlist('preset_serving_type')
 
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
                 item.portion_presets.exclude(id__in=submitted_ids).delete()
@@ -1332,17 +1331,19 @@ def add_item(request):
                     except (ValueError, InvalidOperation, IndexError):
                         qty_c = Decimal('0')
                     order = i
-                    is_jug = i in jug_positions
+                    serving = preset_servings[i] if i < len(preset_servings) else 'cup'
+                    if serving not in ('cup', 'pint', 'jug'):
+                        serving = 'cup'
                     pid = preset_ids[i].strip() if i < len(preset_ids) else ''
                     if pid:
                         ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
                             label=label, price=price, quantity_consumed=qty_c,
-                            display_order=order, is_jug=is_jug
+                            display_order=order, serving_type=serving
                         )
                     else:
                         ItemPortionPreset.objects.create(
                             item=item, label=label, price=price,
-                            quantity_consumed=qty_c, display_order=order, is_jug=is_jug
+                            quantity_consumed=qty_c, display_order=order, serving_type=serving
                         )
                 # ─────────────────────────────────────────────────────────────
 
@@ -1419,12 +1420,11 @@ def edit_item(request, item_id):
                                          'is_keg'])
 
                 # ── PRODUCE PORTION PRESETS ───────────────────────────────────
-                preset_labels  = request.POST.getlist('preset_label')
-                preset_prices  = request.POST.getlist('preset_price')
-                preset_qty     = request.POST.getlist('preset_qty_consumed')
-                preset_ids     = request.POST.getlist('preset_id')
-                # preset_is_jug contains position indices (0-based) of checked jug rows
-                jug_positions  = set(int(v) for v in request.POST.getlist('preset_is_jug') if v.isdigit())
+                preset_labels   = request.POST.getlist('preset_label')
+                preset_prices   = request.POST.getlist('preset_price')
+                preset_qty      = request.POST.getlist('preset_qty_consumed')
+                preset_ids      = request.POST.getlist('preset_id')
+                preset_servings = request.POST.getlist('preset_serving_type')
 
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
                 item.portion_presets.exclude(id__in=submitted_ids).delete()
@@ -1448,17 +1448,19 @@ def edit_item(request, item_id):
                     except (ValueError, InvalidOperation, IndexError):
                         qty_c = Decimal('0')
                     order = i
-                    is_jug = i in jug_positions
+                    serving = preset_servings[i] if i < len(preset_servings) else 'cup'
+                    if serving not in ('cup', 'pint', 'jug'):
+                        serving = 'cup'
                     pid = preset_ids[i].strip() if i < len(preset_ids) else ''
                     if pid:
                         ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
                             label=label, price=price, quantity_consumed=qty_c,
-                            display_order=order, is_jug=is_jug
+                            display_order=order, serving_type=serving
                         )
                     else:
                         ItemPortionPreset.objects.create(
                             item=item, label=label, price=price,
-                            quantity_consumed=qty_c, display_order=order, is_jug=is_jug
+                            quantity_consumed=qty_c, display_order=order, serving_type=serving
                         )
                 # ─────────────────────────────────────────────────────────────
 

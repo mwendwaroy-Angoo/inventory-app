@@ -521,6 +521,14 @@ class Transaction(models.Model):
         default=timezone.now, null=True, blank=True,
         help_text='Exact timestamp — used for shift-level reconciliation. Can be backdated for offline sales.',
     )
+    keg_serving = models.CharField(
+        max_length=10, blank=True, default='',
+        help_text="For keg pours: 'cup', 'pint', or 'jug'. Empty for non-keg transactions.",
+    )
+    keg_qty = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Number of servings in this keg pour (qty is in ml; keg_qty is the human count).',
+    )
 
     def revenue(self):
         if self.type != 'Issue':
@@ -1333,7 +1341,16 @@ class ItemPortionPreset(models.Model):
     )
     is_jug = models.BooleanField(
         default=False,
-        help_text='Tick for jug servings — tracks jugs_dispensed on the barrel separately from cups.',
+        help_text='Legacy flag — superseded by serving_type. Kept for backward compat.',
+    )
+    SERVING_TYPE_CHOICES = [
+        ('cup',  '☕ Cup / Kikombe'),
+        ('pint', '🍺 Pint'),
+        ('jug',  '🫙 Jug'),
+    ]
+    serving_type = models.CharField(
+        max_length=10, choices=SERVING_TYPE_CHOICES, default='cup',
+        help_text="For keg presets: how this serving is counted in daily reports. 'cup' for kikombe/shots, 'pint' for pints, 'jug' for jugs.",
     )
 
     class Meta:
@@ -1599,7 +1616,11 @@ class KegBarrel(models.Model):
     )
     jugs_dispensed = models.PositiveIntegerField(
         default=0,
-        help_text='Running count of jug servings poured. Incremented by record_sale when preset.is_jug is True.',
+        help_text='Running count of jug servings poured.',
+    )
+    pints_dispensed = models.PositiveIntegerField(
+        default=0,
+        help_text='Running count of pint servings poured.',
     )
     status      = models.CharField(max_length=10, choices=STATUS_CHOICES, default='SEALED')
     received_on = models.DateField(default=timezone.localdate)
@@ -1687,6 +1708,9 @@ class KegBarrel(models.Model):
         amount = Decimal(str(float(preset.price) * qty))
         pay = 'credit' if tab else (payment_method or 'cash')
 
+        # serving_type takes precedence; fall back to legacy is_jug flag
+        serving = getattr(preset, 'serving_type', '') or ('jug' if getattr(preset, 'is_jug', False) else 'cup')
+
         txn = Transaction.objects.create(
             item=self.item,
             business=self.business,
@@ -1695,13 +1719,18 @@ class KegBarrel(models.Model):
             sale_amount=amount,
             payment_method=pay,
             keg_barrel=self,
+            keg_serving=serving,
+            keg_qty=int(qty),
         )
 
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
         self.volume_dispensed_ml = (self.volume_dispensed_ml or Decimal('0')) + ml
-        if getattr(preset, 'is_jug', False):
+        if serving == 'jug':
             self.jugs_dispensed = (self.jugs_dispensed or 0) + int(qty)
             update_fields = ['revenue_collected', 'volume_dispensed_ml', 'jugs_dispensed']
+        elif serving == 'pint':
+            self.pints_dispensed = (self.pints_dispensed or 0) + int(qty)
+            update_fields = ['revenue_collected', 'volume_dispensed_ml', 'pints_dispensed']
         else:
             self.cups_dispensed = (self.cups_dispensed or 0) + int(qty)
             update_fields = ['revenue_collected', 'volume_dispensed_ml', 'cups_dispensed']
