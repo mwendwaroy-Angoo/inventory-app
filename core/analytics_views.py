@@ -1410,7 +1410,7 @@ def expense_report(request):
     categories_sorted = sorted(all_categories)
     cat_datasets = [
         {
-            'label': CATEGORY_LABELS.get(cat, cat),
+            'label': str(CATEGORY_LABELS.get(cat, cat)),
             'data': [round(cat_month_data[cat].get(m, 0), 2) for m in months],
             'backgroundColor': CATEGORY_COLORS.get(cat, '#888'),
         }
