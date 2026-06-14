@@ -939,3 +939,111 @@ def bar_daily_report(request):
         'staff_data':     staff_data,
         'today':          timezone.localdate(),
     })
+
+
+# ── Barrel Reconciliation (Sprint 6) ─────────────────────────────────────────
+
+@login_required
+def keg_reconciliation(request):
+    up = _get_up(request)
+    if not up or not up.is_owner:
+        return redirect('bar_board')
+
+    business = up.business
+    today = timezone.localdate()
+
+    # ── Filters ───────────────────────────────────────────────────────────────
+    # Default: current month
+    default_from = today.replace(day=1)
+    default_to   = today
+
+    try:
+        date_from = date_type.fromisoformat(request.GET.get('from', ''))
+    except ValueError:
+        date_from = default_from
+    try:
+        date_to = date_type.fromisoformat(request.GET.get('to', ''))
+    except ValueError:
+        date_to = default_to
+
+    status_filter = request.GET.get('status', '')   # '' = all
+    item_filter   = request.GET.get('item', '')     # item id or ''
+
+    qs = KegBarrel.objects.filter(
+        business=business,
+        received_on__gte=date_from,
+        received_on__lte=date_to,
+    ).select_related('item').prefetch_related('weight_readings').order_by('-received_on', '-tapped_at')
+
+    if status_filter in ('SEALED', 'TAPPED', 'DEPLETED', 'RETURNED'):
+        qs = qs.filter(status=status_filter)
+
+    if item_filter:
+        qs = qs.filter(item_id=item_filter)
+
+    # ── Build per-barrel metrics ───────────────────────────────────────────────
+    barrels = []
+    total_cost = total_revenue_sum = total_profit = 0.0
+
+    for b in qs:
+        cost     = float(b.cost_price or 0)
+        revenue  = float(b.revenue_collected or 0)
+        target   = float(b.target_revenue or 0)
+        profit   = revenue - cost
+        margin   = (profit / cost * 100) if cost else 0.0
+        markup   = (revenue / cost) if cost else 0.0
+
+        book_ml  = float(b.volume_dispensed_ml or 0)
+        scale_ml = b.weight_implied_dispensed_ml()   # from latest weight reading
+        has_weight = bool(b.weight_readings.all())
+
+        # Variance: positive = scale says more was poured than book records
+        # (could be foam / spill / unrecorded pour)
+        variance_ml = (scale_ml - book_ml) if has_weight else None
+
+        revenue_pct = (revenue / target * 100) if target else 0.0
+        remaining_target = max(0.0, target - revenue)
+
+        barrels.append({
+            'barrel':          b,
+            'cost':            cost,
+            'revenue':         revenue,
+            'target':          target,
+            'profit':          profit,
+            'margin':          margin,
+            'markup':          markup,
+            'revenue_pct':     revenue_pct,
+            'remaining_target': remaining_target,
+            'book_l':          book_ml / 1000.0,
+            'scale_l':         scale_ml / 1000.0 if has_weight else None,
+            'variance_l':      variance_ml / 1000.0 if variance_ml is not None else None,
+            'has_weight':      has_weight,
+            'cups':            b.cups_dispensed or 0,
+            'pints':           b.pints_dispensed or 0,
+            'jugs':            b.jugs_dispensed or 0,
+        })
+
+        total_cost         += cost
+        total_revenue_sum  += revenue
+        total_profit       += profit
+
+    total_margin = (total_profit / total_cost * 100) if total_cost else 0.0
+
+    # ── Item dropdown for filter ───────────────────────────────────────────────
+    keg_item_ids = KegBarrel.objects.filter(business=business).values_list('item_id', flat=True).distinct()
+    keg_items = Item.objects.filter(id__in=keg_item_ids).order_by('description')
+
+    return render(request, 'core/bar/keg_reconciliation.html', {
+        'barrels':         barrels,
+        'date_from':       date_from,
+        'date_to':         date_to,
+        'status_filter':   status_filter,
+        'item_filter':     item_filter,
+        'keg_items':       keg_items,
+        'total_cost':      total_cost,
+        'total_revenue':   total_revenue_sum,
+        'total_profit':    total_profit,
+        'total_margin':    total_margin,
+        'barrel_count':    len(barrels),
+        'today':           today,
+    })

@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Barrel Reconciliation — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .rc-card {
+        background: var(--onyx-card);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 1.25rem;
+    }
+    .rc-card-header {
+        background: linear-gradient(135deg, #1a1a1a, #2a2a2a);
+        border-bottom: 1px solid #333;
+        padding: 0.75rem 1.25rem;
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1rem;
+    }
+    .stat-box {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+    }
+    .stat-box .stat-num {
+        font-size: 1.7rem;
+        font-weight: 700;
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        line-height: 1.1;
+    }
+    .stat-box .stat-label {
+        font-size: 0.75rem;
+        color: #b0b0b0;
+        margin-top: 0.25rem;
+    }
+    .stat-box.profit-pos .stat-num { color: #81c784; }
+    .stat-box.profit-neg .stat-num { color: var(--raspberry); }
+    .barrel-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .barrel-table thead tr {
+        font-size: 0.7rem;
+        color: var(--gold);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        border-bottom: 1px solid #2a2a2a;
+    }
+    .barrel-table th { padding: 0.5rem 0.75rem; font-weight: 600; white-space: nowrap; }
+    .barrel-table th:first-child { padding-left: 1.25rem; }
+    .barrel-table th:last-child  { padding-right: 1.25rem; }
+    .barrel-table tbody tr { border-bottom: 1px solid #1e1e1e; }
+    .barrel-table tbody tr:last-child td { border-bottom: none; }
+    .barrel-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+    .barrel-table td { padding: 0.7rem 0.75rem; color: var(--pearl); vertical-align: middle; }
+    .barrel-table td:first-child { padding-left: 1.25rem; }
+    .barrel-table td:last-child  { padding-right: 1.25rem; }
+    .status-badge {
+        display: inline-block;
+        font-size: 0.68rem;
+        font-weight: 600;
+        padding: 2px 7px;
+        border-radius: 10px;
+        white-space: nowrap;
+    }
+    .badge-tapped    { background: rgba(76,175,80,0.15);  color: #81c784; border: 1px solid rgba(76,175,80,0.3); }
+    .badge-depleted  { background: rgba(201,168,76,0.12); color: var(--gold); border: 1px solid rgba(201,168,76,0.3); }
+    .badge-returned  { background: rgba(192,57,90,0.12);  color: var(--raspberry); border: 1px solid rgba(192,57,90,0.3); }
+    .badge-sealed    { background: rgba(176,176,176,0.1); color: #b0b0b0; border: 1px solid #333; }
+    .variance-ok   { color: #81c784; }
+    .variance-warn { color: #ffb74d; }
+    .variance-bad  { color: var(--raspberry); }
+    .prog-bar-wrap {
+        background: #1a1a1a;
+        border-radius: 4px;
+        height: 5px;
+        margin-top: 4px;
+        overflow: hidden;
+        min-width: 60px;
+    }
+    .prog-bar-fill {
+        height: 100%;
+        border-radius: 4px;
+        background: var(--gold);
+        transition: width 0.3s;
+    }
+    .prog-bar-fill.over { background: #81c784; }
+    .filter-form input, .filter-form select {
+        background: #1a1a1a;
+        color: var(--pearl);
+        border: 1px solid #444;
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 0.85rem;
+    }
+    .filter-form select option { background: #1a1a1a; }
+    .scroll-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'bar_board' %}" style="color:var(--gold)">Bar Board</a>
+    <span class="mx-1">›</span>
+    <span>Barrel Reconciliation</span>
+</nav>
+
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">
+        📋 Barrel Reconciliation
+    </h4>
+    <a href="{% url 'bar_board' %}" class="btn btn-secondary btn-sm">← Bar Board</a>
+</div>
+
+<!-- Filters -->
+<div class="rc-card">
+    <div class="rc-card-header">🔎 Filter</div>
+    <div style="padding:1rem 1.25rem;">
+        <form method="get" class="filter-form d-flex flex-wrap align-items-end gap-3">
+            <div>
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">From</label>
+                <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
+            </div>
+            <div>
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">To</label>
+                <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
+            </div>
+            <div>
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Status</label>
+                <select name="status">
+                    <option value="" {% if not status_filter %}selected{% endif %}>All statuses</option>
+                    <option value="TAPPED"   {% if status_filter == 'TAPPED' %}selected{% endif %}>🟢 Tapped</option>
+                    <option value="DEPLETED" {% if status_filter == 'DEPLETED' %}selected{% endif %}>✅ Depleted</option>
+                    <option value="RETURNED" {% if status_filter == 'RETURNED' %}selected{% endif %}>↩ Returned</option>
+                    <option value="SEALED"   {% if status_filter == 'SEALED' %}selected{% endif %}>🔒 Sealed</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Item</label>
+                <select name="item">
+                    <option value="" {% if not item_filter %}selected{% endif %}>All items</option>
+                    {% for ki in keg_items %}
+                    <option value="{{ ki.id }}" {% if item_filter == ki.id|stringformat:'s' %}selected{% endif %}>{{ ki.description }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-gold btn-sm">Apply</button>
+            <a href="{% url 'keg_reconciliation' %}" style="font-size:0.82rem; color:#b0b0b0; align-self:center;">Reset</a>
+        </form>
+    </div>
+</div>
+
+<!-- Summary stats -->
+<div class="rc-card">
+    <div class="rc-card-header">
+        📈 Summary
+        <span style="font-size:0.75rem; color:#b0b0b0; font-family:'DM Sans',sans-serif; margin-left:0.75rem;">
+            {{ barrel_count }} barrel{{ barrel_count|pluralize }} · {{ date_from|date:"d M Y" }} – {{ date_to|date:"d M Y" }}
+        </span>
+    </div>
+    <div style="padding:1.25rem;">
+        <div class="row g-3">
+            <div class="col-6 col-md-3">
+                <div class="stat-box">
+                    <div class="stat-num">{{ total_cost|floatformat:0 }}</div>
+                    <div class="stat-label">💰 Total Cost (KES)</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-box">
+                    <div class="stat-num">{{ total_revenue|floatformat:0 }}</div>
+                    <div class="stat-label">📥 Total Revenue (KES)</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-box {% if total_profit >= 0 %}profit-pos{% else %}profit-neg{% endif %}">
+                    <div class="stat-num">
+                        {% if total_profit >= 0 %}+{% endif %}{{ total_profit|floatformat:0 }}
+                    </div>
+                    <div class="stat-label">📊 Gross Profit (KES)</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-box {% if total_margin >= 0 %}profit-pos{% else %}profit-neg{% endif %}">
+                    <div class="stat-num">
+                        {% if total_margin >= 0 %}+{% endif %}{{ total_margin|floatformat:1 }}%
+                    </div>
+                    <div class="stat-label">📐 Avg Margin</div>
+                </div>
+            </div>
+        </div>
+        {% if barrel_count == 0 %}
+        <p style="color:#555; font-size:0.85rem; text-align:center; margin-top:1rem; margin-bottom:0;">
+            No barrels found for the selected filters.
+        </p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Per-barrel breakdown -->
+{% if barrels %}
+<div class="rc-card">
+    <div class="rc-card-header">🛢 Barrel Breakdown</div>
+    <div class="scroll-wrap">
+    <table class="barrel-table">
+        <thead>
+            <tr>
+                <th style="text-align:left;">Item</th>
+                <th style="text-align:center;">Status</th>
+                <th style="text-align:right;">Received</th>
+                <th style="text-align:right;">Cost (KES)</th>
+                <th style="text-align:right;">Target (KES)</th>
+                <th style="text-align:right;">Revenue (KES)</th>
+                <th style="text-align:right;">Progress</th>
+                <th style="text-align:right;">Profit (KES)</th>
+                <th style="text-align:right;">Margin</th>
+                <th style="text-align:center;">☕ Cups</th>
+                <th style="text-align:center;">🍺 Pints</th>
+                <th style="text-align:center;">🫙 Jugs</th>
+                <th style="text-align:right;">Book Vol (L)</th>
+                <th style="text-align:right;">Scale Vol (L)</th>
+                <th style="text-align:right;">Variance (L)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in barrels %}
+            <tr>
+                <td style="font-weight:500; white-space:nowrap;">{{ row.barrel.item.description }}</td>
+                <td style="text-align:center;">
+                    {% if row.barrel.status == 'TAPPED' %}
+                        <span class="status-badge badge-tapped">🟢 Tapped</span>
+                    {% elif row.barrel.status == 'DEPLETED' %}
+                        <span class="status-badge badge-depleted">✅ Depleted</span>
+                    {% elif row.barrel.status == 'RETURNED' %}
+                        <span class="status-badge badge-returned">↩ Returned</span>
+                    {% else %}
+                        <span class="status-badge badge-sealed">🔒 Sealed</span>
+                    {% endif %}
+                </td>
+                <td style="text-align:right; color:#b0b0b0; font-size:0.8rem; white-space:nowrap;">
+                    {{ row.barrel.received_on|date:"d M Y" }}
+                </td>
+                <td style="text-align:right;">{{ row.cost|floatformat:0 }}</td>
+                <td style="text-align:right; color:#b0b0b0;">{{ row.target|floatformat:0 }}</td>
+                <td style="text-align:right; color:var(--gold); font-weight:600;">{{ row.revenue|floatformat:0 }}</td>
+                <td style="text-align:right; min-width:80px;">
+                    <span style="font-size:0.78rem; color:#b0b0b0;">
+                        {% if row.revenue_pct > 100 %}100+{% else %}{{ row.revenue_pct|floatformat:0 }}{% endif %}%
+                    </span>
+                    <div class="prog-bar-wrap">
+                        <div class="prog-bar-fill {% if row.revenue_pct >= 100 %}over{% endif %}"
+                             style="width:{% if row.revenue_pct > 100 %}100{% else %}{{ row.revenue_pct|floatformat:0 }}{% endif %}%;">
+                        </div>
+                    </div>
+                </td>
+                <td style="text-align:right; font-weight:600;
+                    color:{% if row.profit >= 0 %}#81c784{% else %}var(--raspberry){% endif %};">
+                    {% if row.profit >= 0 %}+{% endif %}{{ row.profit|floatformat:0 }}
+                </td>
+                <td style="text-align:right;
+                    color:{% if row.margin >= 0 %}#81c784{% else %}var(--raspberry){% endif %};">
+                    {% if row.margin >= 0 %}+{% endif %}{{ row.margin|floatformat:1 }}%
+                </td>
+                <td style="text-align:center;">{{ row.cups }}</td>
+                <td style="text-align:center;">{{ row.pints }}</td>
+                <td style="text-align:center;">{{ row.jugs }}</td>
+                <td style="text-align:right; color:#b0b0b0;">{{ row.book_l|floatformat:2 }}</td>
+                <td style="text-align:right; color:#b0b0b0;">
+                    {% if row.has_weight %}{{ row.scale_l|floatformat:2 }}{% else %}—{% endif %}
+                </td>
+                <td style="text-align:right;">
+                    {% if row.variance_l is not None %}
+                        {% if row.variance_l > 2 %}
+                            <span class="variance-bad" title="Scale shows significantly more poured than recorded — check for unrecorded sales or spillage">
+                                +{{ row.variance_l|floatformat:2 }} ⚠️
+                            </span>
+                        {% elif row.variance_l > 0.5 %}
+                            <span class="variance-warn">+{{ row.variance_l|floatformat:2 }}</span>
+                        {% elif row.variance_l < -0.5 %}
+                            <span class="variance-warn">{{ row.variance_l|floatformat:2 }}</span>
+                        {% else %}
+                            <span class="variance-ok">{{ row.variance_l|floatformat:2 }}</span>
+                        {% endif %}
+                    {% else %}
+                        <span style="color:#555; font-size:0.8rem;">No scale data</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <!-- Totals row -->
+        {% if barrels|length > 1 %}
+        <tfoot>
+            <tr style="border-top:2px solid #333; background:rgba(201,168,76,0.04);">
+                <td colspan="3" style="padding:0.65rem 0.75rem 0.65rem 1.25rem; color:var(--gold); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em;">
+                    Totals
+                </td>
+                <td style="text-align:right; padding:0.65rem 0.75rem; font-weight:600; color:var(--pearl);">{{ total_cost|floatformat:0 }}</td>
+                <td style="text-align:right; padding:0.65rem 0.75rem; color:#b0b0b0;"></td>
+                <td style="text-align:right; padding:0.65rem 0.75rem; font-weight:700; color:var(--gold);">{{ total_revenue|floatformat:0 }}</td>
+                <td></td>
+                <td style="text-align:right; padding:0.65rem 0.75rem; font-weight:700;
+                    color:{% if total_profit >= 0 %}#81c784{% else %}var(--raspberry){% endif %};">
+                    {% if total_profit >= 0 %}+{% endif %}{{ total_profit|floatformat:0 }}
+                </td>
+                <td style="text-align:right; padding:0.65rem 0.75rem;
+                    color:{% if total_margin >= 0 %}#81c784{% else %}var(--raspberry){% endif %};">
+                    {% if total_margin >= 0 %}+{% endif %}{{ total_margin|floatformat:1 }}%
+                </td>
+                <td colspan="6" style="padding:0.65rem 1.25rem 0.65rem 0.75rem;"></td>
+            </tr>
+        </tfoot>
+        {% endif %}
+    </table>
+    </div>
+</div>
+
+<!-- Legend -->
+<div style="font-size:0.75rem; color:#555; padding:0 0.25rem 1rem;">
+    <strong style="color:#b0b0b0;">Volume columns:</strong>
+    Book Vol = what presets say was poured (ml × servings).
+    Scale Vol = (opening weight − latest weight reading) ÷ 1.
+    Variance = Scale − Book. Positive variance means more was poured than the system recorded — investigate foam/spillage or unrecorded sales.
+    "—" means no weight reading has been recorded for that barrel.
+</div>
+{% endif %}
+
+{% endblock %}
