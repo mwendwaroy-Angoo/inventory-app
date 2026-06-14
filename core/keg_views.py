@@ -10,7 +10,7 @@ from datetime import date as date_type
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -993,34 +993,52 @@ def keg_reconciliation(request):
         margin   = (profit / cost * 100) if cost else 0.0
         markup   = (revenue / cost) if cost else 0.0
 
-        book_ml  = float(b.volume_dispensed_ml or 0)
-        scale_ml = b.weight_implied_dispensed_ml()   # from latest weight reading
+        book_ml    = float(b.volume_dispensed_ml or 0)
+        scale_ml   = b.weight_implied_dispensed_ml()   # from latest weight reading
         has_weight = bool(b.weight_readings.all())
+        net_vol_l  = float(b.net_volume_l)
 
         # Variance: positive = scale says more was poured than book records
-        # (could be foam / spill / unrecorded pour)
         variance_ml = (scale_ml - book_ml) if has_weight else None
+
+        # Wastage — how much volume was never captured as a sale.
+        # For closed barrels (DEPLETED/RETURNED) the barrel is physically empty,
+        # so all net_volume_l left the barrel. Anything beyond book sold = wastage.
+        # For TAPPED barrels we use the scale reading if available.
+        if b.status in ('DEPLETED', 'RETURNED'):
+            wastage_l   = max(0.0, net_vol_l - book_ml / 1000.0)
+        elif has_weight:
+            wastage_l   = max(0.0, scale_ml / 1000.0 - book_ml / 1000.0)
+        else:
+            wastage_l   = None
+
+        wastage_kes = (wastage_l / net_vol_l * cost) if (wastage_l is not None and net_vol_l > 0) else None
+        wastage_pct = (wastage_l / net_vol_l * 100) if (wastage_l is not None and net_vol_l > 0) else None
 
         revenue_pct = (revenue / target * 100) if target else 0.0
         remaining_target = max(0.0, target - revenue)
 
         barrels.append({
-            'barrel':          b,
-            'cost':            cost,
-            'revenue':         revenue,
-            'target':          target,
-            'profit':          profit,
-            'margin':          margin,
-            'markup':          markup,
-            'revenue_pct':     revenue_pct,
+            'barrel':           b,
+            'cost':             cost,
+            'revenue':          revenue,
+            'target':           target,
+            'profit':           profit,
+            'margin':           margin,
+            'markup':           markup,
+            'revenue_pct':      revenue_pct,
             'remaining_target': remaining_target,
-            'book_l':          book_ml / 1000.0,
-            'scale_l':         scale_ml / 1000.0 if has_weight else None,
-            'variance_l':      variance_ml / 1000.0 if variance_ml is not None else None,
-            'has_weight':      has_weight,
-            'cups':            b.cups_dispensed or 0,
-            'pints':           b.pints_dispensed or 0,
-            'jugs':            b.jugs_dispensed or 0,
+            'net_vol_l':        net_vol_l,
+            'book_l':           book_ml / 1000.0,
+            'scale_l':          scale_ml / 1000.0 if has_weight else None,
+            'variance_l':       variance_ml / 1000.0 if variance_ml is not None else None,
+            'has_weight':       has_weight,
+            'wastage_l':        wastage_l,
+            'wastage_kes':      wastage_kes,
+            'wastage_pct':      wastage_pct,
+            'cups':             b.cups_dispensed or 0,
+            'pints':            b.pints_dispensed or 0,
+            'jugs':             b.jugs_dispensed or 0,
         })
 
         total_cost         += cost
@@ -1046,4 +1064,146 @@ def keg_reconciliation(request):
         'total_margin':    total_margin,
         'barrel_count':    len(barrels),
         'today':           today,
+    })
+
+
+# ── Barrel Detail — shift-by-shift spillage/variance breakdown ────────────────
+
+@login_required
+def keg_barrel_detail(request, barrel_id):
+    up = _get_up(request)
+    if not up or not up.is_owner:
+        return redirect('bar_board')
+
+    business = up.business
+    barrel = get_object_or_404(
+        KegBarrel.objects.select_related('item', 'received_by').prefetch_related('weight_readings'),
+        id=barrel_id, business=business,
+    )
+
+    net_vol_l  = float(barrel.net_volume_l)
+    cost       = float(barrel.cost_price or 0)
+    revenue    = float(barrel.revenue_collected or 0)
+    target     = float(barrel.target_revenue or 0)
+    book_ml    = float(barrel.volume_dispensed_ml or 0)
+
+    # All transactions for this barrel, ordered oldest first
+    txns = Transaction.objects.filter(
+        business=business, keg_barrel=barrel,
+    ).order_by('created_at')
+
+    # Barrel lifespan boundaries
+    barrel_start = barrel.tapped_at or timezone.make_aware(
+        timezone.datetime.combine(barrel.received_on, timezone.datetime.min.time())
+    )
+    barrel_end = barrel.closed_at or timezone.now()
+
+    # Shifts that overlapped with this barrel being active
+    from .models import Shift
+    shifts = Shift.objects.filter(
+        business=business,
+        started_at__lt=barrel_end,
+    ).filter(
+        Q(ended_at__isnull=True) | Q(ended_at__gt=barrel_start)
+    ).select_related('staff').order_by('started_at')
+
+    # Weight readings for this barrel, oldest first — enrich with implied remaining
+    readings_raw = list(barrel.weight_readings.order_by('recorded_at').select_related('recorded_by'))
+    tare = float(barrel.tare_weight_kg)
+    readings = []
+    for r in readings_raw:
+        remaining_l = max(0.0, float(r.weight_kg) - tare)
+        readings.append({'reading': r, 'remaining_l': remaining_l})
+
+    # Per-shift breakdown
+    shift_rows = []
+    for shift in shifts:
+        s_start = shift.started_at
+        s_end   = shift.ended_at or timezone.now()
+
+        # Clamp to barrel lifespan
+        window_start = max(s_start, barrel_start)
+        window_end   = min(s_end, barrel_end)
+        if window_start >= window_end:
+            continue
+
+        shift_txns = txns.filter(created_at__gte=window_start, created_at__lte=window_end)
+
+        cups  = shift_txns.filter(keg_serving='cup').aggregate(n=Sum('keg_qty'))['n'] or 0
+        pints = shift_txns.filter(keg_serving='pint').aggregate(n=Sum('keg_qty'))['n'] or 0
+        jugs  = shift_txns.filter(keg_serving='jug').aggregate(n=Sum('keg_qty'))['n'] or 0
+        shift_revenue = float(shift_txns.aggregate(r=Sum('sale_amount'))['r'] or 0)
+
+        # Book volume sold this shift (qty is stored as negative ml)
+        book_shift_ml = abs(float(shift_txns.aggregate(v=Sum('qty'))['v'] or 0))
+
+        # Weight-based volume: find readings bracketing this shift
+        before_readings = [e for e in readings if e['reading'].recorded_at <= window_start]
+        after_readings  = [e for e in readings if e['reading'].recorded_at >= window_end]
+        weight_before = float(before_readings[-1]['reading'].weight_kg) if before_readings else None
+        weight_after  = float(after_readings[0]['reading'].weight_kg) if after_readings else None
+
+        if weight_before is not None and weight_after is not None:
+            scale_shift_ml = max(0.0, (weight_before - weight_after) * 1000.0)
+            variance_ml = scale_shift_ml - book_shift_ml
+        else:
+            scale_shift_ml = None
+            variance_ml    = None
+
+        wastage_shift_l   = variance_ml / 1000.0 if variance_ml is not None else None
+        wastage_shift_kes = (wastage_shift_l / net_vol_l * cost) if (wastage_shift_l and net_vol_l) else None
+
+        delta = window_end - window_start
+        h, rem = divmod(int(delta.total_seconds()), 3600)
+        m = rem // 60
+        dur = f"{h}h {m:02d}m"
+
+        shift_rows.append({
+            'staff':         shift.staff.get_full_name() or shift.staff.username,
+            'started':       window_start,
+            'ended':         window_end,
+            'is_ongoing':    shift.ended_at is None,
+            'duration':      dur,
+            'cups':          cups,
+            'pints':         pints,
+            'jugs':          jugs,
+            'revenue':       shift_revenue,
+            'book_l':        book_shift_ml / 1000.0,
+            'scale_l':       scale_shift_ml / 1000.0 if scale_shift_ml is not None else None,
+            'wastage_l':     wastage_shift_l,
+            'wastage_kes':   wastage_shift_kes,
+            'has_weight':    scale_shift_ml is not None,
+        })
+
+    # Overall wastage
+    if barrel.status in ('DEPLETED', 'RETURNED'):
+        total_wastage_l = max(0.0, net_vol_l - book_ml / 1000.0)
+    else:
+        scale_total_ml = barrel.weight_implied_dispensed_ml()
+        has_w = bool(readings)
+        total_wastage_l = max(0.0, scale_total_ml / 1000.0 - book_ml / 1000.0) if has_w else None
+
+    total_wastage_kes = (total_wastage_l / net_vol_l * cost) if (total_wastage_l and net_vol_l) else None
+    total_wastage_pct = (total_wastage_l / net_vol_l * 100) if (total_wastage_l and net_vol_l) else None
+
+    profit = revenue - cost
+    margin = (profit / cost * 100) if cost else 0.0
+
+    return render(request, 'core/bar/keg_barrel_detail.html', {
+        'barrel':            barrel,
+        'net_vol_l':         net_vol_l,
+        'cost':              cost,
+        'revenue':           revenue,
+        'target':            target,
+        'profit':            profit,
+        'margin':            margin,
+        'book_l':            book_ml / 1000.0,
+        'total_wastage_l':   total_wastage_l,
+        'total_wastage_kes': total_wastage_kes,
+        'total_wastage_pct': total_wastage_pct,
+        'shift_rows':        shift_rows,
+        'readings':          readings,
+        'cups':              barrel.cups_dispensed or 0,
+        'pints':             barrel.pints_dispensed or 0,
+        'jugs':              barrel.jugs_dispensed or 0,
     })

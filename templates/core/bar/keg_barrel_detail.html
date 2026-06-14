@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Barrel Detail — {{ barrel.item.description }} — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .rc-card {
+        background: var(--onyx-card);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 1.25rem;
+    }
+    .rc-card-header {
+        background: linear-gradient(135deg, #1a1a1a, #2a2a2a);
+        border-bottom: 1px solid #333;
+        padding: 0.75rem 1.25rem;
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1rem;
+    }
+    .stat-box {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 8px;
+        padding: 0.9rem;
+        text-align: center;
+    }
+    .stat-box .stat-num { font-size: 1.5rem; font-weight: 700; font-family: 'Playfair Display', serif; color: var(--gold); line-height: 1.1; }
+    .stat-box .stat-label { font-size: 0.73rem; color: #b0b0b0; margin-top: 0.2rem; }
+    .stat-box.profit-pos .stat-num { color: #81c784; }
+    .stat-box.profit-neg .stat-num { color: var(--raspberry); }
+    .stat-box.waste-stat .stat-num  { color: #ffb74d; }
+    .shift-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .shift-table thead tr { font-size: 0.69rem; color: var(--gold); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #2a2a2a; }
+    .shift-table th { padding: 0.5rem 0.75rem; font-weight: 600; white-space: nowrap; }
+    .shift-table th:first-child { padding-left: 1.25rem; }
+    .shift-table th:last-child  { padding-right: 1.25rem; }
+    .shift-table tbody tr { border-bottom: 1px solid #1e1e1e; }
+    .shift-table tbody tr:last-child td { border-bottom: none; }
+    .shift-table td { padding: 0.65rem 0.75rem; color: var(--pearl); vertical-align: middle; }
+    .shift-table td:first-child { padding-left: 1.25rem; }
+    .shift-table td:last-child  { padding-right: 1.25rem; }
+    .status-badge { display:inline-block; font-size:0.67rem; font-weight:600; padding:2px 7px; border-radius:10px; white-space:nowrap; }
+    .badge-tapped   { background:rgba(76,175,80,0.15);  color:#81c784;         border:1px solid rgba(76,175,80,0.3); }
+    .badge-depleted { background:rgba(201,168,76,0.12); color:var(--gold);     border:1px solid rgba(201,168,76,0.3); }
+    .badge-returned { background:rgba(192,57,90,0.12);  color:var(--raspberry);border:1px solid rgba(192,57,90,0.3); }
+    .waste-ok   { color: #81c784; }
+    .waste-warn { color: #ffb74d; }
+    .waste-bad  { color: var(--raspberry); font-weight: 600; }
+    .reading-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .scroll-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .info-row { display:flex; justify-content:space-between; align-items:center; padding:0.55rem 1.25rem; border-bottom:1px solid #1e1e1e; font-size:0.88rem; }
+    .info-row:last-child { border-bottom: none; }
+    .info-label { color: #b0b0b0; }
+    .info-val   { color: var(--pearl); font-weight: 500; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'bar_board' %}" style="color:var(--gold)">Bar Board</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'keg_reconciliation' %}" style="color:var(--gold)">Reconciliation</a>
+    <span class="mx-1">›</span>
+    <span>{{ barrel.item.description }}</span>
+</nav>
+
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+        <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">
+            🛢 {{ barrel.item.description }}
+        </h4>
+        <span style="font-size:0.8rem; color:#b0b0b0;">
+            Barrel #{{ barrel.id }} · Received {{ barrel.received_on|date:"d M Y" }}
+            {% if barrel.tapped_at %} · Tapped {{ barrel.tapped_at|date:"d M Y H:i" }}{% endif %}
+            {% if barrel.closed_at %} · Closed {{ barrel.closed_at|date:"d M Y H:i" }}{% endif %}
+        </span>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'keg_reconciliation' %}" class="btn btn-secondary btn-sm">← Back</a>
+    </div>
+</div>
+
+<!-- Barrel overview -->
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-2">
+        <div class="stat-box">
+            <div class="stat-num">{{ net_vol_l|floatformat:0 }}L</div>
+            <div class="stat-label">🛢 Barrel Volume</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-2">
+        <div class="stat-box">
+            <div class="stat-num">{{ cost|floatformat:0 }}</div>
+            <div class="stat-label">💰 Cost (KES)</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-2">
+        <div class="stat-box">
+            <div class="stat-num">{{ revenue|floatformat:0 }}</div>
+            <div class="stat-label">📥 Revenue (KES)</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-2">
+        <div class="stat-box {% if profit >= 0 %}profit-pos{% else %}profit-neg{% endif %}">
+            <div class="stat-num">{% if profit >= 0 %}+{% endif %}{{ profit|floatformat:0 }}</div>
+            <div class="stat-label">📊 Profit (KES)</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-2">
+        <div class="stat-box">
+            <div class="stat-num">{{ book_l|floatformat:2 }}L</div>
+            <div class="stat-label">📖 Sold (Book)</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-2">
+        <div class="stat-box {% if total_wastage_l is not None %}waste-stat{% endif %}">
+            <div class="stat-num">
+                {% if total_wastage_l is not None %}{{ total_wastage_l|floatformat:2 }}L{% else %}—{% endif %}
+            </div>
+            <div class="stat-label">💧 Wastage</div>
+        </div>
+    </div>
+</div>
+
+<!-- Wastage summary -->
+{% if total_wastage_l is not None %}
+<div class="rc-card">
+    <div class="rc-card-header">💧 Spillage / Wastage Summary</div>
+    <div style="padding:0;">
+        <div class="info-row">
+            <span class="info-label">Total barrel volume</span>
+            <span class="info-val">{{ net_vol_l|floatformat:2 }} L</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Volume sold (book — from presets)</span>
+            <span class="info-val">{{ book_l|floatformat:2 }} L</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">
+                Unaccounted volume
+                {% if barrel.status == 'DEPLETED' or barrel.status == 'RETURNED' %}
+                <span style="font-size:0.72rem; color:#b0b0b0;">(barrel empty — all {{ net_vol_l|floatformat:0 }}L has left)</span>
+                {% endif %}
+            </span>
+            <span class="info-val">
+                {% if total_wastage_l > 3 %}
+                    <span class="waste-bad">{{ total_wastage_l|floatformat:2 }} L ⚠️</span>
+                {% elif total_wastage_l > 1 %}
+                    <span class="waste-warn">{{ total_wastage_l|floatformat:2 }} L</span>
+                {% else %}
+                    <span class="waste-ok">{{ total_wastage_l|floatformat:2 }} L</span>
+                {% endif %}
+                {% if total_wastage_pct is not None %}
+                <span style="color:#b0b0b0; font-size:0.82rem; margin-left:0.4rem;">({{ total_wastage_pct|floatformat:1 }}% of barrel)</span>
+                {% endif %}
+            </span>
+        </div>
+        {% if total_wastage_kes is not None %}
+        <div class="info-row">
+            <span class="info-label">Cost of unaccounted volume</span>
+            <span class="info-val" style="color:#ffb74d; font-weight:600;">KES {{ total_wastage_kes|floatformat:0 }}</span>
+        </div>
+        {% endif %}
+        <div class="info-row">
+            <span class="info-label">Servings sold</span>
+            <span class="info-val">
+                ☕ {{ cups }} cup{{ cups|pluralize }}
+                &nbsp;·&nbsp; 🍺 {{ pints }} pint{{ pints|pluralize }}
+                &nbsp;·&nbsp; 🫙 {{ jugs }} jug{{ jugs|pluralize }}
+            </span>
+        </div>
+    </div>
+    {% if total_wastage_l > 1 %}
+    <div style="padding:0.75rem 1.25rem; background:rgba(192,57,90,0.06); border-top:1px solid #2a2a2a; font-size:0.82rem; color:#b0b0b0;">
+        ⚠️ <strong style="color:var(--raspberry);">{{ total_wastage_l|floatformat:2 }}L</strong> left the barrel but was never recorded as a sale.
+        Common causes: foam on first pour, spillage during service, overpouring, or unrecorded sales.
+        See the shift breakdown below to identify which staff were on duty during high-wastage periods.
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Shift breakdown -->
+<div class="rc-card">
+    <div class="rc-card-header">👷 Shift-by-Shift Breakdown</div>
+    {% if shift_rows %}
+    <div class="scroll-wrap">
+    <table class="shift-table">
+        <thead>
+            <tr>
+                <th style="text-align:left;">Staff</th>
+                <th style="text-align:left;">Window</th>
+                <th style="text-align:center;">Duration</th>
+                <th style="text-align:center;">☕ Cups</th>
+                <th style="text-align:center;">🍺 Pints</th>
+                <th style="text-align:center;">🫙 Jugs</th>
+                <th style="text-align:right;">Revenue (KES)</th>
+                <th style="text-align:right;">Sold (L)</th>
+                <th style="text-align:right;">Scale (L)</th>
+                <th style="text-align:right;">Wastage (L)</th>
+                <th style="text-align:right;">Waste Cost</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in shift_rows %}
+            <tr>
+                <td style="font-weight:500; white-space:nowrap;">
+                    {{ s.staff }}
+                    {% if s.is_ongoing %}<span style="font-size:0.68rem; color:#81c784; margin-left:4px;">● on shift</span>{% endif %}
+                </td>
+                <td style="color:#b0b0b0; font-size:0.8rem; white-space:nowrap;">
+                    {{ s.started|date:"d M H:i" }} – {{ s.ended|date:"H:i" }}
+                </td>
+                <td style="text-align:center; color:#b0b0b0; font-size:0.82rem;">{{ s.duration }}</td>
+                <td style="text-align:center;">{{ s.cups }}</td>
+                <td style="text-align:center;">{{ s.pints }}</td>
+                <td style="text-align:center;">{{ s.jugs }}</td>
+                <td style="text-align:right; color:var(--gold); font-weight:600;">{{ s.revenue|floatformat:0 }}</td>
+                <td style="text-align:right; color:#b0b0b0;">{{ s.book_l|floatformat:2 }}</td>
+                <td style="text-align:right; color:#b0b0b0;">
+                    {% if s.has_weight %}{{ s.scale_l|floatformat:2 }}{% else %}<span style="color:#555;">—</span>{% endif %}
+                </td>
+                <td style="text-align:right;">
+                    {% if s.wastage_l is not None %}
+                        {% if s.wastage_l > 2 %}
+                            <span class="waste-bad">{{ s.wastage_l|floatformat:2 }} ⚠️</span>
+                        {% elif s.wastage_l > 0.5 %}
+                            <span class="waste-warn">{{ s.wastage_l|floatformat:2 }}</span>
+                        {% elif s.wastage_l > 0 %}
+                            <span class="waste-ok">{{ s.wastage_l|floatformat:2 }}</span>
+                        {% else %}
+                            <span class="waste-ok">0.00</span>
+                        {% endif %}
+                    {% else %}
+                        <span style="color:#555; font-size:0.78rem;">No scale data</span>
+                    {% endif %}
+                </td>
+                <td style="text-align:right;">
+                    {% if s.wastage_kes is not None %}
+                        <span style="color:#ffb74d; font-size:0.85rem;">{{ s.wastage_kes|floatformat:0 }}</span>
+                    {% else %}
+                        <span style="color:#555;">—</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <div style="padding:0.75rem 1.25rem; font-size:0.75rem; color:#555; border-top:1px solid #1e1e1e;">
+        Scale (L) column requires weight readings taken at shift changes (weigh-in).
+        "—" means no weight reading brackets that shift window.
+        Wastage (L) = Scale dispensed − Book sold for that shift.
+    </div>
+    {% else %}
+    <p style="color:#555; font-size:0.85rem; text-align:center; padding:1.5rem; margin:0;">
+        No shift records found during this barrel's active period.
+        Wastage attribution requires shifts to be opened and closed while this barrel was tapped.
+    </p>
+    {% endif %}
+</div>
+
+<!-- Weight readings log -->
+{% if readings %}
+<div class="rc-card">
+    <div class="rc-card-header">⚖️ Weight Reading Log</div>
+    <table class="shift-table">
+        <thead>
+            <tr>
+                <th style="text-align:left;">Type</th>
+                <th style="text-align:left;">Recorded</th>
+                <th style="text-align:right;">Weight (kg)</th>
+                <th style="text-align:right;">Implied Remaining (L)</th>
+                <th style="text-align:left;">Recorded By</th>
+                <th style="text-align:left;">Note</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in readings %}
+            <tr>
+                <td>
+                    <span style="font-size:0.78rem; color:{% if entry.reading.reading_type == 'SHIFT_CLOSE' %}#ffb74d{% elif entry.reading.reading_type == 'SHIFT_OPEN' %}#81c784{% else %}#b0b0b0{% endif %};">
+                        {{ entry.reading.get_reading_type_display }}
+                    </span>
+                </td>
+                <td style="color:#b0b0b0; font-size:0.82rem; white-space:nowrap;">{{ entry.reading.recorded_at|date:"d M Y H:i" }}</td>
+                <td style="text-align:right; font-weight:500;">{{ entry.reading.weight_kg }}</td>
+                <td style="text-align:right; color:#b0b0b0;">{{ entry.remaining_l|floatformat:2 }} L</td>
+                <td style="color:#b0b0b0; font-size:0.82rem;">
+                    {% if entry.reading.recorded_by %}{{ entry.reading.recorded_by.get_full_name|default:entry.reading.recorded_by.username }}{% else %}—{% endif %}
+                </td>
+                <td style="color:#555; font-size:0.8rem;">{{ entry.reading.note|default:"—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -34,70 +34,47 @@
         color: var(--gold);
         line-height: 1.1;
     }
-    .stat-box .stat-label {
-        font-size: 0.75rem;
-        color: #b0b0b0;
-        margin-top: 0.25rem;
-    }
+    .stat-box .stat-label { font-size: 0.75rem; color: #b0b0b0; margin-top: 0.25rem; }
     .stat-box.profit-pos .stat-num { color: #81c784; }
     .stat-box.profit-neg .stat-num { color: var(--raspberry); }
-    .barrel-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .stat-box.waste-stat .stat-num  { color: #ffb74d; }
+    .barrel-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
     .barrel-table thead tr {
-        font-size: 0.7rem;
-        color: var(--gold);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
+        font-size: 0.69rem; color: var(--gold);
+        text-transform: uppercase; letter-spacing: 0.05em;
         border-bottom: 1px solid #2a2a2a;
     }
-    .barrel-table th { padding: 0.5rem 0.75rem; font-weight: 600; white-space: nowrap; }
+    .barrel-table th { padding: 0.5rem 0.65rem; font-weight: 600; white-space: nowrap; }
     .barrel-table th:first-child { padding-left: 1.25rem; }
     .barrel-table th:last-child  { padding-right: 1.25rem; }
     .barrel-table tbody tr { border-bottom: 1px solid #1e1e1e; }
     .barrel-table tbody tr:last-child td { border-bottom: none; }
     .barrel-table tbody tr:hover { background: rgba(255,255,255,0.02); }
-    .barrel-table td { padding: 0.7rem 0.75rem; color: var(--pearl); vertical-align: middle; }
+    .barrel-table td { padding: 0.65rem 0.65rem; color: var(--pearl); vertical-align: middle; }
     .barrel-table td:first-child { padding-left: 1.25rem; }
     .barrel-table td:last-child  { padding-right: 1.25rem; }
-    .status-badge {
-        display: inline-block;
-        font-size: 0.68rem;
-        font-weight: 600;
-        padding: 2px 7px;
-        border-radius: 10px;
-        white-space: nowrap;
-    }
-    .badge-tapped    { background: rgba(76,175,80,0.15);  color: #81c784; border: 1px solid rgba(76,175,80,0.3); }
-    .badge-depleted  { background: rgba(201,168,76,0.12); color: var(--gold); border: 1px solid rgba(201,168,76,0.3); }
-    .badge-returned  { background: rgba(192,57,90,0.12);  color: var(--raspberry); border: 1px solid rgba(192,57,90,0.3); }
-    .badge-sealed    { background: rgba(176,176,176,0.1); color: #b0b0b0; border: 1px solid #333; }
+    .status-badge { display:inline-block; font-size:0.67rem; font-weight:600; padding:2px 7px; border-radius:10px; white-space:nowrap; }
+    .badge-tapped   { background:rgba(76,175,80,0.15);  color:#81c784;         border:1px solid rgba(76,175,80,0.3); }
+    .badge-depleted { background:rgba(201,168,76,0.12); color:var(--gold);     border:1px solid rgba(201,168,76,0.3); }
+    .badge-returned { background:rgba(192,57,90,0.12);  color:var(--raspberry);border:1px solid rgba(192,57,90,0.3); }
+    .badge-sealed   { background:rgba(176,176,176,0.1); color:#b0b0b0;         border:1px solid #333; }
     .variance-ok   { color: #81c784; }
     .variance-warn { color: #ffb74d; }
     .variance-bad  { color: var(--raspberry); }
-    .prog-bar-wrap {
-        background: #1a1a1a;
-        border-radius: 4px;
-        height: 5px;
-        margin-top: 4px;
-        overflow: hidden;
-        min-width: 60px;
-    }
-    .prog-bar-fill {
-        height: 100%;
-        border-radius: 4px;
-        background: var(--gold);
-        transition: width 0.3s;
-    }
-    .prog-bar-fill.over { background: #81c784; }
+    .waste-ok   { color: #81c784; }
+    .waste-warn { color: #ffb74d; }
+    .waste-bad  { color: var(--raspberry); }
+    .prog-bar-wrap { background:#1a1a1a; border-radius:4px; height:5px; margin-top:4px; overflow:hidden; min-width:55px; }
+    .prog-bar-fill { height:100%; border-radius:4px; background:var(--gold); }
+    .prog-bar-fill.over { background:#81c784; }
     .filter-form input, .filter-form select {
-        background: #1a1a1a;
-        color: var(--pearl);
-        border: 1px solid #444;
-        border-radius: 6px;
-        padding: 5px 10px;
-        font-size: 0.85rem;
+        background:#1a1a1a; color:var(--pearl); border:1px solid #444;
+        border-radius:6px; padding:5px 10px; font-size:0.85rem;
     }
-    .filter-form select option { background: #1a1a1a; }
+    .filter-form select option { background:#1a1a1a; }
     .scroll-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .detail-link { color:var(--gold); font-size:0.78rem; text-decoration:none; white-space:nowrap; }
+    .detail-link:hover { text-decoration:underline; }
 </style>
 {% endblock %}
 
@@ -206,7 +183,11 @@
 <!-- Per-barrel breakdown -->
 {% if barrels %}
 <div class="rc-card">
-    <div class="rc-card-header">🛢 Barrel Breakdown</div>
+    <div class="rc-card-header">🛢 Barrel Breakdown
+        <span style="font-size:0.72rem; color:#b0b0b0; font-family:'DM Sans',sans-serif; margin-left:0.5rem;">
+            Click "Details" to see shift-by-shift spillage breakdown
+        </span>
+    </div>
     <div class="scroll-wrap">
     <table class="barrel-table">
         <thead>
@@ -220,12 +201,14 @@
                 <th style="text-align:right;">Progress</th>
                 <th style="text-align:right;">Profit (KES)</th>
                 <th style="text-align:right;">Margin</th>
-                <th style="text-align:center;">☕ Cups</th>
-                <th style="text-align:center;">🍺 Pints</th>
-                <th style="text-align:center;">🫙 Jugs</th>
-                <th style="text-align:right;">Book Vol (L)</th>
-                <th style="text-align:right;">Scale Vol (L)</th>
-                <th style="text-align:right;">Variance (L)</th>
+                <th style="text-align:center;">☕</th>
+                <th style="text-align:center;">🍺</th>
+                <th style="text-align:center;">🫙</th>
+                <th style="text-align:right;">Sold (L)</th>
+                <th style="text-align:right;">Wasted (L)</th>
+                <th style="text-align:right;">Waste Cost</th>
+                <th style="text-align:right;">Waste %</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -243,14 +226,14 @@
                         <span class="status-badge badge-sealed">🔒 Sealed</span>
                     {% endif %}
                 </td>
-                <td style="text-align:right; color:#b0b0b0; font-size:0.8rem; white-space:nowrap;">
+                <td style="text-align:right; color:#b0b0b0; font-size:0.78rem; white-space:nowrap;">
                     {{ row.barrel.received_on|date:"d M Y" }}
                 </td>
                 <td style="text-align:right;">{{ row.cost|floatformat:0 }}</td>
                 <td style="text-align:right; color:#b0b0b0;">{{ row.target|floatformat:0 }}</td>
                 <td style="text-align:right; color:var(--gold); font-weight:600;">{{ row.revenue|floatformat:0 }}</td>
-                <td style="text-align:right; min-width:80px;">
-                    <span style="font-size:0.78rem; color:#b0b0b0;">
+                <td style="text-align:right; min-width:70px;">
+                    <span style="font-size:0.75rem; color:#b0b0b0;">
                         {% if row.revenue_pct > 100 %}100+{% else %}{{ row.revenue_pct|floatformat:0 }}{% endif %}%
                     </span>
                     <div class="prog-bar-wrap">
@@ -271,49 +254,57 @@
                 <td style="text-align:center;">{{ row.pints }}</td>
                 <td style="text-align:center;">{{ row.jugs }}</td>
                 <td style="text-align:right; color:#b0b0b0;">{{ row.book_l|floatformat:2 }}</td>
-                <td style="text-align:right; color:#b0b0b0;">
-                    {% if row.has_weight %}{{ row.scale_l|floatformat:2 }}{% else %}—{% endif %}
-                </td>
+                <!-- Wastage columns -->
                 <td style="text-align:right;">
-                    {% if row.variance_l is not None %}
-                        {% if row.variance_l > 2 %}
-                            <span class="variance-bad" title="Scale shows significantly more poured than recorded — check for unrecorded sales or spillage">
-                                +{{ row.variance_l|floatformat:2 }} ⚠️
-                            </span>
-                        {% elif row.variance_l > 0.5 %}
-                            <span class="variance-warn">+{{ row.variance_l|floatformat:2 }}</span>
-                        {% elif row.variance_l < -0.5 %}
-                            <span class="variance-warn">{{ row.variance_l|floatformat:2 }}</span>
+                    {% if row.wastage_l is not None %}
+                        {% if row.wastage_l > 3 %}
+                            <span class="waste-bad">{{ row.wastage_l|floatformat:2 }} ⚠️</span>
+                        {% elif row.wastage_l > 1 %}
+                            <span class="waste-warn">{{ row.wastage_l|floatformat:2 }}</span>
                         {% else %}
-                            <span class="variance-ok">{{ row.variance_l|floatformat:2 }}</span>
+                            <span class="waste-ok">{{ row.wastage_l|floatformat:2 }}</span>
                         {% endif %}
                     {% else %}
-                        <span style="color:#555; font-size:0.8rem;">No scale data</span>
+                        <span style="color:#555; font-size:0.78rem;">Live</span>
                     {% endif %}
+                </td>
+                <td style="text-align:right;">
+                    {% if row.wastage_kes is not None %}
+                        <span style="color:#ffb74d; font-size:0.85rem;">{{ row.wastage_kes|floatformat:0 }}</span>
+                    {% else %}
+                        <span style="color:#555;">—</span>
+                    {% endif %}
+                </td>
+                <td style="text-align:right;">
+                    {% if row.wastage_pct is not None %}
+                        <span style="color:#b0b0b0; font-size:0.82rem;">{{ row.wastage_pct|floatformat:1 }}%</span>
+                    {% else %}
+                        <span style="color:#555;">—</span>
+                    {% endif %}
+                </td>
+                <td style="text-align:right;">
+                    <a href="{% url 'keg_barrel_detail' row.barrel.id %}" class="detail-link">Details →</a>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
-        <!-- Totals row -->
         {% if barrels|length > 1 %}
         <tfoot>
             <tr style="border-top:2px solid #333; background:rgba(201,168,76,0.04);">
-                <td colspan="3" style="padding:0.65rem 0.75rem 0.65rem 1.25rem; color:var(--gold); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em;">
-                    Totals
-                </td>
-                <td style="text-align:right; padding:0.65rem 0.75rem; font-weight:600; color:var(--pearl);">{{ total_cost|floatformat:0 }}</td>
-                <td style="text-align:right; padding:0.65rem 0.75rem; color:#b0b0b0;"></td>
-                <td style="text-align:right; padding:0.65rem 0.75rem; font-weight:700; color:var(--gold);">{{ total_revenue|floatformat:0 }}</td>
+                <td colspan="3" style="padding:0.65rem 0.75rem 0.65rem 1.25rem; color:var(--gold); font-weight:600; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em;">Totals</td>
+                <td style="text-align:right; padding:0.65rem 0.65rem; font-weight:600; color:var(--pearl);">{{ total_cost|floatformat:0 }}</td>
                 <td></td>
-                <td style="text-align:right; padding:0.65rem 0.75rem; font-weight:700;
+                <td style="text-align:right; padding:0.65rem 0.65rem; font-weight:700; color:var(--gold);">{{ total_revenue|floatformat:0 }}</td>
+                <td></td>
+                <td style="text-align:right; padding:0.65rem 0.65rem; font-weight:700;
                     color:{% if total_profit >= 0 %}#81c784{% else %}var(--raspberry){% endif %};">
                     {% if total_profit >= 0 %}+{% endif %}{{ total_profit|floatformat:0 }}
                 </td>
-                <td style="text-align:right; padding:0.65rem 0.75rem;
+                <td style="text-align:right; padding:0.65rem 0.65rem;
                     color:{% if total_margin >= 0 %}#81c784{% else %}var(--raspberry){% endif %};">
                     {% if total_margin >= 0 %}+{% endif %}{{ total_margin|floatformat:1 }}%
                 </td>
-                <td colspan="6" style="padding:0.65rem 1.25rem 0.65rem 0.75rem;"></td>
+                <td colspan="8" style="padding:0.65rem 1.25rem 0.65rem 0.65rem;"></td>
             </tr>
         </tfoot>
         {% endif %}
@@ -321,13 +312,11 @@
     </div>
 </div>
 
-<!-- Legend -->
 <div style="font-size:0.75rem; color:#555; padding:0 0.25rem 1rem;">
-    <strong style="color:#b0b0b0;">Volume columns:</strong>
-    Book Vol = what presets say was poured (ml × servings).
-    Scale Vol = (opening weight − latest weight reading) ÷ 1.
-    Variance = Scale − Book. Positive variance means more was poured than the system recorded — investigate foam/spillage or unrecorded sales.
-    "—" means no weight reading has been recorded for that barrel.
+    <strong style="color:#b0b0b0;">Wastage:</strong>
+    For depleted/returned barrels, Wasted = total barrel volume − litres sold (book figure).
+    This is foam, spillage, and overpouring. "Waste Cost" shows the KES equivalent of that lost volume.
+    Click <strong style="color:var(--gold)">Details →</strong> to see which shift/staff the wastage occurred during.
 </div>
 {% endif %}
 
