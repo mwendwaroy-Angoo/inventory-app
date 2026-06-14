@@ -175,6 +175,47 @@
                 &nbsp;·&nbsp; 🫙 {{ jugs }} jug{{ jugs|pluralize }}
             </span>
         </div>
+        {% if theoretical_gross_max %}
+        <div class="info-row" style="border-top:1px dashed #2a2a2a; margin-top:2px; padding-top:10px;">
+            <span class="info-label">
+                💡 Max achievable revenue
+                <span style="font-size:0.72rem;">(gross, 100% yield)</span>
+            </span>
+            <span class="info-val" style="color:#b0b0b0;">KES {{ theoretical_gross_max }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">
+                💡 Realistic target range
+                <span style="font-size:0.72rem;">(after ~10% foam/spillage)</span>
+            </span>
+            <span class="info-val" style="color:var(--gold);">
+                KES {{ theoretical_realistic_min }} – {{ theoretical_realistic_max }}
+            </span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Owner's set target</span>
+            <span class="info-val">
+                KES {{ target|floatformat:0 }}
+                {% if target_is_unrealistic %}
+                    <span style="margin-left:0.4rem; font-size:0.75rem; color:var(--raspberry); font-weight:600;">
+                        ⚠️ Exceeds gross max
+                    </span>
+                {% endif %}
+            </span>
+        </div>
+        {% if preset_rates %}
+        <div style="padding:0.5rem 1.25rem 0.75rem; background:rgba(255,255,255,0.01); border-top:1px solid #1e1e1e;">
+            <div style="font-size:0.72rem; color:#555; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.04em;">Per-preset breakdown ({{ net_vol_l|floatformat:1 }}L barrel)</div>
+            {% for p in preset_rates %}
+            <div style="font-size:0.8rem; color:#b0b0b0; margin-bottom:2px;">
+                {{ p.label }} — {{ p.qty_ml|floatformat:0 }}ml @ KES{{ p.price|floatformat:0 }}:
+                <strong style="color:#f0ece4;">{{ p.max_servings }} servings</strong>
+                = gross KES {{ p.gross_max }} / realistic KES {{ p.realistic_max }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endif %}
     </div>
     {% if total_wastage_l > 1 %}
     <div style="padding:0.75rem 1.25rem; background:rgba(192,57,90,0.06); border-top:1px solid #2a2a2a; font-size:0.82rem; color:#b0b0b0;">

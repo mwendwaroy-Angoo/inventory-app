@@ -948,10 +948,12 @@
         <div class="mb-2">
           <label class="form-label">Target kwa barrel (KES)</label>
           <input type="number" id="recv-target" class="form-control"
-                 placeholder="Auto: bei × {{ business.keg_revenue_multiplier }}">
+                 placeholder="Auto: bei × {{ business.keg_revenue_multiplier }}"
+                 oninput="window.updateTargetHint()">
           <div class="form-text">
             Default: bei × {{ business.keg_revenue_multiplier }}. Badilisha ikiwa unafahamu lengo lako.
           </div>
+          <div id="recv-target-hint" style="display:none; border-radius:8px; padding:0.65rem 0.9rem; margin-top:0.5rem; font-size:0.82rem; line-height:1.7;"></div>
         </div>
         <div id="recv-error" style="display:none; color:#c0395a; font-size:0.85rem;"></div>
       </div>
@@ -2060,7 +2062,13 @@
   /* ════════════════════════════════════════════════════════
      RECEIVE MODAL
   ════════════════════════════════════════════════════════ */
-  window.openReceiveModal  = function () { showModal('receiveModal'); };
+  window.openReceiveModal  = function () {
+    _recvPresetRates = [];
+    _recvLastItemId  = null;
+    var hintEl = document.getElementById('recv-target-hint');
+    if (hintEl) hintEl.style.display = 'none';
+    showModal('receiveModal');
+  };
   window.closeReceiveModal = function () { hideModal('receiveModal'); };
 
   window.autoCalcTarget = function () {
@@ -2078,6 +2086,90 @@
       _recvTargetEl.dataset.userEdited = '1';
     });
   }
+
+  /* ── Target recommendation hint ────────────────────────────────────────── */
+  var _recvPresetRates = [];
+  var _recvLastItemId  = null;
+
+  function _fetchPresetRates(itemId) {
+    if (!itemId) { _recvPresetRates = []; window.updateTargetHint(); return; }
+    if (itemId === _recvLastItemId) { window.updateTargetHint(); return; }
+    _recvLastItemId = itemId;
+    fetch('/stock/bar/item/' + itemId + '/target-recommendation/')
+      .then(function(r) { return r.json(); })
+      .then(function(d) { _recvPresetRates = d.presets || []; window.updateTargetHint(); })
+      .catch(function() { _recvPresetRates = []; });
+  }
+
+  window.updateTargetHint = function() {
+    var hintEl = document.getElementById('recv-target-hint');
+    if (!hintEl) return;
+    var gross  = parseFloat((document.getElementById('recv-gross')  || {}).value) || 0;
+    var tare   = parseFloat((document.getElementById('recv-tare')   || {}).value) || 0;
+    var target = parseFloat((document.getElementById('recv-target') || {}).value) || 0;
+    var netMl  = Math.max(0, (gross - tare) * 1000);
+
+    if (!_recvPresetRates.length || netMl <= 0) { hintEl.style.display = 'none'; return; }
+
+    var rates  = _recvPresetRates.map(function(p) { return p.rate_per_ml; });
+    var minRate = Math.min.apply(null, rates);
+    var maxRate = Math.max.apply(null, rates);
+    var FOAM    = 0.90;
+    var grossMax     = Math.round(netMl * maxRate);
+    var realMin      = Math.round(netMl * minRate * FOAM);
+    var realMax      = Math.round(netMl * maxRate * FOAM);
+    var isOver       = target > 0 && target > grossMax;
+
+    var bg     = isOver ? 'rgba(192,57,90,0.10)' : 'rgba(201,168,76,0.07)';
+    var border = isOver ? 'rgba(192,57,90,0.35)' : 'rgba(201,168,76,0.25)';
+    var title  = isOver
+      ? '<span style="color:#e05a7a; font-weight:600;">⚠️ Target exceeds what is achievable</span>'
+      : '<span style="color:#c9a84c; font-weight:600;">💡 System Recommendation</span>';
+
+    var lines = _recvPresetRates.map(function(p) {
+      var servings = Math.floor(netMl / p.qty_ml);
+      var rev = Math.round(servings * p.price);
+      return '<span style="color:#b0b0b0;">' + p.label +
+             ' (' + p.qty_ml + 'ml @KES' + p.price + '): ' +
+             '<strong style="color:#f0ece4;">' + servings + ' servings</strong> = KES ' +
+             rev.toLocaleString() + '</span>';
+    }).join('<br>');
+
+    var warning = isOver
+      ? '<br><span style="color:#e05a7a;">Your target KES ' + target.toLocaleString() +
+        ' exceeds gross max KES ' + grossMax.toLocaleString() + ' — lower it to stay realistic.</span>'
+      : '';
+
+    hintEl.style.display   = 'block';
+    hintEl.style.background = bg;
+    hintEl.style.border    = '1px solid ' + border;
+    hintEl.style.borderRadius = '8px';
+    hintEl.innerHTML =
+      title + '<br>' +
+      '<span style="color:#b0b0b0;">Net volume: <strong style="color:#f0ece4;">' +
+        (netMl / 1000).toFixed(1) + 'L</strong></span><br>' +
+      lines +
+      '<br><span style="color:#f0ece4;">Realistic target range (after ~10% foam): ' +
+        '<strong style="color:#c9a84c;">KES ' + realMin.toLocaleString() +
+        ' – ' + realMax.toLocaleString() + '</strong></span>' +
+      warning;
+  };
+
+  // Trigger hint when item, gross, or tare changes
+  var _recvItemSel = document.getElementById('recv-item-id');
+  if (_recvItemSel) {
+    _recvItemSel.addEventListener('change', function() {
+      _fetchPresetRates(this.value);
+    });
+  }
+  ['recv-gross', 'recv-tare'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('input', function() {
+      var itemId = (_recvItemSel || {}).value;
+      if (itemId) _fetchPresetRates(itemId);
+      else window.updateTargetHint();
+    });
+  });
 
   window.submitReceive = function () {
     var itemId = (document.getElementById('recv-item-id')  || {}).value;

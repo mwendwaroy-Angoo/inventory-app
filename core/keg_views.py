@@ -16,7 +16,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Transaction
+from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Shift, Transaction
 
 
 def _get_up(request):
@@ -941,6 +941,36 @@ def bar_daily_report(request):
     })
 
 
+# ── Target Recommendation API (Sprint 6) ─────────────────────────────────────
+
+@login_required
+def keg_target_recommendation(request, item_id):
+    """
+    Returns per-preset revenue rates for a keg item so the receive modal can
+    display a live achievable-target hint based on barrel volume and presets.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False}, status=403)
+
+    item = get_object_or_404(Item, id=item_id, store__business=up.business)
+    presets = item.portion_presets.filter(quantity_consumed__gt=0).order_by('price')
+
+    rates = []
+    for p in presets:
+        qty_ml = float(p.quantity_consumed)
+        price  = float(p.price)
+        if qty_ml > 0:
+            rates.append({
+                'label':       p.label,
+                'price':       price,
+                'qty_ml':      qty_ml,
+                'rate_per_ml': round(price / qty_ml, 6),
+            })
+
+    return JsonResponse({'ok': True, 'presets': rates})
+
+
 # ── Barrel Reconciliation (Sprint 6) ─────────────────────────────────────────
 
 @login_required
@@ -1087,6 +1117,37 @@ def keg_barrel_detail(request, barrel_id):
     target     = float(barrel.target_revenue or 0)
     book_ml    = float(barrel.volume_dispensed_ml or 0)
 
+    # ── Theoretical max revenue from presets ──────────────────────────────────
+    FOAM_FACTOR = 0.90  # 10% allowance for foam / spillage
+    net_vol_ml = net_vol_l * 1000.0
+    preset_rates = []
+    for p in barrel.item.portion_presets.filter(quantity_consumed__gt=0):
+        qty_ml = float(p.quantity_consumed)
+        price  = float(p.price)
+        if qty_ml > 0:
+            rate = price / qty_ml
+            max_servings = int(net_vol_ml / qty_ml)
+            preset_rates.append({
+                'label':        p.label,
+                'price':        price,
+                'qty_ml':       qty_ml,
+                'max_servings': max_servings,
+                'gross_max':    round(max_servings * price),
+                'realistic_max': round(max_servings * price * FOAM_FACTOR),
+                'rate':         rate,
+            })
+
+    if preset_rates:
+        max_rate = max(p['rate'] for p in preset_rates)
+        min_rate = min(p['rate'] for p in preset_rates)
+        theoretical_gross_max    = round(net_vol_ml * max_rate)
+        theoretical_realistic_max = round(net_vol_ml * max_rate * FOAM_FACTOR)
+        theoretical_realistic_min = round(net_vol_ml * min_rate * FOAM_FACTOR)
+        target_is_unrealistic = target > theoretical_gross_max
+    else:
+        theoretical_gross_max = theoretical_realistic_max = theoretical_realistic_min = None
+        target_is_unrealistic = False
+
     # All transactions for this barrel, ordered oldest first
     txns = Transaction.objects.filter(
         business=business, keg_barrel=barrel,
@@ -1190,20 +1251,25 @@ def keg_barrel_detail(request, barrel_id):
     margin = (profit / cost * 100) if cost else 0.0
 
     return render(request, 'core/bar/keg_barrel_detail.html', {
-        'barrel':            barrel,
-        'net_vol_l':         net_vol_l,
-        'cost':              cost,
-        'revenue':           revenue,
-        'target':            target,
-        'profit':            profit,
-        'margin':            margin,
-        'book_l':            book_ml / 1000.0,
-        'total_wastage_l':   total_wastage_l,
-        'total_wastage_kes': total_wastage_kes,
-        'total_wastage_pct': total_wastage_pct,
-        'shift_rows':        shift_rows,
-        'readings':          readings,
-        'cups':              barrel.cups_dispensed or 0,
-        'pints':             barrel.pints_dispensed or 0,
-        'jugs':              barrel.jugs_dispensed or 0,
+        'barrel':                     barrel,
+        'net_vol_l':                  net_vol_l,
+        'cost':                       cost,
+        'revenue':                    revenue,
+        'target':                     target,
+        'profit':                     profit,
+        'margin':                     margin,
+        'book_l':                     book_ml / 1000.0,
+        'total_wastage_l':            total_wastage_l,
+        'total_wastage_kes':          total_wastage_kes,
+        'total_wastage_pct':          total_wastage_pct,
+        'shift_rows':                 shift_rows,
+        'readings':                   readings,
+        'cups':                       barrel.cups_dispensed or 0,
+        'pints':                      barrel.pints_dispensed or 0,
+        'jugs':                       barrel.jugs_dispensed or 0,
+        'preset_rates':               preset_rates,
+        'theoretical_gross_max':      theoretical_gross_max,
+        'theoretical_realistic_max':  theoretical_realistic_max,
+        'theoretical_realistic_min':  theoretical_realistic_min,
+        'target_is_unrealistic':      target_is_unrealistic,
     })

@@ -63,6 +63,7 @@ from core.keg_views import (
     bar_daily_report,
     keg_reconciliation,
     keg_barrel_detail,
+    keg_target_recommendation,
 )
 from core.shift_views import (
     open_shift,
@@ -195,6 +196,7 @@ urlpatterns = [
     path("bar/daily-report/", bar_daily_report, name="bar_daily_report"),
     path("bar/reconciliation/", keg_reconciliation, name="keg_reconciliation"),
     path("bar/reconciliation/<int:barrel_id>/", keg_barrel_detail, name="keg_barrel_detail"),
+    path("stock/bar/item/<int:item_id>/target-recommendation/", keg_target_recommendation, name="keg_target_recommendation"),
     path("stock/bar/board/", bar_board_api, name="bar_board_api"),
     path("stock/bar/receive/", receive_barrel, name="receive_barrel"),
     path("stock/bar/tap/<int:barrel_id>/", tap_barrel, name="tap_barrel"),
