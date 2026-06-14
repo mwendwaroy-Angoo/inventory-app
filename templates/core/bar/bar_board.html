@@ -541,6 +541,14 @@
   <!-- Shift panel — populated by loadShift() -->
   <div id="shift-panel" style="display:none;"></div>
 
+  <!-- Active waitresses panel — updated by loadBoard() -->
+  <div id="waitress-panel" style="display:none; margin-bottom:0.75rem;
+       background:rgba(255,152,0,0.06); border:1px solid rgba(255,152,0,0.2);
+       border-radius:8px; padding:0.5rem 0.9rem; font-size:0.82rem;">
+    <span style="color:#ff9800; font-weight:600; margin-right:0.75rem;">🧑‍🍽 On Duty:</span>
+    <span id="waitress-panel-names"></span>
+  </div>
+
   <!-- Keg tile grid — rendered by JS after board API call -->
   <div id="keg-board" class="row g-3">
     <div class="col-12 text-center py-5" style="color:#b0b0b0;">
@@ -1303,6 +1311,26 @@
     });
 
     _populateReceiveItems(kegs);
+
+    // Active waitresses panel
+    var waitresses = data.active_waitresses || [];
+    var wPanel = document.getElementById('waitress-panel');
+    var wNames = document.getElementById('waitress-panel-names');
+    if (wPanel && wNames) {
+      if (waitresses.length > 0) {
+        wNames.innerHTML = waitresses.map(function(w) {
+          var pendingStr = w.pending > 0
+            ? ' <span style="color:#c0395a;font-weight:700;">(' + w.pending + ' pending)</span>'
+            : '';
+          return '<span style="color:#f0ece4;">' + w.name + '</span>'
+            + ' <span style="color:#888;">· ' + w.total + ' orders today</span>'
+            + pendingStr;
+        }).join('<span style="color:#444; margin:0 0.5rem;">|</span>');
+        wPanel.style.display = 'block';
+      } else {
+        wPanel.style.display = 'none';
+      }
+    }
 
     // Tab badge
     var openTabs = data.open_tabs || 0;

@@ -10,7 +10,7 @@ from datetime import date as date_type
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Sum
+from django.db.models import Count, Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -121,11 +121,39 @@ def bar_board_api(request):
         })
 
     open_tabs_qs = BarTab.objects.filter(business=business, status='OPEN')
+
+    # Active waitresses — those who placed at least one order today
+    from .models import TableOrder as _TO
+    today = timezone.localdate()
+    active_w = []
+    seen_ids = set()
+    for order in _TO.objects.filter(
+        business=business, created_at__date=today
+    ).select_related('waitress').order_by('waitress_id'):
+        uid = order.waitress_id
+        if uid in seen_ids:
+            continue
+        seen_ids.add(uid)
+        pending = _TO.objects.filter(
+            business=business, waitress_id=uid,
+            created_at__date=today, status__in=['PENDING', 'ACCEPTED', 'READY']
+        ).count()
+        total = _TO.objects.filter(
+            business=business, waitress_id=uid, created_at__date=today
+        ).count()
+        w = order.waitress
+        active_w.append({
+            'name':    w.get_full_name() or w.username,
+            'pending': pending,
+            'total':   total,
+        })
+
     return JsonResponse({
         'kegs': kegs,
         'can_receive': bool(getattr(up, 'is_owner', False)),
         'open_tabs': open_tabs_qs.count(),
         'open_tab_names': list(open_tabs_qs.values_list('customer_name', flat=True).distinct()),
+        'active_waitresses': active_w,
     })
 
 
@@ -843,6 +871,62 @@ def bar_daily_report(request):
             'revenue': float(bt.aggregate(r=Sum('sale_amount'))['r'] or 0),
         })
 
+    # ── Waitress performance ───────────────────────────────────────────────────
+    from .models import TableOrder, TableOrderItem
+    from django.db.models import F as _F, DecimalField as _DF
+
+    waitress_data = []
+    for row in (
+        TableOrder.objects.filter(business=business, created_at__date=report_date, status='SERVED')
+        .values('waitress_id', 'waitress__first_name', 'waitress__last_name', 'waitress__username')
+        .annotate(order_count=Count('id'))
+        .order_by('waitress__first_name', 'waitress__last_name')
+    ):
+        rev = TableOrderItem.objects.filter(
+            order__business=business,
+            order__status='SERVED',
+            order__created_at__date=report_date,
+            order__waitress_id=row['waitress_id'],
+        ).aggregate(
+            r=Sum(_F('unit_price') * _F('quantity'), output_field=_DF())
+        )['r'] or 0
+        fname = row['waitress__first_name'] or ''
+        lname = row['waitress__last_name'] or ''
+        name  = (fname + ' ' + lname).strip() or row['waitress__username']
+        waitress_data.append({
+            'name':        name,
+            'order_count': row['order_count'],
+            'revenue':     float(rev),
+        })
+
+    # ── Staff / shift performance ──────────────────────────────────────────────
+    from .models import Shift
+    staff_data = []
+    for shift in Shift.objects.filter(
+        business=business, started_at__date=report_date
+    ).select_related('staff').order_by('started_at'):
+        shift_end = shift.ended_at or timezone.now()
+        st = Transaction.objects.filter(
+            business=business,
+            created_at__gte=shift.started_at,
+            created_at__lte=shift_end,
+            type='Issue',
+        )
+        delta   = shift_end - shift.started_at
+        h, rem  = divmod(int(delta.total_seconds()), 3600)
+        m       = rem // 60
+        dur_str = f"{h}h {m:02d}m{' (ongoing)' if not shift.ended_at else ''}"
+        staff_data.append({
+            'name':    shift.staff.get_full_name() or shift.staff.username,
+            'started': shift.started_at,
+            'ended':   shift.ended_at,
+            'duration': dur_str,
+            'cups':    st.filter(keg_serving='cup').aggregate(n=Sum('keg_qty'))['n'] or 0,
+            'pints':   st.filter(keg_serving='pint').aggregate(n=Sum('keg_qty'))['n'] or 0,
+            'jugs':    st.filter(keg_serving='jug').aggregate(n=Sum('keg_qty'))['n'] or 0,
+            'revenue': float(st.aggregate(r=Sum('sale_amount'))['r'] or 0),
+        })
+
     return render(request, 'core/bar/bar_daily_report.html', {
         'report_date':    report_date,
         'barrels_opened': barrels_opened,
@@ -851,5 +935,7 @@ def bar_daily_report(request):
         'pints':          pints,
         'total_revenue':  total_revenue,
         'per_barrel':     per_barrel,
+        'waitress_data':  waitress_data,
+        'staff_data':     staff_data,
         'today':          timezone.localdate(),
     })

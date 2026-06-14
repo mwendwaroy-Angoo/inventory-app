@@ -77,13 +77,16 @@ def waitress_screen(request):
         ).prefetch_related('items__item').order_by('-created_at')[:20]
 
     is_owner = getattr(up, 'is_owner', False)
+    has_open_shift = Shift.objects.filter(business=business, status='OPEN').exists()
 
     return render(request, 'core/bar/waitress_screen.html', {
-        'keg_items':     keg_items,
-        'other_items':   other_items,
-        'recent_orders': recent_orders,
-        'is_owner':      is_owner,
-        'business':      business,
+        'keg_items':      keg_items,
+        'other_items':    other_items,
+        'recent_orders':  recent_orders,
+        'is_owner':       is_owner,
+        'business':       business,
+        'has_open_shift': has_open_shift,
+        'is_waitress':    getattr(up, 'role', '') == 'waitress',
     })
 
 
@@ -116,6 +119,13 @@ def place_table_order(request):
     current_shift = Shift.objects.filter(
         business=up.business, status='OPEN'
     ).first()
+
+    # Waitresses cannot place orders unless a shift is open
+    if getattr(up, 'role', '') == 'waitress' and not current_shift:
+        return JsonResponse({
+            'ok': False,
+            'error': 'Hakuna shift wazi — shift lazima ifunguliwe kwanza kabla ya kupokea maagizo'
+        }, status=403)
 
     order = TableOrder.objects.create(
         business=up.business,

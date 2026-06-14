@@ -207,4 +207,73 @@
 </div>
 {% endif %}
 
+<!-- Waitress Performance -->
+{% if waitress_data %}
+<div class="report-card">
+    <div class="report-card-header">🧑‍🍽 Waitress Performance</div>
+    <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+        <thead>
+            <tr style="font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid #2a2a2a;">
+                <th style="padding:0.5rem 1.25rem; text-align:left; font-weight:600;">Waitress</th>
+                <th style="padding:0.5rem 0.75rem; text-align:center; font-weight:600;">Orders Served</th>
+                <th style="padding:0.5rem 1.25rem 0.5rem 0.75rem; text-align:right; font-weight:600;">Revenue (KES)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for w in waitress_data %}
+            <tr style="border-bottom:1px solid #1e1e1e;">
+                <td style="padding:0.65rem 1.25rem; color:var(--pearl); font-weight:500;">{{ w.name }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:center; color:var(--pearl);">{{ w.order_count }}</td>
+                <td style="padding:0.65rem 1.25rem 0.65rem 0.75rem; text-align:right; color:var(--gold); font-weight:600;">{{ w.revenue|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% elif report_date == today %}
+<div class="report-card">
+    <div class="report-card-header">🧑‍🍽 Waitress Performance</div>
+    <p style="color:#555; font-size:0.85rem; text-align:center; padding:1.25rem; margin:0;">No waitress orders served today yet.</p>
+</div>
+{% endif %}
+
+<!-- Staff / Shift Performance -->
+{% if staff_data %}
+<div class="report-card">
+    <div class="report-card-header">👷 Staff / Shift Performance</div>
+    <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+        <thead>
+            <tr style="font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid #2a2a2a;">
+                <th style="padding:0.5rem 1.25rem; text-align:left; font-weight:600;">Staff</th>
+                <th style="padding:0.5rem 0.75rem; text-align:center; font-weight:600;">Shift Duration</th>
+                <th style="padding:0.5rem 0.75rem; text-align:center; font-weight:600;">☕ Cups</th>
+                <th style="padding:0.5rem 0.75rem; text-align:center; font-weight:600;">🍺 Pints</th>
+                <th style="padding:0.5rem 0.75rem; text-align:center; font-weight:600;">🫙 Jugs</th>
+                <th style="padding:0.5rem 1.25rem 0.5rem 0.75rem; text-align:right; font-weight:600;">Revenue (KES)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in staff_data %}
+            <tr style="border-bottom:1px solid #1e1e1e;">
+                <td style="padding:0.65rem 1.25rem; color:var(--pearl); font-weight:500;">
+                    {{ s.name }}
+                    {% if not s.ended %}<span style="font-size:0.68rem; color:#81c784; margin-left:0.4rem;">● on shift</span>{% endif %}
+                </td>
+                <td style="padding:0.65rem 0.75rem; text-align:center; color:#b0b0b0; font-size:0.82rem;">{{ s.duration }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:center; color:var(--pearl);">{{ s.cups }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:center; color:var(--pearl);">{{ s.pints }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:center; color:var(--pearl);">{{ s.jugs }}</td>
+                <td style="padding:0.65rem 1.25rem 0.65rem 0.75rem; text-align:right; color:var(--gold); font-weight:600;">{{ s.revenue|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% elif report_date == today %}
+<div class="report-card">
+    <div class="report-card-header">👷 Staff / Shift Performance</div>
+    <p style="color:#555; font-size:0.85rem; text-align:center; padding:1.25rem; margin:0;">No shift started today.</p>
+</div>
+{% endif %}
+
 {% endblock %}
