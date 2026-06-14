@@ -1708,8 +1708,14 @@ class KegBarrel(models.Model):
         amount = Decimal(str(float(preset.price) * qty))
         pay = 'credit' if tab else (payment_method or 'cash')
 
-        # serving_type takes precedence; fall back to legacy is_jug flag
+        # serving_type takes precedence; fall back to legacy is_jug flag; then infer from label
         serving = getattr(preset, 'serving_type', '') or ('jug' if getattr(preset, 'is_jug', False) else 'cup')
+        if serving == 'cup':
+            _lbl = (getattr(preset, 'label', '') or '').lower()
+            if 'jug' in _lbl:
+                serving = 'jug'
+            elif 'pint' in _lbl:
+                serving = 'pint'
 
         txn = Transaction.objects.create(
             item=self.item,

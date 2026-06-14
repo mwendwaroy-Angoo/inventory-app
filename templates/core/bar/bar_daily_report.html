@@ -39,19 +39,8 @@
         color: #b0b0b0;
         margin-top: 0.25rem;
     }
-    .barrel-row {
-        display: grid;
-        grid-template-columns: 1fr auto auto auto auto;
-        gap: 0.75rem;
-        align-items: center;
-        padding: 0.75rem 1.25rem;
-        border-bottom: 1px solid #1e1e1e;
-        font-size: 0.88rem;
-    }
-    .barrel-row:last-child { border-bottom: none; }
-    .barrel-name { color: var(--pearl); font-weight: 500; }
-    .barrel-stat { text-align: center; color: #b0b0b0; }
-    .barrel-stat strong { color: var(--gold); }
+    table tbody tr:last-child td { border-bottom: none; }
+    table tbody tr:hover { background: rgba(255,255,255,0.02); }
     .date-nav { display: flex; align-items: center; gap: 0.75rem; }
     .date-nav a { color: var(--gold); font-size: 0.9rem; text-decoration: none; }
     .date-nav a:hover { text-decoration: underline; }
@@ -164,15 +153,28 @@
 {% if barrels_opened %}
 <div class="report-card">
     <div class="report-card-header">🛢 Barrels Opened on This Day</div>
-    {% for barrel in barrels_opened %}
-    <div class="barrel-row">
-        <div class="barrel-name">{{ barrel.item.description }}</div>
-        <div class="barrel-stat"><strong>KES {{ barrel.cost_price }}</strong><br><span style="font-size:0.72rem;">cost</span></div>
-        <div class="barrel-stat"><strong>KES {{ barrel.target_revenue }}</strong><br><span style="font-size:0.72rem;">target</span></div>
-        <div class="barrel-stat"><strong>{{ barrel.get_status_display }}</strong><br><span style="font-size:0.72rem;">status</span></div>
-        <div class="barrel-stat"><strong>{{ barrel.net_volume_l|floatformat:1 }} L</strong><br><span style="font-size:0.72rem;">volume</span></div>
-    </div>
-    {% endfor %}
+    <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+        <thead>
+            <tr style="font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid #2a2a2a;">
+                <th style="padding:0.5rem 1.25rem; text-align:left; font-weight:600;">Item</th>
+                <th style="padding:0.5rem 0.75rem; text-align:right; font-weight:600;">Cost (KES)</th>
+                <th style="padding:0.5rem 0.75rem; text-align:right; font-weight:600;">Target (KES)</th>
+                <th style="padding:0.5rem 0.75rem; text-align:center; font-weight:600;">Status</th>
+                <th style="padding:0.5rem 1.25rem 0.5rem 0.75rem; text-align:right; font-weight:600;">Volume</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for barrel in barrels_opened %}
+            <tr style="border-bottom:1px solid #1e1e1e; color:var(--pearl);">
+                <td style="padding:0.65rem 1.25rem; font-weight:500;">{{ barrel.item.description }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:right;">{{ barrel.cost_price }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:right;">{{ barrel.target_revenue }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:center; color:#b0b0b0;">{{ barrel.get_status_display }}</td>
+                <td style="padding:0.65rem 1.25rem 0.65rem 0.75rem; text-align:right;">{{ barrel.net_volume_l|floatformat:1 }} L</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
 {% endif %}
 
@@ -180,24 +182,28 @@
 {% if per_barrel %}
 <div class="report-card">
     <div class="report-card-header">🍺 Sales Breakdown by Barrel</div>
-    <div style="padding:0.5rem 0;">
-        <div style="display:grid; grid-template-columns:1fr auto auto auto auto; gap:0.75rem; padding:0.4rem 1.25rem; font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid #2a2a2a;">
-            <span>Barrel / Item</span>
-            <span>☕ Cups</span>
-            <span>🍺 Pints</span>
-            <span>🫙 Jugs</span>
-            <span>Revenue</span>
-        </div>
-        {% for row in per_barrel %}
-        <div class="barrel-row">
-            <div class="barrel-name">{{ row.barrel.item.description }}</div>
-            <div class="barrel-stat"><strong>{{ row.cups }}</strong></div>
-            <div class="barrel-stat"><strong>{{ row.pints }}</strong></div>
-            <div class="barrel-stat"><strong>{{ row.jugs }}</strong></div>
-            <div class="barrel-stat" style="color:var(--gold);"><strong>KES {{ row.revenue|floatformat:0 }}</strong></div>
-        </div>
-        {% endfor %}
-    </div>
+    <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+        <thead>
+            <tr style="font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid #2a2a2a;">
+                <th style="padding:0.5rem 1.25rem; text-align:left; font-weight:600;">Barrel / Item</th>
+                <th style="padding:0.5rem 0.75rem; text-align:center; font-weight:600;">☕ Cups</th>
+                <th style="padding:0.5rem 0.75rem; text-align:center; font-weight:600;">🍺 Pints</th>
+                <th style="padding:0.5rem 0.75rem; text-align:center; font-weight:600;">🫙 Jugs</th>
+                <th style="padding:0.5rem 1.25rem 0.5rem 0.75rem; text-align:right; font-weight:600;">Revenue (KES)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in per_barrel %}
+            <tr style="border-bottom:1px solid #1e1e1e;">
+                <td style="padding:0.65rem 1.25rem; color:var(--pearl); font-weight:500;">{{ row.barrel.item.description }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:center; color:var(--pearl);">{{ row.cups }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:center; color:var(--pearl);">{{ row.pints }}</td>
+                <td style="padding:0.65rem 0.75rem; text-align:center; color:var(--pearl);">{{ row.jugs }}</td>
+                <td style="padding:0.65rem 1.25rem 0.65rem 0.75rem; text-align:right; color:var(--gold); font-weight:600;">{{ row.revenue|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
 {% endif %}
 
