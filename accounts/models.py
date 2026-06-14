@@ -102,6 +102,12 @@ class Business(models.Model):
         help_text='Suggested barrel target = cost × this. 5000 × 1.5 = 7500, matching common owner targets.'
     )
 
+    # ── Recurring Expenses ────────────────────────────────────────────────────
+    last_expense_review_date = models.DateField(
+        null=True, blank=True,
+        help_text='Date owner last reviewed and confirmed recurring expenses.'
+    )
+
     def __str__(self):
         return self.name
 

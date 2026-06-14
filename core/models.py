@@ -710,6 +710,72 @@ class BusinessExpense(models.Model):
 
 
 # ────────────────────────────────────────────────
+# RECURRING EXPENSES (Sprint 7)
+# ────────────────────────────────────────────────
+
+class RecurringExpense(models.Model):
+    PERIOD_CHOICES = [
+        ('MONTHLY',   _('Monthly')),
+        ('QUARTERLY', _('Quarterly (every 3 months)')),
+        ('ANNUAL',    _('Annual (yearly)')),
+    ]
+
+    business          = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='recurring_expenses')
+    description       = models.CharField(max_length=255)
+    category          = models.CharField(max_length=20, choices=BusinessExpense.CATEGORY_CHOICES, default='other')
+    amount            = models.DecimalField(max_digits=12, decimal_places=2)
+    period            = models.CharField(max_length=10, choices=PERIOD_CHOICES, default='MONTHLY')
+    # For salary lines: link to a specific staff UserProfile
+    staff_profile     = models.ForeignKey('accounts.UserProfile', null=True, blank=True, on_delete=models.SET_NULL, related_name='salary_entries')
+    is_active         = models.BooleanField(default=True)
+    last_confirmed_at = models.DateTimeField(null=True, blank=True)
+    last_notified_at  = models.DateTimeField(null=True, blank=True)
+    notes             = models.CharField(max_length=255, blank=True)
+    created_at        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['category', 'description']
+        verbose_name = _('Recurring Expense')
+        verbose_name_plural = _('Recurring Expenses')
+
+    def __str__(self):
+        label = self.description
+        if self.staff_profile:
+            label += f' ({self.staff_profile.user.get_full_name() or self.staff_profile.user.username})'
+        return f'{label} — KES {self.amount:,.0f} / {self.get_period_display()}'
+
+    def period_start(self, reference_date=None):
+        """Start of the current period relative to reference_date (default: today)."""
+        from datetime import date as _date
+        d = reference_date or timezone.localdate()
+        if self.period == 'MONTHLY':
+            return d.replace(day=1)
+        elif self.period == 'QUARTERLY':
+            quarter_month = ((d.month - 1) // 3) * 3 + 1
+            return d.replace(month=quarter_month, day=1)
+        else:  # ANNUAL
+            return d.replace(month=1, day=1)
+
+    def is_due_for_review(self, reference_date=None):
+        """True if this expense has not been confirmed in the current period."""
+        ps = self.period_start(reference_date)
+        if not self.last_confirmed_at:
+            return True
+        confirmed_date = self.last_confirmed_at.date() if hasattr(self.last_confirmed_at, 'date') else self.last_confirmed_at
+        return confirmed_date < ps
+
+    def already_posted_this_period(self, reference_date=None):
+        """True if a BusinessExpense was already auto-created for the current period."""
+        ps = self.period_start(reference_date)
+        return BusinessExpense.objects.filter(
+            business=self.business,
+            description=self.description,
+            date__gte=ps,
+            notes__startswith='[recurring]',
+        ).exists()
+
+
+# ────────────────────────────────────────────────
 # CAPITAL INVESTMENT (one-time startup / asset costs)
 # ────────────────────────────────────────────────
 

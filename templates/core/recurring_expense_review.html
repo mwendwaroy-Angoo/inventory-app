@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Review Recurring Expenses — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .rc-card { background:var(--onyx-card); border:1px solid #2a2a2a; border-radius:10px; overflow:hidden; margin-bottom:1.25rem; }
+    .rc-card-header { background:linear-gradient(135deg,#1a1a1a,#2a2a2a); border-bottom:1px solid #333; padding:0.75rem 1.25rem; font-family:'Playfair Display',serif; color:var(--gold); font-size:1rem; }
+    .exp-row { display:flex; align-items:center; gap:1rem; padding:0.75rem 1.25rem; border-bottom:1px solid #1e1e1e; flex-wrap:wrap; }
+    .exp-row:last-child { border-bottom:none; }
+    .exp-name { flex:1; min-width:160px; font-weight:500; color:var(--pearl); }
+    .exp-meta { font-size:0.78rem; color:#b0b0b0; }
+    .form-control { background:#1a1a1a; color:var(--pearl); border:1px solid #444; border-radius:6px; font-size:0.88rem; }
+    .form-control:focus { background:#1a1a1a; color:var(--pearl); border-color:var(--gold); box-shadow:none; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <span>Expense Review</span>
+</nav>
+
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+        <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">🔁 Review Recurring Expenses</h4>
+        <div style="font-size:0.8rem; color:#b0b0b0; margin-top:2px;">{{ today|date:"F Y" }} — confirm your expenses for this period</div>
+    </div>
+    <a href="{% url 'recurring_expense_list' %}" class="btn btn-secondary btn-sm">Manage Setup</a>
+</div>
+
+{% if not due %}
+<div style="background:var(--onyx-card); border:1px solid #2a2a2a; border-radius:10px; padding:2rem; text-align:center; color:#555;">
+    <div style="font-size:2rem; margin-bottom:0.5rem;">✅</div>
+    All recurring expenses are up to date. Nothing to review right now.
+    <br><a href="{% url 'recurring_expense_list' %}" style="color:var(--gold); font-size:0.88rem;">Add or manage recurring expenses →</a>
+</div>
+{% else %}
+<div style="background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.2); border-radius:10px; padding:0.85rem 1.25rem; margin-bottom:1.25rem; font-size:0.88rem; color:#b0b0b0;">
+    💡 These expenses carry over from last period. Update any amounts that have changed, then click <strong style="color:var(--pearl);">Confirm & Post</strong>.
+    The system will automatically record them in your expense register for {{ today|date:"F Y" }}.
+</div>
+
+<form method="post" action="{% url 'recurring_expense_confirm' %}">
+    {% csrf_token %}
+
+    {% if monthly %}
+    <div class="rc-card">
+        <div class="rc-card-header">📅 Monthly</div>
+        {% for e in monthly %}
+        <div class="exp-row">
+            <div class="exp-name">
+                {{ e.description }}
+                {% if e.staff_profile %}
+                <span style="font-size:0.75rem; color:#b0b0b0;">· {{ e.staff_profile.user.get_full_name|default:e.staff_profile.user.username }}</span>
+                {% endif %}
+                <div class="exp-meta">{{ e.get_category_display }}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+                <span style="color:#b0b0b0; font-size:0.82rem;">KES</span>
+                <input type="number" name="amount_{{ e.id }}" value="{{ e.amount|floatformat:0 }}"
+                       class="form-control" style="width:120px; text-align:right;"
+                       min="0" step="1">
+                {% if e.already_posted_this_period %}
+                <span style="color:#81c784; font-size:0.75rem; white-space:nowrap;">✓ Already posted</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if quarterly %}
+    <div class="rc-card">
+        <div class="rc-card-header">📆 Quarterly</div>
+        {% for e in quarterly %}
+        <div class="exp-row">
+            <div class="exp-name">
+                {{ e.description }}
+                <div class="exp-meta">{{ e.get_category_display }}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+                <span style="color:#b0b0b0; font-size:0.82rem;">KES</span>
+                <input type="number" name="amount_{{ e.id }}" value="{{ e.amount|floatformat:0 }}"
+                       class="form-control" style="width:120px; text-align:right;" min="0" step="1">
+                {% if e.already_posted_this_period %}
+                <span style="color:#81c784; font-size:0.75rem; white-space:nowrap;">✓ Already posted</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if annual %}
+    <div class="rc-card">
+        <div class="rc-card-header">📅 Annual</div>
+        {% for e in annual %}
+        <div class="exp-row">
+            <div class="exp-name">
+                {{ e.description }}
+                <div class="exp-meta">{{ e.get_category_display }}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+                <span style="color:#b0b0b0; font-size:0.82rem;">KES</span>
+                <input type="number" name="amount_{{ e.id }}" value="{{ e.amount|floatformat:0 }}"
+                       class="form-control" style="width:120px; text-align:right;" min="0" step="1">
+                {% if e.already_posted_this_period %}
+                <span style="color:#81c784; font-size:0.75rem; white-space:nowrap;">✓ Already posted</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="d-flex gap-3 align-items-center mt-2">
+        <button type="submit" class="btn btn-gold">✓ Confirm & Post to {{ today|date:"F Y" }}</button>
+        <a href="{% url 'home' %}" style="color:#b0b0b0; font-size:0.85rem;">Review later</a>
+    </div>
+</form>
+{% endif %}
+
+{% endblock %}

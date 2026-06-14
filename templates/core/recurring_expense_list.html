@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Recurring Expenses — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .rc-card { background:var(--onyx-card); border:1px solid #2a2a2a; border-radius:10px; overflow:hidden; margin-bottom:1.25rem; }
+    .rc-card-header { background:linear-gradient(135deg,#1a1a1a,#2a2a2a); border-bottom:1px solid #333; padding:0.75rem 1.25rem; font-family:'Playfair Display',serif; color:var(--gold); font-size:1rem; }
+    .exp-table { width:100%; border-collapse:collapse; font-size:0.88rem; }
+    .exp-table thead tr { font-size:0.7rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid #2a2a2a; }
+    .exp-table th { padding:0.5rem 0.75rem; font-weight:600; white-space:nowrap; }
+    .exp-table th:first-child { padding-left:1.25rem; }
+    .exp-table th:last-child  { padding-right:1.25rem; }
+    .exp-table tbody tr { border-bottom:1px solid #1e1e1e; }
+    .exp-table tbody tr:last-child td { border-bottom:none; }
+    .exp-table td { padding:0.65rem 0.75rem; color:var(--pearl); vertical-align:middle; }
+    .exp-table td:first-child { padding-left:1.25rem; }
+    .exp-table td:last-child  { padding-right:1.25rem; }
+    .period-badge { display:inline-block; font-size:0.68rem; font-weight:600; padding:2px 7px; border-radius:10px; white-space:nowrap; }
+    .badge-monthly   { background:rgba(201,168,76,0.12); color:var(--gold); border:1px solid rgba(201,168,76,0.3); }
+    .badge-quarterly { background:rgba(76,175,80,0.12);  color:#81c784;    border:1px solid rgba(76,175,80,0.3); }
+    .badge-annual    { background:rgba(192,57,90,0.12);  color:var(--raspberry); border:1px solid rgba(192,57,90,0.3); }
+    .inactive-row { opacity:0.45; }
+    .form-control, .form-select { background:#1a1a1a; color:var(--pearl); border:1px solid #444; border-radius:6px; font-size:0.88rem; }
+    .form-control:focus, .form-select:focus { background:#1a1a1a; color:var(--pearl); border-color:var(--gold); box-shadow:none; }
+    .form-select option { background:#1a1a1a; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'expense_list' %}" style="color:var(--gold)">Expenses</a>
+    <span class="mx-1">›</span>
+    <span>Recurring Expenses</span>
+</nav>
+
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+        <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">🔁 Recurring Expenses</h4>
+        <div style="font-size:0.8rem; color:#b0b0b0; margin-top:2px;">
+            Set up once — the system reminds you each period to confirm or update.
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'recurring_expense_review' %}" class="btn btn-secondary btn-sm">Review Due Now</a>
+        <button class="btn btn-gold btn-sm" onclick="document.getElementById('add-panel').style.display='block'; this.style.display='none';">
+            + Add Recurring
+        </button>
+    </div>
+</div>
+
+<!-- Add form (hidden by default) -->
+<div id="add-panel" style="display:none;" class="rc-card">
+    <div class="rc-card-header">➕ Add Recurring Expense</div>
+    <div style="padding:1.25rem;">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Description</label>
+                <input type="text" id="add-desc" class="form-control" placeholder="e.g. Shop Rent, Electricity">
+            </div>
+            <div class="col-md-2">
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Category</label>
+                <select id="add-category" class="form-select">
+                    {% for val, label in category_choices %}
+                    <option value="{{ val }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Amount (KES)</label>
+                <input type="number" id="add-amount" class="form-control" placeholder="e.g. 25000" min="1">
+            </div>
+            <div class="col-md-2">
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Period</label>
+                <select id="add-period" class="form-select">
+                    {% for val, label in period_choices %}
+                    <option value="{{ val }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Staff (salaries only)</label>
+                <select id="add-staff" class="form-select">
+                    <option value="">— None —</option>
+                    {% for sp in staff_profiles %}
+                    <option value="{{ sp.id }}">{{ sp.user.get_full_name|default:sp.user.username }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="row g-3 mt-1">
+            <div class="col-md-6">
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Notes (optional)</label>
+                <input type="text" id="add-notes" class="form-control" placeholder="">
+            </div>
+        </div>
+        <div id="add-error" style="display:none; color:#c0395a; font-size:0.82rem; margin-top:0.5rem;"></div>
+        <div class="d-flex gap-2 mt-3">
+            <button class="btn btn-gold btn-sm" onclick="submitAdd()">Save</button>
+            <button class="btn btn-sm" style="background:#333; color:#b0b0b0;" onclick="document.getElementById('add-panel').style.display='none'; document.querySelector('.btn-gold.btn-sm').style.display='inline-block';">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- List -->
+{% if expenses %}
+<div class="rc-card">
+    <div class="rc-card-header">📋 Active & Inactive Recurring Expenses</div>
+    <table class="exp-table">
+        <thead>
+            <tr>
+                <th style="text-align:left;">Description</th>
+                <th style="text-align:left;">Category</th>
+                <th style="text-align:left;">Staff</th>
+                <th style="text-align:right;">Amount (KES)</th>
+                <th style="text-align:center;">Period</th>
+                <th style="text-align:left;">Last Confirmed</th>
+                <th style="text-align:center;">Active</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in expenses %}
+            <tr class="{% if not e.is_active %}inactive-row{% endif %}">
+                <td style="font-weight:500;">{{ e.description }}</td>
+                <td style="color:#b0b0b0; font-size:0.82rem;">{{ e.get_category_display }}</td>
+                <td style="color:#b0b0b0; font-size:0.82rem;">
+                    {% if e.staff_profile %}{{ e.staff_profile.user.get_full_name|default:e.staff_profile.user.username }}{% else %}—{% endif %}
+                </td>
+                <td style="text-align:right; font-weight:600; color:var(--gold);">{{ e.amount|floatformat:0 }}</td>
+                <td style="text-align:center;">
+                    {% if e.period == 'MONTHLY' %}<span class="period-badge badge-monthly">Monthly</span>
+                    {% elif e.period == 'QUARTERLY' %}<span class="period-badge badge-quarterly">Quarterly</span>
+                    {% else %}<span class="period-badge badge-annual">Annual</span>{% endif %}
+                </td>
+                <td style="color:#b0b0b0; font-size:0.8rem;">
+                    {% if e.last_confirmed_at %}{{ e.last_confirmed_at|date:"d M Y" }}{% else %}<span style="color:#555;">Never</span>{% endif %}
+                </td>
+                <td style="text-align:center;">
+                    {% if e.is_active %}<span style="color:#81c784;">✓</span>{% else %}<span style="color:#555;">—</span>{% endif %}
+                </td>
+                <td style="text-align:right; white-space:nowrap;">
+                    <button class="btn btn-sm" style="background:#2a2a2a; border:1px solid #444; color:#b0b0b0; font-size:0.75rem; padding:2px 8px;"
+                            onclick="openEdit({{ e.id }}, '{{ e.description|escapejs }}', '{{ e.category }}', '{{ e.amount }}', '{{ e.period }}', '{% if e.staff_profile %}{{ e.staff_profile.id }}{% endif %}', '{{ e.notes|escapejs }}', {{ e.is_active|yesno:'true,false' }})">
+                        Edit
+                    </button>
+                    <button class="btn btn-sm" style="background:rgba(192,57,90,0.12); border:1px solid rgba(192,57,90,0.3); color:var(--raspberry); font-size:0.75rem; padding:2px 8px;"
+                            onclick="deleteExpense({{ e.id }}, '{{ e.description|escapejs }}')">
+                        Delete
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div style="background:var(--onyx-card); border:1px solid #2a2a2a; border-radius:10px; padding:2rem; text-align:center; color:#555;">
+    No recurring expenses set up yet. Add rent, salaries, and bills above.
+</div>
+{% endif %}
+
+<!-- Edit modal -->
+<div id="edit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:12px; padding:1.5rem; width:min(520px,95vw); max-height:90vh; overflow-y:auto;">
+        <h5 style="font-family:'Playfair Display',serif; color:var(--gold); margin-bottom:1rem;">Edit Recurring Expense</h5>
+        <input type="hidden" id="edit-id">
+        <div class="row g-3 mb-3">
+            <div class="col-12">
+                <label style="font-size:0.75rem; color:#b0b0b0;">Description</label>
+                <input type="text" id="edit-desc" class="form-control mt-1">
+            </div>
+            <div class="col-6">
+                <label style="font-size:0.75rem; color:#b0b0b0;">Category</label>
+                <select id="edit-category" class="form-select mt-1">
+                    {% for val, label in category_choices %}
+                    <option value="{{ val }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6">
+                <label style="font-size:0.75rem; color:#b0b0b0;">Amount (KES)</label>
+                <input type="number" id="edit-amount" class="form-control mt-1" min="1">
+            </div>
+            <div class="col-6">
+                <label style="font-size:0.75rem; color:#b0b0b0;">Period</label>
+                <select id="edit-period" class="form-select mt-1">
+                    {% for val, label in period_choices %}
+                    <option value="{{ val }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6">
+                <label style="font-size:0.75rem; color:#b0b0b0;">Staff (salaries only)</label>
+                <select id="edit-staff" class="form-select mt-1">
+                    <option value="">— None —</option>
+                    {% for sp in staff_profiles %}
+                    <option value="{{ sp.id }}">{{ sp.user.get_full_name|default:sp.user.username }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12">
+                <label style="font-size:0.75rem; color:#b0b0b0;">Notes</label>
+                <input type="text" id="edit-notes" class="form-control mt-1">
+            </div>
+            <div class="col-12">
+                <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                    <input type="checkbox" id="edit-active" style="width:16px; height:16px;">
+                    <span style="font-size:0.88rem; color:var(--pearl);">Active (include in reviews)</span>
+                </label>
+            </div>
+        </div>
+        <div id="edit-error" style="display:none; color:#c0395a; font-size:0.82rem; margin-bottom:0.5rem;"></div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-gold btn-sm" onclick="submitEdit()">Save Changes</button>
+            <button class="btn btn-sm" style="background:#333; color:#b0b0b0;" onclick="closeEdit()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function getCsrf() {
+    var el = document.querySelector('[name=csrfmiddlewaretoken]') || {};
+    if (el.value) return el.value;
+    var c = document.cookie.split('; ').find(function(r) { return r.startsWith('csrftoken='); });
+    return c ? c.split('=')[1] : '';
+}
+function postJSON(url, data) {
+    var fd = new FormData();
+    fd.append('csrfmiddlewaretoken', getCsrf());
+    Object.keys(data).forEach(function(k) { fd.append(k, data[k]); });
+    return fetch(url, { method: 'POST', body: fd });
+}
+
+function submitAdd() {
+    var desc   = document.getElementById('add-desc').value.trim();
+    var cat    = document.getElementById('add-category').value;
+    var amt    = document.getElementById('add-amount').value;
+    var period = document.getElementById('add-period').value;
+    var staff  = document.getElementById('add-staff').value;
+    var notes  = document.getElementById('add-notes').value.trim();
+    var errEl  = document.getElementById('add-error');
+    errEl.style.display = 'none';
+    if (!desc || !amt) { errEl.textContent = 'Description and amount are required.'; errEl.style.display = 'block'; return; }
+    postJSON("{% url 'recurring_expense_add' %}", { description: desc, category: cat, amount: amt, period: period, staff_profile: staff, notes: notes })
+        .then(function(r) { return r.json(); })
+        .then(function(d) { if (d.ok) location.reload(); else { errEl.textContent = d.error || 'Error.'; errEl.style.display = 'block'; } });
+}
+
+function openEdit(id, desc, cat, amount, period, staff, notes, active) {
+    document.getElementById('edit-id').value       = id;
+    document.getElementById('edit-desc').value     = desc;
+    document.getElementById('edit-category').value = cat;
+    document.getElementById('edit-amount').value   = amount;
+    document.getElementById('edit-period').value   = period;
+    document.getElementById('edit-staff').value    = staff || '';
+    document.getElementById('edit-notes').value    = notes;
+    document.getElementById('edit-active').checked = active;
+    document.getElementById('edit-error').style.display = 'none';
+    document.getElementById('edit-modal').style.display = 'flex';
+}
+function closeEdit() { document.getElementById('edit-modal').style.display = 'none'; }
+
+function submitEdit() {
+    var id     = document.getElementById('edit-id').value;
+    var desc   = document.getElementById('edit-desc').value.trim();
+    var cat    = document.getElementById('edit-category').value;
+    var amt    = document.getElementById('edit-amount').value;
+    var period = document.getElementById('edit-period').value;
+    var staff  = document.getElementById('edit-staff').value;
+    var notes  = document.getElementById('edit-notes').value.trim();
+    var active = document.getElementById('edit-active').checked ? '1' : '0';
+    var errEl  = document.getElementById('edit-error');
+    errEl.style.display = 'none';
+    postJSON("/analytics/recurring/" + id + "/edit/", { description: desc, category: cat, amount: amt, period: period, staff_profile: staff, notes: notes, is_active: active })
+        .then(function(r) { return r.json(); })
+        .then(function(d) { if (d.ok) location.reload(); else { errEl.textContent = d.error || 'Error.'; errEl.style.display = 'block'; } });
+}
+
+function deleteExpense(id, name) {
+    if (!confirm('Delete "' + name + '"? This will not affect already-posted expense records.')) return;
+    postJSON("/analytics/recurring/" + id + "/delete/", {})
+        .then(function(r) { return r.json(); })
+        .then(function(d) { if (d.ok) location.reload(); });
+}
+</script>
+{% endblock %}

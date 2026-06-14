@@ -148,6 +148,14 @@ from core.analytics_views import (
     revenue_target_settings,
     revenue_target_progress,
 )
+from core.recurring_expense_views import (
+    recurring_expense_list,
+    recurring_expense_add,
+    recurring_expense_edit,
+    recurring_expense_delete,
+    recurring_expense_review,
+    recurring_expense_confirm,
+)
 from core.onboarding_views import mark_section_seen
 from core.restricted_items_views import (
     request_sale_approval, pending_approvals,
@@ -402,6 +410,13 @@ urlpatterns = [
         expense_delete,
         name="expense_delete",
     ),
+    # ── Recurring Expenses ──
+    path("analytics/recurring/", recurring_expense_list, name="recurring_expense_list"),
+    path("analytics/recurring/add/", recurring_expense_add, name="recurring_expense_add"),
+    path("analytics/recurring/<int:expense_id>/edit/", recurring_expense_edit, name="recurring_expense_edit"),
+    path("analytics/recurring/<int:expense_id>/delete/", recurring_expense_delete, name="recurring_expense_delete"),
+    path("analytics/recurring/review/", recurring_expense_review, name="recurring_expense_review"),
+    path("analytics/recurring/confirm/", recurring_expense_confirm, name="recurring_expense_confirm"),
     # ── Capital Investments ──
     path("analytics/capital/", capital_investment_list, name="capital_investment_list"),
     path(

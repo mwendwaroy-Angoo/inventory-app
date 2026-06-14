@@ -159,6 +159,23 @@ def home(request):
                 context['items_missing_cost_price'] = []
                 context['missing_cost_price_count'] = 0
 
+            # Recurring expense review nudge (owner only, once per period)
+            if user_profile.is_owner:
+                try:
+                    from .models import RecurringExpense as _RE
+                    today_d = timezone.localdate()
+                    _review_date = business.last_expense_review_date
+                    _has_recurring = _RE.objects.filter(business=business, is_active=True).exists()
+                    _due = False
+                    if _has_recurring:
+                        month_start = today_d.replace(day=1)
+                        _due = (not _review_date) or (_review_date < month_start)
+                    context['expense_review_due'] = _due
+                except Exception:
+                    context['expense_review_due'] = False
+            else:
+                context['expense_review_due'] = False
+
             # Revenue targets progress for dashboard widget
             try:
                 from core.models import RevenueTarget

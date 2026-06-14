@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Expenses Confirmed — Duka Mwecheche{% endblock %}
+
+{% block content %}
+
+<div style="max-width:480px; margin:3rem auto; text-align:center;">
+    <div style="font-size:3rem; margin-bottom:1rem;">✅</div>
+    <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin-bottom:0.5rem;">
+        Expenses Confirmed
+    </h4>
+    <p style="color:#b0b0b0; font-size:0.95rem;">
+        {{ expense_count }} recurring expense{{ expense_count|pluralize }} confirmed for <strong style="color:var(--pearl);">{{ period_label }}</strong>.
+    </p>
+    {% if created_count %}
+    <p style="color:#81c784; font-size:0.88rem;">
+        {{ created_count }} new record{{ created_count|pluralize }} posted to your expense register —
+        total <strong>KES {{ total_kes|floatformat:0 }}</strong>.
+    </p>
+    {% else %}
+    <p style="color:#b0b0b0; font-size:0.88rem;">
+        All expenses were already posted for this period. Total: <strong style="color:var(--pearl);">KES {{ total_kes|floatformat:0 }}</strong>.
+    </p>
+    {% endif %}
+    <p style="color:#555; font-size:0.82rem; margin-top:0.5rem;">
+        An SMS and email confirmation has been sent to the business contact.
+    </p>
+    <div class="d-flex gap-3 justify-content-center mt-4">
+        <a href="{% url 'expense_list' %}" class="btn btn-gold btn-sm">View Expense Register</a>
+        <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">Dashboard</a>
+    </div>
+</div>
+
+{% endblock %}
