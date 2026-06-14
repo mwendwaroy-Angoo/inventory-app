@@ -227,6 +227,53 @@
 </div>
 {% endif %}
 
+<!-- Target assessment -->
+<div class="rc-card">
+    <div class="rc-card-header">🎯 Target Assessment</div>
+    <div style="padding:0;">
+        <div class="info-row">
+            <span class="info-label">Set target</span>
+            <span class="info-val">KES {{ target|floatformat:0 }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Revenue collected</span>
+            <span class="info-val" style="color:var(--gold); font-weight:600;">KES {{ revenue|floatformat:0 }}</span>
+        </div>
+        {% if revenue >= target %}
+        <div class="info-row" style="background:rgba(76,175,80,0.05);">
+            <span class="info-label">Result</span>
+            <span class="info-val" style="color:#81c784; font-weight:600;">
+                ✅ Target met — {{ pct_achieved|floatformat:0 }}% achieved
+            </span>
+        </div>
+        {% else %}
+        {% with dummy=0 %}
+        <div class="info-row" style="background:rgba(192,57,90,0.04);">
+            <span class="info-label">Shortfall</span>
+            <span class="info-val" style="color:var(--raspberry); font-weight:600;">
+                KES {{ shortfall|floatformat:0 }} missed
+                <span style="font-size:0.78rem; color:#b0b0b0; font-weight:400; margin-left:0.4rem;">
+                    ({{ pct_achieved|floatformat:0 }}% of target achieved)
+                </span>
+            </span>
+        </div>
+        {% endwith %}
+        {% if preset_rates %}
+        <div style="padding:0.6rem 1.25rem; border-top:1px solid #1e1e1e;">
+            <div style="font-size:0.75rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.04em;">To bridge the KES {{ shortfall|floatformat:0 }} shortfall you would have needed:</div>
+            {% for p in preset_rates %}
+            <div style="font-size:0.82rem; color:#b0b0b0; margin-bottom:3px;">
+                <strong style="color:#f0ece4;">{{ p.additional_needed }}</strong>
+                more {{ p.label }}
+                <span style="color:#555;">(@ KES{{ p.price|floatformat:0 }} each)</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+</div>
+
 <!-- Shift breakdown -->
 <div class="rc-card">
     <div class="rc-card-header">👷 Shift-by-Shift Breakdown</div>

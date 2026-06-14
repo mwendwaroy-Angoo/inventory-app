@@ -1137,13 +1137,23 @@ def keg_barrel_detail(request, barrel_id):
                 'rate':         rate,
             })
 
+    shortfall   = max(0.0, target - revenue)
+    pct_achieved = (revenue / target * 100) if target else 0.0
+
     if preset_rates:
         max_rate = max(p['rate'] for p in preset_rates)
         min_rate = min(p['rate'] for p in preset_rates)
-        theoretical_gross_max    = round(net_vol_ml * max_rate)
+        theoretical_gross_max     = round(net_vol_ml * max_rate)
         theoretical_realistic_max = round(net_vol_ml * max_rate * FOAM_FACTOR)
         theoretical_realistic_min = round(net_vol_ml * min_rate * FOAM_FACTOR)
         target_is_unrealistic = target > theoretical_gross_max
+        # How many additional servings of each type to close the shortfall
+        if shortfall > 0:
+            for p in preset_rates:
+                p['additional_needed'] = int(shortfall / p['price']) + 1
+        else:
+            for p in preset_rates:
+                p['additional_needed'] = 0
     else:
         theoretical_gross_max = theoretical_realistic_max = theoretical_realistic_min = None
         target_is_unrealistic = False
@@ -1272,4 +1282,6 @@ def keg_barrel_detail(request, barrel_id):
         'theoretical_realistic_max':  theoretical_realistic_max,
         'theoretical_realistic_min':  theoretical_realistic_min,
         'target_is_unrealistic':      target_is_unrealistic,
+        'shortfall':                  shortfall,
+        'pct_achieved':               pct_achieved,
     })
