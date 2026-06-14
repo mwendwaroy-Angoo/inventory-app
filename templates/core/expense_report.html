@@ -183,7 +183,7 @@
     {% for f in flags %}
     <div class="flag-card flag-{{ f.type }}">
         <span class="flag-icon">{{ f.icon }}</span>
-        <span class="flag-msg">{{ f.msg }}</span>
+        <span class="flag-msg">{{ f.msg|safe }}</span>
     </div>
     {% endfor %}
 </div>
@@ -273,6 +273,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 (function () {
     const monthLabels   = {{ month_labels_json|safe }};
