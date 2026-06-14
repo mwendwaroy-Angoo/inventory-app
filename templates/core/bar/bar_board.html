@@ -1411,10 +1411,11 @@
           typeBadge = '<span class="keg-type-badge ' + tClass + '">' + tLabel + '</span>';
         }
 
-        // ── Cup panel ───────────────────────────────────────
+        // ── Cup / jug panel ─────────────────────────────────
         var cups300 = kg.cups_300_bought || 0;
         var cups500 = kg.cups_500_bought || 0;
         var cupsUsed = kg.cups_used || 0;
+        var jugsUsed = kg.jugs_used || 0;
         var cupPanel = '';
         if (cups300 > 0 || cups500 > 0) {
           var rem300 = Math.max(0, cups300 - cupsUsed);
@@ -1422,13 +1423,18 @@
           var cupParts = ['🥤'];
           if (cups300 > 0) cupParts.push('<span class="' + rem300Class + '">' + rem300 + '/' + cups300 + ' 300ml</span>');
           if (cups500 > 0) cupParts.push('<span>' + cups500 + ' 500ml</span>');
+          if (jugsUsed > 0) cupParts.push('<span style="color:#c9a84c;">🫙 ' + jugsUsed + ' jug' + (jugsUsed !== 1 ? 's' : '') + '</span>');
           if (QS_IS_OWNER) {
             cupParts.push('<button class="cup-add-btn" onclick="event.stopPropagation();window.openAddCupsModal(' + kg.tapped_barrel_id + ')">+</button>');
           }
           cupPanel = '<div class="cup-panel">' + cupParts.join(' ') + '</div>';
         } else if (QS_IS_OWNER) {
+          var jugStr = jugsUsed > 0 ? ' · <span style="color:#c9a84c;">🫙 ' + jugsUsed + ' jugs</span>' : '';
           cupPanel = '<div class="cup-panel"><span style="color:#555;">🥤 Vikombe havijawekwa</span>'
+            + jugStr
             + '<button class="cup-add-btn" onclick="event.stopPropagation();window.openAddCupsModal(' + kg.tapped_barrel_id + ')">+ Vikombe</button></div>';
+        } else if (jugsUsed > 0) {
+          cupPanel = '<div class="cup-panel"><span style="color:#c9a84c;">🫙 ' + jugsUsed + ' jug' + (jugsUsed !== 1 ? 's' : '') + ' poured</span></div>';
         }
 
         html +=

@@ -578,7 +578,8 @@
              data-balance="{{ item.balance }}"
              data-unit="{{ item.unit }}"
              data-store="{{ item.store_id }}"
-             data-is-produce="{{ item.is_produce|yesno:'true,false' }}">
+             data-is-produce="{{ item.is_produce|yesno:'true,false' }}"
+             data-has-presets="{{ item.has_presets|yesno:'true,false' }}">
             <div class="qs-item-name">{{ item.description }}</div>
             <div class="qs-item-price">
                 {% if item.selling_price %}
@@ -915,17 +916,18 @@
     // window.handleItemClick — global for debuggability; called from the delegated listener below
     window.handleItemClick = function(itemEl) {
         var isProduce   = itemEl.dataset.isProduce === 'true';
+        var hasPresets  = itemEl.dataset.hasPresets === 'true';
         var itemId      = itemEl.dataset.id;
         var itemName    = itemEl.dataset.name;
         var itemPrice   = parseFloat(itemEl.dataset.price) || 0;
         var itemBalance = parseFloat(itemEl.dataset.balance) || 0;
         var itemUnit    = itemEl.dataset.unit;
 
-        if (isProduce) {
+        if (isProduce || hasPresets) {
             fetch('/stock/item/' + itemId + '/presets/')
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
-                    if (data.is_produce && data.presets.length > 0) {
+                    if (data.presets && data.presets.length > 0) {
                         window.showProduceModal(itemId, itemName, data.presets, data.balance, itemUnit);
                     } else {
                         openQtyModal(itemId, itemName, itemPrice, itemBalance, itemUnit);

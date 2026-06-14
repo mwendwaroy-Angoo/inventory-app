@@ -445,19 +445,20 @@
                 </div>
 
                 <div style="background:rgba(255,255,255,0.02); border:1px solid #2a2a2a; border-radius:8px; overflow:hidden; margin-bottom:0.75rem;">
-                    <div style="display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0; padding:0.5rem 0.75rem; border-bottom:1px solid #2a2a2a; font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em;">
+                    <div style="display:grid; grid-template-columns:2fr 1fr 1fr auto auto; gap:0; padding:0.5rem 0.75rem; border-bottom:1px solid #2a2a2a; font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em;">
                         <span>{% trans 'Portion' %}</span>
                         <span>{% trans 'Customer Pays (KES)' %}</span>
                         <div>
                             <div>{% trans 'Stock Used' %}</div>
                             <div style="color:#b0b0b0; font-size:0.68rem; text-transform:none; letter-spacing:0;">({% trans 'auto-filled — or choose Custom to set manually' %})</div>
                         </div>
+                        <span title="Is this a jug? Tracks jugs separately from cups." style="cursor:help; font-size:.78rem;">🫙</span>
                         <span></span>
                     </div>
                     <div id="presetRows">
                         {% if form.instance.pk %}
                             {% for preset in form.instance.portion_presets.all %}
-                            <div class="preset-row" style="display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;">
+                            <div class="preset-row" style="display:grid; grid-template-columns:2fr 1fr 1fr auto auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;">
                                 <input type="hidden" name="preset_id" value="{{ preset.id }}">
                                 <select name="preset_label" class="form-select form-select-sm"
                                         onchange="onPresetLabelChange(this)"
@@ -517,6 +518,10 @@
                                        class="form-control form-control-sm" step="0.01" min="0" placeholder="40">
                                 <input type="number" name="preset_qty_consumed" value="{{ preset.quantity_consumed }}"
                                        class="form-control form-control-sm" step="0.0001" min="0" placeholder="0.25">
+                                <input type="checkbox" name="preset_is_jug" value="{{ forloop.counter0 }}"
+                                       title="Jug serving — counts in jugs_dispensed"
+                                       style="width:16px; height:16px; cursor:pointer; accent-color:#c9a84c;"
+                                       {% if preset.is_jug %}checked{% endif %}>
                                 <button type="button" onclick="this.closest('.preset-row').remove()"
                                         style="background:none; border:none; color:#f87171; font-size:1.1rem; cursor:pointer; padding:0.25rem;">✕</button>
                             </div>
@@ -818,7 +823,37 @@
                     qtyInput.readOnly = false;
                     qtyInput.style.opacity = '1';
                 }
+                // Auto-fill price when selecting a whole-unit preset (qty = 1) and price is blank
+                if (!isInit && PRESET_AUTOFILL[val] !== undefined && parseFloat(PRESET_AUTOFILL[val]) === 1.0) {
+                    var priceInput = row.querySelector('input[name="preset_price"]');
+                    if (priceInput && (!priceInput.value || parseFloat(priceInput.value) === 0)) {
+                        var spEl = document.getElementById('id_selling_price');
+                        if (spEl && parseFloat(spEl.value) > 0) {
+                            priceInput.value = parseFloat(spEl.value).toFixed(2);
+                        }
+                    }
+                }
             }
+
+            // When selling_price changes, push it into any blank full-unit preset prices
+            (function() {
+                var spEl = document.getElementById('id_selling_price');
+                if (!spEl) return;
+                spEl.addEventListener('input', function() {
+                    var spVal = parseFloat(this.value);
+                    if (!spVal || spVal <= 0) return;
+                    document.querySelectorAll('#presetRows .preset-row').forEach(function(row) {
+                        var labelEl = row.querySelector('select[name="preset_label"]');
+                        if (!labelEl) return;
+                        var autoQty = PRESET_AUTOFILL[labelEl.value];
+                        if (autoQty === undefined || parseFloat(autoQty) !== 1.0) return;
+                        var priceInput = row.querySelector('input[name="preset_price"]');
+                        if (priceInput && (!priceInput.value || parseFloat(priceInput.value) === 0)) {
+                            priceInput.value = spVal.toFixed(2);
+                        }
+                    });
+                });
+            })();
 
             // On page load, pre-select label for existing presets (edit form)
             document.querySelectorAll('.preset-row select[name="preset_label"]').forEach(function(sel) {
@@ -999,18 +1034,31 @@
             document.getElementById('addPresetBtn').addEventListener('click', function() {
                 var empty = document.getElementById('presetEmptyMsg');
                 if (empty) empty.remove();
+                var rowsContainer = document.getElementById('presetRows');
+                var rowIndex = rowsContainer.querySelectorAll('.preset-row').length;
                 var row = document.createElement('div');
                 row.className = 'preset-row';
-                row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
+                row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr auto auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
                 row.innerHTML = '<input type="hidden" name="preset_id" value="">' +
                     buildLabelSelectHtml() +
                     '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="40">' +
                     '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" placeholder="—" readonly style="opacity:0.55;">' +
+                    '<input type="checkbox" name="preset_is_jug" value="' + rowIndex + '" title="Jug serving" style="width:16px;height:16px;cursor:pointer;accent-color:#c9a84c;">' +
                     '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
-                document.getElementById('presetRows').appendChild(row);
+                rowsContainer.appendChild(row);
                 // Apply current filter to the newly added row's dropdown
                 var kegCb = document.getElementById('is_keg');
                 if (window._applyBarPresetFilter) window._applyBarPresetFilter(!!(kegCb && kegCb.checked));
+            });
+
+            // On submit, normalise preset_is_jug checkbox values to current DOM positions
+            // so the view's position-based lookup works even after rows are deleted/added.
+            document.querySelector('form').addEventListener('submit', function() {
+                var rows = document.querySelectorAll('#presetRows .preset-row');
+                rows.forEach(function(row, idx) {
+                    var cb = row.querySelector('input[name="preset_is_jug"]');
+                    if (cb) cb.value = idx;
+                });
             });
             </script>
 

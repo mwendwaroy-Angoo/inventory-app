@@ -1307,6 +1307,8 @@ def add_item(request):
                 preset_prices  = request.POST.getlist('preset_price')
                 preset_qty     = request.POST.getlist('preset_qty_consumed')
                 preset_ids     = request.POST.getlist('preset_id')
+                # preset_is_jug contains position indices (0-based) of checked jug rows
+                jug_positions  = set(int(v) for v in request.POST.getlist('preset_is_jug') if v.isdigit())
 
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
                 item.portion_presets.exclude(id__in=submitted_ids).delete()
@@ -1330,15 +1332,17 @@ def add_item(request):
                     except (ValueError, InvalidOperation, IndexError):
                         qty_c = Decimal('0')
                     order = i
+                    is_jug = i in jug_positions
                     pid = preset_ids[i].strip() if i < len(preset_ids) else ''
                     if pid:
                         ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
-                            label=label, price=price, quantity_consumed=qty_c, display_order=order
+                            label=label, price=price, quantity_consumed=qty_c,
+                            display_order=order, is_jug=is_jug
                         )
                     else:
                         ItemPortionPreset.objects.create(
                             item=item, label=label, price=price,
-                            quantity_consumed=qty_c, display_order=order
+                            quantity_consumed=qty_c, display_order=order, is_jug=is_jug
                         )
                 # ─────────────────────────────────────────────────────────────
 
@@ -1419,6 +1423,8 @@ def edit_item(request, item_id):
                 preset_prices  = request.POST.getlist('preset_price')
                 preset_qty     = request.POST.getlist('preset_qty_consumed')
                 preset_ids     = request.POST.getlist('preset_id')
+                # preset_is_jug contains position indices (0-based) of checked jug rows
+                jug_positions  = set(int(v) for v in request.POST.getlist('preset_is_jug') if v.isdigit())
 
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
                 item.portion_presets.exclude(id__in=submitted_ids).delete()
@@ -1442,15 +1448,17 @@ def edit_item(request, item_id):
                     except (ValueError, InvalidOperation, IndexError):
                         qty_c = Decimal('0')
                     order = i
+                    is_jug = i in jug_positions
                     pid = preset_ids[i].strip() if i < len(preset_ids) else ''
                     if pid:
                         ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
-                            label=label, price=price, quantity_consumed=qty_c, display_order=order
+                            label=label, price=price, quantity_consumed=qty_c,
+                            display_order=order, is_jug=is_jug
                         )
                     else:
                         ItemPortionPreset.objects.create(
                             item=item, label=label, price=price,
-                            quantity_consumed=qty_c, display_order=order
+                            quantity_consumed=qty_c, display_order=order, is_jug=is_jug
                         )
                 # ─────────────────────────────────────────────────────────────
 
@@ -2024,6 +2032,7 @@ def quick_sell(request):
         .exclude(is_produce=True, produce_mode="BUNCH")  # greens render in their own board
         .exclude(is_keg=True)  # keg items render in the bar board
         .select_related("store")
+        .prefetch_related("portion_presets")
         .order_by("description")
     )
 
@@ -2054,6 +2063,7 @@ def quick_sell(request):
                 "store_id": item.store_id,
                 "reorder_level": item.reorder_level,
                 "is_produce": item.is_produce,
+                "has_presets": len(item.portion_presets.all()) > 0,
             }
         )
 
@@ -2101,21 +2111,22 @@ def next_material_no(request):
 
 @login_required
 def item_portion_presets(request, item_id):
-    """AJAX — returns portion presets for a produce item. Called by Quick Sell and Add Transaction."""
+    """AJAX — returns portion presets for any item with presets. Called by Quick Sell and Add Transaction."""
     user_profile = get_user_profile(request)
     item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
-    if not item.is_produce:
-        return JsonResponse({'is_produce': False, 'presets': []})
 
     presets = list(item.portion_presets.values(
         'id', 'label', 'price', 'quantity_consumed', 'display_order'
-    ))
+    ).order_by('display_order'))
+    if not item.is_produce and not presets:
+        return JsonResponse({'is_produce': False, 'presets': []})
+
     for p in presets:
         p['price'] = float(p['price'])
         p['quantity_consumed'] = float(p['quantity_consumed'])
 
     return JsonResponse({
-        'is_produce': True,
+        'is_produce': item.is_produce,
         'item_name': item.description,
         'unit': item.unit,
         'presets': presets,

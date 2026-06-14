@@ -1331,6 +1331,10 @@ class ItemPortionPreset(models.Model):
         default=0,
         help_text='Lower numbers appear first. Use to sort presets by ascending price.'
     )
+    is_jug = models.BooleanField(
+        default=False,
+        help_text='Tick for jug servings — tracks jugs_dispensed on the barrel separately from cups.',
+    )
 
     class Meta:
         ordering = ['display_order', 'price']
@@ -1591,7 +1595,11 @@ class KegBarrel(models.Model):
     )
     cups_dispensed = models.PositiveIntegerField(
         default=0,
-        help_text='Running count of servings (cups) poured. Incremented by record_sale qty.',
+        help_text='Running count of cup servings poured. Incremented by record_sale when preset.is_jug is False.',
+    )
+    jugs_dispensed = models.PositiveIntegerField(
+        default=0,
+        help_text='Running count of jug servings poured. Incremented by record_sale when preset.is_jug is True.',
     )
     status      = models.CharField(max_length=10, choices=STATUS_CHOICES, default='SEALED')
     received_on = models.DateField(default=timezone.localdate)
@@ -1691,8 +1699,12 @@ class KegBarrel(models.Model):
 
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
         self.volume_dispensed_ml = (self.volume_dispensed_ml or Decimal('0')) + ml
-        self.cups_dispensed = (self.cups_dispensed or 0) + int(qty)
-        update_fields = ['revenue_collected', 'volume_dispensed_ml', 'cups_dispensed']
+        if getattr(preset, 'is_jug', False):
+            self.jugs_dispensed = (self.jugs_dispensed or 0) + int(qty)
+            update_fields = ['revenue_collected', 'volume_dispensed_ml', 'jugs_dispensed']
+        else:
+            self.cups_dispensed = (self.cups_dispensed or 0) + int(qty)
+            update_fields = ['revenue_collected', 'volume_dispensed_ml', 'cups_dispensed']
 
         if (self.remaining_envelope() <= 0
                 and self.latest_weight() <= float(self.tare_weight_kg) + 0.5

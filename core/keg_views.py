@@ -73,10 +73,11 @@ def bar_board_api(request):
                 else:
                     cup_500_bought += log.qty
                     cup_500_cost   += float(log.total_cost)
-            # cups_dispensed incremented by record_sale qty — accurate even for batch sells
             cups_used = primary.cups_dispensed or 0
+            jugs_used = primary.jugs_dispensed or 0
         else:
             cups_used = 0
+            jugs_used = 0
 
         kegs.append({
             'item_id': it.id,
@@ -105,12 +106,13 @@ def bar_board_api(request):
             'next_sealed_target':   float(next_sealed.target_revenue) if next_sealed else 0.0,
             'next_sealed_gross':    float(next_sealed.gross_weight_kg) if next_sealed else 0.0,
             'next_sealed_tare':     float(next_sealed.tare_weight_kg) if next_sealed else 0.0,
-            # Cup tracking
+            # Cup / jug tracking
             'cups_300_bought': cup_300_bought,
             'cups_500_bought': cup_500_bought,
             'cups_300_cost':   round(cup_300_cost, 2),
             'cups_500_cost':   round(cup_500_cost, 2),
             'cups_used':       cups_used,
+            'jugs_used':       jugs_used,
         })
 
     open_tabs_qs = BarTab.objects.filter(business=business, status='OPEN')
@@ -774,11 +776,13 @@ def add_cups(request, barrel_id):
     cups_300 = sum(l.qty for l in logs if l.cup_size == '300')
     cups_500 = sum(l.qty for l in logs if l.cup_size == '500')
     cups_used = barrel.cups_dispensed or 0
+    jugs_used = barrel.jugs_dispensed or 0
 
     return JsonResponse({
         'ok': True,
         'cups_300_bought': cups_300,
         'cups_500_bought': cups_500,
         'cups_used': cups_used,
+        'jugs_used': jugs_used,
         'total_cost': float(total_cost),
     })
