@@ -1,0 +1,363 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Expense Intelligence — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .intel-card {
+        background: var(--onyx-card);
+        border: 1px solid #2a2a2a;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .intel-card-title {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1.1rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .stat-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .stat-box {
+        flex: 1;
+        min-width: 160px;
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+    }
+    .stat-box .label {
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #b0b0b0;
+        margin-bottom: 0.3rem;
+    }
+    .stat-box .value {
+        font-family: 'Playfair Display', serif;
+        font-size: 1.5rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .flag-card {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        margin-bottom: 0.6rem;
+        font-size: 0.88rem;
+    }
+    .flag-warning { background: rgba(255,183,77,0.10); border-left: 3px solid #ffb74d; }
+    .flag-danger  { background: rgba(239,83,80,0.10);  border-left: 3px solid #ef5350; }
+    .flag-info    { background: rgba(79,195,247,0.10); border-left: 3px solid #4fc3f7; }
+    .flag-success { background: rgba(129,199,132,0.10); border-left: 3px solid #81c784; }
+    .flag-icon { font-size: 1.1rem; line-height: 1.4; flex-shrink: 0; }
+    .flag-msg { color: var(--pearl); line-height: 1.5; }
+
+    .line-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .line-table th {
+        background: #1a1a1a;
+        color: #b0b0b0;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 0.5rem 0.6rem;
+        white-space: nowrap;
+        border-bottom: 1px solid #333;
+        text-align: right;
+    }
+    .line-table th.th-desc { text-align: left; min-width: 160px; }
+    .line-table th.th-cat  { text-align: left; min-width: 120px; }
+    .line-table td {
+        padding: 0.45rem 0.6rem;
+        border-bottom: 1px solid #1e1e1e;
+        white-space: nowrap;
+        text-align: right;
+        color: #b0b0b0;
+    }
+    .line-table td.td-desc { text-align: left; color: var(--pearl); font-weight: 500; white-space: normal; min-width: 160px; }
+    .line-table td.td-cat  { text-align: left; font-size: 0.75rem; color: #888; }
+    .line-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .line-table td.nonzero { color: var(--pearl); }
+    .line-table tfoot td {
+        font-weight: 700;
+        color: var(--gold);
+        border-top: 1px solid #333;
+        background: #1a1a1a;
+    }
+    .trend-up   { color: #ef5350; font-size: 0.78rem; }
+    .trend-down { color: #81c784; font-size: 0.78rem; }
+    .trend-flat { color: #888; font-size: 0.78rem; }
+    .impact-badge {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.72rem;
+        font-weight: 600;
+    }
+    .impact-high   { background: rgba(239,83,80,0.15); color: #ef5350; }
+    .impact-medium { background: rgba(255,183,77,0.15); color: #ffb74d; }
+    .impact-low    { background: rgba(129,199,132,0.15); color: #81c784; }
+    .chart-wrap { position: relative; height: 260px; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'analytics' %}" style="color:var(--gold)">Analytics</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'expense_list' %}" style="color:var(--gold)">Expenses</a>
+    <span class="mx-1">›</span>
+    <span>Intelligence</span>
+</nav>
+
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+    <div>
+        <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">📊 Expense Intelligence</h4>
+        <div style="font-size:0.8rem; color:#b0b0b0; margin-top:2px;">
+            12-month view · {{ months.0|date:"M Y" }} → {{ today|date:"M Y" }}
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'recurring_expense_list' %}" class="btn btn-secondary btn-sm">🔁 Recurring Setup</a>
+        <a href="{% url 'expense_list' %}" class="btn btn-secondary btn-sm">← Expense Register</a>
+    </div>
+</div>
+
+<!-- Summary stats -->
+<div class="stat-row">
+    <div class="stat-box" style="border-top:3px solid var(--raspberry);">
+        <div class="label">12-Month Expenses</div>
+        <div class="value" style="color:var(--raspberry);">KES {{ total_12m_expense|floatformat:0 }}</div>
+    </div>
+    <div class="stat-box" style="border-top:3px solid #81c784;">
+        <div class="label">12-Month Revenue</div>
+        <div class="value" style="color:#81c784;">KES {{ total_12m_revenue|floatformat:0 }}</div>
+    </div>
+    <div class="stat-box" style="border-top:3px solid {% if overall_expense_pct > 60 %}#ef5350{% elif overall_expense_pct > 40 %}#ffb74d{% else %}var(--gold){% endif %};">
+        <div class="label">Expense / Revenue Ratio</div>
+        <div class="value" style="color:{% if overall_expense_pct > 60 %}#ef5350{% elif overall_expense_pct > 40 %}#ffb74d{% else %}var(--gold){% endif %};">
+            {{ overall_expense_pct|floatformat:1 }}%
+        </div>
+    </div>
+    <div class="stat-box" style="border-top:3px solid #4fc3f7;">
+        <div class="label">Expense Lines Tracked</div>
+        <div class="value" style="color:#4fc3f7;">{{ lines|length }}</div>
+    </div>
+</div>
+
+<!-- Revenue vs Expenses trend -->
+<div class="intel-card">
+    <div class="intel-card-title">📉 Revenue vs Expenses — Monthly Trend</div>
+    <div class="chart-wrap">
+        <canvas id="trendChart"></canvas>
+    </div>
+</div>
+
+<!-- Category stacked bar -->
+<div class="intel-card">
+    <div class="intel-card-title">📊 Expense Breakdown by Category</div>
+    <div class="chart-wrap">
+        <canvas id="catChart"></canvas>
+    </div>
+</div>
+
+<!-- Flags / recommendations -->
+{% if flags %}
+<div class="intel-card">
+    <div class="intel-card-title">💡 Insights & Recommendations</div>
+    {% for f in flags %}
+    <div class="flag-card flag-{{ f.type }}">
+        <span class="flag-icon">{{ f.icon }}</span>
+        <span class="flag-msg">{{ f.msg }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Per-line expense history -->
+{% if lines %}
+<div class="intel-card">
+    <div class="intel-card-title">📋 Expense Line History — Month by Month</div>
+    <div class="table-responsive">
+        <table class="line-table">
+            <thead>
+                <tr>
+                    <th class="th-desc">Description</th>
+                    <th class="th-cat">Category</th>
+                    {% for m in months %}
+                    <th>{{ m|date:"M" }}<br><span style="font-weight:400; color:#666;">{{ m|date:"y" }}</span></th>
+                    {% endfor %}
+                    <th style="color:var(--gold);">12m Total</th>
+                    <th>Avg % Rev</th>
+                    <th>Trend</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in lines %}
+                <tr>
+                    <td class="td-desc">{{ line.description }}</td>
+                    <td class="td-cat">{{ line.category }}</td>
+                    {% for amt in line.month_totals %}
+                    <td {% if amt > 0 %}class="nonzero"{% endif %}>
+                        {% if amt > 0 %}{{ amt|floatformat:0 }}{% else %}<span style="color:#333;">—</span>{% endif %}
+                    </td>
+                    {% endfor %}
+                    <td style="color:var(--gold); font-weight:700;">{{ line.grand_total|floatformat:0 }}</td>
+                    <td>
+                        {% if line.avg_impact_pct >= 30 %}
+                        <span class="impact-badge impact-high">{{ line.avg_impact_pct }}%</span>
+                        {% elif line.avg_impact_pct >= 10 %}
+                        <span class="impact-badge impact-medium">{{ line.avg_impact_pct }}%</span>
+                        {% elif line.avg_impact_pct > 0 %}
+                        <span class="impact-badge impact-low">{{ line.avg_impact_pct }}%</span>
+                        {% else %}
+                        <span style="color:#444;">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if line.trend_pct is None %}
+                        <span class="trend-flat">🆕 New</span>
+                        {% elif line.trend_pct >= 20 %}
+                        <span class="trend-up">▲ {{ line.trend_pct|floatformat:0 }}%</span>
+                        {% elif line.trend_pct <= -10 %}
+                        <span class="trend-down">▼ {{ line.trend_pct|floatformat:0 }}%</span>
+                        {% else %}
+                        <span class="trend-flat">→ {{ line.trend_pct|floatformat:0 }}%</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td class="td-desc" style="color:var(--gold);">Total</td>
+                    <td></td>
+                    {% for rev in expense_series_json %}{% endfor %}
+                    {% for m in months %}
+                    <td></td>
+                    {% endfor %}
+                    <td>KES {{ total_12m_expense|floatformat:0 }}</td>
+                    <td></td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    <p style="font-size:0.75rem; color:#555; margin-top:0.75rem;">
+        Trend = last 3 months avg vs previous 3 months avg.
+        Avg % Rev = average share of that month's revenue consumed by this expense.
+    </p>
+</div>
+{% else %}
+<div style="text-align:center; padding:3rem 0; color:#555;">
+    No expense data recorded in the last 12 months.
+    <br><a href="{% url 'expense_add' %}" style="color:var(--gold);">Add your first expense →</a>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const monthLabels   = {{ month_labels_json|safe }};
+    const revenueSeries = {{ revenue_series_json|safe }};
+    const expenseSeries = {{ expense_series_json|safe }};
+    const catDatasets   = {{ cat_datasets_json|safe }};
+
+    const gridColor = 'rgba(255,255,255,0.04)';
+    const baseOpts = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                labels: { color: '#b0b0b0', font: { size: 11 }, boxWidth: 12 },
+            },
+            tooltip: {
+                callbacks: {
+                    label: ctx => ' KES ' + ctx.parsed.y.toLocaleString(),
+                },
+            },
+        },
+        scales: {
+            x: {
+                ticks: { color: '#888', font: { size: 10 } },
+                grid:  { color: gridColor },
+            },
+            y: {
+                ticks: {
+                    color: '#888',
+                    font: { size: 10 },
+                    callback: v => 'KES ' + (v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v),
+                },
+                grid: { color: gridColor },
+            },
+        },
+    };
+
+    // Revenue vs Expenses line chart
+    new Chart(document.getElementById('trendChart'), {
+        type: 'line',
+        data: {
+            labels: monthLabels,
+            datasets: [
+                {
+                    label: 'Revenue',
+                    data: revenueSeries,
+                    borderColor: '#81c784',
+                    backgroundColor: 'rgba(129,199,132,0.08)',
+                    tension: 0.3,
+                    fill: true,
+                    pointRadius: 3,
+                },
+                {
+                    label: 'Total Expenses',
+                    data: expenseSeries,
+                    borderColor: '#c0395a',
+                    backgroundColor: 'rgba(192,57,90,0.08)',
+                    tension: 0.3,
+                    fill: true,
+                    pointRadius: 3,
+                },
+            ],
+        },
+        options: baseOpts,
+    });
+
+    // Category stacked bar chart
+    const catOpts = JSON.parse(JSON.stringify(baseOpts));
+    catOpts.scales.x.stacked = true;
+    catOpts.scales.y.stacked = true;
+    catOpts.plugins.tooltip = {
+        mode: 'index',
+        callbacks: {
+            label: ctx => ' ' + ctx.dataset.label + ': KES ' + ctx.parsed.y.toLocaleString(),
+        },
+    };
+
+    new Chart(document.getElementById('catChart'), {
+        type: 'bar',
+        data: {
+            labels: monthLabels,
+            datasets: catDatasets,
+        },
+        options: catOpts,
+    });
+})();
+</script>
+{% endblock %}

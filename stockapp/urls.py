@@ -140,6 +140,7 @@ from core.analytics_views import (
     expense_add,
     expense_edit,
     expense_delete,
+    expense_report,
     capital_investment_list,
     capital_investment_edit,
     capital_investment_delete,
@@ -400,6 +401,7 @@ urlpatterns = [
     # ── WhatsApp Bot ──
     path("whatsapp/webhook/", whatsapp_webhook, name="whatsapp_webhook"),
     # ── Business Expenses ──
+    path("analytics/expenses/report/", expense_report, name="expense_report"),
     path("analytics/expenses/", expense_list, name="expense_list"),
     path("analytics/expenses/add/", expense_add, name="expense_add"),
     path(

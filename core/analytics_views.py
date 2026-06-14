@@ -20,7 +20,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Sum, Count, Q, F, Avg
-from django.db.models.functions import TruncDate
+from django.db.models.functions import TruncDate, TruncMonth
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
@@ -1312,4 +1312,218 @@ def revenue_target_progress(request):
             'actual': round(actual_monthly, 2),
             'pct': pct(actual_monthly, target_monthly),
         },
+    })
+
+
+# ── Expense Intelligence (12-month trend + impact) ─────────────────────────
+
+@login_required
+@owner_required
+def expense_report(request):
+    """12-month expense intelligence — trends, per-line history, revenue impact, flags."""
+    business = get_user_profile(request).business
+    today = date.today()
+
+    # Build list of 12 month-start dates, oldest first
+    month_start = today.replace(day=1)
+    months = []
+    m = month_start
+    for _ in range(12):
+        months.append(m)
+        m = (m - timedelta(days=1)).replace(day=1)
+    months.reverse()
+    twelve_months_ago = months[0]
+
+    CATEGORY_LABELS = dict(BusinessExpense.CATEGORY_CHOICES)
+
+    # Monthly expense totals per category
+    monthly_cat_qs = (
+        BusinessExpense.objects
+        .filter(business=business, date__gte=twelve_months_ago)
+        .annotate(month=TruncMonth('date'))
+        .values('month', 'category')
+        .annotate(total=Sum('amount'))
+        .order_by('month', 'category')
+    )
+
+    cat_month_data = defaultdict(lambda: defaultdict(float))
+    monthly_expense_totals = defaultdict(float)
+    all_categories = set()
+
+    for row in monthly_cat_qs:
+        raw_m = row['month']
+        m = raw_m.date() if hasattr(raw_m, 'date') else raw_m
+        m = m.replace(day=1)
+        cat = row['category']
+        cat_month_data[cat][m] = float(row['total'])
+        monthly_expense_totals[m] += float(row['total'])
+        all_categories.add(cat)
+
+    # Monthly expense totals per description line
+    monthly_line_qs = (
+        BusinessExpense.objects
+        .filter(business=business, date__gte=twelve_months_ago)
+        .annotate(month=TruncMonth('date'))
+        .values('month', 'description', 'category')
+        .annotate(total=Sum('amount'))
+        .order_by('description', 'month')
+    )
+
+    line_data = {}
+    for row in monthly_line_qs:
+        raw_m = row['month']
+        m = raw_m.date() if hasattr(raw_m, 'date') else raw_m
+        m = m.replace(day=1)
+        desc = row['description']
+        if desc not in line_data:
+            line_data[desc] = {'category': row['category'], 'months': defaultdict(float)}
+        line_data[desc]['months'][m] = float(row['total'])
+
+    # Monthly revenue — iterate Issue transactions
+    monthly_revenue = defaultdict(float)
+    sales_qs = (
+        Transaction.objects
+        .filter(business=business, type='Issue', date__gte=twelve_months_ago)
+        .select_related('item', 'produce_bunch', 'keg_barrel')
+    )
+    for t in sales_qs.iterator(chunk_size=500):
+        monthly_revenue[t.date.replace(day=1)] += t.revenue()
+
+    # Chart series
+    month_labels = [m.strftime('%b %Y') for m in months]
+    revenue_series = [round(monthly_revenue.get(m, 0), 2) for m in months]
+    expense_series = [round(monthly_expense_totals.get(m, 0), 2) for m in months]
+
+    CATEGORY_COLORS = {
+        'rent':        '#c9a84c',
+        'labor':       '#81c784',
+        'electricity': '#4fc3f7',
+        'utilities':   '#29b6f6',
+        'transport':   '#ffb74d',
+        'marketing':   '#ce93d8',
+        'maintenance': '#a5d6a7',
+        'supplies':    '#80deea',
+        'tax':         '#ef5350',
+        'other':       '#9e9e9e',
+    }
+
+    categories_sorted = sorted(all_categories)
+    cat_datasets = [
+        {
+            'label': CATEGORY_LABELS.get(cat, cat),
+            'data': [round(cat_month_data[cat].get(m, 0), 2) for m in months],
+            'backgroundColor': CATEGORY_COLORS.get(cat, '#888'),
+        }
+        for cat in categories_sorted
+    ]
+
+    # Per-line table rows
+    lines = []
+    for desc, info in sorted(line_data.items()):
+        month_totals = [info['months'].get(m, 0.0) for m in months]
+        grand_total = sum(month_totals)
+
+        impacts = []
+        for i, m in enumerate(months):
+            rev = monthly_revenue.get(m, 0)
+            exp = month_totals[i]
+            if rev > 0 and exp > 0:
+                impacts.append(exp / rev * 100)
+        avg_impact_pct = round(sum(impacts) / len(impacts), 1) if impacts else 0.0
+
+        last3_avg = sum(month_totals[-3:]) / 3
+        prev3_avg = sum(month_totals[-6:-3]) / 3
+        if prev3_avg > 0 and last3_avg > 0:
+            trend_pct = round((last3_avg - prev3_avg) / prev3_avg * 100, 1)
+        elif last3_avg > 0 and prev3_avg == 0:
+            trend_pct = None  # new expense — no prior data
+        else:
+            trend_pct = 0.0
+
+        lines.append({
+            'description': desc,
+            'category': CATEGORY_LABELS.get(info['category'], info['category']),
+            'category_key': info['category'],
+            'month_totals': [round(v, 0) for v in month_totals],
+            'grand_total': round(grand_total, 0),
+            'avg_impact_pct': avg_impact_pct,
+            'trend_pct': trend_pct,
+        })
+
+    lines.sort(key=lambda x: x['grand_total'], reverse=True)
+
+    # Flags / recommendations
+    total_12m_revenue = sum(monthly_revenue.values())
+    total_12m_expense = sum(monthly_expense_totals.values())
+    overall_expense_pct = round(total_12m_expense / total_12m_revenue * 100, 1) if total_12m_revenue else 0.0
+
+    flags = []
+    for line in lines:
+        if line['trend_pct'] is None:
+            flags.append({
+                'type': 'info',
+                'icon': '🆕',
+                'msg': f"<strong>{line['description']}</strong> — new expense with no prior-period data to compare.",
+            })
+        elif line['trend_pct'] >= 20:
+            flags.append({
+                'type': 'warning',
+                'icon': '📈',
+                'msg': (
+                    f"<strong>{line['description']}</strong> increased "
+                    f"<strong>{line['trend_pct']:.0f}%</strong> in the last 3 months "
+                    f"vs the previous 3 months."
+                ),
+            })
+        if line['avg_impact_pct'] >= 30 and total_12m_revenue > 0:
+            flags.append({
+                'type': 'danger',
+                'icon': '⚠️',
+                'msg': (
+                    f"<strong>{line['description']}</strong> consumes "
+                    f"<strong>{line['avg_impact_pct']:.0f}%</strong> of monthly revenue on average. "
+                    f"Review whether this cost level is sustainable."
+                ),
+            })
+
+    labor_total = sum(cat_month_data.get('labor', {}).values())
+    if total_12m_revenue > 0 and labor_total / total_12m_revenue > 0.45:
+        flags.append({
+            'type': 'warning',
+            'icon': '👥',
+            'msg': (
+                f"Labor costs are <strong>{labor_total / total_12m_revenue * 100:.0f}%</strong> "
+                f"of 12-month revenue. Retail guideline is under 30%."
+            ),
+        })
+
+    if overall_expense_pct > 60 and total_12m_revenue > 0:
+        flags.append({
+            'type': 'danger',
+            'icon': '🔴',
+            'msg': (
+                f"Total expenses are <strong>{overall_expense_pct:.0f}%</strong> of 12-month revenue. "
+                f"This leaves very little room for profit — consider which costs can be reduced."
+            ),
+        })
+
+    if not flags:
+        flags.append({
+            'type': 'success',
+            'icon': '✅',
+            'msg': 'No major expense concerns. Costs are within healthy ranges.',
+        })
+
+    return render(request, 'core/expense_report.html', {
+        'month_labels_json':   json.dumps(month_labels),
+        'revenue_series_json': json.dumps(revenue_series),
+        'expense_series_json': json.dumps(expense_series),
+        'cat_datasets_json':   json.dumps(cat_datasets),
+        'lines':               lines,
+        'months':              months,
+        'flags':               flags,
+        'total_12m_expense':   round(total_12m_expense, 0),
+        'total_12m_revenue':   round(total_12m_revenue, 0),
+        'overall_expense_pct': overall_expense_pct,
+        'today':               today,
     })
