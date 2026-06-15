@@ -84,6 +84,18 @@
             {% csrf_token %}
 
             <div class="section-divider"><span>⭐ {% trans 'Required Fields' %}</span></div>
+
+            {% if catalog_json != '[]' %}
+            <div class="mb-3" id="catalogPickerWrap">
+                <label class="form-label" style="font-size:0.82rem; color:#b0b0b0;">
+                    📦 {% trans 'Start from catalog' %} <span style="font-weight:400; color:#555;">({% trans 'optional — auto-fills fields below' %})</span>
+                </label>
+                <select id="catalogPicker" style="width:100%;" class="form-control">
+                    <option value=""></option>
+                </select>
+            </div>
+            {% endif %}
+
             {% bootstrap_field form.description %}
             {% bootstrap_field form.store %}
 
@@ -1424,6 +1436,74 @@
             });
         })();
         </script>
+
+        {% if catalog_json != '[]' %}
+        <script>
+        (function () {
+            var CATALOG = {{ catalog_json|safe }};
+            if (!CATALOG.length) return;
+
+            var $picker = $('#catalogPicker');
+            if (!$picker.length) return;
+
+            // Build Select2 options from catalog
+            $picker.select2({
+                placeholder: 'Search catalog — keg, spirit, beer…',
+                allowClear: true,
+                theme: 'default',
+                data: CATALOG.map(function (item, idx) {
+                    return { id: idx, text: item.name, item: item };
+                }),
+            });
+
+            $picker.on('select2:select', function (e) {
+                var cat = e.params.data.item;
+                if (!cat) return;
+
+                // Fill description
+                var $desc = $('#id_description');
+                if ($desc.length && !$desc.val()) {
+                    $desc.val(cat.name).trigger('input');
+                }
+
+                // Fill unit
+                var $unit = $('#id_unit');
+                if ($unit.length && cat.unit) $unit.val(cat.unit);
+
+                // Toggle is_keg
+                var $isKeg = $('#id_is_keg');
+                if ($isKeg.length) $isKeg.prop('checked', !!cat.is_keg).trigger('change');
+
+                // Toggle is_produce + produce_mode
+                var $isProd = $('#id_is_produce');
+                if ($isProd.length && cat.is_produce !== undefined) {
+                    $isProd.prop('checked', !!cat.is_produce).trigger('change');
+                    if (cat.is_produce && cat.produce_mode) {
+                        $('input[name="produce_mode"][value="' + cat.produce_mode + '"]')
+                            .prop('checked', true).trigger('change');
+                    }
+                }
+
+                // Hide cost price when keg or produce (spec: hide and show note)
+                if (cat.is_keg || cat.is_produce) {
+                    $('#costPriceSection').hide();
+                }
+
+                // Flash picker green briefly to confirm
+                $picker.next('.select2').find('.select2-selection')
+                    .css('border-color', '#81c784');
+                setTimeout(function () {
+                    $picker.next('.select2').find('.select2-selection')
+                        .css('border-color', '');
+                }, 1200);
+            });
+
+            $picker.on('select2:clear', function () {
+                // Don't clear description — user may have edited it
+            });
+        })();
+        </script>
+        {% endif %}
     </div>
 </div>
 

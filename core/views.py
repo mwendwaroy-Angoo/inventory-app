@@ -1373,11 +1373,15 @@ def add_item(request):
     else:
         form = ItemForm(business=user_profile.business, show_cost_price=True)
 
+    from .business_profiles import get_profile as _get_profile
+    import json as _json
+    _catalog = _get_profile(user_profile.business).get('catalog', [])
     context = {
         "form": form,
         "today": timezone.now().strftime("%B %d, %Y"),
         "action": _("Add"),
         "is_add": True,
+        "catalog_json": _json.dumps(_catalog),
     }
     return render(request, "core/item_form.html", context)
 
@@ -1492,12 +1496,16 @@ def edit_item(request, item_id):
             instance=item, business=user_profile.business, show_cost_price=True
         )
 
+    from .business_profiles import get_profile as _get_profile
+    import json as _json
+    _catalog = _get_profile(user_profile.business).get('catalog', [])
     context = {
         "form": form,
         "item": item,
         "today": timezone.now().strftime("%B %d, %Y"),
         "action": _("Edit"),
         "is_add": False,
+        "catalog_json": _json.dumps(_catalog),
     }
     return render(request, "core/item_form.html", context)
 
@@ -1889,6 +1897,14 @@ def quick_sell(request):
     user_profile = get_user_profile(request)
     if not user_profile:
         return redirect("home")
+
+    # Redirect to the appropriate board based on business profile
+    from .business_profiles import get_profile as _get_profile
+    _board = _get_profile(user_profile.business).get('board', 'grid')
+    if _board == 'bar':
+        return redirect('bar_board')
+    if _board == 'produce':
+        return redirect('produce_board')
 
     success_data = None
 
