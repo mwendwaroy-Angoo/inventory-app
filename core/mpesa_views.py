@@ -18,7 +18,7 @@ from django.views.decorators.http import require_POST, require_GET
 from django.contrib.auth.decorators import login_required
 
 from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt
-from .mpesa import initiate_stk_push, format_phone_ke, query_stk_status
+from .mpesa import initiate_stk_push, format_phone_ke, query_stk_status, register_c2b_url
 from .notifications import notify_transaction, create_in_app_notification
 
 logger = logging.getLogger(__name__)
@@ -445,6 +445,57 @@ def confirm_prompt(request, prompt_id):
         'success': True,
         'message': f"Logged: {qty}x {item.description} — KES {float(prompt.amount):,.0f}",
     })
+
+
+@login_required
+@require_POST
+def register_business_c2b(request):
+    """Owner triggers C2B URL registration with Safaricom for their Till/Paybill.
+
+    Uses the business's own Daraja credentials stored in payment settings.
+    Returns JSON so the payment settings page can show instant feedback.
+    """
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.business or not profile.is_owner:
+        return JsonResponse({'success': False, 'error': 'Only business owners can register C2B URLs.'}, status=403)
+
+    business = profile.business
+
+    consumer_key = business.daraja_consumer_key.strip()
+    consumer_secret = business.daraja_consumer_secret.strip()
+
+    if not consumer_key or not consumer_secret:
+        return JsonResponse({
+            'success': False,
+            'error': 'Please save your Daraja Consumer Key and Consumer Secret first.',
+        }, status=400)
+
+    # Determine shortcode: prefer Till, fall back to Paybill
+    shortcode = (business.mpesa_till or business.mpesa_paybill or '').strip()
+    if not shortcode:
+        return JsonResponse({
+            'success': False,
+            'error': 'Please set your Till Number or Paybill Number in payment settings first.',
+        }, status=400)
+
+    base = 'https://www.dukamwecheche.co.ke'
+    confirmation_url = f'{base}/mpesa/c2b/confirmation/'
+    validation_url = f'{base}/mpesa/c2b/validation/'
+
+    result = register_c2b_url(
+        consumer_key=consumer_key,
+        consumer_secret=consumer_secret,
+        shortcode=shortcode,
+        confirmation_url=confirmation_url,
+        validation_url=validation_url,
+    )
+
+    if result['success']:
+        business.daraja_c2b_registered = True
+        business.save(update_fields=['daraja_c2b_registered'])
+        logger.info("C2B registered for business %s shortcode %s", business.id, shortcode)
+
+    return JsonResponse(result)
 
 
 @login_required

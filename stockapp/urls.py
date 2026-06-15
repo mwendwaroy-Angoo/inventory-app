@@ -93,6 +93,7 @@ from core.mpesa_views import (
     pending_prompts,
     confirm_prompt,
     dismiss_prompt,
+    register_business_c2b,
 )
 from core.marketplace_views import (
     shop_home,
@@ -323,6 +324,7 @@ urlpatterns = [
     path(
         "mpesa/prompt/<int:prompt_id>/dismiss/", dismiss_prompt, name="dismiss_prompt"
     ),
+    path("mpesa/register-c2b/", register_business_c2b, name="register_business_c2b"),
     # ── Customer Marketplace ──
     path("shop/", shop_home, name="shop_home"),
     path("shop/<int:business_id>/", storefront, name="storefront"),

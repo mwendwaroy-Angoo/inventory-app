@@ -59,6 +59,17 @@ class Business(models.Model):
         max_length=10, choices=PAYMENT_CHANNEL_CHOICES, blank=True,
         help_text='Default payment channel customers should use')
 
+    # ── Daraja API credentials (per-business, for C2B URL registration) ──
+    daraja_consumer_key = models.CharField(
+        max_length=200, blank=True,
+        help_text='Safaricom Daraja API Consumer Key for this business shortcode')
+    daraja_consumer_secret = models.CharField(
+        max_length=200, blank=True,
+        help_text='Safaricom Daraja API Consumer Secret for this business shortcode')
+    daraja_c2b_registered = models.BooleanField(
+        default=False,
+        help_text='True once C2B confirmation URL has been registered with Safaricom')
+
     # ── Pre-App Business History ──
     pre_app_cumulative_profit = models.DecimalField(
         max_digits=14,

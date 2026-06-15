@@ -171,6 +171,79 @@ def query_stk_status(checkout_request_id):
         return None
 
 
+# ── C2B URL REGISTRATION ──────────────────────────────────────────────────────
+
+def register_c2b_url(consumer_key, consumer_secret, shortcode, confirmation_url, validation_url):
+    """
+    Register C2B callback URLs with Safaricom for a specific shortcode (Till/Paybill).
+
+    This is a one-time call per shortcode. After registration, Safaricom will POST
+    to confirmation_url whenever a customer pays to the shortcode.
+
+    Args:
+        consumer_key: Daraja Consumer Key for this shortcode's API credentials
+        consumer_secret: Daraja Consumer Secret for this shortcode's API credentials
+        shortcode: The Till or Paybill number
+        confirmation_url: Full HTTPS URL Safaricom will POST payment confirmations to
+        validation_url: Full HTTPS URL Safaricom will call before completing payment
+
+    Returns:
+        dict with 'success' bool and 'message' str
+    """
+    if not consumer_key or not consumer_secret or not shortcode:
+        return {'success': False, 'message': 'Consumer Key, Consumer Secret and Shortcode are required.'}
+
+    # Get access token using THIS business's own credentials
+    try:
+        token_url = _get_urls()['oauth']
+        token_resp = requests.get(
+            token_url,
+            auth=(consumer_key, consumer_secret),
+            timeout=30,
+        )
+        token_resp.raise_for_status()
+        access_token = token_resp.json().get('access_token')
+    except requests.RequestException as e:
+        logger.error("C2B register — token error for shortcode %s: %s", shortcode, e)
+        return {'success': False, 'message': f'Could not authenticate with Safaricom: {e}'}
+
+    if not access_token:
+        return {'success': False, 'message': 'Could not get access token from Safaricom. Check your credentials.'}
+
+    payload = {
+        'ShortCode': shortcode,
+        'ResponseType': 'Completed',
+        'ConfirmationURL': confirmation_url,
+        'ValidationURL': validation_url,
+    }
+
+    try:
+        resp = requests.post(
+            _get_urls()['register_url'],
+            json=payload,
+            headers={
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json',
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info("C2B register response for shortcode %s: %s", shortcode, data)
+
+        response_code = str(data.get('ResponseCode', ''))
+        response_desc = data.get('ResponseDescription', '') or data.get('CustomerMessage', '')
+
+        if response_code == '0':
+            return {'success': True, 'message': f'Registered successfully. {response_desc}'.strip()}
+        else:
+            return {'success': False, 'message': f'Safaricom error {response_code}: {response_desc}'}
+
+    except requests.RequestException as e:
+        logger.error("C2B register — API error for shortcode %s: %s", shortcode, e)
+        return {'success': False, 'message': f'API error: {e}'}
+
+
 # ── PHONE FORMATTING ─────────────────────────────────────────────────────────
 
 def format_phone_ke(phone):

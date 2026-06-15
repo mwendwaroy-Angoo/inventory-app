@@ -325,6 +325,7 @@ class PaymentSettingsForm(forms.ModelForm):
         fields = [
             'mpesa_till', 'mpesa_paybill', 'mpesa_paybill_account',
             'mpesa_pochi', 'mpesa_phone', 'preferred_payment_channel',
+            'daraja_consumer_key', 'daraja_consumer_secret',
         ]
         widgets = {
             'mpesa_till': forms.TextInput(attrs={'placeholder': 'e.g. 5XXXXXX'}),
@@ -332,6 +333,11 @@ class PaymentSettingsForm(forms.ModelForm):
             'mpesa_paybill_account': forms.TextInput(attrs={'placeholder': 'e.g. Account Name'}),
             'mpesa_pochi': forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'}),
             'mpesa_phone': forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'}),
+            'daraja_consumer_key': forms.TextInput(attrs={'placeholder': 'Paste Consumer Key from Daraja portal'}),
+            'daraja_consumer_secret': forms.PasswordInput(
+                attrs={'placeholder': 'Paste Consumer Secret from Daraja portal'},
+                render_value=True,
+            ),
         }
 
     def __init__(self, *args, **kwargs):
@@ -339,6 +345,8 @@ class PaymentSettingsForm(forms.ModelForm):
         for field in self.fields.values():
             field.widget.attrs['class'] = 'form-control'
         self.fields['preferred_payment_channel'].empty_label = '-- Select Preferred Channel --'
+        self.fields['daraja_consumer_key'].required = False
+        self.fields['daraja_consumer_secret'].required = False
 
     def clean(self):
         cleaned_data = super().clean()
