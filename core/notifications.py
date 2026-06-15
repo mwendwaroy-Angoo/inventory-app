@@ -180,13 +180,14 @@ def send_email_notification(to_email, subject, html_message, text_message=None):
 
 
 def send_sms_notification(message, phone_number):
+    """Returns (success: bool, detail: str). detail is the AT error on failure, '' on success."""
     if not phone_number:
-        return False
+        return False, 'no_phone'
     original_phone = phone_number
     phone_number = normalize_ke_phone(phone_number)
     if not phone_number:
         logger.warning('SMS skipped — could not normalize phone number: %s', original_phone)
-        return False
+        return False, 'invalid_phone'
     try:
         import africastalking
 
@@ -195,11 +196,21 @@ def send_sms_notification(message, phone_number):
         )
         sms = africastalking.SMS
         response = sms.send(message, [phone_number])
+        # Check per-recipient status in case AT accepted the call but rejected the number
+        recipients = (response or {}).get('SMSMessageData', {}).get('Recipients', [])
+        if recipients:
+            statuses = [r.get('status', '') for r in recipients]
+            failed = [s for s in statuses if s not in ('Success',)]
+            if failed and all(s not in ('Success',) for s in statuses):
+                detail = ', '.join(statuses)
+                logger.error(f"SMS rejected by AT for {phone_number}: {detail}")
+                return False, detail
         logger.info(f"SMS sent to {phone_number}: {response}")
-        return True
+        return True, ''
     except Exception as e:
-        logger.error(f"SMS failed to {phone_number}: {e}")
-        return False
+        detail = f"{type(e).__name__}: {e}"
+        logger.error(f"SMS failed to {phone_number}: {detail}")
+        return False, detail
 
 
 def send_whatsapp_notification(phone, message, business=None):
