@@ -799,12 +799,14 @@
                     if (checked) applyModeToggle();
                     _updateCostPriceVisibility();
                 }
-                produceCheck.addEventListener('change', function() { applyProduceToggle(this.checked); });
+                if (produceCheck) {
+                    produceCheck.addEventListener('change', function() { applyProduceToggle(this.checked); });
+                }
                 var pmP = document.getElementById('pm_portion');
                 var pmB = document.getElementById('pm_bunch');
                 if (pmP) pmP.addEventListener('change', applyModeToggle);
                 if (pmB) pmB.addEventListener('change', applyModeToggle);
-                applyProduceToggle(produceCheck.checked);
+                if (produceCheck) applyProduceToggle(produceCheck.checked);
             })();
 
             // CHANGE 2c: auto-fill qty_consumed from standard label, editable only for Custom
