@@ -492,20 +492,20 @@
                                         onchange="onPresetLabelChange(this)"
                                         data-existing-value="{{ preset.label }}">
                                     <option value="">-- {% trans 'Select label' %} --</option>
-                                    <optgroup label="{% trans 'Fractional' %}">
+                                    <optgroup label="{% trans 'Fractional' %}" class="non-bar-opts">
                                         <option value="Small Portion">{% trans 'Small Portion' %}</option>
                                         <option value="Quarter">{% trans 'Quarter' %}</option>
                                         <option value="Half">{% trans 'Half' %}</option>
                                         <option value="Three-Quarters">{% trans 'Three-Quarters' %}</option>
                                         <option value="Full">{% trans 'Full' %}</option>
                                     </optgroup>
-                                    <optgroup label="{% trans 'Count-based' %}">
+                                    <optgroup label="{% trans 'Count-based' %}" class="non-bar-opts">
                                         <option value="Single Piece">{% trans 'Single Piece' %}</option>
                                         <option value="Pair (2)">{% trans 'Pair (2)' %}</option>
                                         <option value="Small Bundle (4 units)">{% trans 'Small Bundle (4 units)' %}</option>
                                         <option value="Large Bundle (8 units)">{% trans 'Large Bundle (8 units)' %}</option>
                                     </optgroup>
-                                    <optgroup label="{% trans 'Kibanda / Multi-piece' %}">
+                                    <optgroup label="{% trans 'Kibanda / Multi-piece' %}" class="non-bar-opts">
                                         <option value="Kimoja">{% trans 'Kimoja (1 piece)' %}</option>
                                         <option value="Mbili mbao">{% trans 'Mbili mbao (2 for price)' %}</option>
                                         <option value="Tatu mbao">{% trans 'Tatu mbao (3 for price)' %}</option>
@@ -513,7 +513,7 @@
                                         <option value="Tano mbao">{% trans 'Tano mbao (5 for price)' %}</option>
                                         <option value="Sita mbao">{% trans 'Sita mbao (6 for price)' %}</option>
                                     </optgroup>
-                                    <optgroup label="{% trans 'Gorogoro / Heap' %}">
+                                    <optgroup label="{% trans 'Gorogoro / Heap' %}" class="non-bar-opts">
                                         <option value="Small Gorogoro">{% trans 'Small Gorogoro' %}</option>
                                         <option value="Medium Gorogoro">{% trans 'Medium Gorogoro' %}</option>
                                         <option value="Large Gorogoro">{% trans 'Large Gorogoro' %}</option>
@@ -931,20 +931,20 @@
             function buildLabelSelectHtml() {
                 return '<select name="preset_label" class="form-select form-select-sm" onchange="onPresetLabelChange(this)">' +
                     '<option value="">-- {% trans "Select label" %} --</option>' +
-                    '<optgroup label="{% trans "Fractional" %}">' +
+                    '<optgroup label="{% trans "Fractional" %}" class="non-bar-opts">' +
                     '<option value="Small Portion">{% trans "Small Portion" %}</option>' +
                     '<option value="Quarter">{% trans "Quarter" %}</option>' +
                     '<option value="Half">{% trans "Half" %}</option>' +
                     '<option value="Three-Quarters">{% trans "Three-Quarters" %}</option>' +
                     '<option value="Full">{% trans "Full" %}</option>' +
                     '</optgroup>' +
-                    '<optgroup label="{% trans "Count-based" %}">' +
+                    '<optgroup label="{% trans "Count-based" %}" class="non-bar-opts">' +
                     '<option value="Single Piece">{% trans "Single Piece" %}</option>' +
                     '<option value="Pair (2)">{% trans "Pair (2)" %}</option>' +
                     '<option value="Small Bundle (4 units)">{% trans "Small Bundle (4 units)" %}</option>' +
                     '<option value="Large Bundle (8 units)">{% trans "Large Bundle (8 units)" %}</option>' +
                     '</optgroup>' +
-                    '<optgroup label="{% trans "Kibanda / Multi-piece" %}">' +
+                    '<optgroup label="{% trans "Kibanda / Multi-piece" %}" class="non-bar-opts">' +
                     '<option value="Kimoja">{% trans "Kimoja (1 piece)" %}</option>' +
                     '<option value="Mbili mbao">{% trans "Mbili mbao (2 for price)" %}</option>' +
                     '<option value="Tatu mbao">{% trans "Tatu mbao (3 for price)" %}</option>' +
@@ -952,7 +952,7 @@
                     '<option value="Tano mbao">{% trans "Tano mbao (5 for price)" %}</option>' +
                     '<option value="Sita mbao">{% trans "Sita mbao (6 for price)" %}</option>' +
                     '</optgroup>' +
-                    '<optgroup label="{% trans "Gorogoro / Heap" %}">' +
+                    '<optgroup label="{% trans "Gorogoro / Heap" %}" class="non-bar-opts">' +
                     '<option value="Small Gorogoro">{% trans "Small Gorogoro" %}</option>' +
                     '<option value="Medium Gorogoro">{% trans "Medium Gorogoro" %}</option>' +
                     '<option value="Large Gorogoro">{% trans "Large Gorogoro" %}</option>' +
@@ -985,6 +985,7 @@
 
             // Show/hide bar-specific optgroups based on is_keg state
             // Assigned to window so the keg toggle script (separate block) can call it
+            var IS_KEG_BUSINESS = {{ biz_profile.modules.keg|lower }};
             window._applyBarPresetFilter = function(isKeg) {
                 document.querySelectorAll('select[name="preset_label"]').forEach(function(sel) {
                     sel.querySelectorAll('.bar-keg-opts').forEach(function(og) {
@@ -993,6 +994,12 @@
                     sel.querySelectorAll('.bar-spirit-opts').forEach(function(og) {
                         og.style.display = isKeg ? 'none' : '';
                     });
+                    // Bar businesses never need produce/fractional/count presets
+                    if (IS_KEG_BUSINESS) {
+                        sel.querySelectorAll('.non-bar-opts').forEach(function(og) {
+                            og.style.display = 'none';
+                        });
+                    }
                 });
             };
 
