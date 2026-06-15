@@ -1898,11 +1898,6 @@ def quick_sell(request):
     if not user_profile:
         return redirect("home")
 
-    # Bar businesses use the dedicated bar board; all others render quick_sell normally
-    from .business_profiles import get_profile as _get_profile
-    if _get_profile(user_profile.business).get('board') == 'bar':
-        return redirect('bar_board')
-
     success_data = None
 
     if request.method == "POST":
