@@ -1662,7 +1662,9 @@
                             statusEl.textContent = 'SMS imetumwa!';
                         } else {
                             statusEl.style.color = '#f87171';
-                            statusEl.textContent = 'Imeshindwa — angalia nambari.';
+                            statusEl.textContent = data.error === 'invalid_phone'
+                                ? 'Nambari si sahihi — ingiza 07XX XXX XXX.'
+                                : 'SMS haikufanikiwa. Jaribu tena.';
                         }
                         btn.disabled = false; btn.textContent = 'SMS';
                     });

@@ -59,7 +59,9 @@ def send_receipt(request, receipt_id):
             f"Angalia: {receipt_url}"
         )
         ok = send_sms_notification(msg, normalized)
-        return JsonResponse({'ok': bool(ok)})
+        if ok:
+            return JsonResponse({'ok': True})
+        return JsonResponse({'ok': False, 'error': 'sms_failed'})
 
     if channel == 'email':
         if not email:
