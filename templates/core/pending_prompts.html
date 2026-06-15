@@ -8,19 +8,68 @@
   <div class="col-lg-10">
 
     <!-- ═══ HEADER ═══ -->
-    <div class="d-flex justify-content-between align-items-start mb-4">
+    <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
       <div>
         <h2 class="page-title mb-1">💰 {% trans 'Payment Prompts' %}</h2>
         <p style="color: #b0b0b0; font-size: 0.875rem; margin-bottom: 0;">
           {% trans 'Confirm what was sold when M-Pesa payments come in' %}
         </p>
       </div>
-      <span class="badge" id="pending-count"
-            style="background: rgba(243,156,18,0.2); color: #f39c12;
-                   border: 1px solid rgba(243,156,18,0.4);
-                   font-size: 0.88rem; padding: 0.45rem 0.9rem; border-radius: 20px;">
-        {% blocktrans with count=prompts|length %}{{ count }} pending{% endblocktrans %}
-      </span>
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        <span class="badge" id="pending-count"
+              style="background: rgba(243,156,18,0.2); color: #f39c12;
+                     border: 1px solid rgba(243,156,18,0.4);
+                     font-size: 0.88rem; padding: 0.45rem 0.9rem; border-radius: 20px;">
+          {% blocktrans with count=prompts|length %}{{ count }} pending{% endblocktrans %}
+        </span>
+        <button class="btn btn-gold btn-sm" data-bs-toggle="modal" data-bs-target="#stkModal">
+          📲 {% trans 'Request Payment' %}
+        </button>
+        <a href="{% url 'business_payment_page' user.userprofile.business.id %}"
+           target="_blank" class="btn btn-sm"
+           style="background: rgba(201,168,76,0.12); color: var(--gold); border: 1px solid rgba(201,168,76,0.3);">
+          🔗 {% trans 'Payment Page' %}
+        </a>
+      </div>
+    </div>
+
+    <!-- ═══ STK PUSH MODAL ═══ -->
+    <div class="modal fade" id="stkModal" tabindex="-1">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background: #222; border: 1px solid #333; border-radius: 12px;">
+          <div class="modal-header" style="border-bottom: 1px solid #333;">
+            <h5 class="modal-title" style="color: var(--gold);">📲 {% trans 'Request M-Pesa Payment' %}</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <p style="color: #b0b0b0; font-size: 0.82rem; margin-bottom: 1.25rem; line-height: 1.6;">
+              {% trans "Enter the customer's M-Pesa phone number and the amount. They'll receive a payment prompt on their phone and you'll get a confirmation here once they pay." %}
+            </p>
+            <div class="mb-3">
+              <label class="form-label" style="color: #888; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em;">
+                {% trans "Customer Phone" %}
+              </label>
+              <input type="tel" id="stkModalPhone" class="form-control"
+                     placeholder="e.g. 0712 345 678"
+                     style="background: rgba(255,255,255,0.06); border-color: #444; color: #f0ece4;">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" style="color: #888; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em;">
+                {% trans "Amount (KES)" %}
+              </label>
+              <input type="number" id="stkModalAmount" class="form-control" placeholder="e.g. 500" min="1"
+                     style="background: rgba(255,255,255,0.06); border-color: #444; color: #f0ece4;">
+            </div>
+            <div id="stkModalResult" style="display:none; padding:0.6rem; border-radius:8px; font-size:0.83rem; margin-bottom:0.5rem;"></div>
+          </div>
+          <div class="modal-footer" style="border-top: 1px solid #333;">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{% trans 'Cancel' %}</button>
+            <button type="button" class="btn btn-gold" id="stkModalBtn" onclick="sendStkFromModal()">
+              📲 {% trans 'Send M-Pesa Request' %}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     {% if prompts %}
@@ -303,5 +352,78 @@ function updatePendingCount() {
 
 // ── Auto-refresh every 30s ──
 setInterval(() => { location.reload(); }, 30000);
+
+// ── STK Push from modal ──
+function sendStkFromModal() {
+    var phone = document.getElementById('stkModalPhone').value.trim();
+    var amount = document.getElementById('stkModalAmount').value.trim();
+    var btn = document.getElementById('stkModalBtn');
+    var result = document.getElementById('stkModalResult');
+
+    if (!phone || !amount) {
+        showStkResult('rgba(231,76,60,0.15)', '#e74c3c', '⚠️ Please enter phone and amount.');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Sending...';
+    result.style.display = 'none';
+
+    fetch('/mpesa/stk-push/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: phone, amount: parseInt(amount) }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        btn.textContent = '📲 Send M-Pesa Request';
+        if (data.success) {
+            showStkResult('rgba(46,204,113,0.15)', '#2ecc71',
+                '✅ Sent! The customer should see a prompt on their phone now. This page will refresh when they pay.');
+            pollStkPayment(data.payment_id);
+        } else {
+            showStkResult('rgba(231,76,60,0.15)', '#e74c3c', '❌ ' + (data.error || 'Failed. Try again.'));
+        }
+    })
+    .catch(() => {
+        btn.disabled = false;
+        btn.textContent = '📲 Send M-Pesa Request';
+        showStkResult('rgba(231,76,60,0.15)', '#e74c3c', '❌ Network error. Try again.');
+    });
+}
+
+function showStkResult(bg, color, msg) {
+    var el = document.getElementById('stkModalResult');
+    el.style.background = bg;
+    el.style.color = color;
+    el.style.border = '1px solid ' + color.replace('1)', '0.3)');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
+function pollStkPayment(paymentId) {
+    var tries = 0;
+    var interval = setInterval(function () {
+        tries++;
+        fetch('/mpesa/status/' + paymentId + '/')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'completed') {
+                    clearInterval(interval);
+                    showStkResult('rgba(46,204,113,0.15)', '#2ecc71',
+                        '✅ KES ' + data.amount + ' paid! Page will refresh.');
+                    setTimeout(() => location.reload(), 2000);
+                } else if (data.status === 'failed') {
+                    clearInterval(interval);
+                    showStkResult('rgba(231,76,60,0.15)', '#e74c3c',
+                        '❌ Customer cancelled or payment failed.');
+                } else if (tries >= 12) {
+                    clearInterval(interval);
+                }
+            })
+            .catch(() => { if (tries >= 12) clearInterval(interval); });
+    }, 5000);
+}
 </script>
 {% endblock %}

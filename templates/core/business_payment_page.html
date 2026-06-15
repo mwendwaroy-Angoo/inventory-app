@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pay {{ business.name }} — M-Pesa</title>
+  <style>
+    :root {
+      --gold: #c9a84c;
+      --onyx: #1a1a1a;
+      --onyx-card: #222;
+      --pearl: #f0ece4;
+      --green: #2ecc71;
+      --border: #333;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--onyx);
+      color: var(--pearl);
+      font-family: 'DM Sans', 'Helvetica Neue', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 1.5rem 1rem 3rem;
+    }
+    .wrap { width: 100%; max-width: 420px; }
+
+    /* ── Header ── */
+    .pay-header { text-align: center; margin-bottom: 1.5rem; }
+    .biz-name {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 1.7rem;
+      color: var(--gold);
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .pay-heading {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #888;
+      margin-top: 0.3rem;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--onyx-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1rem;
+    }
+    .card-header {
+      background: rgba(201,168,76,0.07);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1.2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .card-header span { color: var(--gold); font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+    .card-body { padding: 1.25rem 1.2rem; }
+
+    /* ── Channel rows ── */
+    .channel-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.85rem 0;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    .channel-row:last-child { border-bottom: none; }
+    .channel-label { font-size: 0.78rem; color: #888; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 0.2rem; }
+    .channel-number { font-size: 1.5rem; font-weight: 700; color: var(--pearl); letter-spacing: 0.04em; font-family: 'Playfair Display', Georgia, serif; }
+    .channel-icon { font-size: 1.8rem; }
+    .steps { margin-top: 0.5rem; }
+    .steps li { font-size: 0.78rem; color: #a0a0a0; margin-top: 0.25rem; list-style: none; padding-left: 1rem; position: relative; line-height: 1.5; }
+    .steps li::before { content: "→"; position: absolute; left: 0; color: var(--gold); }
+
+    /* ── Preferred badge ── */
+    .preferred-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      background: rgba(201,168,76,0.15);
+      color: var(--gold);
+      border: 1px solid rgba(201,168,76,0.3);
+      border-radius: 20px;
+      font-size: 0.7rem;
+      padding: 0.15rem 0.6rem;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+    }
+
+    /* ── QR section ── */
+    .qr-section { text-align: center; padding: 1.5rem; }
+    .qr-section p { font-size: 0.75rem; color: #888; margin-top: 0.75rem; line-height: 1.5; }
+    #payQrCode { display: inline-block; background: #fff; padding: 10px; border-radius: 8px; }
+
+    /* ── STK Push form ── */
+    .stk-form label { font-size: 0.8rem; color: #888; display: block; margin-bottom: 0.35rem; text-transform: uppercase; letter-spacing: 0.07em; }
+    .stk-form input {
+      width: 100%;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid #444;
+      border-radius: 8px;
+      color: var(--pearl);
+      padding: 0.6rem 0.85rem;
+      font-size: 1rem;
+      margin-bottom: 0.85rem;
+      outline: none;
+    }
+    .stk-form input:focus { border-color: var(--gold); }
+    .btn-pay {
+      width: 100%;
+      background: linear-gradient(135deg, #c9a84c 0%, #e2c36e 100%);
+      color: #1a1a1a;
+      font-weight: 700;
+      font-size: 1rem;
+      border: none;
+      border-radius: 8px;
+      padding: 0.75rem;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+    }
+    .btn-pay:disabled { opacity: 0.5; cursor: not-allowed; }
+    .stk-result { text-align: center; padding: 0.6rem; border-radius: 8px; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
+    .stk-result.success { background: rgba(46,204,113,0.15); color: #2ecc71; border: 1px solid rgba(46,204,113,0.3); }
+    .stk-result.error { background: rgba(231,76,60,0.15); color: #e74c3c; border: 1px solid rgba(231,76,60,0.3); }
+
+    /* ── Actions row ── */
+    .actions { display: flex; gap: 0.75rem; margin-top: 0.75rem; }
+    .btn-outline {
+      flex: 1;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: #b0b0b0;
+      border-radius: 8px;
+      padding: 0.55rem;
+      font-size: 0.82rem;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      display: block;
+    }
+    .btn-outline:hover { border-color: var(--gold); color: var(--gold); }
+
+    /* ── Footer ── */
+    .pay-footer { text-align: center; margin-top: 1.5rem; }
+    .pay-footer a { font-size: 0.72rem; color: #444; text-decoration: none; }
+    .pay-footer a:hover { color: var(--gold); }
+
+    /* ── No channels empty state ── */
+    .empty-state { text-align: center; padding: 3rem 1rem; }
+    .empty-state h3 { color: var(--gold); margin-bottom: 0.5rem; }
+    .empty-state p { color: #888; font-size: 0.875rem; line-height: 1.6; }
+
+    /* ── Print styles ── */
+    @media print {
+      body { background: #fff; color: #111; padding: 0; display: block; }
+      .wrap { max-width: 100%; }
+      .card { background: #fff; border: 1.5px solid #ccc; break-inside: avoid; }
+      .card-header { background: #f5f5f5; }
+      .card-header span { color: #8a6d1a; }
+      .biz-name { color: #8a6d1a; }
+      .channel-number { color: #111; }
+      .channel-label { color: #555; }
+      .steps li { color: #555; }
+      .steps li::before { color: #8a6d1a; }
+      .stk-card, .actions, .pay-footer { display: none !important; }
+      .qr-section p { color: #555; }
+      #payQrCode { background: #fff; }
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <div class="pay-header">
+    <div class="biz-name">{{ business.name }}</div>
+    <div class="pay-heading">💳 Lipa / Pay with M-Pesa</div>
+  </div>
+
+  {% with has_till=business.mpesa_till has_paybill=business.mpesa_paybill has_pochi=business.mpesa_pochi has_phone=business.mpesa_phone %}
+
+  {% if not has_till and not has_paybill and not has_pochi and not has_phone %}
+  <!-- ── No payment channels configured ── -->
+  <div class="card">
+    <div class="card-body empty-state">
+      <h3>Payment details not set up yet</h3>
+      <p>This business hasn't configured their M-Pesa payment channels yet. Please ask them directly how to pay.</p>
+    </div>
+  </div>
+
+  {% else %}
+
+  <!-- ── Till (Buy Goods) ── -->
+  {% if has_till %}
+  <div class="card">
+    <div class="card-header">
+      <span>🏪 Lipa Na M-Pesa — Buy Goods{% if business.preferred_payment_channel == 'till' %}<span class="preferred-badge">⭐ Preferred</span>{% endif %}</span>
+    </div>
+    <div class="card-body">
+      <div class="channel-row">
+        <div>
+          <div class="channel-label">Till Number</div>
+          <div class="channel-number">{{ business.mpesa_till }}</div>
+        </div>
+        <div class="channel-icon">🏪</div>
+      </div>
+      <ul class="steps" style="margin-top: 0.75rem;">
+        <li>Open M-Pesa on your phone</li>
+        <li>Tap <strong>Lipa Na M-Pesa</strong> → <strong>Buy Goods & Services</strong></li>
+        <li>Enter Till No: <strong>{{ business.mpesa_till }}</strong></li>
+        <li>Enter the amount and confirm with your PIN</li>
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Paybill ── -->
+  {% if has_paybill %}
+  <div class="card">
+    <div class="card-header">
+      <span>🏦 Paybill{% if business.preferred_payment_channel == 'paybill' %}<span class="preferred-badge">⭐ Preferred</span>{% endif %}</span>
+    </div>
+    <div class="card-body">
+      <div class="channel-row">
+        <div>
+          <div class="channel-label">Paybill Number</div>
+          <div class="channel-number">{{ business.mpesa_paybill }}</div>
+        </div>
+        <div class="channel-icon">🏦</div>
+      </div>
+      {% if business.mpesa_paybill_account %}
+      <div class="channel-row">
+        <div>
+          <div class="channel-label">Account Number</div>
+          <div class="channel-number" style="font-size:1.1rem;">{{ business.mpesa_paybill_account }}</div>
+        </div>
+      </div>
+      {% endif %}
+      <ul class="steps" style="margin-top: 0.75rem;">
+        <li>Open M-Pesa → <strong>Lipa Na M-Pesa</strong> → <strong>Pay Bill</strong></li>
+        <li>Business No: <strong>{{ business.mpesa_paybill }}</strong></li>
+        {% if business.mpesa_paybill_account %}<li>Account No: <strong>{{ business.mpesa_paybill_account }}</strong></li>{% endif %}
+        <li>Enter amount and confirm with PIN</li>
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Pochi la Biashara ── -->
+  {% if has_pochi %}
+  <div class="card">
+    <div class="card-header">
+      <span>📱 Pochi la Biashara{% if business.preferred_payment_channel == 'pochi' %}<span class="preferred-badge">⭐ Preferred</span>{% endif %}</span>
+    </div>
+    <div class="card-body">
+      <div class="channel-row">
+        <div>
+          <div class="channel-label">Pochi Phone Number</div>
+          <div class="channel-number">{{ business.mpesa_pochi }}</div>
+        </div>
+        <div class="channel-icon">📱</div>
+      </div>
+      <ul class="steps" style="margin-top: 0.75rem;">
+        <li>Open M-Pesa → <strong>Send Money</strong></li>
+        <li>Enter number: <strong>{{ business.mpesa_pochi }}</strong></li>
+        <li>Enter amount → confirm with PIN</li>
+        <li><em style="color:#666;">Your payment goes to their Pochi la Biashara wallet</em></li>
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Personal Phone ── -->
+  {% if has_phone %}
+  <div class="card">
+    <div class="card-header">
+      <span>📞 Send Money{% if business.preferred_payment_channel == 'phone' %}<span class="preferred-badge">⭐ Preferred</span>{% endif %}</span>
+    </div>
+    <div class="card-body">
+      <div class="channel-row">
+        <div>
+          <div class="channel-label">Phone Number</div>
+          <div class="channel-number">{{ business.mpesa_phone }}</div>
+        </div>
+        <div class="channel-icon">📞</div>
+      </div>
+      <ul class="steps" style="margin-top: 0.75rem;">
+        <li>Open M-Pesa → <strong>Send Money</strong></li>
+        <li>Enter number: <strong>{{ business.mpesa_phone }}</strong></li>
+        <li>Enter amount → confirm with PIN</li>
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── QR Code ── -->
+  <div class="card">
+    <div class="card-header"><span>📲 Scan to Pay / Share</span></div>
+    <div class="card-body qr-section">
+      <div id="payQrCode"></div>
+      <p>Scan this QR code to open this payment page.<br>Share the link or download this poster.</p>
+    </div>
+  </div>
+
+  <!-- ── STK Push (Request Payment to Phone) ── only if Till/Paybill configured ── -->
+  {% if has_till or has_paybill %}
+  <div class="card stk-card">
+    <div class="card-header"><span>📲 Request M-Pesa Payment to Your Phone</span></div>
+    <div class="card-body">
+      <p style="font-size:0.82rem; color:#888; margin-bottom:1rem; line-height:1.5;">
+        Enter your M-Pesa phone number and the amount. We'll send a payment request directly to your phone.
+      </p>
+      <div class="stk-form">
+        <label>Your M-Pesa Phone Number</label>
+        <input type="tel" id="stkPhone" placeholder="e.g. 0712 345 678" autocomplete="tel">
+        <label>Amount (KES)</label>
+        <input type="number" id="stkAmount" placeholder="e.g. 500" min="1">
+        <button class="btn-pay" id="stkBtn" onclick="sendStkPush()">
+          📲 Send Payment Request to My Phone
+        </button>
+        <div class="stk-result" id="stkResult"></div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Actions ── -->
+  <div class="actions">
+    <button class="btn-outline" onclick="window.print()">🖨️ Print Poster</button>
+    <button class="btn-outline" onclick="sharePayPage()">🔗 Share Link</button>
+  </div>
+
+  {% endif %}{# end has channels #}
+  {% endwith %}
+
+  <div class="pay-footer">
+    <a href="https://www.dukamwecheche.co.ke">Powered by Duka Mwecheche</a>
+  </div>
+
+</div><!-- /.wrap -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
+<script>
+var BUSINESS_ID = {{ business.id }};
+var PAGE_URL = "{{ payment_page_url|escapejs }}";
+
+// ── QR Code ──
+(function () {
+  var el = document.getElementById('payQrCode');
+  if (!el) return;
+  function makeQR() {
+    new QRCode(el, {
+      text: PAGE_URL,
+      width: 180,
+      height: 180,
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+  }
+  if (typeof QRCode !== 'undefined') {
+    makeQR();
+  } else {
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    s.onload = makeQR;
+    document.head.appendChild(s);
+  }
+})();
+
+// ── STK Push ──
+function sendStkPush() {
+  var phone = document.getElementById('stkPhone').value.trim();
+  var amount = document.getElementById('stkAmount').value.trim();
+  var btn = document.getElementById('stkBtn');
+  var result = document.getElementById('stkResult');
+
+  if (!phone || !amount) {
+    showResult('error', 'Please enter your phone number and amount.');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Sending request...';
+  result.style.display = 'none';
+
+  fetch('/mpesa/stk-push/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: phone, amount: parseInt(amount), business_id: BUSINESS_ID }),
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (data) {
+    btn.disabled = false;
+    btn.textContent = '📲 Send Payment Request to My Phone';
+    if (data.success) {
+      showResult('success', '✅ Check your phone! Approve the M-Pesa prompt to complete payment.');
+      pollPayment(data.payment_id);
+    } else {
+      showResult('error', '❌ ' + (data.error || 'Failed to send. Please try again.'));
+    }
+  })
+  .catch(function () {
+    btn.disabled = false;
+    btn.textContent = '📲 Send Payment Request to My Phone';
+    showResult('error', '❌ Network error. Please try again.');
+  });
+}
+
+function pollPayment(paymentId) {
+  var tries = 0;
+  var interval = setInterval(function () {
+    tries++;
+    fetch('/mpesa/status/' + paymentId + '/')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.status === 'completed') {
+          clearInterval(interval);
+          showResult('success', '✅ Payment of KES ' + data.amount + ' received! Thank you.');
+        } else if (data.status === 'failed') {
+          clearInterval(interval);
+          showResult('error', '❌ Payment was cancelled or failed. Please try again.');
+        } else if (tries >= 12) {
+          clearInterval(interval);
+          showResult('error', '⏱ Timed out. If you approved the payment, it will still reflect in the system.');
+        }
+      })
+      .catch(function () { if (tries >= 12) clearInterval(interval); });
+  }, 5000);
+}
+
+function showResult(type, msg) {
+  var el = document.getElementById('stkResult');
+  el.className = 'stk-result ' + type;
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function sharePayPage() {
+  if (navigator.share) {
+    navigator.share({
+      title: 'Pay {{ business.name|escapejs }} via M-Pesa',
+      url: PAGE_URL,
+    }).catch(function () {});
+  } else {
+    navigator.clipboard && navigator.clipboard.writeText(PAGE_URL).then(function () {
+      alert('Link copied! Share it with your customers.');
+    });
+  }
+}
+</script>
+</body>
+</html>

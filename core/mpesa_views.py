@@ -156,7 +156,7 @@ def stk_push_view(request):
 
     phone_formatted = format_phone_ke(phone)
 
-    # Determine business from order or authenticated user
+    # Determine business from order, authenticated user, or public business_id
     business = None
     order = None
 
@@ -171,6 +171,13 @@ def stk_push_view(request):
         profile = getattr(request.user, 'userprofile', None)
         if profile and profile.business:
             business = profile.business
+
+    if not business and data.get('business_id'):
+        from accounts.models import Business as _Business
+        try:
+            business = _Business.objects.get(id=int(data['business_id']))
+        except (_Business.DoesNotExist, ValueError, TypeError):
+            return JsonResponse({'error': 'Business not found'}, status=404)
 
     if not business:
         return JsonResponse({'error': 'Cannot determine business'}, status=400)
@@ -444,6 +451,21 @@ def confirm_prompt(request, prompt_id):
     return JsonResponse({
         'success': True,
         'message': f"Logged: {qty}x {item.description} — KES {float(prompt.amount):,.0f}",
+    })
+
+
+def business_payment_page(request, business_id):
+    """Public page showing a business's M-Pesa payment channels.
+
+    No login required — this is shared with customers.
+    Doubles as a printable payment poster.
+    """
+    from accounts.models import Business as _Business
+    from django.shortcuts import get_object_or_404
+    business = get_object_or_404(_Business, id=business_id)
+    return render(request, 'core/business_payment_page.html', {
+        'business': business,
+        'payment_page_url': request.build_absolute_uri(),
     })
 
 
