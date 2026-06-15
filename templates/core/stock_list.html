@@ -209,16 +209,16 @@
                     {% endif %}
                 </td>
                 <td>
-                    {% if item._expiry_status == 'EXPIRED' %}
+                    {% if item.expiry_status == 'EXPIRED' %}
                         <span class="badge" style="background:rgba(248,113,113,0.2); color:#f87171; font-size:0.7rem;">
-                            ⚠️ EXPIRED<br><span style="font-size:0.65rem; font-weight:400;">{{ item._expiry_date|date:"d M Y" }}</span>
+                            ⚠️ EXPIRED<br><span style="font-size:0.65rem; font-weight:400;">{{ item.expiry_date|date:"d M Y" }}</span>
                         </span>
-                    {% elif item._expiry_status == 'EXPIRING' %}
+                    {% elif item.expiry_status == 'EXPIRING' %}
                         <span class="badge" style="background:rgba(251,191,36,0.2); color:#fbbf24; font-size:0.7rem;">
-                            ⏰ EXP SOON<br><span style="font-size:0.65rem; font-weight:400;">{{ item._expiry_date|date:"d M Y" }}</span>
+                            ⏰ EXP SOON<br><span style="font-size:0.65rem; font-weight:400;">{{ item.expiry_date|date:"d M Y" }}</span>
                         </span>
-                    {% elif item._expiry_status == 'OK' %}
-                        <span style="color:#b0b0b0; font-size:0.75rem;">{{ item._expiry_date|date:"d M Y" }}</span>
+                    {% elif item.expiry_status == 'OK' %}
+                        <span style="color:#b0b0b0; font-size:0.75rem;">{{ item.expiry_date|date:"d M Y" }}</span>
                     {% else %}
                         <span style="color:#444;">—</span>
                     {% endif %}

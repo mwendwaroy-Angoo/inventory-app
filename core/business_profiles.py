@@ -339,6 +339,7 @@ PROFILES = {
 }
 
 DEFAULT_PROFILE = {
+    'type': '',
     'board': 'grid',
     'modules': dict(_DEFAULT_MODULES),
     'catalog': [],
@@ -350,7 +351,7 @@ def get_profile(business):
     if not business or not business.business_type:
         return DEFAULT_PROFILE
     name = business.business_type.name
-    for profile in PROFILES.values():
+    for profile_type, profile in PROFILES.items():
         if name in profile.get('match', []):
-            return profile
+            return {**profile, 'type': profile_type}
     return DEFAULT_PROFILE

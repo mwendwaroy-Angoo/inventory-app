@@ -183,6 +183,20 @@ def home(request):
                 context['expired_count']  = 0
                 context['expiring_count'] = 0
 
+            # Bar-specific context: tapped kegs and kegs running low
+            try:
+                from .business_profiles import get_profile as _get_profile
+                if _get_profile(business).get('modules', {}).get('keg'):
+                    from .models import KegBarrel as _KB
+                    _tapped = list(_KB.objects.filter(business=business, status='TAPPED'))
+                    _at_risk = [k for k in _tapped
+                                if k.remaining_envelope() < float(k.target_revenue or 1) * 0.15]
+                    context['kegs_tapped'] = len(_tapped)
+                    context['kegs_at_risk_count'] = len(_at_risk)
+            except Exception:
+                context['kegs_tapped'] = 0
+                context['kegs_at_risk_count'] = 0
+
             # Recurring expense review nudge (owner only, once per period)
             if user_profile.is_owner:
                 try:
@@ -388,20 +402,20 @@ def stock_list(request):
     for item in all_items:
         exp = expiry_map.get(item.id)
         if exp is None:
-            item._expiry_date   = None
-            item._expiry_status = None
+            item.expiry_date   = None
+            item.expiry_status = None
         elif exp < today_d:
-            item._expiry_date   = exp
-            item._expiry_status = 'EXPIRED'
+            item.expiry_date   = exp
+            item.expiry_status = 'EXPIRED'
         elif exp <= soon_d:
-            item._expiry_date   = exp
-            item._expiry_status = 'EXPIRING'
+            item.expiry_date   = exp
+            item.expiry_status = 'EXPIRING'
         else:
-            item._expiry_date   = exp
-            item._expiry_status = 'OK'
+            item.expiry_date   = exp
+            item.expiry_status = 'OK'
 
     if status_filter == "expiring":
-        all_items = [i for i in all_items if i._expiry_status in ('EXPIRED', 'EXPIRING')]
+        all_items = [i for i in all_items if i.expiry_status in ('EXPIRED', 'EXPIRING')]
 
     context = {
         "items": all_items,

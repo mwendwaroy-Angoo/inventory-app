@@ -121,6 +121,13 @@
         padding: 1.5rem;
         margin-bottom: 2rem;
     }
+
+    /* ── Bar theming: stat card accent stripe ── */
+    body.biz-bar .stat-card { border-top: 3px solid var(--biz-accent); }
+    body.biz-bar .hero::before {
+        background: radial-gradient(ellipse at center, var(--biz-accent-muted) 0%, transparent 60%);
+    }
+    body.biz-bar .hero { border-top-color: var(--biz-accent); }
 </style>
 {% endblock %}
 
@@ -212,6 +219,29 @@
     {% endif %}
 
     <!-- Hero -->
+    {% if biz_profile.type == 'bar' %}
+    <div class="hero">
+        <div class="hero-subtitle">
+            🍺 {% if user.userprofile.business %}{{ user.userprofile.business.name }}{% endif %}
+        </div>
+        <h1 class="hero-title" style="font-size:clamp(1.6rem,4vw,2.8rem);">Tonight at the Bar 🥃</h1>
+        <div style="margin-top:1.4rem; display:flex; gap:2.5rem; justify-content:center; flex-wrap:wrap;">
+            <div style="text-align:center;">
+                <div id="bar-hero-revenue" style="font-family:'Playfair Display',serif; font-size:2rem; color:var(--biz-accent); font-weight:700;">—</div>
+                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Tonight's Revenue</div>
+            </div>
+            <div style="text-align:center;">
+                <div id="bar-hero-shift" style="font-family:'Playfair Display',serif; font-size:1.5rem; font-weight:700;">—</div>
+                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Shift Status</div>
+            </div>
+            <div style="text-align:center;">
+                <div style="font-family:'Playfair Display',serif; font-size:2rem; font-weight:700; color:{% if kegs_at_risk_count > 0 %}var(--raspberry){% else %}var(--success){% endif %};">{{ kegs_at_risk_count|default:0 }}</div>
+                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Kegs Running Low</div>
+            </div>
+        </div>
+        <div class="hero-date" style="margin-top:1.2rem;">{{ today }}</div>
+    </div>
+    {% else %}
     <div class="hero">
         <div class="hero-subtitle">
             {% if user.userprofile.business %}
@@ -221,6 +251,7 @@
         <h1 class="hero-title">Duka Mwecheche</h1>
         <div class="hero-date">{{ today }}</div>
     </div>
+    {% endif %}
 
     <!-- Stats -->
 <div class="row g-3 mb-4" id="dash-stats">
@@ -590,12 +621,27 @@
 <script>
 (function () {
     var meter = document.getElementById('shift-meter');
-    if (!meter) return;
+    var heroRevenue = document.getElementById('bar-hero-revenue');
+    var heroShift = document.getElementById('bar-hero-shift');
+    if (!meter && !heroRevenue) return;
     fetch('/bar/shift/active/')
         .then(function (r) { return r.json(); })
         .then(function (d) {
-            if (!d.shift || d.shift.status !== 'OPEN') return;
             var s = d.shift;
+            /* ── Bar hero stats ── */
+            if (heroRevenue) {
+                if (s && s.status === 'OPEN') {
+                    heroRevenue.textContent = 'KES ' + Math.round(s.total_sales).toLocaleString();
+                    heroShift.textContent = '🟢 Open';
+                    heroShift.style.color = '#5dde7a';
+                } else {
+                    heroRevenue.textContent = 'KES 0';
+                    heroShift.textContent = '🔴 No Shift';
+                    heroShift.style.color = '#e74c3c';
+                }
+            }
+            /* ── Shift running meter (compact bar below hero) ── */
+            if (!meter || !s || s.status !== 'OPEN') return;
             meter.style.display = 'flex';
             meter.style.alignItems = 'center';
             meter.style.justifyContent = 'space-between';

@@ -38,6 +38,25 @@
             --success: #2ecc71;
             --warning: #f39c12;
             --danger: #e74c3c;
+            /* business-type accent — overridden per body.biz-* below */
+            --biz-accent: var(--gold);
+            --biz-accent-glow: rgba(201,168,76,0.3);
+            --biz-accent-muted: rgba(201,168,76,0.15);
+        }
+
+        /* ── Bar / Pub theme: whiskey amber accent ── */
+        body.biz-bar {
+            --biz-accent: #C8752A;
+            --biz-accent-glow: rgba(200,117,42,0.3);
+            --biz-accent-muted: rgba(200,117,42,0.15);
+        }
+        body.biz-bar .page-title { color: var(--biz-accent); }
+
+        /* ── Secondary nav active indicator (JS adds .biz-active) ── */
+        .secondary-header .biz-active {
+            color: var(--biz-accent) !important;
+            border-bottom: 2px solid var(--biz-accent);
+            padding-bottom: calc(0.5rem - 2px) !important;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -353,7 +372,7 @@
     </style>
     {% block extra_css %}{% endblock %}
 </head>
-<body class="{% if LANGUAGE_CODE != 'en' %}lang-translated{% endif %}{% if user.is_authenticated %} auth-body{% else %} guest-body{% endif %}">
+<body class="{% if LANGUAGE_CODE != 'en' %}lang-translated{% endif %}{% if user.is_authenticated %} auth-body{% else %} guest-body{% endif %}{% if biz_profile.type %} biz-{{ biz_profile.type }}{% endif %}">
 
     <!-- ═══ SITE HEADER ═══ -->
     <header class="site-header">
@@ -362,7 +381,7 @@
         <nav class="navbar navbar-expand-lg {% if user.is_authenticated %}navbar-auth{% else %}navbar-guest{% endif %}">
             <div class="container">
                 <a class="navbar-brand" href="{% if user.is_authenticated %}{% if user.userprofile.is_rider %}{% url 'rider_dashboard' %}{% elif user.userprofile.is_supplier %}{% url 'supplier_dashboard' %}{% else %}{% url 'home' %}{% endif %}{% else %}{% url 'home' %}{% endif %}">
-                    Duka <span>Mwecheche</span>
+                    {% if biz_profile.type == 'bar' %}🍺 {% endif %}Duka <span>Mwecheche</span>
                 </a>
 
                 {% if user.is_authenticated %}
@@ -413,7 +432,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
-                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
@@ -429,7 +448,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
-                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item dropdown">
                             <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">📦 {% trans 'Supply Chain' %}</a>
@@ -582,7 +601,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
-                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
@@ -610,7 +629,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
-                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% trans 'Quick Sell' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item dropdown">
                             <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">📦 {% trans 'Supply Chain' %}</a>
@@ -925,6 +944,20 @@
     })();
     </script>
     {% endif %}
+
+    <!-- Secondary nav active indicator -->
+    <script>
+    (function () {
+        var path = window.location.pathname;
+        var links = document.querySelectorAll('.secondary-header .nav-link');
+        links.forEach(function (link) {
+            var href = link.getAttribute('href');
+            if (href && href !== '#' && path === href) {
+                link.classList.add('biz-active');
+            }
+        });
+    })();
+    </script>
 
     <!-- Language Modal -->
     {% if user.is_authenticated %}
