@@ -279,11 +279,19 @@ def bar_board(request):
                 'timestamp': timezone.localtime(timezone.now()).strftime('%H:%M'),
             }
 
+    non_keg_items = (
+        Item.objects
+        .filter(store__business=business, is_keg=False)
+        .order_by('description')
+        .values('id', 'description', 'unit', 'selling_price')
+    )
+
     return render(request, 'core/bar/bar_board.html', {
         'is_owner': is_owner,
         'business': business,
         'success_data': success_data,
         'current_user_id': request.user.id,
+        'non_keg_items': list(non_keg_items),
     })
 
 
@@ -1285,3 +1293,43 @@ def keg_barrel_detail(request, barrel_id):
         'shortfall':                  shortfall,
         'pct_achieved':               pct_achieved,
     })
+
+
+# ── Bottle / Stock Breakage ──────────────────────────────────────────────────
+
+@login_required
+@require_POST
+def record_breakage(request):
+    """Record a bottle/stock damage event as a Wastage transaction."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({"ok": False, "error": "Auth required"}, status=403)
+
+    business = up.business
+    item = Item.objects.filter(
+        id=request.POST.get("item_id"),
+        store__business=business,
+    ).first()
+    if not item:
+        return JsonResponse({"ok": False, "error": "Item not found"}, status=404)
+
+    try:
+        qty = Decimal(str(request.POST.get("qty", "1")))
+        if qty <= 0:
+            raise ValueError
+    except (ValueError, Exception):
+        return JsonResponse({"ok": False, "error": "Invalid quantity"}, status=400)
+
+    note = request.POST.get("note", "").strip()
+
+    Transaction.objects.create(
+        business=business,
+        item=item,
+        type="Wastage",
+        qty=qty,
+        recipient=note or "Breakage / damage",
+        recorded_by=request.user,
+        payment_method="cash",
+    )
+
+    return JsonResponse({"ok": True})

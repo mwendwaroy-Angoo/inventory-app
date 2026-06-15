@@ -64,6 +64,7 @@ from core.keg_views import (
     keg_reconciliation,
     keg_barrel_detail,
     keg_target_recommendation,
+    record_breakage,
 )
 from core.shift_views import (
     open_shift,
@@ -213,6 +214,7 @@ urlpatterns = [
     path("stock/bar/weigh/<int:barrel_id>/", weigh_barrel, name="weigh_barrel"),
     path("stock/bar/discard/<int:barrel_id>/", discard_barrel, name="discard_barrel"),
     path("stock/bar/edit/<int:barrel_id>/", edit_barrel, name="edit_barrel"),
+    path("stock/bar/breakage/", record_breakage, name="record_breakage"),
     # ── Bar Cups (Sprint 4) ──────────────────────────────────────────────────
     path("bar/barrel/<int:barrel_id>/cups/", add_cups, name="add_cups"),
     # ── Bar Tabs (Sprint 3) ───────────────────────────────────────────────────

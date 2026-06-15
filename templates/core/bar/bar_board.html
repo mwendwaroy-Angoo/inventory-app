@@ -524,6 +524,12 @@
                      background:#c0395a; color:#fff; border-radius:50%; width:18px; height:18px;
                      font-size:0.65rem; line-height:18px; text-align:center; font-weight:700;"></span>
       </button>
+      <button onclick="window.openBreakageModal()"
+              style="background:rgba(192,57,90,0.1); border:1px solid rgba(192,57,90,0.35);
+                     color:#e87090; border-radius:8px; padding:4px 12px; font-size:0.82rem;
+                     cursor:pointer;">
+        🍾 Breakage
+      </button>
       {% if is_owner %}
       <a href="{% url 'bar_daily_report' %}"
          style="background:rgba(76,175,80,0.1); border:1px solid rgba(76,175,80,0.3);
@@ -567,6 +573,49 @@
 
 <!-- Toast notification -->
 <div id="keg-toast"></div>
+
+<!-- ════════════════════════════════════════════════════
+     BREAKAGE MODAL
+════════════════════════════════════════════════════ -->
+<div id="breakageModalBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1200; align-items:center; justify-content:center;">
+  <div style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:16px; width:100%; max-width:400px; margin:1rem; padding:1.25rem;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+      <div style="font-family:'Playfair Display',serif; color:#e2c36e; font-size:1.05rem; font-weight:600;">🍾 Record Breakage</div>
+      <button onclick="window.closeBreakageModal()" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; cursor:pointer; line-height:1;">×</button>
+    </div>
+    <div style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">A bottle or stock item was damaged/broken and not sold. This records it as wastage.</div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Item</label>
+      <select id="breakageItemSel" class="form-select" style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+        <option value="">-- Select item --</option>
+        {% for item in non_keg_items %}
+        <option value="{{ item.id }}">{{ item.description }} {% if item.unit %}({{ item.unit }}){% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Quantity</label>
+      <input type="number" id="breakageQty" class="form-control" min="0.001" step="0.001" value="1"
+             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+    </div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Note <span style="color:#555;">(optional)</span></label>
+      <input type="text" id="breakageNote" class="form-control" placeholder="e.g. Dropped during service"
+             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+    </div>
+    <div id="breakageStatus" style="display:none; font-size:0.82rem; margin-bottom:0.75rem;"></div>
+    <div style="display:flex; gap:0.6rem;">
+      <button onclick="window.submitBreakage()"
+              style="flex:1; padding:0.6rem; background:#c0395a; border:none; border-radius:8px; color:#fff; font-weight:700; font-size:0.9rem; cursor:pointer;">
+        Record Wastage
+      </button>
+      <button onclick="window.closeBreakageModal()"
+              style="padding:0.6rem 1rem; background:rgba(255,255,255,0.06); border:1px solid #333; border-radius:8px; color:#b0b0b0; cursor:pointer; font-size:0.9rem;">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- ════════════════════════════════════════════════════
      ORDER QUEUE DRAWER (Sprint 5 — Waitress Order Queue)
@@ -3024,6 +3073,74 @@
   {% endif %}
   {% endif %}
 
+})();
+</script>
+
+<script>
+// ── Breakage modal ─────────────────────────────────────────────────────────
+(function () {
+  var backdrop = document.getElementById('breakageModalBackdrop');
+
+  window.openBreakageModal = function () {
+    backdrop.style.display = 'flex';
+    document.getElementById('breakageStatus').style.display = 'none';
+    document.getElementById('breakageItemSel').value = '';
+    document.getElementById('breakageQty').value = '1';
+    document.getElementById('breakageNote').value = '';
+  };
+
+  window.closeBreakageModal = function () {
+    backdrop.style.display = 'none';
+  };
+
+  backdrop.addEventListener('click', function (e) {
+    if (e.target === backdrop) window.closeBreakageModal();
+  });
+
+  window.submitBreakage = function () {
+    var itemId = document.getElementById('breakageItemSel').value;
+    var qty    = document.getElementById('breakageQty').value;
+    var note   = document.getElementById('breakageNote').value.trim();
+    var status = document.getElementById('breakageStatus');
+
+    if (!itemId) {
+      status.style.display = 'block';
+      status.style.color = '#f87171';
+      status.textContent = 'Please select an item.';
+      return;
+    }
+    if (!qty || parseFloat(qty) <= 0) {
+      status.style.display = 'block';
+      status.style.color = '#f87171';
+      status.textContent = 'Enter a valid quantity.';
+      return;
+    }
+
+    var fd = new FormData();
+    fd.append('item_id', itemId);
+    fd.append('qty', qty);
+    fd.append('note', note);
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+    fetch('/stock/bar/breakage/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        status.style.display = 'block';
+        if (data.ok) {
+          status.style.color = '#9fcaa0';
+          status.textContent = 'Wastage recorded.';
+          setTimeout(function () { window.closeBreakageModal(); }, 1200);
+        } else {
+          status.style.color = '#f87171';
+          status.textContent = data.error || 'Failed. Try again.';
+        }
+      })
+      .catch(function () {
+        status.style.display = 'block';
+        status.style.color = '#f87171';
+        status.textContent = 'Network error.';
+      });
+  };
 })();
 </script>
 {% endblock %}

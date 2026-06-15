@@ -296,6 +296,7 @@
             {% bootstrap_field form.reorder_quantity %}
             </div>
 
+            {% if not biz_profile.modules.keg %}
             <!-- ── Yield / Processing Section ── -->
             <div class="section-divider" style="margin-top:1.5rem;"><span>⚗️ {% trans 'Yield / Processing' %}</span></div>
             <div style="background:rgba(243,156,18,0.05); border:1px solid rgba(243,156,18,0.2); border-radius:10px; padding:1rem; margin-bottom:1rem;">
@@ -327,6 +328,7 @@
                 </div>
             </div>
             <!-- ── end Yield Section ── -->
+            {% endif %}{# not keg #}
 
             {% if user.userprofile.is_owner %}
             <div class="section-divider"><span>🔒 {% trans 'Restriction Settings' %}</span></div>
@@ -1156,7 +1158,9 @@
                 var produceCb      = document.getElementById('is_produce');
                 var titleEl        = document.getElementById('presetSectionTitle');
                 if (presetsSection) {
-                    presetsSection.style.display = (isKeg || (produceCb && produceCb.checked) || window._barPresetsActive) ? 'block' : 'none';
+                    var _showPresets = isKeg || (produceCb && produceCb.checked) || window._barPresetsActive ||
+                                       (typeof IS_KEG_BUSINESS !== 'undefined' && IS_KEG_BUSINESS);
+                    presetsSection.style.display = _showPresets ? 'block' : 'none';
                 }
                 if (kegHint) kegHint.style.display = isKeg ? 'block' : 'none';
                 if (titleEl) titleEl.textContent = isKeg ? '🍺 Serving Presets' : '📋 Portion Presets';
