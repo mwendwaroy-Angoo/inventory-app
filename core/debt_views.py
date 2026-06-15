@@ -351,7 +351,7 @@ def send_debt_reminder(request, customer_id):
         f"Tafadhali lipa ndani ya siku {window}. Asante."
     )
 
-    ok, _ = send_sms_notification(msg, normalized_phone)
+    ok, _detail = send_sms_notification(msg, normalized_phone)
     if ok:
         messages.success(
             request,
