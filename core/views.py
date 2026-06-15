@@ -183,17 +183,25 @@ def home(request):
                 context['expired_count']  = 0
                 context['expiring_count'] = 0
 
-            # Bar-specific context: tapped kegs and kegs running low
+            # Bar-specific context: today's revenue, tapped kegs and kegs running low
             try:
                 from .business_profiles import get_profile as _get_profile
                 if _get_profile(business).get('modules', {}).get('keg'):
+                    from datetime import date as _ddate
                     from .models import KegBarrel as _KB
+                    # Today's revenue across ALL Issue transactions (not shift-bound)
+                    _bar_txns = Transaction.objects.filter(
+                        business=business, type='Issue', date=_ddate.today(),
+                    ).select_related('item')
+                    context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
+                    # Tapped barrels and kegs near empty (<15% of target remaining)
                     _tapped = list(_KB.objects.filter(business=business, status='TAPPED'))
                     _at_risk = [k for k in _tapped
                                 if k.remaining_envelope() < float(k.target_revenue or 1) * 0.15]
                     context['kegs_tapped'] = len(_tapped)
                     context['kegs_at_risk_count'] = len(_at_risk)
             except Exception:
+                context['bar_today_revenue'] = 0
                 context['kegs_tapped'] = 0
                 context['kegs_at_risk_count'] = 0
 

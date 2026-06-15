@@ -13,7 +13,8 @@ import json
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Sum
+from django.db.models import Case, DecimalField, F, Sum, Value, When
+from django.db.models.functions import Abs, Coalesce
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -38,9 +39,16 @@ def _reconcile(shift):
         created_at__gte=shift.started_at,
         created_at__lte=end,
     )
-    cash_sales  = float(txns.filter(payment_method='cash' ).aggregate(t=Sum('sale_amount'))['t'] or 0)
-    mpesa_sales = float(txns.filter(payment_method='mpesa').aggregate(t=Sum('sale_amount'))['t'] or 0)
-    credit_sales= float(txns.filter(payment_method='credit').aggregate(t=Sum('sale_amount'))['t'] or 0)
+    # Revenue per transaction: use sale_amount when set (keg pours, preset Quick Sell),
+    # otherwise abs(qty) * selling_price (regular Quick Sell without preset).
+    _rev = Case(
+        When(sale_amount__isnull=False, then=F('sale_amount')),
+        default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+    cash_sales   = float(txns.filter(payment_method='cash'  ).aggregate(t=Sum(_rev))['t'] or 0)
+    mpesa_sales  = float(txns.filter(payment_method='mpesa' ).aggregate(t=Sum(_rev))['t'] or 0)
+    credit_sales = float(txns.filter(payment_method='credit').aggregate(t=Sum(_rev))['t'] or 0)
     total_sales  = cash_sales + mpesa_sales + credit_sales
     offline_adj  = float(shift.offline_sales_amount or 0)
     # expected_cash includes any offline cash that staff declared but didn't enter in the system
