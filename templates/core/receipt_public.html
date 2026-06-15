@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Receipt #{{ receipt.receipt_number }} — {{ receipt.business.name }}</title>
+    <style>
+        :root {
+            --gold: #c9a84c;
+            --onyx: #1a1a1a;
+            --pearl: #f0ece4;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--onyx);
+            color: var(--pearl);
+            font-family: 'DM Sans', 'Helvetica Neue', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 1.5rem 1rem 3rem;
+        }
+        .receipt-wrap {
+            width: 100%;
+            max-width: 400px;
+        }
+        .brand {
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+        .brand-name {
+            font-family: 'Playfair Display', Georgia, serif;
+            font-size: 1.6rem;
+            color: var(--gold);
+            letter-spacing: 0.03em;
+        }
+        .brand-sub {
+            font-size: 0.75rem;
+            color: #b0b0b0;
+            margin-top: 0.15rem;
+        }
+        .receipt-card {
+            background: #222;
+            border: 1px solid #333;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .receipt-header {
+            background: rgba(201,168,76,0.08);
+            border-bottom: 1px solid #333;
+            padding: 1rem 1.2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .receipt-number {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--gold);
+        }
+        .receipt-date {
+            font-size: 0.78rem;
+            color: #b0b0b0;
+            text-align: right;
+        }
+        .receipt-lines {
+            padding: 0.75rem 1.2rem;
+        }
+        .receipt-line {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 0.55rem 0;
+            border-bottom: 1px dashed #2e2e2e;
+            font-size: 0.88rem;
+        }
+        .receipt-line:last-child { border-bottom: none; }
+        .line-name { color: var(--pearl); flex: 1; }
+        .line-qty { color: #b0b0b0; font-size: 0.78rem; margin: 0 0.75rem; white-space: nowrap; }
+        .line-amount { color: var(--pearl); font-weight: 600; white-space: nowrap; }
+        .receipt-total {
+            background: rgba(201,168,76,0.06);
+            border-top: 2px solid var(--gold);
+            padding: 0.9rem 1.2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .total-label { font-weight: 700; font-size: 1rem; color: var(--gold); }
+        .total-amount { font-size: 1.25rem; font-weight: 700; color: var(--gold); }
+        .receipt-footer {
+            padding: 0.9rem 1.2rem;
+            border-top: 1px solid #2a2a2a;
+            font-size: 0.78rem;
+            color: #b0b0b0;
+            display: flex;
+            justify-content: space-between;
+        }
+        .payment-badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .pay-cash { background: rgba(120,180,90,0.15); color: #9fcaa0; }
+        .pay-mpesa { background: rgba(120,200,100,0.15); color: #4caf50; }
+        .pay-credit { background: rgba(192,57,90,0.15); color: #e87090; }
+        .qr-section {
+            text-align: center;
+            padding: 1.2rem;
+            border-top: 1px solid #2a2a2a;
+        }
+        .qr-section p { font-size: 0.72rem; color: #b0b0b0; margin-top: 0.5rem; }
+        #qrCanvas { display: inline-block; border-radius: 8px; overflow: hidden; }
+        .actions {
+            margin-top: 1.25rem;
+            display: flex;
+            gap: 0.6rem;
+        }
+        .btn-receipt {
+            flex: 1;
+            padding: 0.65rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+            text-decoration: none;
+            display: block;
+        }
+        .btn-print { background: rgba(201,168,76,0.15); color: var(--gold); border: 1px solid rgba(201,168,76,0.3); }
+        .btn-share { background: rgba(255,255,255,0.06); color: var(--pearl); border: 1px solid #333; }
+        .send-section {
+            margin-top: 1rem;
+            background: #1e1e1e;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 0.9rem;
+        }
+        .send-title { font-size: 0.8rem; color: #b0b0b0; margin-bottom: 0.6rem; }
+        .send-row { display: flex; gap: 0.5rem; }
+        .send-input {
+            flex: 1;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: var(--pearl);
+            padding: 0.45rem 0.7rem;
+            font-size: 0.82rem;
+        }
+        .btn-send {
+            padding: 0.45rem 1rem;
+            border-radius: 6px;
+            border: none;
+            background: var(--gold);
+            color: #111;
+            font-weight: 700;
+            font-size: 0.82rem;
+            cursor: pointer;
+        }
+        .send-status { font-size: 0.75rem; margin-top: 0.4rem; display: none; }
+
+        /* ── Thermal print ──────────────────────────────────── */
+        @media print {
+            * { -webkit-print-color-adjust: exact; color-adjust: exact; }
+            body {
+                background: #fff;
+                color: #000;
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 11px;
+                padding: 0;
+                display: block;
+            }
+            .receipt-wrap { max-width: 80mm; margin: 0 auto; }
+            .receipt-card {
+                background: #fff;
+                border: none;
+                border-radius: 0;
+            }
+            .brand-name { color: #000; }
+            .receipt-header { background: #fff; border-bottom: 1px solid #000; }
+            .receipt-number { color: #000; }
+            .receipt-date { color: #444; }
+            .receipt-line { border-bottom: 1px dashed #ccc; }
+            .line-name, .line-amount { color: #000; }
+            .line-qty { color: #444; }
+            .receipt-total { background: #fff; border-top: 2px solid #000; }
+            .total-label, .total-amount { color: #000; }
+            .receipt-footer { color: #444; }
+            .payment-badge { background: transparent; color: #000; border: 1px solid #000; }
+            .qr-section { border-top: 1px solid #ccc; }
+            .qr-section p { color: #444; }
+            .actions, .send-section { display: none; }
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="receipt-wrap">
+    <div class="brand">
+        <div class="brand-name">{{ receipt.business.name }}</div>
+        {% if receipt.business.phone %}<div class="brand-sub">{{ receipt.business.phone }}</div>{% endif %}
+    </div>
+
+    <div class="receipt-card">
+        <div class="receipt-header">
+            <div class="receipt-number">Risiti #{{ receipt.receipt_number }}</div>
+            <div class="receipt-date">
+                {{ receipt.created_at|date:"d M Y" }}<br>
+                <span style="font-size:0.72rem;">{{ receipt.created_at|date:"H:i" }}</span>
+            </div>
+        </div>
+
+        <div class="receipt-lines">
+            {% for line in receipt.lines %}
+            <div class="receipt-line">
+                <span class="line-name">{{ line.name }}</span>
+                <span class="line-qty">×{{ line.qty|floatformat:"-2" }}</span>
+                <span class="line-amount">KES {{ line.subtotal|floatformat:"0" }}</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="receipt-total">
+            <span class="total-label">Jumla</span>
+            <span class="total-amount">KES {{ receipt.total|floatformat:"0" }}</span>
+        </div>
+
+        <div class="receipt-footer">
+            <span>
+                Malipo:
+                <span class="payment-badge {% if receipt.payment_method == 'mpesa' %}pay-mpesa{% elif receipt.payment_method == 'credit' %}pay-credit{% else %}pay-cash{% endif %}">
+                    {% if receipt.payment_method == 'mpesa' %}M-Pesa{% elif receipt.payment_method == 'credit' %}Credit{% else %}Cash{% endif %}
+                </span>
+            </span>
+            {% if receipt.customer_name %}<span>{{ receipt.customer_name }}</span>{% endif %}
+        </div>
+
+        <div class="qr-section no-print">
+            <div id="qrCanvas"></div>
+            <p>Scan to view this receipt</p>
+        </div>
+    </div>
+
+    <div class="actions no-print">
+        <button class="btn-receipt btn-print" onclick="window.print()">🖨️ Print</button>
+        <button class="btn-receipt btn-share" id="btnShare">📤 Share</button>
+    </div>
+
+    <div class="send-section no-print">
+        <div class="send-title">📱 Send receipt via SMS</div>
+        <div class="send-row">
+            <input type="tel" class="send-input" id="smsPhone"
+                   placeholder="07XX XXX XXX"
+                   value="{{ receipt.customer_phone }}">
+            <button class="btn-send" id="btnSendSms">Send</button>
+        </div>
+        <div class="send-status" id="smsStatus"></div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
+<script>
+(function() {
+    var url = "{{ receipt_url|escapejs }}";
+
+    new QRCode(document.getElementById("qrCanvas"), {
+        text: url,
+        width: 120,
+        height: 120,
+        colorDark: "#1a1a1a",
+        colorLight: "#f0ece4",
+        correctLevel: QRCode.CorrectLevel.M,
+    });
+
+    var btnShare = document.getElementById('btnShare');
+    if (navigator.share) {
+        btnShare.addEventListener('click', function() {
+            navigator.share({
+                title: "Risiti #{{ receipt.receipt_number }} — {{ receipt.business.name|escapejs }}",
+                text: "Angalia risiti yako hapa:",
+                url: url,
+            });
+        });
+    } else {
+        btnShare.addEventListener('click', function() {
+            navigator.clipboard.writeText(url).then(function() {
+                btnShare.textContent = '✅ Copied!';
+                setTimeout(function() { btnShare.textContent = '📤 Share'; }, 2000);
+            });
+        });
+    }
+
+    var btnSend = document.getElementById('btnSendSms');
+    var smsStatus = document.getElementById('smsStatus');
+    btnSend.addEventListener('click', function() {
+        var phone = document.getElementById('smsPhone').value.trim();
+        if (!phone) { return; }
+        btnSend.disabled = true;
+        btnSend.textContent = '...';
+        var fd = new FormData();
+        fd.append('channel', 'sms');
+        fd.append('phone', phone);
+        fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        fetch('/receipts/{{ receipt.id }}/send/', { method: 'POST', body: fd })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                smsStatus.style.display = 'block';
+                if (data.ok) {
+                    smsStatus.style.color = '#9fcaa0';
+                    smsStatus.textContent = 'SMS imetumwa!';
+                } else {
+                    smsStatus.style.color = '#f87171';
+                    smsStatus.textContent = 'Imeshindwa — angalia nambari.';
+                }
+                btnSend.disabled = false;
+                btnSend.textContent = 'Send';
+            });
+    });
+})();
+</script>
+</body>
+</html>

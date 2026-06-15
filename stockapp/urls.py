@@ -157,6 +157,7 @@ from core.recurring_expense_views import (
     recurring_expense_review,
     recurring_expense_confirm,
 )
+from core.receipt_views import receipts_list, public_receipt, send_receipt
 from core.onboarding_views import mark_section_seen
 from core.restricted_items_views import (
     request_sale_approval, pending_approvals,
@@ -431,6 +432,10 @@ urlpatterns = [
         capital_investment_delete,
         name="capital_investment_delete",
     ),
+    # ── Digital Receipts ──────────────────────────────────────────────────────
+    path("receipts/", receipts_list, name="receipts_list"),
+    path("r/<str:token>/", public_receipt, name="public_receipt"),
+    path("receipts/<int:receipt_id>/send/", send_receipt, name="send_receipt"),
     # ── Compliance & Licensing ──
     path("analytics/compliance/", compliance_checklist, name="compliance_checklist"),
     # ── Analytics ──

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Receipts{% endblock %}
+
+{% block extra_css %}
+<style>
+.receipt-row {
+    background: var(--onyx-card);
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    padding: 0.85rem 1.1rem;
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    text-decoration: none;
+    color: var(--pearl);
+    transition: border-color 0.15s;
+}
+.receipt-row:hover { border-color: var(--gold); color: var(--pearl); }
+.rct-num { font-weight: 700; color: var(--gold); min-width: 60px; }
+.rct-date { font-size: 0.78rem; color: #b0b0b0; min-width: 90px; }
+.rct-items { flex: 1; font-size: 0.82rem; color: #b0b0b0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rct-total { font-weight: 700; white-space: nowrap; }
+.pay-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+.pay-cash { background: rgba(120,180,90,0.15); color: #9fcaa0; }
+.pay-mpesa { background: rgba(76,175,80,0.15); color: #4caf50; }
+.pay-credit { background: rgba(192,57,90,0.15); color: #e87090; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3" style="max-width:680px;">
+    <div class="d-flex align-items-center gap-2 mb-3">
+        <div>
+            <h5 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0;">🧾 Receipts</h5>
+            <div style="font-size:0.78rem; color:#b0b0b0;">Last 100 digital receipts</div>
+        </div>
+    </div>
+
+    {% if receipts %}
+        {% for r in receipts %}
+        <a href="{% url 'public_receipt' r.token %}" class="receipt-row" target="_blank">
+            <span class="rct-num">#{{ r.receipt_number }}</span>
+            <span class="rct-date">{{ r.created_at|date:"d M, H:i" }}</span>
+            <span class="rct-items">
+                {% for line in r.lines %}{{ line.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+            </span>
+            <span class="rct-total">KES {{ r.total|floatformat:"0" }}</span>
+            <span class="pay-badge {% if r.payment_method == 'mpesa' %}pay-mpesa{% elif r.payment_method == 'credit' %}pay-credit{% else %}pay-cash{% endif %}">
+                {% if r.payment_method == 'mpesa' %}M-Pesa{% elif r.payment_method == 'credit' %}Credit{% else %}Cash{% endif %}
+            </span>
+        </a>
+        {% endfor %}
+    {% else %}
+        <div style="text-align:center; padding:3rem 1rem; color:#b0b0b0;">
+            <div style="font-size:2.5rem; margin-bottom:0.5rem;">🧾</div>
+            <div>No receipts yet. Receipts are created automatically when you complete a Quick Sell.</div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

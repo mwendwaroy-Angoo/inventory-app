@@ -2059,3 +2059,50 @@ class TableOrderItem(models.Model):
 
     def line_total(self):
         return self.quantity * self.unit_price
+
+
+class Receipt(models.Model):
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='receipts'
+    )
+    receipt_number = models.PositiveIntegerField()
+    token = models.CharField(max_length=32, unique=True, db_index=True)
+    customer_name = models.CharField(max_length=100, blank=True)
+    customer_phone = models.CharField(max_length=20, blank=True)
+    payment_method = models.CharField(max_length=20, default='cash')
+    total = models.DecimalField(max_digits=12, decimal_places=2)
+    lines = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        'auth.User', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='receipts_issued'
+    )
+
+    class Meta:
+        unique_together = [('business', 'receipt_number')]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"#{self.receipt_number} – {self.business}"
+
+    @classmethod
+    def issue(cls, business, lines, payment_method, user=None, customer_name='', customer_phone=''):
+        import secrets as _secrets
+        from django.db import transaction as _tx
+        from django.db.models import Max as _Max
+        total = sum(float(line.get('subtotal', 0)) for line in lines)
+        with _tx.atomic():
+            last = cls.objects.select_for_update().filter(
+                business=business
+            ).aggregate(n=_Max('receipt_number'))['n'] or 0
+            return cls.objects.create(
+                business=business,
+                receipt_number=last + 1,
+                token=_secrets.token_urlsafe(20),
+                customer_name=customer_name or '',
+                customer_phone=customer_phone or '',
+                payment_method=payment_method,
+                total=Decimal(str(round(total, 2))),
+                lines=lines,
+                created_by=user,
+            )

@@ -627,7 +627,35 @@
         <div style="font-size: 3rem; margin-bottom: 0.5rem;">✅</div>
         <h4>{% trans 'Sale Recorded!' %}</h4>
         <div class="qs-receipt" id="qsReceipt"></div>
-        <button class="qs-modal-add w-100 mt-3" onclick="document.getElementById('qsSuccessModal').classList.remove('active')">
+
+        <!-- Digital receipt row (shown only when receipt was created) -->
+        <div id="qsReceiptActions" style="display:none; margin-top:0.75rem;">
+            <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem;">
+                <a id="qsReceiptLink" href="#" target="_blank" rel="noopener"
+                   style="flex:1; padding:0.55rem; background:rgba(201,168,76,0.12); border:1px solid rgba(201,168,76,0.3); color:var(--gold); border-radius:8px; font-size:0.82rem; font-weight:600; text-align:center; text-decoration:none;">
+                    🧾 {% trans 'View Receipt' %}
+                </a>
+                <button id="qsShareBtn"
+                        style="flex:1; padding:0.55rem; background:rgba(255,255,255,0.05); border:1px solid #333; color:var(--pearl); border-radius:8px; font-size:0.82rem; font-weight:600; cursor:pointer;">
+                    📤 {% trans 'Share' %}
+                </button>
+            </div>
+            <div id="qsQrWrap" style="text-align:center; margin-bottom:0.5rem;">
+                <div id="qsQrCode" style="display:inline-block; border-radius:8px; overflow:hidden;"></div>
+                <div style="font-size:0.68rem; color:#b0b0b0; margin-top:0.25rem;">{% trans 'Scan to view receipt' %}</div>
+            </div>
+            <div style="display:flex; gap:0.4rem;">
+                <input type="tel" id="qsSmsPhone" placeholder="07XX XXX XXX"
+                       style="flex:1; background:#111; border:1px solid #333; border-radius:6px; color:var(--pearl); padding:0.4rem 0.65rem; font-size:0.8rem;">
+                <button id="qsSendSmsBtn"
+                        style="padding:0.4rem 0.9rem; background:var(--gold); color:#111; border:none; border-radius:6px; font-weight:700; font-size:0.8rem; cursor:pointer;">
+                    SMS
+                </button>
+            </div>
+            <div id="qsSmsStatus" style="font-size:0.75rem; margin-top:0.3rem; display:none;"></div>
+        </div>
+
+        <button class="qs-modal-add w-100 mt-3" onclick="document.getElementById('qsSuccessModal').classList.remove('active'); document.getElementById('qsQrCode').innerHTML = '';">
             {% trans 'Continue Selling' %}
         </button>
     </div>
@@ -1564,21 +1592,85 @@
 
     // ── SUCCESS MODAL ──
     {% if success_data %}
-    var successData = {{ success_data|safe }};
-    var receiptHtml = '';
-    for (var i = 0; i < successData.items.length; i++) {
-        var item = successData.items[i];
-        receiptHtml += '<div class="qs-receipt-line">'
-            + '<span>' + item.name + ' \u00D7 ' + item.qty + '</span>'
-            + '<span>KES ' + item.subtotal.toLocaleString() + '</span>'
+    (function() {
+        var successData = {{ success_data|safe }};
+        var receiptHtml = '';
+        for (var i = 0; i < successData.items.length; i++) {
+            var item = successData.items[i];
+            receiptHtml += '<div class="qs-receipt-line">'
+                + '<span>' + item.name + ' × ' + item.qty + '</span>'
+                + '<span>KES ' + item.subtotal.toLocaleString() + '</span>'
+                + '</div>';
+        }
+        receiptHtml += '<div class="qs-receipt-total">'
+            + '<span>Total</span>'
+            + '<span>KES ' + successData.total.toLocaleString() + '</span>'
             + '</div>';
-    }
-    receiptHtml += '<div class="qs-receipt-total">'
-        + '<span>Total</span>'
-        + '<span>KES ' + successData.total.toLocaleString() + '</span>'
-        + '</div>';
-    document.getElementById('qsReceipt').innerHTML = receiptHtml;
-    document.getElementById('qsSuccessModal').classList.add('active');
+        document.getElementById('qsReceipt').innerHTML = receiptHtml;
+
+        if (successData.receipt_url && successData.receipt_token) {
+            document.getElementById('qsReceiptActions').style.display = 'block';
+            document.getElementById('qsReceiptLink').href = successData.receipt_url;
+
+            var qrEl = document.getElementById('qsQrCode');
+            qrEl.innerHTML = '';
+            function _makeQr() {
+                new QRCode(qrEl, {
+                    text: successData.receipt_url,
+                    width: 110, height: 110,
+                    colorDark: "#1a1a1a", colorLight: "#f0ece4",
+                    correctLevel: QRCode.CorrectLevel.M,
+                });
+            }
+            if (typeof QRCode !== 'undefined') {
+                _makeQr();
+            } else {
+                var s = document.createElement('script');
+                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+                s.onload = _makeQr;
+                document.head.appendChild(s);
+            }
+
+            document.getElementById('qsShareBtn').onclick = function() {
+                if (navigator.share) {
+                    navigator.share({ title: 'Receipt', url: successData.receipt_url });
+                } else {
+                    navigator.clipboard.writeText(successData.receipt_url).then(function() {
+                        var btn = document.getElementById('qsShareBtn');
+                        btn.textContent = '✅ Copied!';
+                        setTimeout(function() { btn.textContent = '📤 Share'; }, 2000);
+                    });
+                }
+            };
+
+            document.getElementById('qsSendSmsBtn').onclick = function() {
+                var phone = document.getElementById('qsSmsPhone').value.trim();
+                if (!phone) { return; }
+                var btn = document.getElementById('qsSendSmsBtn');
+                var statusEl = document.getElementById('qsSmsStatus');
+                btn.disabled = true; btn.textContent = '...';
+                var fd = new FormData();
+                fd.append('channel', 'sms');
+                fd.append('phone', phone);
+                fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+                fetch('/receipts/' + successData.receipt_id + '/send/', { method: 'POST', body: fd })
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        statusEl.style.display = 'block';
+                        if (data.ok) {
+                            statusEl.style.color = '#9fcaa0';
+                            statusEl.textContent = 'SMS imetumwa!';
+                        } else {
+                            statusEl.style.color = '#f87171';
+                            statusEl.textContent = 'Imeshindwa — angalia nambari.';
+                        }
+                        btn.disabled = false; btn.textContent = 'SMS';
+                    });
+            };
+        }
+
+        document.getElementById('qsSuccessModal').classList.add('active');
+    })();
     {% endif %}
 })();
 </script>

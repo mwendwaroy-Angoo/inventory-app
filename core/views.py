@@ -2049,7 +2049,33 @@ def quick_sell(request):
             except Exception:
                 pass
 
-            success_data = json.dumps({"items": recorded, "total": total})
+            receipt_token = None
+            receipt_number = None
+            try:
+                from .models import Receipt
+                rcpt = Receipt.issue(
+                    business=user_profile.business,
+                    lines=recorded,
+                    payment_method=request.POST.get("payment_method", "cash"),
+                    user=request.user,
+                )
+                receipt_token = rcpt.token
+                receipt_number = rcpt.receipt_number
+            except Exception:
+                pass
+
+            receipt_url = (
+                request.build_absolute_uri(f'/r/{receipt_token}/')
+                if receipt_token else None
+            )
+            success_data = json.dumps({
+                "items": recorded,
+                "total": total,
+                "receipt_token": receipt_token,
+                "receipt_number": receipt_number,
+                "receipt_url": receipt_url,
+                "receipt_id": rcpt.id if receipt_token else None,
+            })
             messages.success(
                 request,
                 _("Sale recorded: %(item_count)s item(s), KES %(total)s")
