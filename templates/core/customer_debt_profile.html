@@ -329,8 +329,7 @@
     {% endif %}
 </div>
 
-<!-- Per-customer credit settings (owner only) -->
-{% if is_owner %}
+<!-- Per-customer credit settings (staff + owner) -->
 <div class="section-card">
     <div class="section-card-header">
         <h6>⚙️ {% trans 'Credit Settings for This Customer' %}</h6>
@@ -371,7 +370,6 @@
         </form>
     </div>
 </div>
-{% endif %}
 
 <!-- ── Record Payment Modal ── -->
 <div class="modal fade" id="paymentModal" tabindex="-1" aria-hidden="true">

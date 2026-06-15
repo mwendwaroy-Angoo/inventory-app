@@ -232,7 +232,7 @@ def record_debt_payment(request, customer_id):
         messages.error(request, _('Please enter a valid payment amount.'))
         return redirect('customer_debt_profile', customer_id=customer_id)
 
-    # Snapshot debt data BEFORE recording payment — needed for receipt lines
+    # Snapshot debt data BEFORE recording payment — needed for receipt lines + validation
     data = _get_customer_debt_data(customer, business)
     if amount > Decimal(str(data['outstanding'])):
         messages.error(
@@ -242,10 +242,9 @@ def record_debt_payment(request, customer_id):
         )
         return redirect('customer_debt_profile', customer_id=customer_id)
 
-    unpaid_before   = data['unpaid_transactions']
-    score_label     = data.get('score_label', '')
-    method_label    = 'M-Pesa' if method == 'mpesa' else 'Cash'
-    recorder        = request.user.get_full_name() or request.user.username
+    unpaid_before = data['unpaid_transactions']
+    method_label  = 'M-Pesa' if method == 'mpesa' else 'Cash'
+    recorder      = request.user.get_full_name() or request.user.username
 
     CustomerDebtPayment.objects.create(
         customer=customer,
@@ -255,6 +254,11 @@ def record_debt_payment(request, customer_id):
         notes=notes,
         recorded_by=request.user,
     )
+
+    # Recompute score AFTER payment — shows the customer's current standing
+    post_data       = _get_customer_debt_data(customer, business)
+    score_label     = post_data.get('score_label', '')
+    effective_window = post_data.get('effective_window', business.credit_window_days or 30)
 
     # Build receipt lines: show each original credit transaction being cleared (FIFO)
     receipt_lines = []
@@ -275,10 +279,20 @@ def record_debt_payment(request, customer_id):
     if not receipt_lines:
         receipt_lines.append({'name': notes or 'Malipo ya deni', 'qty': 1, 'subtotal': float(amount)})
 
-    # Metadata line (subtotal=0, hidden in template)
-    days_label = f"{max_days} siku" if max_days > 0 else 'siku moja'
+    # Days label: how long the customer actually took to pay vs their window
+    if max_days == 0:
+        days_label = 'umelipa leo'
+    elif max_days == 1:
+        days_label = 'umelipa siku 1 baadaye'
+    else:
+        days_label = f'umelipa siku {max_days} baadaye'
+    window_label = f'kiwango siku {effective_window}'
+
     receipt_lines.append({
-        'name': f"Malipo: {method_label} · {days_label} za kulipa · {score_label} · alirekodiwa na {recorder}",
+        'name': (
+            f"Malipo: {method_label} · {days_label} ({window_label})"
+            f" · {score_label} · alirekodiwa na {recorder}"
+        ),
         'qty': 0,
         'subtotal': 0,
     })
@@ -304,7 +318,7 @@ def record_debt_payment(request, customer_id):
             if normalized:
                 sms_msg = (
                     f"{business.name}: Deni lako limelipiwa!\n"
-                    f"KES {amount:,.0f} ({method_label}) — {days_label} za kulipa\n"
+                    f"KES {amount:,.0f} ({method_label}) — {days_label} ({window_label})\n"
                     f"Alama ya mikopo: {score_label}\n"
                     f"Risiti: {receipt_url}"
                 )
@@ -387,7 +401,6 @@ def toggle_credit_approval(request, customer_id):
 
 
 @login_required
-@owner_required
 @require_POST
 def update_customer_credit_settings(request, customer_id):
     user_profile = get_user_profile(request)
