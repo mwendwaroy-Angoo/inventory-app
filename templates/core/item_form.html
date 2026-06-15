@@ -1036,7 +1036,8 @@
                 var kegCb     = document.getElementById('is_keg');
                 var section   = document.getElementById('portionPresetsSection');
                 if (section) {
-                    var show = (produceCb && produceCb.checked) || (kegCb && kegCb.checked);
+                    var show = (produceCb && produceCb.checked) || (kegCb && kegCb.checked) ||
+                               (typeof IS_KEG_BUSINESS !== 'undefined' && IS_KEG_BUSINESS);
                     section.style.display = show ? 'block' : 'none';
                 }
                 var spiritHint = document.getElementById('barSpiritPresetHint');
