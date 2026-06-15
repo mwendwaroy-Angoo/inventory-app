@@ -1790,6 +1790,7 @@ class KegBarrel(models.Model):
             qty=-ml,
             sale_amount=amount,
             payment_method=pay,
+            recipient=tab.customer_name if tab else '',
             keg_barrel=self,
             keg_serving=serving,
             keg_qty=int(qty),

@@ -235,6 +235,14 @@ def bar_board(request):
                     served_by=request.user if not tab_server else None,
                 )
 
+        # Auto-create Customer so tab sales appear in debt tracker
+        if payment_method == 'tab' and tab_customer:
+            from .models import Customer as _Customer
+            _cust, _cust_created = _Customer.objects.get_or_create(
+                business=business,
+                name=tab_customer,
+            )
+
         receipt_lines = []
         total_revenue = Decimal('0')
 
@@ -275,11 +283,13 @@ def bar_board(request):
             receipt_number = None
             receipt_id = None
             try:
+                receipt_pm = 'credit' if payment_method == 'tab' else payment_method
                 rcpt = Receipt.issue(
                     business=business,
                     lines=receipt_lines,
-                    payment_method=payment_method,
+                    payment_method=receipt_pm,
                     user=request.user,
+                    customer_name=tab_customer if payment_method == 'tab' else '',
                 )
                 receipt_token = rcpt.token
                 receipt_number = rcpt.receipt_number
