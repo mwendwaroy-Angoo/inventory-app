@@ -366,6 +366,7 @@
             {% endif %}
 
             {% if user.userprofile.is_owner %}
+            {% if not biz_profile.modules.keg %}
             <div class="section-divider"><span>🥬 {% trans 'Produce Settings' %}</span></div>
 
             <div class="mb-3">
@@ -427,6 +428,9 @@
                 </div>
             </div>
 
+            {% endif %}{# end not keg #}
+
+            {% if not biz_profile.modules.produce %}
             <div class="section-divider"><span>🍺 {% trans 'Keg Settings' %}</span></div>
             <div class="mb-3" id="kegSettingsBlock">
                 <div class="form-check">
@@ -445,9 +449,11 @@
                 </div>
             </div>
 
+            {% endif %}{# end not produce #}
+
             <!-- Preset table — used by both Produce (Portion Presets) and Keg (Serving Presets) -->
-            <div id="portionPresetsSection" style="{% if not form.instance.is_produce and not form.instance.is_keg %}display:none;{% endif %}">
-                <div id="kegPresetHint" style="display:none; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#e2c36e; margin-bottom:0.75rem;">
+            <div id="portionPresetsSection" style="{% if not form.instance.is_produce and not form.instance.is_keg and not biz_profile.modules.keg %}display:none;{% endif %}">
+                <div id="kegPresetHint" style="{% if not biz_profile.modules.keg %}display:none;{% endif %} background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#e2c36e; margin-bottom:0.75rem;">
                     🍺 {% trans 'Keg presets: each row is one serving size. Label = name on the Bar Board tile (e.g. Kikombe, Jug). Customer Pays = KES price. Stock Used = millilitres poured.' %}
                     <span style="display:block; margin-top:0.35rem; color:#b0b0b0;">
                         💡 {% trans 'Catalog fills standard sizes (300ml kikombe, 1250ml jug). Change Stock Used to match your actual cup — e.g. type 400 if you use a 400ml glass.' %}
@@ -867,6 +873,13 @@
                 } else {
                     qtyInput.readOnly = false;
                     qtyInput.style.opacity = '1';
+                }
+                // Keg items: ml is always editable — bar may use non-standard cup sizes
+                var _kegCb = document.getElementById('is_keg');
+                if (_kegCb && _kegCb.checked) {
+                    qtyInput.readOnly = false;
+                    qtyInput.style.opacity = '1';
+                    qtyInput.placeholder = 'ml';
                 }
                 // Auto-fill price when selecting a whole-unit preset (qty = 1) and price is blank
                 if (!isInit && PRESET_AUTOFILL[val] !== undefined && parseFloat(PRESET_AUTOFILL[val]) === 1.0) {
