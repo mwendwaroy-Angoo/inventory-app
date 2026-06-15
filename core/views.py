@@ -2053,7 +2053,7 @@ def quick_sell(request):
             # ── Auto-create Customer for credit sales so debt tracker finds them ──
             if payment_method_qs == "credit" and credit_recipient:
                 from .models import Customer as _Customer
-                cust_obj, _ = _Customer.objects.get_or_create(
+                cust_obj, _created = _Customer.objects.get_or_create(
                     business=user_profile.business,
                     name=credit_recipient,
                 )
