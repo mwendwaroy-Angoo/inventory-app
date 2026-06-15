@@ -250,11 +250,45 @@ def record_debt_payment(request, customer_id):
         recorded_by=request.user,
     )
 
+    # Generate a receipt for the debt payment
+    receipt_url = None
+    try:
+        from .models import Receipt
+        method_label = 'M-Pesa' if method == 'mpesa' else 'Cash'
+        rcpt = Receipt.issue(
+            business=business,
+            lines=[{
+                'name': f"Debt payment — {notes}" if notes else "Debt payment",
+                'qty': 1,
+                'subtotal': float(amount),
+            }],
+            payment_method=method,
+            user=request.user,
+            customer_name=customer.name,
+            customer_phone=customer.phone or '',
+        )
+        receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
+        # SMS the payment receipt to the customer if they have a phone
+        if customer.phone:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            normalized = normalize_ke_phone(customer.phone)
+            if normalized:
+                sms_msg = (
+                    f"Malipo yaliyopokelewa: KES {amount:,.0f} ({method_label})\n"
+                    f"Duka: {business.name}\n"
+                    f"Risiti: {receipt_url}"
+                )
+                send_sms_notification(sms_msg, normalized)
+    except Exception:
+        pass
+
     messages.success(
         request,
         _('Payment of KES %(amount)s recorded for %(customer)s.')
         % {'amount': f'{amount:,.2f}', 'customer': customer.name}
     )
+    if receipt_url:
+        messages.info(request, f'Receipt: {receipt_url}')
     return redirect('customer_debt_profile', customer_id=customer_id)
 
 

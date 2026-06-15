@@ -1938,6 +1938,8 @@ def quick_sell(request):
             cart = []
 
         credit_recipient = request.POST.get("recipient", "").strip()
+        credit_phone     = request.POST.get("credit_phone", "").strip()
+        payment_method_qs = request.POST.get("payment_method", "cash")
 
         recorded = []
         last_transaction = None
@@ -1949,7 +1951,8 @@ def quick_sell(request):
                 line, txn = handle_bunch_cart_entry(
                     entry,
                     user_profile.business,
-                    request.POST.get("payment_method", "cash"),
+                    payment_method_qs,
+                    recipient=credit_recipient if payment_method_qs == "credit" else "",
                 )
                 if line:
                     recorded.append(line)
@@ -2012,15 +2015,14 @@ def quick_sell(request):
             if entry.get("stock_qty") is not None and display_price:
                 sale_amt = Decimal(str(round(display_price * float(display_qty), 2)))
 
-            pm = request.POST.get("payment_method", "cash")
             last_transaction = Transaction.objects.create(
                 item=item,
                 type="Issue",
                 qty=-stock_qty,
                 business=user_profile.business,
-                payment_method=pm,
+                payment_method=payment_method_qs,
                 sale_amount=sale_amt,
-                recipient=credit_recipient if pm == "credit" else "",
+                recipient=credit_recipient if payment_method_qs == "credit" else "",
             )
             recorded.append(
                 {
@@ -2048,6 +2050,19 @@ def quick_sell(request):
             except Exception:
                 pass
 
+            # ── Auto-create Customer for credit sales so debt tracker finds them ──
+            if payment_method_qs == "credit" and credit_recipient:
+                from .models import Customer as _Customer
+                cust_obj, _ = _Customer.objects.get_or_create(
+                    business=user_profile.business,
+                    name=credit_recipient,
+                )
+                if credit_phone and not cust_obj.phone:
+                    cust_obj.phone = credit_phone
+                    cust_obj.save(update_fields=["phone"])
+                elif credit_phone and cust_obj.phone != credit_phone:
+                    pass  # don't overwrite existing phone
+
             receipt_token = None
             receipt_number = None
             try:
@@ -2055,13 +2070,35 @@ def quick_sell(request):
                 rcpt = Receipt.issue(
                     business=user_profile.business,
                     lines=recorded,
-                    payment_method=request.POST.get("payment_method", "cash"),
+                    payment_method=payment_method_qs,
                     user=request.user,
+                    customer_name=credit_recipient if payment_method_qs == "credit" else "",
+                    customer_phone=credit_phone if payment_method_qs == "credit" else "",
                 )
                 receipt_token = rcpt.token
                 receipt_number = rcpt.receipt_number
             except Exception:
                 pass
+
+            # ── SMS confirmation to customer when sold on credit ──────────────
+            if payment_method_qs == "credit" and credit_phone and receipt_token:
+                try:
+                    from .notifications import normalize_ke_phone, send_sms_notification
+                    from django.utils import timezone as _tz
+                    normalized = normalize_ke_phone(credit_phone)
+                    if normalized:
+                        window = user_profile.business.credit_window_days or 30
+                        due_date = (_tz.now().date() + __import__('datetime').timedelta(days=window)).strftime('%d %b %Y')
+                        receipt_url_sms = request.build_absolute_uri(f'/r/{receipt_token}/')
+                        sms_msg = (
+                            f"Duka: {user_profile.business.name}\n"
+                            f"Umenunua kwa deni: KES {total:,.0f}\n"
+                            f"Tarehe ya malipo: {due_date}\n"
+                            f"Risiti: {receipt_url_sms}"
+                        )
+                        send_sms_notification(sms_msg, normalized)
+                except Exception:
+                    pass
 
             receipt_url = (
                 request.build_absolute_uri(f'/r/{receipt_token}/')

@@ -49,7 +49,7 @@ def _sell_item_amount(business, item, amount, payment_method='cash', recipient='
     return txns, sold
 
 
-def handle_bunch_cart_entry(entry, business, payment_method):
+def handle_bunch_cart_entry(entry, business, payment_method, recipient=''):
     try:
         amount = Decimal(str(entry.get('amount', 0)))
     except Exception:
@@ -65,7 +65,7 @@ def handle_bunch_cart_entry(entry, business, payment_method):
             return None, None
         raw_ids = entry.get('selected_ids') or []
         item_ids = [int(x) for x in raw_ids if str(x).isdigit() or isinstance(x, int)] or None
-        txns, _breakdown = ProduceBunch.sell_mix(business, group, amount, payment_method, item_ids=item_ids)
+        txns, _breakdown = ProduceBunch.sell_mix(business, group, amount, payment_method, recipient=recipient, item_ids=item_ids)
         if not txns:
             return None, None
         name = entry.get('label') or f"Mboga za kienyeji ({group})"
@@ -75,7 +75,7 @@ def handle_bunch_cart_entry(entry, business, payment_method):
         item = Item.objects.filter(id=entry.get('id'), store__business=business).first()
         if not item:
             return None, None
-        txns, sold = _sell_item_amount(business, item, amount, payment_method)
+        txns, sold = _sell_item_amount(business, item, amount, payment_method, recipient)
         if not txns:
             return None, None
         return {'name': item.description, 'qty': 1, 'subtotal': float(sold)}, txns[-1]

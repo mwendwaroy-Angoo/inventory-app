@@ -265,7 +265,7 @@
             <span>
                 Malipo:
                 <span class="payment-badge {% if receipt.payment_method == 'mpesa' %}pay-mpesa{% elif receipt.payment_method == 'credit' %}pay-credit{% else %}pay-cash{% endif %}">
-                    {% if receipt.payment_method == 'mpesa' %}M-Pesa{% elif receipt.payment_method == 'credit' %}Credit{% else %}Cash{% endif %}
+                    {% if receipt.payment_method == 'mpesa' %}M-Pesa{% elif receipt.payment_method == 'credit' %}Credit / Deni{% else %}Cash{% endif %}
                 </span>
             </span>
             {% if receipt.customer_name %}<span>{{ receipt.customer_name }}</span>{% endif %}
