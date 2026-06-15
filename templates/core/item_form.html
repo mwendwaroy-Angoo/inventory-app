@@ -90,9 +90,13 @@
                 <label class="form-label" style="font-size:0.82rem; color:#b0b0b0;">
                     📦 {% trans 'Start from catalog' %} <span style="font-weight:400; color:#555;">({% trans 'optional — auto-fills fields below' %})</span>
                 </label>
-                <select id="catalogPicker" style="width:100%;" class="form-control">
+                <input type="text" id="catalogSearch" class="form-control mb-1"
+                       placeholder="{% trans 'Type to search catalog (e.g. Kibao, Senator, Tusker)...' %}"
+                       autocomplete="off">
+                <select id="catalogPicker" class="form-control" style="display:none;">
                     <option value=""></option>
                 </select>
+                <div id="catalogResults" style="display:none; background:var(--onyx-card); border:1px solid rgba(201,168,76,0.3); border-radius:6px; max-height:220px; overflow-y:auto; margin-top:2px; position:relative; z-index:200;"></div>
             </div>
             {% endif %}
 
@@ -444,7 +448,10 @@
             <!-- Preset table — used by both Produce (Portion Presets) and Keg (Serving Presets) -->
             <div id="portionPresetsSection" style="{% if not form.instance.is_produce and not form.instance.is_keg %}display:none;{% endif %}">
                 <div id="kegPresetHint" style="display:none; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#e2c36e; margin-bottom:0.75rem;">
-                    🍺 {% trans 'Keg presets: each row is one serving size. Label = name on the Bar Board tile (e.g. Kikombe, Jug). Customer Pays = KES price. Stock Used = millilitres poured (e.g. 300 for a 300ml kikombe, 1250 for a jug).' %}
+                    🍺 {% trans 'Keg presets: each row is one serving size. Label = name on the Bar Board tile (e.g. Kikombe, Jug). Customer Pays = KES price. Stock Used = millilitres poured.' %}
+                    <span style="display:block; margin-top:0.35rem; color:#b0b0b0;">
+                        💡 {% trans 'Catalog fills standard sizes (300ml kikombe, 1250ml jug). Change Stock Used to match your actual cup — e.g. type 400 if you use a 400ml glass.' %}
+                    </span>
                 </div>
                 <div id="bunchPresetHint" style="display:none; background:rgba(120,180,90,0.08); border:1px solid rgba(120,180,90,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#9fcaa0; margin-bottom:0.75rem;">
                     📦 {% trans 'Batch mode: each row is a price point the customer asks for (e.g. KES 80 gorogoro, KES 140 gorogoro, KES 30 per shada). Label = name shown on the tile. Stock Used column is ignored — each sale depletes the batch envelope by the price amount, not a unit count.' %}
@@ -1469,63 +1476,111 @@
             var CATALOG = {{ catalog_json|safe }};
             if (!CATALOG.length) return;
 
-            var $picker = $('#catalogPicker');
-            if (!$picker.length) return;
+            var searchEl  = document.getElementById('catalogSearch');
+            var resultsEl = document.getElementById('catalogResults');
+            if (!searchEl || !resultsEl) return;
 
-            // Build Select2 options from catalog
-            $picker.select2({
-                placeholder: 'Search catalog — keg, spirit, beer…',
-                allowClear: true,
-                theme: 'default',
-                data: CATALOG.map(function (item, idx) {
-                    return { id: idx, text: item.name, item: item };
-                }),
-            });
-
-            $picker.on('select2:select', function (e) {
-                var cat = e.params.data.item;
+            function applyFromCatalog(cat) {
                 if (!cat) return;
 
-                // Fill description
-                var $desc = $('#id_description');
-                if ($desc.length && !$desc.val()) {
-                    $desc.val(cat.name).trigger('input');
+                // Fill description (only if blank)
+                var descEl = document.getElementById('id_description');
+                if (descEl && !descEl.value) {
+                    descEl.value = cat.name;
+                    descEl.dispatchEvent(new Event('input'));
                 }
 
                 // Fill unit
-                var $unit = $('#id_unit');
-                if ($unit.length && cat.unit) $unit.val(cat.unit);
+                var unitEl = document.getElementById('id_unit');
+                if (unitEl && cat.unit) unitEl.value = cat.unit;
 
                 // Toggle is_keg
-                var $isKeg = $('#id_is_keg');
-                if ($isKeg.length) $isKeg.prop('checked', !!cat.is_keg).trigger('change');
+                var kegCb = document.getElementById('is_keg');
+                if (kegCb) {
+                    kegCb.checked = !!cat.is_keg;
+                    kegCb.dispatchEvent(new Event('change'));
+                }
 
                 // Toggle is_produce + produce_mode
-                var $isProd = $('#id_is_produce');
-                if ($isProd.length && cat.is_produce !== undefined) {
-                    $isProd.prop('checked', !!cat.is_produce).trigger('change');
+                var prodCb = document.getElementById('is_produce');
+                if (prodCb && cat.is_produce !== undefined) {
+                    prodCb.checked = !!cat.is_produce;
+                    prodCb.dispatchEvent(new Event('change'));
                     if (cat.is_produce && cat.produce_mode) {
-                        $('input[name="produce_mode"][value="' + cat.produce_mode + '"]')
-                            .prop('checked', true).trigger('change');
+                        var modeRadio = document.querySelector('input[name="produce_mode"][value="' + cat.produce_mode + '"]');
+                        if (modeRadio) { modeRadio.checked = true; modeRadio.dispatchEvent(new Event('change')); }
                     }
                 }
 
-                // Hide cost price when keg or produce (spec: hide and show note)
-                if (cat.is_keg || cat.is_produce) {
-                    $('#costPriceSection').hide();
+                // Cost-price visibility
+                if (typeof window._updateCostPriceVisibility === 'function') {
+                    window._updateCostPriceVisibility();
                 }
 
-                // Flash picker green briefly to confirm
-                $picker.next('.select2').find('.select2-selection')
-                    .css('border-color', '#81c784');
-                setTimeout(function () {
-                    $picker.next('.select2').find('.select2-selection')
-                        .css('border-color', '');
-                }, 1200);
-            });
+                // Populate preset rows from catalog
+                if (cat.presets && cat.presets.length) {
+                    var rowsContainer = document.getElementById('presetRows');
+                    var emptyMsg = document.getElementById('presetEmptyMsg');
+                    if (rowsContainer) {
+                        if (emptyMsg) emptyMsg.remove();
+                        var presSection = document.getElementById('portionPresetsSection');
+                        if (presSection) presSection.style.display = 'block';
+                        cat.presets.forEach(function(p) {
+                            var row = document.createElement('div');
+                            row.className = 'preset-row';
+                            row.style.cssText = 'display:grid;grid-template-columns:2fr 1fr 1fr 80px auto;gap:0.5rem;padding:0.5rem 0.75rem;border-bottom:1px solid #1e1e1e;align-items:center;';
+                            var qtyVal = (p.qty !== null && p.qty !== undefined) ? p.qty : '';
+                            var priceVal = (p.price !== null && p.price !== undefined) ? p.price : '';
+                            row.innerHTML =
+                                '<input type="hidden" name="preset_id" value="">' +
+                                '<input type="text" name="preset_label" class="form-select form-select-sm" value="' + (p.label || '') + '" placeholder="Label">' +
+                                '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="KES" value="' + priceVal + '">' +
+                                '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" value="' + qtyVal + '" placeholder="qty">' +
+                                '<select name="preset_serving_type" style="background:#1a1a1a;color:#f0ece4;border:1px solid #333;border-radius:4px;font-size:0.75rem;padding:2px 4px;width:100%;">' +
+                                '<option value="cup">☕ Cup</option><option value="pint">🍺 Pint</option><option value="jug">🫙 Jug</option>' +
+                                '</select>' +
+                                '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
+                            rowsContainer.appendChild(row);
+                        });
+                    }
+                }
 
-            $picker.on('select2:clear', function () {
-                // Don't clear description — user may have edited it
+                // Flash search box green briefly
+                searchEl.style.borderColor = '#81c784';
+                setTimeout(function () { searchEl.style.borderColor = ''; }, 1200);
+            }
+
+            function showResults(query) {
+                query = query.toLowerCase().trim();
+                if (!query) { resultsEl.style.display = 'none'; return; }
+                var matches = CATALOG.filter(function(c) {
+                    return c.name.toLowerCase().indexOf(query) !== -1;
+                }).slice(0, 15);
+                if (!matches.length) { resultsEl.style.display = 'none'; return; }
+                resultsEl.innerHTML = '';
+                matches.forEach(function(cat) {
+                    var div = document.createElement('div');
+                    div.style.cssText = 'padding:0.5rem 0.75rem;cursor:pointer;border-bottom:1px solid #222;font-size:0.85rem;color:var(--pearl);';
+                    div.textContent = cat.name + (cat.unit ? '  (' + cat.unit + ')' : '');
+                    div.addEventListener('mouseenter', function() { this.style.background = 'rgba(201,168,76,0.12)'; });
+                    div.addEventListener('mouseleave', function() { this.style.background = ''; });
+                    div.addEventListener('mousedown', function(e) {
+                        e.preventDefault();
+                        searchEl.value = cat.name;
+                        resultsEl.style.display = 'none';
+                        applyFromCatalog(cat);
+                    });
+                    resultsEl.appendChild(div);
+                });
+                resultsEl.style.display = 'block';
+            }
+
+            searchEl.addEventListener('input', function() { showResults(this.value); });
+            searchEl.addEventListener('focus', function() { if (this.value) showResults(this.value); });
+            document.addEventListener('click', function(e) {
+                if (!resultsEl.contains(e.target) && e.target !== searchEl) {
+                    resultsEl.style.display = 'none';
+                }
             });
         })();
         </script>
