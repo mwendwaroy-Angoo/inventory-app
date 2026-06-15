@@ -684,33 +684,34 @@ def analytics_dashboard(request):
         })
     barrel_rows.sort(key=lambda x: x['received_on'], reverse=True)
 
-    # ── Staff keg league — revenue recorded per staff member ──────────────────
-    keg_txn_qs = (
-        Transaction.objects
+    # ── Staff keg league — revenue attributed via bar tabs (served_by) ──────────
+    from .models import BarTabEntry
+    tab_entry_qs = (
+        BarTabEntry.objects
         .filter(
-            business=business,
-            type='Issue',
-            keg_barrel__isnull=False,
-            date__gte=start_date,
-            date__lte=today,
+            tab__business=business,
+            tab__opened_at__date__gte=start_date,
+            tab__opened_at__date__lte=today,
+            transaction__keg_barrel__isnull=False,
+            tab__served_by__isnull=False,
         )
         .values(
-            'recorded_by__id',
-            'recorded_by__first_name',
-            'recorded_by__last_name',
-            'recorded_by__username',
+            'tab__served_by__id',
+            'tab__served_by__first_name',
+            'tab__served_by__last_name',
+            'tab__served_by__username',
         )
         .annotate(
-            keg_revenue=Sum('sale_amount'),
+            keg_revenue=Sum('amount'),
             keg_servings=Count('id'),
         )
         .order_by('-keg_revenue')
     )
     staff_keg_rows = []
-    for row in keg_txn_qs:
-        first = row['recorded_by__first_name'] or ''
-        last  = row['recorded_by__last_name'] or ''
-        name  = f"{first} {last}".strip() or row['recorded_by__username'] or 'Unknown'
+    for row in tab_entry_qs:
+        first = row['tab__served_by__first_name'] or ''
+        last  = row['tab__served_by__last_name'] or ''
+        name  = f"{first} {last}".strip() or row['tab__served_by__username'] or 'Unknown'
         rev = round(float(row['keg_revenue'] or 0), 2)
         srv = row['keg_servings'] or 0
         staff_keg_rows.append({
