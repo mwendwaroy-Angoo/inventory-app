@@ -117,6 +117,13 @@
 <!-- Stats strip -->
 <div class="stats-strip">
     <div class="strip-stat">{% trans 'Total Items' %} <span>{{ items|length }}</span></div>
+    <a href="{% url 'stock_list' %}?status=expiring{% if request.GET.store %}&store={{ request.GET.store }}{% endif %}"
+       class="strip-stat" style="text-decoration:none; color:{% if status_filter == 'expiring' %}#fbbf24{% else %}inherit{% endif %};">
+        ⏰ {% trans 'Expiring' %}
+    </a>
+    <a href="{% url 'expiring_items' %}" class="strip-stat" style="text-decoration:none; color:#b0b0b0;">
+        📋 {% trans 'Full Expiry Report' %}
+    </a>
 </div>
 
 <!-- Filter & Search bar -->
@@ -165,6 +172,7 @@
                 <th>{% trans 'Reorder Qty' %}</th>
                 {% if user.userprofile.is_owner %}<th>{% trans 'Price (KES)' %}</th>{% endif %}
                 <th>{% trans 'Status' %}</th>
+                <th>{% trans 'Expiry' %}</th>
                 <th>{% trans 'Store' %}</th>
                 {% if user.userprofile.is_owner %}<th></th>{% endif %}
             </tr>
@@ -198,6 +206,21 @@
                         <span class="badge bg-warning">{% trans 'Reorder' %}</span>
                     {% else %}
                         <span class="badge bg-success">{% trans 'Available' %}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if item._expiry_status == 'EXPIRED' %}
+                        <span class="badge" style="background:rgba(248,113,113,0.2); color:#f87171; font-size:0.7rem;">
+                            ⚠️ EXPIRED<br><span style="font-size:0.65rem; font-weight:400;">{{ item._expiry_date|date:"d M Y" }}</span>
+                        </span>
+                    {% elif item._expiry_status == 'EXPIRING' %}
+                        <span class="badge" style="background:rgba(251,191,36,0.2); color:#fbbf24; font-size:0.7rem;">
+                            ⏰ EXP SOON<br><span style="font-size:0.65rem; font-weight:400;">{{ item._expiry_date|date:"d M Y" }}</span>
+                        </span>
+                    {% elif item._expiry_status == 'OK' %}
+                        <span style="color:#b0b0b0; font-size:0.75rem;">{{ item._expiry_date|date:"d M Y" }}</span>
+                    {% else %}
+                        <span style="color:#444;">—</span>
                     {% endif %}
                 </td>
                 <td>{{ item.store.name }}</td>

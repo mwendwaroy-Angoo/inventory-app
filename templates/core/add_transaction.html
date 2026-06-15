@@ -441,6 +441,19 @@
                        placeholder="{% trans 'e.g. INV-001 or REC-2026-001' %}">
             </div>
 
+            <!-- Expiry Date — Receipt only -->
+            <div class="mb-4" id="expiryDateSection" style="display:none;">
+                <label class="form-label">
+                    📅 {% trans 'Expiry Date' %}
+                    <span style="color:#888; font-size:0.8rem;">({% trans 'optional — medicines, dairy, perishables' %})</span>
+                </label>
+                <input type="date" name="expiry_date" id="expiryDateInput" class="form-control"
+                       style="max-width:220px; background:#1a1a1a; border:1px solid #555; color:#f0ece4;">
+                <div style="color:#888; font-size:0.72rem; margin-top:0.25rem;">
+                    {% trans 'Leave blank if the item does not expire.' %}
+                </div>
+            </div>
+
             <!-- Payment Method — Issue only -->
             <div class="mb-3" id="paymentMethodRow" style="display:none;">
                 <label class="form-label">💳 Payment Method</label>
@@ -653,6 +666,7 @@ $(document).ready(function () {
             $('#backdateToggle').hide();
             $('#backdateSection').hide();
             $('#backdatedAt').val('');
+            $('#expiryDateSection').show();
             checkCostPriceSection();
         } else {
             $('#storeField').hide();
@@ -662,6 +676,8 @@ $(document).ready(function () {
             $('#recipientLabel').text(LABEL_CUSTOMER_RECIPIENT);
             $('#paymentMethodRow').show();
             $('#costPriceSection').hide();
+            $('#expiryDateSection').hide();
+            $('#expiryDateInput').val('');
             // Backdate toggle only relevant for Issue (offline sale), not Wastage
             if (type === 'Issue') {
                 $('#backdateToggle').show();

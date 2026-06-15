@@ -529,6 +529,10 @@ class Transaction(models.Model):
         null=True, blank=True,
         help_text='Number of servings in this keg pour (qty is in ml; keg_qty is the human count).',
     )
+    expiry_date = models.DateField(
+        null=True, blank=True,
+        help_text='Expiry date for this stock-in batch. Set on Receipt transactions only.',
+    )
 
     def revenue(self):
         if self.type != 'Issue':

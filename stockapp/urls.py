@@ -6,6 +6,7 @@ from accounts.views import logout_view
 from core.views import (
     home,
     stock_list,
+    expiring_items,
     add_transaction,
     item_detail,
     create_po_from_item,
@@ -192,6 +193,7 @@ urlpatterns = [
     path("manifest.json", manifest_json, name="manifest_json"),
     path("sw.js", service_worker, name="service_worker"),
     path("stock/", stock_list, name="stock_list"),
+    path("stock/expiring/", expiring_items, name="expiring_items"),
     path("stock/manage/", manage_items, name="manage_items"),
     path("stock/add/", add_item, name="add_item"),
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),

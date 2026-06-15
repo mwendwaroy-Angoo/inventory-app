@@ -159,6 +159,30 @@ def home(request):
                 context['items_missing_cost_price'] = []
                 context['missing_cost_price_count'] = 0
 
+            # Expiry alerts
+            try:
+                from datetime import date as _date, timedelta as _td
+                _today = _date.today()
+                _soon  = _today + _td(days=7)
+                _exp_qs = Transaction.objects.filter(
+                    business=business,
+                    type='Receipt',
+                    expiry_date__isnull=False,
+                ).values('item_id').distinct()
+                _expired_ids  = Transaction.objects.filter(
+                    business=business, type='Receipt',
+                    expiry_date__lt=_today,
+                ).values_list('item_id', flat=True).distinct()
+                _expiring_ids = Transaction.objects.filter(
+                    business=business, type='Receipt',
+                    expiry_date__gte=_today, expiry_date__lte=_soon,
+                ).values_list('item_id', flat=True).distinct()
+                context['expired_count']  = len(set(_expired_ids))
+                context['expiring_count'] = len(set(_expiring_ids))
+            except Exception:
+                context['expired_count']  = 0
+                context['expiring_count'] = 0
+
             # Recurring expense review nudge (owner only, once per period)
             if user_profile.is_owner:
                 try:
@@ -342,6 +366,43 @@ def stock_list(request):
     elif status_filter == "reorder":
         all_items = [i for i in all_items if i.needs_reorder()]
 
+    # Annotate each item with its earliest expiry date from Receipt batches
+    from datetime import date as _date, timedelta as _td
+    from django.db.models import Min as _Min
+    today_d = _date.today()
+    soon_d  = today_d + _td(days=7)
+
+    expiry_qs = (
+        Transaction.objects
+        .filter(
+            business=user_profile.business,
+            type='Receipt',
+            expiry_date__isnull=False,
+            item__in=all_items,
+        )
+        .values('item_id')
+        .annotate(earliest=_Min('expiry_date'))
+    )
+    expiry_map = {row['item_id']: row['earliest'] for row in expiry_qs}
+
+    for item in all_items:
+        exp = expiry_map.get(item.id)
+        if exp is None:
+            item._expiry_date   = None
+            item._expiry_status = None
+        elif exp < today_d:
+            item._expiry_date   = exp
+            item._expiry_status = 'EXPIRED'
+        elif exp <= soon_d:
+            item._expiry_date   = exp
+            item._expiry_status = 'EXPIRING'
+        else:
+            item._expiry_date   = exp
+            item._expiry_status = 'OK'
+
+    if status_filter == "expiring":
+        all_items = [i for i in all_items if i._expiry_status in ('EXPIRED', 'EXPIRING')]
+
     context = {
         "items": all_items,
         "stores": stores,
@@ -350,6 +411,68 @@ def stock_list(request):
         "today": timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, "core/stock_list.html", context)
+
+
+@login_required
+def expiring_items(request):
+    from datetime import date as _date, timedelta as _td
+    from django.db.models import Min as _Min
+
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect("home")
+
+    business = user_profile.business
+    today_d  = _date.today()
+    soon_d   = today_d + _td(days=7)
+
+    # One query: earliest expiry per item, for all items with any expiry set
+    expiry_rows = (
+        Transaction.objects
+        .filter(business=business, type='Receipt', expiry_date__isnull=False)
+        .values('item_id', 'item__description', 'item__unit', 'item__store__name')
+        .annotate(earliest=_Min('expiry_date'))
+        .order_by('earliest')
+    )
+
+    items_data = []
+    for row in expiry_rows:
+        exp = row['earliest']
+        if exp < today_d:
+            status = 'EXPIRED'
+            days   = (today_d - exp).days
+            days_label = f"Expired {days} day{'s' if days != 1 else ''} ago"
+        elif exp <= soon_d:
+            status = 'EXPIRING'
+            days   = (exp - today_d).days
+            days_label = f"Expires in {days} day{'s' if days != 1 else ''}" if days > 0 else "Expires today"
+        else:
+            status = 'OK'
+            days   = (exp - today_d).days
+            days_label = f"Expires in {days} days"
+
+        try:
+            from .models import Item as _Item
+            item_obj = _Item.objects.get(id=row['item_id'])
+            balance = item_obj.current_balance()
+        except Exception:
+            balance = '—'
+
+        items_data.append({
+            'item_id':   row['item_id'],
+            'name':      row['item__description'],
+            'unit':      row['item__unit'],
+            'store':     row['item__store__name'],
+            'expiry':    exp,
+            'status':    status,
+            'days_label': days_label,
+            'balance':   balance,
+        })
+
+    return render(request, 'core/expiring_items.html', {
+        'items_data': items_data,
+        'today': today_d,
+    })
 
 
 # ── TRANSACTIONS ──────────────────────────────────────────────────────────────
@@ -446,6 +569,16 @@ def add_transaction(request):
             except Exception:
                 backdated_at = None
 
+        expiry_date = None
+        if trans_type == "Receipt":
+            expiry_raw = request.POST.get("expiry_date", "").strip()
+            if expiry_raw:
+                try:
+                    from datetime import date as _date
+                    expiry_date = _date.fromisoformat(expiry_raw)
+                except (ValueError, TypeError):
+                    expiry_date = None
+
         transaction = Transaction.objects.create(
             item=item,
             type=trans_type,
@@ -458,6 +591,7 @@ def add_transaction(request):
                 if trans_type == "Issue"
                 else ""
             ),
+            expiry_date=expiry_date,
             **({"created_at": backdated_at} if backdated_at else {}),
         )
 

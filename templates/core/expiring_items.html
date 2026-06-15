@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Expiry Report{% endblock %}
+
+{% block extra_css %}
+<style>
+.exp-card {
+    background: var(--onyx-card);
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    padding: 0.85rem 1.1rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    text-decoration: none;
+    color: var(--pearl);
+    transition: border-color 0.15s;
+}
+.exp-card:hover { border-color: var(--gold); color: var(--pearl); }
+.exp-card.status-expired  { border-left: 3px solid #f87171; }
+.exp-card.status-expiring { border-left: 3px solid #fbbf24; }
+.exp-card.status-ok       { border-left: 3px solid #6ee7b7; }
+.exp-name  { flex: 1; font-size: 0.9rem; font-weight: 600; }
+.exp-store { font-size: 0.75rem; color: #b0b0b0; white-space: nowrap; }
+.exp-bal   { font-size: 0.82rem; color: #b0b0b0; white-space: nowrap; min-width: 60px; text-align: right; }
+.exp-date  { font-size: 0.82rem; white-space: nowrap; min-width: 90px; text-align: right; }
+.exp-badge {
+    display: inline-block; padding: 0.2rem 0.6rem;
+    border-radius: 10px; font-size: 0.7rem; font-weight: 700;
+    text-transform: uppercase; white-space: nowrap;
+}
+.badge-expired  { background: rgba(248,113,113,0.15); color: #f87171; }
+.badge-expiring { background: rgba(251,191,36,0.15);  color: #fbbf24; }
+.badge-ok       { background: rgba(110,231,183,0.15); color: #6ee7b7; }
+.section-heading {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #b0b0b0; margin: 1.2rem 0 0.4rem; padding-bottom: 0.3rem;
+    border-bottom: 1px solid #2a2a2a;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3" style="max-width:680px;">
+    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+        <div>
+            <h5 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0;">📋 Expiry Report</h5>
+            <div style="font-size:0.75rem; color:#b0b0b0;">Items with expiry dates set — sorted by urgency</div>
+        </div>
+        <a href="{% url 'stock_list' %}" class="btn btn-sm btn-outline-secondary">← Stock List</a>
+    </div>
+
+    {% if items_data %}
+        {% with expired=items_data|dictsort:"expiry" %}
+
+        {% comment %}Expired section{% endcomment %}
+        {% for item in items_data %}{% if item.status == 'EXPIRED' %}
+        {% if forloop.first or forloop.counter == 1 %}
+        <div class="section-heading" style="color:#f87171;">⚠️ EXPIRED — remove from sale</div>
+        {% endif %}
+        <a href="{% url 'item_detail' item.item_id %}" class="exp-card status-expired">
+            <div style="flex:1;">
+                <div class="exp-name">{{ item.name }}</div>
+                <div class="exp-store">{{ item.store }}</div>
+            </div>
+            <div class="exp-bal">{{ item.balance }} {{ item.unit }}</div>
+            <div class="exp-date" style="color:#f87171;">{{ item.expiry|date:"d M Y" }}</div>
+            <span class="exp-badge badge-expired">{{ item.days_label }}</span>
+        </a>
+        {% endif %}{% endfor %}
+
+        {% comment %}Expiring soon section{% endcomment %}
+        {% for item in items_data %}{% if item.status == 'EXPIRING' %}
+        {% if forloop.first or forloop.counter == 1 %}
+        <div class="section-heading" style="color:#fbbf24;">⏰ Expiring within 7 days</div>
+        {% endif %}
+        <a href="{% url 'item_detail' item.item_id %}" class="exp-card status-expiring">
+            <div style="flex:1;">
+                <div class="exp-name">{{ item.name }}</div>
+                <div class="exp-store">{{ item.store }}</div>
+            </div>
+            <div class="exp-bal">{{ item.balance }} {{ item.unit }}</div>
+            <div class="exp-date" style="color:#fbbf24;">{{ item.expiry|date:"d M Y" }}</div>
+            <span class="exp-badge badge-expiring">{{ item.days_label }}</span>
+        </a>
+        {% endif %}{% endfor %}
+
+        {% comment %}OK section{% endcomment %}
+        {% for item in items_data %}{% if item.status == 'OK' %}
+        {% if forloop.first or forloop.counter == 1 %}
+        <div class="section-heading">✅ Upcoming (more than 7 days)</div>
+        {% endif %}
+        <a href="{% url 'item_detail' item.item_id %}" class="exp-card status-ok">
+            <div style="flex:1;">
+                <div class="exp-name">{{ item.name }}</div>
+                <div class="exp-store">{{ item.store }}</div>
+            </div>
+            <div class="exp-bal">{{ item.balance }} {{ item.unit }}</div>
+            <div class="exp-date" style="color:#6ee7b7;">{{ item.expiry|date:"d M Y" }}</div>
+            <span class="exp-badge badge-ok">{{ item.days_label }}</span>
+        </a>
+        {% endif %}{% endfor %}
+
+        {% endwith %}
+    {% else %}
+        <div style="text-align:center; padding:3rem 1rem; color:#b0b0b0;">
+            <div style="font-size:2.5rem; margin-bottom:0.5rem;">✅</div>
+            <div>No expiry dates set yet. Add them when recording stock receipts — especially for medicines, dairy, and packaged foods.</div>
+            <div style="margin-top:1rem;">
+                <a href="{% url 'add_transaction' %}" class="btn btn-gold btn-sm">Add Stock Receipt →</a>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
