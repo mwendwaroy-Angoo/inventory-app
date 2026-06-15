@@ -304,10 +304,10 @@ County model lives in core (not accounts). Customer.county FK to core.County, SE
 ## Features Built (Complete)
 
 ### Core Inventory
-- Stock list with store/status filters
-- Add Transaction (Receipt/Issue/Wastage) with cost price, landed cost, yield processing
+- Stock list with store/status/expiry filters; expiry column (EXPIRED/EXP SOON/OK badges)
+- Add Transaction (Receipt/Issue/Wastage) with cost price, landed cost, yield processing, expiry date
 - Transaction history with Excel export
-- Quick Sell POS (cart-based, M-Pesa/cash/credit)
+- Quick Sell POS (cart-based, M-Pesa/cash/credit); preset modal for spirits/non-produce items
 
 ### Kibanda Produce Module (COMPLETE — see full section above)
 All features built and deployed including:
@@ -318,15 +318,52 @@ All features built and deployed including:
 - Smart unit hints in item form (UNIT_MAP lookup by description)
 - Analytics "Kibanda Produce Performance" (BUNCH by ProduceBunch + PORTION by Transaction)
 
+### Keg Bar Module (COMPLETE)
+- Bar board POS: keg tapping, pint/jug/cup presets, tab management, waitress order queue
+- Shift handover: middleware enforcement, barrel weigh-in at shift change, offline/backdated sales
+- Keg reconciliation (/bar/reconciliation/): per-barrel P&L, wastage %, book vs scale variance
+- Bar Performance analytics: per-barrel table, pouring league, tab aging buckets
+- Daily bar report: cups/pints/jugs/revenue per barrel, waitress performance, staff/shift performance
+- Shift history, active waitress on-duty panel
+
+### Recurring Expenses & Expense Intelligence
+- RecurringExpense model (MONTHLY/QUARTERLY/ANNUAL, per-staff salary lines)
+- Period review flow (confirm + auto-post BusinessExpense idempotently)
+- Home page gold banner at first login each period; SMS+email on confirm
+- Expense Intelligence page (/analytics/expenses/report/): 12-month trend chart, category stacked bar, insight flags
+
+### Digital Receipts (COMPLETE)
+- Receipt model (token, receipt_number, lines JSONField, customer_name/phone, payment_method)
+- Public receipt page (/r/<token>/): QR code, Print, Share, Send SMS
+- Receipts list (/receipts/): month/year/customer-name filter, accessible to all staff
+- Auto-issued on: Quick Sell, bar board sales, debt payments
+- Partial payment "⚠️ Bado unalipa KES X" block (qty=-1 line variant, raspberry styling)
+- "Powered by Duka Mwecheche" footer on public receipt (hidden on print)
+
+### Debt Tracker (COMPLETE)
+- FIFO balance, aged buckets (current/30/60/90+), credit score, per-customer expected_payment_days
+- Credit sales in Quick Sell: recipient set, Customer auto-created, SMS confirmation to customer
+- Keg tab sales: recipient + Customer auto-created, payment_method='credit' on receipt
+- Debt payment receipt: FIFO line items showing original transactions, post-payment credit score,
+  "umelipa leo / umelipa siku N baadaye (kiwango siku W)" days label
+- send_debt_reminder: uses send_sms_notification (AT live), Swahili message
+- Per-customer credit settings accessible to all staff (not owner-only)
+
+### Expiry Date Tracking (COMPLETE)
+- Transaction.expiry_date DateField (migration 0056), set on Receipt batches
+- Add Transaction form: date picker visible for Receipt type only
+- Stock list: Min(expiry_date) per item annotated; EXPIRED/EXP SOON/OK badges; expiring filter
+- /stock/expiring/: full report grouped EXPIRED → EXPIRING SOON → OK, with balance + days label
+- Home dashboard: raspberry EXPIRED alert + amber EXPIRING SOON alert, visible to all staff
+
 ### Analytics & Reporting
 - Sales & P&L dashboard, ETS/Holt-Winters forecasting
-- Kibanda Produce Performance section
+- Kibanda Produce Performance, Bar Performance sections
 - Break-even analysis, Capital investments tracker
 - County-level sales heatmap (Leaflet choropleth)
+- Expense Intelligence page
 
 ### Revenue Targets — daily/weekly/monthly per business and per store
-
-### Debt Tracker — FIFO balance, aged buckets, credit score, payment recording
 
 ### Staff Permissions, Reserved Items, Business Management (multi-store, role-based)
 
@@ -334,15 +371,20 @@ All features built and deployed including:
 
 ### Payments — Till/Paybill/Pochi/M-Pesa, STK Push, payment method tracking
 
+### Business-Type Profiles (Sprint 8)
+- business_profiles.py registry (8 profiles + item catalogs)
+- Context processor injects biz_profile into every template
+- Navbar gating: Bar Board/Shifts only for keg businesses
+- Quick Sell redirect for bar; item form Select2 catalog picker
+
 ### Onboarding — modal tutorial (4 role variants) + Driver.js spotlight tours (17 templates)
 
 ---
 
 ## Next Sprint Candidates
-1. **Keg bar reconciliation** — yield-based items for bars (keg → pints, waste-adjusted profit)
-2. **Shift handover module** — opening float, closing balance, cash reconciliation per shift
-3. **Expiry date tracking** — pharmacy/perishables module
-4. **Business-type aware UI** — dynamic form labels/fields by business type (Phase B)
+1. **Business-type theming** — per-type accent color, icon sets, home hero personalisation (Sprint 13+). Bar first, then kibanda, then rest. See session prompt in sprint log notes.
+2. **Business-type aware UI Phase B** — dynamic form labels/fields by business type (6-8 sprints, new session)
+3. **FIFO batch depletion** — per-batch stock tracking for pharmacy/perishables (follow-on to expiry tracking)
 
 ---
 
