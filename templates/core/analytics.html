@@ -725,10 +725,151 @@
     </table>
   </div>
 </div>
-<div style="font-size:0.75rem;color:#555;margin-bottom:2rem;padding:0 0.25rem;">
+<div style="font-size:0.75rem;color:#555;margin-bottom:1.5rem;padding:0 0.25rem;">
   † {% trans "Net Margin is interim for barrels still selling — will improve as sales continue." %}
   {% trans "Loss (returned) shows revenue shortfall on barrels returned or discarded before fully selling out." %}
 </div>
+
+<!-- Per-barrel P&L with shrinkage -->
+{% if barrel_rows %}
+<div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(201,168,76,0.2);overflow:hidden;margin-bottom:0.5rem;">
+  <div style="padding:0.75rem 1rem;border-bottom:1px solid #222;font-weight:600;color:var(--gold);font-size:0.85rem;">
+    📊 {% trans "Per-Barrel Breakdown — Book vs Scale" %}
+    <span style="color:#b0b0b0;font-size:0.75rem;font-weight:400;margin-left:0.5rem;">{% trans "Shrinkage = scale says more was poured than the app recorded" %}</span>
+  </div>
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+      <thead>
+        <tr style="background:rgba(201,168,76,0.06);color:#8aa;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">
+          <th style="padding:0.5rem 0.75rem;text-align:left;">{% trans "Barrel" %}</th>
+          <th style="padding:0.5rem;text-align:left;">{% trans "Status" %}</th>
+          <th style="padding:0.5rem;text-align:right;">{% trans "Cost" %}</th>
+          <th style="padding:0.5rem;text-align:right;">{% trans "Target" %}</th>
+          <th style="padding:0.5rem;text-align:right;">{% trans "Collected" %}</th>
+          <th style="padding:0.5rem;text-align:right;">{% trans "Markup" %}</th>
+          <th style="padding:0.5rem;text-align:right;" title="{% trans "ml poured per scale weight vs ml recorded in app" %}">{% trans "Scale/Book (ml)" %}</th>
+          <th style="padding:0.5rem;text-align:right;">{% trans "Shrinkage %" %}</th>
+          <th style="padding:0.5rem;text-align:right;">{% trans "Days Open" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in barrel_rows %}
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+          <td style="padding:0.5rem 0.75rem;">
+            <div style="color:var(--pearl);font-weight:600;">{{ b.item }}</div>
+            <div style="color:#555;font-size:0.72rem;">{{ b.received_on }}</div>
+          </td>
+          <td style="padding:0.5rem;">
+            <span style="font-size:0.72rem;padding:2px 6px;border-radius:4px;
+              {% if b.status_code == 'TAPPED' %}background:rgba(111,174,79,0.15);color:#6fae4f;
+              {% elif b.status_code == 'SEALED' %}background:rgba(201,168,76,0.12);color:#c9a84c;
+              {% elif b.status_code == 'DEPLETED' %}background:rgba(100,100,100,0.15);color:#888;
+              {% else %}background:rgba(192,57,90,0.15);color:#c0395a;{% endif %}">
+              {{ b.status_label }}
+            </span>
+          </td>
+          <td style="padding:0.5rem;text-align:right;color:#b0b0b0;">KES {{ b.cost|floatformat:0 }}</td>
+          <td style="padding:0.5rem;text-align:right;color:#b0b0b0;">KES {{ b.target|floatformat:0 }}</td>
+          <td style="padding:0.5rem;text-align:right;color:#c9a84c;font-weight:700;">KES {{ b.collected|floatformat:0 }}</td>
+          <td style="padding:0.5rem;text-align:right;
+            {% if b.markup >= 1.5 %}color:#6fae4f;{% elif b.markup >= 1.2 %}color:#c9a84c;{% else %}color:#c0395a;{% endif %}
+            font-weight:600;">{{ b.markup }}×</td>
+          <td style="padding:0.5rem;text-align:right;font-size:0.78rem;">
+            {% if b.has_readings %}
+              <span style="color:#b0b0b0;">{{ b.scale_ml|floatformat:0 }}</span>
+              <span style="color:#555;"> / </span>
+              <span style="color:#b0b0b0;">{{ b.book_ml|floatformat:0 }}</span>
+            {% else %}
+              <span style="color:#444;">{% trans "No readings" %}</span>
+            {% endif %}
+          </td>
+          <td style="padding:0.5rem;text-align:right;">
+            {% if b.has_readings %}
+              <span style="font-weight:600;
+                {% if b.shrinkage_pct > 10 %}color:#c0395a;
+                {% elif b.shrinkage_pct > 5 %}color:#ffb74d;
+                {% elif b.shrinkage_pct > 0 %}color:#c9a84c;
+                {% else %}color:#6fae4f;{% endif %}">
+                {{ b.shrinkage_pct }}%
+              </span>
+            {% else %}
+              <span style="color:#444;">—</span>
+            {% endif %}
+          </td>
+          <td style="padding:0.5rem;text-align:right;color:#b0b0b0;">
+            {% if b.days_open %}{{ b.days_open }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div style="font-size:0.72rem;color:#555;margin-bottom:1.5rem;padding:0 0.25rem;">
+  {% trans "Shrinkage: positive = scale says more was dispensed than the app recorded (spillage, foam, free pours, or under-recording)." %}
+  {% trans "No readings = no weight check recorded yet for that barrel." %}
+</div>
+{% endif %}
+
+<!-- Staff keg league -->
+{% if staff_keg_rows %}
+<div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(201,168,76,0.2);overflow:hidden;margin-bottom:1.5rem;">
+  <div style="padding:0.75rem 1rem;border-bottom:1px solid #222;font-weight:600;color:var(--gold);font-size:0.85rem;">
+    🏆 {% trans "Usahihi wa Kumwaga — Pouring League" %}
+    <span style="color:#b0b0b0;font-size:0.75rem;font-weight:400;margin-left:0.5rem;">{{ start_date }} {% trans "to" %} {{ end_date }}</span>
+  </div>
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+      <thead>
+        <tr style="background:rgba(201,168,76,0.06);color:#8aa;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;">
+          <th style="padding:0.5rem 1rem;text-align:left;">{% trans "Staff Member" %}</th>
+          <th style="padding:0.5rem;text-align:right;">{% trans "Servings Recorded" %}</th>
+          <th style="padding:0.5rem;text-align:right;">{% trans "Revenue Recorded" %}</th>
+          <th style="padding:0.5rem;text-align:right;">{% trans "Avg/Serving" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in staff_keg_rows %}
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+          <td style="padding:0.5rem 1rem;color:var(--pearl);font-weight:600;">{{ s.name }}</td>
+          <td style="padding:0.5rem;text-align:right;color:#b0b0b0;">{{ s.servings }}</td>
+          <td style="padding:0.5rem;text-align:right;color:#c9a84c;font-weight:700;">KES {{ s.revenue|floatformat:0 }}</td>
+          <td style="padding:0.5rem;text-align:right;color:#b0b0b0;">KES {{ s.avg_per_serving|floatformat:0 }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div style="padding:0.5rem 1rem;font-size:0.72rem;color:#555;">
+    {% trans "Revenue recorded = total keg sale amounts entered by this staff member. Compare across shifts to spot patterns." %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Tabs aging -->
+{% if total_open_tabs %}
+<div style="background:var(--onyx-card);border-radius:10px;border:1px solid rgba(192,57,90,0.25);overflow:hidden;margin-bottom:2rem;">
+  <div style="padding:0.75rem 1rem;border-bottom:1px solid #2a2a2a;font-weight:600;color:var(--raspberry);font-size:0.85rem;">
+    📒 {% trans "Open Tabs — Aging" %}
+    <span style="color:#b0b0b0;font-size:0.75rem;font-weight:400;margin-left:0.5rem;">
+      {{ total_open_tabs }} {% trans "open tab" %}{{ total_open_tabs|pluralize }} · KES {{ total_tabs_owed|floatformat:0 }} {% trans "outstanding" %}
+    </span>
+  </div>
+  <div class="row g-0">
+    {% for bucket in tabs_aging %}
+    <div class="col-6 col-md-3" style="padding:0.9rem 1rem;border-right:1px solid #222;border-bottom:1px solid #222;">
+      <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:{{ bucket.color }};margin-bottom:0.3rem;">{{ bucket.label }}</div>
+      <div style="font-size:1.3rem;font-weight:700;font-family:'Playfair Display',serif;color:var(--pearl);">{{ bucket.count }}</div>
+      <div style="font-size:0.82rem;color:{{ bucket.color }};font-weight:600;">KES {{ bucket.total|floatformat:0 }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <div style="padding:0.5rem 1rem;font-size:0.72rem;color:#555;">
+    {% trans "Open tabs older than 3 days need follow-up. Use Shift close to settle or convert to Debt." %}
+  </div>
+</div>
+{% endif %}
+
 {% endif %}
 <!-- ────────────────────────────────────────────────────────────────────── -->
 

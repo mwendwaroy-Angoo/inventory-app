@@ -26,7 +26,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County, RevenueTarget, Store, ProduceBunch, KegBarrel, BarCupLog
+from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County, RevenueTarget, Store, ProduceBunch, KegBarrel, BarCupLog, BarTab
 from core.forms import BusinessExpenseForm, CapitalInvestmentForm
 from core.views import get_user_profile, owner_required
 
@@ -570,7 +570,7 @@ def analytics_dashboard(request):
             received_on__lte=today,
         )
         .select_related('item')
-        .prefetch_related('cup_logs')
+        .prefetch_related('cup_logs', 'weight_readings')
     )
 
     # Per-item keg breakdown with status breakdown per barrel
@@ -647,6 +647,103 @@ def analytics_dashboard(request):
     total_keg_barrels  = sum(r['barrels'] for r in keg_item_rows)
     keg_type_rows = []  # kept for backward compat — template no longer uses it
     keg_share = round(100 * total_keg_revenue / float(cur_revenue), 1) if cur_revenue > 0 else 0
+
+    # ── Per-barrel P&L with book-vs-scale shrinkage ───────────────────────────
+    barrel_rows = []
+    for barrel in keg_barrels_period:
+        readings = sorted(barrel.weight_readings.all(), key=lambda r: r.recorded_at)
+        latest_kg = float(readings[-1].weight_kg) if readings else float(barrel.gross_weight_kg)
+        net_vol_ml = (float(barrel.gross_weight_kg) - float(barrel.tare_weight_kg)) * 1000.0
+        scale_ml = max(0.0, (float(barrel.gross_weight_kg) - latest_kg) * 1000.0)
+        book_ml = float(barrel.volume_dispensed_ml)
+        shrinkage_ml = scale_ml - book_ml
+        shrinkage_pct = round(shrinkage_ml / scale_ml * 100, 1) if scale_ml > 0 else 0.0
+        markup = round(float(barrel.revenue_collected) / float(barrel.cost_price), 2) if barrel.cost_price else 0
+        if barrel.tapped_at and barrel.closed_at:
+            days_open = (barrel.closed_at.date() - barrel.tapped_at.date()).days
+        elif barrel.tapped_at:
+            days_open = (today - barrel.tapped_at.date()).days
+        else:
+            days_open = 0
+        barrel_rows.append({
+            'id':            barrel.id,
+            'item':          barrel.item.description,
+            'received_on':   barrel.received_on,
+            'status_code':   barrel.status,
+            'status_label':  barrel.get_status_display(),
+            'cost':          round(float(barrel.cost_price), 2),
+            'target':        round(float(barrel.target_revenue), 2),
+            'collected':     round(float(barrel.revenue_collected), 2),
+            'markup':        markup,
+            'book_ml':       round(book_ml),
+            'scale_ml':      round(scale_ml),
+            'shrinkage_ml':  round(shrinkage_ml),
+            'shrinkage_pct': shrinkage_pct,
+            'days_open':     days_open,
+            'has_readings':  bool(readings),
+        })
+    barrel_rows.sort(key=lambda x: x['received_on'], reverse=True)
+
+    # ── Staff keg league — revenue recorded per staff member ──────────────────
+    keg_txn_qs = (
+        Transaction.objects
+        .filter(
+            business=business,
+            type='Issue',
+            keg_barrel__isnull=False,
+            date__gte=start_date,
+            date__lte=today,
+        )
+        .values(
+            'recorded_by__id',
+            'recorded_by__first_name',
+            'recorded_by__last_name',
+            'recorded_by__username',
+        )
+        .annotate(
+            keg_revenue=Sum('sale_amount'),
+            keg_servings=Count('id'),
+        )
+        .order_by('-keg_revenue')
+    )
+    staff_keg_rows = []
+    for row in keg_txn_qs:
+        first = row['recorded_by__first_name'] or ''
+        last  = row['recorded_by__last_name'] or ''
+        name  = f"{first} {last}".strip() or row['recorded_by__username'] or 'Unknown'
+        rev = round(float(row['keg_revenue'] or 0), 2)
+        srv = row['keg_servings'] or 0
+        staff_keg_rows.append({
+            'name':             name,
+            'servings':         srv,
+            'revenue':          rev,
+            'avg_per_serving':  round(rev / srv, 2) if srv > 0 else 0,
+        })
+
+    # ── Tabs aging buckets (open tabs only) ───────────────────────────────────
+    open_tabs = (
+        BarTab.objects
+        .filter(business=business, status='OPEN')
+        .prefetch_related('entries')
+    )
+    _aging_buckets = [
+        {'label': 'Same day',  'count': 0, 'total': 0.0, 'color': '#6fae4f'},
+        {'label': '1–3 days',  'count': 0, 'total': 0.0, 'color': '#c9a84c'},
+        {'label': '4–7 days',  'count': 0, 'total': 0.0, 'color': '#ffb74d'},
+        {'label': '7+ days',   'count': 0, 'total': 0.0, 'color': '#c0395a'},
+    ]
+    total_open_tabs = 0
+    total_tabs_owed = 0.0
+    for tab in open_tabs:
+        age_days = (today - tab.opened_at.date()).days
+        unpaid = sum(float(e.amount) for e in tab.entries.all() if not e.is_paid)
+        idx = 0 if age_days == 0 else (1 if age_days <= 3 else (2 if age_days <= 7 else 3))
+        _aging_buckets[idx]['count'] += 1
+        _aging_buckets[idx]['total'] += unpaid
+        total_open_tabs += 1
+        total_tabs_owed += unpaid
+    tabs_aging = [b for b in _aging_buckets if b['count'] > 0]
+    total_tabs_owed = round(total_tabs_owed, 2)
 
     context = {
         'period': days,
@@ -733,6 +830,11 @@ def analytics_dashboard(request):
         'total_keg_cup_cost': total_keg_cup_cost,
         'total_keg_barrels':  total_keg_barrels,
         'keg_share':          keg_share,
+        'barrel_rows':        barrel_rows,
+        'staff_keg_rows':     staff_keg_rows,
+        'tabs_aging':         tabs_aging,
+        'total_open_tabs':    total_open_tabs,
+        'total_tabs_owed':    total_tabs_owed,
         # Break-Even Analysis
         'breakeven_data': breakeven_data,
     }

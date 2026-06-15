@@ -118,6 +118,9 @@
                 {% bootstrap_field form.cost_price %}
             </div>
             </div>
+            <div id="costPriceHint" style="display:none; background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:0.65rem 0.9rem; margin-bottom:1rem; font-size:0.82rem; color:#b0b0b0;">
+                💰 {% trans 'Bei ya kununua inarekodiwa kila unapopokea mzigo — tumia' %} <strong style="color:#c9a84c;">"+From Market"</strong> / <strong style="color:#c9a84c;">"+Pokea Barrel"</strong>.
+            </div>
             {% endif %}
 
             <div class="section-divider"><span>📋 {% trans 'Optional Fields' %}</span></div>
@@ -592,6 +595,15 @@
             // ── Carrots: pile/sack → small bundles (also Batch mode) ──
             { keys: ['carrot','karoti'],
               unit: 'Bundle', note: 'Sorted into bundles from a pile/sack — use Batch mode' },
+            // ── Kg mode: sold by weight, count known upfront (PORTION, unit=Kg) ──
+            { keys: ['nyanya kg', 'tomato kg'],
+              unit: 'Kg', note: 'Sold by kg — use Portion mode with 1 Kg / ½ Kg / ¼ Kg presets.' },
+            { keys: ['vitunguu kg', 'onion kg'],
+              unit: 'Kg', note: 'Sold by kg — use Portion mode with 1 Kg / ½ Kg / ¼ Kg presets.' },
+            { keys: ['omena'],
+              unit: 'Kg', note: 'Sold by kg or gorogoro. Use Portion mode (1 Kg / ½ Kg).' },
+            { keys: ['sukari kg', 'sugar kg', 'sugar loose'],
+              unit: 'Kg', note: 'Loose sugar — sold by kg. Use Portion mode.' },
             // ── Piece-count items: PORTION mode is correct ──
             { keys: ['tomato','nyanya'],
               unit: 'Pcs', note: 'Sold by piece — kimoja/tatu mbao. Portion mode is correct.' },
@@ -742,6 +754,17 @@
                         });
                     });
                 }
+                window._updateCostPriceVisibility = function() {
+                    var produceCb = document.getElementById('is_produce');
+                    var kegCb     = document.getElementById('is_keg');
+                    var hideIt    = (produceCb && produceCb.checked) || (kegCb && kegCb.checked);
+                    var section   = document.getElementById('costPriceSection');
+                    var hint      = document.getElementById('costPriceHint');
+                    if (section) section.style.display = hideIt ? 'none' : 'block';
+                    if (hint)    hint.style.display    = hideIt ? 'block' : 'none';
+                };
+                window._updateCostPriceVisibility();
+
                 function applyProduceToggle(checked) {
                     var kegCb = document.getElementById('is_keg');
                     var kegOn = kegCb && kegCb.checked;
@@ -757,6 +780,7 @@
                     }
                     if (modeSection) modeSection.style.display = checked ? 'block' : 'none';
                     if (checked) applyModeToggle();
+                    _updateCostPriceVisibility();
                 }
                 produceCheck.addEventListener('change', function() { applyProduceToggle(this.checked); });
                 var pmP = document.getElementById('pm_portion');
@@ -1087,7 +1111,6 @@
             if (!kegCb) return;
             var KEG_HIDE = [
                 document.getElementById('sellingPriceSection'),
-                document.getElementById('costPriceSection'),
                 document.getElementById('openingStockSection'),
                 document.getElementById('reorderSection'),
             ];
@@ -1095,6 +1118,9 @@
                 KEG_HIDE.forEach(function (el) {
                     if (el) el.style.display = isKeg ? 'none' : '';
                 });
+                if (typeof window._updateCostPriceVisibility === 'function') {
+                    window._updateCostPriceVisibility();
+                }
                 var presetsSection = document.getElementById('portionPresetsSection');
                 var kegHint        = document.getElementById('kegPresetHint');
                 var produceCb      = document.getElementById('is_produce');
