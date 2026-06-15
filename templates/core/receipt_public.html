@@ -248,11 +248,17 @@
 
         <div class="receipt-lines">
             {% for line in receipt.lines %}
+            {% if line.qty == 0 %}
+            <div class="receipt-line" style="border-bottom:none; padding-top:0.3rem;">
+                <span class="line-name" style="color:#b0b0b0; font-size:0.78rem; font-style:italic;">{{ line.name }}</span>
+            </div>
+            {% else %}
             <div class="receipt-line">
                 <span class="line-name">{{ line.name }}</span>
                 <span class="line-qty">×{{ line.qty|floatformat:"-2" }}</span>
                 <span class="line-amount">KES {{ line.subtotal|floatformat:"0" }}</span>
             </div>
+            {% endif %}
             {% endfor %}
         </div>
 

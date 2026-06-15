@@ -232,6 +232,7 @@ def record_debt_payment(request, customer_id):
         messages.error(request, _('Please enter a valid payment amount.'))
         return redirect('customer_debt_profile', customer_id=customer_id)
 
+    # Snapshot debt data BEFORE recording payment — needed for receipt lines
     data = _get_customer_debt_data(customer, business)
     if amount > Decimal(str(data['outstanding'])):
         messages.error(
@@ -240,6 +241,11 @@ def record_debt_payment(request, customer_id):
             % {'amount': f'{amount:,.2f}', 'outstanding': f"{data['outstanding']:,.2f}"}
         )
         return redirect('customer_debt_profile', customer_id=customer_id)
+
+    unpaid_before   = data['unpaid_transactions']
+    score_label     = data.get('score_label', '')
+    method_label    = 'M-Pesa' if method == 'mpesa' else 'Cash'
+    recorder        = request.user.get_full_name() or request.user.username
 
     CustomerDebtPayment.objects.create(
         customer=customer,
@@ -250,32 +256,56 @@ def record_debt_payment(request, customer_id):
         recorded_by=request.user,
     )
 
-    # Generate a receipt for the debt payment
-    receipt_url = None
+    # Build receipt lines: show each original credit transaction being cleared (FIFO)
+    receipt_lines = []
+    paid_remaining = float(amount)
+    max_days = 0
+    for entry in unpaid_before:
+        if paid_remaining <= 0:
+            break
+        txn = entry['txn']
+        covered = round(min(entry['amount'], paid_remaining), 2)
+        paid_remaining = round(paid_remaining - covered, 2)
+        max_days = max(max_days, entry['days_outstanding'])
+        receipt_lines.append({
+            'name': f"{txn.item.description} — deni la {txn.date.strftime('%d %b %Y')}",
+            'qty': 1,
+            'subtotal': covered,
+        })
+    if not receipt_lines:
+        receipt_lines.append({'name': notes or 'Malipo ya deni', 'qty': 1, 'subtotal': float(amount)})
+
+    # Metadata line (subtotal=0, hidden in template)
+    days_label = f"{max_days} siku" if max_days > 0 else 'siku moja'
+    receipt_lines.append({
+        'name': f"Malipo: {method_label} · {days_label} za kulipa · {score_label} · alirekodiwa na {recorder}",
+        'qty': 0,
+        'subtotal': 0,
+    })
+
+    # Issue receipt and redirect straight to it
+    receipt_token = None
     try:
         from .models import Receipt
-        method_label = 'M-Pesa' if method == 'mpesa' else 'Cash'
         rcpt = Receipt.issue(
             business=business,
-            lines=[{
-                'name': f"Debt payment — {notes}" if notes else "Debt payment",
-                'qty': 1,
-                'subtotal': float(amount),
-            }],
+            lines=receipt_lines,
             payment_method=method,
             user=request.user,
             customer_name=customer.name,
             customer_phone=customer.phone or '',
         )
+        receipt_token = rcpt.token
         receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
-        # SMS the payment receipt to the customer if they have a phone
+        # Auto-SMS the payment confirmation to the customer
         if customer.phone:
             from .notifications import normalize_ke_phone, send_sms_notification
             normalized = normalize_ke_phone(customer.phone)
             if normalized:
                 sms_msg = (
-                    f"Malipo yaliyopokelewa: KES {amount:,.0f} ({method_label})\n"
-                    f"Duka: {business.name}\n"
+                    f"{business.name}: Deni lako limelipiwa!\n"
+                    f"KES {amount:,.0f} ({method_label}) — {days_label} za kulipa\n"
+                    f"Alama ya mikopo: {score_label}\n"
                     f"Risiti: {receipt_url}"
                 )
                 send_sms_notification(sms_msg, normalized)
@@ -287,8 +317,8 @@ def record_debt_payment(request, customer_id):
         _('Payment of KES %(amount)s recorded for %(customer)s.')
         % {'amount': f'{amount:,.2f}', 'customer': customer.name}
     )
-    if receipt_url:
-        messages.info(request, f'Receipt: {receipt_url}')
+    if receipt_token:
+        return redirect('public_receipt', token=receipt_token)
     return redirect('customer_debt_profile', customer_id=customer_id)
 
 
@@ -308,43 +338,21 @@ def send_debt_reminder(request, customer_id):
         messages.error(request, _('%(customer)s does not have a phone number on file.') % {'customer': customer.name})
         return redirect('customer_debt_profile', customer_id=customer_id)
 
-    outstanding_str = f"KES {data['outstanding']:,.2f}"
-    msg = (
-        f"Dear {customer.name}, you have an outstanding balance of {outstanding_str} "
-        f"at {business.name}. Please clear your debt at your earliest convenience. "
-        f"Thank you for your continued patronage."
-    )
-
-    from core.notifications import normalize_ke_phone
+    from core.notifications import normalize_ke_phone, send_sms_notification
     normalized_phone = normalize_ke_phone(customer.phone)
     if not normalized_phone:
         messages.error(request, _('Could not send reminder — invalid phone number format: %(phone)s') % {'phone': customer.phone})
         return redirect('customer_debt_profile', customer_id=customer_id)
 
-    sent = False
-    try:
-        from django.conf import settings as _settings
-        import africastalking
-        at_username = getattr(_settings, 'AT_USERNAME', '') or ''
-        at_api_key = getattr(_settings, 'AT_API_KEY', '') or ''
-        if not at_username or not at_api_key:
-            raise ValueError('AT_USERNAME or AT_API_KEY not set in settings')
-        africastalking.initialize(username=at_username, api_key=at_api_key)
-        sms = africastalking.SMS
-        response = sms.send(msg, [normalized_phone])
-        import logging
-        logging.getLogger(__name__).info(
-            'Debt reminder SMS to %s: %s', normalized_phone, response
-        )
-        sent = True
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(
-            'Debt reminder SMS failed to %s: %s', normalized_phone, str(e)
-        )
-        sent = False
+    outstanding_str = f"KES {data['outstanding']:,.0f}"
+    window = business.credit_window_days or 30
+    msg = (
+        f"{business.name}: {customer.name}, bado una deni la {outstanding_str}. "
+        f"Tafadhali lipa ndani ya siku {window}. Asante."
+    )
 
-    if sent:
+    ok, _ = send_sms_notification(msg, normalized_phone)
+    if ok:
         messages.success(
             request,
             _('Reminder sent to %(customer)s (%(phone)s).')
@@ -353,8 +361,8 @@ def send_debt_reminder(request, customer_id):
     else:
         messages.warning(
             request,
-            _('SMS not configured — reminder not sent. Message: "%(msg)s"')
-            % {'msg': msg}
+            _('Reminder could not be sent to %(phone)s — check your Africa\'s Talking account balance and settings.')
+            % {'phone': customer.phone}
         )
 
     return redirect('customer_debt_profile', customer_id=customer_id)
