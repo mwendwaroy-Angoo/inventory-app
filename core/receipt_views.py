@@ -14,13 +14,48 @@ logger = logging.getLogger(__name__)
 
 
 @login_required
-@owner_required
 def receipts_list(request):
     user_profile = get_user_profile(request)
     if not user_profile:
         return redirect('home')
-    receipts = Receipt.objects.filter(business=user_profile.business).select_related('created_by')[:100]
-    return render(request, 'core/receipts_list.html', {'receipts': receipts})
+
+    from django.utils import timezone as _tz
+    now = _tz.localtime(_tz.now())
+
+    try:
+        month = int(request.GET.get('month', now.month))
+        year  = int(request.GET.get('year',  now.year))
+    except (ValueError, TypeError):
+        month, year = now.month, now.year
+
+    month = max(1, min(12, month))
+    year  = max(2020, min(now.year + 1, year))
+
+    search = request.GET.get('q', '').strip()
+
+    qs = Receipt.objects.filter(
+        business=user_profile.business,
+        created_at__year=year,
+        created_at__month=month,
+    ).select_related('created_by')
+
+    if search:
+        qs = qs.filter(customer_name__icontains=search)
+
+    receipts = qs.order_by('-created_at')
+
+    # Build month options for the filter UI (current year, plus one back)
+    import calendar as _cal
+    month_options = [(m, _cal.month_abbr[m]) for m in range(1, 13)]
+
+    return render(request, 'core/receipts_list.html', {
+        'receipts':      receipts,
+        'sel_month':     month,
+        'sel_year':      year,
+        'search':        search,
+        'month_options': month_options,
+        'cur_year':      now.year,
+    })
 
 
 def public_receipt(request, token):

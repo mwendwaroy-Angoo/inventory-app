@@ -8,49 +8,91 @@
     border: 1px solid #2a2a2a;
     border-radius: 10px;
     padding: 0.85rem 1.1rem;
-    margin-bottom: 0.6rem;
+    margin-bottom: 0.5rem;
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.9rem;
     text-decoration: none;
     color: var(--pearl);
     transition: border-color 0.15s;
 }
 .receipt-row:hover { border-color: var(--gold); color: var(--pearl); }
-.rct-num { font-weight: 700; color: var(--gold); min-width: 60px; }
-.rct-date { font-size: 0.78rem; color: #b0b0b0; min-width: 90px; }
-.rct-items { flex: 1; font-size: 0.82rem; color: #b0b0b0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.rct-total { font-weight: 700; white-space: nowrap; }
+.rct-num  { font-weight: 700; color: var(--gold); min-width: 52px; }
+.rct-date { font-size: 0.75rem; color: #b0b0b0; min-width: 80px; white-space: nowrap; }
+.rct-customer { font-size: 0.78rem; color: #c9a84c; min-width: 80px; max-width: 110px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rct-items { flex: 1; font-size: 0.80rem; color: #b0b0b0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rct-total { font-weight: 700; white-space: nowrap; font-size: 0.9rem; }
 .pay-badge {
-    display: inline-block;
-    padding: 0.15rem 0.5rem;
-    border-radius: 10px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
+    display: inline-block; padding: 0.15rem 0.5rem;
+    border-radius: 10px; font-size: 0.68rem;
+    font-weight: 600; text-transform: uppercase; white-space: nowrap;
 }
-.pay-cash { background: rgba(120,180,90,0.15); color: #9fcaa0; }
-.pay-mpesa { background: rgba(76,175,80,0.15); color: #4caf50; }
-.pay-credit { background: rgba(192,57,90,0.15); color: #e87090; }
+.pay-cash   { background: rgba(120,180,90,0.15); color: #9fcaa0; }
+.pay-mpesa  { background: rgba(76,175,80,0.15);  color: #4caf50; }
+.pay-credit { background: rgba(192,57,90,0.15);  color: #e87090; }
+.filter-bar {
+    background: var(--onyx-card);
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;
+}
+.filter-bar select, .filter-bar input[type=text] {
+    background: #111; border: 1px solid #333; border-radius: 6px;
+    color: var(--pearl); padding: 0.35rem 0.65rem; font-size: 0.82rem;
+}
+.filter-bar select:focus, .filter-bar input:focus { border-color: var(--gold); outline: none; }
+.filter-bar button {
+    background: rgba(201,168,76,0.15); color: var(--gold);
+    border: 1px solid rgba(201,168,76,0.3); border-radius: 6px;
+    padding: 0.35rem 0.9rem; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid px-3 py-3" style="max-width:680px;">
+<div class="container-fluid px-3 py-3" style="max-width:700px;">
+
     <div class="d-flex align-items-center gap-2 mb-3">
         <div>
             <h5 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0;">🧾 Receipts</h5>
-            <div style="font-size:0.78rem; color:#b0b0b0;">Last 100 digital receipts</div>
+            <div style="font-size:0.75rem; color:#b0b0b0;">Click any receipt to open the full page (share, print, or send via SMS)</div>
         </div>
     </div>
 
+    <!-- Filter bar -->
+    <form method="get" class="filter-bar">
+        <select name="month">
+            {% for num, abbr in month_options %}
+            <option value="{{ num }}" {% if num == sel_month %}selected{% endif %}>{{ abbr }}</option>
+            {% endfor %}
+        </select>
+        <select name="year">
+            {% for y in "xx"|make_list %}{% endfor %}
+            <option value="{{ cur_year }}" {% if sel_year == cur_year %}selected{% endif %}>{{ cur_year }}</option>
+            {% if cur_year > 2025 %}<option value="{{ cur_year|add:"-1" }}" {% if sel_year == cur_year|add:"-1" %}selected{% endif %}>{{ cur_year|add:"-1" }}</option>{% endif %}
+        </select>
+        <input type="text" name="q" value="{{ search }}" placeholder="Search customer…" style="flex:1; min-width:120px;">
+        <button type="submit">Filter</button>
+        {% if search or sel_month != cur_year %}<a href="{% url 'receipts_list' %}" style="color:#b0b0b0; font-size:0.8rem; text-decoration:none; padding:0.35rem 0.5rem;">✕ Clear</a>{% endif %}
+    </form>
+
     {% if receipts %}
+        <div style="font-size:0.72rem; color:#b0b0b0; margin-bottom:0.5rem;">
+            {{ receipts|length }} receipt{{ receipts|length|pluralize }} found
+        </div>
         {% for r in receipts %}
-        <a href="{% url 'public_receipt' r.token %}" class="receipt-row" target="_blank">
+        <a href="{% url 'public_receipt' r.token %}" class="receipt-row" target="_blank" rel="noopener">
             <span class="rct-num">#{{ r.receipt_number }}</span>
             <span class="rct-date">{{ r.created_at|date:"d M, H:i" }}</span>
+            {% if r.customer_name %}
+            <span class="rct-customer">{{ r.customer_name }}</span>
+            {% else %}
+            <span class="rct-customer" style="color:#444;">—</span>
+            {% endif %}
             <span class="rct-items">
-                {% for line in r.lines %}{{ line.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                {% for line in r.lines %}{% if line.qty != 0 %}{{ line.name }}{% if not forloop.last %}, {% endif %}{% endif %}{% endfor %}
             </span>
             <span class="rct-total">KES {{ r.total|floatformat:"0" }}</span>
             <span class="pay-badge {% if r.payment_method == 'mpesa' %}pay-mpesa{% elif r.payment_method == 'credit' %}pay-credit{% else %}pay-cash{% endif %}">
@@ -61,7 +103,11 @@
     {% else %}
         <div style="text-align:center; padding:3rem 1rem; color:#b0b0b0;">
             <div style="font-size:2.5rem; margin-bottom:0.5rem;">🧾</div>
-            <div>No receipts yet. Receipts are created automatically when you complete a Quick Sell.</div>
+            {% if search %}
+            <div>No receipts found for <strong>{{ search }}</strong> in this period.</div>
+            {% else %}
+            <div>No receipts for this month. Receipts are created automatically on every Quick Sell, bar order, and debt payment.</div>
+            {% endif %}
         </div>
     {% endif %}
 </div>

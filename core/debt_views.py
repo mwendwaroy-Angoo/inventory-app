@@ -279,6 +279,15 @@ def record_debt_payment(request, customer_id):
     if not receipt_lines:
         receipt_lines.append({'name': notes or 'Malipo ya deni', 'qty': 1, 'subtotal': float(amount)})
 
+    # Remaining balance — show on receipt if this was a partial payment
+    remaining_balance = round(max(0.0, data['outstanding'] - float(amount)), 2)
+    if remaining_balance > 0:
+        receipt_lines.append({
+            'name': 'Bado unalipa',
+            'qty': -1,
+            'subtotal': remaining_balance,
+        })
+
     # Days label: how long the customer actually took to pay vs their window
     if max_days == 0:
         days_label = 'umelipa leo'

@@ -252,6 +252,11 @@
             <div class="receipt-line" style="border-bottom:none; padding-top:0.3rem;">
                 <span class="line-name" style="color:#b0b0b0; font-size:0.78rem; font-style:italic;">{{ line.name }}</span>
             </div>
+            {% elif line.qty == -1 %}
+            <div class="receipt-line" style="background:rgba(192,57,90,0.10); border-radius:7px; padding:0.5rem 0.8rem; border-bottom:none; margin-top:0.5rem; justify-content:space-between;">
+                <span class="line-name" style="color:#e87090; font-weight:600; font-size:0.85rem;">⚠️ {{ line.name }}</span>
+                <span class="line-amount" style="color:#e87090;">KES {{ line.subtotal|floatformat:"0" }}</span>
+            </div>
             {% else %}
             <div class="receipt-line">
                 <span class="line-name">{{ line.name }}</span>
