@@ -165,6 +165,35 @@
         }
         .send-status { font-size: 0.75rem; margin-top: 0.4rem; display: none; }
 
+        /* ── Powered-by footer ──────────────────────────────── */
+        .powered-by {
+            margin-top: 1.5rem;
+            text-align: center;
+            padding: 1rem;
+            border-top: 1px solid #2a2a2a;
+        }
+        .powered-by-label {
+            font-size: 0.68rem;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.3rem;
+        }
+        .powered-by-brand {
+            font-family: 'Playfair Display', Georgia, serif;
+            font-size: 1.05rem;
+            color: var(--gold);
+            text-decoration: none;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        .powered-by-brand:hover { color: #e2c36e; }
+        .powered-by-tagline {
+            font-size: 0.7rem;
+            color: #555;
+            margin-top: 0.2rem;
+        }
+
         /* ── Thermal print ──────────────────────────────────── */
         @media print {
             * { -webkit-print-color-adjust: exact; color-adjust: exact; }
@@ -195,7 +224,7 @@
             .payment-badge { background: transparent; color: #000; border: 1px solid #000; }
             .qr-section { border-top: 1px solid #ccc; }
             .qr-section p { color: #444; }
-            .actions, .send-section { display: none; }
+            .actions, .send-section, .powered-by { display: none; }
         }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -263,6 +292,14 @@
         </div>
         <div class="send-status" id="smsStatus"></div>
     </div>
+
+    <div class="powered-by no-print">
+        <div class="powered-by-label">Powered by</div>
+        <a class="powered-by-brand" href="https://www.dukamwecheche.co.ke" target="_blank" rel="noopener">
+            Duka Mwecheche
+        </a>
+        <div class="powered-by-tagline">Smart inventory &amp; sales for Kenyan businesses</div>
+    </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
@@ -317,7 +354,9 @@
                     smsStatus.textContent = 'SMS imetumwa!';
                 } else {
                     smsStatus.style.color = '#f87171';
-                    smsStatus.textContent = 'Imeshindwa — angalia nambari.';
+                    smsStatus.textContent = data.error === 'invalid_phone'
+                        ? 'Nambari si sahihi — ingiza 07XX XXX XXX.'
+                        : 'SMS haikufanikiwa. Jaribu tena.';
                 }
                 btnSend.disabled = false;
                 btnSend.textContent = 'Send';

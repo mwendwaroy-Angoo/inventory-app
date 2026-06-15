@@ -811,6 +811,15 @@
                 </label>
               </div>
             </div>
+            <!-- Customer name — required for credit to link to debt tracker -->
+            <div id="qsCreditCustomerRow" style="display:none; margin-bottom:0.6rem;">
+              <label style="color:var(--gold); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.07em; display:block; margin-bottom:0.3rem;">
+                Jina la mteja (lazima kwa credit)
+              </label>
+              <input type="text" id="qsCreditCustomerName" placeholder="e.g. Kamau, Mama Njeri…"
+                     style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                            color:var(--pearl); padding:0.45rem 0.7rem; font-size:0.85rem;">
+            </div>
             <div class="d-flex gap-2">
                 <button class="qs-clear-btn" id="qsClear">{% trans 'Clear' %}</button>
                 <button class="qs-sell-btn" id="qsSell">{% trans 'Complete Sale' %} ➜</button>
@@ -823,6 +832,7 @@
     {% csrf_token %}
     <input type="hidden" name="cart" id="qsCartData">
     <input type="hidden" name="payment_method" id="qsPaymentMethodData" value="cash">
+    <input type="hidden" name="recipient" id="qsRecipientData" value="">
 </form>
 {% endblock %}
 
@@ -1083,13 +1093,32 @@
         updateCart();
     });
 
+    // Show/hide customer name field when Credit is selected
+    document.querySelectorAll('input[name="payment_method"]').forEach(function(radio) {
+        radio.addEventListener('change', function() {
+            var row = document.getElementById('qsCreditCustomerRow');
+            if (row) row.style.display = this.value === 'credit' ? 'block' : 'none';
+        });
+    });
+
     // ── COMPLETE SALE ──
     document.getElementById('qsSell').addEventListener('click', function() {
         if (cart.length === 0) return;
+        var selectedMethod = document.querySelector('input[name="payment_method"]:checked');
+        var pm = selectedMethod ? selectedMethod.value : 'cash';
+        if (pm === 'credit') {
+            var customerName = (document.getElementById('qsCreditCustomerName') || {}).value;
+            if (!customerName || !customerName.trim()) {
+                alert('Weka jina la mteja kwa credit sale.');
+                document.getElementById('qsCreditCustomerName').focus();
+                return;
+            }
+            document.getElementById('qsRecipientData').value = customerName.trim();
+        } else {
+            document.getElementById('qsRecipientData').value = '';
+        }
         document.getElementById('qsCartData').value = JSON.stringify(cart);
-        // Capture the selected payment method before submitting
-        const selectedMethod = document.querySelector('input[name="payment_method"]:checked');
-        document.getElementById('qsPaymentMethodData').value = selectedMethod ? selectedMethod.value : 'cash';
+        document.getElementById('qsPaymentMethodData').value = pm;
         document.getElementById('qsForm').submit();
     });
 

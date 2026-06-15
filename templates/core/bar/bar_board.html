@@ -1174,6 +1174,37 @@
           {% else %}Cash{% endif %}
         </div>
       </div>
+      {% if success_data.receipt_url %}
+      <div class="modal-body" style="padding-top:0; border-top:1px solid #2a2a2a;">
+        <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem;">
+          <a id="bbReceiptLink" href="{{ success_data.receipt_url }}" target="_blank" rel="noopener"
+             style="flex:1; padding:0.55rem; background:rgba(201,168,76,0.12); border:1px solid rgba(201,168,76,0.3);
+                    color:#c9a84c; border-radius:8px; font-size:0.82rem; font-weight:600; text-align:center; text-decoration:none;">
+            🧾 Angalia Risiti
+          </a>
+          <button id="bbShareBtn"
+                  style="flex:1; padding:0.55rem; background:rgba(255,255,255,0.05); border:1px solid #333;
+                         color:#f0ece4; border-radius:8px; font-size:0.82rem; font-weight:600; cursor:pointer;">
+            📤 Shiriki
+          </button>
+        </div>
+        <div id="bbQrWrap" style="text-align:center; margin-bottom:0.5rem;">
+          <div id="bbQrCode" style="display:inline-block; border-radius:8px; overflow:hidden;"></div>
+          <div style="font-size:0.68rem; color:#b0b0b0; margin-top:0.25rem;">Scan kupata risiti</div>
+        </div>
+        <div style="display:flex; gap:0.4rem;">
+          <input type="tel" id="bbSmsPhone" placeholder="07XX XXX XXX"
+                 style="flex:1; background:#111; border:1px solid #333; border-radius:6px;
+                        color:#f0ece4; padding:0.4rem 0.65rem; font-size:0.8rem;">
+          <button id="bbSendSmsBtn"
+                  style="padding:0.4rem 0.9rem; background:#c9a84c; color:#111; border:none;
+                         border-radius:6px; font-weight:700; font-size:0.8rem; cursor:pointer;">
+            SMS
+          </button>
+        </div>
+        <div id="bbSmsStatus" style="font-size:0.75rem; margin-top:0.3rem; display:none;"></div>
+      </div>
+      {% endif %}
       <div class="modal-footer">
         <button type="button" class="btn btn-gold"
                 onclick="bootstrap.Modal.getInstance(document.getElementById('successModal')).hide()">
@@ -3070,6 +3101,73 @@
   }, 600);
   {% if success_data.payment_method == 'tab' %}
   setTimeout(function () { window.openTabsDrawer(); }, 2000);
+  {% endif %}
+
+  {% if success_data.receipt_url %}
+  (function() {
+    var receiptUrl = "{{ success_data.receipt_url|escapejs }}";
+    var receiptId  = {{ success_data.receipt_id }};
+
+    // QR code
+    var qrEl = document.getElementById('bbQrCode');
+    function _makeQr() {
+      new QRCode(qrEl, {
+        text: receiptUrl,
+        width: 110, height: 110,
+        colorDark: "#1a1a1a", colorLight: "#f0ece4",
+        correctLevel: QRCode.CorrectLevel.M,
+      });
+    }
+    if (typeof QRCode !== 'undefined') {
+      _makeQr();
+    } else {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+      s.onload = _makeQr;
+      document.head.appendChild(s);
+    }
+
+    // Share button
+    document.getElementById('bbShareBtn').onclick = function() {
+      if (navigator.share) {
+        navigator.share({ title: 'Risiti', url: receiptUrl });
+      } else {
+        navigator.clipboard.writeText(receiptUrl).then(function() {
+          var btn = document.getElementById('bbShareBtn');
+          btn.textContent = '✅ Imenakiliwa!';
+          setTimeout(function() { btn.textContent = '📤 Shiriki'; }, 2000);
+        });
+      }
+    };
+
+    // SMS button
+    document.getElementById('bbSendSmsBtn').onclick = function() {
+      var phone = document.getElementById('bbSmsPhone').value.trim();
+      if (!phone) return;
+      var btn = document.getElementById('bbSendSmsBtn');
+      var statusEl = document.getElementById('bbSmsStatus');
+      btn.disabled = true; btn.textContent = '...';
+      var fd = new FormData();
+      fd.append('channel', 'sms');
+      fd.append('phone', phone);
+      fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+      fetch('/receipts/' + receiptId + '/send/', { method: 'POST', body: fd })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          statusEl.style.display = 'block';
+          if (data.ok) {
+            statusEl.style.color = '#9fcaa0';
+            statusEl.textContent = 'SMS imetumwa!';
+          } else {
+            statusEl.style.color = '#f87171';
+            statusEl.textContent = data.error === 'invalid_phone'
+              ? 'Nambari si sahihi — ingiza 07XX XXX XXX.'
+              : 'SMS haikufanikiwa. Jaribu tena.';
+          }
+          btn.disabled = false; btn.textContent = 'SMS';
+        });
+    };
+  })();
   {% endif %}
   {% endif %}
 

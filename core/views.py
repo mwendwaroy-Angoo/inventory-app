@@ -1937,6 +1937,8 @@ def quick_sell(request):
         except (json.JSONDecodeError, TypeError):
             cart = []
 
+        credit_recipient = request.POST.get("recipient", "").strip()
+
         recorded = []
         last_transaction = None
 
@@ -2010,13 +2012,15 @@ def quick_sell(request):
             if entry.get("stock_qty") is not None and display_price:
                 sale_amt = Decimal(str(round(display_price * float(display_qty), 2)))
 
+            pm = request.POST.get("payment_method", "cash")
             last_transaction = Transaction.objects.create(
                 item=item,
                 type="Issue",
                 qty=-stock_qty,
                 business=user_profile.business,
-                payment_method=request.POST.get("payment_method", "cash"),
+                payment_method=pm,
                 sale_amount=sale_amt,
+                recipient=credit_recipient if pm == "credit" else "",
             )
             recorded.append(
                 {

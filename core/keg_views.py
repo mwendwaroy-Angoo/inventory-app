@@ -16,7 +16,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Shift, Transaction
+from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Receipt, Shift, Transaction
 
 
 def _get_up(request):
@@ -271,12 +271,36 @@ def bar_board(request):
             })
 
         if receipt_lines:
+            receipt_token = None
+            receipt_number = None
+            receipt_id = None
+            try:
+                rcpt = Receipt.issue(
+                    business=business,
+                    lines=receipt_lines,
+                    payment_method=payment_method,
+                    user=request.user,
+                )
+                receipt_token = rcpt.token
+                receipt_number = rcpt.receipt_number
+                receipt_id = rcpt.id
+            except Exception:
+                pass
+
+            receipt_url = (
+                request.build_absolute_uri(f'/r/{receipt_token}/')
+                if receipt_token else None
+            )
             success_data = {
                 'lines': receipt_lines,
                 'total': float(total_revenue),
                 'payment_method': payment_method,
                 'tab_customer': tab_customer if active_tab else '',
                 'timestamp': timezone.localtime(timezone.now()).strftime('%H:%M'),
+                'receipt_token': receipt_token,
+                'receipt_number': receipt_number,
+                'receipt_url': receipt_url,
+                'receipt_id': receipt_id,
             }
 
     non_keg_items = (
