@@ -278,6 +278,19 @@ Fonts: Playfair Display (headings), DM Sans (body)
 - One file at a time — state what changed
 - Never truncate — complete every file fully
 - No Django template formatters — Prettier breaks `{% trans %}` tags
+- NEVER name any variable `_` anywhere in Python code (loop unpacking, get_or_create
+  results, etc.) — `_` is reserved for `gettext_lazy as _`. Reusing it silently shadows
+  the translation function and causes `TypeError: 'X' object is not callable` deep in
+  unrelated code later in the same file, often nowhere near the actual mistake. This
+  caused at least three separate production crashes (Sprints 9-11: send_debt_reminder,
+  a get_or_create unpack, a produce IIFE guard). Always use a real name: `_unused`,
+  `_created`, `_discard`.
+- When a bug takes more than one attempted fix across sessions, record the actual ROOT
+  CAUSE in the Known Issues section below once found — not just the symptom — so the
+  next session doesn't re-walk the same dead ends. Example: the bar preset dropdown was
+  patched three different ways (CSS class hiding, a Django template guard, a JS
+  ternary) before discovering the real cause: jQuery/Select2 was never loaded on
+  item_form.html at all.
 
 ---
 
@@ -291,7 +304,9 @@ CSRF_TRUSTED_ORIGINS = [
 SESSION_COOKIE_AGE = 86400        # 24 hours (retail owners leave app open all day)
 SESSION_SAVE_EVERY_REQUEST = True  # Prevents CSRF token mismatch after cold starts
 ```
-DEBUG = True currently (should be changed to False for production eventually).
+DEBUG = False (fixed 2026-06-17). Watch point: SECRET_KEY falls back to a hardcoded
+insecure default if the SECRET_KEY env var isn't set on Render — confirm it's set in
+the Render dashboard env vars; never rely on the fallback in production.
 
 ---
 
@@ -381,10 +396,52 @@ All features built and deployed including:
 
 ---
 
+## M-Pesa / Payments Architecture — read before touching any payment code
+
+Hard boundary, never cross it: Duka Mwecheche must NEVER hold, pool, or pass customer
+money through any account it controls, not even briefly. The moment money from
+multiple different businesses' customers flows through one Duka-Mwecheche-owned
+Paybill/account before reaching the business, that crosses into Central Bank of Kenya
+Payment Service Provider territory (National Payment System Act 2011), which requires
+a CBK PSP authorization with real capital requirements (KES 5M+ depending on category)
+and a full regulatory application. Not appropriate for this app — ever, unless the
+business model fundamentally changes. Money always settles directly into the
+individual business owner's own Till/Paybill/Pochi. Duka Mwecheche is a reconciliation
+and prompting layer on top of payments the owner already receives directly, never an
+intermediary holding funds.
+
+Two payment tiers, in priority order:
+
+Tier 0 — static M-Pesa QR (build first): generate a standard EMVCo
+Merchant-Presented-Mode QR code client-side, encoding the business's own
+Till/Paybill (+ account number for Paybill) and the exact sale amount. Customer scans
+with their own M-Pesa app — no Daraja API call, no go-live process, no consumer
+key/secret, works the moment a business has ANY Till or Paybill (nearly all already
+do). This should replace the current "QR links to a payment instructions page"
+approach with a true EMVCo payload the M-Pesa app decodes directly, saving the
+customer a step. Reconciliation stays manual (staff marks payment_method=mpesa +
+optional transaction code) — already built, already fine for this tier.
+
+Tier 1 — per-owner Daraja STK Push / C2B (optional upgrade, built Sprint 13): each
+business owner goes through Safaricom's go-live process for THEIR OWN shortcode (never
+Duka Mwecheche's) and pastes their resulting consumer key/secret into Payment Settings.
+Duka Mwecheche calls RegisterURL/STK Push using the OWNER's credentials, so settlement
+still goes straight to them — Duka Mwecheche itself never needs a production shortcode
+under this model. This unlocks real-time auto-reconciliation but has real Safaricom
+paperwork friction per business (more for Paybill than Till). Treat it as an opt-in
+upgrade a technical owner can self-serve, or that Roy walks a less technical owner
+through personally as part of onboarding — never a requirement to use the rest of the
+app.
+
+---
+
 ## Next Sprint Candidates
 1. **Business-type theming** — per-type accent color, icon sets, home hero personalisation (Sprint 13+). Bar first, then kibanda, then rest. See session prompt in sprint log notes.
 2. **Business-type aware UI Phase B** — dynamic form labels/fields by business type (6-8 sprints, new session)
 3. **FIFO batch depletion** — per-batch stock tracking for pharmacy/perishables (follow-on to expiry tracking)
+4. Payments Tier 0 — static M-Pesa EMVCo QR generator (replaces link-based QR on the
+   payment page and bar board success modal). See M-Pesa / Payments Architecture
+   section above before starting.
 
 ---
 
@@ -431,6 +488,9 @@ Never use `{% widthratio %}` — unreliable in Django templates.
 - `produce_board()` must include `unit` in the greens dict for the receive modal to
   correctly detect greens (unit=Bunch) vs sack items (unit=Gorogoro) and show the
   appropriate gunia/gorogoro toggle.
+- item_form.html does NOT load jQuery/Select2. Any picker/dropdown/typeahead UI on
+  that template must be vanilla JS (see the catalog picker rewrite, commit c4020e3) —
+  do not add new Select2() calls there.
 
 ## End-of-sprint ritual:
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
