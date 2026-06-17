@@ -114,7 +114,7 @@
                 <label class="form-label" style="color: #b0b0b0; font-size: 0.8rem;">
                   {% trans 'What was sold?' %}
                 </label>
-                <select name="item_id" class="form-select form-select-sm" required
+                <select name="item_id" class="form-select form-select-sm item-select" required
                         style="background: rgba(255,255,255,0.05); border-color: #444;
                                color: #e0e0e0; font-size: 0.85rem;">
                   <option value="" style="background: #1a1a1a;">{% trans '-- Select Item --' %}</option>
@@ -130,12 +130,24 @@
                 </select>
               </div>
 
+              <!-- Preset dropdown — shown only when item has portion presets -->
+              <div class="mb-2 preset-row" style="display:none;">
+                <label class="form-label" style="color: #b0b0b0; font-size: 0.8rem;">
+                  {% trans 'Portion / Preset' %}
+                </label>
+                <select name="preset_id" class="form-select form-select-sm preset-select"
+                        style="background: rgba(255,255,255,0.05); border-color: #444;
+                               color: #e0e0e0; font-size: 0.85rem;">
+                  <option value="" style="background: #1a1a1a;">{% trans '-- No preset (enter qty manually) --' %}</option>
+                </select>
+              </div>
+
               <div class="mb-3">
                 <label class="form-label" style="color: #b0b0b0; font-size: 0.8rem;">
                   {% trans 'Quantity' %}
                 </label>
-                <input type="number" name="qty" value="1" min="1"
-                       class="form-control form-control-sm"
+                <input type="number" name="qty" value="1" min="0.0001" step="any"
+                       class="form-control form-control-sm qty-input"
                        style="width: 90px; background: rgba(255,255,255,0.05);
                               border-color: #444; color: #e0e0e0;" required />
               </div>
@@ -296,18 +308,78 @@
 {% endblock %}
 
 {% block extra_js %}
+{{ presets_by_item|json_script:"presets-data" }}
 <script>
-// ── Auto-calculate quantity from amount ──
-document.querySelectorAll('.confirm-form select[name="item_id"]').forEach(sel => {
+var PRESETS_BY_ITEM = JSON.parse(document.getElementById('presets-data').textContent);
+
+// ── Item dropdown: show presets + auto-calculate qty ──
+document.querySelectorAll('.item-select').forEach(function(sel) {
     sel.addEventListener('change', function() {
-        const opt = this.options[this.selectedIndex];
-        const price = parseFloat(opt.dataset.price || 0);
-        const form = this.closest('form');
-        const amountText = form.closest('.card-body').querySelector('h5').textContent;
-        const amount = parseFloat(amountText.replace(/[^0-9.]/g, ''));
-        const qtyInput = form.querySelector('input[name="qty"]');
-        if (price > 0 && amount > 0) {
-            qtyInput.value = Math.max(1, Math.round(amount / price));
+        var itemId = this.value;
+        var opt = this.options[this.selectedIndex];
+        var price = parseFloat(opt.dataset.price || 0);
+        var form = this.closest('form');
+        var amountText = form.closest('.card-body').querySelector('h5').textContent;
+        var amount = parseFloat(amountText.replace(/[^0-9.]/g, ''));
+        var qtyInput = form.querySelector('.qty-input');
+        var presetRow = form.querySelector('.preset-row');
+        var presetSel = form.querySelector('.preset-select');
+        var itemPresets = PRESETS_BY_ITEM[itemId] || [];
+
+        if (itemPresets.length > 0) {
+            // Rebuild preset options
+            presetSel.innerHTML = '<option value="" style="background:#1a1a1a;">-- No preset (enter qty manually) --</option>';
+            itemPresets.forEach(function(p) {
+                var o = document.createElement('option');
+                o.value = p.id;
+                o.textContent = p.label + " — KES " + p.price;
+                o.dataset.qty = p.qty;
+                o.dataset.price = p.price;
+                o.style.background = '#1a1a1a';
+                presetSel.appendChild(o);
+            });
+            presetRow.style.display = '';
+
+            // Auto-select the preset whose price matches the payment amount
+            var match = itemPresets.find(function(p) { return Math.abs(p.price - amount) < 0.01; });
+            if (match) {
+                presetSel.value = match.id;
+                qtyInput.value = match.qty;
+                qtyInput.readOnly = true;
+                qtyInput.style.opacity = '0.6';
+            } else {
+                presetSel.value = '';
+                qtyInput.readOnly = false;
+                qtyInput.style.opacity = '';
+                if (price > 0 && amount > 0) {
+                    qtyInput.value = Math.max(1, Math.round(amount / price));
+                }
+            }
+        } else {
+            presetRow.style.display = 'none';
+            presetSel.value = '';
+            qtyInput.readOnly = false;
+            qtyInput.style.opacity = '';
+            if (price > 0 && amount > 0) {
+                qtyInput.value = Math.max(1, Math.round(amount / price));
+            }
+        }
+    });
+});
+
+// ── Preset dropdown: lock/unlock qty ──
+document.querySelectorAll('.preset-select').forEach(function(presetSel) {
+    presetSel.addEventListener('change', function() {
+        var form = this.closest('form');
+        var qtyInput = form.querySelector('.qty-input');
+        var selectedOpt = this.options[this.selectedIndex];
+        if (this.value && selectedOpt.dataset.qty) {
+            qtyInput.value = selectedOpt.dataset.qty;
+            qtyInput.readOnly = true;
+            qtyInput.style.opacity = '0.6';
+        } else {
+            qtyInput.readOnly = false;
+            qtyInput.style.opacity = '';
         }
     });
 });

@@ -17,7 +17,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 from django.contrib.auth.decorators import login_required
 
-from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt, BarTab, BarTabEntry, Receipt
+from decimal import Decimal
+
+from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt, BarTab, BarTabEntry, Receipt, ItemPortionPreset
 from .mpesa import initiate_stk_push, format_phone_ke, query_stk_status, register_c2b_url, generate_mpesa_qr, generate_emv_qr_string
 from .notifications import notify_transaction, create_in_app_notification
 
@@ -495,10 +497,24 @@ def pending_prompts(request):
         business=profile.business
     ).select_related('store').order_by('description')
 
+    # Build preset lookup keyed by item_id for the template JS
+    preset_qs = ItemPortionPreset.objects.filter(
+        item__business=profile.business,
+    ).order_by('item_id', 'display_order', 'price')
+    presets_by_item = {}
+    for p in preset_qs:
+        presets_by_item.setdefault(str(p.item_id), []).append({
+            'id': p.id,
+            'label': p.label,
+            'price': float(p.price),
+            'qty': float(p.quantity_consumed),
+        })
+
     return render(request, 'core/pending_prompts.html', {
         'prompts': prompts,
         'confirmed': confirmed,
         'items': items,
+        'presets_by_item': presets_by_item,
     })
 
 
@@ -520,7 +536,7 @@ def confirm_prompt(request, prompt_id):
         return JsonResponse({'error': 'Prompt not found or already confirmed'}, status=404)
 
     item_id = request.POST.get('item_id')
-    qty = request.POST.get('qty', '1')
+    preset_id = request.POST.get('preset_id') or None
 
     if not item_id:
         return JsonResponse({'error': 'Please select an item'}, status=400)
@@ -530,31 +546,47 @@ def confirm_prompt(request, prompt_id):
     except Item.DoesNotExist:
         return JsonResponse({'error': 'Item not found'}, status=404)
 
-    try:
-        qty = int(qty)
-        if qty < 1:
-            raise ValueError
-    except (ValueError, TypeError):
-        return JsonResponse({'error': 'Quantity must be a positive integer'}, status=400)
+    # Resolve qty and line label — preset takes precedence over manual qty
+    preset = None
+    line_label = item.description
+    if preset_id:
+        try:
+            preset = ItemPortionPreset.objects.get(id=preset_id, item=item)
+        except ItemPortionPreset.DoesNotExist:
+            return JsonResponse({'error': 'Preset not found'}, status=404)
+        qty_decimal = Decimal(str(float(preset.quantity_consumed)))
+        line_label = f"{item.description} ({preset.label})"
+    else:
+        raw_qty = request.POST.get('qty', '1')
+        try:
+            qty_int = int(raw_qty)
+            if qty_int < 1:
+                raise ValueError
+        except (ValueError, TypeError):
+            return JsonResponse({'error': 'Quantity must be a positive integer'}, status=400)
+        qty_decimal = Decimal(qty_int)
 
     today = timezone.localtime(timezone.now()).date()
+    # sale_amount = the actual M-Pesa receipt amount — ensures revenue() is accurate
     txn = Transaction.objects.create(
         item=item,
         date=today,
         type='Issue',
-        qty=-qty,
+        qty=-qty_decimal,
+        sale_amount=prompt.amount,
         invoice_no=prompt.mpesa_receipt or f"MPESA-{prompt.id}",
         recipient=prompt.phone,
         business=profile.business,
     )
 
     # Issue a receipt so the transaction has a shareable record
-    unit_price = round(float(prompt.amount) / qty, 2)
+    qty_display = float(qty_decimal)
+    unit_price = round(float(prompt.amount) / qty_display, 2) if qty_display else float(prompt.amount)
     receipt_obj = Receipt.issue(
         business=profile.business,
         lines=[{
-            'name': item.description,
-            'qty': qty,
+            'name': line_label,
+            'qty': qty_display,
             'unit_price': unit_price,
             'subtotal': float(prompt.amount),
         }],
@@ -595,7 +627,7 @@ def confirm_prompt(request, prompt_id):
 
     return JsonResponse({
         'success': True,
-        'message': f"Logged: {qty}x {item.description} — KES {float(prompt.amount):,.0f}",
+        'message': f"Logged: {float(qty_decimal):g}x {line_label} — KES {float(prompt.amount):,.0f}",
         'receipt_url': f"/r/{receipt_obj.token}/",
     })
 
