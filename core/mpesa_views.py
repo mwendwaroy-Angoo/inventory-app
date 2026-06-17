@@ -17,7 +17,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 from django.contrib.auth.decorators import login_required
 
-from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt, BarTab, BarTabEntry
+from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt, BarTab, BarTabEntry, Receipt
 from .mpesa import initiate_stk_push, format_phone_ke, query_stk_status, register_c2b_url, generate_mpesa_qr, generate_emv_qr_string
 from .notifications import notify_transaction, create_in_app_notification
 
@@ -489,7 +489,7 @@ def pending_prompts(request):
     confirmed = PendingTransactionPrompt.objects.filter(
         business=profile.business,
         status='confirmed',
-    )[:20]
+    ).select_related('transaction__item', 'confirmed_by', 'receipt')[:20]
 
     items = Item.objects.filter(
         business=profile.business
@@ -548,11 +548,41 @@ def confirm_prompt(request, prompt_id):
         business=profile.business,
     )
 
+    # Issue a receipt so the transaction has a shareable record
+    unit_price = round(float(prompt.amount) / qty, 2)
+    receipt_obj = Receipt.issue(
+        business=profile.business,
+        lines=[{
+            'name': item.description,
+            'qty': qty,
+            'unit_price': unit_price,
+            'subtotal': float(prompt.amount),
+        }],
+        payment_method='mpesa',
+        user=request.user,
+        customer_name='',
+        customer_phone=prompt.phone or '',
+    )
+
     prompt.status = 'confirmed'
     prompt.transaction = txn
+    prompt.receipt = receipt_obj
     prompt.confirmed_by = request.user
     prompt.confirmed_at = timezone.now()
     prompt.save()
+
+    # SMS the payer with the receipt link (non-blocking)
+    if prompt.phone:
+        try:
+            from .notifications import send_sms_notification
+            receipt_url = f"https://www.dukamwecheche.co.ke/r/{receipt_obj.token}/"
+            sms_text = (
+                f"Asante! KES {int(float(prompt.amount))} kwa {profile.business.name}. "
+                f"Risiti: {receipt_url}"
+            )
+            send_sms_notification(sms_text, prompt.phone)
+        except Exception:
+            pass
 
     # Notify with daily count
     daily_count = Transaction.objects.filter(
@@ -566,6 +596,7 @@ def confirm_prompt(request, prompt_id):
     return JsonResponse({
         'success': True,
         'message': f"Logged: {qty}x {item.description} — KES {float(prompt.amount):,.0f}",
+        'receipt_url': f"/r/{receipt_obj.token}/",
     })
 
 

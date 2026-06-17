@@ -1109,6 +1109,8 @@ class PendingTransactionPrompt(models.Model):
     payment_channel = models.CharField(max_length=15, blank=True, help_text='till, paybill, pochi, phone')
     transaction = models.ForeignKey(Transaction, on_delete=models.SET_NULL, null=True, blank=True,
                                     related_name='prompt', help_text='Linked transaction once confirmed')
+    receipt = models.ForeignKey('Receipt', on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name='prompts', help_text='Receipt issued at confirmation')
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='pending')
     confirmed_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,
                                      related_name='confirmed_prompts')

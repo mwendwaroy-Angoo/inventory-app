@@ -212,6 +212,11 @@
                            font-weight: 600; border-bottom: none; white-space: nowrap;">
                   {% trans 'When' %}
                 </th>
+                <th style="color: var(--gold); font-size: 0.72rem; text-transform: uppercase;
+                           letter-spacing: 0.07em; padding: 0.75rem 1rem 0.75rem 0.5rem;
+                           font-weight: 600; border-bottom: none; white-space: nowrap;">
+                  {% trans 'Receipt' %}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -231,6 +236,16 @@
                 </td>
                 <td style="padding: 0.75rem 1rem 0.75rem 0.5rem;">
                   <small style="color: #777;">{{ c.confirmed_at|timesince }} {% trans 'ago' %}</small>
+                </td>
+                <td style="padding: 0.75rem 1rem 0.75rem 0.5rem;">
+                  {% if c.receipt %}
+                  <a href="/r/{{ c.receipt.token }}/" target="_blank"
+                     style="color: #c9a84c; font-size: 0.8rem; white-space: nowrap;">
+                    📄 Receipt
+                  </a>
+                  {% else %}
+                  <small style="color: #555;">—</small>
+                  {% endif %}
                 </td>
               </tr>
               {% endfor %}
@@ -307,11 +322,15 @@ document.querySelectorAll('.confirm-form').forEach(form => {
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
+                    const receiptLink = data.receipt_url
+                        ? `<br><a href="${data.receipt_url}" target="_blank" style="color:#c9a84c;font-size:0.8rem;">📄 View Receipt</a>`
+                        : '';
                     document.getElementById(`prompt-card-${promptId}`).innerHTML =
                         `<div class="card" style="border-left:3px solid #2ecc71;">
                            <div class="card-body text-center py-3">
                              <span style="color:#2ecc71;font-size:1.5rem;">✅</span><br>
                              <small style="color:#2ecc71;">${data.message}</small>
+                             ${receiptLink}
                            </div></div>`;
                     updatePendingCount();
                 } else {
