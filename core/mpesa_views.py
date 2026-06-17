@@ -29,20 +29,22 @@ logger = logging.getLogger(__name__)
 def _bridge_stk_to_prompt(payment):
     """Create a PendingTransactionPrompt for a completed STK Push that has no
     linked order or bar tab — i.e. a manual 'Request Payment' from the dashboard.
-    Idempotent: skips if a prompt for this receipt already exists."""
+    Idempotent: skips if a prompt for this payment already exists."""
     if payment.order_id or payment.bar_tab_id:
         return  # Tab/order have their own completion logic
     receipt = payment.mpesa_receipt
-    if not receipt:
-        return
-    if PendingTransactionPrompt.objects.filter(mpesa_receipt=receipt).exists():
-        return  # Already created (e.g. callback fired AND active-poll fired)
+    # When the active-poll path confirms success before the callback arrives,
+    # mpesa_receipt is empty. Use a synthetic key so the prompt still appears.
+    # Max: "STK" + 10-digit payment ID = 13 chars, well within the 30-char field.
+    dedup_key = receipt if receipt else f"STK{payment.id}"
+    if PendingTransactionPrompt.objects.filter(mpesa_receipt=dedup_key).exists():
+        return  # Already created (callback fired + poll fired, or duplicate call)
 
     prompt = PendingTransactionPrompt.objects.create(
         business=payment.business,
         amount=payment.amount,
         phone=payment.phone or '',
-        mpesa_receipt=receipt,
+        mpesa_receipt=dedup_key,
         payment_channel='stk',
     )
 
@@ -353,6 +355,9 @@ def payment_status(request, payment_id):
                 payment.result_code = result_code
                 payment.completed_at = timezone.now()
                 payment.save()
+                # Re-read from DB: if mpesa_callback already landed and set mpesa_receipt,
+                # we'll use the real receipt as the dedup key instead of the synthetic one.
+                payment.refresh_from_db()
                 # Bridge to tab settlement and/or reconciliation queue
                 if payment.bar_tab_id:
                     _settle_tab_from_payment(payment)

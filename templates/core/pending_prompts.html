@@ -350,8 +350,15 @@ function updatePendingCount() {
     document.getElementById('pending-count').textContent = remaining + ' pending';
 }
 
-// ── Auto-refresh every 30s ──
-setInterval(() => { location.reload(); }, 30000);
+// ── Auto-refresh every 30s — paused while STK modal is open ──
+var _autoReload = setInterval(() => { location.reload(); }, 30000);
+var _stkModalEl = document.getElementById('stkModal');
+if (_stkModalEl) {
+    _stkModalEl.addEventListener('show.bs.modal', function () { clearInterval(_autoReload); });
+    _stkModalEl.addEventListener('hidden.bs.modal', function () {
+        _autoReload = setInterval(() => { location.reload(); }, 30000);
+    });
+}
 
 // ── STK Push from modal ──
 function sendStkFromModal() {
