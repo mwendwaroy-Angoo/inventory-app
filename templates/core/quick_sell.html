@@ -624,8 +624,11 @@
 <!-- Success Modal -->
 <div class="qs-modal-overlay" id="qsSuccessModal">
     <div class="qs-modal">
-        <div style="font-size: 3rem; margin-bottom: 0.5rem;">✅</div>
-        <h4>{% trans 'Sale Recorded!' %}</h4>
+        <div style="font-size: 3rem; margin-bottom: 0.5rem;" id="qsSuccessIcon">✅</div>
+        <h4 id="qsSuccessTitle">{% trans 'Sale Recorded!' %}</h4>
+        <div id="qsTabNotice" style="display:none; margin-bottom:0.6rem; padding:0.55rem 0.75rem;
+             background:rgba(13,202,240,0.1); border:1px solid rgba(13,202,240,0.3);
+             border-radius:8px; font-size:0.82rem; color:#0dcaf0; line-height:1.5;"></div>
         <div class="qs-receipt" id="qsReceipt"></div>
 
         <!-- Digital receipt row (shown only when receipt was created) -->
@@ -803,28 +806,46 @@
                   📱 M-Pesa
                 </label>
 
+                {% if biz_profile.type == 'bar' %}
+                <input type="radio" class="btn-check" name="payment_method"
+                       id="pm_tab" value="tab">
+                <label class="btn btn-outline-info flex-fill text-center"
+                       for="pm_tab" style="font-weight:600;">
+                  🍺 Tab
+                </label>
+
                 <input type="radio" class="btn-check" name="payment_method"
                        id="pm_credit" value="credit">
                 <label class="btn btn-outline-secondary flex-fill text-center"
                        for="pm_credit" style="font-weight:600;">
-                  📒 Credit/Tab
+                  📒 Deni
                 </label>
+                {% else %}
+                <input type="radio" class="btn-check" name="payment_method"
+                       id="pm_credit" value="credit">
+                <label class="btn btn-outline-secondary flex-fill text-center"
+                       for="pm_credit" style="font-weight:600;">
+                  📒 Credit
+                </label>
+                {% endif %}
               </div>
             </div>
-            <!-- Customer name + phone — required/optional for credit sales -->
+            <!-- Customer / tab name — shown for both Tab and Credit/Deni -->
             <div id="qsCreditCustomerRow" style="display:none; margin-bottom:0.6rem;">
-              <label style="color:var(--gold); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.07em; display:block; margin-bottom:0.3rem;">
-                Jina la mteja (lazima kwa credit)
+              <label id="qsCustomerRowLabel" style="color:var(--gold); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.07em; display:block; margin-bottom:0.3rem;">
+                Jina la mteja
               </label>
               <input type="text" id="qsCreditCustomerName" placeholder="e.g. Kamau, Mama Njeri…"
                      style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
                             color:var(--pearl); padding:0.45rem 0.7rem; font-size:0.85rem; margin-bottom:0.4rem;">
-              <label style="color:#b0b0b0; font-size:0.75rem; display:block; margin-bottom:0.25rem;">
-                Nambari ya simu (hiari — kwa reminder SMS)
-              </label>
-              <input type="tel" id="qsCreditCustomerPhone" placeholder="07XX XXX XXX"
-                     style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
-                            color:var(--pearl); padding:0.45rem 0.7rem; font-size:0.85rem;">
+              <div id="qsPhoneRow">
+                <label style="color:#b0b0b0; font-size:0.75rem; display:block; margin-bottom:0.25rem;">
+                  Nambari ya simu (hiari — kwa reminder SMS)
+                </label>
+                <input type="tel" id="qsCreditCustomerPhone" placeholder="07XX XXX XXX"
+                       style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                              color:var(--pearl); padding:0.45rem 0.7rem; font-size:0.85rem;">
+              </div>
             </div>
             <div class="d-flex gap-2">
                 <button class="qs-clear-btn" id="qsClear">{% trans 'Clear' %}</button>
@@ -1100,11 +1121,23 @@
         updateCart();
     });
 
-    // Show/hide customer name field when Credit is selected
+    // Show/hide customer name field for Tab and Credit/Deni
     document.querySelectorAll('input[name="payment_method"]').forEach(function(radio) {
         radio.addEventListener('change', function() {
             var row = document.getElementById('qsCreditCustomerRow');
-            if (row) row.style.display = this.value === 'credit' ? 'block' : 'none';
+            var label = document.getElementById('qsCustomerRowLabel');
+            var phoneRow = document.getElementById('qsPhoneRow');
+            var needsCustomer = this.value === 'credit' || this.value === 'tab';
+            if (row) row.style.display = needsCustomer ? 'block' : 'none';
+            if (label) {
+                if (this.value === 'tab') {
+                    label.textContent = 'Jina la mteja / meza (kwa Tab — lazima)';
+                    if (phoneRow) phoneRow.style.display = 'none';
+                } else {
+                    label.textContent = 'Jina la mteja (lazima kwa deni)';
+                    if (phoneRow) phoneRow.style.display = 'block';
+                }
+            }
         });
     });
 
@@ -1113,16 +1146,17 @@
         if (cart.length === 0) return;
         var selectedMethod = document.querySelector('input[name="payment_method"]:checked');
         var pm = selectedMethod ? selectedMethod.value : 'cash';
-        if (pm === 'credit') {
+        if (pm === 'credit' || pm === 'tab') {
             var customerName = (document.getElementById('qsCreditCustomerName') || {}).value || '';
             if (!customerName.trim()) {
-                alert('Weka jina la mteja kwa credit sale.');
+                var lbl = pm === 'tab' ? 'Weka jina la mteja au meza kwa Tab.' : 'Weka jina la mteja kwa deni.';
+                alert(lbl);
                 document.getElementById('qsCreditCustomerName').focus();
                 return;
             }
             document.getElementById('qsRecipientData').value = customerName.trim();
             var customerPhone = (document.getElementById('qsCreditCustomerPhone') || {}).value || '';
-            document.getElementById('qsCreditPhoneData').value = customerPhone.trim();
+            document.getElementById('qsCreditPhoneData').value = pm === 'tab' ? '' : customerPhone.trim();
         } else {
             document.getElementById('qsRecipientData').value = '';
             document.getElementById('qsCreditPhoneData').value = '';
@@ -1646,6 +1680,16 @@
             + '<span>KES ' + successData.total.toLocaleString() + '</span>'
             + '</div>';
         document.getElementById('qsReceipt').innerHTML = receiptHtml;
+
+        if (successData.payment_method === 'tab') {
+            document.getElementById('qsSuccessIcon').textContent = '🍺';
+            document.getElementById('qsSuccessTitle').textContent = 'Tab Imeongezwa!';
+            var notice = document.getElementById('qsTabNotice');
+            notice.textContent = 'KES ' + successData.total.toLocaleString()
+                + ' imeongezwa kwenye tab ya ' + successData.tab_customer
+                + '. Lipa kutoka Tabs Drawer baadaye.';
+            notice.style.display = 'block';
+        }
 
         if (successData.receipt_url && successData.receipt_token) {
             document.getElementById('qsReceiptActions').style.display = 'block';

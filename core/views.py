@@ -19,6 +19,8 @@ from .models import (
     GoodsReceiptLine,
     ItemPortionPreset,
     Category,
+    BarTab,
+    BarTabEntry,
 )
 from .forms import (
     ItemForm,
@@ -2095,10 +2097,15 @@ def quick_sell(request):
 
         credit_recipient = request.POST.get("recipient", "").strip()
         credit_phone     = request.POST.get("credit_phone", "").strip()
-        payment_method_qs = request.POST.get("payment_method", "cash")
+        payment_method_raw = request.POST.get("payment_method", "cash")
+        # 'tab' is a UI-only value — persisted to Transaction as 'credit' (same
+        # as keg tab convention) but routed to BarTab instead of debt tracker.
+        is_tab_sale = (payment_method_raw == "tab")
+        payment_method_qs = "credit" if is_tab_sale else payment_method_raw
 
         recorded = []
         last_transaction = None
+        tab_transactions = []  # (transaction, description, amount) for BarTabEntry creation
 
         for entry in cart:
             # ── Greens / bunch (revenue-envelope) lines ──────────────────
@@ -2171,6 +2178,7 @@ def quick_sell(request):
             if entry.get("stock_qty") is not None and display_price:
                 sale_amt = Decimal(str(round(display_price * float(display_qty), 2)))
 
+            line_amount = Decimal(str(round(display_price * float(display_qty), 2)))
             last_transaction = Transaction.objects.create(
                 item=item,
                 type="Issue",
@@ -2184,9 +2192,11 @@ def quick_sell(request):
                 {
                     "name": item.description,
                     "qty": float(display_qty),
-                    "subtotal": display_price * float(display_qty),
+                    "subtotal": float(line_amount),
                 }
             )
+            if is_tab_sale:
+                tab_transactions.append((last_transaction, f"{item.description} ×{display_qty}", line_amount))
 
         if recorded and last_transaction:
             total = sum(r["subtotal"] for r in recorded)
@@ -2206,76 +2216,111 @@ def quick_sell(request):
             except Exception:
                 pass
 
-            # ── Auto-create Customer for credit sales so debt tracker finds them ──
-            if payment_method_qs == "credit" and credit_recipient:
-                from .models import Customer as _Customer
-                cust_obj, _created = _Customer.objects.get_or_create(
+            # ── TAB SALE: create/extend BarTab and attach BarTabEntry records ──
+            if is_tab_sale and tab_transactions and credit_recipient:
+                bar_tab = BarTab.objects.filter(
                     business=user_profile.business,
-                    name=credit_recipient,
+                    customer_name=credit_recipient,
+                    status='OPEN',
+                ).first()
+                if not bar_tab:
+                    bar_tab = BarTab.objects.create(
+                        business=user_profile.business,
+                        customer_name=credit_recipient,
+                        served_by=request.user,
+                    )
+                for txn, desc, amt in tab_transactions:
+                    BarTabEntry.objects.create(
+                        tab=bar_tab,
+                        transaction=txn,
+                        description=desc,
+                        amount=amt,
+                    )
+                success_data = json.dumps({
+                    "items": recorded,
+                    "total": total,
+                    "payment_method": "tab",
+                    "tab_customer": credit_recipient,
+                    "receipt_token": None,
+                    "receipt_url": None,
+                    "receipt_id": None,
+                })
+                messages.success(
+                    request,
+                    _("Added to %(customer)s's tab: %(count)s item(s), KES %(total)s")
+                    % {"customer": credit_recipient, "count": len(recorded), "total": f"{total:,.0f}"},
                 )
-                if credit_phone and not cust_obj.phone:
-                    cust_obj.phone = credit_phone
-                    cust_obj.save(update_fields=["phone"])
-                elif credit_phone and cust_obj.phone != credit_phone:
-                    pass  # don't overwrite existing phone
 
-            receipt_token = None
-            receipt_number = None
-            try:
-                from .models import Receipt
-                rcpt = Receipt.issue(
-                    business=user_profile.business,
-                    lines=recorded,
-                    payment_method=payment_method_qs,
-                    user=request.user,
-                    customer_name=credit_recipient if payment_method_qs == "credit" else "",
-                    customer_phone=credit_phone if payment_method_qs == "credit" else "",
-                )
-                receipt_token = rcpt.token
-                receipt_number = rcpt.receipt_number
-            except Exception:
-                pass
+            else:
+                # ── DENI / regular cash / M-Pesa ─────────────────────────────
+                # Auto-create Customer for credit (deni) sales so debt tracker finds them
+                if payment_method_qs == "credit" and credit_recipient:
+                    from .models import Customer as _Customer
+                    cust_obj, _cust_created = _Customer.objects.get_or_create(
+                        business=user_profile.business,
+                        name=credit_recipient,
+                    )
+                    if credit_phone and not cust_obj.phone:
+                        cust_obj.phone = credit_phone
+                        cust_obj.save(update_fields=["phone"])
 
-            # ── SMS confirmation to customer when sold on credit ──────────────
-            if payment_method_qs == "credit" and credit_phone and receipt_token:
+                receipt_token = None
+                receipt_number = None
+                rcpt = None
                 try:
-                    from .notifications import normalize_ke_phone, send_sms_notification
-                    from django.utils import timezone as _tz
-                    normalized = normalize_ke_phone(credit_phone)
-                    if normalized:
-                        window = user_profile.business.credit_window_days or 30
-                        due_date = (_tz.now().date() + __import__('datetime').timedelta(days=window)).strftime('%d %b %Y')
-                        receipt_url_sms = request.build_absolute_uri(f'/r/{receipt_token}/')
-                        sms_msg = (
-                            f"Duka: {user_profile.business.name}\n"
-                            f"Umenunua kwa deni: KES {total:,.0f}\n"
-                            f"Tarehe ya malipo: {due_date}\n"
-                            f"Risiti: {receipt_url_sms}"
-                        )
-                        send_sms_notification(sms_msg, normalized)
+                    from .models import Receipt
+                    rcpt = Receipt.issue(
+                        business=user_profile.business,
+                        lines=recorded,
+                        payment_method=payment_method_qs,
+                        user=request.user,
+                        customer_name=credit_recipient if payment_method_qs == "credit" else "",
+                        customer_phone=credit_phone if payment_method_qs == "credit" else "",
+                    )
+                    receipt_token = rcpt.token
+                    receipt_number = rcpt.receipt_number
                 except Exception:
                     pass
 
-            receipt_url = (
-                request.build_absolute_uri(f'/r/{receipt_token}/')
-                if receipt_token else None
-            )
-            success_data = json.dumps({
-                "items": recorded,
-                "total": total,
-                "receipt_token": receipt_token,
-                "receipt_number": receipt_number,
-                "receipt_url": receipt_url,
-                "receipt_id": rcpt.id if receipt_token else None,
-            })
-            messages.success(
-                request,
-                _("Sale recorded: %(item_count)s item(s), KES %(total)s")
-                % {
-                    "item_count": len(recorded),
-                    "total": f"{total:,.0f}",
-                },
-            )
+                # SMS confirmation to customer when sold on credit (deni)
+                if payment_method_qs == "credit" and credit_phone and receipt_token:
+                    try:
+                        from .notifications import normalize_ke_phone, send_sms_notification
+                        from django.utils import timezone as _tz
+                        normalized = normalize_ke_phone(credit_phone)
+                        if normalized:
+                            credit_window = user_profile.business.credit_window_days or 30
+                            due_date = (_tz.now().date() + __import__('datetime').timedelta(days=credit_window)).strftime('%d %b %Y')
+                            receipt_url_sms = request.build_absolute_uri(f'/r/{receipt_token}/')
+                            sms_msg = (
+                                f"Duka: {user_profile.business.name}\n"
+                                f"Umenunua kwa deni: KES {total:,.0f}\n"
+                                f"Tarehe ya malipo: {due_date}\n"
+                                f"Risiti: {receipt_url_sms}"
+                            )
+                            send_sms_notification(sms_msg, normalized)
+                    except Exception:
+                        pass
+
+                receipt_url = (
+                    request.build_absolute_uri(f'/r/{receipt_token}/')
+                    if receipt_token else None
+                )
+                success_data = json.dumps({
+                    "items": recorded,
+                    "total": total,
+                    "payment_method": payment_method_raw,
+                    "tab_customer": None,
+                    "receipt_token": receipt_token,
+                    "receipt_number": receipt_number,
+                    "receipt_url": receipt_url,
+                    "receipt_id": rcpt.id if rcpt else None,
+                })
+                messages.success(
+                    request,
+                    _("Sale recorded: %(item_count)s item(s), KES %(total)s")
+                    % {"item_count": len(recorded), "total": f"{total:,.0f}"},
+                )
 
     items_qs = list(
         Item.objects.filter(store__business=user_profile.business)

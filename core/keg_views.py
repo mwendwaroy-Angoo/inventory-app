@@ -689,22 +689,44 @@ def tick_entry(request, entry_id):
 
     tab = entry.tab
     tab_settled = not tab.entries.filter(is_paid=False).exists()
+    receipt_url = None
+    receipt_id = None
     if tab_settled:
         tab.status = 'SETTLED'
         tab.settled_at = now
         tab.save(update_fields=['status', 'settled_at'])
+        try:
+            from .models import Receipt as _Receipt
+            all_entries = list(tab.entries.all())
+            lines = [
+                {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
+                for e in all_entries
+            ]
+            rcpt = _Receipt.issue(
+                business=tab.business,
+                lines=lines,
+                payment_method=pay,
+                user=request.user,
+                customer_name=tab.customer_name,
+            )
+            receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
+            receipt_id = rcpt.id
+        except Exception:
+            pass
 
     return JsonResponse({
         'ok': True,
         'unpaid_total': float(tab.unpaid_total()),
         'tab_settled': tab_settled,
+        'receipt_url': receipt_url,
+        'receipt_id': receipt_id,
     })
 
 
 @login_required
 @require_POST
 def settle_tab(request, tab_id):
-    """Settle all unpaid entries on a tab at once."""
+    """Settle all unpaid entries on a tab at once and issue a receipt."""
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
@@ -716,19 +738,47 @@ def settle_tab(request, tab_id):
         pay = 'cash'
 
     now = timezone.now()
-    for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
-        entry.is_paid = True
-        entry.paid_at = now
-        entry.payment_method = pay
-        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
-        entry.transaction.payment_method = pay
-        entry.transaction.save(update_fields=['payment_method'])
+    all_entries = list(tab.entries.all().select_related('transaction'))
+    for entry in all_entries:
+        if not entry.is_paid:
+            entry.is_paid = True
+            entry.paid_at = now
+            entry.payment_method = pay
+            entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+            entry.transaction.payment_method = pay
+            entry.transaction.save(update_fields=['payment_method'])
 
     tab.status = 'SETTLED'
     tab.settled_at = now
     tab.save(update_fields=['status', 'settled_at'])
 
-    return JsonResponse({'ok': True, 'total': float(tab.total())})
+    # Issue a unified receipt for all entries on this tab
+    receipt_url = None
+    receipt_id = None
+    try:
+        from .models import Receipt as _Receipt
+        lines = [
+            {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
+            for e in all_entries
+        ]
+        rcpt = _Receipt.issue(
+            business=tab.business,
+            lines=lines,
+            payment_method=pay,
+            user=request.user,
+            customer_name=tab.customer_name,
+        )
+        receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
+        receipt_id = rcpt.id
+    except Exception:
+        pass
+
+    return JsonResponse({
+        'ok': True,
+        'total': float(tab.total()),
+        'receipt_url': receipt_url,
+        'receipt_id': receipt_id,
+    })
 
 
 @login_required

@@ -1235,6 +1235,17 @@
     </h5>
     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
   </div>
+  <!-- Receipt banner shown after tab settlement -->
+  <div id="tabReceiptBanner" style="display:none; margin:0.5rem 0.75rem 0;
+       padding:0.55rem 0.75rem; background:rgba(201,168,76,0.12);
+       border:1px solid rgba(201,168,76,0.3); border-radius:8px;
+       font-size:0.82rem; color:#c9a84c; display:none; align-items:center; gap:0.5rem;">
+    <span>🧾</span>
+    <a id="tabReceiptLink" href="#" target="_blank" rel="noopener"
+       style="color:#c9a84c; font-weight:600; flex:1;">Angalia Risiti</a>
+    <button onclick="document.getElementById('tabReceiptBanner').style.display='none';"
+            style="background:none; border:none; color:#888; cursor:pointer; font-size:1rem; line-height:1;">×</button>
+  </div>
   <div class="offcanvas-body" id="tabs-drawer-body" style="padding:0.75rem; overflow-y:auto;">
     <div class="text-center py-4" style="color:#b0b0b0;">
       <div class="spinner-border spinner-border-sm me-2"></div>
@@ -2071,6 +2082,14 @@
       .then(function (d) {
         if (d.ok) {
           showToast('✓ Tab imelipwa! KES ' + fmt(d.total));
+          if (d.receipt_url) {
+            var banner = document.getElementById('tabReceiptBanner');
+            var link = document.getElementById('tabReceiptLink');
+            if (banner && link) {
+              link.href = d.receipt_url;
+              banner.style.display = 'flex';
+            }
+          }
           window.loadTabs();
           loadBarBoard();
         } else {
