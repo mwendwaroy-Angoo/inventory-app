@@ -135,14 +135,15 @@ def mpesa_callback(request):
         checkout_request_id, result_code, result_desc,
     )
 
-    # Find the matching payment
+    # Find the matching payment — accept 'pending' OR 'failed' (in case the active-poll
+    # prematurely marked it failed before the real callback arrived).
     try:
         payment = Payment.objects.get(
             checkout_request_id=checkout_request_id,
-            status='pending',
+            status__in=['pending', 'failed'],
         )
     except Payment.DoesNotExist:
-        logger.warning("No pending payment for CheckoutID: %s", checkout_request_id)
+        logger.warning("No open payment for CheckoutID: %s (already completed or unknown)", checkout_request_id)
         return JsonResponse({'ResultCode': 0, 'ResultDesc': 'Accepted'})
 
     payment.merchant_request_id = merchant_request_id
@@ -345,7 +346,13 @@ def payment_status(request, payment_id):
     except Payment.DoesNotExist:
         return JsonResponse({'error': 'Payment not found'}, status=404)
 
-    # If still pending, optionally query Safaricom
+    # If still pending, query Safaricom to speed up success detection.
+    # IMPORTANT: only mark 'completed' from the query — NEVER mark 'failed'.
+    # The Safaricom query API returns misleading codes (e.g. 1037 "DS timeout",
+    # 1019 "expired") even while the customer is still on the approve screen, and
+    # marking 'failed' here causes mpesa_callback (the real authoritative result)
+    # to be silently discarded because it looks for status='pending'.
+    # All failure marking must come exclusively from mpesa_callback.
     if payment.status == 'pending' and payment.checkout_request_id:
         stk_result = query_stk_status(payment.checkout_request_id)
         if stk_result and stk_result.get('ResultCode') is not None:
@@ -355,18 +362,12 @@ def payment_status(request, payment_id):
                 payment.result_code = result_code
                 payment.completed_at = timezone.now()
                 payment.save()
-                # Re-read from DB: if mpesa_callback already landed and set mpesa_receipt,
-                # we'll use the real receipt as the dedup key instead of the synthetic one.
+                # Re-read: if mpesa_callback already landed and set mpesa_receipt,
+                # use the real receipt as dedup key instead of the synthetic one.
                 payment.refresh_from_db()
-                # Bridge to tab settlement and/or reconciliation queue
                 if payment.bar_tab_id:
                     _settle_tab_from_payment(payment)
                 _bridge_stk_to_prompt(payment)
-            elif result_code != 1032:  # 1032 = "Request cancelled by user" — might retry
-                payment.status = 'failed'
-                payment.result_code = result_code
-                payment.result_desc = stk_result.get('ResultDesc', '')
-                payment.save()
 
     return JsonResponse({
         'payment_id': payment.id,
