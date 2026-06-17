@@ -2008,8 +2008,9 @@ def notifications_list(request):
     return render(request, "core/notifications.html", {"notifications": notifications})
 
 
-@login_required
 def notifications_count(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"count": 0, "prompts_count": 0})
     count = request.user.app_notifications.filter(is_read=False).count()
     prompts_count = 0
     profile = getattr(request.user, "userprofile", None)
