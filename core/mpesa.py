@@ -32,6 +32,7 @@ URLS = {
         'stk_push': 'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
         'stk_query': 'https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query',
         'register_url': 'https://sandbox.safaricom.co.ke/mpesa/c2b/v1/registerurl',
+        'qr_generate': 'https://sandbox.safaricom.co.ke/mpesa/qrcode/v1/generate',
     },
     'production': {
         'base': 'https://api.safaricom.co.ke',
@@ -39,6 +40,7 @@ URLS = {
         'stk_push': 'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
         'stk_query': 'https://api.safaricom.co.ke/mpesa/stkpushquery/v1/query',
         'register_url': 'https://api.safaricom.co.ke/mpesa/c2b/v1/registerurl',
+        'qr_generate': 'https://api.safaricom.co.ke/mpesa/qrcode/v1/generate',
     },
 }
 
@@ -168,6 +170,61 @@ def query_stk_status(checkout_request_id):
         return response.json()
     except requests.RequestException as e:
         logger.error("STK Query error: %s", e)
+        return None
+
+
+# ── DYNAMIC QR CODE (Path 1 — Safaricom Daraja API) ─────────────────────────
+
+def generate_mpesa_qr(merchant_name, shortcode, trx_code, amount=None, ref_no='PAYMENT', size=300):
+    """
+    Generate an M-Pesa-scannable QR code via Safaricom's Dynamic QR Code API.
+
+    Args:
+        merchant_name: Business name (max 25 chars)
+        shortcode: Till number (for trx_code='BG') or Paybill (for 'PB')
+        trx_code: 'BG' = Buy Goods (Till), 'PB' = Pay Bill, 'SM' = Send Money
+        amount: Amount in KES as int/str (optional — customer enters on phone if omitted)
+        ref_no: Reference / invoice number (max 12 chars)
+        size: QR image size in pixels (default 300)
+
+    Returns:
+        base64-encoded PNG string (without data: prefix) on success, or None on failure.
+        Use as: <img src="data:image/png;base64,<return_value>">
+    """
+    access_token = get_access_token()
+    if not access_token:
+        logger.warning("QR generate: no access token")
+        return None
+
+    payload = {
+        'MerchantName': str(merchant_name)[:25],
+        'RefNo': str(ref_no)[:12],
+        'Amount': str(int(amount)) if amount else '0',
+        'TrxCode': trx_code,
+        'CPI': str(shortcode),
+        'Size': str(size),
+    }
+
+    try:
+        resp = requests.post(
+            _get_urls()['qr_generate'],
+            json=payload,
+            headers={
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json',
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        qr_image = data.get('QRCode')
+        if qr_image:
+            logger.info("QR generated via Daraja for shortcode %s", shortcode)
+            return qr_image
+        logger.warning("QR API returned no QRCode field: %s", data)
+        return None
+    except requests.RequestException as e:
+        logger.warning("QR API error for shortcode %s: %s", shortcode, e)
         return None
 
 

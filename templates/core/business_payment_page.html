@@ -304,8 +304,9 @@
   <div class="card">
     <div class="card-header"><span>📲 Scan to Pay / Share</span></div>
     <div class="card-body qr-section">
+      <div id="payQrLoader" style="color:#888; font-size:0.8rem; padding:1.5rem 0;">Loading QR...</div>
       <div id="payQrCode"></div>
-      <p>Scan this QR code to open this payment page.<br>Share the link or download this poster.</p>
+      <p id="payQrCaption" style="display:none;"></p>
     </div>
   </div>
 
@@ -346,31 +347,53 @@
 
 </div><!-- /.wrap -->
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
 <script>
 var BUSINESS_ID = {{ business.id }};
 var PAGE_URL = "{{ payment_page_url|escapejs }}";
 
-// ── QR Code ──
+// ── QR Code — Path 1 (Daraja image) → Path 2 (URL QR fallback) ──
 (function () {
-  var el = document.getElementById('payQrCode');
-  if (!el) return;
-  function makeQR() {
-    new QRCode(el, {
-      text: PAGE_URL,
-      width: 180,
-      height: 180,
-      correctLevel: QRCode.CorrectLevel.M,
-    });
+  var qrEl = document.getElementById('payQrCode');
+  var loader = document.getElementById('payQrLoader');
+  var caption = document.getElementById('payQrCaption');
+  if (!qrEl) return;
+
+  function showUrlQR(url) {
+    loader.style.display = 'none';
+    function make() {
+      new QRCode(qrEl, { text: url, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+      caption.textContent = 'Scan this QR code to open this payment page. Share the link or download this poster.';
+      caption.style.display = 'block';
+    }
+    if (typeof QRCode !== 'undefined') {
+      make();
+    } else {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+      s.onload = make;
+      document.head.appendChild(s);
+    }
   }
-  if (typeof QRCode !== 'undefined') {
-    makeQR();
-  } else {
-    var s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-    s.onload = makeQR;
-    document.head.appendChild(s);
-  }
+
+  fetch('/mpesa/qr/?business_id=' + BUSINESS_ID)
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      loader.style.display = 'none';
+      if (data.mode === 'img') {
+        // Path 1: Daraja returned a real M-Pesa-scannable QR image
+        var img = document.createElement('img');
+        img.src = 'data:image/png;base64,' + data.data;
+        img.alt = 'M-Pesa QR Code';
+        img.style.cssText = 'width:180px; height:180px; border-radius:6px; display:block; margin:0 auto;';
+        qrEl.appendChild(img);
+        caption.textContent = 'Scan with your M-Pesa app to pay directly — no typing needed.';
+        caption.style.display = 'block';
+      } else {
+        // Path 2: show URL QR pointing to payment page
+        showUrlQR(data.data || PAGE_URL);
+      }
+    })
+    .catch(function () { showUrlQR(PAGE_URL); });
 })();
 
 // ── STK Push ──

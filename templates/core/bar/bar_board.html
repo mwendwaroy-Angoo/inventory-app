@@ -1188,6 +1188,12 @@
             📤 Shiriki
           </button>
         </div>
+        {% if success_data.payment_method == 'mpesa' %}{% if business.mpesa_till or business.mpesa_paybill %}
+        <div id="bbPayQrWrap" style="text-align:center; margin-bottom:0.75rem; display:none;">
+          <div id="bbPayQrCode" style="display:inline-block; border-radius:8px; overflow:hidden;"></div>
+          <div style="font-size:0.7rem; color:#c9a84c; margin-top:0.3rem; font-weight:600;">📲 Scan kulipa M-Pesa</div>
+        </div>
+        {% endif %}{% endif %}
         <div id="bbQrWrap" style="text-align:center; margin-bottom:0.5rem;">
           <div id="bbQrCode" style="display:inline-block; border-radius:8px; overflow:hidden;"></div>
           <div style="font-size:0.68rem; color:#b0b0b0; margin-top:0.25rem;">Scan kupata risiti</div>
@@ -3108,7 +3114,7 @@
     var receiptUrl = "{{ success_data.receipt_url|escapejs }}";
     var receiptId  = {{ success_data.receipt_id }};
 
-    // QR code
+    // Receipt QR code
     var qrEl = document.getElementById('bbQrCode');
     function _makeQr() {
       new QRCode(qrEl, {
@@ -3126,6 +3132,28 @@
       s.onload = _makeQr;
       document.head.appendChild(s);
     }
+
+    {% if success_data.payment_method == 'mpesa' %}{% if business.mpesa_till or business.mpesa_paybill %}
+    // M-Pesa payment QR (Path 1 — Daraja image; silently skips if Daraja unavailable)
+    (function() {
+      var payQrEl = document.getElementById('bbPayQrCode');
+      var payQrWrap = document.getElementById('bbPayQrWrap');
+      if (!payQrEl || !payQrWrap) return;
+      fetch('/mpesa/qr/?business_id={{ business.id }}')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.mode === 'img') {
+            var img = document.createElement('img');
+            img.src = 'data:image/png;base64,' + data.data;
+            img.alt = 'M-Pesa QR';
+            img.style.cssText = 'width:110px; height:110px; border-radius:6px; display:block;';
+            payQrEl.appendChild(img);
+            payQrWrap.style.display = 'block';
+          }
+        })
+        .catch(function() {});
+    })();
+    {% endif %}{% endif %}
 
     // Share button
     document.getElementById('bbShareBtn').onclick = function() {

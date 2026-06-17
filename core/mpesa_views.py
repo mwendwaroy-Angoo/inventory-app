@@ -18,7 +18,7 @@ from django.views.decorators.http import require_POST, require_GET
 from django.contrib.auth.decorators import login_required
 
 from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt
-from .mpesa import initiate_stk_push, format_phone_ke, query_stk_status, register_c2b_url
+from .mpesa import initiate_stk_push, format_phone_ke, query_stk_status, register_c2b_url, generate_mpesa_qr
 from .notifications import notify_transaction, create_in_app_notification
 
 logger = logging.getLogger(__name__)
@@ -452,6 +452,68 @@ def confirm_prompt(request, prompt_id):
         'success': True,
         'message': f"Logged: {qty}x {item.description} — KES {float(prompt.amount):,.0f}",
     })
+
+
+@require_GET
+def mpesa_qr_view(request):
+    """Generate an M-Pesa payment QR code for a business.
+
+    GET /mpesa/qr/?business_id=X&amount=Y (amount optional)
+
+    Path 1 — calls Safaricom Daraja Dynamic QR API, returns base64 PNG.
+    Path 2 — if Daraja fails, returns the payment page URL so the client
+              can render a URL-link QR using qrcodejs (guaranteed to work).
+
+    Response JSON:
+        {"mode": "img",  "data": "<base64>"}   — Path 1 success: render <img>
+        {"mode": "url",  "data": "<url>"}       — Path 2 fallback: render URL QR
+    """
+    business_id = request.GET.get('business_id')
+    amount_str = request.GET.get('amount', '')
+
+    if not business_id:
+        return JsonResponse({'error': 'business_id required'}, status=400)
+
+    from accounts.models import Business as _Business
+    try:
+        business = _Business.objects.get(id=int(business_id))
+    except (_Business.DoesNotExist, ValueError, TypeError):
+        return JsonResponse({'error': 'Business not found'}, status=404)
+
+    # Determine shortcode + transaction type (prefer Till over Paybill)
+    shortcode = ''
+    trx_code = ''
+    if business.mpesa_till:
+        shortcode = business.mpesa_till.strip()
+        trx_code = 'BG'  # Buy Goods (Till)
+    elif business.mpesa_paybill:
+        shortcode = business.mpesa_paybill.strip()
+        trx_code = 'PB'  # Pay Bill
+
+    amount = None
+    if amount_str:
+        try:
+            amount = int(float(amount_str))
+            if amount <= 0:
+                amount = None
+        except (ValueError, TypeError):
+            amount = None
+
+    fallback_url = request.build_absolute_uri(f'/pay/{business.id}/')
+
+    if shortcode and trx_code:
+        qr_b64 = generate_mpesa_qr(
+            merchant_name=business.name,
+            shortcode=shortcode,
+            trx_code=trx_code,
+            amount=amount,
+            ref_no='PAYMENT',
+        )
+        if qr_b64:
+            return JsonResponse({'mode': 'img', 'data': qr_b64})
+
+    # Fallback: URL pointing to this business's payment page
+    return JsonResponse({'mode': 'url', 'data': fallback_url})
 
 
 def business_payment_page(request, business_id):
