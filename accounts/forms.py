@@ -325,7 +325,7 @@ class PaymentSettingsForm(forms.ModelForm):
         fields = [
             'mpesa_till', 'mpesa_paybill', 'mpesa_paybill_account',
             'mpesa_pochi', 'mpesa_phone', 'preferred_payment_channel',
-            'daraja_consumer_key', 'daraja_consumer_secret',
+            'daraja_consumer_key', 'daraja_consumer_secret', 'daraja_passkey',
         ]
         widgets = {
             'mpesa_till': forms.TextInput(attrs={'placeholder': 'e.g. 5XXXXXX'}),
@@ -338,6 +338,10 @@ class PaymentSettingsForm(forms.ModelForm):
                 attrs={'placeholder': 'Paste Consumer Secret from Daraja portal'},
                 render_value=True,
             ),
+            'daraja_passkey': forms.PasswordInput(
+                attrs={'placeholder': 'Paste Lipa Na M-Pesa Passkey from Daraja portal'},
+                render_value=True,
+            ),
         }
 
     def __init__(self, *args, **kwargs):
@@ -347,6 +351,7 @@ class PaymentSettingsForm(forms.ModelForm):
         self.fields['preferred_payment_channel'].empty_label = '-- Select Preferred Channel --'
         self.fields['daraja_consumer_key'].required = False
         self.fields['daraja_consumer_secret'].required = False
+        self.fields['daraja_passkey'].required = False
 
     def clean(self):
         cleaned_data = super().clean()

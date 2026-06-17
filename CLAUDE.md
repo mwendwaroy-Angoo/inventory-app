@@ -442,6 +442,17 @@ app.
 4. Payments Tier 0 — static M-Pesa EMVCo QR generator (replaces link-based QR on the
    payment page and bar board success modal). See M-Pesa / Payments Architecture
    section above before starting.
+5. **Quick Sell cart → STK Push (Daraja Tier 1 — PENDING)**: When customer selects
+   M-Pesa at Quick Sell checkout, initiate STK Push for the cart total and
+   auto-complete the sale on callback. Architecture:
+   - Create a draft Order from the cart before initiating STK Push
+   - Pass order_id to stk_push_view → Payment.order FK set
+   - On mpesa_callback success: existing _settle_order_from_payment() (needs writing)
+     creates Issue transactions for each cart line, issues Receipt, clears the cart
+   - Mirror of what bar tab STK Push does (Sprint 15) — that's the working template
+   - Prerequisite: business must have daraja_consumer_key + daraja_secret + daraja_passkey
+     saved in Payment Settings (Business.daraja_* fields, migration 0029). Already stored.
+   - Reminder: remind Roy to start this sprint when a business requests STK-at-checkout
 
 ---
 
@@ -523,6 +534,19 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   `/mpesa/stk-push/` expects JSON (json.loads). Tab STK Push uses raw `fetch` with
   Content-Type:application/json instead of the `post()` helper — this is correct and
   intentional. Do not convert it to use `post()`.
+- Daraja per-business STK Push (post-Sprint 16): `initiate_stk_push()` and
+  `query_stk_status()` in mpesa.py now accept per-business credentials
+  (consumer_key, consumer_secret, shortcode, passkey) and fall back to global
+  settings when omitted. `stk_push_view` and `payment_status` already pass business
+  credentials. Business.daraja_passkey added (accounts migration 0029). Payment
+  Settings UI shows the passkey field. The only remaining gap is Quick Sell cart →
+  STK Push (see Next Sprint Candidates #5). Do NOT write a new stk function — just
+  pass the business's four fields to the existing initiate_stk_push() call.
+- Daraja TransactionType for Till (Buy Goods) = `CustomerBuyGoodsOnline`. For Paybill
+  = `CustomerPayBillOnline`. mpesa.py currently uses `CustomerBuyGoodsOnline` in
+  initiate_stk_push — correct for Till. If a business has only a Paybill (no Till),
+  the TransactionType must change to `CustomerPayBillOnline`. Add logic when building
+  the payload: check whether shortcode matches mpesa_till or mpesa_paybill.
 
 ## End-of-sprint ritual:
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
@@ -541,3 +565,4 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
 - Sprint 13 (2026-06-16): Bar business-type visual theming (whiskey amber #C8752A accent via --biz-accent CSS vars, biz-bar body class, bar hero Tonight stats, navbar 🍺 prefix + "Bar Orders"); stock_list underscore template variable fix (_expiry_status→expiry_status); shift reconciliation revenue fix (SQL CASE/WHEN replaces Sum('sale_amount') which missed non-preset sales); dashboard revenue targets now show actual KES even without target set; bar hero revenue from DB context not JS. M-Pesa C2B registration — Business.daraja_consumer_key/secret/c2b_registered fields (migration 0028), register_c2b_url() in mpesa.py, register_business_c2b view, payment settings UI with per-business Daraja credentials + one-click "Register with Safaricom" button. Next: Business-Type Aware UI Phase B or per-type theming for kibanda.
 - Sprint 14 (2026-06-17): Login loop fix — removed @login_required from notifications_count (returns {"count":0} for anon), bumped SW to duka-v6 with !response.redirected guard, removed "/" from SW precache. Bar QR Scan-to-Pay (Tier 0 static EMVCo QR via Daraja Dynamic QR API, fallback URL QR); bar tab unified for keg+spirits; Quick Sell bar "Tab" vs "Deni" split. Bar tab now accepts table number as customer identifier (placeholder updated in both quick_sell and bar_board). ShiftStockCount model (migration 0057) + stock_take_api view (/bar/shift/<id>/stock-take/) — end-of-shift physical item count with book vs actual vs variance, triggered from shift close modal. iOS PWA: manifest icons split "any maskable" → separate "any"/"maskable" entries, added 120x120 apple-touch-icon, fixed 167x167 to use icon-192, iOS-specific "Tap Share → Add to Home Screen" install banner (detects iOS UA + non-standalone). Next: Business-Type Aware UI Phase B or per-type kibanda theming.
 - Sprint 15 (2026-06-18): STK Push pipeline fixes — (1) Bridge: mpesa_callback + payment_status now call _bridge_stk_to_prompt() to create PendingTransactionPrompt for manual STK pushes (no order/tab); idempotent via mpesa_receipt guard. (2) Poll timeout: extended from 12×5s (60s) to 24×5s (2 min) with visible amber message on timeout in both pending_prompts.html and business_payment_page.html. (3) Pay-tab STK Push: Payment.bar_tab FK (migration 0058), stk_push_view accepts tab_id, _settle_tab_from_payment() does FIFO BarTabEntry settlement + Receipt.issue on full settlement; tabs drawer "📲 STK Push" button + tabStkModal with 2-min polling. (4) EMVCo QR: generate_emv_qr_string() in mpesa.py builds Safaricom MPMQR TLV string (CRC16-CCITT); mpesa_qr_view returns mode=emv between Daraja img fail and URL fallback; payment page renders with qrcodejs — Roy must test-scan with real M-Pesa app. Next: EMVCo scan test, then Business-Type Aware UI Phase B.
+- Sprint 16 (2026-06-18): Per-business Daraja credentials complete — Business.daraja_passkey (accounts migration 0029); initiate_stk_push() + query_stk_status() in mpesa.py now accept per-business consumer_key/secret/shortcode/passkey kwargs, fall back to global settings; use_till flag sets correct TransactionType (Buy Goods vs PayBill); stk_push_view + payment_status pass business credentials; Payment Settings UI adds Passkey field; channels form now preserves daraja fields via hidden inputs (was silently erasing them on save). Receipt + auto-SMS on prompt confirmation; portion presets in confirm form + sale_amount fix. Pending: Quick Sell cart → STK Push (see Next Sprint Candidates #5).

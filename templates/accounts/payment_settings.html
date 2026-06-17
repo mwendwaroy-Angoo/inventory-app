@@ -49,6 +49,10 @@
       <div class="card-body">
         <form method="post" id="payment-settings-form">
           {% csrf_token %}
+          <!-- Preserve Daraja credentials so they aren't erased when saving channels -->
+          <input type="hidden" name="daraja_consumer_key" value="{{ business.daraja_consumer_key }}">
+          <input type="hidden" name="daraja_consumer_secret" value="{{ business.daraja_consumer_secret }}">
+          <input type="hidden" name="daraja_passkey" value="{{ business.daraja_passkey }}">
 
           <!-- Preferred Channel -->
           <div class="mb-4">
@@ -274,6 +278,7 @@
             <input type="hidden" name="mpesa_pochi" value="{{ business.mpesa_pochi }}">
             <input type="hidden" name="mpesa_phone" value="{{ business.mpesa_phone }}">
             <input type="hidden" name="preferred_payment_channel" value="{{ business.preferred_payment_channel }}">
+            <!-- daraja_consumer_key and daraja_consumer_secret are rendered as visible fields below -->
 
             <div class="mb-3">
               <label class="form-label" style="color: var(--gold); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em;">
@@ -293,6 +298,19 @@
               {% if form.daraja_consumer_secret.errors %}
                 <div class="text-danger small mt-1">{{ form.daraja_consumer_secret.errors.0 }}</div>
               {% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" style="color: var(--gold); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em;">
+                {% trans 'Lipa Na M-Pesa Passkey' %}
+              </label>
+              {{ form.daraja_passkey }}
+              {% if form.daraja_passkey.errors %}
+                <div class="text-danger small mt-1">{{ form.daraja_passkey.errors.0 }}</div>
+              {% endif %}
+              <small style="color: #777; display: block; margin-top: 0.3rem;">
+                {% trans 'Required for STK Push (Request Payment). Issued by Safaricom at go-live alongside your Consumer Key and Secret.' %}
+              </small>
             </div>
 
             <div class="d-flex gap-2 align-items-center mt-3">

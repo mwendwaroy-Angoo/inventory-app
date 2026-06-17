@@ -52,14 +52,18 @@ def _get_urls():
 # ── AUTH ─────────────────────────────────────────────────────────────────────
 
 def get_access_token():
-    """Get OAuth access token from Safaricom."""
-    consumer_key = getattr(settings, 'MPESA_CONSUMER_KEY', '')
-    consumer_secret = getattr(settings, 'MPESA_CONSUMER_SECRET', '')
+    """Get OAuth access token using global (app-level) Safaricom credentials."""
+    return _get_access_token_for(
+        getattr(settings, 'MPESA_CONSUMER_KEY', ''),
+        getattr(settings, 'MPESA_CONSUMER_SECRET', ''),
+    )
 
+
+def _get_access_token_for(consumer_key, consumer_secret):
+    """Get OAuth access token for the given credentials (per-business or global)."""
     if not consumer_key or not consumer_secret:
         logger.error("M-Pesa credentials not configured")
         return None
-
     try:
         response = requests.get(
             _get_urls()['oauth'],
@@ -73,12 +77,12 @@ def get_access_token():
         return None
 
 
-def _generate_password():
-    """Generate the base64-encoded password for STK Push."""
-    shortcode = getattr(settings, 'MPESA_SHORTCODE', '')
-    passkey = getattr(settings, 'MPESA_PASSKEY', '')
+def _generate_password(shortcode=None, passkey=None):
+    """Generate the base64-encoded STK Push password + timestamp."""
+    _code = shortcode or getattr(settings, 'MPESA_SHORTCODE', '')
+    _pass = passkey or getattr(settings, 'MPESA_PASSKEY', '')
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-    raw = f"{shortcode}{passkey}{timestamp}"
+    raw = f"{_code}{_pass}{timestamp}"
     password = base64.b64encode(raw.encode()).decode('utf-8')
     return password, timestamp
 
@@ -86,39 +90,42 @@ def _generate_password():
 # ── STK PUSH ─────────────────────────────────────────────────────────────────
 
 def initiate_stk_push(phone_number, amount, account_reference, description,
-                      callback_url):
+                      callback_url, consumer_key=None, consumer_secret=None,
+                      shortcode=None, passkey=None, use_till=True):
     """
     Initiate Lipa Na M-Pesa Online (STK Push).
 
-    Args:
-        phone_number: Customer phone in 2547XXXXXXXX format
-        amount: Amount in KES (integer)
-        account_reference: e.g. "ORDER-123"
-        description: Transaction description
-        callback_url: Full URL for M-Pesa to POST results to
+    Pass per-business credentials (consumer_key, consumer_secret, shortcode,
+    passkey) when calling on behalf of a specific business. Falls back to
+    global settings when any param is omitted or blank.
 
-    Returns:
-        dict with response data or None on failure
+    use_till=True  → TransactionType: CustomerBuyGoodsOnline  (Till / Buy Goods)
+    use_till=False → TransactionType: CustomerPayBillOnline   (Paybill)
     """
-    access_token = get_access_token()
+    _key    = consumer_key    or getattr(settings, 'MPESA_CONSUMER_KEY',    '')
+    _secret = consumer_secret or getattr(settings, 'MPESA_CONSUMER_SECRET', '')
+    _code   = shortcode       or getattr(settings, 'MPESA_SHORTCODE',       '')
+    _pass   = passkey         or getattr(settings, 'MPESA_PASSKEY',         '')
+
+    access_token = _get_access_token_for(_key, _secret)
     if not access_token:
         return None
 
-    password, timestamp = _generate_password()
-    shortcode = getattr(settings, 'MPESA_SHORTCODE', '')
+    password, timestamp = _generate_password(_code, _pass)
+    txn_type = 'CustomerBuyGoodsOnline' if use_till else 'CustomerPayBillOnline'
 
     payload = {
-        'BusinessShortCode': shortcode,
+        'BusinessShortCode': _code,
         'Password': password,
         'Timestamp': timestamp,
-        'TransactionType': 'CustomerPayBillOnline',
+        'TransactionType': txn_type,
         'Amount': int(amount),
         'PartyA': phone_number,
-        'PartyB': shortcode,
+        'PartyB': _code,
         'PhoneNumber': phone_number,
         'CallBackURL': callback_url,
-        'AccountReference': account_reference[:12],  # Max 12 chars
-        'TransactionDesc': description[:13],  # Max 13 chars
+        'AccountReference': account_reference[:12],
+        'TransactionDesc': description[:13],
     }
 
     try:
@@ -133,24 +140,33 @@ def initiate_stk_push(phone_number, amount, account_reference, description,
         )
         response.raise_for_status()
         data = response.json()
-        logger.info("STK Push initiated: %s", data.get('CheckoutRequestID'))
+        logger.info("STK Push initiated: %s shortcode=%s", data.get('CheckoutRequestID'), _code)
         return data
     except requests.RequestException as e:
         logger.error("STK Push error: %s", e)
         return None
 
 
-def query_stk_status(checkout_request_id):
-    """Query the status of an STK Push transaction."""
-    access_token = get_access_token()
+def query_stk_status(checkout_request_id, consumer_key=None, consumer_secret=None,
+                     shortcode=None, passkey=None):
+    """Query the status of an STK Push transaction.
+
+    Pass per-business credentials to query against the correct shortcode.
+    Falls back to global settings when params are omitted or blank.
+    """
+    _key    = consumer_key    or getattr(settings, 'MPESA_CONSUMER_KEY',    '')
+    _secret = consumer_secret or getattr(settings, 'MPESA_CONSUMER_SECRET', '')
+    _code   = shortcode       or getattr(settings, 'MPESA_SHORTCODE',       '')
+    _pass   = passkey         or getattr(settings, 'MPESA_PASSKEY',         '')
+
+    access_token = _get_access_token_for(_key, _secret)
     if not access_token:
         return None
 
-    password, timestamp = _generate_password()
-    shortcode = getattr(settings, 'MPESA_SHORTCODE', '')
+    password, timestamp = _generate_password(_code, _pass)
 
     payload = {
-        'BusinessShortCode': shortcode,
+        'BusinessShortCode': _code,
         'Password': password,
         'Timestamp': timestamp,
         'CheckoutRequestID': checkout_request_id,

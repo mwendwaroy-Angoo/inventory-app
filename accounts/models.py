@@ -66,6 +66,9 @@ class Business(models.Model):
     daraja_consumer_secret = models.CharField(
         max_length=200, blank=True,
         help_text='Safaricom Daraja API Consumer Secret for this business shortcode')
+    daraja_passkey = models.CharField(
+        max_length=200, blank=True,
+        help_text='Safaricom Daraja Passkey for STK Push (issued at Daraja go-live)')
     daraja_c2b_registered = models.BooleanField(
         default=False,
         help_text='True once C2B confirmation URL has been registered with Safaricom')

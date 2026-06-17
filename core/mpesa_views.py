@@ -308,13 +308,21 @@ def stk_push_view(request):
         phone=phone_formatted,
     )
 
-    # Call Safaricom STK Push
+    # Resolve shortcode: prefer Till (Buy Goods) over Paybill
+    biz_shortcode = (business.mpesa_till or business.mpesa_paybill or '').strip() or None
+
+    # Call Safaricom STK Push — use business's own Daraja credentials if configured
     result = initiate_stk_push(
         phone_number=phone_formatted,
         amount=amount,
         account_reference=account_ref,
         description=description,
         callback_url=callback_url,
+        consumer_key=business.daraja_consumer_key or None,
+        consumer_secret=business.daraja_consumer_secret or None,
+        shortcode=biz_shortcode,
+        passkey=business.daraja_passkey or None,
+        use_till=bool(business.mpesa_till),
     )
 
     if result and result.get('ResponseCode') == '0':
@@ -356,7 +364,14 @@ def payment_status(request, payment_id):
     # to be silently discarded because it looks for status='pending'.
     # All failure marking must come exclusively from mpesa_callback.
     if payment.status == 'pending' and payment.checkout_request_id:
-        stk_result = query_stk_status(payment.checkout_request_id)
+        biz = payment.business
+        stk_result = query_stk_status(
+            payment.checkout_request_id,
+            consumer_key=biz.daraja_consumer_key or None,
+            consumer_secret=biz.daraja_consumer_secret or None,
+            shortcode=(biz.mpesa_till or biz.mpesa_paybill or '').strip() or None,
+            passkey=biz.daraja_passkey or None,
+        )
         if stk_result and stk_result.get('ResultCode') is not None:
             result_code = int(stk_result['ResultCode'])
             if result_code == 0:
