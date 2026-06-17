@@ -301,6 +301,64 @@ def register_c2b_url(consumer_key, consumer_secret, shortcode, confirmation_url,
         return {'success': False, 'message': f'API error: {e}'}
 
 
+# ── EMVCo MERCHANT-PRESENTED QR (client-side Path 2) ─────────────────────────
+
+def _crc16_ccitt(data: str) -> str:
+    """CRC16-CCITT (poly 0x1021, init 0xFFFF) over ASCII data string."""
+    crc = 0xFFFF
+    for ch in data.encode('ascii', errors='replace'):
+        crc ^= ch << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return format(crc, '04X')
+
+
+def _emv_tlv(tag: int, value: str) -> str:
+    val = str(value)
+    return f"{tag:02d}{len(val):02d}{val}"
+
+
+def generate_emv_qr_string(merchant_name: str, shortcode: str, trx_code: str, amount=None) -> str:
+    """
+    Build an EMVCo MPMQR string for M-Pesa Kenya.
+
+    trx_code: 'BG' = Till (Buy Goods), 'PB' = Paybill, 'SM' = Send Money
+    Returns the full MPMQR string — pass directly to QRCode(text=...).
+    """
+    merchant_name = str(merchant_name)[:25].strip()
+    shortcode = str(shortcode).strip()
+
+    # Tag 26 — Merchant Account Information (Safaricom sub-fields)
+    ma_value = (
+        _emv_tlv(0, 'com.safaricom.lipa') +
+        _emv_tlv(1, trx_code) +
+        _emv_tlv(2, shortcode)
+    )
+
+    parts = [
+        '000201',               # Payload Format Indicator v01
+        '010211',               # Point of Initiation Method: 11 = static
+        _emv_tlv(26, ma_value),  # Merchant Account Information
+        '52040000',             # Merchant Category Code (0000 = generic)
+        '5303404',              # Currency: KES (ISO 4217 numeric 404)
+    ]
+    if amount:
+        parts.append(_emv_tlv(54, str(int(amount))))
+
+    parts += [
+        '5802KE',                      # Country Code
+        _emv_tlv(59, merchant_name),   # Merchant Name
+        '6009Nairobi',                 # Merchant City (9 chars)
+        '6304',                        # CRC placeholder (value appended below)
+    ]
+
+    data = ''.join(parts)
+    return data + _crc16_ccitt(data)
+
+
 # ── PHONE FORMATTING ─────────────────────────────────────────────────────────
 
 def format_phone_ke(phone):

@@ -839,6 +839,7 @@ class Payment(models.Model):
     ]
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
+    bar_tab = models.ForeignKey('BarTab', on_delete=models.SET_NULL, null=True, blank=True, related_name='stk_payments')
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='payments')
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     method = models.CharField(max_length=10, choices=METHOD_CHOICES, default='mpesa')

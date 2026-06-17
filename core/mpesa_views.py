@@ -17,11 +17,94 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 from django.contrib.auth.decorators import login_required
 
-from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt
-from .mpesa import initiate_stk_push, format_phone_ke, query_stk_status, register_c2b_url, generate_mpesa_qr
+from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt, BarTab, BarTabEntry
+from .mpesa import initiate_stk_push, format_phone_ke, query_stk_status, register_c2b_url, generate_mpesa_qr, generate_emv_qr_string
 from .notifications import notify_transaction, create_in_app_notification
 
 logger = logging.getLogger(__name__)
+
+
+# ── HELPERS ──────────────────────────────────────────────────────────────────
+
+def _bridge_stk_to_prompt(payment):
+    """Create a PendingTransactionPrompt for a completed STK Push that has no
+    linked order or bar tab — i.e. a manual 'Request Payment' from the dashboard.
+    Idempotent: skips if a prompt for this receipt already exists."""
+    if payment.order_id or payment.bar_tab_id:
+        return  # Tab/order have their own completion logic
+    receipt = payment.mpesa_receipt
+    if not receipt:
+        return
+    if PendingTransactionPrompt.objects.filter(mpesa_receipt=receipt).exists():
+        return  # Already created (e.g. callback fired AND active-poll fired)
+
+    prompt = PendingTransactionPrompt.objects.create(
+        business=payment.business,
+        amount=payment.amount,
+        phone=payment.phone or '',
+        mpesa_receipt=receipt,
+        payment_channel='stk',
+    )
+
+    from accounts.models import UserProfile as _UP
+    for up in _UP.objects.filter(
+        business=payment.business, role__in=['owner', 'staff']
+    ).select_related('user'):
+        create_in_app_notification(
+            user=up.user,
+            title='💰 STK Payment Received!',
+            message=(
+                f"KES {float(payment.amount):,.0f} received"
+                + (f" from {payment.phone}" if payment.phone else "")
+                + f". Receipt: {receipt}. Please confirm what was sold."
+            ),
+            notification_type='transaction',
+        )
+    logger.info("STK prompt created: id=%s business=%s amount=%s", prompt.id, payment.business_id, payment.amount)
+
+
+def _settle_tab_from_payment(payment):
+    """FIFO-settle unpaid BarTabEntry rows up to the paid amount, then close
+    the tab and issue a receipt if all entries are now paid."""
+    try:
+        tab = payment.bar_tab
+        if not tab or tab.status != 'OPEN':
+            return
+
+        paid_amount = float(payment.amount)
+        unpaid_entries = list(tab.entries.filter(is_paid=False).order_by('id'))
+        now = timezone.now()
+        for entry in unpaid_entries:
+            if paid_amount <= 0:
+                break
+            entry_amt = float(entry.amount)
+            if entry_amt <= paid_amount:
+                entry.is_paid = True
+                entry.payment_method = 'mpesa'
+                entry.paid_at = now
+                entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
+                paid_amount -= entry_amt
+
+        if not tab.entries.filter(is_paid=False).exists():
+            tab.status = 'SETTLED'
+            tab.settled_at = now
+            tab.save(update_fields=['status', 'settled_at'])
+
+            from .models import Receipt as _Receipt
+            all_entries = list(tab.entries.all())
+            lines = [
+                {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
+                for e in all_entries
+            ]
+            _Receipt.issue(
+                business=tab.business,
+                lines=lines,
+                payment_method='mpesa',
+                customer_name=tab.customer_name,
+            )
+            logger.info("Tab #%s settled via STK receipt=%s", tab.id, payment.mpesa_receipt)
+    except Exception as exc:
+        logger.warning("Tab STK settlement failed for tab_id=%s: %s", getattr(payment, 'bar_tab_id', '?'), exc)
 
 
 # ── STK PUSH CALLBACK (from Safaricom) ──────────────────────────────────────
@@ -88,6 +171,13 @@ def mpesa_callback(request):
                 order.save(update_fields=['status'])
                 _fulfill_order(order)
 
+        # Settle bar tab via FIFO if linked
+        if payment.bar_tab_id:
+            _settle_tab_from_payment(payment)
+
+        # Create reconciliation prompt for manual STK pushes (no order, no tab)
+        _bridge_stk_to_prompt(payment)
+
         logger.info("Payment completed: %s receipt=%s", payment.id, receipt)
     else:
         payment.status = 'failed'
@@ -143,6 +233,7 @@ def stk_push_view(request):
     phone = data.get('phone', '')
     amount = data.get('amount', 0)
     order_id = data.get('order_id')
+    tab_id = data.get('tab_id')
 
     if not phone or not amount:
         return JsonResponse({'error': 'Phone and amount required'}, status=400)
@@ -156,11 +247,19 @@ def stk_push_view(request):
 
     phone_formatted = format_phone_ke(phone)
 
-    # Determine business from order, authenticated user, or public business_id
+    # Determine business from tab, order, authenticated user, or public business_id
     business = None
     order = None
+    bar_tab = None
 
-    if order_id:
+    if tab_id:
+        try:
+            bar_tab = BarTab.objects.get(id=int(tab_id), status='OPEN')
+            business = bar_tab.business
+        except (BarTab.DoesNotExist, ValueError, TypeError):
+            return JsonResponse({'error': 'Tab not found or already closed'}, status=404)
+
+    if not business and order_id:
         try:
             order = Order.objects.get(id=order_id)
             business = order.business
@@ -185,12 +284,18 @@ def stk_push_view(request):
     # Build callback URL
     callback_url = request.build_absolute_uri('/mpesa/callback/')
 
-    account_ref = order.order_number if order else f"DUKA-{business.id}"
+    if bar_tab:
+        account_ref = f"TAB-{bar_tab.id}"
+    elif order:
+        account_ref = order.order_number
+    else:
+        account_ref = f"DUKA-{business.id}"
     description = "Duka Mwecheche"
 
     # Create pending payment record
     payment = Payment.objects.create(
         order=order,
+        bar_tab=bar_tab,
         business=business,
         amount=amount,
         method='mpesa',
@@ -248,6 +353,10 @@ def payment_status(request, payment_id):
                 payment.result_code = result_code
                 payment.completed_at = timezone.now()
                 payment.save()
+                # Bridge to tab settlement and/or reconciliation queue
+                if payment.bar_tab_id:
+                    _settle_tab_from_payment(payment)
+                _bridge_stk_to_prompt(payment)
             elif result_code != 1032:  # 1032 = "Request cancelled by user" — might retry
                 payment.status = 'failed'
                 payment.result_code = result_code
@@ -512,7 +621,17 @@ def mpesa_qr_view(request):
         if qr_b64:
             return JsonResponse({'mode': 'img', 'data': qr_b64})
 
-    # Fallback: URL pointing to this business's payment page
+        # Path 2: client-side EMVCo MPMQR string — customer scans with M-Pesa app
+        emv_str = generate_emv_qr_string(
+            merchant_name=business.name,
+            shortcode=shortcode,
+            trx_code=trx_code,
+            amount=amount,
+        )
+        if emv_str:
+            return JsonResponse({'mode': 'emv', 'data': emv_str})
+
+    # Final fallback: URL pointing to this business's payment page
     return JsonResponse({'mode': 'url', 'data': fallback_url})
 
 

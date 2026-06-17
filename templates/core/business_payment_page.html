@@ -388,8 +388,23 @@ var PAGE_URL = "{{ payment_page_url|escapejs }}";
         qrEl.appendChild(img);
         caption.textContent = 'Scan with your M-Pesa app to pay directly — no typing needed.';
         caption.style.display = 'block';
+      } else if (data.mode === 'emv') {
+        // Path 2: client-side EMVCo MPMQR string — render as scannable QR
+        function makeEmvQr() {
+          new QRCode(qrEl, { text: data.data, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+          caption.textContent = 'Scan with your M-Pesa app to pay directly — no typing needed.';
+          caption.style.display = 'block';
+        }
+        if (typeof QRCode !== 'undefined') {
+          makeEmvQr();
+        } else {
+          var sc = document.createElement('script');
+          sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+          sc.onload = makeEmvQr;
+          document.head.appendChild(sc);
+        }
       } else {
-        // Path 2: show URL QR pointing to payment page
+        // Path 3: show URL QR pointing to payment page
         showUrlQR(data.data || PAGE_URL);
       }
     })
@@ -448,12 +463,12 @@ function pollPayment(paymentId) {
         } else if (data.status === 'failed') {
           clearInterval(interval);
           showResult('error', '❌ Payment was cancelled or failed. Please try again.');
-        } else if (tries >= 12) {
+        } else if (tries >= 24) {
           clearInterval(interval);
-          showResult('error', '⏱ Timed out. If you approved the payment, it will still reflect in the system.');
+          showResult('error', '⏱ Still waiting — this can take a minute after the app was idle. If you approved the prompt, the payment will still reflect.');
         }
       })
-      .catch(function () { if (tries >= 12) clearInterval(interval); });
+      .catch(function () { if (tries >= 24) clearInterval(interval); });
   }, 5000);
 }
 

@@ -418,11 +418,13 @@ function pollStkPayment(paymentId) {
                     clearInterval(interval);
                     showStkResult('rgba(231,76,60,0.15)', '#e74c3c',
                         '❌ Customer cancelled or payment failed.');
-                } else if (tries >= 12) {
+                } else if (tries >= 24) {
                     clearInterval(interval);
+                    showStkResult('rgba(255,152,0,0.15)', '#ff9800',
+                        '⏳ Still waiting on the customer — this can take a minute, especially right after the app has been idle. Check Payment Prompts in a moment.');
                 }
             })
-            .catch(() => { if (tries >= 12) clearInterval(interval); });
+            .catch(() => { if (tries >= 24) clearInterval(interval); });
     }, 5000);
 }
 </script>

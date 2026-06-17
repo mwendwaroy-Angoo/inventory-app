@@ -490,6 +490,7 @@
 }
 .tab-btn-cash  { border-color: rgba(76,175,80,0.4);   color: #4caf50; }
 .tab-btn-mpesa { border-color: rgba(33,150,243,0.4);  color: #64b5f6; }
+.tab-btn-stk   { border-color: rgba(201,168,76,0.35); color: #c9a84c; }
 .tab-btn-debt  { border-color: rgba(201,168,76,0.4);  color: #c9a84c; }
 .tab-btn-void  { border-color: rgba(192,57,90,0.4);   color: #c0395a; }
 </style>
@@ -1336,6 +1337,35 @@
   </div>
 </div>
 
+<!-- Tab STK Push modal -->
+<div class="modal fade bar-modal" id="tabStkModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content">
+      <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
+        <h6 class="modal-title" style="color:#c9a84c;">📲 Lipa Tab — STK Push</h6>
+      </div>
+      <div class="modal-body">
+        <p id="tab-stk-cust" style="color:#c9a84c; font-weight:600; font-size:0.9rem; margin-bottom:0.75rem;"></p>
+        <label style="font-size:0.78rem; color:#b0b0b0; display:block; margin-bottom:4px;">Nambari ya Simu ya Mteja</label>
+        <input type="tel" id="tab-stk-phone" placeholder="e.g. 0712 345 678"
+               class="form-control form-control-sm mb-2"
+               style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+        <label style="font-size:0.78rem; color:#b0b0b0; display:block; margin-bottom:4px;">Kiasi (KES)</label>
+        <input type="number" id="tab-stk-amount" min="1"
+               class="form-control form-control-sm mb-2"
+               style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+        <div id="tab-stk-result" style="display:none; padding:0.5rem 0.75rem; border-radius:8px; font-size:0.82rem; margin-bottom:0.5rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #3a3a3a;">
+        <button class="btn btn-sm" style="background:#333; border-color:#444; color:#b0b0b0;"
+                onclick="window.hideModal('tabStkModal')">Acha</button>
+        <button id="tab-stk-btn" class="btn btn-gold btn-sm"
+                onclick="window.sendTabStk()">📲 Tuma Ombi</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Convert tab to debt modal -->
 <div class="modal fade bar-modal" id="debtModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered modal-sm">
@@ -2078,6 +2108,7 @@
         '<div class="tab-actions-row">' +
         '<button class="tab-action-btn tab-btn-cash" onclick="window.settleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
         '<button class="tab-action-btn tab-btn-mpesa" onclick="window.settleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
+        '<button class="tab-action-btn tab-btn-stk" onclick="window.openTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + safeCust + '\')">📲 STK Push</button>' +
         '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>' +
         (QS_IS_OWNER
           ? '<button class="tab-action-btn tab-btn-void" onclick="window.openVoidModal(' + tab.id + ',\'' + safeCust + '\')">Void</button>'
@@ -2200,6 +2231,103 @@
         errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block';
       });
   };
+
+  /* ── Tab STK Push ──────────────────────────────────────── */
+  var _pendingStkTabId = null;
+
+  window.openTabStk = function (tabId, amount, custName) {
+    _pendingStkTabId = tabId;
+    document.getElementById('tab-stk-cust').textContent = 'Tab ya ' + custName + ' — KES ' + fmt(amount);
+    document.getElementById('tab-stk-phone').value = '';
+    document.getElementById('tab-stk-amount').value = amount;
+    document.getElementById('tab-stk-result').style.display = 'none';
+    var btn = document.getElementById('tab-stk-btn');
+    btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+    showModal('tabStkModal');
+  };
+
+  window.sendTabStk = function () {
+    if (!_pendingStkTabId) return;
+    var phone  = (document.getElementById('tab-stk-phone').value  || '').trim();
+    var amount = parseInt(document.getElementById('tab-stk-amount').value || '0');
+    var resultEl = document.getElementById('tab-stk-result');
+    var btn = document.getElementById('tab-stk-btn');
+
+    function stkErr(msg) {
+      resultEl.style.background = 'rgba(192,57,90,0.15)';
+      resultEl.style.color = '#c0395a';
+      resultEl.textContent = msg;
+      resultEl.style.display = 'block';
+    }
+
+    if (!phone) { stkErr('Ingiza nambari ya simu ya mteja.'); return; }
+    if (!amount || amount < 1) { stkErr('Ingiza kiasi sahihi.'); return; }
+
+    btn.disabled = true; btn.textContent = '⏳ Inatuma...';
+    resultEl.style.display = 'none';
+
+    fetch('/mpesa/stk-push/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({phone: phone, amount: amount, tab_id: _pendingStkTabId}),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.success) {
+        resultEl.style.background = 'rgba(46,204,113,0.15)';
+        resultEl.style.color = '#2ecc71';
+        resultEl.textContent = '✅ Imetumwa! Mteja aidhinishe kwenye simu yake.';
+        resultEl.style.display = 'block';
+        btn.textContent = '⏳ Inasubiri malipo...';
+        _pollTabStk(d.payment_id);
+      } else {
+        btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+        stkErr('❌ ' + (d.error || 'Imeshindwa. Jaribu tena.'));
+      }
+    })
+    .catch(function () {
+      btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+      stkErr('❌ Hitilafu ya mtandao. Jaribu tena.');
+    });
+  };
+
+  function _pollTabStk(paymentId) {
+    var tries = 0;
+    var resultEl = document.getElementById('tab-stk-result');
+    var btn = document.getElementById('tab-stk-btn');
+    var interval = setInterval(function () {
+      tries++;
+      fetch('/mpesa/status/' + paymentId + '/')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.status === 'completed') {
+            clearInterval(interval);
+            resultEl.style.background = 'rgba(46,204,113,0.15)';
+            resultEl.style.color = '#2ecc71';
+            resultEl.textContent = '✅ Malipo yamepokelewa! Tab imefungwa.';
+            btn.disabled = true; btn.textContent = '✓ Imelipwa';
+            setTimeout(function () {
+              hideModal('tabStkModal');
+              window.loadTabs();
+              loadBarBoard();
+            }, 2000);
+          } else if (data.status === 'failed') {
+            clearInterval(interval);
+            btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+            resultEl.style.background = 'rgba(192,57,90,0.15)';
+            resultEl.style.color = '#c0395a';
+            resultEl.textContent = '❌ Mteja alikataa au malipo yalishindwa.';
+          } else if (tries >= 24) {
+            clearInterval(interval);
+            btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+            resultEl.style.background = 'rgba(255,152,0,0.15)';
+            resultEl.style.color = '#ff9800';
+            resultEl.textContent = '⏳ Bado tunasubiri — angalia tena baadaye ikiwa mteja alipitisha.';
+          }
+        })
+        .catch(function () { if (tries >= 24) clearInterval(interval); });
+    }, 5000);
+  }
 
   /* ════════════════════════════════════════════════════════
      RECEIVE MODAL
