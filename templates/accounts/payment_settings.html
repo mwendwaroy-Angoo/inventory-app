@@ -250,18 +250,23 @@
                 {% trans 'Step-by-Step Guide' %}
               </p>
               <ol style="color: #b0b0b0; font-size: 0.83rem; padding-left: 1.2rem; line-height: 2;">
-                <li>{% blocktrans %}Go to <strong style="color:#e0e0e0;"><a href="https://developer.safaricom.co.ke" target="_blank" style="color:var(--gold);">developer.safaricom.co.ke</a></strong> and sign in (or register) with the same account you used to register your Till/Paybill with Safaricom.{% endblocktrans %}</li>
-                <li>{% trans 'Click <strong style=\"color:#e0e0e0;\">My Apps</strong> in the left menu, then <strong style=\"color:#e0e0e0;\">Create App</strong>.' %}</li>
-                <li>{% trans 'Select <strong style=\"color:#e0e0e0;\">Production</strong> (not Sandbox). Give your app a name (e.g. your business name).' %}</li>
-                <li>{% trans 'Under <strong style=\"color:#e0e0e0;\">Products</strong>, enable <strong style=\"color:#e0e0e0;\">C2B (Customer to Business)</strong>. Enter your Till or Paybill number as the shortcode.' %}</li>
-                <li>{% trans 'Click <strong style=\"color:#e0e0e0;\">Create App</strong>. Wait for Safaricom to approve it (usually 1-2 business days).' %}</li>
-                <li>{% trans 'Once approved, open the app — copy the <strong style=\"color:#e0e0e0;\">Consumer Key</strong> and <strong style=\"color:#e0e0e0;\">Consumer Secret</strong> shown on the app card.' %}</li>
-                <li>{% trans 'Paste them in the fields below and click <strong style=\"color:#e0e0e0;\">Save Credentials</strong>, then <strong style=\"color:#e0e0e0;\">Register with Safaricom</strong>.' %}</li>
+                <li>{% blocktrans %}Go to <strong style="color:#e0e0e0;"><a href="https://developer.safaricom.co.ke" target="_blank" style="color:var(--gold);">developer.safaricom.co.ke</a></strong> and sign in with the same Safaricom account that owns your Till or Paybill. If you don't have a developer account, register for free.{% endblocktrans %}</li>
+                <li>{% trans 'Click <strong style=\"color:#e0e0e0;\">Go Live</strong> in the left menu, then <strong style=\"color:#e0e0e0;\">Create Production App</strong>.' %}</li>
+                <li>{% trans 'Name the app (e.g. your business name). Under <strong style=\"color:#e0e0e0;\">Products</strong>, enable both <strong style=\"color:#e0e0e0;\">C2B</strong> (so payments to your Till/Paybill notify the app) <em>and</em> <strong style=\"color:#e0e0e0;\">M-PESA EXPRESS</strong> (so the app can send payment requests to customer phones). Enter your Till or Paybill number as the shortcode.' %}</li>
+                <li>{% trans 'Submit. Safaricom will review and approve — usually 1-5 business days for a Till, longer for Paybill.' %}</li>
+                <li>{% trans 'Once approved, open the app on the Daraja portal. Copy the <strong style=\"color:#e0e0e0;\">Consumer Key</strong>, <strong style=\"color:#e0e0e0;\">Consumer Secret</strong>, and <strong style=\"color:#e0e0e0;\">Passkey</strong> (all three are shown on the approved app card).' %}</li>
+                <li>{% trans 'Paste all three in the fields below, click <strong style=\"color:#e0e0e0;\">Save Credentials</strong>, then click <strong style=\"color:#e0e0e0;\">Register with Safaricom</strong>.' %}</li>
               </ol>
               <div style="background: rgba(201,168,76,0.08); border: 1px solid rgba(201,168,76,0.2); border-radius: 8px; padding: 0.85rem; margin-top: 0.75rem;">
                 <p style="color: #c9a84c; font-size: 0.8rem; margin: 0; line-height: 1.6;">
-                  💡 <strong>{% trans 'Tip' %}:</strong>
-                  {% trans 'The Daraja account must belong to the person/company that registered the Till or Paybill with Safaricom. If you registered via a Safaricom agent or your bank, contact them to get the Daraja access.' %}
+                  💡 <strong>{% trans 'What each credential does' %}:</strong>
+                  {% trans 'Consumer Key + Consumer Secret → lets the app talk to Safaricom on your behalf (needed for both automatic payment detection and sending payment requests). Passkey → only needed for the "Request Payment" (STK Push) feature where the app sends a prompt to a customer\'s phone. If you only want automatic payment detection, Consumer Key + Secret are enough.' %}
+                </p>
+              </div>
+              <div style="background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 8px; padding: 0.85rem; margin-top: 0.75rem;">
+                <p style="color: #888; font-size: 0.8rem; margin: 0; line-height: 1.6;">
+                  ⚠️ <strong style="color:#b0b0b0;">{% trans 'Important' %}:</strong>
+                  {% trans 'The Daraja account must belong to the person or company that registered the Till/Paybill with Safaricom. If your Till was registered through a Safaricom agent or your bank, ask them to create a Daraja app for the shortcode on your behalf.' %}
                 </p>
               </div>
             </div>
@@ -353,12 +358,16 @@
         <div class="d-flex gap-3 align-items-start">
           <div style="font-size: 2rem; flex-shrink: 0;">💡</div>
           <div>
-            <h6 style="color: var(--gold); margin-bottom: 0.4rem;">{% trans 'Want automatic payment detection?' %}</h6>
-            <p style="color: #a0a0a0; font-size: 0.875rem; margin: 0; line-height: 1.6;">
-              {% blocktrans %}
-              If you have an M-Pesa <strong style="color:#e0e0e0;">Till Number</strong> or <strong style="color:#e0e0e0;">Paybill</strong>, set it above and save.
-              You'll then be able to connect to Safaricom so the app automatically detects customer payments and creates prompts for you to log the sale.
-              {% endblocktrans %}
+            <h6 style="color: var(--gold); margin-bottom: 0.6rem;">{% trans 'Want automatic payment detection?' %}</h6>
+            <p style="color: #a0a0a0; font-size: 0.875rem; margin: 0 0 0.75rem; line-height: 1.6;">
+              {% trans 'Two steps to activate:' %}
+            </p>
+            <ol style="color: #a0a0a0; font-size: 0.875rem; margin: 0; padding-left: 1.2rem; line-height: 2;">
+              <li>{% blocktrans %}Enter your <strong style="color:#e0e0e0;">Till Number</strong> or <strong style="color:#e0e0e0;">Paybill</strong> in the form above and click <strong style="color:#e0e0e0;">Save Payment Settings</strong>.{% endblocktrans %}</li>
+              <li>{% trans 'A new section will appear here — follow the guide to get your Daraja credentials from Safaricom, paste them, and click <strong style="color:#e0e0e0;">Register with Safaricom</strong>.' %}</li>
+            </ol>
+            <p style="color: #666; font-size: 0.8rem; margin: 0.75rem 0 0; line-height: 1.5;">
+              {% trans 'Pochi la Biashara and personal M-Pesa numbers do not support automatic detection — Till and Paybill only.' %}
             </p>
           </div>
         </div>
