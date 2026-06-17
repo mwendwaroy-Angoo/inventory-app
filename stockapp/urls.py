@@ -74,6 +74,7 @@ from core.shift_views import (
     confirm_barrel_weights,
     active_shift_api,
     shift_history,
+    stock_take_api,
 )
 from core.order_views import (
     waitress_screen,
@@ -235,6 +236,7 @@ urlpatterns = [
     path("bar/shift/confirm-weights/",        confirm_barrel_weights, name="confirm_barrel_weights"),
     path("bar/shift/active/",                 active_shift_api,       name="active_shift_api"),
     path("bar/shift/history/",                shift_history,          name="shift_history"),
+    path("bar/shift/<int:shift_id>/stock-take/", stock_take_api,      name="stock_take_api"),
     # ── Waitress Order Queue (Sprint 5) ──────────────────────────────────────
     path("bar/orders/",                       waitress_screen,        name="waitress_screen"),
     path("bar/orders/place/",                 place_table_order,      name="place_table_order"),

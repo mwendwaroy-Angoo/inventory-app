@@ -1957,6 +1957,31 @@ class BarCupLog(models.Model):
         return f"Barrel #{self.barrel_id} — {self.qty}× {self.cup_size}ml cups @ KES {self.unit_cost}"
 
 
+class ShiftStockCount(models.Model):
+    """End-of-shift stock take: staff records physical item counts for peace-of-mind reconciliation."""
+    shift       = models.ForeignKey(Shift, on_delete=models.CASCADE, related_name='stock_counts')
+    item        = models.ForeignKey('Item', on_delete=models.SET_NULL, null=True, related_name='stock_counts')
+    book_balance = models.DecimalField(max_digits=10, decimal_places=2)
+    actual_count = models.DecimalField(max_digits=10, decimal_places=2)
+    recorded_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, related_name='stock_counts_recorded'
+    )
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['item__description']
+        verbose_name = 'Shift Stock Count'
+        verbose_name_plural = 'Shift Stock Counts'
+        unique_together = [('shift', 'item')]
+
+    def __str__(self):
+        return f"Shift #{self.shift_id} — {self.item} ({self.actual_count} / book {self.book_balance})"
+
+    @property
+    def variance(self):
+        return self.actual_count - self.book_balance
+
+
 class ProduceOverhead(models.Model):
     """Operational overhead for the kibanda produce section — bags, water, transport."""
     OVERHEAD_TYPES = [

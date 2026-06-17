@@ -29,7 +29,7 @@ _SHIFT_EXEMPT_PREFIXES = (
     '/static/',
     '/accounts/',
     '/business/',
-    '/bar/shift/',
+    '/bar/shift/',    # shift endpoints including stock take
     '/bar/orders/',   # waitress order queue
     '/bar/',          # bar board
     '/stock/bar/',    # board API

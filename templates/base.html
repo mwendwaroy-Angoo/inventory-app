@@ -12,8 +12,9 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
     <link rel="shortcut icon" href="/static/icons/icon-192.png" type="image/png">
+    <link rel="apple-touch-icon" sizes="120x120" href="/static/icons/icon-128.png">
     <link rel="apple-touch-icon" sizes="152x152" href="/static/icons/icon-152.png">
-    <link rel="apple-touch-icon" sizes="167x167" href="/static/icons/icon-152.png">
+    <link rel="apple-touch-icon" sizes="167x167" href="/static/icons/icon-192.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
     <title>{% block title %}Duka Mwecheche{% endblock %}</title>
@@ -846,6 +847,35 @@
             document.getElementById('pwa-install-banner').style.display = 'none';
             sessionStorage.setItem('pwa-dismissed', '1');
         }
+
+        // ── iOS "Add to Home Screen" hint (Safari never fires beforeinstallprompt) ──
+        (function() {
+            var isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+            var isSafari = /safari/i.test(navigator.userAgent) && !/crios|fxios|opios|chrome/i.test(navigator.userAgent);
+            var isStandalone = window.navigator.standalone === true;
+            if (!isIos || !isSafari || isStandalone) return;
+            if (sessionStorage.getItem('ios-install-dismissed')) return;
+
+            var banner = document.createElement('div');
+            banner.id = 'ios-install-banner';
+            banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2001;' +
+                'background:linear-gradient(135deg,#111,#1a1a1a);border-top:2px solid #c9a84c;' +
+                'padding:0.9rem 1.1rem;box-shadow:0 -4px 20px rgba(0,0,0,0.6);';
+            banner.innerHTML =
+                '<div style="display:flex;align-items:flex-start;gap:0.75rem;">' +
+                '<img src="/static/icons/icon-152.png" width="44" height="44" style="border-radius:10px;flex-shrink:0;">' +
+                '<div style="flex:1;">' +
+                '<div style="color:#c9a84c;font-weight:600;font-size:0.88rem;margin-bottom:2px;">Install Duka Mwecheche</div>' +
+                '<div style="color:#b0b0b0;font-size:0.76rem;line-height:1.4;">' +
+                'Tap <strong style="color:#f0ece4;">Share</strong> <span style="font-size:1rem;">⬆️</span> at the bottom of Safari, then choose ' +
+                '<strong style="color:#f0ece4;">"Add to Home Screen"</strong> to install the app.' +
+                '</div>' +
+                '</div>' +
+                '<button onclick="(function(){document.getElementById(\'ios-install-banner\').remove();sessionStorage.setItem(\'ios-install-dismissed\',\'1\');})()"' +
+                ' style="background:none;border:none;color:#888;font-size:1.2rem;cursor:pointer;line-height:1;flex-shrink:0;">✕</button>' +
+                '</div>';
+            document.body.appendChild(banner);
+        })();
     </script>
 
     {% if user.is_authenticated %}

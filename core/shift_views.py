@@ -20,7 +20,7 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .models import KegBarrel, KegWeightReading, Shift, Transaction
+from .models import Item, KegBarrel, KegWeightReading, Shift, ShiftStockCount, Transaction
 
 
 def _get_up(request):
@@ -456,3 +456,68 @@ def shift_history(request):
         'rows':     rows,
         'is_owner': getattr(up, 'is_owner', False),
     })
+
+
+# ── Shift stock take ──────────────────────────────────────────────────────────
+
+@login_required
+def stock_take_api(request, shift_id):
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    shift = get_object_or_404(Shift, id=shift_id, business=up.business)
+
+    if request.method == 'GET':
+        items = (
+            Item.objects
+            .filter(business=up.business)
+            .exclude(is_keg=True)
+            .exclude(is_produce=True)
+            .order_by('description')
+        )
+        data = []
+        for item in items:
+            data.append({
+                'item_id':    item.id,
+                'name':       item.description,
+                'unit':       item.unit or '',
+                'book_balance': float(item.current_balance()),
+            })
+        return JsonResponse({'ok': True, 'items': data})
+
+    if request.method == 'POST':
+        try:
+            counts = json.loads(request.POST.get('counts', '[]'))
+        except Exception:
+            return JsonResponse({'ok': False, 'error': 'Invalid data'}, status=400)
+
+        results = []
+        for entry in counts:
+            try:
+                item_id      = int(entry.get('item_id', 0))
+                actual       = Decimal(str(entry.get('actual_count', '0') or '0'))
+                item = Item.objects.filter(id=item_id, business=up.business).first()
+                if not item:
+                    continue
+                book = item.current_balance()
+                ShiftStockCount.objects.update_or_create(
+                    shift=shift, item=item,
+                    defaults={
+                        'book_balance': book,
+                        'actual_count': actual,
+                        'recorded_by':  request.user,
+                    }
+                )
+                variance = float(actual) - float(book)
+                results.append({
+                    'name':       item.description,
+                    'unit':       item.unit or '',
+                    'book':       float(book),
+                    'actual':     float(actual),
+                    'variance':   round(variance, 2),
+                })
+            except Exception:
+                continue
+
+        return JsonResponse({'ok': True, 'results': results})

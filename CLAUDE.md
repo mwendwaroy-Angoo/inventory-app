@@ -491,6 +491,28 @@ Never use `{% widthratio %}` — unreliable in Django templates.
 - item_form.html does NOT load jQuery/Select2. Any picker/dropdown/typeahead UI on
   that template must be vanilla JS (see the catalog picker rewrite, commit c4020e3) —
   do not add new Select2() calls there.
+- NEVER put `@login_required` on JSON/AJAX endpoints (notifications_count, API views).
+  When an unauthenticated AJAX poll hits such an endpoint, Django sets `?next=<endpoint>`
+  on the login URL. After login the user gets redirected to a JSON response instead of
+  the dashboard. ROOT CAUSE of the 2026-06-17 login loop: `notifications_count` had
+  `@login_required` → 30-second poll expired session → `?next=/notifications/count/`
+  on login page → user redirected to JSON after login. Fix: return `{"count":0}` for
+  unauthenticated requests instead.
+- Service Worker MUST NOT cache redirected responses. If a SW `fetch()` follows a
+  redirect (e.g. server redirects to `/accounts/login/`), `response.redirected === true`.
+  Caching that response with `cache.put(originalRequest, response)` stores the login
+  page HTML at the original URL key. ALWAYS guard caching with `!response.redirected`.
+  Fixed in duka-v6 SW (both navigate and stale-while-revalidate handlers).
+- SW PRECACHE_URLS must not include auth-gated URLs (e.g. `/`). During SW install
+  the user may not be logged in; `cache.addAll(['/'])` would then store the login-redirect
+  response at `/`. Removed `/` from PRECACHE_URLS in duka-v6.
+- iOS PWA ("Add to Home Screen"): iOS Safari NEVER fires `beforeinstallprompt`.
+  The iOS install banner must detect iOS UA + Safari + non-standalone and show manual
+  instructions ("Tap Share ⬆️ then Add to Home Screen"). The existing Android banner
+  (based on `beforeinstallprompt`) does nothing on iOS.
+- iOS PWA manifest icons: do NOT use `"purpose": "any maskable"` (combined value).
+  Split into two separate entries — one `"purpose": "any"` and one `"purpose": "maskable"`.
+  The combined value causes rendering issues on some iOS Safari versions.
 
 ## End-of-sprint ritual:
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
@@ -507,3 +529,4 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
 - Sprint 10+11 (2026-06-15): Digital Receipts + Debt Tracker parity — Receipt model (token, QR, SMS send); Quick Sell credit sales linked to debt tracker (recipient set, Customer auto-created); keg tab sales linked to debt tracker (recipient + Customer auto-created, payment_method='credit' on Receipt); debt payment receipt: FIFO line items, redirect to receipt page, auto-SMS customer, score computed post-payment, days label "umelipa leo/siku N baadaye (kiwango siku W)"; send_debt_reminder fixed to use send_sms_notification; Receipts history page (/receipts/) with month/year/customer filter, accessible to staff; partial payment "Bado unalipa KES X" block on receipt; "Powered by Duka Mwecheche" on public receipt; credit settings form open to staff. Next: Expiry Date Tracking.
 - Sprint 12 (2026-06-15): Expiry Date Tracking — Transaction.expiry_date (migration 0056); Add Transaction form shows date picker for Receipt type; stock_list annotates items with earliest expiry (single Min query), EXPIRED/EXP SOON/OK badges in Expiry column, expiring filter link; /stock/expiring/ report grouped EXPIRED→EXPIRING SOON→OK with balance + days label; home dashboard raspberry/amber alert banners linking to report, visible all staff. Next: Themes discussion, then Business-Type Aware UI Phase B (new session).
 - Sprint 13 (2026-06-16): Bar business-type visual theming (whiskey amber #C8752A accent via --biz-accent CSS vars, biz-bar body class, bar hero Tonight stats, navbar 🍺 prefix + "Bar Orders"); stock_list underscore template variable fix (_expiry_status→expiry_status); shift reconciliation revenue fix (SQL CASE/WHEN replaces Sum('sale_amount') which missed non-preset sales); dashboard revenue targets now show actual KES even without target set; bar hero revenue from DB context not JS. M-Pesa C2B registration — Business.daraja_consumer_key/secret/c2b_registered fields (migration 0028), register_c2b_url() in mpesa.py, register_business_c2b view, payment settings UI with per-business Daraja credentials + one-click "Register with Safaricom" button. Next: Business-Type Aware UI Phase B or per-type theming for kibanda.
+- Sprint 14 (2026-06-17): Login loop fix — removed @login_required from notifications_count (returns {"count":0} for anon), bumped SW to duka-v6 with !response.redirected guard, removed "/" from SW precache. Bar QR Scan-to-Pay (Tier 0 static EMVCo QR via Daraja Dynamic QR API, fallback URL QR); bar tab unified for keg+spirits; Quick Sell bar "Tab" vs "Deni" split. Bar tab now accepts table number as customer identifier (placeholder updated in both quick_sell and bar_board). ShiftStockCount model (migration 0057) + stock_take_api view (/bar/shift/<id>/stock-take/) — end-of-shift physical item count with book vs actual vs variance, triggered from shift close modal. iOS PWA: manifest icons split "any maskable" → separate "any"/"maskable" entries, added 120x120 apple-touch-icon, fixed 167x167 to use icon-192, iOS-specific "Tap Share → Add to Home Screen" install banner (detects iOS UA + non-standalone). Next: Business-Type Aware UI Phase B or per-type kibanda theming.
