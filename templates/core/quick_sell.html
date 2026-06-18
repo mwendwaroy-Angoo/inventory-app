@@ -874,8 +874,12 @@
                 Jina la mteja
               </label>
               <input type="text" id="qsCreditCustomerName" placeholder="e.g. Mary, Meza 5, Mama Njeri…"
+                     list="qs-open-tab-names" autocomplete="off"
                      style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
                             color:var(--pearl); padding:0.45rem 0.7rem; font-size:0.85rem; margin-bottom:0.4rem;">
+              <datalist id="qs-open-tab-names">
+                {% for tab_name in open_tab_names %}<option value="{{ tab_name }}">{% endfor %}
+              </datalist>
               <div id="qsPhoneRow">
                 <label style="color:#b0b0b0; font-size:0.75rem; display:block; margin-bottom:0.25rem;">
                   Nambari ya simu (hiari — kwa reminder SMS)

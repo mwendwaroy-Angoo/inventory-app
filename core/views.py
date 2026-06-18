@@ -2369,6 +2369,12 @@ def quick_sell(request):
 
     stores = Store.objects.filter(business=user_profile.business)
 
+    open_tab_names = list(
+        BarTab.objects.filter(business=user_profile.business, status='OPEN')
+        .values_list('customer_name', flat=True)
+        .distinct()
+    )
+
     return render(
         request,
         "core/quick_sell.html",
@@ -2377,6 +2383,7 @@ def quick_sell(request):
             "stores": stores,
             "success_data": success_data,
             "is_owner": user_profile.is_owner if user_profile else False,
+            "open_tab_names": open_tab_names,
         },
     )
 
