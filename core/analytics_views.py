@@ -289,7 +289,7 @@ def analytics_dashboard(request):
 
         velocity_data.append({
             'name':             item.description,
-            'balance':          round(balance, 1),
+            'balance':          max(0.0, round(balance, 1)),  # floor at 0; negatives mean oversold — corrected via Receipt
             'units_sold':       round(units_sold, 1),
             'daily_rate':       round(daily_rate, 2),
             'days_left':        days_left,

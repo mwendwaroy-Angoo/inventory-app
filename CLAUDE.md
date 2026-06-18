@@ -300,6 +300,20 @@ Fonts: Playfair Display (headings), DM Sans (body)
   reader. Confirm each still behaves correctly before calling the sprint done. This is
   what caught the `MPESA_ENV` routing bug (Sprint 18): three functions all called
   `_get_urls()` with no env awareness, silent until audited together.
+- **Everything in this app is connected — audit ALL surfaces, not just the one you touched**:
+  When a field value (e.g. `current_balance`) is changed or the meaning of its data
+  changes (e.g. can now be negative), grep every template and view that reads that field
+  and verify each surface behaves correctly. A "display fix" in Quick Sell is incomplete
+  if the same field is also shown in analytics, stock velocity ranking, expiring items,
+  reorder table, sales dashboard, item detail, and add_transaction dropdown — they must
+  ALL be audited in the same change. Example: fixing the negative-balance display in
+  quick_sell.html (showing "Out of Stock" instead of -22) without also checking
+  analytics_views.py left -22.0 showing in the Stock Velocity Ranking "Current Stock"
+  column. Roy noticed. Before closing any fix, run:
+    `grep -rn "current_balance\|\.balance" templates/`
+  and inspect every hit. The rule of thumb: one logical bug has N display surfaces —
+  fix them all or the inconsistency will confuse a business owner who uses multiple
+  pages of the same app.
 - **Run `python manage.py test` before every push** (baseline suite in `core/tests.py`).
   Highest-priority paths: STK Push URL/env routing per business, Receipt gap-free
   numbering, Quick Sell checkout (all three payment methods), keg sale + reconciliation
