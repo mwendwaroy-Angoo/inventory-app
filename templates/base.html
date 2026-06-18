@@ -53,6 +53,41 @@
         }
         body.biz-bar .page-title { color: var(--biz-accent); }
 
+        /* ── Navbar beer mug icon (bar businesses only) ── */
+        .nav-beer-icon {
+            position: relative;
+            display: inline-block;
+            animation: beer-glow-pulse 3s ease-in-out infinite;
+        }
+        @keyframes beer-glow-pulse {
+            0%, 100% { filter: drop-shadow(0 0 2px rgba(200,117,42,0.15)); }
+            50%       { filter: drop-shadow(0 0 7px rgba(200,117,42,0.55)); }
+        }
+        .nav-beer-icon::before,
+        .nav-beer-icon::after {
+            content: '';
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(200,235,255,0.70);
+            filter: blur(1.5px);
+            pointer-events: none;
+            animation: nav-beer-smoke ease-out infinite;
+        }
+        .nav-beer-icon::before {
+            width: 5px; height: 5px; top: -2px; left: 22%;
+            animation-duration: 2.8s; animation-delay: 0s;
+        }
+        .nav-beer-icon::after {
+            width: 4px; height: 4px; top: -1px; left: 52%;
+            animation-duration: 3.2s; animation-delay: 1.0s;
+        }
+        @keyframes nav-beer-smoke {
+            0%   { transform: translateY(0)     scale(1);   opacity: 0; }
+            20%  { opacity: 0.75; }
+            85%  { opacity: 0.05; }
+            100% { transform: translateY(-14px) scale(2.2); opacity: 0; }
+        }
+
         /* ── Secondary nav active indicator (JS adds .biz-active) ── */
         .secondary-header .biz-active {
             color: var(--biz-accent) !important;
@@ -382,7 +417,7 @@
         <nav class="navbar navbar-expand-lg {% if user.is_authenticated %}navbar-auth{% else %}navbar-guest{% endif %}">
             <div class="container">
                 <a class="navbar-brand" href="{% if user.is_authenticated %}{% if user.userprofile.is_rider %}{% url 'rider_dashboard' %}{% elif user.userprofile.is_supplier %}{% url 'supplier_dashboard' %}{% else %}{% url 'home' %}{% endif %}{% else %}{% url 'home' %}{% endif %}">
-                    {% if biz_profile.type == 'bar' %}🍺 {% endif %}Duka <span>Mwecheche</span>
+                    {% if biz_profile.type == 'bar' %}<span class="nav-beer-icon">🍺</span> {% endif %}Duka <span>Mwecheche</span>
                 </a>
 
                 {% if user.is_authenticated %}

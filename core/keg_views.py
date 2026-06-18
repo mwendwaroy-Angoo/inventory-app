@@ -1406,6 +1406,12 @@ def record_breakage(request):
 
     note = request.POST.get("note", "").strip()
 
+    if item.current_balance() < qty:
+        return JsonResponse({
+            "ok": False,
+            "error": f"Not enough stock. Available: {item.current_balance()} {item.unit}"
+        }, status=400)
+
     Transaction.objects.create(
         business=business,
         item=item,

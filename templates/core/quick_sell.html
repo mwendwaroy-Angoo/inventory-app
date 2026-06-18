@@ -589,7 +589,7 @@
                 {% endif %}
             </div>
             <div class="qs-item-stock {% if item.balance <= 0 %}out{% elif item.balance <= item.reorder_level %}low{% endif %}">
-                {{ item.balance|floatformat:-2 }} {{ item.unit }}
+                {% if item.balance <= 0 %}Out of Stock{% else %}{{ item.balance|floatformat:-2 }} {{ item.unit }}{% endif %}
             </div>
         </div>
         {% empty %}
