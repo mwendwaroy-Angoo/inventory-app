@@ -53,6 +53,7 @@
           <input type="hidden" name="daraja_consumer_key" value="{{ business.daraja_consumer_key }}">
           <input type="hidden" name="daraja_consumer_secret" value="{{ business.daraja_consumer_secret }}">
           <input type="hidden" name="daraja_passkey" value="{{ business.daraja_passkey }}">
+          <input type="hidden" name="daraja_environment" value="{{ business.daraja_environment }}">
 
           <!-- Preferred Channel -->
           <div class="mb-4">
@@ -315,6 +316,19 @@
               {% endif %}
               <small style="color: #777; display: block; margin-top: 0.3rem;">
                 {% trans 'Required for STK Push (Request Payment). Issued by Safaricom at go-live alongside your Consumer Key and Secret.' %}
+              </small>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" style="color: var(--gold); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em;">
+                {% trans 'Daraja Environment' %}
+              </label>
+              {{ form.daraja_environment }}
+              {% if form.daraja_environment.errors %}
+                <div class="text-danger small mt-1">{{ form.daraja_environment.errors.0 }}</div>
+              {% endif %}
+              <small style="color: #777; display: block; margin-top: 0.3rem;">
+                {% trans 'Keep on Sandbox while testing. Switch to Production only after Safaricom has approved your go-live request — production credentials will not work against the sandbox cluster.' %}
               </small>
             </div>
 

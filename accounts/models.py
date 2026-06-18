@@ -72,6 +72,12 @@ class Business(models.Model):
     daraja_c2b_registered = models.BooleanField(
         default=False,
         help_text='True once C2B confirmation URL has been registered with Safaricom')
+    daraja_environment = models.CharField(
+        max_length=20,
+        choices=[('sandbox', 'Sandbox'), ('production', 'Production')],
+        default='sandbox',
+        help_text='Select Production only after Safaricom has approved your go-live request for this shortcode.',
+    )
 
     # ── Pre-App Business History ──
     pre_app_cumulative_profit = models.DecimalField(

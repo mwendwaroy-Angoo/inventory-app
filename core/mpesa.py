@@ -45,8 +45,8 @@ URLS = {
 }
 
 
-def _get_urls():
-    return URLS.get(MPESA_ENV, URLS['sandbox'])
+def _get_urls(env=None):
+    return URLS.get(env or MPESA_ENV, URLS['sandbox'])
 
 
 # ── AUTH ─────────────────────────────────────────────────────────────────────
@@ -59,14 +59,14 @@ def get_access_token():
     )
 
 
-def _get_access_token_for(consumer_key, consumer_secret):
+def _get_access_token_for(consumer_key, consumer_secret, env=None):
     """Get OAuth access token for the given credentials (per-business or global)."""
     if not consumer_key or not consumer_secret:
         logger.error("M-Pesa credentials not configured")
         return None
     try:
         response = requests.get(
-            _get_urls()['oauth'],
+            _get_urls(env)['oauth'],
             auth=(consumer_key, consumer_secret),
             timeout=30,
         )
@@ -91,23 +91,26 @@ def _generate_password(shortcode=None, passkey=None):
 
 def initiate_stk_push(phone_number, amount, account_reference, description,
                       callback_url, consumer_key=None, consumer_secret=None,
-                      shortcode=None, passkey=None, use_till=True):
+                      shortcode=None, passkey=None, use_till=True, env=None):
     """
     Initiate Lipa Na M-Pesa Online (STK Push).
 
     Pass per-business credentials (consumer_key, consumer_secret, shortcode,
-    passkey) when calling on behalf of a specific business. Falls back to
+    passkey, env) when calling on behalf of a specific business. Falls back to
     global settings when any param is omitted or blank.
 
     use_till=True  → TransactionType: CustomerBuyGoodsOnline  (Till / Buy Goods)
     use_till=False → TransactionType: CustomerPayBillOnline   (Paybill)
+    env: 'sandbox' or 'production' — overrides global MPESA_ENV for this call.
     """
     _key    = consumer_key    or getattr(settings, 'MPESA_CONSUMER_KEY',    '')
     _secret = consumer_secret or getattr(settings, 'MPESA_CONSUMER_SECRET', '')
     _code   = shortcode       or getattr(settings, 'MPESA_SHORTCODE',       '')
     _pass   = passkey         or getattr(settings, 'MPESA_PASSKEY',         '')
+    resolved_env = env or MPESA_ENV
 
-    access_token = _get_access_token_for(_key, _secret)
+    logger.info("STK Push using env=%s shortcode=%s", resolved_env, _code)
+    access_token = _get_access_token_for(_key, _secret, env=resolved_env)
     if not access_token:
         return None
 
@@ -130,7 +133,7 @@ def initiate_stk_push(phone_number, amount, account_reference, description,
 
     try:
         response = requests.post(
-            _get_urls()['stk_push'],
+            _get_urls(resolved_env)['stk_push'],
             json=payload,
             headers={
                 'Authorization': f'Bearer {access_token}',
@@ -140,7 +143,7 @@ def initiate_stk_push(phone_number, amount, account_reference, description,
         )
         response.raise_for_status()
         data = response.json()
-        logger.info("STK Push initiated: %s shortcode=%s", data.get('CheckoutRequestID'), _code)
+        logger.info("STK Push initiated: %s shortcode=%s env=%s", data.get('CheckoutRequestID'), _code, resolved_env)
         return data
     except requests.RequestException as e:
         logger.error("STK Push error: %s", e)
@@ -148,18 +151,19 @@ def initiate_stk_push(phone_number, amount, account_reference, description,
 
 
 def query_stk_status(checkout_request_id, consumer_key=None, consumer_secret=None,
-                     shortcode=None, passkey=None):
+                     shortcode=None, passkey=None, env=None):
     """Query the status of an STK Push transaction.
 
-    Pass per-business credentials to query against the correct shortcode.
-    Falls back to global settings when params are omitted or blank.
+    Pass per-business credentials (including env) to query against the correct
+    shortcode and cluster. Falls back to global settings when params are omitted or blank.
     """
     _key    = consumer_key    or getattr(settings, 'MPESA_CONSUMER_KEY',    '')
     _secret = consumer_secret or getattr(settings, 'MPESA_CONSUMER_SECRET', '')
     _code   = shortcode       or getattr(settings, 'MPESA_SHORTCODE',       '')
     _pass   = passkey         or getattr(settings, 'MPESA_PASSKEY',         '')
+    resolved_env = env or MPESA_ENV
 
-    access_token = _get_access_token_for(_key, _secret)
+    access_token = _get_access_token_for(_key, _secret, env=resolved_env)
     if not access_token:
         return None
 
@@ -174,7 +178,7 @@ def query_stk_status(checkout_request_id, consumer_key=None, consumer_secret=Non
 
     try:
         response = requests.post(
-            _get_urls()['stk_query'],
+            _get_urls(resolved_env)['stk_query'],
             json=payload,
             headers={
                 'Authorization': f'Bearer {access_token}',
@@ -246,7 +250,7 @@ def generate_mpesa_qr(merchant_name, shortcode, trx_code, amount=None, ref_no='P
 
 # ── C2B URL REGISTRATION ──────────────────────────────────────────────────────
 
-def register_c2b_url(consumer_key, consumer_secret, shortcode, confirmation_url, validation_url):
+def register_c2b_url(consumer_key, consumer_secret, shortcode, confirmation_url, validation_url, env=None):
     """
     Register C2B callback URLs with Safaricom for a specific shortcode (Till/Paybill).
 
@@ -259,6 +263,7 @@ def register_c2b_url(consumer_key, consumer_secret, shortcode, confirmation_url,
         shortcode: The Till or Paybill number
         confirmation_url: Full HTTPS URL Safaricom will POST payment confirmations to
         validation_url: Full HTTPS URL Safaricom will call before completing payment
+        env: 'sandbox' or 'production' — overrides global MPESA_ENV for this call.
 
     Returns:
         dict with 'success' bool and 'message' str
@@ -266,9 +271,11 @@ def register_c2b_url(consumer_key, consumer_secret, shortcode, confirmation_url,
     if not consumer_key or not consumer_secret or not shortcode:
         return {'success': False, 'message': 'Consumer Key, Consumer Secret and Shortcode are required.'}
 
+    resolved_env = env or MPESA_ENV
+
     # Get access token using THIS business's own credentials
     try:
-        token_url = _get_urls()['oauth']
+        token_url = _get_urls(resolved_env)['oauth']
         token_resp = requests.get(
             token_url,
             auth=(consumer_key, consumer_secret),
@@ -292,7 +299,7 @@ def register_c2b_url(consumer_key, consumer_secret, shortcode, confirmation_url,
 
     try:
         resp = requests.post(
-            _get_urls()['register_url'],
+            _get_urls(resolved_env)['register_url'],
             json=payload,
             headers={
                 'Authorization': f'Bearer {access_token}',

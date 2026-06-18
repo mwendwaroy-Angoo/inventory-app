@@ -326,6 +326,7 @@ class PaymentSettingsForm(forms.ModelForm):
             'mpesa_till', 'mpesa_paybill', 'mpesa_paybill_account',
             'mpesa_pochi', 'mpesa_phone', 'preferred_payment_channel',
             'daraja_consumer_key', 'daraja_consumer_secret', 'daraja_passkey',
+            'daraja_environment',
         ]
         widgets = {
             'mpesa_till': forms.TextInput(attrs={'placeholder': 'e.g. 5XXXXXX'}),
@@ -342,6 +343,7 @@ class PaymentSettingsForm(forms.ModelForm):
                 attrs={'placeholder': 'Paste Lipa Na M-Pesa Passkey from Daraja portal'},
                 render_value=True,
             ),
+            'daraja_environment': forms.Select(),
         }
 
     def __init__(self, *args, **kwargs):

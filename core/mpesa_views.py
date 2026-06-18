@@ -323,6 +323,7 @@ def stk_push_view(request):
         shortcode=biz_shortcode,
         passkey=business.daraja_passkey or None,
         use_till=bool(business.mpesa_till),
+        env=business.daraja_environment,
     )
 
     if result and result.get('ResponseCode') == '0':
@@ -371,6 +372,7 @@ def payment_status(request, payment_id):
             consumer_secret=biz.daraja_consumer_secret or None,
             shortcode=(biz.mpesa_till or biz.mpesa_paybill or '').strip() or None,
             passkey=biz.daraja_passkey or None,
+            env=biz.daraja_environment,
         )
         if stk_result and stk_result.get('ResultCode') is not None:
             result_code = int(stk_result['ResultCode'])
@@ -775,6 +777,7 @@ def register_business_c2b(request):
         shortcode=shortcode,
         confirmation_url=confirmation_url,
         validation_url=validation_url,
+        env=business.daraja_environment,
     )
 
     if result['success']:

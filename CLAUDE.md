@@ -293,6 +293,18 @@ Fonts: Playfair Display (headings), DM Sans (body)
   patched three different ways (CSS class hiding, a Django template guard, a JS
   ternary) before discovering the real cause: jQuery/Select2 was never loaded on
   item_form.html at all.
+- **Before marking any fix "done" — regression sweep**: Search the whole codebase for
+  every call site that reads or writes whatever model field, settings value, or shared
+  function you just changed — not just the one you were fixing. If you changed
+  `_get_urls()`, grep every caller. If you changed a model field default, grep every
+  reader. Confirm each still behaves correctly before calling the sprint done. This is
+  what caught the `MPESA_ENV` routing bug (Sprint 18): three functions all called
+  `_get_urls()` with no env awareness, silent until audited together.
+- **Run `python manage.py test` before every push** (baseline suite in `core/tests.py`).
+  Highest-priority paths: STK Push URL/env routing per business, Receipt gap-free
+  numbering, Quick Sell checkout (all three payment methods), keg sale + reconciliation
+  arithmetic, bar tab settlement. Add a test whenever a silent regression costs real
+  money or a client's trust — not after the fact.
 
 ---
 
@@ -536,14 +548,15 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   `/mpesa/stk-push/` expects JSON (json.loads). Tab STK Push uses raw `fetch` with
   Content-Type:application/json instead of the `post()` helper — this is correct and
   intentional. Do not convert it to use `post()`.
-- Daraja per-business STK Push (post-Sprint 16): `initiate_stk_push()` and
-  `query_stk_status()` in mpesa.py now accept per-business credentials
-  (consumer_key, consumer_secret, shortcode, passkey) and fall back to global
-  settings when omitted. `stk_push_view` and `payment_status` already pass business
-  credentials. Business.daraja_passkey added (accounts migration 0029). Payment
-  Settings UI shows the passkey field. The only remaining gap is Quick Sell cart →
-  STK Push (see Next Sprint Candidates #5). Do NOT write a new stk function — just
-  pass the business's four fields to the existing initiate_stk_push() call.
+- Daraja per-business STK Push (post-Sprint 18): `initiate_stk_push()`,
+  `query_stk_status()`, and `register_c2b_url()` in mpesa.py now accept an `env`
+  kwarg ('sandbox'|'production') alongside the per-business credential kwargs.
+  `_get_urls(env=None)` and `_get_access_token_for(..., env=None)` both thread env
+  through. `stk_push_view`, `payment_status`, and `register_business_c2b` all pass
+  `env=business.daraja_environment`. `Business.daraja_environment` (accounts migration
+  0031, default='sandbox') is toggled in Payment Settings. ROOT CAUSE of the original
+  bug: `_get_urls()` was called without env awareness so all API calls went to sandbox
+  even when per-business production credentials were configured.
 - Daraja TransactionType for Till (Buy Goods) = `CustomerBuyGoodsOnline`. For Paybill
   = `CustomerPayBillOnline`. mpesa.py currently uses `CustomerBuyGoodsOnline` in
   initiate_stk_push — correct for Till. If a business has only a Paybill (no Till),
@@ -569,3 +582,4 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
 - Sprint 15 (2026-06-18): STK Push pipeline fixes — (1) Bridge: mpesa_callback + payment_status now call _bridge_stk_to_prompt() to create PendingTransactionPrompt for manual STK pushes (no order/tab); idempotent via mpesa_receipt guard. (2) Poll timeout: extended from 12×5s (60s) to 24×5s (2 min) with visible amber message on timeout in both pending_prompts.html and business_payment_page.html. (3) Pay-tab STK Push: Payment.bar_tab FK (migration 0058), stk_push_view accepts tab_id, _settle_tab_from_payment() does FIFO BarTabEntry settlement + Receipt.issue on full settlement; tabs drawer "📲 STK Push" button + tabStkModal with 2-min polling. (4) EMVCo QR: generate_emv_qr_string() in mpesa.py builds Safaricom MPMQR TLV string (CRC16-CCITT); mpesa_qr_view returns mode=emv between Daraja img fail and URL fallback; payment page renders with qrcodejs — Roy must test-scan with real M-Pesa app. Next: EMVCo scan test, then Business-Type Aware UI Phase B.
 - Sprint 16 (2026-06-18): Per-business Daraja credentials complete — Business.daraja_passkey (accounts migration 0029); initiate_stk_push() + query_stk_status() in mpesa.py now accept per-business consumer_key/secret/shortcode/passkey kwargs, fall back to global settings; use_till flag sets correct TransactionType (Buy Goods vs PayBill); stk_push_view + payment_status pass business credentials; Payment Settings UI adds Passkey field; channels form now preserves daraja fields via hidden inputs (was silently erasing them on save). Receipt + auto-SMS on prompt confirmation; portion presets in confirm form + sale_amount fix. Pending: Quick Sell cart → STK Push (see Next Sprint Candidates #5).
 - Sprint 17 (2026-06-18): Bar board mobile layout fix — header buttons now wrap on small screens (title on its own line, flex-wrap on button row) so Reconciliation/Daily Report/Pokea Barrel no longer overflow on phone. Single-session enforcement — UserProfile.current_session_key + allow_concurrent_sessions (accounts migration 0030); accounts/signals.py writes session key on user_logged_in; SingleSessionMiddleware in accounts/middleware.py kicks stale sessions on next request with bilingual warning; Django superusers always exempt. Roy must set allow_concurrent_sessions=True on his own UserProfile via Django admin (/admin/) to allow multi-device dev testing. STK Push in tabs: bar board tabs have full STK push (Sprint 15). Quick Sell tabs = credit/deni only, no STK push (that is Sprint Candidates #5). Debt reminder confirmed correct (send_sms_notification, message first param).
+- Sprint 18 (2026-06-18): M-Pesa env routing fix — Business.daraja_environment CharField (accounts migration 0031, default='sandbox'); _get_urls(env=None), _get_access_token_for(..., env=None), initiate_stk_push/query_stk_status/register_c2b_url all accept env kwarg; stk_push_view + payment_status + register_business_c2b pass env=business.daraja_environment; Payment Settings UI adds Sandbox/Production toggle with explanation. Baseline automated test suite (core/tests.py): 12 tests covering STK Push URL routing per env, OAuth token cluster, query_stk_status routing, Receipt sequential numbering and per-business isolation. Regression discipline added to CLAUDE.md (sweep all callers before marking done; run tests before push).
