@@ -213,6 +213,8 @@
   gap: 3px;
   flex-shrink: 0;
   padding-top: 2px;
+  position: relative;
+  overflow: visible;
 }
 .keg-barrel-body {
   width: 34px;
@@ -245,6 +247,23 @@
   transition: height 1.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
   z-index: 1;
   border-radius: 0 0 5px 5px;
+  animation: keg-idle-wave 6s ease-in-out infinite;
+}
+.keg-liquid::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 25%,
+    rgba(255,255,255,0.11) 48%,
+    rgba(255,255,255,0.06) 54%,
+    transparent 75%
+  );
+  animation: keg-shimmer 5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: inherit;
 }
 /* ── Liquid colours by keg TYPE (override level for dark/gold/regular) ── */
 /* Default fallback (no type set) — amber lager */
@@ -333,6 +352,71 @@
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.5; }
 }
+
+/* ── Idle liquid surface wave ────────────────────── */
+@keyframes keg-idle-wave {
+  0%, 100% { border-top-left-radius: 5px; border-top-right-radius: 1px; }
+  25%       { border-top-left-radius: 1px; border-top-right-radius: 6px; }
+  50%       { border-top-left-radius: 6px; border-top-right-radius: 2px; }
+  75%       { border-top-left-radius: 2px; border-top-right-radius: 5px; }
+}
+
+/* ── Light shimmer across liquid surface ────────── */
+@keyframes keg-shimmer {
+  0%, 100% { opacity: 0.5; transform: translateX(-3px) skewX(-1deg); }
+  50%       { opacity: 1;   transform: translateX(3px)  skewX(1deg);  }
+}
+
+/* ── Micro bubbles rising through liquid ─────────── */
+@keyframes keg-bubble-rise {
+  0%   { transform: translateY(0)     scale(1);   opacity: 0.6; }
+  70%  { opacity: 0.25; }
+  100% { transform: translateY(-60px) scale(0.4); opacity: 0;   }
+}
+.keg-bubble {
+  position: absolute;
+  bottom: 8%;
+  width: 2px;
+  height: 2px;
+  background: rgba(255,255,255,0.45);
+  border-radius: 50%;
+  animation: keg-bubble-rise 3.5s ease-in infinite;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* ── Cold mist / vapor above barrel rim ─────────── */
+@keyframes keg-mist-rise {
+  0%   { transform: translateY(0)    scale(1);   opacity: 0;    }
+  18%  { opacity: 0.55; }
+  80%  { opacity: 0.08; }
+  100% { transform: translateY(-26px) scale(2.6); opacity: 0;   }
+}
+.keg-mist {
+  position: absolute;
+  /* bottom of mist sits at barrel top (82px barrel + 2px wrap padding) */
+  bottom: 84px;
+  left: 0;
+  width: 34px;
+  height: 28px;
+  pointer-events: none;
+  z-index: 10;
+  overflow: visible;
+}
+.keg-mist span {
+  position: absolute;
+  bottom: 0;
+  width: 5px;
+  height: 5px;
+  background: rgba(195,228,255,0.6);
+  border-radius: 50%;
+  filter: blur(1.8px);
+  animation: keg-mist-rise ease-out infinite;
+}
+.keg-mist span:nth-child(1) { left: 12%; animation-duration: 3.0s; animation-delay: 0s;    }
+.keg-mist span:nth-child(2) { left: 38%; animation-duration: 3.6s; animation-delay: 0.85s; }
+.keg-mist span:nth-child(3) { left: 62%; animation-duration: 2.8s; animation-delay: 1.7s;  }
+.keg-mist span:nth-child(4) { left: 80%; animation-duration: 3.3s; animation-delay: 0.45s; }
 
 .keg-bottom-warn {
   font-size: 0.7rem;
@@ -1597,11 +1681,17 @@
         var barrelViz =
           '<div class="keg-barrel-wrap" title="' + pct + '% iliyobaki"' +
                ' onclick="window._surgeLiquid(' + kg.tapped_barrel_id + ')">' +
+            '<div class="keg-mist">' +
+              '<span></span><span></span><span></span><span></span>' +
+            '</div>' +
             '<div class="keg-barrel-body">' +
               '<div class="keg-liquid ' + lvlClass + ' ' + typeClass + '"' +
                    ' id="keg-liq-' + kg.tapped_barrel_id + '"' +
                    ' style="height:' + pct + '%;">' +
                 '<div class="keg-foam"></div>' +
+                '<span class="keg-bubble" style="left:18%;animation-delay:0.3s"></span>' +
+                '<span class="keg-bubble" style="left:52%;animation-delay:1.8s"></span>' +
+                '<span class="keg-bubble" style="left:76%;animation-delay:0.95s"></span>' +
               '</div>' +
             '</div>' +
             '<div class="keg-gauge">' +
