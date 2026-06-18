@@ -503,6 +503,32 @@
         text-align: left;
     }
 
+    /* ── SUCCESS MODAL — scrollable body, pinned button ── */
+    .qs-success-modal {
+        max-height: 92vh;
+        display: flex;
+        flex-direction: column;
+        padding: 1.25rem 1.5rem 1.25rem;
+    }
+    .qs-success-header { flex-shrink: 0; margin-bottom: 0.25rem; }
+    .qs-success-body   { flex: 1; overflow-y: auto; min-height: 0; }
+    .qs-success-footer { flex-shrink: 0; padding-top: 0.75rem; }
+    /* receipt inside success modal fills the scrollable area — no fixed cap */
+    .qs-success-modal .qs-receipt { max-height: none; overflow-y: visible; }
+
+    /* ── CART INLINE QTY CONTROLS ── */
+    .qs-cart-item-controls { display: flex; align-items: center; gap: 0.3rem; }
+    .qs-ci-btn {
+        width: 26px; height: 26px;
+        border: 1px solid #444; border-radius: 5px;
+        background: transparent; color: var(--gold);
+        font-size: 1rem; font-weight: 700; cursor: pointer;
+        display: inline-flex; align-items: center; justify-content: center;
+        padding: 0; line-height: 1; flex-shrink: 0;
+    }
+    .qs-ci-btn:active { background: rgba(201,168,76,0.18); }
+    .qs-cart-item-qty { min-width: 1.6rem; text-align: center; color: var(--pearl); font-weight: 600; }
+
     .qs-receipt-line {
         display: flex;
         justify-content: space-between;
@@ -623,44 +649,56 @@
 
 <!-- Success Modal -->
 <div class="qs-modal-overlay" id="qsSuccessModal">
-    <div class="qs-modal">
-        <div style="font-size: 3rem; margin-bottom: 0.5rem;" id="qsSuccessIcon">✅</div>
-        <h4 id="qsSuccessTitle">{% trans 'Sale Recorded!' %}</h4>
-        <div id="qsTabNotice" style="display:none; margin-bottom:0.6rem; padding:0.55rem 0.75rem;
-             background:rgba(13,202,240,0.1); border:1px solid rgba(13,202,240,0.3);
-             border-radius:8px; font-size:0.82rem; color:#0dcaf0; line-height:1.5;"></div>
-        <div class="qs-receipt" id="qsReceipt"></div>
+    <div class="qs-modal qs-success-modal">
 
-        <!-- Digital receipt row (shown only when receipt was created) -->
-        <div id="qsReceiptActions" style="display:none; margin-top:0.75rem;">
-            <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem;">
-                <a id="qsReceiptLink" href="#" target="_blank" rel="noopener"
-                   style="flex:1; padding:0.55rem; background:rgba(201,168,76,0.12); border:1px solid rgba(201,168,76,0.3); color:var(--gold); border-radius:8px; font-size:0.82rem; font-weight:600; text-align:center; text-decoration:none;">
-                    🧾 {% trans 'View Receipt' %}
-                </a>
-                <button id="qsShareBtn"
-                        style="flex:1; padding:0.55rem; background:rgba(255,255,255,0.05); border:1px solid #333; color:var(--pearl); border-radius:8px; font-size:0.82rem; font-weight:600; cursor:pointer;">
-                    📤 {% trans 'Share' %}
-                </button>
-            </div>
-            <div id="qsQrWrap" style="text-align:center; margin-bottom:0.5rem;">
-                <div id="qsQrCode" style="display:inline-block; border-radius:8px; overflow:hidden;"></div>
-                <div style="font-size:0.68rem; color:#b0b0b0; margin-top:0.25rem;">{% trans 'Scan to view receipt' %}</div>
-            </div>
-            <div style="display:flex; gap:0.4rem;">
-                <input type="tel" id="qsSmsPhone" placeholder="07XX XXX XXX"
-                       style="flex:1; background:#111; border:1px solid #333; border-radius:6px; color:var(--pearl); padding:0.4rem 0.65rem; font-size:0.8rem;">
-                <button id="qsSendSmsBtn"
-                        style="padding:0.4rem 0.9rem; background:var(--gold); color:#111; border:none; border-radius:6px; font-weight:700; font-size:0.8rem; cursor:pointer;">
-                    SMS
-                </button>
-            </div>
-            <div id="qsSmsStatus" style="font-size:0.75rem; margin-top:0.3rem; display:none;"></div>
+        <!-- Header — always visible, never scrolls away -->
+        <div class="qs-success-header" style="text-align:center;">
+            <div style="font-size:2.6rem; margin-bottom:0.3rem;" id="qsSuccessIcon">✅</div>
+            <h4 id="qsSuccessTitle">{% trans 'Sale Recorded!' %}</h4>
+            <div id="qsTabNotice" style="display:none; margin-top:0.4rem; padding:0.55rem 0.75rem;
+                 background:rgba(13,202,240,0.1); border:1px solid rgba(13,202,240,0.3);
+                 border-radius:8px; font-size:0.82rem; color:#0dcaf0; line-height:1.5; text-align:left;"></div>
         </div>
 
-        <button class="qs-modal-add w-100 mt-3" onclick="document.getElementById('qsSuccessModal').classList.remove('active'); document.getElementById('qsQrCode').innerHTML = '';">
-            {% trans 'Continue Selling' %}
-        </button>
+        <!-- Scrollable body — receipt lines + digital receipt actions -->
+        <div class="qs-success-body">
+            <div class="qs-receipt" id="qsReceipt"></div>
+
+            <!-- Digital receipt row (shown only when receipt was created) -->
+            <div id="qsReceiptActions" style="display:none; margin-top:0.75rem;">
+                <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem;">
+                    <a id="qsReceiptLink" href="#" target="_blank" rel="noopener"
+                       style="flex:1; padding:0.55rem; background:rgba(201,168,76,0.12); border:1px solid rgba(201,168,76,0.3); color:var(--gold); border-radius:8px; font-size:0.82rem; font-weight:600; text-align:center; text-decoration:none;">
+                        🧾 {% trans 'View Receipt' %}
+                    </a>
+                    <button id="qsShareBtn"
+                            style="flex:1; padding:0.55rem; background:rgba(255,255,255,0.05); border:1px solid #333; color:var(--pearl); border-radius:8px; font-size:0.82rem; font-weight:600; cursor:pointer;">
+                        📤 {% trans 'Share' %}
+                    </button>
+                </div>
+                <div id="qsQrWrap" style="text-align:center; margin-bottom:0.5rem;">
+                    <div id="qsQrCode" style="display:inline-block; border-radius:8px; overflow:hidden;"></div>
+                    <div style="font-size:0.68rem; color:#b0b0b0; margin-top:0.25rem;">{% trans 'Scan to view receipt' %}</div>
+                </div>
+                <div style="display:flex; gap:0.4rem;">
+                    <input type="tel" id="qsSmsPhone" placeholder="07XX XXX XXX"
+                           style="flex:1; background:#111; border:1px solid #333; border-radius:6px; color:var(--pearl); padding:0.4rem 0.65rem; font-size:0.8rem;">
+                    <button id="qsSendSmsBtn"
+                            style="padding:0.4rem 0.9rem; background:var(--gold); color:#111; border:none; border-radius:6px; font-weight:700; font-size:0.8rem; cursor:pointer;">
+                        SMS
+                    </button>
+                </div>
+                <div id="qsSmsStatus" style="font-size:0.75rem; margin-top:0.3rem; display:none;"></div>
+            </div>
+        </div>
+
+        <!-- Footer — always pinned at bottom -->
+        <div class="qs-success-footer">
+            <button class="qs-modal-add w-100" onclick="document.getElementById('qsSuccessModal').classList.remove('active'); document.getElementById('qsQrCode').innerHTML = '';">
+                {% trans 'Continue Selling' %}
+            </button>
+        </div>
+
     </div>
 </div>
 
@@ -1097,19 +1135,34 @@
             var c = cart[i];
             html += '<div class="qs-cart-item">'
                 + '<span class="qs-cart-item-name">' + c.name + '</span>'
-                + '<span>'
-                + '<span class="qs-cart-item-qty">' + c.qty + ' ' + c.unit + '</span> '
-                + '<span class="qs-cart-item-subtotal">KES ' + (c.qty * c.price).toLocaleString() + '</span> '
+                + '<span class="qs-cart-item-controls">'
+                + '<button class="qs-ci-btn" data-action="minus" data-index="' + i + '">\u2212</button>'
+                + '<span class="qs-cart-item-qty">' + c.qty + '</span>'
+                + '<button class="qs-ci-btn" data-action="plus" data-index="' + i + '">+</button>'
+                + '<span class="qs-cart-item-subtotal">KES ' + (c.qty * c.price).toLocaleString() + '</span>'
                 + '<span class="qs-cart-item-remove" data-index="' + i + '">\u2715</span>'
                 + '</span></div>';
         }
         cartItemsEl.innerHTML = html;
     }
 
-    // ── REMOVE FROM CART ──
+    // ── CART ITEM CONTROLS (inline +/− and remove) ──
     cartItemsEl.addEventListener('click', function(e) {
+        var idx, c;
+        if (e.target.classList.contains('qs-ci-btn')) {
+            idx = parseInt(e.target.dataset.index);
+            c = cart[idx];
+            if (e.target.dataset.action === 'plus') {
+                var maxQty = (typeof c.balance !== 'undefined') ? c.balance : 999;
+                if (c.qty < maxQty) { c.qty += 1; updateCart(); }
+            } else {
+                if (c.qty > 1) { c.qty -= 1; updateCart(); }
+                else { cart.splice(idx, 1); updateCart(); }
+            }
+            return;
+        }
         if (e.target.classList.contains('qs-cart-item-remove')) {
-            var idx = parseInt(e.target.dataset.index);
+            idx = parseInt(e.target.dataset.index);
             cart.splice(idx, 1);
             updateCart();
         }
