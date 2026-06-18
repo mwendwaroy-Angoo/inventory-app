@@ -1,4 +1,7 @@
 from django.conf import settings
+from django.contrib import messages
+from django.contrib.auth import logout
+from django.shortcuts import redirect
 from django.utils import translation
 
 
@@ -42,3 +45,35 @@ class UserLanguageMiddleware:
 
         response = self.get_response(request)
         return response
+
+
+class SingleSessionMiddleware:
+    """
+    Enforces one active session per user.
+
+    When a user logs in from a new device/browser, anyone still using the old
+    session is logged out on their next request and shown a message.
+
+    Bypass: set UserProfile.allow_concurrent_sessions = True via Django admin
+    (intended for the developer who tests across multiple devices simultaneously).
+    Django superusers are also always exempt.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.user.is_authenticated and not request.user.is_superuser:
+            profile = getattr(request.user, 'userprofile', None)
+            if profile and not profile.allow_concurrent_sessions:
+                stored = profile.current_session_key
+                current = request.session.session_key
+                if stored and current and stored != current:
+                    logout(request)
+                    messages.warning(
+                        request,
+                        'Umefunguliwa nje — akaunti yako imefunguliwa kwenye kifaa kingine. '
+                        'Logged out: your account was signed in on another device.',
+                    )
+                    return redirect('login')
+        return self.get_response(request)

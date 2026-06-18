@@ -240,6 +240,16 @@ class UserProfile(models.Model):
         help_text='Staff can sell restricted items without triggering an owner approval request.'
     )
 
+    # ── Session Control ────────────────────────────────────────────────
+    current_session_key = models.CharField(
+        max_length=40, blank=True,
+        help_text='Session key of the most recent login. Used to enforce single active session per user.'
+    )
+    allow_concurrent_sessions = models.BooleanField(
+        default=False,
+        help_text='If True, this user may be logged in from multiple devices at once (e.g. for dev/testing).'
+    )
+
     def __str__(self):
         return f"{self.user.username} ({self.business.name if self.business else 'No Business'}) - {self.role}"
 
