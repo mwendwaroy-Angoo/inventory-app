@@ -3416,7 +3416,14 @@
     {% endfor %}
   }, 600);
   {% if success_data.payment_method == 'tab' %}
-  setTimeout(function () { window.openTabsDrawer(); }, 2000);
+  (function () {
+    var _smEl = document.getElementById('successModal');
+    if (_smEl) {
+      _smEl.addEventListener('hidden.bs.modal', function () { window.openTabsDrawer(); }, {once: true});
+    } else {
+      window.openTabsDrawer();
+    }
+  }());
   {% endif %}
 
   {% if success_data.receipt_url %}

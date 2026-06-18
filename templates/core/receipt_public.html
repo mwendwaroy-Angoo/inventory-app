@@ -109,6 +109,7 @@
         .pay-cash { background: rgba(120,180,90,0.15); color: #9fcaa0; }
         .pay-mpesa { background: rgba(120,200,100,0.15); color: #4caf50; }
         .pay-credit { background: rgba(192,57,90,0.15); color: #e87090; }
+        .pay-tab { background: rgba(201,168,76,0.15); color: #c9a84c; }
         .qr-section {
             text-align: center;
             padding: 1.2rem;
@@ -275,8 +276,8 @@
         <div class="receipt-footer">
             <span>
                 Malipo:
-                <span class="payment-badge {% if receipt.payment_method == 'mpesa' %}pay-mpesa{% elif receipt.payment_method == 'credit' %}pay-credit{% else %}pay-cash{% endif %}">
-                    {% if receipt.payment_method == 'mpesa' %}M-Pesa{% elif receipt.payment_method == 'credit' %}Credit / Deni{% else %}Cash{% endif %}
+                <span class="payment-badge {% if receipt.payment_method == 'mpesa' %}pay-mpesa{% elif receipt.payment_method == 'credit' %}pay-credit{% elif receipt.payment_method == 'tab' %}pay-tab{% else %}pay-cash{% endif %}">
+                    {% if receipt.payment_method == 'mpesa' %}M-Pesa{% elif receipt.payment_method == 'credit' %}Credit / Deni{% elif receipt.payment_method == 'tab' %}Tab{% else %}Cash{% endif %}
                 </span>
             </span>
             {% if receipt.customer_name %}<span>{{ receipt.customer_name }}</span>{% endif %}

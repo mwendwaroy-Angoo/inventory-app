@@ -283,7 +283,7 @@ def bar_board(request):
             receipt_number = None
             receipt_id = None
             try:
-                receipt_pm = 'credit' if payment_method == 'tab' else payment_method
+                receipt_pm = payment_method
                 rcpt = Receipt.issue(
                     business=business,
                     lines=receipt_lines,
