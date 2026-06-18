@@ -564,8 +564,12 @@ def add_transaction(request):
             # else: sale is within freely-sellable range — falls through below
         # ─────────────────────────────────────────────────────────────────────
 
-        if trans_type == "Issue":
-            if item.current_balance() < quantity:
+        if trans_type in ("Issue", "Wastage"):
+            # Both Issue and Wastage reduce stock — qty must be stored negative.
+            # Only Issue is guarded against going below zero; Wastage is allowed
+            # to exceed current stock (e.g. recording expired stock that was
+            # never properly received), but is still negated so balance falls.
+            if trans_type == "Issue" and item.current_balance() < quantity:
                 messages.error(
                     request,
                     _(

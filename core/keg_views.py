@@ -1406,19 +1406,14 @@ def record_breakage(request):
 
     note = request.POST.get("note", "").strip()
 
-    if item.current_balance() < qty:
-        return JsonResponse({
-            "ok": False,
-            "error": f"Not enough stock. Available: {item.current_balance()} {item.unit}"
-        }, status=400)
-
+    # qty must be stored negative — Wastage reduces stock.
+    # recorded_by is NOT a Transaction field; recipient carries the note instead.
     Transaction.objects.create(
         business=business,
         item=item,
         type="Wastage",
-        qty=qty,
+        qty=-qty,
         recipient=note or "Breakage / damage",
-        recorded_by=request.user,
         payment_method="cash",
     )
 
