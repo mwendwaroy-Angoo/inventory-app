@@ -2122,12 +2122,15 @@ class Receipt(models.Model):
     def issue(cls, business, lines, payment_method, user=None, customer_name='', customer_phone=''):
         import secrets as _secrets
         from django.db import transaction as _tx
-        from django.db.models import Max as _Max
         total = sum(float(line.get('subtotal', 0)) for line in lines)
         with _tx.atomic():
-            last = cls.objects.select_for_update().filter(
+            # select_for_update() + aggregate() is rejected by PostgreSQL ("FOR UPDATE is not
+            # allowed with aggregate functions"). Use order_by + first() to lock the latest
+            # row and read its number — correct and safe in both SQLite and PostgreSQL.
+            latest = cls.objects.select_for_update().filter(
                 business=business
-            ).aggregate(n=_Max('receipt_number'))['n'] or 0
+            ).order_by('-receipt_number').first()
+            last = latest.receipt_number if latest else 0
             return cls.objects.create(
                 business=business,
                 receipt_number=last + 1,
