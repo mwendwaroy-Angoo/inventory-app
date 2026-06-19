@@ -2245,6 +2245,19 @@ def quick_sell(request):
                         description=desc,
                         amount=amt,
                     )
+                # Ensure Customer record exists with phone so debt tracker can SMS them
+                from .models import Customer as _Customer
+                _cust = _Customer.objects.filter(
+                    business=user_profile.business, name=credit_recipient
+                ).first()
+                if _cust is None:
+                    _cust = _Customer.objects.create(
+                        business=user_profile.business, name=credit_recipient
+                    )
+                if credit_phone and not _cust.phone:
+                    _cust.phone = credit_phone
+                    _cust.save(update_fields=["phone"])
+
                 success_data = json.dumps({
                     "items": recorded,
                     "total": total,

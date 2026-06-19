@@ -173,6 +173,15 @@ def bar_board(request):
     is_owner = bool(getattr(up, 'is_owner', False))
     success_data = None
 
+    # Pass shift status to template so tiles can be greyed out immediately on load
+    if is_owner:
+        has_my_shift = True
+    else:
+        from .models import Shift as _ShiftCheck
+        has_my_shift = _ShiftCheck.objects.filter(
+            business=business, status='OPEN', staff=request.user
+        ).exists()
+
     if request.method == 'POST':
         # Shift enforcement — staff must have personally opened an active shift
         if not is_owner:
@@ -341,6 +350,7 @@ def bar_board(request):
         'success_data': success_data,
         'current_user_id': request.user.id,
         'non_keg_items': non_keg_items,
+        'has_my_shift': has_my_shift,
     })
 
 

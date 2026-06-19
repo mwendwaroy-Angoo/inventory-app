@@ -20,6 +20,10 @@
 }
 .keg-tile.stale    { border-color: rgba(192,57,90,0.6); }
 .keg-tile.keg-no-tap { cursor: default; opacity: 0.72; }
+.keg-tile.shift-blocked { opacity: 0.42; cursor: not-allowed; filter: grayscale(30%); }
+.keg-tile.shift-blocked:hover { transform: none; border-color: #3a3a3a; }
+#shift-no-shift-banner { display:none; }
+#shift-no-shift-banner.visible { display:block; }
 
 .keg-name {
   font-family: 'Playfair Display', serif;
@@ -644,6 +648,14 @@
        border-radius:8px; padding:0.5rem 0.9rem; font-size:0.82rem;">
     <span style="color:#ff9800; font-weight:600; margin-right:0.75rem;">🧑‍🍽 On Duty:</span>
     <span id="waitress-panel-names"></span>
+  </div>
+
+  <!-- No-shift banner (shown to staff without an open shift) -->
+  <div id="shift-no-shift-banner"{% if has_my_shift or is_owner %} style="display:none;"{% endif %}
+       style="background:rgba(192,57,90,0.1); border:1px solid rgba(192,57,90,0.3);
+              border-radius:10px; padding:0.7rem 1rem; margin-bottom:1rem;
+              color:#e07a8f; font-size:0.88rem; display:flex; align-items:center; gap:0.6rem;">
+    ⚠️ Fungua shift yako kwanza kabla ya kuuza. Bonyeza <strong style="color:#c9a84c; margin:0 4px;">Fungua Shift</strong> juu.
   </div>
 
   <!-- Keg tile grid — rendered by JS after board API call -->
@@ -1488,6 +1500,8 @@
   var KegRevMult  = {{ business.keg_revenue_multiplier }};
   var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
   var CSRF        = "{{ csrf_token }}";
+  /* Seeded from server — updated dynamically once shift API responds */
+  var _myShiftOpen = {% if has_my_shift %}true{% else %}false{% endif %};
 
   /* ── State ─────────────────────────────────────────────── */
   var _boardData  = {};   // item_id → keg data from board API
@@ -1771,6 +1785,7 @@
     });
 
     board.innerHTML = html;
+    _updateBoardShiftState();
   }
 
   function _populateReceiveItems(kegs) {
@@ -1791,6 +1806,10 @@
      SELL MODAL
   ════════════════════════════════════════════════════════ */
   window.openSellModal = function (itemId) {
+    if (!QS_IS_OWNER && !_myShiftOpen) {
+      showToast('Fungua shift yako kwanza kabla ya kuuza.');
+      return;
+    }
     if (_shiftBlockMsg) { showToast(_shiftBlockMsg); return; }
     var kg = _boardData[itemId];
     if (!kg || !kg.tapped_barrel_id) return;
@@ -2783,9 +2802,25 @@
   ════════════════════════════════════════════════════════ */
   var _activeShiftId   = null;
   var _shiftBlockMsg   = null;   // set when another staff's shift is running
-  var _myShiftOpen     = false;  // true only when THIS user's own shift is OPEN
+  /* _myShiftOpen is shared with the keg board JS — declared in the top IIFE and
+     seeded from the server. The shift AJAX call updates it once it responds. */
   var _currentUserId   = {{ current_user_id|default:0 }};
   var _isOwner         = {{ is_owner|yesno:"true,false" }};
+
+  function _updateBoardShiftState() {
+    if (_isOwner) return;
+    var board = document.getElementById('keg-board');
+    var banner = document.getElementById('shift-no-shift-banner');
+    if (!board) return;
+    var tiles = board.querySelectorAll('.keg-tile:not(.keg-no-tap)');
+    if (_myShiftOpen) {
+      tiles.forEach(function (t) { t.classList.remove('shift-blocked'); });
+      if (banner) banner.style.display = 'none';
+    } else {
+      tiles.forEach(function (t) { t.classList.add('shift-blocked'); });
+      if (banner) banner.style.display = 'flex';
+    }
+  }
 
   function loadShift() {
     fetch('/bar/shift/active/')
@@ -2818,6 +2853,7 @@
         '<span style="color:#888; font-size:.83rem;">Hakuna shift iliyofunguliwa</span>' +
         '<button class="shift-open-btn" onclick="window.openShiftModal()">+ Fungua Shift</button>' +
         '</div>';
+      _updateBoardShiftState();
       return;
     }
 
@@ -2831,6 +2867,7 @@
     } else {
       _shiftBlockMsg = null;
     }
+    _updateBoardShiftState();
     panel.style.display = 'block';
 
     var statusColor = s.status === 'OPEN' ? '#5dde7a' : '#f0a840';

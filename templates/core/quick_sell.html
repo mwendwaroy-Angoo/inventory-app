@@ -1278,11 +1278,10 @@
             if (label) {
                 if (this.value === 'tab') {
                     label.textContent = 'Jina la mteja / meza (kwa Tab — lazima)';
-                    if (phoneRow) phoneRow.style.display = 'none';
                 } else {
                     label.textContent = 'Jina la mteja (lazima kwa deni)';
-                    if (phoneRow) phoneRow.style.display = 'block';
                 }
+                if (phoneRow) phoneRow.style.display = 'block';
             }
         });
     });
@@ -1302,7 +1301,7 @@
             }
             document.getElementById('qsRecipientData').value = customerName.trim();
             var customerPhone = (document.getElementById('qsCreditCustomerPhone') || {}).value || '';
-            document.getElementById('qsCreditPhoneData').value = pm === 'tab' ? '' : customerPhone.trim();
+            document.getElementById('qsCreditPhoneData').value = customerPhone.trim();
         } else {
             document.getElementById('qsRecipientData').value = '';
             document.getElementById('qsCreditPhoneData').value = '';
