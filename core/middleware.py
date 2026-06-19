@@ -33,6 +33,8 @@ _SHIFT_EXEMPT_PREFIXES = (
     '/bar/orders/',   # waitress order queue
     '/bar/',          # bar board
     '/stock/bar/',    # board API
+    '/mpesa/',        # M-Pesa STK push, callbacks, prompts — never block payment flows
+    '/r/',            # public receipt pages (unauthenticated)
     '/sw.js',
     '/manifest.json',
     '/offline/',
