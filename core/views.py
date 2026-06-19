@@ -523,11 +523,15 @@ def add_transaction(request):
 
         new_customer_name = request.POST.get("new_customer_name", "").strip()
         if new_customer_name and trans_type == "Issue":
-            customer, _created = Customer.objects.get_or_create(
-                business=user_profile.business,
-                name=new_customer_name,
-                defaults={"phone": request.POST.get("new_customer_phone", "")},
-            )
+            customer = Customer.objects.filter(
+                business=user_profile.business, name=new_customer_name
+            ).first()
+            if customer is None:
+                customer = Customer.objects.create(
+                    business=user_profile.business,
+                    name=new_customer_name,
+                    phone=request.POST.get("new_customer_phone", ""),
+                )
             recipient = customer.name
 
         item = get_object_or_404(Item, id=item_id)
@@ -2261,10 +2265,13 @@ def quick_sell(request):
                 # Auto-create Customer for credit (deni) sales so debt tracker finds them
                 if payment_method_qs == "credit" and credit_recipient:
                     from .models import Customer as _Customer
-                    cust_obj, _cust_created = _Customer.objects.get_or_create(
-                        business=user_profile.business,
-                        name=credit_recipient,
-                    )
+                    cust_obj = _Customer.objects.filter(
+                        business=user_profile.business, name=credit_recipient
+                    ).first()
+                    if cust_obj is None:
+                        cust_obj = _Customer.objects.create(
+                            business=user_profile.business, name=credit_recipient
+                        )
                     if credit_phone and not cust_obj.phone:
                         cust_obj.phone = credit_phone
                         cust_obj.save(update_fields=["phone"])

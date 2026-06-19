@@ -512,6 +512,7 @@ Never use `{% widthratio %}` — unreliable in Django templates.
 ---
 
 ## Known Issues / Watch Points
+- `Customer` has NO `unique_together` on `(business, name)`. Never use `get_or_create(business=x, name=y)` — if duplicate Customer rows exist, Django raises `MultipleObjectsReturned`. Always use `filter(business=x, name=y).first()` and create only if None. ROOT CAUSE of the production 500 on keg tab sales (2026-06-19): bar_board used get_or_create, production DB had two Customer rows with same business+name from earlier test sessions.
 - `Store.__str__` must handle null business gracefully
 - `Notification` uses `related_name='app_notifications'` — always use this
 - `{% trans %}` tags break if formatter wraps them across lines

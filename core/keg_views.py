@@ -238,13 +238,15 @@ def bar_board(request):
                     served_by=request.user if not tab_server else None,
                 )
 
-        # Auto-create Customer so tab sales appear in debt tracker
+        # Auto-create Customer so tab sales appear in debt tracker.
+        # filter().first() instead of get_or_create — the Customer model has no
+        # unique_together on (business, name), so duplicate rows can exist in
+        # production; get_or_create raises MultipleObjectsReturned in that case.
         if payment_method == 'tab' and tab_customer:
             from .models import Customer as _Customer
-            _cust, _cust_created = _Customer.objects.get_or_create(
-                business=business,
-                name=tab_customer,
-            )
+            _cust = _Customer.objects.filter(business=business, name=tab_customer).first()
+            if _cust is None:
+                _Customer.objects.create(business=business, name=tab_customer)
 
         receipt_lines = []
         total_revenue = Decimal('0')
