@@ -2158,6 +2158,14 @@
       body.innerHTML =
         '<div class="text-center py-5" style="color:#b0b0b0;">Hakuna tabs wazi — wote wamelipa 🎉</div>';
       if (hdr) hdr.textContent = '';
+      // Auto-close the drawer 2 s after the last tab is cleared
+      if (_tabsJustSettled) {
+        _tabsJustSettled = false;
+        setTimeout(function () {
+          var el = document.getElementById('tabsDrawer');
+          if (el) { var oc = bootstrap.Offcanvas.getInstance(el); if (oc) oc.hide(); }
+        }, 2000);
+      }
       return;
     }
 
@@ -2231,12 +2239,21 @@
       .catch(function () { showToast('Hitilafu ya mtandao. Jaribu tena.'); });
   };
 
+  var _tabsJustSettled = false;
+
   window.settleTab = function (tabId, payMethod) {
+    // Disable all action buttons to prevent double-submit
+    document.querySelectorAll('.tab-action-btn').forEach(function (b) { b.disabled = true; });
+    _tabsJustSettled = true;
     post('/bar/tabs/' + tabId + '/settle/', {payment_method: payMethod})
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) return r.text().then(function () { throw new Error('HTTP ' + r.status); });
+        return r.json();
+      })
       .then(function (d) {
+        document.querySelectorAll('.tab-action-btn').forEach(function (b) { b.disabled = false; });
         if (d.ok) {
-          showToast('✓ Tab imelipwa! KES ' + fmt(d.total));
+          if (!d.already_settled) showToast('✓ Tab imelipwa! KES ' + fmt(d.total));
           if (d.receipt_url) {
             var banner = document.getElementById('tabReceiptBanner');
             var link = document.getElementById('tabReceiptLink');
@@ -2251,7 +2268,10 @@
           showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
         }
       })
-      .catch(function () { showToast('Hitilafu ya mtandao. Jaribu tena.'); });
+      .catch(function () {
+        document.querySelectorAll('.tab-action-btn').forEach(function (b) { b.disabled = false; });
+        showToast('Hitilafu ya mtandao. Jaribu tena.');
+      });
   };
 
   window.openVoidModal = function (tabId, custName) {

@@ -746,7 +746,12 @@ def settle_tab(request, tab_id):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
-    tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
+    tab = BarTab.objects.filter(id=tab_id, business=up.business).first()
+    if not tab:
+        return JsonResponse({'ok': False, 'error': 'Tab not found'}, status=404)
+    if tab.status != 'OPEN':
+        # Idempotent — already settled; return ok so the JS doesn't show an error on retry
+        return JsonResponse({'ok': True, 'already_settled': True, 'total': float(tab.total())})
 
     pay = (request.POST.get('payment_method') or 'cash').strip()
     if pay not in ('cash', 'mpesa'):

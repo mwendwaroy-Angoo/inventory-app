@@ -558,6 +558,28 @@
         .qs-item-name { font-size: 0.75rem; }
         .qs-item-price { font-size: 0.85rem; }
     }
+
+    /* ── QS Tabs Drawer ── */
+    .qs-tab-card {
+        background:#1a1a1a; border:1px solid #3a3a3a; border-radius:10px;
+        margin-bottom:0.75rem; padding:0.75rem;
+    }
+    .qs-tab-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem; }
+    .qs-tab-cust { color:#e2c36e; font-weight:700; font-size:0.95rem; }
+    .qs-tab-total { color:#c9a84c; font-weight:700; font-size:0.95rem; }
+    .qs-tab-server { font-size:0.72rem; color:#b0b0b0; margin-bottom:0.5rem; }
+    .qs-tab-entry { display:flex; align-items:center; gap:8px; padding:4px 0;
+        border-bottom:1px solid #2a2a2a; font-size:0.82rem; color:#f0ece4; }
+    .qs-tab-entry.paid { color:#555; text-decoration:line-through; }
+    .qs-tab-entry-amt { margin-left:auto; color:#b0b0b0; flex-shrink:0; }
+    .qs-tab-actions { display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.6rem; }
+    .qs-tab-btn {
+        flex:1; min-width:0; border:none; border-radius:7px; padding:6px 10px;
+        font-size:0.78rem; font-weight:600; cursor:pointer;
+    }
+    .qs-tab-btn:disabled { opacity:0.5; cursor:not-allowed; }
+    .qs-tab-btn-cash { background:rgba(201,168,76,0.15); color:#c9a84c; border:1px solid rgba(201,168,76,0.3); }
+    .qs-tab-btn-mpesa { background:rgba(76,175,80,0.12); color:#4caf50; border:1px solid rgba(76,175,80,0.3); }
 </style>
 {% endblock %}
 
@@ -566,7 +588,21 @@
     <!-- Header -->
     <div class="qs-header">
         <h2>⚡ {% trans 'Quick Sell' %}</h2>
-        <a href="{% url 'add_transaction' %}" class="btn btn-sm btn-secondary">{% trans 'Full Form' %} →</a>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+            {% if biz_profile.type == 'bar' %}
+            <button type="button" id="qsTabsBtn"
+                    style="position:relative; background:rgba(201,168,76,0.12);
+                           border:1px solid rgba(201,168,76,0.3); color:#c9a84c;
+                           border-radius:8px; padding:4px 12px; font-size:0.82rem; cursor:pointer;"
+                    onclick="qsOpenTabsDrawer()">
+                📋 Tabs
+                <span id="qsTabsBadge" style="display:none; position:absolute; top:-7px; right:-7px;
+                      background:#c0395a; color:#fff; border-radius:50%; width:18px; height:18px;
+                      font-size:0.65rem; line-height:18px; text-align:center;"></span>
+            </button>
+            {% endif %}
+            <a href="{% url 'add_transaction' %}" class="btn btn-sm btn-secondary">{% trans 'Full Form' %} →</a>
+        </div>
     </div>
 
     <!-- Search -->
@@ -904,6 +940,59 @@
     <input type="hidden" name="recipient" id="qsRecipientData" value="">
     <input type="hidden" name="credit_phone" id="qsCreditPhoneData" value="">
 </form>
+
+{% if biz_profile.type == 'bar' %}
+<!-- ── QS Tabs Drawer (offcanvas) ───────────────────────────────── -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="qsTabsDrawer"
+     style="max-width:420px; background:#2a2a2a; border-left:1px solid #3a3a3a;">
+  <div class="offcanvas-header" style="border-bottom:1px solid #3a3a3a; padding:0.75rem 1rem;">
+    <h5 class="offcanvas-title"
+        style="color:#c9a84c; font-family:'Playfair Display',serif; font-size:1rem; margin:0;">
+      📋 Tabs — Nani Hajalipa?
+      <span id="qs-tabs-unpaid" style="font-size:0.78rem; font-weight:400; color:#b0b0b0; margin-left:6px;"></span>
+    </h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div id="qsTabReceiptBanner" style="display:none; margin:0.5rem 0.75rem 0;
+       padding:0.55rem 0.75rem; background:rgba(201,168,76,0.12);
+       border:1px solid rgba(201,168,76,0.3); border-radius:8px;
+       font-size:0.82rem; color:#c9a84c; align-items:center; gap:0.5rem;">
+    <span>🧾</span>
+    <a id="qsTabReceiptLink" href="#" target="_blank" rel="noopener"
+       style="color:#c9a84c; font-weight:600; flex:1;">Angalia Risiti</a>
+    <button onclick="document.getElementById('qsTabReceiptBanner').style.display='none';"
+            style="background:none; border:none; color:#888; cursor:pointer; font-size:1rem; line-height:1;">×</button>
+  </div>
+  <div class="offcanvas-body" id="qs-tabs-body" style="padding:0.75rem; overflow-y:auto;">
+    <div class="text-center py-4" style="color:#b0b0b0;">
+      <div class="spinner-border spinner-border-sm me-2"></div>
+    </div>
+  </div>
+</div>
+
+<!-- QS Tick payment picker modal -->
+<div class="modal fade" id="qsTickModal" tabindex="-1" style="z-index:1060;">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
+        <h6 class="modal-title" style="color:#c9a84c;">Malipo ya sehemu hii</h6>
+      </div>
+      <div class="modal-body" style="padding:0.75rem 1rem;">
+        <p id="qs-tick-desc" style="color:#f0ece4; font-size:0.88rem; margin:0;"></p>
+      </div>
+      <div class="modal-footer flex-column gap-2" style="border-top:1px solid #3a3a3a; padding:0.75rem;">
+        <button class="btn btn-gold w-100" onclick="qsDoTick('cash')">Cash</button>
+        <button class="btn w-100"
+                style="background:rgba(76,175,80,0.12); border:1px solid rgba(76,175,90,0.35); color:#4caf50;"
+                onclick="qsDoTick('mpesa')">M-Pesa</button>
+        <button class="btn btn-sm w-100"
+                style="background:transparent; border:1px solid #333; color:#b0b0b0;"
+                data-bs-dismiss="modal">Acha</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block page_tour %}
@@ -1746,6 +1835,18 @@
                 + ' imeongezwa kwenye tab ya ' + successData.tab_customer
                 + '. Lipa kutoka Tabs Drawer baadaye.';
             notice.style.display = 'block';
+            // Refresh the tabs badge count so the 📋 button shows the new total
+            if (typeof qsLoadTabs === 'function') {
+                fetch('/bar/tabs/', {credentials: 'same-origin'})
+                    .then(function (r) { return r.ok ? r.json() : {tabs: []}; })
+                    .then(function (d) {
+                        var badge = document.getElementById('qsTabsBadge');
+                        if (badge && d.tabs) {
+                            badge.textContent = d.tabs.length;
+                            badge.style.display = d.tabs.length > 0 ? 'block' : 'none';
+                        }
+                    }).catch(function () {});
+            }
         }
 
         if (successData.receipt_url && successData.receipt_token) {
@@ -1815,5 +1916,190 @@
     })();
     {% endif %}
 })();
+
+{% if biz_profile.type == 'bar' %}
+/* ── QS Tabs Drawer JS ───────────────────────────────────────────── */
+(function () {
+    var CSRF = '{{ csrf_token }}';
+    var _qsTickPendingId = null;
+    var _qsTabsJustSettled = false;
+
+    function qsPost(url, data) {
+        var body = new URLSearchParams(data);
+        body.append('csrfmiddlewaretoken', CSRF);
+        return fetch(url, {method: 'POST', body: body, headers: {'X-CSRFToken': CSRF}});
+    }
+
+    function qsFmt(n) { return Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0}); }
+
+    function qsShowToast(msg) {
+        /* Reuse the qs success title briefly or fall back to alert */
+        var t = document.getElementById('qsSuccessTitle');
+        if (t) {
+            var prev = t.textContent;
+            t.textContent = msg;
+            setTimeout(function () { t.textContent = prev; }, 2500);
+        }
+    }
+
+    window.qsOpenTabsDrawer = function () {
+        var el = document.getElementById('qsTabsDrawer');
+        if (!el) return;
+        var oc = bootstrap.Offcanvas.getInstance(el) || new bootstrap.Offcanvas(el);
+        oc.show();
+        qsLoadTabs();
+    };
+
+    window.qsLoadTabs = function () {
+        var body = document.getElementById('qs-tabs-body');
+        if (!body) return;
+        body.innerHTML = '<div class="text-center py-4" style="color:#b0b0b0;">' +
+            '<div class="spinner-border spinner-border-sm me-2"></div></div>';
+        fetch('/bar/tabs/', {credentials: 'same-origin'})
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (d) { qsRenderTabs(d.tabs || []); })
+            .catch(function () {
+                var b = document.getElementById('qs-tabs-body');
+                if (b) b.innerHTML = '<div style="color:#c0395a;padding:1rem;">Tabs hazikupakia. ' +
+                    '<button onclick="qsLoadTabs()" style="background:none;border:1px solid rgba(192,57,90,0.4);' +
+                    'color:#c0395a;border-radius:6px;padding:3px 12px;font-size:0.8rem;cursor:pointer;margin-top:6px;">' +
+                    '↺ Jaribu Tena</button></div>';
+            });
+    };
+
+    function qsRenderTabs(tabs) {
+        var body = document.getElementById('qs-tabs-body');
+        var hdr  = document.getElementById('qs-tabs-unpaid');
+        var badge = document.getElementById('qsTabsBadge');
+        if (!body) return;
+
+        /* Update badge count */
+        if (badge) {
+            if (tabs.length > 0) {
+                badge.textContent = tabs.length;
+                badge.style.display = 'block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        if (tabs.length === 0) {
+            body.innerHTML = '<div class="text-center py-5" style="color:#b0b0b0;">Hakuna tabs wazi — wote wamelipa 🎉</div>';
+            if (hdr) hdr.textContent = '';
+            if (_qsTabsJustSettled) {
+                _qsTabsJustSettled = false;
+                setTimeout(function () {
+                    var el = document.getElementById('qsTabsDrawer');
+                    if (el) { var oc = bootstrap.Offcanvas.getInstance(el); if (oc) oc.hide(); }
+                }, 2000);
+            }
+            return;
+        }
+
+        var grand = tabs.reduce(function (s, t) { return s + t.unpaid_total; }, 0);
+        if (hdr) hdr.textContent = '— KES ' + qsFmt(grand) + ' bila malipo';
+
+        var html = '';
+        tabs.forEach(function (tab) {
+            var entries = '';
+            tab.entries.forEach(function (e) {
+                var sd = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+                entries +=
+                    '<div class="qs-tab-entry' + (e.is_paid ? ' paid' : '') + '">' +
+                    '<input type="checkbox"' + (e.is_paid ? ' checked disabled' : '') +
+                    ' onchange="qsTickEntry(' + e.id + ',\'' + sd + '\',' + e.amount + ')"' +
+                    ' style="accent-color:#c9a84c; flex-shrink:0;">' +
+                    '<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;">' + sd + '</span>' +
+                    '<span class="qs-tab-entry-amt">KES ' + qsFmt(e.amount) + '</span>' +
+                    '</div>';
+            });
+            var sc = tab.customer_name.replace(/'/g, "\\'");
+            html +=
+                '<div class="qs-tab-card" id="qs-tab-card-' + tab.id + '">' +
+                '<div class="qs-tab-head">' +
+                '<span class="qs-tab-cust">' + tab.customer_name + '</span>' +
+                '<span class="qs-tab-total">KES ' + qsFmt(tab.unpaid_total) + '</span>' +
+                '</div>' +
+                '<div class="qs-tab-server">' +
+                (tab.server_name ? 'via ' + tab.server_name + ' · ' : '') + tab.opened_at +
+                '</div>' +
+                '<div style="margin-bottom:0.4rem;">' + entries + '</div>' +
+                '<div class="qs-tab-actions">' +
+                '<button class="qs-tab-btn qs-tab-btn-cash" onclick="qsSettleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
+                '<button class="qs-tab-btn qs-tab-btn-mpesa" onclick="qsSettleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
+                '</div>' +
+                '</div>';
+        });
+        body.innerHTML = html;
+    }
+
+    window.qsSettleTab = function (tabId, payMethod) {
+        document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = true; });
+        _qsTabsJustSettled = true;
+        qsPost('/bar/tabs/' + tabId + '/settle/', {payment_method: payMethod})
+            .then(function (r) {
+                if (!r.ok) return r.text().then(function () { throw new Error('HTTP ' + r.status); });
+                return r.json();
+            })
+            .then(function (d) {
+                document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
+                if (d.ok) {
+                    if (!d.already_settled) qsShowToast('✓ Tab imelipwa! KES ' + qsFmt(d.total));
+                    if (d.receipt_url) {
+                        var banner = document.getElementById('qsTabReceiptBanner');
+                        var link   = document.getElementById('qsTabReceiptLink');
+                        if (banner && link) { link.href = d.receipt_url; banner.style.display = 'flex'; }
+                    }
+                    qsLoadTabs();
+                } else {
+                    qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+                }
+            })
+            .catch(function () {
+                document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
+                qsShowToast('Hitilafu ya mtandao. Jaribu tena.');
+            });
+    };
+
+    window.qsTickEntry = function (entryId, desc, amount) {
+        _qsTickPendingId = entryId;
+        var el = document.getElementById('qs-tick-desc');
+        if (el) el.textContent = desc + ' — KES ' + qsFmt(amount);
+        var m = document.getElementById('qsTickModal');
+        if (m) new bootstrap.Modal(m).show();
+    };
+
+    window.qsDoTick = function (payMethod) {
+        if (!_qsTickPendingId) return;
+        var id = _qsTickPendingId;
+        _qsTickPendingId = null;
+        var m = document.getElementById('qsTickModal');
+        if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
+        qsPost('/bar/tabs/entry/' + id + '/tick/', {payment_method: payMethod})
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (d) {
+                if (d.ok) {
+                    qsLoadTabs();
+                    if (d.tab_settled) qsShowToast('✓ Tab imelipwa kabisa!');
+                } else {
+                    qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+                }
+            })
+            .catch(function () { qsShowToast('Hitilafu ya mtandao. Jaribu tena.'); });
+    };
+
+    /* Refresh tab badge count on page load */
+    fetch('/bar/tabs/', {credentials: 'same-origin'})
+        .then(function (r) { return r.ok ? r.json() : {tabs: []}; })
+        .then(function (d) {
+            var badge = document.getElementById('qsTabsBadge');
+            if (badge && d.tabs && d.tabs.length > 0) {
+                badge.textContent = d.tabs.length;
+                badge.style.display = 'block';
+            }
+        })
+        .catch(function () {});
+}());
+{% endif %}
 </script>
 {% endblock %}
