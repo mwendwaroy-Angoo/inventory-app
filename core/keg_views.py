@@ -6,6 +6,7 @@ Sprint 3: tab sell path — BarTab CRUD, tabs drawer, tick-to-pay, convert-to-de
 Sprint 4: shift handover.
 """
 import json
+import logging
 from datetime import date as date_type
 from decimal import Decimal
 
@@ -17,6 +18,8 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Receipt, Shift, Transaction
+
+logger = logging.getLogger(__name__)
 
 
 def _get_up(request):
@@ -295,7 +298,10 @@ def bar_board(request):
                 receipt_number = rcpt.receipt_number
                 receipt_id = rcpt.id
             except Exception:
-                pass
+                logger.exception(
+                    "Receipt.issue failed in bar_board (user=%s business=%s payment=%s)",
+                    request.user.username, business.id, payment_method,
+                )
 
             receipt_url = (
                 request.build_absolute_uri(f'/r/{receipt_token}/')
@@ -313,19 +319,26 @@ def bar_board(request):
                 'receipt_id': receipt_id,
             }
 
-    non_keg_items = (
-        Item.objects
-        .filter(store__business=business, is_keg=False)
-        .order_by('description')
-        .values('id', 'description', 'unit', 'selling_price')
-    )
+    try:
+        non_keg_items = list(
+            Item.objects
+            .filter(store__business=business, is_keg=False)
+            .order_by('description')
+            .values('id', 'description', 'unit', 'selling_price')
+        )
+    except Exception:
+        logger.exception(
+            "bar_board non_keg_items query failed (user=%s business=%s)",
+            request.user.username, business.id,
+        )
+        non_keg_items = []
 
     return render(request, 'core/bar/bar_board.html', {
         'is_owner': is_owner,
         'business': business,
         'success_data': success_data,
         'current_user_id': request.user.id,
-        'non_keg_items': list(non_keg_items),
+        'non_keg_items': non_keg_items,
     })
 
 

@@ -14,7 +14,7 @@ SECRET_KEY = os.getenv(
     "SECRET_KEY", "django-insecure-#e-h-#sy&d7=%m2v$2g%&x_odbmwfi(%5zoeewt1(@y!$607ju"
 )
 
-DEBUG = False
+DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1")
 
 ALLOWED_HOSTS = [
     "dukamwecheche.co.ke",
