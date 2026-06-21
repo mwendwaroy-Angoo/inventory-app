@@ -992,6 +992,92 @@
     </div>
   </div>
 </div>
+
+<!-- ── QS Tab STK Push Modal ──────────────────────────────────── -->
+<div class="modal fade" id="qsTabStkModal" tabindex="-1" style="z-index:1060;">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
+        <h6 class="modal-title" style="color:#c9a84c;">📲 STK Push — Omba Malipo</h6>
+      </div>
+      <div class="modal-body" style="padding:0.75rem 1rem;">
+        <p id="qs-tab-stk-cust" style="color:#f0ece4; font-size:0.85rem; margin:0 0 0.75rem;"></p>
+        <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.25rem;">Simu ya Mteja</label>
+        <input type="tel" id="qs-tab-stk-phone" placeholder="07XX XXX XXX"
+               style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                      color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.88rem; margin-bottom:0.6rem;">
+        <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.25rem;">Kiasi (KES)</label>
+        <input type="number" id="qs-tab-stk-amount" min="1"
+               style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                      color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.88rem; margin-bottom:0.6rem;">
+        <div id="qs-tab-stk-result" style="display:none; padding:0.5rem 0.7rem; border-radius:6px; font-size:0.82rem; margin-top:0.4rem;"></div>
+      </div>
+      <div class="modal-footer flex-column gap-2" style="border-top:1px solid #3a3a3a; padding:0.75rem;">
+        <button id="qs-tab-stk-btn" class="btn w-100"
+                style="background:rgba(76,175,80,0.12); border:1px solid rgba(76,175,80,0.3); color:#4caf50;"
+                onclick="qsSendTabStk()">📲 Tuma Ombi</button>
+        <button class="btn btn-sm w-100"
+                style="background:transparent; border:1px solid #333; color:#b0b0b0;"
+                data-bs-dismiss="modal">Acha</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── QS Tab Debt Modal ───────────────────────────────────────── -->
+<div class="modal fade" id="qsTabDebtModal" tabindex="-1" style="z-index:1060;">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
+        <h6 class="modal-title" style="color:#c9a84c;">→ Hamisha kwa Deni</h6>
+      </div>
+      <div class="modal-body" style="padding:0.75rem 1rem;">
+        <p id="qs-tab-debt-info" style="color:#b0b0b0; font-size:0.82rem; margin:0 0 0.75rem;"></p>
+        <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.25rem;">Jina la Mteja</label>
+        <input type="text" id="qs-tab-debt-name"
+               style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                      color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.88rem; margin-bottom:0.6rem;">
+        <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.25rem;">Simu (hiari)</label>
+        <input type="tel" id="qs-tab-debt-phone" placeholder="07XX XXX XXX"
+               style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                      color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.88rem; margin-bottom:0.4rem;">
+        <div id="qs-tab-debt-error" style="display:none; color:#c0395a; font-size:0.8rem;"></div>
+      </div>
+      <div class="modal-footer flex-column gap-2" style="border-top:1px solid #3a3a3a; padding:0.75rem;">
+        <button id="qs-tab-debt-btn" class="btn btn-gold w-100" onclick="qsDoTabDebt()">Hamisha → Deni</button>
+        <button class="btn btn-sm w-100"
+                style="background:transparent; border:1px solid #333; color:#b0b0b0;"
+                data-bs-dismiss="modal">Acha</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── QS Tab Void Modal (owner only) ────────────────────────── -->
+<div class="modal fade" id="qsTabVoidModal" tabindex="-1" style="z-index:1060;">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
+        <h6 class="modal-title" style="color:#c0395a;">Tupa Tab</h6>
+      </div>
+      <div class="modal-body" style="padding:0.75rem 1rem;">
+        <p id="qs-tab-void-desc" style="color:#f0ece4; font-size:0.85rem; margin:0 0 0.75rem;"></p>
+        <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.25rem;">Sababu (hiari)</label>
+        <input type="text" id="qs-tab-void-reason" placeholder="e.g. Mteja ameondoka"
+               style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                      color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.88rem;">
+      </div>
+      <div class="modal-footer flex-column gap-2" style="border-top:1px solid #3a3a3a; padding:0.75rem;">
+        <button class="btn w-100"
+                style="background:rgba(192,57,90,0.15); border:1px solid rgba(192,57,90,0.4); color:#c0395a;"
+                onclick="qsDoTabVoid()">Tupa Tab</button>
+        <button class="btn btn-sm w-100"
+                style="background:transparent; border:1px solid #333; color:#b0b0b0;"
+                data-bs-dismiss="modal">Acha</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endif %}
 {% endblock %}
 
@@ -1920,6 +2006,7 @@
 /* ── QS Tabs Drawer JS ───────────────────────────────────────────── */
 (function () {
     var CSRF = '{{ csrf_token }}';
+    var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
     var _qsTickPendingId = null;
     var _qsTabsJustSettled = false;
 
@@ -2026,6 +2113,9 @@
                 '<div class="qs-tab-actions">' +
                 '<button class="qs-tab-btn qs-tab-btn-cash" onclick="qsSettleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
                 '<button class="qs-tab-btn qs-tab-btn-mpesa" onclick="qsSettleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
+                '<button class="qs-tab-btn" style="background:rgba(76,175,80,0.08);color:#4caf50;border:1px solid rgba(76,175,80,0.3);" onclick="qsOpenTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">📲 STK Push</button>' +
+                '<button class="qs-tab-btn" style="background:rgba(201,168,76,0.08);color:#c9a84c;border:1px solid rgba(201,168,76,0.25);" onclick="qsOpenTabDebt(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">→ Deni</button>' +
+                (QS_IS_OWNER ? '<button class="qs-tab-btn" style="background:rgba(192,57,90,0.1);color:#c0395a;border:1px solid rgba(192,57,90,0.3);" onclick="qsOpenTabVoid(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">Void</button>' : '') +
                 '</div>' +
                 '</div>';
         });
@@ -2080,6 +2170,167 @@
                 if (d.ok) {
                     qsLoadTabs();
                     if (d.tab_settled) qsShowToast('✓ Tab imelipwa kabisa!');
+                } else {
+                    qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+                }
+            })
+            .catch(function () { qsShowToast('Hitilafu ya mtandao. Jaribu tena.'); });
+    };
+
+    /* ── STK Push for QS tab ───────────────────────────────── */
+    var _qsPendingStkTabId = null;
+
+    window.qsOpenTabStk = function (tabId, amount, custName) {
+        _qsPendingStkTabId = tabId;
+        var cEl = document.getElementById('qs-tab-stk-cust');
+        if (cEl) cEl.textContent = 'Tab ya ' + custName + ' — KES ' + qsFmt(amount);
+        var pEl = document.getElementById('qs-tab-stk-phone'); if (pEl) pEl.value = '';
+        var aEl = document.getElementById('qs-tab-stk-amount'); if (aEl) aEl.value = amount;
+        var rEl = document.getElementById('qs-tab-stk-result'); if (rEl) rEl.style.display = 'none';
+        var btn = document.getElementById('qs-tab-stk-btn');
+        if (btn) { btn.disabled = false; btn.textContent = '📲 Tuma Ombi'; }
+        var m = document.getElementById('qsTabStkModal');
+        if (m) new bootstrap.Modal(m).show();
+    };
+
+    window.qsSendTabStk = function () {
+        if (!_qsPendingStkTabId) return;
+        var phone  = (document.getElementById('qs-tab-stk-phone').value || '').trim();
+        var amount = parseInt(document.getElementById('qs-tab-stk-amount').value || '0');
+        var rEl    = document.getElementById('qs-tab-stk-result');
+        var btn    = document.getElementById('qs-tab-stk-btn');
+        function stkErr(msg) {
+            rEl.style.background = 'rgba(192,57,90,0.15)'; rEl.style.color = '#c0395a';
+            rEl.textContent = msg; rEl.style.display = 'block';
+        }
+        if (!phone) { stkErr('Ingiza nambari ya simu ya mteja.'); return; }
+        if (!amount || amount < 1) { stkErr('Ingiza kiasi sahihi.'); return; }
+        btn.disabled = true; btn.textContent = '⏳ Inatuma...'; rEl.style.display = 'none';
+        fetch('/mpesa/stk-push/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF},
+            body: JSON.stringify({phone: phone, amount: amount, tab_id: _qsPendingStkTabId}),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.success) {
+                rEl.style.background = 'rgba(46,204,113,0.15)'; rEl.style.color = '#2ecc71';
+                rEl.textContent = '✅ Imetumwa! Mteja aidhinishe kwenye simu yake.';
+                rEl.style.display = 'block'; btn.textContent = '⏳ Inasubiri...';
+                _qsPollTabStk(d.payment_id);
+            } else {
+                btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+                stkErr('❌ ' + (d.error || 'Imeshindwa. Jaribu tena.'));
+            }
+        })
+        .catch(function () {
+            btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+            stkErr('❌ Hitilafu ya mtandao. Jaribu tena.');
+        });
+    };
+
+    function _qsPollTabStk(paymentId) {
+        var tries = 0;
+        var rEl = document.getElementById('qs-tab-stk-result');
+        var btn = document.getElementById('qs-tab-stk-btn');
+        var iv = setInterval(function () {
+            tries++;
+            fetch('/mpesa/status/' + paymentId + '/')
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (d.status === 'completed') {
+                        clearInterval(iv);
+                        rEl.style.background = 'rgba(46,204,113,0.15)'; rEl.style.color = '#2ecc71';
+                        rEl.textContent = '✅ Malipo yamepokelewa! Tab imefungwa.';
+                        btn.disabled = true; btn.textContent = '✓ Imelipwa';
+                        setTimeout(function () {
+                            var m = document.getElementById('qsTabStkModal');
+                            if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
+                            qsLoadTabs();
+                        }, 2000);
+                    } else if (d.status === 'failed') {
+                        clearInterval(iv);
+                        btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+                        rEl.style.background = 'rgba(192,57,90,0.15)'; rEl.style.color = '#c0395a';
+                        rEl.textContent = '❌ Mteja alikataa au malipo yalishindwa.';
+                    } else if (tries >= 24) {
+                        clearInterval(iv);
+                        btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+                        rEl.style.background = 'rgba(255,152,0,0.15)'; rEl.style.color = '#ff9800';
+                        rEl.textContent = '⏳ Bado tunasubiri — angalia tena baadaye ikiwa mteja alipitisha.';
+                    }
+                })
+                .catch(function () { if (tries >= 24) clearInterval(iv); });
+        }, 5000);
+    }
+
+    /* ── Convert tab to debt ───────────────────────────────── */
+    var _qsPendingDebtTabId = null;
+
+    window.qsOpenTabDebt = function (tabId, custName) {
+        _qsPendingDebtTabId = tabId;
+        var info = document.getElementById('qs-tab-debt-info');
+        if (info) info.textContent = 'Tab ya ' + custName + ' itahamishiwa kwa tracker ya madeni. Mteja atalipa baadaye.';
+        var nEl = document.getElementById('qs-tab-debt-name'); if (nEl) nEl.value = custName;
+        var pEl = document.getElementById('qs-tab-debt-phone'); if (pEl) pEl.value = '';
+        var eEl = document.getElementById('qs-tab-debt-error'); if (eEl) eEl.style.display = 'none';
+        var btn = document.getElementById('qs-tab-debt-btn');
+        if (btn) { btn.disabled = false; btn.textContent = 'Hamisha → Deni'; }
+        var m = document.getElementById('qsTabDebtModal');
+        if (m) new bootstrap.Modal(m).show();
+    };
+
+    window.qsDoTabDebt = function () {
+        if (!_qsPendingDebtTabId) return;
+        var name  = (document.getElementById('qs-tab-debt-name').value  || '').trim();
+        var phone = (document.getElementById('qs-tab-debt-phone').value || '').trim();
+        var eEl   = document.getElementById('qs-tab-debt-error');
+        var btn   = document.getElementById('qs-tab-debt-btn');
+        if (!name) { eEl.textContent = 'Ingiza jina la mteja.'; eEl.style.display = 'block'; return; }
+        btn.disabled = true; btn.textContent = 'Inahamisha...';
+        qsPost('/bar/tabs/' + _qsPendingDebtTabId + '/debt/', {customer_name: name, phone: phone})
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (d) {
+                btn.disabled = false; btn.textContent = 'Hamisha → Deni';
+                if (d.ok) {
+                    var m = document.getElementById('qsTabDebtModal');
+                    if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
+                    qsShowToast('✓ Deni la KES ' + qsFmt(d.unpaid_total) + ' limeandikwa kwa ' + d.customer_name);
+                    qsLoadTabs();
+                } else {
+                    eEl.textContent = d.error || 'Hitilafu.'; eEl.style.display = 'block';
+                }
+            })
+            .catch(function () {
+                btn.disabled = false; btn.textContent = 'Hamisha → Deni';
+                eEl.textContent = 'Hitilafu ya mtandao.'; eEl.style.display = 'block';
+            });
+    };
+
+    /* ── Void tab (owner only) ─────────────────────────────── */
+    var _qsPendingVoidTabId = null;
+
+    window.qsOpenTabVoid = function (tabId, custName) {
+        _qsPendingVoidTabId = tabId;
+        var desc = document.getElementById('qs-tab-void-desc');
+        if (desc) desc.textContent = 'Tab ya ' + custName + ' itatupwa. Pesa hazitarudishwa.';
+        var rEl = document.getElementById('qs-tab-void-reason'); if (rEl) rEl.value = '';
+        var m = document.getElementById('qsTabVoidModal');
+        if (m) new bootstrap.Modal(m).show();
+    };
+
+    window.qsDoTabVoid = function () {
+        if (!_qsPendingVoidTabId) return;
+        var reason = (document.getElementById('qs-tab-void-reason').value || '').trim() || 'Imetupwa';
+        var id = _qsPendingVoidTabId; _qsPendingVoidTabId = null;
+        var m = document.getElementById('qsTabVoidModal');
+        if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
+        qsPost('/bar/tabs/' + id + '/void/', {reason: reason})
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (d) {
+                if (d.ok) {
+                    qsShowToast('Tab imetupwa.');
+                    qsLoadTabs();
                 } else {
                     qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
                 }

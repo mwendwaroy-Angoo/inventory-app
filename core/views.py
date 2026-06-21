@@ -189,11 +189,16 @@ def home(request):
             try:
                 from .business_profiles import get_profile as _get_profile
                 if _get_profile(business).get('modules', {}).get('keg'):
-                    from datetime import date as _ddate
                     from .models import KegBarrel as _KB
-                    # Today's revenue across ALL Issue transactions (not shift-bound)
+                    # Only PAID transactions count as revenue (cash + mpesa).
+                    # Credit (open tabs, deni) stays as 'credit' until settle_tab
+                    # updates the transaction's payment_method to cash/mpesa.
+                    # Use timezone.localdate() so the filter matches the Nairobi
+                    # date stored in Transaction.date (Django converts UTC→local).
                     _bar_txns = Transaction.objects.filter(
-                        business=business, type='Issue', date=_ddate.today(),
+                        business=business, type='Issue',
+                        date=timezone.localdate(),
+                        payment_method__in=['cash', 'mpesa'],
                     ).select_related('item')
                     context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
                     # Tapped barrels and kegs near empty (<15% of target remaining)
