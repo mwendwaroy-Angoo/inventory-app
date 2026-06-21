@@ -1429,6 +1429,8 @@ def _resolve_category(cat_text):
     return Category.objects.create(code=code, level1=cat_text)
 
 
+@login_required
+@owner_required
 def add_item(request):
     user_profile = request.user.userprofile
 
