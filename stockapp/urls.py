@@ -84,6 +84,12 @@ from core.order_views import (
     cancel_table_order,
     my_orders_api,
 )
+from core.kitchen_views import (
+    kitchen_board,
+    kitchen_receive,
+    kitchen_tabs_list,
+    toggle_kitchen,
+)
 from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import (
     mpesa_callback,
@@ -244,6 +250,13 @@ urlpatterns = [
     path("bar/orders/mine/",                  my_orders_api,          name="my_orders_api"),
     path("bar/orders/<int:order_id>/update/", update_table_order,     name="update_table_order"),
     path("bar/orders/<int:order_id>/cancel/", cancel_table_order,     name="cancel_table_order"),
+
+    # ── Kitchen / Grill side venture ─────────────────────────────────────────
+    path("kitchen/",                kitchen_board,       name="kitchen_board"),
+    path("kitchen/receive/",        kitchen_receive,     name="kitchen_receive"),
+    path("kitchen/tabs/",           kitchen_tabs_list,   name="kitchen_tabs_list"),
+    path("kitchen/toggle/",         toggle_kitchen,      name="toggle_kitchen"),
+
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────
     path("approvals/", pending_approvals, name="pending_approvals"),

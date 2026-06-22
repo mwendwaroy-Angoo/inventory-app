@@ -209,6 +209,7 @@ class Store(models.Model):
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stores')
     name = models.CharField(max_length=100)
     suitable_for_types = models.ManyToManyField(BusinessType, related_name='suitable_stores', blank=True)
+    is_kitchen = models.BooleanField(default=False, help_text='Kitchen / grill side venture — separate POS board')
 
     def __str__(self):
         business_name = self.business.name if self.business else "No Business"
@@ -1894,6 +1895,8 @@ class BarTab(models.Model):
         max_length=80, blank=True,
         help_text='Waitress name when she has no login.'
     )
+    SOURCE_CHOICES = [('bar', 'Bar'), ('kitchen', 'Kitchen')]
+    source        = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='bar')
     status        = models.CharField(max_length=8, choices=STATUS_CHOICES, default='OPEN')
     opened_at     = models.DateTimeField(auto_now_add=True)
     settled_at    = models.DateTimeField(null=True, blank=True)

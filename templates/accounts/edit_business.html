@@ -234,6 +234,31 @@
             </div>
             <button type="button" class="btn btn-sm btn-outline-warning mt-1 mb-3" onclick="addTierRow()">+ {% trans 'Add Delivery Mode' %}</button>
 
+            <!-- ── Kitchen / Grill Module ── -->
+            <div style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:10px;padding:1rem;margin:1.5rem 0 0;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+                    <div>
+                        <div style="color:#f0ece4;font-weight:600;font-size:.95rem;">🍗 Kitchen / Grill Module</div>
+                        <div style="color:#b0b0b0;font-size:.8rem;margin-top:.2rem;">
+                            Enable a separate Kitchen Board for chipo, chicken, nyama choma, and other food sold at the entrance.
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:.75rem;">
+                        <span id="kitchen-status-label" style="font-size:.82rem;color:{% if business.has_kitchen %}#4caf50{% else %}#555{% endif %};">
+                            {% if business.has_kitchen %}Imewashwa{% else %}Imezimwa{% endif %}
+                        </span>
+                        <button id="kitchen-toggle-btn" class="btn btn-sm"
+                                style="background:{% if business.has_kitchen %}rgba(192,57,90,.15){% else %}rgba(76,175,80,.12){% endif %};border:1px solid {% if business.has_kitchen %}rgba(192,57,90,.4){% else %}rgba(76,175,80,.3){% endif %};color:{% if business.has_kitchen %}#c0395a{% else %}#4caf50{% endif %};"
+                                onclick="toggleKitchen()">
+                            {% if business.has_kitchen %}Zima Kitchen{% else %}Washa Kitchen{% endif %}
+                        </button>
+                        {% if business.has_kitchen %}
+                        <a href="{% url 'kitchen_board' %}" class="btn btn-sm btn-gold">Nenda Kitchen →</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
             <div class="d-flex gap-2 mt-4">
                 <button type="submit" class="btn btn-gold flex-fill py-2">{% trans 'Save Changes' %}</button>
                 <a href="{% url 'home' %}" class="btn btn-secondary flex-fill py-2">{% trans 'Cancel' %}</a>
@@ -399,5 +424,23 @@
         container.insertAdjacentHTML('beforeend', html);
         tierIndex++;
     }
+
+    /* ── Kitchen toggle ── */
+    window.toggleKitchen = function() {
+        var btn  = document.getElementById('kitchen-toggle-btn');
+        var lbl  = document.getElementById('kitchen-status-label');
+        var cur  = lbl.textContent.trim() === 'Imewashwa';
+        var enable = cur ? '0' : '1';
+        btn.disabled = true;
+        var body = new URLSearchParams({enable: enable, csrfmiddlewaretoken: '{{ csrf_token }}'});
+        fetch("{% url 'toggle_kitchen' %}", {method:'POST', body:body, headers:{'X-CSRFToken':'{{ csrf_token }}'}})
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+                btn.disabled = false;
+                if (d.ok) { location.reload(); }
+                else { alert(d.error||'Hitilafu.'); }
+            })
+            .catch(function(){ btn.disabled=false; alert('Hitilafu ya mtandao.'); });
+    };
 </script>
 {% endblock %}

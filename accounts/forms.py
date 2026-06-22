@@ -416,6 +416,7 @@ class AddStaffForm(forms.Form):
         choices=[
             ('staff',    'Staff (bartender / general)'),
             ('waitress', 'Waitress / Waiter'),
+            ('kitchen',  'Kitchen / Grill Staff'),
         ],
         initial='staff',
         label='Role',

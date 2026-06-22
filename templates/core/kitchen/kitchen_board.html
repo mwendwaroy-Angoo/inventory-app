@@ -1,0 +1,728 @@
+{% extends "base.html" %}
+{% block title %}Kitchen Board — {{ business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Layout ── */
+.kb-wrap       { display:flex; gap:1rem; align-items:flex-start; padding:0 0.5rem 4rem; }
+.kb-menu       { flex:1; min-width:0; }
+.kb-cart-panel { width:280px; flex-shrink:0; position:sticky; top:70px; }
+
+/* ── Section headers ── */
+.kb-section-title {
+  font-family:'Playfair Display',serif; font-size:1rem; color:#c9a84c;
+  padding:0.5rem 0 0.4rem; margin:0.8rem 0 0.5rem;
+  border-bottom:1px solid #333;
+}
+
+/* ── Menu tiles ── */
+.kb-tile {
+  background:#2a2a2a; border:1px solid #3a3a3a; border-radius:10px;
+  padding:0.65rem 0.75rem; cursor:pointer; transition:border-color .15s,transform .1s;
+  user-select:none;
+}
+.kb-tile:hover  { border-color:#c9a84c; transform:translateY(-1px); }
+.kb-tile:active { transform:scale(.97); }
+.kb-tile.out-of-stock { opacity:.45; cursor:not-allowed; }
+.kb-tile-name   { color:#f0ece4; font-size:.88rem; font-weight:500; line-height:1.3; }
+.kb-tile-price  { color:#c9a84c; font-size:.8rem; margin-top:.2rem; }
+.kb-tile-stock  { font-size:.72rem; margin-top:.15rem; }
+.kb-tile-stock.ok   { color:#4caf50; }
+.kb-tile-stock.low  { color:#ff9800; }
+.kb-tile-stock.out  { color:#c0395a; }
+/* Batch/grill tiles */
+.kb-tile-batch  { border-color:#4a3520; }
+.kb-tile-batch:hover { border-color:#c8752a; }
+.kb-envelope    { font-size:.72rem; color:#b0b0b0; margin-top:.15rem; }
+.kb-envelope .env-bar {
+  height:4px; background:#333; border-radius:2px; margin-top:.3rem; overflow:hidden;
+}
+.kb-envelope .env-fill { height:100%; background:#c8752a; border-radius:2px; }
+
+/* ── Cart panel ── */
+.kb-cart       { background:#2a2a2a; border:1px solid #3a3a3a; border-radius:12px; overflow:hidden; }
+.kb-cart-hdr   { background:#1a1a1a; padding:.6rem .85rem; font-size:.8rem; color:#b0b0b0; font-weight:600; display:flex; justify-content:space-between; align-items:center; }
+.kb-cart-body  { padding:.5rem .75rem; min-height:60px; max-height:240px; overflow-y:auto; }
+.kb-cart-empty { color:#555; font-size:.82rem; text-align:center; padding:.75rem 0; }
+.kb-cart-line  { display:flex; justify-content:space-between; align-items:center; padding:.3rem 0; border-bottom:1px solid #2f2f2f; font-size:.83rem; }
+.kb-cart-line-name { color:#f0ece4; flex:1; }
+.kb-cart-line-amt  { color:#c9a84c; margin-left:.5rem; white-space:nowrap; }
+.kb-cart-line-rm   { color:#555; background:none; border:none; cursor:pointer; font-size:.9rem; padding:0 .25rem; }
+.kb-cart-line-rm:hover { color:#c0395a; }
+.kb-cart-total { padding:.5rem .75rem; display:flex; justify-content:space-between; border-top:1px solid #3a3a3a; font-size:.88rem; }
+.kb-pay-section { padding:.6rem .75rem; border-top:1px solid #333; }
+.kb-pay-row { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.4rem; }
+.kb-pay-btn {
+  flex:1; min-width:80px; padding:.35rem .5rem; font-size:.78rem; border-radius:7px;
+  border:1px solid #444; background:#1a1a1a; color:#b0b0b0; cursor:pointer; text-align:center;
+}
+.kb-pay-btn.selected { border-color:#c9a84c; color:#c9a84c; background:rgba(201,168,76,.08); }
+.kb-pay-btn.pm-mpesa.selected  { border-color:#4caf50; color:#4caf50; background:rgba(76,175,80,.08); }
+.kb-pay-btn.pm-food-tab.selected { border-color:#c8752a; color:#c8752a; background:rgba(200,117,42,.08); }
+.kb-pay-btn.pm-bar-tab.selected  { border-color:#c9a84c; color:#c9a84c; background:rgba(201,168,76,.08); }
+#kb-tab-name-row { margin-bottom:.4rem; }
+#kb-tab-name-row input {
+  width:100%; background:#111; border:1px solid #333; border-radius:6px;
+  color:#f0ece4; padding:.35rem .6rem; font-size:.82rem;
+}
+.kb-checkout-btn {
+  width:100%; padding:.5rem; font-size:.88rem; border-radius:8px;
+  background:linear-gradient(135deg,#c9a84c,#e2c36e); color:#1a1a1a;
+  border:none; font-weight:700; cursor:pointer;
+}
+.kb-checkout-btn:disabled { opacity:.45; cursor:not-allowed; }
+
+/* ── Tabs button ── */
+.kb-tabs-btn {
+  position:fixed; bottom:1rem; right:1rem; z-index:900;
+  background:#2a2a2a; border:1px solid #c9a84c; color:#c9a84c;
+  border-radius:50px; padding:.45rem 1.1rem; font-size:.85rem; cursor:pointer;
+  box-shadow:0 2px 12px rgba(0,0,0,.4);
+}
+.kb-tabs-badge {
+  display:inline-block; background:#c0395a; color:#fff; border-radius:50%;
+  font-size:.7rem; font-weight:700; width:18px; height:18px; line-height:18px;
+  text-align:center; margin-left:.3rem; vertical-align:middle;
+}
+
+/* ── Preset modal ── */
+.kb-preset-item {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:.55rem .75rem; margin-bottom:.35rem;
+  background:#1a1a1a; border:1px solid #333; border-radius:8px; cursor:pointer;
+}
+.kb-preset-item:hover { border-color:#c9a84c; }
+.kb-preset-label { color:#f0ece4; font-size:.88rem; }
+.kb-preset-price { color:#c9a84c; font-weight:600; font-size:.9rem; }
+
+/* ── Toast ── */
+#kb-toast {
+  position:fixed; bottom:70px; left:50%; transform:translateX(-50%);
+  background:#2a2a2a; border:1px solid #3a3a3a; color:#f0ece4;
+  padding:.5rem 1.2rem; border-radius:20px; font-size:.83rem;
+  z-index:9999; display:none; white-space:nowrap; box-shadow:0 2px 12px rgba(0,0,0,.5);
+}
+
+/* ── Revenue badge ── */
+.kb-revenue-badge {
+  background:rgba(201,168,76,.12); border:1px solid rgba(201,168,76,.3);
+  color:#c9a84c; border-radius:8px; padding:.3rem .8rem;
+  font-size:.82rem; display:inline-flex; align-items:center; gap:.4rem;
+}
+
+@media(max-width:640px){
+  .kb-wrap { flex-direction:column; }
+  .kb-cart-panel { width:100%; position:static; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="padding:.75rem 0.5rem 0;">
+  <!-- Header -->
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem; margin-bottom:.75rem;">
+    <div style="display:flex; align-items:center; gap:.6rem;">
+      <span style="font-size:1.4rem;">🍗</span>
+      <div>
+        <div style="font-family:'Playfair Display',serif; font-size:1.1rem; color:#f0ece4;">Kitchen Board</div>
+        <div style="font-size:.75rem;" style="color:#b0b0b0;">{{ business.name }}</div>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;">
+      <div class="kb-revenue-badge">
+        🍽 Leo: <strong>KES {{ kitchen_revenue_today|floatformat:0 }}</strong>
+      </div>
+      {% if is_owner %}
+      <a href="{% url 'kitchen_receive' %}" style="display:none;" id="kb-receive-btn-placeholder"></a>
+      <button class="btn btn-sm" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#c9a84c;font-size:.8rem;"
+              onclick="openReceiveModal()">+ Pata Stok</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="kb-wrap">
+    <!-- Menu tiles -->
+    <div class="kb-menu">
+
+      <!-- Portion items -->
+      <div id="kb-portion-section">
+        <div class="kb-section-title">🍟 Fast Food</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:.5rem;" id="kb-portion-grid">
+          <!-- JS fills this -->
+        </div>
+      </div>
+
+      <!-- Batch / grill items -->
+      <div id="kb-batch-section" style="margin-top:.75rem;">
+        <div class="kb-section-title">🔥 Nyama Choma / Grill</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.5rem;" id="kb-batch-grid">
+          <!-- JS fills this -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Cart panel -->
+    <div class="kb-cart-panel">
+      <div class="kb-cart">
+        <div class="kb-cart-hdr">
+          <span>Mauzo ya Sasa</span>
+          <button onclick="clearCart()" style="background:none;border:none;color:#555;font-size:.75rem;cursor:pointer;">↺ Futa</button>
+        </div>
+        <div class="kb-cart-body" id="kb-cart-body">
+          <div class="kb-cart-empty">Gonga tile ili kuongeza kwenye mauzo</div>
+        </div>
+        <div class="kb-cart-total">
+          <span style="color:#b0b0b0;">Jumla</span>
+          <strong style="color:#c9a84c;" id="kb-cart-total">KES 0</strong>
+        </div>
+        <div class="kb-pay-section">
+          <div style="font-size:.75rem; color:#b0b0b0; margin-bottom:.35rem;">Malipo</div>
+          <div class="kb-pay-row">
+            <button class="kb-pay-btn pm-cash selected" onclick="selectPM('cash')">Cash</button>
+            <button class="kb-pay-btn pm-mpesa" onclick="selectPM('mpesa')">M-Pesa</button>
+          </div>
+          <div class="kb-pay-row">
+            <button class="kb-pay-btn pm-food-tab" onclick="selectPM('food_tab')">🍽 Food Tab</button>
+            <button class="kb-pay-btn pm-bar-tab" onclick="selectPM('bar_tab')">🍺 Bar Tab</button>
+          </div>
+          <div id="kb-tab-name-row" style="display:none;">
+            <input type="text" id="kb-tab-name" placeholder="Jina la mteja..." autocomplete="off" list="kb-bar-tab-list">
+            <datalist id="kb-bar-tab-list"></datalist>
+          </div>
+          <button class="kb-checkout-btn mt-2" id="kb-checkout-btn" onclick="doCheckout()" disabled>
+            Maliza Mauzo
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Floating tabs button -->
+<button class="kb-tabs-btn" onclick="openFoodTabs()">
+  🍽 Food Tabs
+  <span class="kb-tabs-badge" id="kb-tabs-badge" style="display:{% if food_tab_count > 0 %}inline-block{% else %}none{% endif %}">{{ food_tab_count }}</span>
+</button>
+
+<!-- Toast -->
+<div id="kb-toast"></div>
+
+<!-- ── Preset selector modal ── -->
+<div class="modal fade" id="kbPresetModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#c9a84c;" id="kb-preset-modal-title">Chagua kiwango</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.75rem;" id="kb-preset-modal-body">
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Batch sale modal (nyama choma price-point selector) ── -->
+<div class="modal fade" id="kbBatchModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#c8752a;" id="kb-batch-modal-title">Chagua bei</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.75rem;">
+        <div id="kb-batch-presets"></div>
+        <div style="margin-top:.6rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.25rem;">Au ingiza kiasi (KES)</label>
+          <div style="display:flex;gap:.4rem;">
+            <input type="number" id="kb-batch-custom-amount" min="10" step="10"
+                   placeholder="e.g. 350"
+                   style="flex:1;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+            <button class="btn btn-sm" style="background:rgba(200,117,42,.15);border:1px solid rgba(200,117,42,.4);color:#c8752a;"
+                    onclick="addBatchCustom()">+ Ongeza</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Receive stock modal (owner only) ── -->
+{% if is_owner %}
+<div class="modal fade" id="kbReceiveModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#c9a84c;">+ Pata Stok</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.85rem;">
+        <div style="margin-bottom:.6rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.25rem;">Bidhaa</label>
+          <select id="kr-item" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+            <option value="">— Chagua bidhaa —</option>
+          </select>
+        </div>
+        <div id="kr-portion-fields">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem;">
+            <div>
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Idadi Iliyopokelewa</label>
+              <input type="number" id="kr-qty" min="1" placeholder="e.g. 20"
+                     style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+            </div>
+            <div>
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Gharama ya Kununua (KES)</label>
+              <input type="number" id="kr-cost" min="0" placeholder="e.g. 1500"
+                     style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+            </div>
+          </div>
+        </div>
+        <div id="kr-batch-fields" style="display:none;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem;">
+            <div>
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Gharama ya Kununua (KES)</label>
+              <input type="number" id="kr-batch-cost" min="0" placeholder="e.g. 4500"
+                     style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+            </div>
+            <div>
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Lengo la Mapato (KES, hiari)</label>
+              <input type="number" id="kr-batch-target" min="0" placeholder="auto"
+                     style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+            </div>
+          </div>
+          <div>
+            <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Maelezo (hiari)</label>
+            <input type="text" id="kr-batch-note" placeholder="e.g. Mbuzi nusu"
+                   style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+          </div>
+        </div>
+        <div id="kr-error" style="display:none;color:#c0395a;font-size:.8rem;margin-top:.4rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;padding:.75rem;">
+        <button id="kr-submit-btn" class="btn btn-gold w-100" onclick="submitReceive()">Pokea</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Food Tabs offcanvas ── -->
+<div class="offcanvas offcanvas-end" id="kbTabsDrawer" tabindex="-1" style="width:340px;max-width:95vw;background:#1a1a1a;border-left:1px solid #3a3a3a;">
+  <div class="offcanvas-header" style="border-bottom:1px solid #3a3a3a;">
+    <h6 class="offcanvas-title" style="color:#c9a84c;">🍽 Food Tabs</h6>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body" style="padding:.75rem;" id="kb-tabs-body">
+    <div class="text-center py-4" style="color:#b0b0b0;">Inapakia...</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  var CSRF = '{{ csrf_token }}';
+  var IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
+
+  var _portionItems = {{ portion_items|safe }};
+  var _batchItems   = {{ batch_items|safe }};
+  var _barTabNames  = {{ bar_tab_names|safe }};
+
+  var _cart = [];       // [{item_id, bunch_id, preset_id, description, amount, qty}]
+  var _pm   = 'cash';
+  var _activeBatchItem = null;  // currently selected batch item for modal
+
+  /* ── Helpers ── */
+  function fmt(n) { return Number(n).toLocaleString('en-KE', {maximumFractionDigits:0}); }
+
+  function showToast(msg, ms) {
+    var t = document.getElementById('kb-toast');
+    t.textContent = msg; t.style.display = 'block';
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function(){ t.style.display='none'; }, ms||2200);
+  }
+
+  function postJSON(url, data) {
+    var body = new URLSearchParams(data);
+    body.append('csrfmiddlewaretoken', CSRF);
+    return fetch(url, {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}});
+  }
+
+  /* ── Build boards ── */
+  function buildPortionGrid() {
+    var grid = document.getElementById('kb-portion-grid');
+    var sec  = document.getElementById('kb-portion-section');
+    if (!_portionItems.length) { sec.style.display='none'; return; }
+    var html = '';
+    _portionItems.forEach(function(item){
+      var oos = item.balance <= 0;
+      var stockCls = oos ? 'out' : item.balance < 5 ? 'low' : 'ok';
+      var stockLbl = oos ? 'Hakuna stok' : item.balance + ' ' + item.unit;
+      var priceStr = item.presets.length
+        ? 'KES ' + fmt(item.presets[0].price) + (item.presets.length>1 ? ' – '+fmt(item.presets[item.presets.length-1].price) : '')
+        : 'KES ' + fmt(item.selling_price);
+      html += '<div class="kb-tile' + (oos?' out-of-stock':'') + '" onclick="tileClick(' + item.id + ')"' +
+              ' data-item-id="' + item.id + '">' +
+              '<div class="kb-tile-name">' + item.name + '</div>' +
+              '<div class="kb-tile-price">' + priceStr + '</div>' +
+              '<div class="kb-tile-stock ' + stockCls + '">' + stockLbl + '</div>' +
+              '</div>';
+    });
+    grid.innerHTML = html;
+  }
+
+  function buildBatchGrid() {
+    var grid = document.getElementById('kb-batch-grid');
+    var sec  = document.getElementById('kb-batch-section');
+    if (!_batchItems.length) { sec.style.display='none'; return; }
+    var html = '';
+    _batchItems.forEach(function(item){
+      var remaining = item.total_remaining;
+      var pct = 0;
+      if (item.open_bunches.length) {
+        var tot = item.open_bunches.reduce(function(s,b){ return s+b.target_revenue; }, 0);
+        var col = item.open_bunches.reduce(function(s,b){ return s+b.revenue_collected; }, 0);
+        pct = tot > 0 ? Math.min(100, Math.round(col/tot*100)) : 0;
+      }
+      var noStock = !item.has_stock;
+      html += '<div class="kb-tile kb-tile-batch' + (noStock?' out-of-stock':'') + '" onclick="batchTileClick(' + item.id + ')"' +
+              ' data-item-id="' + item.id + '">' +
+              '<div class="kb-tile-name">' + item.name + '</div>' +
+              '<div class="kb-envelope">' +
+                (noStock ? '<span style="color:#c0395a;">Hakuna — pokea tena</span>'
+                         : 'Imebaki: KES ' + fmt(remaining)) +
+                '<div class="env-bar"><div class="env-fill" style="width:' + pct + '%"></div></div>' +
+              '</div>' +
+              '</div>';
+    });
+    grid.innerHTML = html;
+  }
+
+  /* ── Payment method selector ── */
+  function selectPM(pm) {
+    _pm = pm;
+    document.querySelectorAll('.kb-pay-btn').forEach(function(b){ b.classList.remove('selected'); });
+    var cls = pm === 'cash' ? 'pm-cash' : pm === 'mpesa' ? 'pm-mpesa' : pm === 'food_tab' ? 'pm-food-tab' : 'pm-bar-tab';
+    var btn = document.querySelector('.kb-pay-btn.' + cls);
+    if (btn) btn.classList.add('selected');
+    var row = document.getElementById('kb-tab-name-row');
+    row.style.display = (pm === 'food_tab' || pm === 'bar_tab') ? 'block' : 'none';
+    if (pm === 'bar_tab') {
+      // Populate datalist with known open bar tab names
+      var dl = document.getElementById('kb-bar-tab-list');
+      dl.innerHTML = _barTabNames.map(function(n){ return '<option value="' + n + '">'; }).join('');
+    }
+  }
+  window.selectPM = selectPM;
+
+  /* ── Tile clicks ── */
+  window.tileClick = function(itemId) {
+    var item = _portionItems.find(function(i){ return i.id === itemId; });
+    if (!item) return;
+    if (item.balance <= 0) { showToast('Hakuna stok ya ' + item.name + '.'); return; }
+    if (item.presets && item.presets.length > 1) {
+      openPresetModal(item);
+    } else if (item.presets && item.presets.length === 1) {
+      addToCart({item_id: item.id, description: item.name + ' — ' + item.presets[0].label,
+                 amount: item.presets[0].price, qty: item.presets[0].qty});
+    } else {
+      addToCart({item_id: item.id, description: item.name, amount: item.selling_price, qty: 1});
+    }
+  };
+
+  window.batchTileClick = function(itemId) {
+    var item = _batchItems.find(function(i){ return i.id === itemId; });
+    if (!item) return;
+    if (!item.has_stock) { showToast('Hakuna ' + item.name + ' — pokea tena.'); return; }
+    _activeBatchItem = item;
+    openBatchModal(item);
+  };
+
+  /* ── Preset modal ── */
+  function openPresetModal(item) {
+    document.getElementById('kb-preset-modal-title').textContent = item.name;
+    var body = document.getElementById('kb-preset-modal-body');
+    body.innerHTML = item.presets.map(function(p){
+      return '<div class="kb-preset-item" onclick="addPreset(' + item.id + ',' + p.id + ',' +
+             JSON.stringify(item.name + ' — ' + p.label) + ',' + p.price + ',' + p.qty + ')">' +
+             '<span class="kb-preset-label">' + p.label + '</span>' +
+             '<span class="kb-preset-price">KES ' + fmt(p.price) + '</span>' +
+             '</div>';
+    }).join('');
+    new bootstrap.Modal(document.getElementById('kbPresetModal')).show();
+  }
+
+  window.addPreset = function(itemId, presetId, desc, price, qty) {
+    var m = bootstrap.Modal.getInstance(document.getElementById('kbPresetModal'));
+    if (m) m.hide();
+    addToCart({item_id: itemId, preset_id: presetId, description: desc, amount: price, qty: qty});
+  };
+
+  /* ── Batch modal ── */
+  function openBatchModal(item) {
+    document.getElementById('kb-batch-modal-title').textContent = item.name;
+    var presetsEl = document.getElementById('kb-batch-presets');
+    presetsEl.innerHTML = item.presets.length
+      ? item.presets.map(function(p){
+          var bunch = item.open_bunches[0];
+          return '<div class="kb-preset-item" onclick="addBatchPreset(' + (bunch ? bunch.id : 'null') + ',' +
+                 JSON.stringify(item.name + ' — ' + p.label) + ',' + p.price + ')">' +
+                 '<span class="kb-preset-label">' + p.label + '</span>' +
+                 '<span class="kb-preset-price">KES ' + fmt(p.price) + '</span>' +
+                 '</div>';
+        }).join('')
+      : '';
+    document.getElementById('kb-batch-custom-amount').value = '';
+    new bootstrap.Modal(document.getElementById('kbBatchModal')).show();
+  }
+
+  window.addBatchPreset = function(bunchId, desc, amount) {
+    var m = bootstrap.Modal.getInstance(document.getElementById('kbBatchModal'));
+    if (m) m.hide();
+    if (!_activeBatchItem) return;
+    var bunch = bunchId ? _activeBatchItem.open_bunches.find(function(b){ return b.id===bunchId; }) : _activeBatchItem.open_bunches[0];
+    addToCart({bunch_id: bunch ? bunch.id : null, description: desc, amount: amount, qty: 1});
+  };
+
+  window.addBatchCustom = function() {
+    var amount = parseFloat(document.getElementById('kb-batch-custom-amount').value)||0;
+    if (amount <= 0) { showToast('Ingiza kiasi sahihi.'); return; }
+    if (!_activeBatchItem) return;
+    var bunch = _activeBatchItem.open_bunches[0];
+    var m = bootstrap.Modal.getInstance(document.getElementById('kbBatchModal'));
+    if (m) m.hide();
+    addToCart({bunch_id: bunch ? bunch.id : null, description: _activeBatchItem.name + ' ya ' + fmt(amount) + '/-', amount: amount, qty: 1});
+  };
+
+  /* ── Cart management ── */
+  function addToCart(entry) {
+    _cart.push(entry);
+    renderCart();
+    showToast('✓ ' + entry.description);
+  }
+
+  window.removeCartLine = function(idx) {
+    _cart.splice(idx, 1);
+    renderCart();
+  };
+
+  window.clearCart = function() { _cart = []; renderCart(); };
+
+  function renderCart() {
+    var body = document.getElementById('kb-cart-body');
+    var totalEl = document.getElementById('kb-cart-total');
+    var btn = document.getElementById('kb-checkout-btn');
+    if (_cart.length === 0) {
+      body.innerHTML = '<div class="kb-cart-empty">Gonga tile ili kuongeza kwenye mauzo</div>';
+      totalEl.textContent = 'KES 0';
+      btn.disabled = true;
+      return;
+    }
+    var total = 0;
+    var html = '';
+    _cart.forEach(function(line, idx){
+      total += parseFloat(line.amount)||0;
+      html += '<div class="kb-cart-line">' +
+              '<span class="kb-cart-line-name">' + line.description + '</span>' +
+              '<span class="kb-cart-line-amt">KES ' + fmt(line.amount) + '</span>' +
+              '<button class="kb-cart-line-rm" onclick="removeCartLine(' + idx + ')">✕</button>' +
+              '</div>';
+    });
+    body.innerHTML = html;
+    totalEl.textContent = 'KES ' + fmt(total);
+    btn.disabled = false;
+  }
+
+  /* ── Checkout ── */
+  window.doCheckout = function() {
+    if (!_cart.length) return;
+    var tabName = (document.getElementById('kb-tab-name').value||'').trim();
+    if ((_pm==='food_tab'||_pm==='bar_tab') && !tabName) {
+      document.getElementById('kb-tab-name').focus();
+      showToast('Ingiza jina la mteja.');
+      return;
+    }
+    var btn = document.getElementById('kb-checkout-btn');
+    btn.disabled = true; btn.textContent = 'Inatuma...';
+
+    var body = new URLSearchParams({
+      cart: JSON.stringify(_cart),
+      payment_method: _pm,
+      tab_customer: tabName,
+      csrfmiddlewaretoken: CSRF,
+    });
+    fetch('/kitchen/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        btn.disabled = false; btn.textContent = 'Maliza Mauzo';
+        if (d.ok) {
+          var msg = '✓ KES ' + fmt(d.total);
+          if (d.tab_customer) msg += ' — Tab ya ' + d.tab_customer;
+          if (d.receipt_number) msg += ' | Receipt #' + d.receipt_number;
+          showToast(msg, 3500);
+          _cart = []; renderCart();
+          // Reset tab name
+          document.getElementById('kb-tab-name').value = '';
+          // Refresh today's revenue
+          refreshRevenue();
+          // If food tab, refresh badge
+          if (_pm === 'food_tab') loadFoodTabBadge();
+        } else {
+          showToast('❌ ' + (d.error||'Hitilafu. Jaribu tena.'));
+        }
+      })
+      .catch(function(){ btn.disabled=false; btn.textContent='Maliza Mauzo'; showToast('❌ Hitilafu ya mtandao.'); });
+  };
+
+  function refreshRevenue() {
+    fetch('/kitchen/', {headers:{'Accept':'application/json'}}).catch(function(){});
+    // Reload the revenue badge by reloading the page silently after 2s
+    setTimeout(function(){ location.reload(); }, 2500);
+  }
+
+  /* ── Food Tabs drawer ── */
+  window.openFoodTabs = function() {
+    var el = document.getElementById('kbTabsDrawer');
+    if (!el) return;
+    var oc = bootstrap.Offcanvas.getInstance(el) || new bootstrap.Offcanvas(el);
+    oc.show();
+    loadFoodTabs();
+  };
+
+  function loadFoodTabs() {
+    var body = document.getElementById('kb-tabs-body');
+    body.innerHTML = '<div class="text-center py-4" style="color:#b0b0b0;"><div class="spinner-border spinner-border-sm me-2"></div></div>';
+    fetch('/kitchen/tabs/', {credentials:'same-origin', headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ renderFoodTabs(d.tabs||[]); })
+      .catch(function(){
+        document.getElementById('kb-tabs-body').innerHTML = '<div style="color:#c0395a;padding:.75rem;">Imeshindwa kupakia tabs.</div>';
+      });
+  }
+
+  function renderFoodTabs(tabs) {
+    var body = document.getElementById('kb-tabs-body');
+    if (!tabs.length) {
+      body.innerHTML = '<div class="text-center py-5" style="color:#b0b0b0;">Hakuna food tabs wazi 🎉</div>';
+      updateTabBadge(0); return;
+    }
+    updateTabBadge(tabs.length);
+    body.innerHTML = tabs.map(function(tab){
+      var entriesHtml = tab.entries.map(function(e){
+        return '<div style="display:flex;justify-content:space-between;font-size:.8rem;padding:.2rem 0;color:' + (e.is_paid?'#555':'#b0b0b0') + ';">' +
+               '<span>' + (e.is_paid?'<s>':'') + e.description + (e.is_paid?'</s>':'') + '</span>' +
+               '<span>KES ' + fmt(e.amount) + '</span></div>';
+      }).join('');
+      return '<div style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:10px;padding:.65rem .75rem;margin-bottom:.6rem;">' +
+             '<div style="display:flex;justify-content:space-between;margin-bottom:.35rem;">' +
+             '<strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +
+             '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
+             entriesHtml +
+             '<div style="border-top:1px solid #333;margin-top:.4rem;padding-top:.4rem;display:flex;justify-content:space-between;font-size:.85rem;">' +
+             '<strong style="color:#c9a84c;">Deni: KES ' + fmt(tab.unpaid_total) + '</strong></div>' +
+             '<div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap;">' +
+             '<button class="btn btn-sm btn-gold" onclick="settleKitchenTab(' + tab.id + ',\'cash\')">Cash</button>' +
+             '<button class="btn btn-sm" style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.3);color:#4caf50;" onclick="settleKitchenTab(' + tab.id + ',\'mpesa\')">M-Pesa</button>' +
+             '<button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;" onclick="voidKitchenTab(' + tab.id + ')">Void</button>' +
+             '</div></div>';
+    }).join('');
+  }
+
+  function updateTabBadge(count) {
+    var badge = document.getElementById('kb-tabs-badge');
+    if (!badge) return;
+    badge.textContent = count;
+    badge.style.display = count > 0 ? 'inline-block' : 'none';
+  }
+
+  function loadFoodTabBadge() {
+    fetch('/kitchen/tabs/', {credentials:'same-origin', headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ updateTabBadge((d.tabs||[]).length); })
+      .catch(function(){});
+  }
+
+  window.settleKitchenTab = function(tabId, pm) {
+    var body = new URLSearchParams({payment_method: pm, csrfmiddlewaretoken: CSRF});
+    fetch('/bar/tabs/' + tabId + '/settle/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) { showToast('✓ Tab imelipwa.'); loadFoodTabs(); }
+        else showToast('❌ ' + (d.error||'Hitilafu.'));
+      })
+      .catch(function(){ showToast('❌ Hitilafu ya mtandao.'); });
+  };
+
+  window.voidKitchenTab = function(tabId) {
+    if (!confirm('Unataka kufuta tab hii?')) return;
+    var body = new URLSearchParams({reason:'Imefutwa', csrfmiddlewaretoken:CSRF});
+    fetch('/bar/tabs/' + tabId + '/void/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if (d.ok) { showToast('Tab imefutwa.'); loadFoodTabs(); } })
+      .catch(function(){ showToast('❌ Hitilafu ya mtandao.'); });
+  };
+
+  {% if is_owner %}
+  /* ── Receive stock modal ── */
+  var _allItems = _portionItems.concat(_batchItems);
+
+  window.openReceiveModal = function() {
+    var sel = document.getElementById('kr-item');
+    sel.innerHTML = '<option value="">— Chagua bidhaa —</option>' +
+      _allItems.map(function(i){
+        return '<option value="' + i.id + '" data-batch="' + (i.open_bunches!==undefined?'1':'0') + '">' + i.name + '</option>';
+      }).join('');
+    sel.onchange = function() {
+      var opt = sel.options[sel.selectedIndex];
+      var isBatch = opt.getAttribute('data-batch') === '1';
+      document.getElementById('kr-portion-fields').style.display = isBatch ? 'none' : 'block';
+      document.getElementById('kr-batch-fields').style.display   = isBatch ? 'block' : 'none';
+    };
+    document.getElementById('kr-error').style.display = 'none';
+    new bootstrap.Modal(document.getElementById('kbReceiveModal')).show();
+  };
+
+  window.submitReceive = function() {
+    var itemId = document.getElementById('kr-item').value;
+    var errEl  = document.getElementById('kr-error');
+    if (!itemId) { errEl.textContent='Chagua bidhaa.'; errEl.style.display='block'; return; }
+    var opt = document.querySelector('#kr-item option[value="' + itemId + '"]');
+    var isBatch = opt && opt.getAttribute('data-batch') === '1';
+    var btn = document.getElementById('kr-submit-btn');
+    btn.disabled = true; btn.textContent = 'Inapokea...';
+    var data = {item_id: itemId, mode: isBatch ? 'batch' : 'portion', csrfmiddlewaretoken: CSRF};
+    if (isBatch) {
+      data.cost_price = document.getElementById('kr-batch-cost').value||'0';
+      data.target_revenue = document.getElementById('kr-batch-target').value||'';
+      data.note = document.getElementById('kr-batch-note').value||'';
+    } else {
+      data.qty = document.getElementById('kr-qty').value||'0';
+      data.cost_price = document.getElementById('kr-cost').value||'0';
+    }
+    var body = new URLSearchParams(data);
+    fetch('/kitchen/receive/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        btn.disabled=false; btn.textContent='Pokea';
+        if (d.ok) {
+          var m = bootstrap.Modal.getInstance(document.getElementById('kbReceiveModal'));
+          if (m) m.hide();
+          showToast('✓ Stok imepokelewa!');
+          setTimeout(function(){ location.reload(); }, 1200);
+        } else {
+          errEl.textContent = d.error||'Hitilafu.'; errEl.style.display='block';
+        }
+      })
+      .catch(function(){ btn.disabled=false; btn.textContent='Pokea'; errEl.textContent='Hitilafu ya mtandao.'; errEl.style.display='block'; });
+  };
+  {% endif %}
+
+  /* ── Init ── */
+  buildPortionGrid();
+  buildBatchGrid();
+  selectPM('cash');
+  loadFoodTabBadge();
+
+}());
+</script>
+{% endblock %}

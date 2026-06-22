@@ -460,6 +460,12 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                     </ul>
 
+                    {% elif user.userprofile.is_kitchen_staff %}
+                    <ul class="navbar-nav me-auto d-lg-none">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
+                    </ul>
+
                     {% elif user.userprofile.is_staff_member %}
                     <ul class="navbar-nav me-auto d-lg-none">
                         <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
@@ -468,6 +474,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
+                        {% if biz_profile.modules.kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
@@ -484,6 +491,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
+                        {% if biz_profile.modules.kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item dropdown">
@@ -629,6 +637,12 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                     </ul>
 
+                    {% elif user.userprofile.is_kitchen_staff %}
+                    <ul class="navbar-nav flex-row">
+                        <li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
+                    </ul>
+
                     {% elif user.userprofile.is_staff_member %}
                     <ul class="navbar-nav flex-row">
                         <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
@@ -637,6 +651,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
+                        {% if biz_profile.modules.kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
@@ -665,6 +680,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
+                        {% if biz_profile.modules.kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item dropdown">

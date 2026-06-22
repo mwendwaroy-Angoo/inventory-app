@@ -282,16 +282,87 @@ WATER_CATALOG = [
     _pc('Bottle + Water 20L'),
 ]
 
+# ── Kitchen / Grill catalog ───────────────────────────────────────────────────
+# Portion items (pre-counted, fixed price per piece/serving)
+def _food(name, unit='Pcs', presets=None):
+    return {
+        'name': name, 'unit': unit, 'is_keg': False, 'is_produce': True,
+        'produce_mode': 'PORTION',
+        'presets': presets or [{'label': 'Kimoja', 'price': None, 'qty': 1.0}],
+    }
+
+# Batch/revenue-envelope items (buy a whole animal/batch, sell by price point)
+def _grill_batch(name, unit='Kg'):
+    return {
+        'name': name, 'unit': unit, 'is_keg': False, 'is_produce': True,
+        'produce_mode': 'BUNCH', 'presets': [],
+    }
+
+KITCHEN_CATALOG = [
+    # Fast food — PORTION mode (count known upfront)
+    _food('Chips / Chipo', 'Pcs', [
+        {'label': 'Regular',  'price': 100, 'qty': 1.0},
+        {'label': 'Large',    'price': 150, 'qty': 1.0},
+    ]),
+    _food('Chicken Wing / Bawa', 'Pcs', [
+        {'label': 'Kimoja',   'price': 70,  'qty': 1.0},
+        {'label': 'Mbili',    'price': 130, 'qty': 2.0},
+    ]),
+    _food('Chicken Drumstick / Paja', 'Pcs', [
+        {'label': 'Kimoja',   'price': 150, 'qty': 1.0},
+    ]),
+    _food('Chicken Thigh', 'Pcs', [
+        {'label': 'Kimoja',   'price': 120, 'qty': 1.0},
+    ]),
+    _food('Smokie', 'Pcs', [
+        {'label': 'Kimoja',   'price': 60,  'qty': 1.0},
+        {'label': 'Mbili',    'price': 110, 'qty': 2.0},
+    ]),
+    _food('Samosa', 'Pcs', [
+        {'label': 'Kimoja',   'price': 30,  'qty': 1.0},
+        {'label': 'Tatu',     'price': 80,  'qty': 3.0},
+    ]),
+    _food('Sausage / Sosej', 'Pcs', [
+        {'label': 'Kimoja',   'price': 50,  'qty': 1.0},
+    ]),
+    _food('Chips + Chicken', 'Set', [
+        {'label': 'Regular',  'price': 200, 'qty': 1.0},
+        {'label': 'Large',    'price': 280, 'qty': 1.0},
+    ]),
+    _food('Chips + Smokie', 'Set', [
+        {'label': 'Regular',  'price': 150, 'qty': 1.0},
+    ]),
+    _food('Ugali', 'Pcs', [
+        {'label': 'Moja',     'price': 30,  'qty': 1.0},
+    ]),
+    _food('Ugali + Nyama',  'Set', [
+        {'label': 'Regular',  'price': 200, 'qty': 1.0},
+    ]),
+    _food('Chapati', 'Pcs', [
+        {'label': 'Moja',     'price': 20,  'qty': 1.0},
+        {'label': 'Mbili',    'price': 40,  'qty': 2.0},
+    ]),
+
+    # Grill — BUNCH/BATCH mode (buy whole animal/large cut, track revenue envelope)
+    _grill_batch('Nyama Choma / Roasted Meat', 'Kg'),
+    _grill_batch('Mutura / Blood Sausage',     'Kg'),
+    _grill_batch('Mbuzi / Goat',               'Kg'),
+    _grill_batch('Kuku Choma / Roasted Chicken', 'Pcs'),
+    _grill_batch('Ng\'ombe Choma / Roasted Beef', 'Kg'),
+    _grill_batch('Pork Ribs / Mbavu za Nguruwe',  'Kg'),
+    _grill_batch('Matumbo / Tripe',               'Kg'),
+]
+
 
 # ── Profile registry ──────────────────────────────────────────────────────────
 
-_DEFAULT_MODULES = {'keg': False, 'tabs': False, 'shifts': False, 'produce': False}
+_DEFAULT_MODULES = {'keg': False, 'tabs': False, 'shifts': False, 'produce': False, 'kitchen': False}
 
 PROFILES = {
     'bar': {
         'match': ['Bar / Pub (Local Joint)', 'Liquor Store / Bar'],
         'board': 'bar',
-        'modules': {'keg': True, 'tabs': True, 'shifts': True, 'produce': False},
+        'modules': {'keg': True, 'tabs': True, 'shifts': True, 'produce': False, 'kitchen': False},
         'catalog': BAR_CATALOG,
     },
     'liquor_store': {
@@ -303,13 +374,13 @@ PROFILES = {
     'club': {
         'match': ['Club / Lounge', 'Juice Bar'],
         'board': 'grid',
-        'modules': {'keg': False, 'tabs': True, 'shifts': True, 'produce': False},
+        'modules': {'keg': False, 'tabs': True, 'shifts': True, 'produce': False, 'kitchen': False},
         'catalog': LIQUOR_CATALOG,
     },
     'kibanda': {
         'match': ['Kibanda / Food Stall', 'Mama Mboga / Kiosk', 'Vegetable & Produce Stall'],
         'board': 'produce',
-        'modules': {'keg': False, 'tabs': False, 'shifts': False, 'produce': True},
+        'modules': {'keg': False, 'tabs': False, 'shifts': False, 'produce': True, 'kitchen': False},
         'catalog': KIBANDA_CATALOG,
     },
     'butchery': {
@@ -321,7 +392,7 @@ PROFILES = {
     'cereals': {
         'match': ['Cereal & Grain Shop', 'Posho Mill'],
         'board': 'produce',
-        'modules': {'keg': False, 'tabs': False, 'shifts': False, 'produce': True},
+        'modules': {'keg': False, 'tabs': False, 'shifts': False, 'produce': True, 'kitchen': False},
         'catalog': CEREALS_CATALOG,
     },
     'fish': {
@@ -347,11 +418,24 @@ DEFAULT_PROFILE = {
 
 
 def get_profile(business):
-    """Return the matching profile for business.business_type.name, or DEFAULT_PROFILE."""
+    """Return the matching profile for business.business_type.name, or DEFAULT_PROFILE.
+
+    The 'kitchen' module flag is set from business.has_kitchen, not from the static profile,
+    so an owner can enable the kitchen module independently of the business type.
+    """
     if not business or not business.business_type:
-        return DEFAULT_PROFILE
-    name = business.business_type.name
-    for profile_type, profile in PROFILES.items():
-        if name in profile.get('match', []):
-            return {**profile, 'type': profile_type}
-    return DEFAULT_PROFILE
+        profile = DEFAULT_PROFILE.copy()
+    else:
+        name = business.business_type.name
+        profile = DEFAULT_PROFILE.copy()
+        for profile_type, p in PROFILES.items():
+            if name in p.get('match', []):
+                profile = {**p, 'type': profile_type}
+                break
+
+    # Overlay the live has_kitchen flag so templates always see the current state
+    modules = dict(profile.get('modules', _DEFAULT_MODULES))
+    modules['kitchen'] = bool(getattr(business, 'has_kitchen', False))
+    profile = dict(profile)
+    profile['modules'] = modules
+    return profile

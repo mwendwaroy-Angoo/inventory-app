@@ -35,6 +35,7 @@ _SHIFT_EXEMPT_PREFIXES = (
     '/stock/bar/',    # board API
     '/mpesa/',        # M-Pesa STK push, callbacks, prompts — never block payment flows
     '/r/',            # public receipt pages (unauthenticated)
+    '/kitchen/',      # kitchen/grill board — independent of bar shift system
     '/sw.js',
     '/manifest.json',
     '/offline/',
