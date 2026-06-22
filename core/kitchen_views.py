@@ -214,11 +214,16 @@ def _kitchen_checkout(request, up, business, is_owner):
         cart = json.loads(request.POST.get('cart', '[]'))
         payment_method = request.POST.get('payment_method', 'cash')
         tab_customer = (request.POST.get('tab_customer') or '').strip()
+        credit_name  = (request.POST.get('credit_name') or '').strip()
+        credit_phone = (request.POST.get('credit_phone') or '').strip()
     except (json.JSONDecodeError, Exception):
         return JsonResponse({'ok': False, 'error': 'Invalid request'}, status=400)
 
     if not cart:
         return JsonResponse({'ok': False, 'error': 'Cart is empty'}, status=400)
+
+    if payment_method == 'credit' and not credit_name:
+        return JsonResponse({'ok': False, 'error': 'Jina la mteja linahitajika kwa deni'}, status=400)
 
     kitchen_store = _kitchen_store(business)
     if not kitchen_store:
@@ -247,7 +252,9 @@ def _kitchen_checkout(request, up, business, is_owner):
 
     receipt_lines = []
     total = Decimal('0')
-    txn_pm = 'credit' if active_tab else payment_method
+    # For tabs → 'credit'; for direct credit → 'credit'; for cash/mpesa → as-is
+    txn_pm = 'credit' if (active_tab or payment_method == 'credit') else payment_method
+    txn_recipient = credit_name if payment_method == 'credit' else (tab_customer or '')
 
     for entry in cart:
         item_id = entry.get('item_id')
@@ -266,7 +273,7 @@ def _kitchen_checkout(request, up, business, is_owner):
             txn = bunch.record_sale(
                 amount=amount,
                 payment_method=txn_pm,
-                recipient=tab_customer or '',
+                recipient=txn_recipient,
             )
             if active_tab:
                 BarTabEntry.objects.create(
@@ -290,7 +297,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 qty=-qty,
                 sale_amount=amount,
                 payment_method=txn_pm,
-                recipient=tab_customer or '',
+                recipient=txn_recipient,
                 recorded_by=request.user.username,
             )
             if active_tab:
@@ -306,21 +313,52 @@ def _kitchen_checkout(request, up, business, is_owner):
     if not receipt_lines:
         return JsonResponse({'ok': False, 'error': 'No valid items'}, status=400)
 
+    # For direct credit: auto-create Customer record
+    if payment_method == 'credit' and credit_name:
+        from .models import Customer as _Customer
+        from .notifications import normalize_ke_phone, send_sms_notification
+        cust = _Customer.objects.filter(business=business, name__iexact=credit_name).first()
+        if not cust:
+            cust = _Customer.objects.create(business=business, name=credit_name, phone=credit_phone)
+        elif credit_phone and not cust.phone:
+            cust.phone = credit_phone
+            cust.save(update_fields=['phone'])
+
     receipt_url = None
     receipt_number = None
-    if payment_method in ('cash', 'mpesa'):
+    if payment_method in ('cash', 'mpesa', 'credit'):
         try:
             rcpt = Receipt.issue(
                 business=business,
                 lines=receipt_lines,
-                payment_method=payment_method,
+                payment_method=txn_pm,
                 user=request.user,
-                customer_name=tab_customer,
+                customer_name=credit_name if payment_method == 'credit' else tab_customer,
+                customer_phone=credit_phone if payment_method == 'credit' else '',
             )
             receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
             receipt_number = rcpt.receipt_number
         except Exception:
             logger.exception('Kitchen Receipt.issue failed business=%s', business.id)
+
+    # SMS to customer on direct credit sale (same pattern as Quick Sell)
+    if payment_method == 'credit' and credit_phone and receipt_url:
+        try:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            import datetime as _dt
+            normalized = normalize_ke_phone(credit_phone)
+            if normalized:
+                credit_window = business.credit_window_days or 30
+                due_date = (_dt.date.today() + _dt.timedelta(days=credit_window)).strftime('%d %b %Y')
+                sms_msg = (
+                    f"Duka: {business.name}\n"
+                    f"Umenunua kwa deni: KES {float(total):,.0f}\n"
+                    f"Tarehe ya malipo: {due_date}\n"
+                    f"Risiti: {receipt_url}"
+                )
+                send_sms_notification(sms_msg, normalized)
+        except Exception:
+            logger.exception('Kitchen credit SMS failed business=%s', business.id)
 
     tab_id = active_tab.id if active_tab else None
     return JsonResponse({
@@ -329,6 +367,7 @@ def _kitchen_checkout(request, up, business, is_owner):
         'payment_method': payment_method,
         'tab_id': tab_id,
         'tab_customer': tab_customer,
+        'credit_name': credit_name,
         'receipt_url': receipt_url,
         'receipt_number': receipt_number,
     })

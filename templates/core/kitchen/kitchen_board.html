@@ -183,6 +183,7 @@
           <div class="kb-pay-row">
             <button class="kb-pay-btn pm-cash selected" onclick="selectPM('cash')">Cash</button>
             <button class="kb-pay-btn pm-mpesa" onclick="selectPM('mpesa')">M-Pesa</button>
+            <button class="kb-pay-btn pm-credit" onclick="selectPM('credit')" style="border-color:#c0395a;color:#c0395a;">🤝 Deni</button>
           </div>
           <div class="kb-pay-row">
             <button class="kb-pay-btn pm-food-tab" onclick="selectPM('food_tab')">🍽 Food Tab</button>
@@ -191,6 +192,11 @@
           <div id="kb-tab-name-row" style="display:none;">
             <input type="text" id="kb-tab-name" placeholder="Jina la mteja..." autocomplete="off" list="kb-bar-tab-list">
             <datalist id="kb-bar-tab-list"></datalist>
+          </div>
+          <!-- Credit (Deni) customer fields -->
+          <div id="kb-credit-row" style="display:none; margin-top:0.5rem; display:none;">
+            <input type="text" id="kb-credit-name" class="form-control form-control-sm mb-1" placeholder="Jina la mteja (lazima)..." autocomplete="off">
+            <input type="tel" id="kb-credit-phone" class="form-control form-control-sm" placeholder="Namba ya simu (07XX... — SMS)" autocomplete="off">
           </div>
           <button class="kb-checkout-btn mt-2" id="kb-checkout-btn" onclick="doCheckout()" disabled>
             Maliza Mauzo
@@ -311,6 +317,28 @@
 <!-- Petty Cash modal -->
 {% include "core/petty_cash_modal.html" %}
 
+<!-- ── Convert food tab to Deni modal ── -->
+<div class="modal fade" id="kbDeniModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#1e1e1e;border:1px solid rgba(192,57,90,.3);border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #2a2a2a;">
+        <h6 class="modal-title" style="color:#c0395a;">🤝 Weka kama Deni</h6>
+        <button type="button" class="btn-close btn-close-white btn-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:1rem;">
+        <p style="color:#b0b0b0;font-size:.82rem;margin-bottom:.75rem;">Bakiye isiyolipwa itaonekana kwenye Deni Tracker.</p>
+        <input type="text" id="kb-deni-name" class="form-control form-control-sm mb-2" placeholder="Jina la mteja (lazima)">
+        <input type="tel" id="kb-deni-phone" class="form-control form-control-sm mb-2" placeholder="Simu (07XX...) — kwa SMS">
+        <div id="kb-deni-error" style="display:none;color:#c0395a;font-size:.78rem;margin-bottom:.5rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #2a2a2a;padding:.6rem 1rem;gap:.5rem;">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Acha</button>
+        <button class="btn btn-sm" style="background:rgba(192,57,90,.15);border:1px solid rgba(192,57,90,.4);color:#c0395a;" onclick="submitKitchenTabDeni()">Weka Deni →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Food Tabs offcanvas ── -->
 <div class="offcanvas offcanvas-end" id="kbTabsDrawer" tabindex="-1" style="width:340px;max-width:95vw;background:#1a1a1a;border-left:1px solid #3a3a3a;">
   <div class="offcanvas-header" style="border-bottom:1px solid #3a3a3a;">
@@ -407,13 +435,14 @@
   function selectPM(pm) {
     _pm = pm;
     document.querySelectorAll('.kb-pay-btn').forEach(function(b){ b.classList.remove('selected'); });
-    var cls = pm === 'cash' ? 'pm-cash' : pm === 'mpesa' ? 'pm-mpesa' : pm === 'food_tab' ? 'pm-food-tab' : 'pm-bar-tab';
-    var btn = document.querySelector('.kb-pay-btn.' + cls);
+    var clsMap = {cash:'pm-cash', mpesa:'pm-mpesa', food_tab:'pm-food-tab', bar_tab:'pm-bar-tab', credit:'pm-credit'};
+    var btn = document.querySelector('.kb-pay-btn.' + (clsMap[pm] || ''));
     if (btn) btn.classList.add('selected');
-    var row = document.getElementById('kb-tab-name-row');
-    row.style.display = (pm === 'food_tab' || pm === 'bar_tab') ? 'block' : 'none';
+    var tabRow    = document.getElementById('kb-tab-name-row');
+    var creditRow = document.getElementById('kb-credit-row');
+    tabRow.style.display    = (pm === 'food_tab' || pm === 'bar_tab') ? 'block' : 'none';
+    creditRow.style.display = (pm === 'credit') ? 'block' : 'none';
     if (pm === 'bar_tab') {
-      // Populate datalist with known open bar tab names
       var dl = document.getElementById('kb-bar-tab-list');
       dl.innerHTML = _barTabNames.map(function(n){ return '<option value="' + n + '">'; }).join('');
     }
@@ -541,12 +570,21 @@
   /* ── Checkout ── */
   window.doCheckout = function() {
     if (!_cart.length) return;
-    var tabName = (document.getElementById('kb-tab-name').value||'').trim();
+    var tabName    = (document.getElementById('kb-tab-name').value||'').trim();
+    var creditName = (document.getElementById('kb-credit-name').value||'').trim();
+    var creditPhone= (document.getElementById('kb-credit-phone').value||'').trim();
+
     if ((_pm==='food_tab'||_pm==='bar_tab') && !tabName) {
       document.getElementById('kb-tab-name').focus();
       showToast('Ingiza jina la mteja.');
       return;
     }
+    if (_pm === 'credit' && !creditName) {
+      document.getElementById('kb-credit-name').focus();
+      showToast('Ingiza jina la mteja kwa deni.');
+      return;
+    }
+
     var btn = document.getElementById('kb-checkout-btn');
     btn.disabled = true; btn.textContent = 'Inatuma...';
 
@@ -554,6 +592,8 @@
       cart: JSON.stringify(_cart),
       payment_method: _pm,
       tab_customer: tabName,
+      credit_name: creditName,
+      credit_phone: creditPhone,
       csrfmiddlewaretoken: CSRF,
     });
     fetch('/kitchen/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
@@ -563,14 +603,14 @@
         if (d.ok) {
           var msg = '✓ KES ' + fmt(d.total);
           if (d.tab_customer) msg += ' — Tab ya ' + d.tab_customer;
+          if (d.credit_name)  msg += ' — Deni: ' + d.credit_name;
           if (d.receipt_number) msg += ' | Receipt #' + d.receipt_number;
           showToast(msg, 3500);
           _cart = []; renderCart();
-          // Reset tab name
           document.getElementById('kb-tab-name').value = '';
-          // Refresh today's revenue
+          document.getElementById('kb-credit-name').value = '';
+          document.getElementById('kb-credit-phone').value = '';
           refreshRevenue();
-          // If food tab, refresh badge
           if (_pm === 'food_tab') loadFoodTabBadge();
         } else {
           showToast('❌ ' + (d.error||'Hitilafu. Jaribu tena.'));
@@ -628,7 +668,8 @@
              '<div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap;">' +
              '<button class="btn btn-sm btn-gold" onclick="settleKitchenTab(' + tab.id + ',\'cash\')">Cash</button>' +
              '<button class="btn btn-sm" style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.3);color:#4caf50;" onclick="settleKitchenTab(' + tab.id + ',\'mpesa\')">M-Pesa</button>' +
-             '<button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;" onclick="voidKitchenTab(' + tab.id + ')">Void</button>' +
+             '<button class="btn btn-sm" style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.35);color:#c0395a;" onclick="openKitchenTabDeni(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'") + '\')">🤝 Deni</button>' +
+             '<button class="btn btn-sm" style="background:rgba(80,80,80,.1);border:1px solid #444;color:#888;" onclick="voidKitchenTab(' + tab.id + ')">Void</button>' +
              '</div></div>';
     }).join('');
   }
@@ -664,6 +705,37 @@
     fetch('/bar/tabs/' + tabId + '/void/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
       .then(function(r){ return r.json(); })
       .then(function(d){ if (d.ok) { showToast('Tab imefutwa.'); loadFoodTabs(); } })
+      .catch(function(){ showToast('❌ Hitilafu ya mtandao.'); });
+  };
+
+  /* ── Convert food tab to debt (Deni) ── */
+  var _deniTabId = null;
+  window.openKitchenTabDeni = function(tabId, customerName) {
+    _deniTabId = tabId;
+    document.getElementById('kb-deni-name').value  = customerName || '';
+    document.getElementById('kb-deni-phone').value = '';
+    document.getElementById('kb-deni-error').style.display = 'none';
+    var modal = new bootstrap.Modal(document.getElementById('kbDeniModal'));
+    modal.show();
+  };
+  window.submitKitchenTabDeni = function() {
+    if (!_deniTabId) return;
+    var name  = (document.getElementById('kb-deni-name').value||'').trim();
+    var phone = (document.getElementById('kb-deni-phone').value||'').trim();
+    var errEl = document.getElementById('kb-deni-error');
+    if (!name) { errEl.textContent = 'Ingiza jina la mteja.'; errEl.style.display='block'; return; }
+    var body = new URLSearchParams({customer_name:name, phone:phone, csrfmiddlewaretoken:CSRF});
+    fetch('/bar/tabs/' + _deniTabId + '/convert-to-debt/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        bootstrap.Modal.getInstance(document.getElementById('kbDeniModal')).hide();
+        if (d.ok) {
+          showToast('🤝 Deni ya KES ' + fmt(d.unpaid_total) + ' imewekwa kwa ' + d.customer_name + '.');
+          loadFoodTabs();
+        } else {
+          showToast('❌ ' + (d.error||'Hitilafu.'));
+        }
+      })
       .catch(function(){ showToast('❌ Hitilafu ya mtandao.'); });
   };
 
