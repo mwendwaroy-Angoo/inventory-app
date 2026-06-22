@@ -2142,7 +2142,10 @@
     body.innerHTML =
       '<div class="text-center py-4" style="color:#b0b0b0;">' +
       '<div class="spinner-border spinner-border-sm me-2"></div></div>';
-    fetch('/bar/tabs/', {credentials: 'same-origin'})
+    fetch('/bar/tabs/', {
+        credentials: 'same-origin',
+        headers: {'Accept': 'application/json'},
+      })
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();

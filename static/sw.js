@@ -1,4 +1,4 @@
-const CACHE_NAME = 'duka-v6';
+const CACHE_NAME = 'duka-v7';
 const OFFLINE_URL = '/offline/';
 
 const PRECACHE_URLS = [
@@ -86,10 +86,12 @@ self.addEventListener('fetch', event => {
   // API/JSON + dynamic app endpoints: network-first, no caching
   if (
     request.url.includes('/api/') ||
+    request.url.includes('/bar/tabs/') ||
     request.url.includes('/bar/shift/') ||
     request.url.includes('/stock/bar/board/') ||
+    request.url.includes('/stock/produce/board/') ||
     request.url.includes('/notifications/') ||
-    request.headers.get('accept')?.includes('json')
+    request.headers.get('accept')?.includes('application/json')
   ) {
     event.respondWith(
       fetch(request).catch(() => caches.match(request))

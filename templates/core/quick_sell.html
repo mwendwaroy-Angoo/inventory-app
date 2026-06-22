@@ -1922,7 +1922,7 @@
             notice.style.display = 'block';
             // Refresh the tabs badge count so the 📋 button shows the new total
             if (typeof qsLoadTabs === 'function') {
-                fetch('/bar/tabs/', {credentials: 'same-origin'})
+                fetch('/bar/tabs/', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
                     .then(function (r) { return r.ok ? r.json() : {tabs: []}; })
                     .then(function (d) {
                         var badge = document.getElementById('qsTabsBadge');
@@ -2041,7 +2041,7 @@
         if (!body) return;
         body.innerHTML = '<div class="text-center py-4" style="color:#b0b0b0;">' +
             '<div class="spinner-border spinner-border-sm me-2"></div></div>';
-        fetch('/bar/tabs/', {credentials: 'same-origin'})
+        fetch('/bar/tabs/', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
             .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(function (d) { qsRenderTabs(d.tabs || []); })
             .catch(function () {
@@ -2339,7 +2339,7 @@
     };
 
     /* Refresh tab badge count on page load */
-    fetch('/bar/tabs/', {credentials: 'same-origin'})
+    fetch('/bar/tabs/', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
         .then(function (r) { return r.ok ? r.json() : {tabs: []}; })
         .then(function (d) {
             var badge = document.getElementById('qsTabsBadge');
