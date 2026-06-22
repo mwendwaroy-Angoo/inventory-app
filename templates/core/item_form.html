@@ -543,7 +543,7 @@
                                         <option value="Small Bottle">{% trans 'Small Bottle (200ml)' %}</option>
                                     </optgroup>
                                     <!-- Kitchen food presets — shown only when a kitchen store is selected -->
-                                    <optgroup label="🍗 {% trans 'Food Sizes' %}" class="kitchen-food-opts" style="display:none">
+                                    <optgroup label="🍽️ {% trans 'Food Sizes' %}" class="kitchen-food-opts" style="display:none">
                                         <option value="Regular">{% trans 'Regular (Kawaida)' %}</option>
                                         <option value="Large">{% trans 'Large (Kubwa)' %}</option>
                                         <option value="Special">{% trans 'Special (Maalum)' %}</option>
@@ -680,6 +680,28 @@
               unit: 'Bunch', note: 'Greens — use Batch/Bunch mode' },
             { keys: ['managu','terere','kunde','mrende','saga','mchicha'],
               unit: 'Bunch', note: 'Kienyeji greens — use Batch/Bunch mode' },
+            // ── Kitchen: batch-cooked food (revenue envelope, BATCH mode ON) ──
+            { keys: ['chipo', 'chips', 'fries', 'french fries'],
+              unit: 'Batch', note: 'Batch mode — each sack of potatoes = one batch. Turn Batch/Bunch mode ON. Sell by price point (Regular 70/-, Large 100/-). No unit counting.' },
+            { keys: ['wali', 'ugali'],
+              unit: 'Batch', note: 'Batch mode — each cooking pot = one batch. Turn Batch/Bunch mode ON. Sell by plate size (Small Plate, Full Plate).' },
+            { keys: ['bhajia', 'viazi karai', 'karai'],
+              unit: 'Batch', note: 'Batch mode — each frying batch from a pot. Turn Batch/Bunch mode ON.' },
+            { keys: ['nyama choma', 'nyama', 'choma'],
+              unit: 'Batch', note: 'Batch mode — each piece/portion bought at market = one batch. Turn Batch/Bunch mode ON. Use Nyama/Price Points presets (100g, 200g, 500g).' },
+            { keys: ['mutura'],
+              unit: 'Batch', note: 'Batch mode — each roll = one batch. Turn Batch/Bunch mode ON. Use 100g/200g price point presets.' },
+            // ── Kitchen: piece-counted food (PORTION mode, stock tracked by unit) ──
+            { keys: ['chicken', 'kuku'],
+              unit: 'Bird', note: 'Portion mode — stock per whole bird. qty_consumed: Wing=0.125, Quarter=0.25, Half=0.5, Full=1.0. Opening stock = number of whole birds you have.' },
+            { keys: ['smokie', 'sausage', 'boerewors'],
+              unit: 'Pcs', note: 'Portion mode — stock per piece. 1 Piece = 1 unit consumed.' },
+            { keys: ['samosa'],
+              unit: 'Pcs', note: 'Portion mode — stock per piece. 1 unit per samosa sold.' },
+            { keys: ['mandazi', 'mahamri'],
+              unit: 'Pcs', note: 'Portion mode — stock per piece. Opening stock = how many you have.' },
+            { keys: ['egg', 'mayai', 'yai'],
+              unit: 'Pcs', note: 'Portion mode — stock per egg. 1 unit per egg.' },
             // ── Bar: spirits / wines / beer ──────────────────────────────────
             { keys: ['gin', 'vodka', 'rum', 'bourbon', 'whiskey', 'whisky', 'tequila', 'brandy', 'cognac', 'schnapps', 'jenever'],
               unit: '750ml', note: 'Spirit — stock per bottle. Select category to quick-fill Shot/Double/Half/Full presets.' },
@@ -874,7 +896,26 @@
                 // ── Bottle portions (Portion mode — fraction of 1 bottle/unit) ──
                 'Full Bottle':            '1.0',
                 'Half Bottle':            '0.5',
-                'Quarter Bottle':         '0.25'
+                'Quarter Bottle':         '0.25',
+                // ── Kitchen chicken cuts (fraction of 1 whole bird) ──
+                'Wing':                   '0.125',
+                'Drumstick':              '0.125',
+                'Quarter Chicken':        '0.25',
+                'Half Chicken':           '0.5',
+                'Full Chicken':           '1.0',
+                // ── Kitchen pieces (unit count) ──
+                '1 Piece':                '1',
+                '2 Pieces':               '2',
+                '3 Pieces':               '3',
+                '4 Pieces':               '4',
+                '6 Pieces':               '6',
+                '12 Pieces':              '12',
+                // ── Kitchen food sizes (1 unit each — portioning is by revenue, not count) ──
+                'Regular':                '1',
+                'Large':                  '1',
+                'Special':                '1',
+                'Small Plate':            '1',
+                'Full Plate':             '1'
             };
 
             // Replace a label <select> with a free-text <input> for custom labels
@@ -966,7 +1007,7 @@
 
             // Build the label select HTML for dynamically added rows
             var KITCHEN_FOOD_OPTS_HTML =
-                    '<optgroup label="🍗 {% trans "Food Sizes" %}" class="kitchen-food-opts" style="display:none">' +
+                    '<optgroup label="🍽️ {% trans "Food Sizes" %}" class="kitchen-food-opts" style="display:none">' +
                     '<option value="Regular">{% trans "Regular (Kawaida)" %}</option>' +
                     '<option value="Large">{% trans "Large (Kubwa)" %}</option>' +
                     '<option value="Special">{% trans "Special (Maalum)" %}</option>' +
@@ -1715,6 +1756,34 @@
             if (kegCb && kegCb.checked) kegCb.checked = false;
         }
 
+        // Selling price is irrelevant for kitchen items — presets set the price
+        var sellSection = document.getElementById('sellingPriceSection');
+        var sellNote    = document.getElementById('produceSellingNote');
+        if (isKitchen) {
+            if (sellSection) sellSection.style.display = 'none';
+            if (sellNote)    sellNote.style.display    = 'block';
+        } else {
+            var produceCb = document.getElementById('is_produce');
+            var kegCbSell = document.getElementById('is_keg');
+            var hidePrice = (produceCb && produceCb.checked) || (kegCbSell && kegCbSell.checked);
+            if (sellSection) sellSection.style.display = hidePrice ? 'none' : 'block';
+            if (sellNote)    sellNote.style.display    = hidePrice ? 'block' : 'none';
+        }
+
+        // Always show the portion presets section for kitchen items
+        var presSection = document.getElementById('portionPresetsSection');
+        if (presSection && isKitchen) presSection.style.display = 'block';
+
+        // Material number: auto-fill with K prefix for kitchen items
+        if (isKitchen) {
+            var matEl = document.getElementById('id_material_no');
+            if (matEl && !matEl.value.trim()) {
+                if (typeof _autoFillMaterialNo === 'function') {
+                    _autoFillMaterialNo('Kitchen');
+                }
+            }
+        }
+
         // Hide/show the Type select cell in every existing and future preset row
         var cols = isKitchen ? '2fr 1fr 1fr auto' : '2fr 1fr 1fr 80px auto';
         var hdr  = document.getElementById('presetHeaderRow');
@@ -1727,18 +1796,15 @@
 
         // Toggle preset label optgroups on all label selects
         document.querySelectorAll('select[name="preset_label"]').forEach(function(sel) {
-            // Kitchen store: show food presets, hide bar/produce presets
             sel.querySelectorAll('.kitchen-food-opts').forEach(function(og) {
                 og.style.display = isKitchen ? '' : 'none';
             });
             sel.querySelectorAll('.bar-keg-opts, .bar-spirit-opts').forEach(function(og) {
                 og.style.display = isKitchen ? 'none' : '';
             });
-            // Produce-specific groups (only present on non-keg businesses)
             sel.querySelectorAll('.kibanda-opts, .gorogoro-opts').forEach(function(og) {
                 og.style.display = isKitchen ? 'none' : '';
             });
-            // Fractional/Count are still useful for general items but not for kitchen
             sel.querySelectorAll('.fractional-opts, .count-opts').forEach(function(og) {
                 og.style.display = isKitchen ? 'none' : '';
             });
