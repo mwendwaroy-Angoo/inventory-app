@@ -358,6 +358,7 @@ def edit_business(request):
     return render(request, 'accounts/edit_business.html', {
         'form': form,
         'delivery_tiers': delivery_tiers,
+        'business': business,
     })
 
 

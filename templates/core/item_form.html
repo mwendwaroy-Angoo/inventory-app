@@ -475,14 +475,14 @@
                 </div>
 
                 <div style="background:rgba(255,255,255,0.02); border:1px solid #2a2a2a; border-radius:8px; overflow:hidden; margin-bottom:0.75rem;">
-                    <div style="display:grid; grid-template-columns:2fr 1fr 1fr 80px auto; gap:0; padding:0.5rem 0.75rem; border-bottom:1px solid #2a2a2a; font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em;">
+                    <div id="presetHeaderRow" style="display:grid; grid-template-columns:2fr 1fr 1fr 80px auto; gap:0; padding:0.5rem 0.75rem; border-bottom:1px solid #2a2a2a; font-size:0.72rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em;">
                         <span>{% trans 'Portion' %}</span>
                         <span>{% trans 'Customer Pays (KES)' %}</span>
                         <div>
                             <div>{% trans 'Stock Used' %}</div>
                             <div style="color:#b0b0b0; font-size:0.68rem; text-transform:none; letter-spacing:0;">({% trans 'auto-filled — or choose Custom to set manually' %})</div>
                         </div>
-                        <span title="Keg serving type — used in daily bar report." style="cursor:help; font-size:.78rem;">🥤 {% trans 'Type' %}</span>
+                        <span id="presetTypeColHeader" title="Keg serving type — used in daily bar report." style="cursor:help; font-size:.78rem;">🥤 {% trans 'Type' %}</span>
                         <span></span>
                     </div>
                     <div id="presetRows">
@@ -1123,6 +1123,7 @@
                 // Apply current filter to the newly added row's dropdown
                 var kegCb = document.getElementById('is_keg');
                 if (window._applyBarPresetFilter) window._applyBarPresetFilter(!!(kegCb && kegCb.checked));
+                if (window._applyKitchenMode) window._applyKitchenMode();
             });
 
             </script>
@@ -1617,5 +1618,59 @@
         {% endif %}
     </div>
 </div>
+
+{% if kitchen_store_ids_json %}
+<script>
+(function() {
+    var KITCHEN_IDS = {{ kitchen_store_ids_json|safe }};
+    if (!KITCHEN_IDS.length) return;
+
+    var storeSelect = document.getElementById('id_store');
+    if (!storeSelect) return;
+
+    var kegDividerEl = null;
+    document.querySelectorAll('.section-divider').forEach(function(d) {
+        if (d.textContent.indexOf('Keg') !== -1) kegDividerEl = d;
+    });
+    var kegBlock      = document.getElementById('kegSettingsBlock');
+    var kegHint       = document.getElementById('kegPresetHint');
+    var typeColHeader = document.getElementById('presetTypeColHeader');
+
+    function isKitchenStore(val) {
+        return KITCHEN_IDS.indexOf(parseInt(val, 10)) !== -1;
+    }
+
+    function applyKitchenMode(isKitchen) {
+        if (kegDividerEl) kegDividerEl.style.display = isKitchen ? 'none' : '';
+        if (kegBlock)     kegBlock.style.display     = isKitchen ? 'none' : '';
+        if (kegHint)      kegHint.style.display      = isKitchen ? 'none' : '';
+        if (typeColHeader) typeColHeader.style.display = isKitchen ? 'none' : '';
+
+        if (isKitchen) {
+            var kegCb = document.getElementById('is_keg');
+            if (kegCb && kegCb.checked) kegCb.checked = false;
+        }
+
+        // Hide/show the Type select cell in every existing and future preset row
+        var cols = isKitchen ? '2fr 1fr 1fr auto' : '2fr 1fr 1fr 80px auto';
+        var hdr  = document.getElementById('presetHeaderRow');
+        if (hdr) hdr.style.gridTemplateColumns = cols;
+        document.querySelectorAll('.preset-row').forEach(function(r) {
+            r.style.gridTemplateColumns = cols;
+            var sel = r.querySelector('[name="preset_serving_type"]');
+            if (sel) sel.style.display = isKitchen ? 'none' : '';
+        });
+    }
+
+    // Expose so the "Add Preset" button can call it after injecting a new row
+    window._applyKitchenMode = function() {
+        applyKitchenMode(isKitchenStore(storeSelect.value));
+    };
+
+    storeSelect.addEventListener('change', window._applyKitchenMode);
+    window._applyKitchenMode();
+}());
+</script>
+{% endif %}
 
 {% endblock %}

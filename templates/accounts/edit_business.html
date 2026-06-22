@@ -248,6 +248,7 @@
                             {% if business.has_kitchen %}Imewashwa{% else %}Imezimwa{% endif %}
                         </span>
                         <button id="kitchen-toggle-btn" class="btn btn-sm"
+                                data-enabled="{% if business.has_kitchen %}1{% else %}0{% endif %}"
                                 style="background:{% if business.has_kitchen %}rgba(192,57,90,.15){% else %}rgba(76,175,80,.12){% endif %};border:1px solid {% if business.has_kitchen %}rgba(192,57,90,.4){% else %}rgba(76,175,80,.3){% endif %};color:{% if business.has_kitchen %}#c0395a{% else %}#4caf50{% endif %};"
                                 onclick="toggleKitchen()">
                             {% if business.has_kitchen %}Zima Kitchen{% else %}Washa Kitchen{% endif %}
@@ -428,8 +429,7 @@
     /* ── Kitchen toggle ── */
     window.toggleKitchen = function() {
         var btn  = document.getElementById('kitchen-toggle-btn');
-        var lbl  = document.getElementById('kitchen-status-label');
-        var cur  = lbl.textContent.trim() === 'Imewashwa';
+        var cur  = btn.getAttribute('data-enabled') === '1';
         var enable = cur ? '0' : '1';
         btn.disabled = true;
         var body = new URLSearchParams({enable: enable, csrfmiddlewaretoken: '{{ csrf_token }}'});

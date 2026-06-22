@@ -1558,12 +1558,17 @@ def add_item(request):
     from .business_profiles import get_profile as _get_profile
     import json as _json
     _catalog = _get_profile(user_profile.business).get('catalog', [])
+    _kitchen_store_ids = list(
+        Store.objects.filter(business=user_profile.business, is_kitchen=True)
+        .values_list('id', flat=True)
+    )
     context = {
         "form": form,
         "today": timezone.now().strftime("%B %d, %Y"),
         "action": _("Add"),
         "is_add": True,
         "catalog_json": _json.dumps(_catalog),
+        "kitchen_store_ids_json": _json.dumps(_kitchen_store_ids),
     }
     return render(request, "core/item_form.html", context)
 
@@ -1681,6 +1686,10 @@ def edit_item(request, item_id):
     from .business_profiles import get_profile as _get_profile
     import json as _json
     _catalog = _get_profile(user_profile.business).get('catalog', [])
+    _kitchen_store_ids = list(
+        Store.objects.filter(business=user_profile.business, is_kitchen=True)
+        .values_list('id', flat=True)
+    )
     context = {
         "form": form,
         "item": item,
@@ -1688,6 +1697,7 @@ def edit_item(request, item_id):
         "action": _("Edit"),
         "is_add": False,
         "catalog_json": _json.dumps(_catalog),
+        "kitchen_store_ids_json": _json.dumps(_kitchen_store_ids),
     }
     return render(request, "core/item_form.html", context)
 
