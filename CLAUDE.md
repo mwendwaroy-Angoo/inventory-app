@@ -324,6 +324,21 @@ Fonts: Playfair Display (headings), DM Sans (body)
   changed files, commit with a descriptive message following the repo style
   (`feat:`/`fix:` prefix), then `git push origin main`. This is the final step of
   every task — treat it the same as running tests.
+- **When adding any new module or feature, proactively audit ALL connected app surfaces
+  before marking it done — do not wait for Roy to notice gaps.** The surfaces to check
+  for every new selling/payment feature are: (1) Debt tracker — does credit flow
+  produce Transaction(payment_method='credit', recipient=name) so the debt tracker
+  picks it up? (2) Receipts — does cash/mpesa/credit issue a Receipt and appear in the
+  receipts list? (3) SMS — does credit send the debt confirmation SMS to the customer
+  (same as Quick Sell does)? (4) Analytics — does revenue appear in the correct section
+  and NOT bleed into unrelated sections (e.g. kitchen batch items must not appear in
+  Kibanda Produce Performance)? (5) Home dashboard — does today's revenue show on the
+  right tile, not merged with a different module's figure? (6) Revenue targets — does
+  revenue count toward the owner's daily/weekly/monthly targets? (7) Expiry alerts —
+  do items in the new store/module show in expiry warnings? (8) Tabs → debt conversion
+  — if the feature has tabs, is there a "Convert to Deni" path? Root cause of the
+  Sprint 21 gap: kitchen module launched without a direct Deni option and without a
+  "Convert to Deni" button on food tabs — Roy had to point it out.
 
 ---
 
