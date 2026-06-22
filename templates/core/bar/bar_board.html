@@ -619,6 +619,12 @@
                      cursor:pointer;">
         🍾 Breakage
       </button>
+      <button onclick="window.openPettyCashModal()"
+              style="background:rgba(255,152,0,0.08); border:1px solid rgba(255,152,0,0.3);
+                     color:#ff9800; border-radius:8px; padding:4px 12px; font-size:0.82rem;
+                     cursor:pointer;">
+        🪙 Counter Cash
+      </button>
       {% if is_owner %}
       <a href="{% url 'bar_daily_report' %}"
          style="background:rgba(76,175,80,0.1); border:1px solid rgba(76,175,80,0.3);
@@ -1488,6 +1494,9 @@
     </div>
   </div>
 </div>
+
+<!-- Petty Cash modal -->
+{% include "core/petty_cash_modal.html" %}
 
 {% endblock %}
 
@@ -3732,5 +3741,8 @@
       });
   };
 })();
+
+/* ── Petty Cash ── */
+{% include "core/petty_cash_js.html" %}
 </script>
 {% endblock %}

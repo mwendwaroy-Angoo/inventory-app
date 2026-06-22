@@ -1,0 +1,54 @@
+/* Petty Cash JS — included inside existing <script> blocks */
+window.openPettyCashModal = function() {
+  document.getElementById('pc-amount').value = '';
+  document.getElementById('pc-description').value = '';
+  document.getElementById('pc-error').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('pettyCashModal')).show();
+  setTimeout(function(){ document.getElementById('pc-amount').focus(); }, 300);
+};
+
+window._submitPettyCash = function() {
+  var amount = (document.getElementById('pc-amount').value || '').trim();
+  var reason = document.getElementById('pc-reason').value;
+  var desc   = (document.getElementById('pc-description').value || '').trim();
+  var errEl  = document.getElementById('pc-error');
+  var btn    = document.getElementById('pc-submit-btn');
+
+  if (!amount || parseFloat(amount) <= 0) {
+    errEl.textContent = 'Ingiza kiasi sahihi.';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Inatuma...';
+
+  var CSRF_TOKEN = document.querySelector('[name=csrfmiddlewaretoken]');
+  var csrf = CSRF_TOKEN ? CSRF_TOKEN.value : '{{ csrf_token }}';
+  var body = new URLSearchParams({amount: amount, reason: reason, description: desc, csrfmiddlewaretoken: csrf});
+  fetch('/petty-cash/record/', {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '🪙 Rekodi & Endelea';
+      if (d.ok) {
+        var m = bootstrap.Modal.getInstance(document.getElementById('pettyCashModal'));
+        if (m) m.hide();
+        // Show brief confirmation toast if toast helper exists, else alert
+        var msg = '✓ KES ' + d.amount.toLocaleString('en-KE', {maximumFractionDigits:0}) + ' (' + d.reason_display + ') imerekodiwa.';
+        if (typeof showToast === 'function') {
+          showToast(msg, 3000);
+        } else if (typeof window.showQsToast === 'function') {
+          window.showQsToast(msg);
+        } else {
+          alert(msg);
+        }
+      } else {
+        errEl.textContent = d.error || 'Hitilafu. Jaribu tena.';
+        errEl.style.display = 'block';
+      }
+    })
+    .catch(function(){
+      btn.disabled = false; btn.textContent = '🪙 Rekodi & Endelea';
+      errEl.textContent = 'Hitilafu ya mtandao.';
+      errEl.style.display = 'block';
+    });
+};

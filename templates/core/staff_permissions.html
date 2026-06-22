@@ -9,6 +9,7 @@
         <h1 class="page-title mb-1">⚙️ {% trans 'Staff Permissions' %}</h1>
         <p style="color:#b0b0b0; font-size:0.875rem;">
             {% trans 'Managing permissions for' %} <strong style="color:var(--gold);">{{ staff_name }}</strong>
+            <span style="color:#555; font-size:.78rem; margin-left:.4rem;">({{ staff_profile.get_role_display }})</span>
         </p>
     </div>
     <a href="{% url 'staff_list' %}" class="btn btn-outline-secondary btn-sm">← {% trans 'Back to Staff' %}</a>
@@ -19,6 +20,7 @@
 
     <div class="card border-0 mb-3" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important; border-radius:10px;">
 
+        <!-- Cost price -->
         <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
             <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
                 <div>
@@ -42,7 +44,8 @@
             </div>
         </div>
 
-        <div class="p-4">
+        <!-- Restricted items override -->
+        <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
             <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
                 <div>
                     <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
@@ -64,6 +67,62 @@
                 </div>
             </div>
         </div>
+
+        <!-- Cross-module: Kitchen access (show for non-kitchen staff when kitchen is enabled) -->
+        {% if biz_profile.modules.kitchen and not staff_profile.is_kitchen_staff %}
+        <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        🍗 {% trans 'Kitchen Board Access' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans 'Allow this staff member to view and sell from the Kitchen Board. Enabled by default when the kitchen module is active.' %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'Revoke if you want this staff member to operate bar-side only.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_access_kitchen"
+                           id="can_access_kitchen"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_access_kitchen %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Cross-module: Bar access (show for kitchen staff when keg module is enabled) -->
+        {% if biz_profile.modules.keg and staff_profile.is_kitchen_staff %}
+        <div class="p-4">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        🍺 {% trans 'Bar Board Access' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans 'Allow this kitchen staff member to view and sell from the Bar Board. Disabled by default — kitchen staff are scoped to their own board.' %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'Grant if this person also serves bar customers or covers bar shifts.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_access_bar"
+                           id="can_access_bar"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_access_bar %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if not biz_profile.modules.kitchen and not biz_profile.modules.keg %}
+        <!-- Fallback row when neither module is active (no cross-module toggles needed) -->
+        {% endif %}
 
     </div>
 

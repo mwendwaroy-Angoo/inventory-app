@@ -90,6 +90,11 @@ from core.kitchen_views import (
     kitchen_tabs_list,
     toggle_kitchen,
 )
+from core.petty_cash_views import (
+    record_petty_cash,
+    petty_cash_list,
+    review_petty_cash,
+)
 from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import (
     mpesa_callback,
@@ -256,6 +261,11 @@ urlpatterns = [
     path("kitchen/receive/",        kitchen_receive,     name="kitchen_receive"),
     path("kitchen/tabs/",           kitchen_tabs_list,   name="kitchen_tabs_list"),
     path("kitchen/toggle/",         toggle_kitchen,      name="toggle_kitchen"),
+
+    # ── Petty Cash / Counter Drawdown ────────────────────────────────────────
+    path("petty-cash/",                           petty_cash_list,    name="petty_cash_list"),
+    path("petty-cash/record/",                    record_petty_cash,  name="record_petty_cash"),
+    path("petty-cash/<int:entry_id>/review/",     review_petty_cash,  name="review_petty_cash"),
 
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────

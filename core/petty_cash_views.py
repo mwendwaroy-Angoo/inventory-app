@@ -1,0 +1,111 @@
+"""
+Petty Cash / Counter Drawdown — views for recording and reviewing small operational
+expenses taken directly from the till during service (tokens, tissues, transport, etc.).
+"""
+from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
+from django.shortcuts import render, get_object_or_404, redirect
+from django.utils import timezone
+from django.views.decorators.http import require_POST
+
+from .models import PettyCash
+
+
+def _get_up(request):
+    try:
+        return request.user.userprofile
+    except Exception:
+        return None
+
+
+# ── Record a petty cash entry (staff or owner, AJAX POST) ────────────────────
+
+@login_required
+@require_POST
+def record_petty_cash(request):
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Not authenticated'}, status=401)
+
+    business = up.business
+    amount_str = request.POST.get('amount', '').strip()
+    reason = request.POST.get('reason', 'other')
+    description = (request.POST.get('description') or '').strip()
+
+    try:
+        amount = float(amount_str)
+        if amount <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        return JsonResponse({'ok': False, 'error': 'Ingiza kiasi sahihi.'}, status=400)
+
+    valid_reasons = [r[0] for r in PettyCash.REASON_CHOICES]
+    if reason not in valid_reasons:
+        reason = 'other'
+
+    entry = PettyCash.objects.create(
+        business=business,
+        amount=amount,
+        reason=reason,
+        description=description,
+        recorded_by=request.user,
+        date=timezone.localdate(),
+    )
+    return JsonResponse({
+        'ok': True,
+        'id': entry.id,
+        'amount': float(entry.amount),
+        'reason_display': entry.get_reason_display(),
+        'description': entry.description,
+        'status': entry.status,
+    })
+
+
+# ── Owner review list ─────────────────────────────────────────────────────────
+
+@login_required
+def petty_cash_list(request):
+    up = _get_up(request)
+    if not up or not up.is_owner:
+        return redirect('home')
+
+    business = up.business
+    entries = PettyCash.objects.filter(business=business).select_related('recorded_by', 'reviewed_by')
+
+    # Filter by status
+    status_filter = request.GET.get('status', 'all')
+    if status_filter in ('pending', 'approved', 'rejected'):
+        entries = entries.filter(status=status_filter)
+
+    pending_count = PettyCash.objects.filter(business=business, status='pending').count()
+
+    return render(request, 'core/petty_cash_list.html', {
+        'entries': entries[:100],
+        'status_filter': status_filter,
+        'pending_count': pending_count,
+    })
+
+
+# ── Approve / reject a petty cash entry (owner only, AJAX POST) ───────────────
+
+@login_required
+@require_POST
+def review_petty_cash(request, entry_id):
+    up = _get_up(request)
+    if not up or not up.is_owner:
+        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+
+    entry = get_object_or_404(PettyCash, id=entry_id, business=up.business)
+    action = request.POST.get('action')  # 'approve' or 'reject'
+    review_note = (request.POST.get('review_note') or '').strip()
+
+    if action not in ('approve', 'reject'):
+        return JsonResponse({'ok': False, 'error': 'Invalid action'}, status=400)
+
+    entry.status = 'approved' if action == 'approve' else 'rejected'
+    entry.reviewed_by = request.user
+    entry.reviewed_at = timezone.now()
+    entry.review_note = review_note
+    entry.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'review_note'])
+
+    return JsonResponse({'ok': True, 'new_status': entry.status})

@@ -132,6 +132,8 @@
       <div class="kb-revenue-badge">
         🍽 Leo: <strong>KES {{ kitchen_revenue_today|floatformat:0 }}</strong>
       </div>
+      <button class="btn btn-sm" style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);color:#ff9800;font-size:.8rem;"
+              onclick="window.openPettyCashModal()">🪙 Counter Cash</button>
       {% if is_owner %}
       <a href="{% url 'kitchen_receive' %}" style="display:none;" id="kb-receive-btn-placeholder"></a>
       <button class="btn btn-sm" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#c9a84c;font-size:.8rem;"
@@ -305,6 +307,9 @@
   </div>
 </div>
 {% endif %}
+
+<!-- Petty Cash modal -->
+{% include "core/petty_cash_modal.html" %}
 
 <!-- ── Food Tabs offcanvas ── -->
 <div class="offcanvas offcanvas-end" id="kbTabsDrawer" tabindex="-1" style="width:340px;max-width:95vw;background:#1a1a1a;border-left:1px solid #3a3a3a;">
@@ -724,5 +729,8 @@
   loadFoodTabBadge();
 
 }());
+
+/* ── Petty Cash ── */
+{% include "core/petty_cash_js.html" %}
 </script>
 {% endblock %}

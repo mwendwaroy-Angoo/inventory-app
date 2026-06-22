@@ -36,6 +36,7 @@ _SHIFT_EXEMPT_PREFIXES = (
     '/mpesa/',        # M-Pesa STK push, callbacks, prompts — never block payment flows
     '/r/',            # public receipt pages (unauthenticated)
     '/kitchen/',      # kitchen/grill board — independent of bar shift system
+    '/petty-cash/',   # petty cash recording — staff must be able to log during any shift state
     '/sw.js',
     '/manifest.json',
     '/offline/',

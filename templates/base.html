@@ -474,7 +474,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
-                        {% if biz_profile.modules.kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
+                        {% if biz_profile.modules.kitchen and user.userprofile.can_access_kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
@@ -491,7 +491,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
-                        {% if biz_profile.modules.kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
+                        {% if biz_profile.modules.kitchen and user.userprofile.can_access_kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item dropdown">
@@ -531,6 +531,7 @@
                                 <li><a class="dropdown-item" href="{% url 'pending_prompts' %}">💰 {% trans 'Payment Prompts' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
@@ -651,7 +652,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
-                        {% if biz_profile.modules.kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
+                        {% if biz_profile.modules.kitchen and user.userprofile.can_access_kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
@@ -680,7 +681,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
                         {% endif %}
-                        {% if biz_profile.modules.kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
+                        {% if biz_profile.modules.kitchen and user.userprofile.can_access_kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item dropdown">
@@ -720,6 +721,7 @@
                                 <li><a class="dropdown-item" href="{% url 'pending_prompts' %}">💰 {% trans 'Payment Prompts' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>

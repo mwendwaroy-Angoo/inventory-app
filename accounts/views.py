@@ -220,13 +220,18 @@ def staff_permissions(request, staff_id):
         UserProfile,
         id=staff_id,
         business=user_profile.business,
-        role__in=['staff', 'waitress'],
+        role__in=['staff', 'waitress', 'kitchen'],
     )
 
     if request.method == 'POST':
         staff_profile.can_input_cost_price = request.POST.get('can_input_cost_price') == 'on'
         staff_profile.can_override_restrictions = request.POST.get('can_override_restrictions') == 'on'
-        staff_profile.save(update_fields=['can_input_cost_price', 'can_override_restrictions'])
+        staff_profile.can_access_kitchen = request.POST.get('can_access_kitchen') == 'on'
+        staff_profile.can_access_bar = request.POST.get('can_access_bar') == 'on'
+        staff_profile.save(update_fields=[
+            'can_input_cost_price', 'can_override_restrictions',
+            'can_access_kitchen', 'can_access_bar',
+        ])
         staff_name = staff_profile.user.get_full_name() or staff_profile.user.username
         messages.success(request, _(f'Permissions updated for {staff_name}.'))
         return redirect('staff_permissions', staff_id=staff_id)

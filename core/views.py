@@ -161,6 +161,15 @@ def home(request):
                 context['items_missing_cost_price'] = []
                 context['missing_cost_price_count'] = 0
 
+            # Petty cash pending review count
+            try:
+                from .models import PettyCash as _PettyCash
+                context['pending_petty_cash_count'] = _PettyCash.objects.filter(
+                    business=business, status='pending'
+                ).count()
+            except Exception:
+                context['pending_petty_cash_count'] = 0
+
             # Expiry alerts
             try:
                 from datetime import date as _date, timedelta as _td

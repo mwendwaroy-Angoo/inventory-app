@@ -244,6 +244,21 @@
     </a>
     {% endif %}
 
+    <!-- Petty cash pending review alert (owner only) -->
+    {% if user.userprofile.is_owner and pending_petty_cash_count > 0 %}
+    <a href="{% url 'petty_cash_list' %}?status=pending" style="text-decoration:none; display:block; margin-bottom:0.75rem;">
+      <div style="background:rgba(255,152,0,.1); border:1px solid rgba(255,152,0,.3);
+                  border-left:3px solid #ff9800; border-radius:8px; padding:.65rem 1rem;
+                  display:flex; align-items:center; gap:.6rem;">
+        <span style="font-size:1.1rem;">🪙</span>
+        <span style="color:#ff9800; font-size:.88rem;">
+          <strong>{{ pending_petty_cash_count }} counter cash entr{{ pending_petty_cash_count|pluralize:"y,ies" }} pending your review</strong>
+          — Kagua →
+        </span>
+      </div>
+    </a>
+    {% endif %}
+
     <!-- Cost price missing alert (owner only) -->
     {% if user.userprofile.is_owner and missing_cost_price_count > 0 %}
     <div class="alert alert-warning alert-dismissible fade show mb-3" role="alert"

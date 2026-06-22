@@ -601,6 +601,9 @@
                       font-size:0.65rem; line-height:18px; text-align:center;"></span>
             </button>
             {% endif %}
+            <button type="button"
+                    style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);color:#ff9800;border-radius:8px;padding:4px 12px;font-size:0.82rem;cursor:pointer;"
+                    onclick="window.openPettyCashModal()">🪙 Counter Cash</button>
             <a href="{% url 'add_transaction' %}" class="btn btn-sm btn-secondary">{% trans 'Full Form' %} →</a>
         </div>
     </div>
@@ -1079,6 +1082,10 @@
   </div>
 </div>
 {% endif %}
+
+<!-- Petty Cash modal -->
+{% include "core/petty_cash_modal.html" %}
+
 {% endblock %}
 
 {% block page_tour %}
@@ -2351,5 +2358,8 @@
         .catch(function () {});
 }());
 {% endif %}
+
+/* ── Petty Cash ── */
+{% include "core/petty_cash_js.html" %}
 </script>
 {% endblock %}

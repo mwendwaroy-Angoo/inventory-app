@@ -89,6 +89,11 @@ def kitchen_board(request):
     if not business.has_kitchen and not is_owner:
         return redirect('home')
 
+    # Bar/general staff need explicit kitchen access permission
+    if not is_owner and not up.is_kitchen_staff:
+        if not getattr(up, 'can_access_kitchen', True):
+            return redirect('home')
+
     if request.method == 'POST':
         return _kitchen_checkout(request, up, business, is_owner)
 

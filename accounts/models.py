@@ -252,6 +252,14 @@ class UserProfile(models.Model):
         default=False,
         help_text='Staff can sell restricted items without triggering an owner approval request.'
     )
+    can_access_kitchen = models.BooleanField(
+        default=True,
+        help_text='Bar/general staff may access the Kitchen Board. Revoke if you want them bar-only.'
+    )
+    can_access_bar = models.BooleanField(
+        default=False,
+        help_text='Kitchen staff may access the Bar Board. Grant if they also serve bar customers.'
+    )
 
     # ── Session Control ────────────────────────────────────────────────
     current_session_key = models.CharField(

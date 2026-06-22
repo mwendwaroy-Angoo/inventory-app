@@ -171,6 +171,12 @@ def bar_board(request):
 
     business = up.business
     is_owner = bool(getattr(up, 'is_owner', False))
+
+    # Kitchen staff are bar-board-blocked unless the owner has granted access
+    if not is_owner and getattr(up, 'is_kitchen_staff', False):
+        if not getattr(up, 'can_access_bar', False):
+            return redirect('kitchen_board')
+
     success_data = None
 
     # Pass shift status to template so tiles can be greyed out immediately on load

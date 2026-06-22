@@ -715,6 +715,47 @@ class BusinessExpense(models.Model):
 
 
 # ────────────────────────────────────────────────
+# PETTY CASH / COUNTER DRAWDOWN (Sprint 21)
+# ────────────────────────────────────────────────
+
+class PettyCash(models.Model):
+    """Money taken from the counter during service for small operational expenses."""
+    STATUS_CHOICES = [
+        ('pending',  _('Pending Review')),
+        ('approved', _('Approved')),
+        ('rejected', _('Rejected')),
+    ]
+    REASON_CHOICES = [
+        ('electricity', _('Electricity / Tokens')),
+        ('supplies',    _('Supplies (tissues, serviettes, etc.)')),
+        ('transport',   _('Transport / Delivery')),
+        ('fuel',        _('Fuel / Gas')),
+        ('food',        _('Staff Meal')),
+        ('other',       _('Other')),
+    ]
+
+    business     = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='petty_cash_entries')
+    amount       = models.DecimalField(max_digits=10, decimal_places=2)
+    reason       = models.CharField(max_length=20, choices=REASON_CHOICES, default='other')
+    description  = models.CharField(max_length=200, blank=True)
+    recorded_by  = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, related_name='petty_cash_recorded')
+    date         = models.DateField(default=timezone.now)
+    created_at   = models.DateTimeField(auto_now_add=True)
+    status       = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    reviewed_by  = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='petty_cash_reviewed')
+    reviewed_at  = models.DateTimeField(null=True, blank=True)
+    review_note  = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = _('Petty Cash Entry')
+        verbose_name_plural = _('Petty Cash Entries')
+
+    def __str__(self):
+        return f"{self.get_reason_display()} KES {self.amount} by {self.recorded_by} ({self.date})"
+
+
+# ────────────────────────────────────────────────
 # RECURRING EXPENSES (Sprint 7)
 # ────────────────────────────────────────────────
 

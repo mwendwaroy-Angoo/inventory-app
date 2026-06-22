@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Petty Cash Review{% endblock %}
+
+{% block extra_css %}
+<style>
+.pc-card {
+  background:#2a2a2a; border:1px solid #3a3a3a; border-radius:10px;
+  padding:.75rem 1rem; margin-bottom:.55rem;
+  display:flex; align-items:flex-start; gap:.75rem; flex-wrap:wrap;
+}
+.pc-badge {
+  display:inline-block; border-radius:20px; padding:.2rem .65rem;
+  font-size:.72rem; font-weight:600; white-space:nowrap;
+}
+.pc-badge.pending  { background:rgba(255,152,0,.12); color:#ff9800; border:1px solid rgba(255,152,0,.3); }
+.pc-badge.approved { background:rgba(76,175,80,.12); color:#4caf50; border:1px solid rgba(76,175,80,.3); }
+.pc-badge.rejected { background:rgba(192,57,90,.12); color:#c0395a; border:1px solid rgba(192,57,90,.3); }
+.pc-actions { display:flex; gap:.4rem; margin-top:.45rem; flex-wrap:wrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="page-title mb-1">🪙 Petty Cash</h1>
+    <div style="color:#b0b0b0; font-size:.85rem;">
+      Counter drawdowns recorded by staff during service
+      {% if pending_count > 0 %}
+      — <span style="color:#ff9800; font-weight:600;">{{ pending_count }} pending review</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="?status=all" class="btn btn-sm {% if status_filter == 'all' %}btn-gold{% else %}btn-outline-secondary{% endif %}">All</a>
+    <a href="?status=pending" class="btn btn-sm {% if status_filter == 'pending' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Pending</a>
+    <a href="?status=approved" class="btn btn-sm {% if status_filter == 'approved' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Approved</a>
+    <a href="?status=rejected" class="btn btn-sm {% if status_filter == 'rejected' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Rejected</a>
+  </div>
+</div>
+
+{% if not entries %}
+<div class="text-center py-5" style="color:#555;">
+  <div style="font-size:2rem; margin-bottom:.5rem;">🪙</div>
+  Hakuna rekodi za petty cash
+  {% if status_filter != 'all' %}kwa filter hii{% endif %}.
+</div>
+{% else %}
+{% for entry in entries %}
+<div class="pc-card" id="pc-entry-{{ entry.id }}">
+  <div style="flex:1; min-width:160px;">
+    <div style="color:#f0ece4; font-weight:600; font-size:.92rem;">KES {{ entry.amount|floatformat:0 }}</div>
+    <div style="color:#b0b0b0; font-size:.82rem; margin-top:.1rem;">{{ entry.get_reason_display }}</div>
+    {% if entry.description %}
+    <div style="color:#888; font-size:.78rem; margin-top:.1rem;">"{{ entry.description }}"</div>
+    {% endif %}
+    <div style="color:#555; font-size:.75rem; margin-top:.25rem;">
+      Imeandikwa na <strong style="color:#b0b0b0;">{{ entry.recorded_by.get_full_name|default:entry.recorded_by.username }}</strong>
+      — {{ entry.date }} {{ entry.created_at|time:"H:i" }}
+    </div>
+    {% if entry.reviewed_by %}
+    <div style="color:#555; font-size:.75rem; margin-top:.15rem;">
+      Imekaguliwa na {{ entry.reviewed_by.get_full_name|default:entry.reviewed_by.username }}
+      {% if entry.review_note %}: "{{ entry.review_note }}"{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div style="display:flex; flex-direction:column; align-items:flex-end; gap:.4rem;">
+    <span class="pc-badge {{ entry.status }}">
+      {% if entry.status == 'pending' %}⏳ Inasubiri{% elif entry.status == 'approved' %}✓ Imekubaliwa{% else %}✕ Imekataliwa{% endif %}
+    </span>
+    {% if entry.status == 'pending' %}
+    <div class="pc-actions">
+      <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
+              onclick="reviewEntry({{ entry.id }}, 'approve')">✓ Kubali</button>
+      <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
+              onclick="reviewEntry({{ entry.id }}, 'reject')">✕ Kataa</button>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- Review note modal -->
+<div class="modal fade" id="pcReviewModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" id="pcReviewTitle" style="color:#c9a84c;">Kagua</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.75rem;">
+        <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.25rem;">Maelezo (hiari)</label>
+        <input type="text" id="pc-review-note" placeholder="e.g. Receipts zimetolewa"
+               style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.85rem;">
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;padding:.75rem;">
+        <button id="pc-review-confirm-btn" class="btn btn-gold w-100">Thibitisha</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var _pendingAction = null;
+var _pendingId = null;
+
+window.reviewEntry = function(entryId, action) {
+  _pendingAction = action;
+  _pendingId = entryId;
+  var title = action === 'approve' ? '✓ Kubali' : '✕ Kataa';
+  document.getElementById('pcReviewTitle').textContent = title;
+  document.getElementById('pc-review-note').value = '';
+  new bootstrap.Modal(document.getElementById('pcReviewModal')).show();
+};
+
+document.getElementById('pc-review-confirm-btn').addEventListener('click', function() {
+  if (!_pendingId || !_pendingAction) return;
+  var note = document.getElementById('pc-review-note').value || '';
+  var btn = this;
+  btn.disabled = true; btn.textContent = 'Inatuma...';
+
+  var body = new URLSearchParams({
+    action: _pendingAction,
+    review_note: note,
+    csrfmiddlewaretoken: '{{ csrf_token }}',
+  });
+  fetch('/petty-cash/' + _pendingId + '/review/', {
+    method: 'POST', body: body,
+    headers: {'X-CSRFToken': '{{ csrf_token }}'}
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      btn.disabled = false; btn.textContent = 'Thibitisha';
+      if (d.ok) {
+        var m = bootstrap.Modal.getInstance(document.getElementById('pcReviewModal'));
+        if (m) m.hide();
+        // Update badge in page without reload
+        var card = document.getElementById('pc-entry-' + _pendingId);
+        if (card) {
+          var badge = card.querySelector('.pc-badge');
+          var actions = card.querySelector('.pc-actions');
+          if (badge) {
+            badge.className = 'pc-badge ' + d.new_status;
+            badge.textContent = d.new_status === 'approved' ? '✓ Imekubaliwa' : '✕ Imekataliwa';
+          }
+          if (actions) actions.remove();
+        }
+      } else {
+        alert(d.error || 'Hitilafu.');
+      }
+    })
+    .catch(function(){ btn.disabled=false; btn.textContent='Thibitisha'; alert('Hitilafu ya mtandao.'); });
+});
+</script>
+{% endblock %}
