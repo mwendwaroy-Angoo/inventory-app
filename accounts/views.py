@@ -198,7 +198,7 @@ def staff_list(request):
 
     staff = UserProfile.objects.filter(
         business=user_profile.business,
-        role__in=['staff', 'waitress']
+        role__in=['staff', 'waitress', 'kitchen']
     ).select_related('user')
 
     return render(request, 'accounts/staff_list.html', {'staff': staff})
