@@ -495,20 +495,20 @@
                                         data-existing-value="{{ preset.label }}">
                                     <option value="">-- {% trans 'Select label' %} --</option>
                                     {% if not biz_profile.modules.keg %}
-                                    <optgroup label="{% trans 'Fractional' %}">
+                                    <optgroup label="{% trans 'Fractional' %}" class="fractional-opts">
                                         <option value="Small Portion">{% trans 'Small Portion' %}</option>
                                         <option value="Quarter">{% trans 'Quarter' %}</option>
                                         <option value="Half">{% trans 'Half' %}</option>
                                         <option value="Three-Quarters">{% trans 'Three-Quarters' %}</option>
                                         <option value="Full">{% trans 'Full' %}</option>
                                     </optgroup>
-                                    <optgroup label="{% trans 'Count-based' %}">
+                                    <optgroup label="{% trans 'Count-based' %}" class="count-opts">
                                         <option value="Single Piece">{% trans 'Single Piece' %}</option>
                                         <option value="Pair (2)">{% trans 'Pair (2)' %}</option>
                                         <option value="Small Bundle (4 units)">{% trans 'Small Bundle (4 units)' %}</option>
                                         <option value="Large Bundle (8 units)">{% trans 'Large Bundle (8 units)' %}</option>
                                     </optgroup>
-                                    <optgroup label="{% trans 'Kibanda / Multi-piece' %}">
+                                    <optgroup label="{% trans 'Kibanda / Multi-piece' %}" class="kibanda-opts">
                                         <option value="Kimoja">{% trans 'Kimoja (1 piece)' %}</option>
                                         <option value="Mbili mbao">{% trans 'Mbili mbao (2 for price)' %}</option>
                                         <option value="Tatu mbao">{% trans 'Tatu mbao (3 for price)' %}</option>
@@ -516,7 +516,7 @@
                                         <option value="Tano mbao">{% trans 'Tano mbao (5 for price)' %}</option>
                                         <option value="Sita mbao">{% trans 'Sita mbao (6 for price)' %}</option>
                                     </optgroup>
-                                    <optgroup label="{% trans 'Gorogoro / Heap' %}">
+                                    <optgroup label="{% trans 'Gorogoro / Heap' %}" class="gorogoro-opts">
                                         <option value="Small Gorogoro">{% trans 'Small Gorogoro' %}</option>
                                         <option value="Medium Gorogoro">{% trans 'Medium Gorogoro' %}</option>
                                         <option value="Large Gorogoro">{% trans 'Large Gorogoro' %}</option>
@@ -541,6 +541,37 @@
                                         <option value="Double">{% trans 'Double (60ml)' %}</option>
                                         <option value="Wine Glass">{% trans 'Wine Glass (150ml)' %}</option>
                                         <option value="Small Bottle">{% trans 'Small Bottle (200ml)' %}</option>
+                                    </optgroup>
+                                    <!-- Kitchen food presets — shown only when a kitchen store is selected -->
+                                    <optgroup label="🍗 {% trans 'Food Sizes' %}" class="kitchen-food-opts" style="display:none">
+                                        <option value="Regular">{% trans 'Regular (Kawaida)' %}</option>
+                                        <option value="Large">{% trans 'Large (Kubwa)' %}</option>
+                                        <option value="Special">{% trans 'Special (Maalum)' %}</option>
+                                        <option value="Small Plate">{% trans 'Small Plate (Sahani Ndogo)' %}</option>
+                                        <option value="Full Plate">{% trans 'Full Plate (Sahani Kubwa)' %}</option>
+                                    </optgroup>
+                                    <optgroup label="🍗 {% trans 'Chicken Cuts' %}" class="kitchen-food-opts" style="display:none">
+                                        <option value="Wing">{% trans 'Wing (Bawa)' %}</option>
+                                        <option value="Drumstick">{% trans 'Drumstick (Paja)' %}</option>
+                                        <option value="Quarter Chicken">{% trans 'Quarter (Robo Kuku)' %}</option>
+                                        <option value="Half Chicken">{% trans 'Half (Nusu Kuku)' %}</option>
+                                        <option value="Full Chicken">{% trans 'Full (Kuku Mzima)' %}</option>
+                                    </optgroup>
+                                    <optgroup label="🍖 {% trans 'Nyama / Price Points' %}" class="kitchen-food-opts" style="display:none">
+                                        <option value="100g">100g</option>
+                                        <option value="200g">200g</option>
+                                        <option value="300g">300g</option>
+                                        <option value="500g">500g</option>
+                                        <option value="1kg">1kg</option>
+                                        <option value="1 Plate">{% trans '1 Plate (Sahani)' %}</option>
+                                    </optgroup>
+                                    <optgroup label="🥩 {% trans 'Pieces / Count' %}" class="kitchen-food-opts" style="display:none">
+                                        <option value="1 Piece">{% trans '1 Piece (Moja)' %}</option>
+                                        <option value="2 Pieces">{% trans '2 Pieces (Mbili)' %}</option>
+                                        <option value="3 Pieces">{% trans '3 Pieces (Tatu)' %}</option>
+                                        <option value="4 Pieces">{% trans '4 Pieces (Nne)' %}</option>
+                                        <option value="6 Pieces">{% trans '6 Pieces (Sita)' %}</option>
+                                        <option value="12 Pieces">{% trans '12 Pieces (Kumi na Mbili)' %}</option>
                                     </optgroup>
                                     <optgroup label="{% trans 'Other' %}">
                                         <option value="Custom">{% trans 'Custom (enter manually)' %}</option>
@@ -934,24 +965,56 @@
             });
 
             // Build the label select HTML for dynamically added rows
+            var KITCHEN_FOOD_OPTS_HTML =
+                    '<optgroup label="🍗 {% trans "Food Sizes" %}" class="kitchen-food-opts" style="display:none">' +
+                    '<option value="Regular">{% trans "Regular (Kawaida)" %}</option>' +
+                    '<option value="Large">{% trans "Large (Kubwa)" %}</option>' +
+                    '<option value="Special">{% trans "Special (Maalum)" %}</option>' +
+                    '<option value="Small Plate">{% trans "Small Plate (Sahani Ndogo)" %}</option>' +
+                    '<option value="Full Plate">{% trans "Full Plate (Sahani Kubwa)" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="🍗 {% trans "Chicken Cuts" %}" class="kitchen-food-opts" style="display:none">' +
+                    '<option value="Wing">{% trans "Wing (Bawa)" %}</option>' +
+                    '<option value="Drumstick">{% trans "Drumstick (Paja)" %}</option>' +
+                    '<option value="Quarter Chicken">{% trans "Quarter (Robo Kuku)" %}</option>' +
+                    '<option value="Half Chicken">{% trans "Half (Nusu Kuku)" %}</option>' +
+                    '<option value="Full Chicken">{% trans "Full (Kuku Mzima)" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="🍖 {% trans "Nyama / Price Points" %}" class="kitchen-food-opts" style="display:none">' +
+                    '<option value="100g">100g</option>' +
+                    '<option value="200g">200g</option>' +
+                    '<option value="300g">300g</option>' +
+                    '<option value="500g">500g</option>' +
+                    '<option value="1kg">1kg</option>' +
+                    '<option value="1 Plate">{% trans "1 Plate (Sahani)" %}</option>' +
+                    '</optgroup>' +
+                    '<optgroup label="🥩 {% trans "Pieces / Count" %}" class="kitchen-food-opts" style="display:none">' +
+                    '<option value="1 Piece">{% trans "1 Piece (Moja)" %}</option>' +
+                    '<option value="2 Pieces">{% trans "2 Pieces (Mbili)" %}</option>' +
+                    '<option value="3 Pieces">{% trans "3 Pieces (Tatu)" %}</option>' +
+                    '<option value="4 Pieces">{% trans "4 Pieces (Nne)" %}</option>' +
+                    '<option value="6 Pieces">{% trans "6 Pieces (Sita)" %}</option>' +
+                    '<option value="12 Pieces">{% trans "12 Pieces (Kumi na Mbili)" %}</option>' +
+                    '</optgroup>';
+
             function buildLabelSelectHtml() {
                 return '<select name="preset_label" class="form-select form-select-sm" onchange="onPresetLabelChange(this)">' +
                     '<option value="">-- {% trans "Select label" %} --</option>' +
                     (IS_KEG_BUSINESS ? '' :
-                    '<optgroup label="{% trans "Fractional" %}">' +
+                    '<optgroup label="{% trans "Fractional" %}" class="fractional-opts">' +
                     '<option value="Small Portion">{% trans "Small Portion" %}</option>' +
                     '<option value="Quarter">{% trans "Quarter" %}</option>' +
                     '<option value="Half">{% trans "Half" %}</option>' +
                     '<option value="Three-Quarters">{% trans "Three-Quarters" %}</option>' +
                     '<option value="Full">{% trans "Full" %}</option>' +
                     '</optgroup>' +
-                    '<optgroup label="{% trans "Count-based" %}">' +
+                    '<optgroup label="{% trans "Count-based" %}" class="count-opts">' +
                     '<option value="Single Piece">{% trans "Single Piece" %}</option>' +
                     '<option value="Pair (2)">{% trans "Pair (2)" %}</option>' +
                     '<option value="Small Bundle (4 units)">{% trans "Small Bundle (4 units)" %}</option>' +
                     '<option value="Large Bundle (8 units)">{% trans "Large Bundle (8 units)" %}</option>' +
                     '</optgroup>' +
-                    '<optgroup label="{% trans "Kibanda / Multi-piece" %}">' +
+                    '<optgroup label="{% trans "Kibanda / Multi-piece" %}" class="kibanda-opts">' +
                     '<option value="Kimoja">{% trans "Kimoja (1 piece)" %}</option>' +
                     '<option value="Mbili mbao">{% trans "Mbili mbao (2 for price)" %}</option>' +
                     '<option value="Tatu mbao">{% trans "Tatu mbao (3 for price)" %}</option>' +
@@ -959,7 +1022,7 @@
                     '<option value="Tano mbao">{% trans "Tano mbao (5 for price)" %}</option>' +
                     '<option value="Sita mbao">{% trans "Sita mbao (6 for price)" %}</option>' +
                     '</optgroup>' +
-                    '<optgroup label="{% trans "Gorogoro / Heap" %}">' +
+                    '<optgroup label="{% trans "Gorogoro / Heap" %}" class="gorogoro-opts">' +
                     '<option value="Small Gorogoro">{% trans "Small Gorogoro" %}</option>' +
                     '<option value="Medium Gorogoro">{% trans "Medium Gorogoro" %}</option>' +
                     '<option value="Large Gorogoro">{% trans "Large Gorogoro" %}</option>' +
@@ -984,6 +1047,7 @@
                     '<option value="Wine Glass">{% trans "Wine Glass (150ml)" %}</option>' +
                     '<option value="Small Bottle">{% trans "Small Bottle (200ml)" %}</option>' +
                     '</optgroup>' +
+                    KITCHEN_FOOD_OPTS_HTML +
                     '<optgroup label="{% trans "Other" %}">' +
                     '<option value="Custom">{% trans "Custom (enter manually)" %}</option>' +
                     '</optgroup>' +
@@ -1659,6 +1723,25 @@
             r.style.gridTemplateColumns = cols;
             var sel = r.querySelector('[name="preset_serving_type"]');
             if (sel) sel.style.display = isKitchen ? 'none' : '';
+        });
+
+        // Toggle preset label optgroups on all label selects
+        document.querySelectorAll('select[name="preset_label"]').forEach(function(sel) {
+            // Kitchen store: show food presets, hide bar/produce presets
+            sel.querySelectorAll('.kitchen-food-opts').forEach(function(og) {
+                og.style.display = isKitchen ? '' : 'none';
+            });
+            sel.querySelectorAll('.bar-keg-opts, .bar-spirit-opts').forEach(function(og) {
+                og.style.display = isKitchen ? 'none' : '';
+            });
+            // Produce-specific groups (only present on non-keg businesses)
+            sel.querySelectorAll('.kibanda-opts, .gorogoro-opts').forEach(function(og) {
+                og.style.display = isKitchen ? 'none' : '';
+            });
+            // Fractional/Count are still useful for general items but not for kitchen
+            sel.querySelectorAll('.fractional-opts, .count-opts').forEach(function(og) {
+                og.style.display = isKitchen ? 'none' : '';
+            });
         });
     }
 
