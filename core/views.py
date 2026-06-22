@@ -208,6 +208,7 @@ def home(request):
                         business=business, type='Issue',
                         date=timezone.localdate(),
                         payment_method__in=['cash', 'mpesa'],
+                        item__store__is_kitchen=False,
                     ).select_related('item')
                     context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
                     # Tapped barrels and kegs near empty (<15% of target remaining)
@@ -220,6 +221,19 @@ def home(request):
                 context['bar_today_revenue'] = 0
                 context['kegs_tapped'] = 0
                 context['kegs_at_risk_count'] = 0
+
+            # Kitchen-specific today revenue (separate from bar)
+            try:
+                if business.has_kitchen:
+                    _kitchen_txns = Transaction.objects.filter(
+                        business=business, type='Issue',
+                        date=timezone.localdate(),
+                        payment_method__in=['cash', 'mpesa'],
+                        item__store__is_kitchen=True,
+                    ).select_related('item')
+                    context['kitchen_today_revenue'] = sum(t.revenue() for t in _kitchen_txns)
+            except Exception:
+                context['kitchen_today_revenue'] = 0
 
             # Recurring expense review nudge (owner only, once per period)
             if user_profile.is_owner:

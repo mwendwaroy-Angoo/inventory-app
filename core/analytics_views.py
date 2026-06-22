@@ -481,7 +481,8 @@ def analytics_dashboard(request):
     # Per-item: bunches received in period, revenue collected, cost, wastage
     greens_items = list(
         ProduceBunch.objects
-        .filter(business=business, received_on__gte=start_date, received_on__lte=today)
+        .filter(business=business, received_on__gte=start_date, received_on__lte=today,
+                item__store__is_kitchen=False)
         .values('item__description')
         .annotate(
             bunches_in=Count('id'),
@@ -512,6 +513,7 @@ def analytics_dashboard(request):
             business=business, type='Issue',
             produce_bunch__isnull=False,   # only BUNCH greens have a produce_bunch FK
             date__gte=start_date, date__lte=today,
+            item__store__is_kitchen=False,
         )
         .annotate(day=TruncDate('date'))
         .values('day')
@@ -527,6 +529,7 @@ def analytics_dashboard(request):
         .filter(
             business=business, type='Issue',
             item__is_produce=True, item__produce_mode='PORTION',
+            item__store__is_kitchen=False,
             date__gte=start_date, date__lte=today,
         )
         .select_related('item')
@@ -746,6 +749,48 @@ def analytics_dashboard(request):
     tabs_aging = [b for b in _aging_buckets if b['count'] > 0]
     total_tabs_owed = round(total_tabs_owed, 2)
 
+    # ── Kitchen Performance Analytics ─────────────────────────────────────────
+    kitchen_rows = []
+    total_kitchen_revenue = 0.0
+    kitchen_share = 0.0
+    if business.has_kitchen:
+        _kitchen_txns = list(
+            Transaction.objects.filter(
+                business=business, type='Issue',
+                item__store__is_kitchen=True,
+                date__gte=start_date, date__lte=today,
+            ).select_related('item', 'produce_bunch')
+        )
+        _km = {}
+        for t in _kitchen_txns:
+            k = t.item_id
+            if k not in _km:
+                _km[k] = {
+                    'name':    t.item.description,
+                    'units':   0.0,
+                    'revenue': 0.0,
+                    'cost':    0.0,
+                    'is_batch': t.produce_bunch_id is not None,
+                }
+            rev = float(t.revenue())
+            qty = abs(float(t.qty or 0))
+            _km[k]['revenue'] += rev
+            _km[k]['cost']    += float(t.cost())
+            _km[k]['units']   += qty
+        for row in sorted(_km.values(), key=lambda x: -x['revenue']):
+            margin = (round((row['revenue'] - row['cost']) / row['revenue'] * 100, 1)
+                      if row['revenue'] > 0 else 0)
+            kitchen_rows.append({
+                'name':    row['name'],
+                'units':   round(row['units'], 1),
+                'revenue': round(row['revenue'], 2),
+                'cost':    round(row['cost'], 2),
+                'margin':  margin,
+                'is_batch': row['is_batch'],
+            })
+        total_kitchen_revenue = round(sum(r['revenue'] for r in kitchen_rows), 2)
+        kitchen_share = round(100 * total_kitchen_revenue / float(cur_revenue), 1) if cur_revenue > 0 else 0
+
     context = {
         'period': days,
         'start_date': start_date,
@@ -838,6 +883,10 @@ def analytics_dashboard(request):
         'total_tabs_owed':    total_tabs_owed,
         # Break-Even Analysis
         'breakeven_data': breakeven_data,
+        # Kitchen performance
+        'kitchen_rows':           kitchen_rows,
+        'total_kitchen_revenue':  total_kitchen_revenue,
+        'kitchen_share':          kitchen_share,
     }
     return render(request, 'core/analytics.html', context)
 

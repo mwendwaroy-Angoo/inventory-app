@@ -1184,6 +1184,61 @@
 </div>
 {% endif %}
 
+{% if kitchen_rows %}
+<hr class="gold-divider" />
+<!-- ── Kitchen / Grill Performance ─────────────────────────────────────── -->
+<div class="section-title">🍗 {% trans "Kitchen Performance" %}</div>
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div style="background:var(--onyx-card);border:1px solid rgba(255,165,0,0.3);border-radius:10px;padding:1rem;text-align:center;">
+      <div style="color:#ff9800;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Kitchen Revenue" %}</div>
+      <div style="color:#ffb74d;font-size:1.4rem;font-weight:700;font-family:'Playfair Display',serif;">KES {{ total_kitchen_revenue|floatformat:0 }}</div>
+      <div style="color:#b0b0b0;font-size:0.8rem;">{{ kitchen_share }}% {% trans "of all sales" %}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div style="background:var(--onyx-card);border:1px solid rgba(255,165,0,0.2);border-radius:10px;padding:1rem;text-align:center;">
+      <div style="color:#ff9800;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;">{% trans "Menu Items" %}</div>
+      <div style="color:#ffb74d;font-size:1.4rem;font-weight:700;font-family:'Playfair Display',serif;">{{ kitchen_rows|length }}</div>
+      <div style="color:#b0b0b0;font-size:0.8rem;">{% trans "selling this period" %}</div>
+    </div>
+  </div>
+</div>
+
+<div style="background:var(--onyx-card);border:1px solid #2a2a2a;border-radius:10px;overflow:hidden;margin-bottom:1.5rem;">
+  <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+    <thead>
+      <tr style="background:rgba(255,152,0,0.08);border-bottom:1px solid #2a2a2a;">
+        <th style="padding:0.6rem 1rem;text-align:left;color:#ff9800;font-weight:600;">{% trans "Item" %}</th>
+        <th style="padding:0.6rem;text-align:right;color:#ff9800;font-weight:600;">{% trans "Units" %}</th>
+        <th style="padding:0.6rem;text-align:right;color:#ff9800;font-weight:600;">{% trans "Revenue" %}</th>
+        <th style="padding:0.6rem;text-align:right;color:#ff9800;font-weight:600;">{% trans "Cost" %}</th>
+        <th style="padding:0.6rem 1rem;text-align:right;color:#ff9800;font-weight:600;">{% trans "Margin %" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in kitchen_rows %}
+      <tr style="border-bottom:1px solid #1e1e1e;">
+        <td style="padding:0.6rem 1rem;color:var(--pearl);">
+          {{ row.name }}
+          {% if row.is_batch %}<span style="font-size:0.72rem;color:#b0b0b0;margin-left:0.3rem;">(batch)</span>{% endif %}
+        </td>
+        <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">{{ row.units|floatformat:1 }}</td>
+        <td style="padding:0.6rem;text-align:right;color:#ffb74d;">KES {{ row.revenue|floatformat:0 }}</td>
+        <td style="padding:0.6rem;text-align:right;color:#b0b0b0;">KES {{ row.cost|floatformat:0 }}</td>
+        <td style="padding:0.6rem 1rem;text-align:right;color:{% if row.margin >= 40 %}#4caf50{% elif row.margin >= 20 %}#c9a84c{% else %}#c0395a{% endif %};">{{ row.margin }}%</td>
+      </tr>
+      {% endfor %}
+      <tr style="background:rgba(255,152,0,0.05);">
+        <td colspan="2" style="padding:0.6rem 1rem;color:#ff9800;font-weight:600;">{% trans "Total" %}</td>
+        <td style="padding:0.6rem;text-align:right;color:#ffb74d;font-weight:600;">KES {{ total_kitchen_revenue|floatformat:0 }}</td>
+        <td colspan="2"></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 <hr class="gold-divider" />
 
 <!-- ═══ ORDER & PAYMENT ANALYTICS ═══ -->

@@ -320,8 +320,16 @@
                 <div style="font-family:'Playfair Display',serif; font-size:2rem; color:var(--biz-accent); font-weight:700;">
                     KES {{ bar_today_revenue|default:0|floatformat:0 }}
                 </div>
-                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Today's Revenue</div>
+                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Bar Revenue</div>
             </div>
+            {% if kitchen_today_revenue %}
+            <div style="text-align:center;">
+                <div style="font-family:'Playfair Display',serif; font-size:2rem; color:#ff9800; font-weight:700;">
+                    KES {{ kitchen_today_revenue|floatformat:0 }}
+                </div>
+                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">🍗 Kitchen</div>
+            </div>
+            {% endif %}
             <div style="text-align:center;">
                 <div id="bar-hero-shift" style="font-family:'Playfair Display',serif; font-size:1.5rem; font-weight:700; color:#888;">—</div>
                 <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Shift Status</div>
