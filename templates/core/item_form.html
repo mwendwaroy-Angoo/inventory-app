@@ -453,6 +453,38 @@
 
             {% endif %}{# end not produce #}
 
+            {% if kitchen_store_ids_json %}
+            <!-- Kitchen-specific Batch / Portion toggle — shown only when kitchen store selected -->
+            <!-- Lives OUTSIDE the keg/produce gates so it renders for bar businesses too -->
+            <div id="kitchenModeSection" style="display:none;">
+                <div class="section-divider"><span>🍽️ {% trans 'Kitchen Stock Mode' %}</span></div>
+                <div class="mb-3">
+                    <div style="color:var(--gold); font-size:0.85rem; font-weight:600; margin-bottom:0.6rem;">
+                        {% trans 'How is this item cooked and sold?' %}
+                    </div>
+                    <div class="d-flex gap-2" style="margin-bottom:0.6rem;">
+                        <input type="radio" class="btn-check" id="km_portion" name="km_mode" value="portion" checked>
+                        <label class="btn btn-outline-warning flex-fill text-center py-2" for="km_portion" style="line-height:1.3;">
+                            🍗 {% trans 'Countable pieces' %}<br>
+                            <small style="opacity:0.65; font-size:0.72rem;">{% trans 'chicken, smokies, eggs, samosas' %}</small>
+                        </label>
+                        <input type="radio" class="btn-check" id="km_batch" name="km_mode" value="batch">
+                        <label class="btn btn-outline-success flex-fill text-center py-2" for="km_batch" style="line-height:1.3;">
+                            📦 {% trans 'Batch cooking' %}<br>
+                            <small style="opacity:0.65; font-size:0.72rem;">{% trans 'fries, rice, ugali, nyama choma' %}</small>
+                        </label>
+                    </div>
+                    <div id="km_portion_info" style="color:#b0b0b0; font-size:0.78rem; padding:0.5rem 0.7rem; background:rgba(201,168,76,0.05); border-radius:6px;">
+                        {% trans 'You count pieces before selling. Opening stock = how many you have right now. Each sale deducts from count.' %}
+                    </div>
+                    <div id="km_batch_info" style="display:none; color:#9fcaa0; font-size:0.78rem; padding:0.6rem 0.7rem; background:rgba(120,180,90,0.07); border:1px solid rgba(120,180,90,0.25); border-radius:6px;">
+                        📦 {% trans 'You sell from a sack or cooking pot — not by counting pieces. Opening stock, reorder level, and cost price are not needed here.' %}<br>
+                        <strong style="color:#e2c36e;">{% trans 'Cost is entered when you receive each new batch (sack/pot) on the Kitchen Board.' %}</strong>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- Preset table — used by both Produce (Portion Presets) and Keg (Serving Presets) -->
             <div id="portionPresetsSection" style="{% if not form.instance.is_produce and not form.instance.is_keg and not biz_profile.modules.keg %}display:none;{% endif %}">
                 <div id="kegPresetHint" style="{% if not biz_profile.modules.keg %}display:none;{% endif %} background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.6rem 0.9rem; font-size:0.8rem; color:#e2c36e; margin-bottom:0.75rem;">
@@ -1745,27 +1777,116 @@
         return KITCHEN_IDS.indexOf(parseInt(val, 10)) !== -1;
     }
 
+    var _kitchenActive = false;
+
+    function applyKitchenBatchState(isBatch) {
+        var openSec    = document.getElementById('openingStockSection');
+        var reordSec   = document.getElementById('reorderSection');
+        var costSec    = document.getElementById('costPriceSection');
+        var costHint   = document.getElementById('costPriceHint');
+        var batchInfo  = document.getElementById('km_batch_info');
+        var portionInfo = document.getElementById('km_portion_info');
+        var sellSec    = document.getElementById('sellingPriceSection');
+        var sellNote   = document.getElementById('produceSellingNote');
+
+        if (isBatch) {
+            if (openSec)    openSec.style.display    = 'none';
+            if (reordSec)   reordSec.style.display   = 'none';
+            if (costSec)    costSec.style.display     = 'none';
+            if (costHint)   costHint.style.display    = 'block';
+            if (batchInfo)  batchInfo.style.display   = 'block';
+            if (portionInfo) portionInfo.style.display = 'none';
+            if (sellSec)    sellSec.style.display     = 'none';
+            if (sellNote)   sellNote.style.display    = 'block';
+        } else {
+            if (openSec)    openSec.style.display    = 'block';
+            if (reordSec)   reordSec.style.display   = 'block';
+            if (costSec)    costSec.style.display     = 'block';
+            if (costHint)   costHint.style.display    = 'none';
+            if (batchInfo)  batchInfo.style.display   = 'none';
+            if (portionInfo) portionInfo.style.display = 'block';
+            if (sellSec)    sellSec.style.display     = 'none';  // presets set the price
+            if (sellNote)   sellNote.style.display    = 'block';
+        }
+    }
+
+    function setupKitchenModeToggle() {
+        var kmBatch   = document.getElementById('km_batch');
+        var kmPortion = document.getElementById('km_portion');
+        if (!kmBatch) return;
+        // Set initial state from existing item (edit form)
+        var produceCb = document.getElementById('is_produce');
+        var pmBunch   = document.getElementById('pm_bunch');
+        var isAlreadyBatch = (produceCb && produceCb.checked && pmBunch && pmBunch.checked);
+        if (isAlreadyBatch) {
+            kmBatch.checked = true;
+            kmPortion.checked = false;
+        }
+        applyKitchenBatchState(kmBatch.checked);
+        kmBatch.addEventListener('change', function() {
+            if (this.checked) applyKitchenBatchState(true);
+        });
+        kmPortion.addEventListener('change', function() {
+            if (this.checked) applyKitchenBatchState(false);
+        });
+    }
+
     function applyKitchenMode(isKitchen) {
+        _kitchenActive = isKitchen;
+
         if (kegDividerEl) kegDividerEl.style.display = isKitchen ? 'none' : '';
         if (kegBlock)     kegBlock.style.display     = isKitchen ? 'none' : '';
         if (kegHint)      kegHint.style.display      = isKitchen ? 'none' : '';
         if (typeColHeader) typeColHeader.style.display = isKitchen ? 'none' : '';
 
+        var kitchenModeSec = document.getElementById('kitchenModeSection');
+        if (kitchenModeSec) kitchenModeSec.style.display = isKitchen ? 'block' : 'none';
+
         if (isKitchen) {
             var kegCb = document.getElementById('is_keg');
             if (kegCb && kegCb.checked) kegCb.checked = false;
+
+            setupKitchenModeToggle();
+
+            var kmBatch = document.getElementById('km_batch');
+            applyKitchenBatchState(!!(kmBatch && kmBatch.checked));
+
+            // Update category placeholder for kitchen context
+            var hiddenCat = document.getElementById('id_category');
+            var catDisplay = document.querySelector('#catDisplayInput, [placeholder*="Gin"]');
+            if (catDisplay) catDisplay.placeholder = 'e.g. Chicken, Fries, Grills, Snacks, Rice & Ugali';
+
+            // Material number: auto-fill with K prefix
+            var matEl = document.getElementById('id_material_no');
+            if (matEl && !matEl.value.trim()) {
+                if (typeof _autoFillMaterialNo === 'function') {
+                    _autoFillMaterialNo('Kitchen');
+                }
+            }
+        } else {
+            // Restore non-kitchen state
+            var openSec  = document.getElementById('openingStockSection');
+            var reordSec = document.getElementById('reorderSection');
+            var costSec  = document.getElementById('costPriceSection');
+            var costHint = document.getElementById('costPriceHint');
+            var produceCb = document.getElementById('is_produce');
+            var kegCbR    = document.getElementById('is_keg');
+            var hideForProduceOrKeg = (produceCb && produceCb.checked) || (kegCbR && kegCbR.checked);
+            if (openSec)  openSec.style.display  = hideForProduceOrKeg ? 'none' : 'block';
+            if (reordSec) reordSec.style.display = hideForProduceOrKeg ? 'none' : 'block';
+            if (costSec)  costSec.style.display  = hideForProduceOrKeg ? 'none' : 'block';
+            if (costHint) costHint.style.display = hideForProduceOrKeg ? 'block' : 'none';
         }
 
-        // Selling price is irrelevant for kitchen items — presets set the price
+        // Selling price is irrelevant for kitchen items — presets define the price
         var sellSection = document.getElementById('sellingPriceSection');
         var sellNote    = document.getElementById('produceSellingNote');
         if (isKitchen) {
-            if (sellSection) sellSection.style.display = 'none';
-            if (sellNote)    sellNote.style.display    = 'block';
+            // Batch sub-state handles this — do nothing here (applyKitchenBatchState already ran)
         } else {
-            var produceCb = document.getElementById('is_produce');
-            var kegCbSell = document.getElementById('is_keg');
-            var hidePrice = (produceCb && produceCb.checked) || (kegCbSell && kegCbSell.checked);
+            var produceCb2 = document.getElementById('is_produce');
+            var kegCbSell  = document.getElementById('is_keg');
+            var hidePrice  = (produceCb2 && produceCb2.checked) || (kegCbSell && kegCbSell.checked);
             if (sellSection) sellSection.style.display = hidePrice ? 'none' : 'block';
             if (sellNote)    sellNote.style.display    = hidePrice ? 'block' : 'none';
         }
@@ -1773,16 +1894,6 @@
         // Always show the portion presets section for kitchen items
         var presSection = document.getElementById('portionPresetsSection');
         if (presSection && isKitchen) presSection.style.display = 'block';
-
-        // Material number: auto-fill with K prefix for kitchen items
-        if (isKitchen) {
-            var matEl = document.getElementById('id_material_no');
-            if (matEl && !matEl.value.trim()) {
-                if (typeof _autoFillMaterialNo === 'function') {
-                    _autoFillMaterialNo('Kitchen');
-                }
-            }
-        }
 
         // Hide/show the Type select cell in every existing and future preset row
         var cols = isKitchen ? '2fr 1fr 1fr auto' : '2fr 1fr 1fr 80px auto';
@@ -1808,6 +1919,23 @@
             sel.querySelectorAll('.fractional-opts, .count-opts').forEach(function(og) {
                 og.style.display = isKitchen ? 'none' : '';
             });
+        });
+    }
+
+    // On form submit: inject is_produce + produce_mode for kitchen batch items
+    var form = document.getElementById('itemForm');
+    if (form) {
+        form.addEventListener('submit', function() {
+            if (!_kitchenActive) return;
+            var kmBatch = document.getElementById('km_batch');
+            if (kmBatch && kmBatch.checked) {
+                var fp = document.createElement('input');
+                fp.type = 'hidden'; fp.name = 'is_produce'; fp.value = 'on';
+                form.appendChild(fp);
+                var fm = document.createElement('input');
+                fm.type = 'hidden'; fm.name = 'produce_mode'; fm.value = 'BUNCH';
+                form.appendChild(fm);
+            }
         });
     }
 
