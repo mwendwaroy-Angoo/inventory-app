@@ -1843,8 +1843,7 @@
         var kmPortion = document.getElementById('km_portion');
         if (!kmBatch) return;
         // Restore batch/portion state from saved item.
-        // Cannot rely on is_produce / pm_bunch DOM elements — they live inside
-        // {% if not biz_profile.modules.keg %} and are absent on bar business forms.
+        // Cannot rely on is_produce / pm_bunch DOM elements — absent on bar forms.
         if (_ITEM_IS_BATCH) {
             kmBatch.checked = true;
             kmPortion.checked = false;
