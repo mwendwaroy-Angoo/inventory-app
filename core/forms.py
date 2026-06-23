@@ -126,6 +126,25 @@ class ItemForm(forms.ModelForm):
             clean = [t for t in clean if t]
             self.initial['tags'] = ', '.join(clean)
 
+    # IntegerFields with NOT NULL constraints must never clean to None.
+    # required=False allows empty submission → IntegerField converts '' → None → IntegrityError.
+    # Kitchen mode hides these fields; the hidden inputs still submit empty strings.
+    def clean_opening_bin_balance(self):
+        val = self.cleaned_data.get('opening_bin_balance')
+        return val if val is not None else 0
+
+    def clean_opening_physical(self):
+        val = self.cleaned_data.get('opening_physical')
+        return val if val is not None else 0
+
+    def clean_reorder_level(self):
+        val = self.cleaned_data.get('reorder_level')
+        return val if val is not None else 0
+
+    def clean_reorder_quantity(self):
+        val = self.cleaned_data.get('reorder_quantity')
+        return val if val is not None else 0
+
         # Build category hierarchy JSON for client-side picker
         try:
             qs = self.fields['category'].queryset
