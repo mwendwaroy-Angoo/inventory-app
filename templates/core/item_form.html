@@ -1782,8 +1782,8 @@
     if (!KITCHEN_IDS.length) return;
 
     // Initial state from the saved item — used by setupKitchenModeToggle to restore
-    // km_batch / km_portion without depending on is_produce / pm_bunch, which are
-    // inside {% if not biz_profile.modules.keg %} and absent on bar business forms.
+    // km_batch / km_portion without querying is_produce / pm_bunch DOM elements,
+    // which are absent on bar business forms (gated by the keg module flag).
     var _ITEM_IS_BATCH = {{ form.instance.is_produce|yesno:"true,false" }} &&
                          '{{ form.instance.produce_mode }}' === 'BUNCH';
 
