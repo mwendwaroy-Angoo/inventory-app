@@ -307,7 +307,6 @@ def _kitchen_checkout(request, up, business, is_owner):
                 sale_amount=amount,
                 payment_method=txn_pm,
                 recipient=txn_recipient,
-                recorded_by=request.user.username,
             )
             if active_tab:
                 BarTabEntry.objects.create(
@@ -465,7 +464,6 @@ def kitchen_receive(request):
                 type='Receipt',
                 qty=qty,
                 payment_method='cash',
-                recorded_by=request.user.username,
             )
             if cost > 0:
                 item.cost_price = cost / qty
