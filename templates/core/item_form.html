@@ -726,12 +726,18 @@
             // ── Kitchen: piece-counted food (PORTION mode, stock tracked by unit) ──
             { keys: ['chicken', 'kuku'],
               unit: 'Bird', note: 'Portion mode — stock per whole bird. qty_consumed: Wing=0.125, Quarter=0.25, Half=0.5, Full=1.0. Opening stock = number of whole birds you have.' },
-            { keys: ['smokie', 'sausage', 'boerewors'],
-              unit: 'Pcs', note: 'Portion mode — stock per piece. 1 Piece = 1 unit consumed.' },
+            // ── Kitchen: hand-made items — yield uncertain, BATCH mode ──
             { keys: ['samosa'],
-              unit: 'Pcs', note: 'Portion mode — stock per piece. 1 unit per samosa sold.' },
-            { keys: ['mandazi', 'mahamri'],
-              unit: 'Pcs', note: 'Portion mode — stock per piece. Opening stock = how many you have.' },
+              unit: 'Batch', note: 'Batch mode — made from ingredients (flour, mince, ndengu, viazi), yield count varies. Turn Batch/Bunch mode ON. Log cost of ingredients per batch. Sell by piece price tile (1 Piece=30, 2 Pieces=60).' },
+            { keys: ['kebab', 'mishkaki'],
+              unit: 'Batch', note: 'Batch mode — made fresh from mince/meat, yield varies. Turn Batch/Bunch mode ON. Sell by piece price tile (1 Piece=80, etc.).' },
+            { keys: ['bhajia'],
+              unit: 'Batch', note: 'Batch mode — made from potatoes + flour batter, yield varies. Turn Batch/Bunch mode ON.' },
+            { keys: ['mandazi', 'mahamri', 'vitumbua', 'doughnut', 'chapati'],
+              unit: 'Batch', note: 'Batch mode — made fresh daily, exact count varies. Turn Batch/Bunch mode ON. Sell by piece price tile.' },
+            // ── Kitchen: piece-counted food (PORTION mode, stock tracked by unit) ──
+            { keys: ['smokie', 'sausage', 'boerewors'],
+              unit: 'Pcs', note: 'Portion mode — bought ready-made by piece, count is known. 1 Piece = 1 unit consumed.' },
             { keys: ['egg', 'mayai', 'yai'],
               unit: 'Pcs', note: 'Portion mode — stock per egg. 1 unit per egg.' },
             // ── Bar: spirits / wines / beer ──────────────────────────────────
