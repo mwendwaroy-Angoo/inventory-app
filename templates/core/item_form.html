@@ -481,6 +481,19 @@
                         📦 {% trans 'You sell from a sack or cooking pot — not by counting pieces. Opening stock, reorder level, and cost price are not needed here.' %}<br>
                         <strong style="color:#e2c36e;">{% trans 'Cost is entered when you receive each new batch (sack/pot) on the Kitchen Board.' %}</strong>
                     </div>
+                    <!-- Kikundi cha Malighafi — links items sharing one sack (e.g. Chipo + Bhajia = viazi) -->
+                    <div id="km-mix-group-section" style="display:none; margin-top:0.6rem; padding:0.55rem 0.7rem; background:rgba(120,180,90,0.05); border:1px solid rgba(120,180,90,0.2); border-radius:6px;">
+                        <label style="color:#9fcaa0; font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">
+                            {% trans 'Kikundi cha Malighafi' %} <span style="font-weight:400; color:#888;">({% trans 'optional' %})</span>
+                        </label>
+                        <input type="text" id="km-mix-group-input" class="form-control form-control-sm"
+                               value="{{ form.instance.mix_group }}"
+                               placeholder="e.g. viazi"
+                               style="background:#1a1a1a; border-color:#444; color:#f0ece4; max-width:200px; margin-bottom:0.25rem;">
+                        <div style="color:#b0b0b0; font-size:0.73rem; line-height:1.4;">
+                            {% trans 'Set the same tag on items from one sack (e.g.' %} <code style="color:#c9a84c;">viazi</code> {% trans 'on both Chipo and Bhajia). When receiving on the Kitchen Board, one cost splits across all tagged items automatically.' %}
+                        </div>
+                    </div>
                 </div>
             </div>
             {% endif %}
@@ -1794,6 +1807,7 @@
         var portionInfo = document.getElementById('km_portion_info');
         var sellSec    = document.getElementById('sellingPriceSection');
         var sellNote   = document.getElementById('produceSellingNote');
+        var mgSec      = document.getElementById('km-mix-group-section');
 
         if (isBatch) {
             if (openSec)    openSec.style.display    = 'none';
@@ -1804,6 +1818,7 @@
             if (portionInfo) portionInfo.style.display = 'none';
             if (sellSec)    sellSec.style.display     = 'none';
             if (sellNote)   sellNote.style.display    = 'block';
+            if (mgSec)      mgSec.style.display       = 'block';
         } else {
             if (openSec)    openSec.style.display    = 'block';
             if (reordSec)   reordSec.style.display   = 'block';
@@ -1813,6 +1828,7 @@
             if (portionInfo) portionInfo.style.display = 'block';
             if (sellSec)    sellSec.style.display     = 'none';  // presets set the price
             if (sellNote)   sellNote.style.display    = 'block';
+            if (mgSec)      mgSec.style.display       = 'none';
         }
     }
 
@@ -1928,7 +1944,7 @@
         });
     }
 
-    // On form submit: inject is_produce + produce_mode for kitchen batch items
+    // On form submit: inject is_produce + produce_mode + km_mix_group for kitchen batch items
     var form = document.getElementById('itemForm');
     if (form) {
         form.addEventListener('submit', function() {
@@ -1941,6 +1957,12 @@
                 var fm = document.createElement('input');
                 fm.type = 'hidden'; fm.name = 'produce_mode'; fm.value = 'BUNCH';
                 form.appendChild(fm);
+                // km_mix_group uses a distinct name to take priority over the produce section's
+                // mix_group_input (which stays empty in kitchen mode and would shadow this value).
+                var mgEl = document.getElementById('km-mix-group-input');
+                var fmg = document.createElement('input');
+                fmg.type = 'hidden'; fmg.name = 'km_mix_group'; fmg.value = mgEl ? mgEl.value.trim() : '';
+                form.appendChild(fmg);
             }
         });
     }

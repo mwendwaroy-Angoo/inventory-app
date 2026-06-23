@@ -1504,7 +1504,9 @@ def add_item(request):
                 item.is_produce = request.POST.get('is_produce') == 'on'
                 pmode = request.POST.get('produce_mode', 'PORTION')
                 item.produce_mode = pmode if pmode in ('PORTION', 'BUNCH') else 'PORTION'
-                item.mix_group = request.POST.get('mix_group', '').strip()
+                # km_mix_group is submitted by kitchen batch items via a hidden input to avoid
+                # conflict with the produce section's mix_group_input (which stays empty in kitchen mode).
+                item.mix_group = (request.POST.get('km_mix_group') or request.POST.get('mix_group') or '').strip()[:40]
                 try:
                     rm = Decimal(request.POST.get('revenue_multiplier') or '1.70')
                     item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')
@@ -1630,7 +1632,9 @@ def edit_item(request, item_id):
                 item.is_produce = request.POST.get('is_produce') == 'on'
                 pmode = request.POST.get('produce_mode', 'PORTION')
                 item.produce_mode = pmode if pmode in ('PORTION', 'BUNCH') else 'PORTION'
-                item.mix_group = request.POST.get('mix_group', '').strip()
+                # km_mix_group is submitted by kitchen batch items via a hidden input to avoid
+                # conflict with the produce section's mix_group_input (which stays empty in kitchen mode).
+                item.mix_group = (request.POST.get('km_mix_group') or request.POST.get('mix_group') or '').strip()[:40]
                 try:
                     rm = Decimal(request.POST.get('revenue_multiplier') or '1.70')
                     item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')

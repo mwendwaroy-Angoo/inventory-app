@@ -322,6 +322,22 @@
                    style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
           </div>
         </div>
+        <!-- Group receive — shown when batch item shares a mix_group (e.g. Chipo + Bhajia from viazi) -->
+        <div id="kr-group-fields" style="display:none;">
+          <div style="background:rgba(120,180,90,0.08);border:1px solid rgba(120,180,90,0.25);border-radius:6px;padding:.5rem .6rem;margin-bottom:.55rem;font-size:.77rem;color:#9fcaa0;line-height:1.4;">
+            🛍 <strong style="color:#c9a84c;">Gunia moja — bidhaa mbili.</strong> Chagua bidhaa zote zinazotoka gunia hilo. Gharama itasambazwa sawasawa.
+          </div>
+          <div style="margin-bottom:.5rem;">
+            <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.3rem;">Pokea pamoja na:</label>
+            <div id="kr-group-checkboxes" style="display:flex;flex-direction:column;gap:.3rem;padding:.3rem 0;"></div>
+          </div>
+          <div style="margin-bottom:.4rem;">
+            <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Gharama ya Gunia Zima (KES)</label>
+            <input type="number" id="kr-group-cost" min="0" placeholder="e.g. 800"
+                   style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+          </div>
+          <div id="kr-group-split-preview" style="display:none;background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.15);border-radius:6px;padding:.35rem .55rem;font-size:.76rem;color:#b0b0b0;line-height:1.5;"></div>
+        </div>
         <div id="kr-error" style="display:none;color:#c0395a;font-size:.8rem;margin-top:.4rem;"></div>
       </div>
       <div class="modal-footer" style="border-top:1px solid #333;padding:.75rem;">
@@ -398,6 +414,7 @@
 
   var _portionItems = {{ portion_items|safe }};
   var _batchItems   = {{ batch_items|safe }};
+  var _mixSiblings  = {{ mix_siblings_json|safe }};
   var _barTabNames  = {{ bar_tab_names|safe }};
 
   // Split batch items: grilled meat vs fried/baked fast food
@@ -917,7 +934,9 @@
     var sel = document.getElementById('kr-item');
     sel.innerHTML = '<option value="">— Chagua bidhaa —</option>' +
       _allItems.map(function(i){
-        return '<option value="' + i.id + '" data-batch="' + (i.open_bunches!==undefined?'1':'0') + '">' + i.name + '</option>';
+        var isBatch = i.open_bunches !== undefined ? '1' : '0';
+        var mg = i.mix_group || '';
+        return '<option value="' + i.id + '" data-batch="' + isBatch + '" data-mix-group="' + mg + '">' + i.name + '</option>';
       }).join('');
     var _COST_HINTS = {
       chipo:'e.g. gunia la viazi: 800', chips:'e.g. gunia la viazi: 800', fries:'e.g. gunia la viazi: 800',
@@ -932,9 +951,56 @@
     sel.onchange = function() {
       var opt = sel.options[sel.selectedIndex];
       var isBatch = opt.getAttribute('data-batch') === '1';
-      document.getElementById('kr-portion-fields').style.display = isBatch ? 'none' : 'block';
-      document.getElementById('kr-batch-fields').style.display   = isBatch ? 'block' : 'none';
-      if (isBatch) {
+      var mg = (opt.getAttribute('data-mix-group') || '').trim();
+      // siblings = other batch items in the same mix_group (excludes the currently selected item)
+      var siblings = (mg && _mixSiblings[mg])
+        ? _mixSiblings[mg].filter(function(s){ return s.id !== parseInt(opt.value, 10); })
+        : [];
+
+      document.getElementById('kr-portion-fields').style.display = 'none';
+      document.getElementById('kr-batch-fields').style.display   = 'none';
+      document.getElementById('kr-group-fields').style.display   = 'none';
+
+      if (!isBatch) {
+        document.getElementById('kr-portion-fields').style.display = 'block';
+      } else if (siblings.length > 0) {
+        // Group receive mode: shared sack across multiple items
+        document.getElementById('kr-group-fields').style.display = 'block';
+        var selectedName = (opt.textContent || '').trim();
+        var cbHtml = siblings.map(function(s){
+          return '<label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;color:#f0ece4;font-size:.83rem;">' +
+                 '<input type="checkbox" class="kr-group-cb" value="' + s.id + '" checked ' +
+                 'style="accent-color:#c9a84c;width:14px;height:14px;flex-shrink:0;"> ' + s.name + '</label>';
+        }).join('');
+        document.getElementById('kr-group-checkboxes').innerHTML = cbHtml;
+        var costInp = document.getElementById('kr-group-cost');
+        costInp.value = '';
+        document.getElementById('kr-group-split-preview').style.display = 'none';
+
+        function updateSplitPreview() {
+          var total = parseFloat(costInp.value) || 0;
+          var checkedCbs = Array.from(document.querySelectorAll('.kr-group-cb:checked'));
+          var n = checkedCbs.length + 1; // +1 for the primary selected item
+          var prevEl = document.getElementById('kr-group-split-preview');
+          if (total > 0 && n > 0) {
+            var per = Math.round(total / n);
+            var parts = [selectedName + ': KES ' + per];
+            checkedCbs.forEach(function(cb){
+              parts.push(cb.closest('label').textContent.trim() + ': KES ' + per);
+            });
+            prevEl.textContent = parts.join(' | ');
+            prevEl.style.display = 'block';
+          } else {
+            prevEl.style.display = 'none';
+          }
+        }
+        costInp.oninput = updateSplitPreview;
+        document.querySelectorAll('.kr-group-cb').forEach(function(cb){
+          cb.addEventListener('change', updateSplitPreview);
+        });
+      } else {
+        // Single batch item (no siblings in mix_group)
+        document.getElementById('kr-batch-fields').style.display = 'block';
         var nm = (opt.textContent||'').toLowerCase();
         var hint = '';
         Object.keys(_COST_HINTS).forEach(function(k){ if (nm.indexOf(k) !== -1 && !hint) hint = _COST_HINTS[k]; });
@@ -954,18 +1020,38 @@
     if (!itemId) { errEl.textContent='Chagua bidhaa.'; errEl.style.display='block'; return; }
     var opt = document.querySelector('#kr-item option[value="' + itemId + '"]');
     var isBatch = opt && opt.getAttribute('data-batch') === '1';
+    var groupVisible = document.getElementById('kr-group-fields').style.display !== 'none';
     var btn = document.getElementById('kr-submit-btn');
     btn.disabled = true; btn.textContent = 'Inapokea...';
-    var data = {item_id: itemId, mode: isBatch ? 'batch' : 'portion', csrfmiddlewaretoken: CSRF};
-    if (isBatch) {
-      data.cost_price = document.getElementById('kr-batch-cost').value||'0';
-      data.target_revenue = document.getElementById('kr-batch-target').value||'';
-      data.note = document.getElementById('kr-batch-note').value||'';
+
+    var body = new URLSearchParams();
+    body.append('csrfmiddlewaretoken', CSRF);
+
+    if (isBatch && groupVisible) {
+      // Group mode: one sack cost split across multiple items
+      var totalCost = document.getElementById('kr-group-cost').value || '0';
+      if (!parseFloat(totalCost) || parseFloat(totalCost) <= 0) {
+        errEl.textContent = 'Weka gharama ya gunia zima.'; errEl.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Pokea'; return;
+      }
+      var checkedCbs = Array.from(document.querySelectorAll('.kr-group-cb:checked'));
+      body.append('mode', 'batch_group');
+      body.append('item_ids[]', itemId);
+      checkedCbs.forEach(function(cb){ body.append('item_ids[]', cb.value); });
+      body.append('total_cost', totalCost);
+    } else if (isBatch) {
+      body.append('item_id', itemId);
+      body.append('mode', 'batch');
+      body.append('cost_price', document.getElementById('kr-batch-cost').value||'0');
+      body.append('target_revenue', document.getElementById('kr-batch-target').value||'');
+      body.append('note', document.getElementById('kr-batch-note').value||'');
     } else {
-      data.qty = document.getElementById('kr-qty').value||'0';
-      data.cost_price = document.getElementById('kr-cost').value||'0';
+      body.append('item_id', itemId);
+      body.append('mode', 'portion');
+      body.append('qty', document.getElementById('kr-qty').value||'0');
+      body.append('cost_price', document.getElementById('kr-cost').value||'0');
     }
-    var body = new URLSearchParams(data);
+
     fetch('/kitchen/receive/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
       .then(function(r){
         return r.json().then(function(d){ return {ok: r.ok, data: d}; });
@@ -976,8 +1062,13 @@
         if (d.ok) {
           var m = bootstrap.Modal.getInstance(document.getElementById('kbReceiveModal'));
           if (m) m.hide();
-          showToast('✓ Stok imepokelewa!');
-          setTimeout(function(){ location.reload(); }, 1200);
+          if (d.group && d.created) {
+            var names = d.created.map(function(c){ return c.item + ' (target: KES ' + Math.round(c.target) + ')'; }).join(', ');
+            showToast('✓ Stok imepokelewa: ' + names);
+          } else {
+            showToast('✓ Stok imepokelewa!');
+          }
+          setTimeout(function(){ location.reload(); }, 1800);
         } else {
           errEl.textContent = d.error||'Hitilafu ya seva.'; errEl.style.display='block';
         }

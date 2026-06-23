@@ -125,6 +125,7 @@ def kitchen_board(request):
                     'id': item.id,
                     'name': item.description,
                     'unit': item.unit,
+                    'mix_group': item.mix_group or '',
                     'presets': presets,
                     'open_bunches': [
                         {
@@ -151,6 +152,13 @@ def kitchen_board(request):
                     'balance': balance,
                     'presets': presets,
                 })
+
+    # Build mix_group → sibling list for the receive modal (group sack receives)
+    mix_siblings = {}
+    for b in batch_items:
+        mg = b.get('mix_group', '')
+        if mg:
+            mix_siblings.setdefault(mg, []).append({'id': b['id'], 'name': b['name']})
 
     # Open food tabs (source='kitchen') for this business
     food_tabs = list(
@@ -201,6 +209,7 @@ def kitchen_board(request):
         'kitchen_store': kitchen_store,
         'portion_items': json.dumps(portion_items),
         'batch_items': json.dumps(batch_items),
+        'mix_siblings_json': json.dumps(mix_siblings),
         'food_tabs': json.dumps(food_tabs_data),
         'bar_tab_names': json.dumps(bar_tab_names),
         'kitchen_revenue_today': kitchen_revenue_today,
@@ -386,7 +395,38 @@ def kitchen_receive(request):
     business = up.business
     kitchen_store = _ensure_kitchen_store(business)
 
-    mode = request.POST.get('mode', 'portion')  # 'portion' or 'batch'
+    mode = request.POST.get('mode', 'portion')  # 'portion', 'batch', or 'batch_group'
+
+    # ── batch_group: one sack split proportionally across multiple items ──────
+    if mode == 'batch_group':
+        try:
+            raw_ids = request.POST.getlist('item_ids[]')
+            total_cost = Decimal(str(request.POST.get('total_cost', '0') or '0'))
+            item_ids = [int(x) for x in raw_ids if str(x).strip().isdigit()]
+        except (ValueError, TypeError):
+            return JsonResponse({'ok': False, 'error': 'Gharama batili.'}, status=400)
+        if not item_ids or total_cost <= 0:
+            return JsonResponse({'ok': False, 'error': 'Chagua bidhaa na weka gharama ya gunia.'}, status=400)
+        items_in_group = list(Item.objects.filter(id__in=item_ids, store=kitchen_store))
+        n = len(items_in_group)
+        if n == 0:
+            return JsonResponse({'ok': False, 'error': 'Bidhaa hazikupatikana kwenye jikoni.'}, status=400)
+        per_cost = (total_cost / Decimal(n)).quantize(Decimal('0.01'))
+        created = []
+        for it in items_in_group:
+            target = it.default_bunch_target(per_cost)
+            bunch = ProduceBunch.objects.create(
+                item=it, business=business, size='LARGE',
+                cost_price=per_cost, target_revenue=target,
+            )
+            created.append({
+                'item': it.description,
+                'bunch_id': bunch.id,
+                'cost': float(per_cost),
+                'target': float(target),
+            })
+        return JsonResponse({'ok': True, 'group': True, 'created': created})
+
     item_id = request.POST.get('item_id')
 
     try:
