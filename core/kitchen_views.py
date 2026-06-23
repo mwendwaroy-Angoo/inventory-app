@@ -203,6 +203,10 @@ def kitchen_board(request):
         ).select_related('item')
         kitchen_revenue_today = sum(Decimal(str(t.revenue())) for t in txns)
 
+    has_stk = bool(
+        business.daraja_consumer_key and
+        (business.mpesa_till or business.mpesa_paybill)
+    )
     return render(request, 'core/kitchen/kitchen_board.html', {
         'is_owner': is_owner,
         'business': business,
@@ -214,6 +218,7 @@ def kitchen_board(request):
         'bar_tab_names': json.dumps(bar_tab_names),
         'kitchen_revenue_today': kitchen_revenue_today,
         'food_tab_count': len(food_tabs_data),
+        'has_stk': has_stk,
     })
 
 
@@ -223,6 +228,7 @@ def _kitchen_checkout(request, up, business, is_owner):
         cart = json.loads(request.POST.get('cart', '[]'))
         payment_method = request.POST.get('payment_method', 'cash')
         tab_customer = (request.POST.get('tab_customer') or '').strip()
+        tab_phone    = (request.POST.get('tab_phone') or '').strip()
         credit_name  = (request.POST.get('credit_name') or '').strip()
         credit_phone = (request.POST.get('credit_phone') or '').strip()
     except (json.JSONDecodeError, Exception):
@@ -342,7 +348,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 payment_method=txn_pm,
                 user=request.user,
                 customer_name=credit_name if payment_method == 'credit' else tab_customer,
-                customer_phone=credit_phone if payment_method == 'credit' else '',
+                customer_phone=credit_phone if payment_method == 'credit' else tab_phone,
             )
             receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
             receipt_number = rcpt.receipt_number

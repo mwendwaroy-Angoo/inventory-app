@@ -260,6 +260,10 @@ class UserProfile(models.Model):
         default=False,
         help_text='Kitchen staff may access the Bar Board. Grant if they also serve bar customers.'
     )
+    kitchen_requires_shift = models.BooleanField(
+        default=False,
+        help_text='Kitchen staff must open a shift before they can work. Off by default — kitchen staff normally bypass shift enforcement.'
+    )
 
     # ── Session Control ────────────────────────────────────────────────
     current_session_key = models.CharField(

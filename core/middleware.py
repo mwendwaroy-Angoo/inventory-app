@@ -84,9 +84,15 @@ class ShiftEnforcementMiddleware:
         if up.is_owner:
             return False
 
-        # Waitresses and kitchen staff don't have bar shifts — never block them
-        if getattr(up, 'role', '') in ('waitress', 'kitchen'):
+        # Waitresses are always exempt — they have no shift concept
+        if getattr(up, 'role', '') == 'waitress':
             return False
+
+        # Kitchen staff are exempt by default; owner can require a shift via the permission toggle
+        if getattr(up, 'role', '') == 'kitchen':
+            if not getattr(up, 'kitchen_requires_shift', False):
+                return False
+            # kitchen_requires_shift=True → fall through to the shift check below
 
         # Only enforce for bar businesses (has keg items)
         from .models import Item

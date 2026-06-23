@@ -198,9 +198,10 @@
           <div id="kb-stk-row" style="display:none; margin-top:0.5rem;">
             <input type="tel" id="kb-stk-phone" class="form-control form-control-sm" placeholder="Simu ya mteja (07XX...)" autocomplete="off">
           </div>
-          <div id="kb-tab-name-row" style="display:none;">
-            <input type="text" id="kb-tab-name" placeholder="Jina la mteja..." autocomplete="off" list="kb-bar-tab-list">
+          <div id="kb-tab-name-row" style="display:none; margin-top:0.5rem;">
+            <input type="text" id="kb-tab-name" class="form-control form-control-sm mb-1" placeholder="Jina la mteja (lazima)..." autocomplete="off" list="kb-bar-tab-list">
             <datalist id="kb-bar-tab-list"></datalist>
+            <input type="tel" id="kb-tab-phone" class="form-control form-control-sm" placeholder="Simu (hiari — kwa SMS risiti)" autocomplete="off">
           </div>
           <!-- Credit (Deni) customer fields -->
           <div id="kb-credit-row" style="display:none; margin-top:0.5rem;">
@@ -359,13 +360,18 @@
       </div>
       <div class="modal-body" style="padding:.85rem;">
         <div id="kb-settle-amount" style="font-size:1.05rem;color:#c9a84c;font-weight:700;margin-bottom:.65rem;"></div>
-        <input type="tel" id="kb-settle-phone" class="form-control form-control-sm mb-3"
-               placeholder="Simu ya mteja (hiari — kwa SMS risiti)">
-        <div style="display:flex;gap:.5rem;">
+        <input type="tel" id="kb-settle-phone" class="form-control form-control-sm mb-2"
+               placeholder="Simu ya mteja{% if has_stk %} (lazima kwa STK){% else %} (hiari — kwa SMS risiti){% endif %}">
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
           <button class="btn btn-gold flex-fill" onclick="settleKitchenTab('cash')">💵 Cash</button>
           <button class="btn btn-sm flex-fill" style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
                   onclick="settleKitchenTab('mpesa')">📱 M-Pesa</button>
+          {% if has_stk %}
+          <button id="kb-settle-stk-btn" class="btn btn-sm flex-fill" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.35);color:#c9a84c;"
+                  onclick="settleKitchenTabStk()">📲 STK Push</button>
+          {% endif %}
         </div>
+        <div id="kb-settle-stk-result" style="display:none;margin-top:.5rem;padding:.4rem .55rem;border-radius:6px;font-size:.78rem;"></div>
         <div id="kb-settle-receipt-banner" style="display:none;margin-top:.65rem;padding:.45rem .6rem;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:8px;text-align:center;">
           <a id="kb-settle-receipt-link" href="#" target="_blank" rel="noopener" style="color:#c9a84c;font-size:.82rem;font-weight:600;text-decoration:none;">🧾 Angalia Risiti</a>
         </div>
@@ -456,6 +462,7 @@
   var _cart = [];            // [{item_id, bunch_id, preset_id, description, amount, qty}]
   var _activePresetItem = null;   // portion item whose preset modal is open
   var _settleTabId = null;        // food tab being settled via kbSettleModal
+  var _settleTabAmount = 0;       // unpaid total for the tab being settled (used by STK push)
   var _pm   = 'cash';
   var _activeBatchItem = null;  // currently selected batch item for modal
 
@@ -690,6 +697,7 @@
   function _submitCheckout(pmOverride) {
     var pm = pmOverride || _pm;
     var tabName    = (document.getElementById('kb-tab-name').value||'').trim();
+    var tabPhone   = (document.getElementById('kb-tab-phone').value||'').trim();
     var creditName = (document.getElementById('kb-credit-name').value||'').trim();
     var creditPhone= (document.getElementById('kb-credit-phone').value||'').trim();
     var btn = document.getElementById('kb-checkout-btn');
@@ -698,6 +706,7 @@
       cart: JSON.stringify(_cart),
       payment_method: pm,
       tab_customer: tabName,
+      tab_phone: tabPhone,
       credit_name: creditName,
       credit_phone: creditPhone,
       csrfmiddlewaretoken: CSRF,
@@ -915,13 +924,17 @@
 
   window.openKitchenTabSettle = function(btn) {
     _settleTabId = parseInt(btn.getAttribute('data-tab-id'), 10);
+    _settleTabAmount = parseFloat(btn.getAttribute('data-unpaid')) || 0;
     var customerName = btn.getAttribute('data-customer');
-    var unpaidTotal  = parseFloat(btn.getAttribute('data-unpaid'));
     document.getElementById('kb-settle-modal-title').textContent = 'Lipa Tab ya ' + customerName;
-    document.getElementById('kb-settle-amount').textContent = 'KES ' + fmt(unpaidTotal);
+    document.getElementById('kb-settle-amount').textContent = 'KES ' + fmt(_settleTabAmount);
     document.getElementById('kb-settle-phone').value = '';
     document.getElementById('kb-settle-receipt-banner').style.display = 'none';
     document.getElementById('kb-settle-error').style.display = 'none';
+    var stkRes = document.getElementById('kb-settle-stk-result');
+    if (stkRes) stkRes.style.display = 'none';
+    var stkBtn = document.getElementById('kb-settle-stk-btn');
+    if (stkBtn) { stkBtn.disabled = false; stkBtn.textContent = '📲 STK Push'; }
     new bootstrap.Modal(document.getElementById('kbSettleModal')).show();
   };
 
@@ -955,6 +968,70 @@
       })
       .catch(function(){ errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; });
   };
+
+  window.settleKitchenTabStk = function() {
+    if (!_settleTabId) return;
+    var phone  = (document.getElementById('kb-settle-phone').value || '').trim();
+    var resEl  = document.getElementById('kb-settle-stk-result');
+    var stkBtn = document.getElementById('kb-settle-stk-btn');
+    function stkMsg(msg, isErr) {
+      resEl.textContent = msg;
+      resEl.style.background = isErr ? 'rgba(192,57,90,.15)' : 'rgba(46,204,113,.15)';
+      resEl.style.color = isErr ? '#c0395a' : '#2ecc71';
+      resEl.style.display = 'block';
+    }
+    if (!phone) { stkMsg('Weka namba ya simu ya mteja kwa STK Push.', true); return; }
+    stkBtn.disabled = true; stkBtn.textContent = '⏳ Inatuma...';
+    resEl.style.display = 'none';
+    fetch('/mpesa/stk-push/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({phone: phone, amount: Math.round(_settleTabAmount), tab_id: _settleTabId}),
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.success) {
+        stkMsg('✅ Imetumwa! Mteja aidhinishe kwenye simu yake.', false);
+        stkBtn.textContent = '⏳ Inasubiri...';
+        _pollKbTabStk(d.payment_id);
+      } else {
+        stkBtn.disabled = false; stkBtn.textContent = '📲 STK Push';
+        stkMsg('❌ ' + (d.error || 'Imeshindwa. Jaribu tena.'), true);
+      }
+    })
+    .catch(function(){
+      stkBtn.disabled = false; stkBtn.textContent = '📲 STK Push';
+      stkMsg('❌ Hitilafu ya mtandao. Jaribu tena.', true);
+    });
+  };
+
+  function _pollKbTabStk(paymentId) {
+    var tries = 0;
+    var resEl  = document.getElementById('kb-settle-stk-result');
+    var stkBtn = document.getElementById('kb-settle-stk-btn');
+    var interval = setInterval(function() {
+      tries++;
+      fetch('/mpesa/status/' + paymentId + '/')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (data.status === 'completed') {
+            clearInterval(interval);
+            stkMsg('✅ Malipo yamepokelewa! Tab imefungwa.', false);
+            stkBtn.disabled = true; stkBtn.textContent = '✓ Imelipwa';
+            loadFoodTabs();
+            setTimeout(function(){
+              var m = bootstrap.Modal.getInstance(document.getElementById('kbSettleModal'));
+              if (m) m.hide();
+            }, 2000);
+          } else if (data.status === 'failed' || tries >= 24) {
+            clearInterval(interval);
+            stkBtn.disabled = false; stkBtn.textContent = '📲 STK Push';
+            stkMsg(tries >= 24 ? '⏰ Muda umekwisha. Angalia simu au lipa kwa cash/mpesa.' : '❌ Imeshindwa. Jaribu tena.', true);
+          }
+        })
+        .catch(function(){ if (tries >= 24) clearInterval(interval); });
+    }, 5000);
+  }
 
   window.voidKitchenTab = function(tabId) {
     if (!confirm('Unataka kufuta tab hii?')) return;
