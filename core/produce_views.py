@@ -101,6 +101,7 @@ def produce_board(request):
     # ── BUNCH-mode greens ─────────────────────────────────────────────
     items = (
         Item.objects.filter(store__business=business, is_produce=True, produce_mode='BUNCH')
+        .exclude(store__is_kitchen=True)  # kitchen batch items live on Kitchen Board only
         .prefetch_related('bunches', 'portion_presets')
         .order_by('description')
     )
@@ -147,6 +148,7 @@ def produce_board(request):
     portion_items = []
     for it in (Item.objects
                .filter(store__business=business, is_produce=True, produce_mode='PORTION')
+               .exclude(store__is_kitchen=True)  # kitchen items live on Kitchen Board only
                .order_by('description')):
         portion_items.append({
             'id': it.id,

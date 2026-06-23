@@ -402,7 +402,7 @@ def stock_list(request):
 
     items = Item.objects.filter(store__business=user_profile.business).exclude(
         is_keg=True
-    ).order_by("material_no")
+    ).exclude(store__is_kitchen=True).order_by("material_no")
 
     if selected_store_id:
         try:
@@ -854,7 +854,7 @@ def add_transaction(request):
 
     items = Item.objects.filter(store__business=user_profile.business).exclude(
         is_keg=True
-    ).order_by("material_no")
+    ).exclude(store__is_kitchen=True).order_by("material_no")
     restricted_items_data = {}
     if not user_profile.is_owner:
         restricted_qs = Item.objects.filter(
@@ -1367,7 +1367,7 @@ def export_stock_excel(request):
     store_id = request.GET.get("store")
 
     if user_profile:
-        items = Item.objects.filter(store__business=user_profile.business)
+        items = Item.objects.filter(store__business=user_profile.business).exclude(store__is_kitchen=True)
         if store_id:
             items = items.filter(store_id=store_id)
     else:
@@ -2391,6 +2391,7 @@ def quick_sell(request):
         Item.objects.filter(store__business=user_profile.business)
         .exclude(is_produce=True, produce_mode="BUNCH")  # greens render in their own board
         .exclude(is_keg=True)  # keg items render in the bar board
+        .exclude(store__is_kitchen=True)  # kitchen items render on Kitchen Board only
         .select_related("store")
         .prefetch_related("portion_presets")
         .order_by("description")
