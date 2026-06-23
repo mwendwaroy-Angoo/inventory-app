@@ -287,14 +287,15 @@
         <div id="kr-portion-fields">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem;">
             <div>
-              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Idadi Iliyopokelewa</label>
-              <input type="number" id="kr-qty" min="1" placeholder="e.g. 20"
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Idadi Iliyopokelewa <span style="color:#c0395a;">*</span></label>
+              <input type="number" id="kr-qty" min="1" step="1" placeholder="e.g. 30"
                      style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
             </div>
             <div>
-              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Gharama ya Kununua (KES)</label>
-              <input type="number" id="kr-cost" min="0" placeholder="e.g. 1500"
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Gharama ya Kuandaa (KES) <span style="color:#888;font-style:italic;">(hiari)</span></label>
+              <input type="number" id="kr-cost" min="0" step="1" placeholder="Jumla ya viungo"
                      style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+              <div style="font-size:.7rem;color:#666;margin-top:.2rem;">Acha tupu kama hujui — sasishe baadaye</div>
             </div>
           </div>
         </div>
@@ -1115,9 +1116,15 @@
       body.append('target_revenue', document.getElementById('kr-batch-target').value||'');
       body.append('note', document.getElementById('kr-batch-note').value||'');
     } else {
+      var qty = parseFloat(document.getElementById('kr-qty').value) || 0;
+      if (qty <= 0) {
+        errEl.textContent = 'Weka idadi iliyopokelewa (lazima iwe zaidi ya 0).';
+        errEl.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Pokea'; return;
+      }
       body.append('item_id', itemId);
       body.append('mode', 'portion');
-      body.append('qty', document.getElementById('kr-qty').value||'0');
+      body.append('qty', qty);
       body.append('cost_price', document.getElementById('kr-cost').value||'0');
     }
 
