@@ -1781,6 +1781,12 @@
     var KITCHEN_IDS = {{ kitchen_store_ids_json|safe }};
     if (!KITCHEN_IDS.length) return;
 
+    // Initial state from the saved item — used by setupKitchenModeToggle to restore
+    // km_batch / km_portion without depending on is_produce / pm_bunch, which are
+    // inside {% if not biz_profile.modules.keg %} and absent on bar business forms.
+    var _ITEM_IS_BATCH = {{ form.instance.is_produce|yesno:"true,false" }} &&
+                         '{{ form.instance.produce_mode }}' === 'BUNCH';
+
     var storeSelect = document.getElementById('id_store');
     if (!storeSelect) return;
 
@@ -1836,11 +1842,10 @@
         var kmBatch   = document.getElementById('km_batch');
         var kmPortion = document.getElementById('km_portion');
         if (!kmBatch) return;
-        // Set initial state from existing item (edit form)
-        var produceCb = document.getElementById('is_produce');
-        var pmBunch   = document.getElementById('pm_bunch');
-        var isAlreadyBatch = (produceCb && produceCb.checked && pmBunch && pmBunch.checked);
-        if (isAlreadyBatch) {
+        // Restore batch/portion state from saved item.
+        // Cannot rely on is_produce / pm_bunch DOM elements — they live inside
+        // {% if not biz_profile.modules.keg %} and are absent on bar business forms.
+        if (_ITEM_IS_BATCH) {
             kmBatch.checked = true;
             kmPortion.checked = false;
         }
