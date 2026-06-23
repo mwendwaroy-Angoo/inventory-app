@@ -1508,7 +1508,9 @@ def add_item(request):
                 # conflict with the produce section's mix_group_input (which stays empty in kitchen mode).
                 item.mix_group = (request.POST.get('km_mix_group') or request.POST.get('mix_group') or '').strip()[:40]
                 try:
-                    rm = Decimal(request.POST.get('revenue_multiplier') or '1.70')
+                    # km_revenue_multiplier from kitchen batch form takes priority
+                    rm_raw = request.POST.get('km_revenue_multiplier') or request.POST.get('revenue_multiplier') or '1.70'
+                    rm = Decimal(rm_raw)
                     item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')
                 except (ValueError, InvalidOperation):
                     item.revenue_multiplier = Decimal('1.70')
@@ -1636,7 +1638,9 @@ def edit_item(request, item_id):
                 # conflict with the produce section's mix_group_input (which stays empty in kitchen mode).
                 item.mix_group = (request.POST.get('km_mix_group') or request.POST.get('mix_group') or '').strip()[:40]
                 try:
-                    rm = Decimal(request.POST.get('revenue_multiplier') or '1.70')
+                    # km_revenue_multiplier from kitchen batch form takes priority
+                    rm_raw = request.POST.get('km_revenue_multiplier') or request.POST.get('revenue_multiplier') or '1.70'
+                    rm = Decimal(rm_raw)
                     item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')
                 except (ValueError, InvalidOperation):
                     item.revenue_multiplier = Decimal('1.70')

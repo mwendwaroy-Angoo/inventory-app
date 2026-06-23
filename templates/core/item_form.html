@@ -481,7 +481,7 @@
                         📦 {% trans 'You sell from a sack or cooking pot — not by counting pieces. Opening stock, reorder level, and cost price are not needed here.' %}<br>
                         <strong style="color:#e2c36e;">{% trans 'Cost is entered when you receive each new batch (sack/pot) on the Kitchen Board.' %}</strong>
                     </div>
-                    <!-- Kikundi cha Malighafi — links items sharing one sack (e.g. Chipo + Bhajia = viazi) -->
+                    <!-- Kikundi cha Malighafi + Markup — shown in batch mode -->
                     <div id="km-mix-group-section" style="display:none; margin-top:0.6rem; padding:0.55rem 0.7rem; background:rgba(120,180,90,0.05); border:1px solid rgba(120,180,90,0.2); border-radius:6px;">
                         <label style="color:#9fcaa0; font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">
                             {% trans 'Kikundi cha Malighafi' %} <span style="font-weight:400; color:#888;">({% trans 'optional' %})</span>
@@ -490,8 +490,24 @@
                                value="{{ form.instance.mix_group }}"
                                placeholder="e.g. viazi"
                                style="background:#1a1a1a; border-color:#444; color:#f0ece4; max-width:200px; margin-bottom:0.25rem;">
-                        <div style="color:#b0b0b0; font-size:0.73rem; line-height:1.4;">
+                        <div style="color:#b0b0b0; font-size:0.73rem; line-height:1.4; margin-bottom:0.55rem;">
                             {% trans 'Set the same tag on items from one sack (e.g.' %} <code style="color:#c9a84c;">viazi</code> {% trans 'on both Chipo and Bhajia). When receiving on the Kitchen Board, one cost splits across all tagged items automatically.' %}
+                        </div>
+                        <!-- Revenue multiplier — sets the target = cost × multiplier at receive time -->
+                        <div style="border-top:1px solid rgba(120,180,90,0.18); padding-top:0.5rem;">
+                            <label style="color:#9fcaa0; font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">
+                                {% trans 'Markup ya Lengo' %}
+                            </label>
+                            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                                <input type="number" id="km-multiplier-input" class="form-control form-control-sm"
+                                       value="{{ form.instance.revenue_multiplier|default:'1.70' }}"
+                                       step="0.05" min="1.0" max="10.0"
+                                       style="background:#1a1a1a; border-color:#444; color:#f0ece4; width:90px;">
+                                <span id="km-multiplier-preview" style="color:#c9a84c; font-size:0.78rem;"></span>
+                            </div>
+                            <div style="color:#b0b0b0; font-size:0.73rem; margin-top:0.25rem; line-height:1.4;">
+                                {% trans 'Lengo la mapato = gharama × multiplier. 1.70 → gharama 1000 itapendekeza lengo la 1700.' %}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1855,6 +1871,21 @@
         kmPortion.addEventListener('change', function() {
             if (this.checked) applyKitchenBatchState(false);
         });
+        // Live multiplier preview: shows e.g. "gharama 1000 → lengo 1,700"
+        var mulInput = document.getElementById('km-multiplier-input');
+        var mulPreview = document.getElementById('km-multiplier-preview');
+        function updateMultiplierPreview() {
+            if (!mulInput || !mulPreview) return;
+            var m = parseFloat(mulInput.value);
+            if (!m || m < 1) { mulPreview.textContent = ''; return; }
+            var eg = Math.round(1000 * m);
+            mulPreview.textContent = '→ e.g. gharama 1,000 / lengo ' + eg.toLocaleString();
+            mulPreview.style.display = 'inline';
+        }
+        if (mulInput) {
+            mulInput.addEventListener('input', updateMultiplierPreview);
+            updateMultiplierPreview();
+        }
     }
 
     function applyKitchenMode(isKitchen) {
@@ -1967,6 +1998,13 @@
                 var fmg = document.createElement('input');
                 fmg.type = 'hidden'; fmg.name = 'km_mix_group'; fmg.value = mgEl ? mgEl.value.trim() : '';
                 form.appendChild(fmg);
+                // km_revenue_multiplier: per-item markup target for kitchen batch items.
+                // Views read this first (before the produce section's revenue_multiplier).
+                var mulEl = document.getElementById('km-multiplier-input');
+                var fmul = document.createElement('input');
+                fmul.type = 'hidden'; fmul.name = 'km_revenue_multiplier';
+                fmul.value = mulEl && mulEl.value.trim() ? mulEl.value.trim() : '1.70';
+                form.appendChild(fmul);
             }
         });
     }
