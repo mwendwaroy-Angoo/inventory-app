@@ -84,8 +84,8 @@ class ShiftEnforcementMiddleware:
         if up.is_owner:
             return False
 
-        # Waitresses don't have shifts — never block them
-        if getattr(up, 'role', '') == 'waitress':
+        # Waitresses and kitchen staff don't have bar shifts — never block them
+        if getattr(up, 'role', '') in ('waitress', 'kitchen'):
             return False
 
         # Only enforce for bar businesses (has keg items)

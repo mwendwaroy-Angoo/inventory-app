@@ -348,6 +348,32 @@
 </div>
 {% endif %}
 
+<!-- ── Food tab settle modal ── -->
+<div class="modal fade" id="kbSettleModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#c9a84c;" id="kb-settle-modal-title">Lipa Tab</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.85rem;">
+        <div id="kb-settle-amount" style="font-size:1.05rem;color:#c9a84c;font-weight:700;margin-bottom:.65rem;"></div>
+        <input type="tel" id="kb-settle-phone" class="form-control form-control-sm mb-3"
+               placeholder="Simu ya mteja (hiari — kwa SMS risiti)">
+        <div style="display:flex;gap:.5rem;">
+          <button class="btn btn-gold flex-fill" onclick="settleKitchenTab('cash')">💵 Cash</button>
+          <button class="btn btn-sm flex-fill" style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
+                  onclick="settleKitchenTab('mpesa')">📱 M-Pesa</button>
+        </div>
+        <div id="kb-settle-receipt-banner" style="display:none;margin-top:.65rem;padding:.45rem .6rem;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:8px;text-align:center;">
+          <a id="kb-settle-receipt-link" href="#" target="_blank" rel="noopener" style="color:#c9a84c;font-size:.82rem;font-weight:600;text-decoration:none;">🧾 Angalia Risiti</a>
+        </div>
+        <div id="kb-settle-error" style="display:none;color:#c0395a;font-size:.78rem;margin-top:.5rem;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── STK Push modal ── -->
 <div class="modal fade" id="kbStkModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered modal-sm">
@@ -426,7 +452,9 @@
   var _grillItems    = _batchItems.filter(function(i){ return  _isGrill(i); });
   var _fryBatchItems = _batchItems.filter(function(i){ return !_isGrill(i); });
 
-  var _cart = [];       // [{item_id, bunch_id, preset_id, description, amount, qty}]
+  var _cart = [];            // [{item_id, bunch_id, preset_id, description, amount, qty}]
+  var _activePresetItem = null;   // portion item whose preset modal is open
+  var _settleTabId = null;        // food tab being settled via kbSettleModal
   var _pm   = 'cash';
   var _activeBatchItem = null;  // currently selected batch item for modal
 
@@ -554,11 +582,11 @@
 
   /* ── Preset modal ── */
   function openPresetModal(item) {
+    _activePresetItem = item;
     document.getElementById('kb-preset-modal-title').textContent = item.name;
     var body = document.getElementById('kb-preset-modal-body');
-    body.innerHTML = item.presets.map(function(p){
-      return '<div class="kb-preset-item" onclick="addPreset(' + item.id + ',' + p.id + ',' +
-             JSON.stringify(item.name + ' — ' + p.label) + ',' + p.price + ',' + p.qty + ')">' +
+    body.innerHTML = item.presets.map(function(p, idx){
+      return '<div class="kb-preset-item" onclick="addPreset(' + item.id + ',' + idx + ')">' +
              '<span class="kb-preset-label">' + p.label + '</span>' +
              '<span class="kb-preset-price">KES ' + fmt(p.price) + '</span>' +
              '</div>';
@@ -566,21 +594,26 @@
     new bootstrap.Modal(document.getElementById('kbPresetModal')).show();
   }
 
-  window.addPreset = function(itemId, presetId, desc, price, qty) {
+  window.addPreset = function(itemId, presetIdx) {
     var m = bootstrap.Modal.getInstance(document.getElementById('kbPresetModal'));
     if (m) m.hide();
-    addToCart({item_id: itemId, preset_id: presetId, description: desc, amount: price, qty: qty});
+    var item = _activePresetItem || _portionItems.find(function(i){ return i.id === itemId; });
+    if (!item) return;
+    var p = item.presets[presetIdx];
+    if (!p) return;
+    addToCart({item_id: itemId, preset_id: p.id,
+               description: item.name + ' — ' + p.label, amount: p.price, qty: p.qty});
   };
 
   /* ── Batch modal ── */
   function openBatchModal(item) {
     document.getElementById('kb-batch-modal-title').textContent = item.name;
     var presetsEl = document.getElementById('kb-batch-presets');
+    var bunch = item.open_bunches[0];
+    var bId = bunch ? bunch.id : 'null';
     presetsEl.innerHTML = item.presets.length
-      ? item.presets.map(function(p){
-          var bunch = item.open_bunches[0];
-          return '<div class="kb-preset-item" onclick="addBatchPreset(' + (bunch ? bunch.id : 'null') + ',' +
-                 JSON.stringify(item.name + ' — ' + p.label) + ',' + p.price + ')">' +
+      ? item.presets.map(function(p, idx){
+          return '<div class="kb-preset-item" onclick="addBatchPreset(' + bId + ',' + idx + ')">' +
                  '<span class="kb-preset-label">' + p.label + '</span>' +
                  '<span class="kb-preset-price">KES ' + fmt(p.price) + '</span>' +
                  '</div>';
@@ -590,12 +623,17 @@
     new bootstrap.Modal(document.getElementById('kbBatchModal')).show();
   }
 
-  window.addBatchPreset = function(bunchId, desc, amount) {
+  window.addBatchPreset = function(bunchId, presetIdx) {
     var m = bootstrap.Modal.getInstance(document.getElementById('kbBatchModal'));
     if (m) m.hide();
     if (!_activeBatchItem) return;
-    var bunch = bunchId ? _activeBatchItem.open_bunches.find(function(b){ return b.id===bunchId; }) : _activeBatchItem.open_bunches[0];
-    addToCart({bunch_id: bunch ? bunch.id : null, description: desc, amount: amount, qty: 1});
+    var p = _activeBatchItem.presets[presetIdx];
+    if (!p) return;
+    var bunch = bunchId ? _activeBatchItem.open_bunches.find(function(b){ return b.id === bunchId; })
+                        : _activeBatchItem.open_bunches[0];
+    addToCart({bunch_id: bunch ? bunch.id : null,
+               description: _activeBatchItem.name + ' — ' + p.label,
+               amount: p.price, qty: 1});
   };
 
   window.addBatchCustom = function() {
@@ -853,8 +891,7 @@
              '<div style="border-top:1px solid #333;margin-top:.4rem;padding-top:.4rem;display:flex;justify-content:space-between;font-size:.85rem;">' +
              '<strong style="color:#c9a84c;">Deni: KES ' + fmt(tab.unpaid_total) + '</strong></div>' +
              '<div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap;">' +
-             '<button class="btn btn-sm btn-gold" onclick="settleKitchenTab(' + tab.id + ',\'cash\')">Cash</button>' +
-             '<button class="btn btn-sm" style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.3);color:#4caf50;" onclick="settleKitchenTab(' + tab.id + ',\'mpesa\')">M-Pesa</button>' +
+             '<button class="btn btn-sm btn-gold" data-tab-id="' + tab.id + '" data-customer="' + (tab.customer_name||'').replace(/"/g,'&quot;') + '" data-unpaid="' + tab.unpaid_total + '" onclick="openKitchenTabSettle(this)">💰 Lipa</button>' +
              '<button class="btn btn-sm" style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.35);color:#c0395a;" onclick="openKitchenTabDeni(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'") + '\')">🤝 Deni</button>' +
              '<button class="btn btn-sm" style="background:rgba(80,80,80,.1);border:1px solid #444;color:#888;" onclick="voidKitchenTab(' + tab.id + ')">Void</button>' +
              '</div></div>';
@@ -875,15 +912,47 @@
       .catch(function(){});
   }
 
-  window.settleKitchenTab = function(tabId, pm) {
-    var body = new URLSearchParams({payment_method: pm, csrfmiddlewaretoken: CSRF});
-    fetch('/bar/tabs/' + tabId + '/settle/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+  window.openKitchenTabSettle = function(btn) {
+    _settleTabId = parseInt(btn.getAttribute('data-tab-id'), 10);
+    var customerName = btn.getAttribute('data-customer');
+    var unpaidTotal  = parseFloat(btn.getAttribute('data-unpaid'));
+    document.getElementById('kb-settle-modal-title').textContent = 'Lipa Tab ya ' + customerName;
+    document.getElementById('kb-settle-amount').textContent = 'KES ' + fmt(unpaidTotal);
+    document.getElementById('kb-settle-phone').value = '';
+    document.getElementById('kb-settle-receipt-banner').style.display = 'none';
+    document.getElementById('kb-settle-error').style.display = 'none';
+    new bootstrap.Modal(document.getElementById('kbSettleModal')).show();
+  };
+
+  window.settleKitchenTab = function(pm) {
+    if (!_settleTabId) return;
+    var phone = (document.getElementById('kb-settle-phone').value||'').trim();
+    var errEl = document.getElementById('kb-settle-error');
+    errEl.style.display = 'none';
+    var body = new URLSearchParams({payment_method: pm, customer_phone: phone, csrfmiddlewaretoken: CSRF});
+    fetch('/bar/tabs/' + _settleTabId + '/settle/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
       .then(function(r){ return r.json(); })
       .then(function(d){
-        if (d.ok) { showToast('✓ Tab imelipwa.'); loadFoodTabs(); }
-        else showToast('❌ ' + (d.error||'Hitilafu.'));
+        if (d.ok) {
+          showToast('✓ Tab imelipwa.');
+          if (d.receipt_url) {
+            document.getElementById('kb-settle-receipt-link').href = d.receipt_url;
+            document.getElementById('kb-settle-receipt-banner').style.display = 'block';
+          }
+          loadFoodTabs();
+          _settleTabId = null;
+          if (!d.receipt_url) {
+            setTimeout(function(){
+              var m = bootstrap.Modal.getInstance(document.getElementById('kbSettleModal'));
+              if (m) m.hide();
+            }, 1500);
+          }
+        } else {
+          errEl.textContent = d.error || 'Hitilafu.';
+          errEl.style.display = 'block';
+        }
       })
-      .catch(function(){ showToast('❌ Hitilafu ya mtandao.'); });
+      .catch(function(){ errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; });
   };
 
   window.voidKitchenTab = function(tabId) {

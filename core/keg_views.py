@@ -788,6 +788,8 @@ def settle_tab(request, tab_id):
     tab.settled_at = now
     tab.save(update_fields=['status', 'settled_at'])
 
+    customer_phone = (request.POST.get('customer_phone') or '').strip()
+
     # Issue a unified receipt for all entries on this tab
     receipt_url = None
     receipt_id = None
@@ -803,9 +805,20 @@ def settle_tab(request, tab_id):
             payment_method=pay,
             user=request.user,
             customer_name=tab.customer_name,
+            customer_phone=customer_phone,
         )
         receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
         receipt_id = rcpt.id
+        if customer_phone and receipt_url:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            normalized = normalize_ke_phone(customer_phone)
+            if normalized:
+                sms_msg = (
+                    f"Duka: {tab.business.name}\n"
+                    f"Umelipa tab: KES {float(tab.total()):,.0f}\n"
+                    f"Risiti: {receipt_url}"
+                )
+                send_sms_notification(sms_msg, normalized)
     except Exception:
         pass
 
