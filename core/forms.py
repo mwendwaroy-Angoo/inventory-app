@@ -91,6 +91,7 @@ class ItemForm(forms.ModelForm):
         # hide the raw category select; we'll control it via the hierarchical picker
         try:
             self.fields['category'].widget = forms.HiddenInput()
+            self.fields['category'].required = False
         except Exception:
             pass
 
