@@ -253,8 +253,17 @@ def analytics_dashboard(request):
     # ── Stock health ──
     all_items = list(Item.objects.filter(business=business))
     total_items = len(all_items)
-    out_of_stock = sum(1 for i in all_items if i.current_balance() <= 0)
-    low_stock = sum(1 for i in all_items if 0 < i.current_balance() <= i.reorder_level)
+    # Exclude BUNCH produce items — their "stock" lives in ProduceBunch envelopes, not unit balance.
+    # current_balance() returns 0/negative for them (no Receipt transactions), so they'd always
+    # register as out-of-stock. Same exclusion logic as keg items in velocity ranking below.
+    out_of_stock = sum(
+        1 for i in all_items
+        if i.current_balance() <= 0 and not (i.is_produce and i.produce_mode == 'BUNCH')
+    )
+    low_stock = sum(
+        1 for i in all_items
+        if 0 < i.current_balance() <= i.reorder_level and not (i.is_produce and i.produce_mode == 'BUNCH')
+    )
     healthy_stock = total_items - out_of_stock - low_stock
     stock_value = sum(i.stock_value() for i in all_items)
 
@@ -268,6 +277,8 @@ def analytics_dashboard(request):
     for item in all_items:
         if item.is_keg:
             continue  # keg stock tracked via barrel weight/envelope, not item balance
+        if item.is_produce and item.produce_mode == 'BUNCH':
+            continue  # BUNCH items tracked via ProduceBunch envelope; no unit balance to rank
         balance    = float(item.current_balance())
         units_sold = item_units_sold.get(item.id, 0.0)
         daily_rate = units_sold / days if days > 0 else 0.0
