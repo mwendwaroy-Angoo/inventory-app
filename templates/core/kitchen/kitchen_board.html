@@ -967,19 +967,22 @@
     }
     var body = new URLSearchParams(data);
     fetch('/kitchen/receive/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
-      .then(function(r){ return r.json(); })
-      .then(function(d){
+      .then(function(r){
+        return r.json().then(function(d){ return {ok: r.ok, data: d}; });
+      })
+      .then(function(res){
         btn.disabled=false; btn.textContent='Pokea';
+        var d = res.data;
         if (d.ok) {
           var m = bootstrap.Modal.getInstance(document.getElementById('kbReceiveModal'));
           if (m) m.hide();
           showToast('✓ Stok imepokelewa!');
           setTimeout(function(){ location.reload(); }, 1200);
         } else {
-          errEl.textContent = d.error||'Hitilafu.'; errEl.style.display='block';
+          errEl.textContent = d.error||'Hitilafu ya seva.'; errEl.style.display='block';
         }
       })
-      .catch(function(){ btn.disabled=false; btn.textContent='Pokea'; errEl.textContent='Hitilafu ya mtandao.'; errEl.style.display='block'; });
+      .catch(function(){ btn.disabled=false; btn.textContent='Pokea'; errEl.textContent='Hitilafu ya mtandao — angalia intaneti.'; errEl.style.display='block'; });
   };
   {% endif %}
 

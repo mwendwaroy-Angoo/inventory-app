@@ -392,39 +392,48 @@ def kitchen_receive(request):
     try:
         item = Item.objects.get(id=item_id, store=kitchen_store)
     except Item.DoesNotExist:
-        return JsonResponse({'ok': False, 'error': 'Item not found'}, status=404)
+        return JsonResponse({'ok': False, 'error': f'Bidhaa {item_id} haikupatikana kwenye jikoni.'}, status=404)
+    except (ValueError, TypeError):
+        return JsonResponse({'ok': False, 'error': 'item_id batili.'}, status=400)
 
-    if mode == 'batch':
-        cost = Decimal(str(request.POST.get('cost_price', 0)))
-        target = request.POST.get('target_revenue')
-        target = Decimal(str(target)) if target else item.default_bunch_target(cost)
-        note = (request.POST.get('note') or '').strip()
-        bunch = ProduceBunch.objects.create(
-            item=item,
-            business=business,
-            size='LARGE',
-            cost_price=cost,
-            target_revenue=target,
-            note=note,
-        )
-        return JsonResponse({'ok': True, 'bunch_id': bunch.id, 'target': float(target)})
-    else:
-        qty = Decimal(str(request.POST.get('qty', 0)))
-        cost = Decimal(str(request.POST.get('cost_price', 0)))
-        if qty <= 0:
-            return JsonResponse({'ok': False, 'error': 'Qty must be > 0'}, status=400)
-        Transaction.objects.create(
-            business=business,
-            item=item,
-            type='Receipt',
-            qty=qty,
-            payment_method='cash',
-            recorded_by=request.user.username,
-        )
-        if cost > 0:
-            item.cost_price = cost / qty
-            item.save(update_fields=['cost_price'])
-        return JsonResponse({'ok': True, 'new_balance': float(item.current_balance())})
+    try:
+        if mode == 'batch':
+            cost_raw = request.POST.get('cost_price', '0') or '0'
+            cost = Decimal(str(cost_raw))
+            target_raw = (request.POST.get('target_revenue') or '').strip()
+            target = Decimal(str(target_raw)) if target_raw else item.default_bunch_target(cost)
+            note = (request.POST.get('note') or '').strip()
+            bunch = ProduceBunch.objects.create(
+                item=item,
+                business=business,
+                size='LARGE',
+                cost_price=cost,
+                target_revenue=target,
+                note=note,
+            )
+            return JsonResponse({'ok': True, 'bunch_id': bunch.id, 'target': float(target)})
+        else:
+            qty_raw = request.POST.get('qty', '0') or '0'
+            cost_raw = request.POST.get('cost_price', '0') or '0'
+            qty = Decimal(str(qty_raw))
+            cost = Decimal(str(cost_raw))
+            if qty <= 0:
+                return JsonResponse({'ok': False, 'error': 'Idadi lazima iwe zaidi ya 0.'}, status=400)
+            Transaction.objects.create(
+                business=business,
+                item=item,
+                type='Receipt',
+                qty=qty,
+                payment_method='cash',
+                recorded_by=request.user.username,
+            )
+            if cost > 0:
+                item.cost_price = cost / qty
+                item.save(update_fields=['cost_price'])
+            return JsonResponse({'ok': True, 'new_balance': float(item.current_balance())})
+    except Exception as exc:
+        logger.exception('kitchen_receive failed business=%s item=%s mode=%s', business.id, item_id, mode)
+        return JsonResponse({'ok': False, 'error': f'Hitilafu: {exc}'}, status=500)
 
 
 # ── Food tabs API (reuses same settle/void/debt endpoints as bar tabs) ─────────
