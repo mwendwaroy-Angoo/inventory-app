@@ -147,7 +147,7 @@ def kitchen_board(request):
                     'id': item.id,
                     'name': item.description,
                     'unit': item.unit,
-                    'selling_price': float(item.selling_price),
+                    'selling_price': float(item.selling_price or 0),
                     'balance': balance,
                     'presets': presets,
                 })
