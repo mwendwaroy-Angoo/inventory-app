@@ -146,15 +146,19 @@
     <!-- Menu tiles -->
     <div class="kb-menu">
 
-      <!-- Portion items -->
+      <!-- Fast Food: portion items + fried/baked batch items (chipo, bhajia, samosa batches) -->
       <div id="kb-portion-section">
         <div class="kb-section-title">🍟 Fast Food</div>
         <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:.5rem;" id="kb-portion-grid">
           <!-- JS fills this -->
         </div>
+        <!-- Batch items that are NOT grilled (fries, bhajia, mandazi, etc.) -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.5rem; margin-top:.5rem;" id="kb-fry-batch-grid">
+          <!-- JS fills this -->
+        </div>
       </div>
 
-      <!-- Batch / grill items -->
+      <!-- Nyama Choma / Grill: only actual grilled meat batch items -->
       <div id="kb-batch-section" style="margin-top:.75rem;">
         <div class="kb-section-title">🔥 Nyama Choma / Grill</div>
         <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.5rem;" id="kb-batch-grid">
@@ -361,6 +365,15 @@
   var _batchItems   = {{ batch_items|safe }};
   var _barTabNames  = {{ bar_tab_names|safe }};
 
+  // Split batch items: grilled meat vs fried/baked fast food
+  var _GRILL_KEYS = ['nyama','choma','mutura','mishkaki','rib','bbq','barbecue','grill','suya','roast','smokehouse'];
+  function _isGrill(item) {
+    var n = (item.name || '').toLowerCase();
+    return _GRILL_KEYS.some(function(k){ return n.indexOf(k) !== -1; });
+  }
+  var _grillItems    = _batchItems.filter(function(i){ return  _isGrill(i); });
+  var _fryBatchItems = _batchItems.filter(function(i){ return !_isGrill(i); });
+
   var _cart = [];       // [{item_id, bunch_id, preset_id, description, amount, qty}]
   var _pm   = 'cash';
   var _activeBatchItem = null;  // currently selected batch item for modal
@@ -385,7 +398,8 @@
   function buildPortionGrid() {
     var grid = document.getElementById('kb-portion-grid');
     var sec  = document.getElementById('kb-portion-section');
-    if (!_portionItems.length) { sec.style.display='none'; return; }
+    if (!_portionItems.length && !_fryBatchItems.length) { sec.style.display='none'; return; }
+    sec.style.display = 'block';
     var html = '';
     _portionItems.forEach(function(item){
       var oos = item.balance <= 0;
@@ -402,33 +416,44 @@
               '</div>';
     });
     grid.innerHTML = html;
+    // Fried/baked batch items also appear in Fast Food (not in grill section)
+    buildFryBatchGrid();
+  }
+
+  function _buildBatchTileHtml(item) {
+    var remaining = item.total_remaining;
+    var pct = 0;
+    if (item.open_bunches.length) {
+      var tot = item.open_bunches.reduce(function(s,b){ return s+b.target_revenue; }, 0);
+      var col = item.open_bunches.reduce(function(s,b){ return s+b.revenue_collected; }, 0);
+      pct = tot > 0 ? Math.min(100, Math.round(col/tot*100)) : 0;
+    }
+    var noStock = !item.has_stock;
+    return '<div class="kb-tile kb-tile-batch' + (noStock?' out-of-stock':'') + '" onclick="batchTileClick(' + item.id + ')"' +
+            ' data-item-id="' + item.id + '">' +
+            '<div class="kb-tile-name">' + item.name + '</div>' +
+            '<div class="kb-envelope">' +
+              (noStock ? '<span style="color:#c0395a;">Hakuna — pokea tena</span>'
+                       : 'Imebaki: KES ' + fmt(remaining)) +
+              '<div class="env-bar"><div class="env-fill" style="width:' + pct + '%"></div></div>' +
+            '</div>' +
+            '</div>';
+  }
+
+  function buildFryBatchGrid() {
+    var grid = document.getElementById('kb-fry-batch-grid');
+    if (!grid) return;
+    if (!_fryBatchItems.length) { grid.style.display='none'; return; }
+    grid.style.display = 'grid';
+    grid.innerHTML = _fryBatchItems.map(_buildBatchTileHtml).join('');
   }
 
   function buildBatchGrid() {
     var grid = document.getElementById('kb-batch-grid');
     var sec  = document.getElementById('kb-batch-section');
-    if (!_batchItems.length) { sec.style.display='none'; return; }
-    var html = '';
-    _batchItems.forEach(function(item){
-      var remaining = item.total_remaining;
-      var pct = 0;
-      if (item.open_bunches.length) {
-        var tot = item.open_bunches.reduce(function(s,b){ return s+b.target_revenue; }, 0);
-        var col = item.open_bunches.reduce(function(s,b){ return s+b.revenue_collected; }, 0);
-        pct = tot > 0 ? Math.min(100, Math.round(col/tot*100)) : 0;
-      }
-      var noStock = !item.has_stock;
-      html += '<div class="kb-tile kb-tile-batch' + (noStock?' out-of-stock':'') + '" onclick="batchTileClick(' + item.id + ')"' +
-              ' data-item-id="' + item.id + '">' +
-              '<div class="kb-tile-name">' + item.name + '</div>' +
-              '<div class="kb-envelope">' +
-                (noStock ? '<span style="color:#c0395a;">Hakuna — pokea tena</span>'
-                         : 'Imebaki: KES ' + fmt(remaining)) +
-                '<div class="env-bar"><div class="env-fill" style="width:' + pct + '%"></div></div>' +
-              '</div>' +
-              '</div>';
-    });
-    grid.innerHTML = html;
+    if (!_grillItems.length) { sec.style.display='none'; return; }
+    sec.style.display = 'block';
+    grid.innerHTML = _grillItems.map(_buildBatchTileHtml).join('');
   }
 
   /* ── Payment method selector ── */
