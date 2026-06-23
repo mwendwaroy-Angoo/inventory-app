@@ -187,20 +187,29 @@
           <div class="kb-pay-row">
             <button class="kb-pay-btn pm-cash selected" onclick="selectPM('cash')">Cash</button>
             <button class="kb-pay-btn pm-mpesa" onclick="selectPM('mpesa')">M-Pesa</button>
-            <button class="kb-pay-btn pm-credit" onclick="selectPM('credit')" style="border-color:#c0395a;color:#c0395a;">🤝 Deni</button>
+            <button class="kb-pay-btn pm-stk" onclick="selectPM('stk')" style="border-color:#3cb371;color:#3cb371;">📲 STK</button>
           </div>
           <div class="kb-pay-row">
+            <button class="kb-pay-btn pm-credit" onclick="selectPM('credit')" style="border-color:#c0395a;color:#c0395a;">🤝 Deni</button>
             <button class="kb-pay-btn pm-food-tab" onclick="selectPM('food_tab')">🍽 Food Tab</button>
             <button class="kb-pay-btn pm-bar-tab" onclick="selectPM('bar_tab')">🍺 Bar Tab</button>
+          </div>
+          <!-- STK Push phone input -->
+          <div id="kb-stk-row" style="display:none; margin-top:0.5rem;">
+            <input type="tel" id="kb-stk-phone" class="form-control form-control-sm" placeholder="Simu ya mteja (07XX...)" autocomplete="off">
           </div>
           <div id="kb-tab-name-row" style="display:none;">
             <input type="text" id="kb-tab-name" placeholder="Jina la mteja..." autocomplete="off" list="kb-bar-tab-list">
             <datalist id="kb-bar-tab-list"></datalist>
           </div>
           <!-- Credit (Deni) customer fields -->
-          <div id="kb-credit-row" style="display:none; margin-top:0.5rem; display:none;">
+          <div id="kb-credit-row" style="display:none; margin-top:0.5rem;">
             <input type="text" id="kb-credit-name" class="form-control form-control-sm mb-1" placeholder="Jina la mteja (lazima)..." autocomplete="off">
             <input type="tel" id="kb-credit-phone" class="form-control form-control-sm" placeholder="Namba ya simu (07XX... — SMS)" autocomplete="off">
+          </div>
+          <!-- Receipt link shown after successful cash/mpesa/credit sale -->
+          <div id="kb-receipt-banner" style="display:none; margin-top:0.5rem; padding:0.45rem 0.6rem; background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:8px; text-align:center;">
+            <a id="kb-receipt-link" href="#" target="_blank" rel="noopener" style="color:#c9a84c; font-size:0.82rem; font-weight:600; text-decoration:none;">🧾 Angalia Risiti</a>
           </div>
           <button class="kb-checkout-btn mt-2" id="kb-checkout-btn" onclick="doCheckout()" disabled>
             Maliza Mauzo
@@ -290,21 +299,26 @@
           </div>
         </div>
         <div id="kr-batch-fields" style="display:none;">
+          <div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:6px;padding:.5rem .6rem;margin-bottom:.6rem;font-size:.77rem;color:#b0b0b0;line-height:1.4;">
+            📦 <strong style="color:#c9a84c;">Mfumo wa Batch</strong> — Usihesabu idadi ya vipande. Weka tu kiasi ulichotumia kununua <em>malighafi</em> (gunia la viazi, unga + nyanya, nyama nk.) Mfumo utafuatilia mapato mpaka lengo lifikiwe.
+          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem;">
             <div>
-              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Gharama ya Kununua (KES)</label>
-              <input type="number" id="kr-batch-cost" min="0" placeholder="e.g. 4500"
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Gharama ya Malighafi (KES)</label>
+              <input type="number" id="kr-batch-cost" min="0" placeholder="e.g. 800"
                      style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+              <div id="kr-batch-cost-hint" style="font-size:.72rem;color:#888;margin-top:.2rem;"></div>
             </div>
             <div>
-              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Lengo la Mapato (KES, hiari)</label>
-              <input type="number" id="kr-batch-target" min="0" placeholder="auto"
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Lengo la Mapato (KES)</label>
+              <input type="number" id="kr-batch-target" min="0" placeholder="itahesabiwa auto"
                      style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+              <div style="font-size:.72rem;color:#888;margin-top:.2rem;">Kiasi unachotegemea kupata. Hiari — itahesabiwa kiotomatiki.</div>
             </div>
           </div>
           <div>
             <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Maelezo (hiari)</label>
-            <input type="text" id="kr-batch-note" placeholder="e.g. Mbuzi nusu"
+            <input type="text" id="kr-batch-note" placeholder="e.g. Mbuzi nusu, Gunia la viazi 50kg"
                    style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
           </div>
         </div>
@@ -317,6 +331,27 @@
   </div>
 </div>
 {% endif %}
+
+<!-- ── STK Push modal ── -->
+<div class="modal fade" id="kbStkModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#c9a84c;">📲 Lipa — STK Push</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.85rem;">
+        <div id="kb-stk-summary" style="color:#b0b0b0;font-size:.82rem;margin-bottom:.75rem;"></div>
+        <input type="tel" id="kb-stk-modal-phone" class="form-control form-control-sm mb-2" placeholder="Simu ya mteja (07XX...)">
+        <div id="kb-stk-result" style="display:none;font-size:.8rem;padding:.4rem .6rem;border-radius:6px;margin-top:.5rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;gap:.5rem;">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Acha</button>
+        <button id="kb-stk-send-btn" class="btn btn-sm btn-gold" onclick="window.sendKitchenStk()">📲 Tuma Ombi</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Petty Cash modal -->
 {% include "core/petty_cash_modal.html" %}
@@ -460,13 +495,16 @@
   function selectPM(pm) {
     _pm = pm;
     document.querySelectorAll('.kb-pay-btn').forEach(function(b){ b.classList.remove('selected'); });
-    var clsMap = {cash:'pm-cash', mpesa:'pm-mpesa', food_tab:'pm-food-tab', bar_tab:'pm-bar-tab', credit:'pm-credit'};
+    var clsMap = {cash:'pm-cash', mpesa:'pm-mpesa', stk:'pm-stk', food_tab:'pm-food-tab', bar_tab:'pm-bar-tab', credit:'pm-credit'};
     var btn = document.querySelector('.kb-pay-btn.' + (clsMap[pm] || ''));
     if (btn) btn.classList.add('selected');
     var tabRow    = document.getElementById('kb-tab-name-row');
     var creditRow = document.getElementById('kb-credit-row');
+    var stkRow    = document.getElementById('kb-stk-row');
     tabRow.style.display    = (pm === 'food_tab' || pm === 'bar_tab') ? 'block' : 'none';
     creditRow.style.display = (pm === 'credit') ? 'block' : 'none';
+    stkRow.style.display    = (pm === 'stk') ? 'block' : 'none';
+    document.getElementById('kb-receipt-banner').style.display = 'none';
     if (pm === 'bar_tab') {
       var dl = document.getElementById('kb-bar-tab-list');
       dl.innerHTML = _barTabNames.map(function(n){ return '<option value="' + n + '">'; }).join('');
@@ -593,29 +631,16 @@
   }
 
   /* ── Checkout ── */
-  window.doCheckout = function() {
-    if (!_cart.length) return;
+  function _submitCheckout(pmOverride) {
+    var pm = pmOverride || _pm;
     var tabName    = (document.getElementById('kb-tab-name').value||'').trim();
     var creditName = (document.getElementById('kb-credit-name').value||'').trim();
     var creditPhone= (document.getElementById('kb-credit-phone').value||'').trim();
-
-    if ((_pm==='food_tab'||_pm==='bar_tab') && !tabName) {
-      document.getElementById('kb-tab-name').focus();
-      showToast('Ingiza jina la mteja.');
-      return;
-    }
-    if (_pm === 'credit' && !creditName) {
-      document.getElementById('kb-credit-name').focus();
-      showToast('Ingiza jina la mteja kwa deni.');
-      return;
-    }
-
     var btn = document.getElementById('kb-checkout-btn');
     btn.disabled = true; btn.textContent = 'Inatuma...';
-
     var body = new URLSearchParams({
       cart: JSON.stringify(_cart),
-      payment_method: _pm,
+      payment_method: pm,
       tab_customer: tabName,
       credit_name: creditName,
       credit_phone: creditPhone,
@@ -629,20 +654,140 @@
           var msg = '✓ KES ' + fmt(d.total);
           if (d.tab_customer) msg += ' — Tab ya ' + d.tab_customer;
           if (d.credit_name)  msg += ' — Deni: ' + d.credit_name;
-          if (d.receipt_number) msg += ' | Receipt #' + d.receipt_number;
           showToast(msg, 3500);
+          if (d.receipt_url) {
+            var banner = document.getElementById('kb-receipt-banner');
+            var link   = document.getElementById('kb-receipt-link');
+            link.href = d.receipt_url;
+            link.textContent = d.receipt_number ? '🧾 Angalia Risiti #' + d.receipt_number : '🧾 Angalia Risiti';
+            banner.style.display = 'block';
+          }
           _cart = []; renderCart();
           document.getElementById('kb-tab-name').value = '';
           document.getElementById('kb-credit-name').value = '';
           document.getElementById('kb-credit-phone').value = '';
           refreshRevenue();
-          if (_pm === 'food_tab') loadFoodTabBadge();
+          if (pm === 'food_tab') loadFoodTabBadge();
         } else {
           showToast('❌ ' + (d.error||'Hitilafu. Jaribu tena.'));
         }
       })
       .catch(function(){ btn.disabled=false; btn.textContent='Maliza Mauzo'; showToast('❌ Hitilafu ya mtandao.'); });
+  }
+
+  window.doCheckout = function() {
+    if (!_cart.length) return;
+    var tabName    = (document.getElementById('kb-tab-name').value||'').trim();
+    var creditName = (document.getElementById('kb-credit-name').value||'').trim();
+
+    if ((_pm==='food_tab'||_pm==='bar_tab') && !tabName) {
+      document.getElementById('kb-tab-name').focus();
+      showToast('Ingiza jina la mteja.');
+      return;
+    }
+    if (_pm === 'credit' && !creditName) {
+      document.getElementById('kb-credit-name').focus();
+      showToast('Ingiza jina la mteja kwa deni.');
+      return;
+    }
+    if (_pm === 'stk') {
+      // Open STK modal; actual checkout fires after payment confirmed
+      var total = _cart.reduce(function(s,e){ return s + e.amount; }, 0);
+      var phone = (document.getElementById('kb-stk-phone').value||'').trim();
+      document.getElementById('kb-stk-modal-phone').value = phone;
+      document.getElementById('kb-stk-summary').textContent = 'Jumla: KES ' + fmt(total);
+      document.getElementById('kb-stk-result').style.display = 'none';
+      var stkBtn = document.getElementById('kb-stk-send-btn');
+      stkBtn.disabled = false; stkBtn.textContent = '📲 Tuma Ombi';
+      new bootstrap.Modal(document.getElementById('kbStkModal')).show();
+      return;
+    }
+    _submitCheckout();
   };
+
+  /* ── STK Push for kitchen ── */
+  window.sendKitchenStk = function() {
+    var phone  = (document.getElementById('kb-stk-modal-phone').value||'').trim();
+    var total  = _cart.reduce(function(s,e){ return s + e.amount; }, 0);
+    var resultEl = document.getElementById('kb-stk-result');
+    var btn = document.getElementById('kb-stk-send-btn');
+
+    function stkErr(msg) {
+      resultEl.style.background = 'rgba(192,57,90,0.15)';
+      resultEl.style.color = '#c0395a';
+      resultEl.textContent = msg;
+      resultEl.style.display = 'block';
+    }
+    if (!phone) { stkErr('Ingiza nambari ya simu ya mteja.'); return; }
+    if (!total || total < 1) { stkErr('Kikapu kiko tupu.'); return; }
+
+    btn.disabled = true; btn.textContent = '⏳ Inatuma...';
+    resultEl.style.display = 'none';
+
+    fetch('/mpesa/stk-push/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({phone: phone, amount: Math.round(total)}),
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.success) {
+        resultEl.style.background = 'rgba(46,204,113,0.15)';
+        resultEl.style.color = '#2ecc71';
+        resultEl.textContent = '✅ Imetumwa! Mteja aidhinishe kwenye simu yake.';
+        resultEl.style.display = 'block';
+        btn.textContent = '⏳ Inasubiri...';
+        _pollKitchenStk(d.payment_id);
+      } else {
+        btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+        stkErr('❌ ' + (d.error || 'Imeshindwa. Jaribu tena.'));
+      }
+    })
+    .catch(function(){
+      btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+      stkErr('❌ Hitilafu ya mtandao. Jaribu tena.');
+    });
+  };
+
+  function _pollKitchenStk(paymentId) {
+    var tries = 0;
+    var resultEl = document.getElementById('kb-stk-result');
+    var btn = document.getElementById('kb-stk-send-btn');
+    var interval = setInterval(function() {
+      tries++;
+      fetch('/mpesa/status/' + paymentId + '/')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (data.status === 'completed') {
+            clearInterval(interval);
+            resultEl.style.background = 'rgba(46,204,113,0.15)';
+            resultEl.style.color = '#2ecc71';
+            resultEl.textContent = '✅ Malipo yamepokelewa!';
+            btn.disabled = true; btn.textContent = '✓ Imelipwa';
+            setTimeout(function() {
+              var m = bootstrap.Modal.getInstance(document.getElementById('kbStkModal'));
+              if (m) m.hide();
+              _submitCheckout('mpesa');
+            }, 1500);
+          } else if (data.status === 'failed') {
+            clearInterval(interval);
+            resultEl.style.background = 'rgba(192,57,90,0.15)';
+            resultEl.style.color = '#c0395a';
+            resultEl.textContent = '❌ Malipo yamekataliwa au muda umekwisha.';
+            resultEl.style.display = 'block';
+            btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+          } else if (tries >= 24) {
+            clearInterval(interval);
+            resultEl.style.background = 'rgba(201,168,76,0.15)';
+            resultEl.style.color = '#c9a84c';
+            resultEl.textContent = '⏱ Muda umekwisha. Angalia M-Pesa yako kisha lipa kwa Cash/M-Pesa.';
+            resultEl.style.display = 'block';
+            btn.disabled = false; btn.textContent = '📲 Jaribu Tena';
+          }
+        })
+        .catch(function(){});
+    }, 5000);
+  }
 
   function refreshRevenue() {
     fetch('/kitchen/', {headers:{'Accept':'application/json'}}).catch(function(){});
@@ -774,11 +919,30 @@
       _allItems.map(function(i){
         return '<option value="' + i.id + '" data-batch="' + (i.open_bunches!==undefined?'1':'0') + '">' + i.name + '</option>';
       }).join('');
+    var _COST_HINTS = {
+      chipo:'e.g. gunia la viazi: 800', chips:'e.g. gunia la viazi: 800', fries:'e.g. gunia la viazi: 800',
+      bhajia:'e.g. viazi + unga + viungo: 400', karai:'e.g. viazi + unga + viungo: 400',
+      samosa:'e.g. unga + nyama/ndengu + viungo: 600', kebab:'e.g. nyama ya kusaga + viungo: 1200',
+      mishkaki:'e.g. nyama ya kusaga + viungo: 1200', mshikaki:'e.g. nyama ya kusaga + viungo: 1200',
+      mandazi:'e.g. unga + sukari + mayai: 300', mahamri:'e.g. unga + sukari + nazi: 350',
+      chapati:'e.g. unga + mafuta: 400', ugali:'e.g. unga wa mahindi: 250',
+      wali:'e.g. mchele 2kg: 400', nyama:'e.g. nyama 3kg: 1500',
+      choma:'e.g. nyama 3kg: 1500', mutura:'e.g. utumbo + nyama: 800',
+    };
     sel.onchange = function() {
       var opt = sel.options[sel.selectedIndex];
       var isBatch = opt.getAttribute('data-batch') === '1';
       document.getElementById('kr-portion-fields').style.display = isBatch ? 'none' : 'block';
       document.getElementById('kr-batch-fields').style.display   = isBatch ? 'block' : 'none';
+      if (isBatch) {
+        var nm = (opt.textContent||'').toLowerCase();
+        var hint = '';
+        Object.keys(_COST_HINTS).forEach(function(k){ if (nm.indexOf(k) !== -1 && !hint) hint = _COST_HINTS[k]; });
+        document.getElementById('kr-batch-cost-hint').textContent = hint;
+        document.getElementById('kr-batch-cost').value = '';
+        document.getElementById('kr-batch-target').value = '';
+        document.getElementById('kr-batch-note').value = '';
+      }
     };
     document.getElementById('kr-error').style.display = 'none';
     new bootstrap.Modal(document.getElementById('kbReceiveModal')).show();
