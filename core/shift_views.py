@@ -39,6 +39,16 @@ def _reconcile(shift):
         created_at__gte=shift.started_at,
         created_at__lte=end,
     )
+    # Scope to the correct counter so concurrent bar + kitchen shifts don't bleed into each other.
+    # Kitchen staff shifts only count kitchen store sales; all other shifts count bar/general sales.
+    try:
+        is_kitchen_shift = shift.staff.userprofile.role == 'kitchen'
+    except Exception:
+        is_kitchen_shift = False
+    if is_kitchen_shift:
+        txns = txns.filter(item__store__is_kitchen=True)
+    else:
+        txns = txns.filter(item__store__is_kitchen=False)
     # Revenue per transaction: use sale_amount when set (keg pours, preset Quick Sell),
     # otherwise abs(qty) * selling_price (regular Quick Sell without preset).
     _rev = Case(
@@ -99,34 +109,84 @@ def _tapped_barrels_for_business(business):
 
 @login_required
 def active_shift_api(request):
-    """JSON: current open/closed shift for this business, or null."""
+    """JSON: current user's own shift + all active shifts for the business.
+
+    d.shift      — the calling user's shift (for bar board panel; null if not open).
+    d.all_shifts — every OPEN/CLOSED shift across all staff (for owner dashboard).
+    """
     up = _get_up(request)
     if not up:
-        return JsonResponse({'shift': None})
+        return JsonResponse({'shift': None, 'all_shifts': []})
 
-    shift = Shift.objects.filter(
+    def _section(s):
+        try:
+            return 'kitchen' if s.staff.userprofile.role == 'kitchen' else 'bar'
+        except Exception:
+            return 'bar'
+
+    def _covers_both(s):
+        try:
+            sup = s.staff.userprofile
+            if sup.role == 'kitchen':
+                return getattr(sup, 'can_access_bar', False)
+            return getattr(sup, 'can_access_kitchen', False)
+        except Exception:
+            return False
+
+    # All open/closing shifts for the business (for dashboard)
+    all_open = list(
+        Shift.objects.filter(
+            business=up.business,
+            status__in=('OPEN', 'CLOSED'),
+        ).order_by('started_at').select_related('staff__userprofile')
+    )
+    all_shifts_data = []
+    for s in all_open:
+        rec = _reconcile(s)
+        all_shifts_data.append({
+            'id':          s.id,
+            'staff_name':  s.staff.get_full_name() or s.staff.username,
+            'section':     _section(s),
+            'covers_both': _covers_both(s),
+            'status':      s.status,
+            'started_at':  timezone.localtime(s.started_at).strftime('%H:%M'),
+            'elapsed':     rec['elapsed'],
+            'cash_sales':  rec['cash_sales'],
+            'mpesa_sales': rec['mpesa_sales'],
+            'total_sales': rec['total_sales'],
+        })
+
+    # MY shift — for the bar board's own shift panel
+    my_shift = Shift.objects.filter(
         business=up.business,
         status__in=('OPEN', 'CLOSED'),
+        staff=request.user,
     ).order_by('-started_at').first()
 
-    if not shift:
-        # No active shift — find the last CONFIRMED shift's closing count as float suggestion
+    if not my_shift:
+        # Float suggestion: the previous CONFIRMED shift opened by this same staff member
         last = Shift.objects.filter(
             business=up.business,
             status='CONFIRMED',
             closing_cash_counted__isnull=False,
+            staff=request.user,
         ).order_by('-ended_at').first()
         last_closing = float(last.closing_cash_counted) if last else None
-        return JsonResponse({'shift': None, 'can_open': True, 'last_closing': last_closing})
+        return JsonResponse({
+            'shift': None,
+            'can_open': True,
+            'last_closing': last_closing,
+            'all_shifts': all_shifts_data,
+        })
 
-    rec = _reconcile(shift)
+    rec = _reconcile(my_shift)
     return JsonResponse({
         'shift': {
-            'id':             shift.id,
-            'status':         shift.status,
-            'staff_name':     shift.staff.get_full_name() or shift.staff.username,
-            'started_at':     timezone.localtime(shift.started_at).strftime('%H:%M'),
-            'opening_float':  float(shift.opening_float),
+            'id':             my_shift.id,
+            'status':         my_shift.status,
+            'staff_name':     my_shift.staff.get_full_name() or my_shift.staff.username,
+            'started_at':     timezone.localtime(my_shift.started_at).strftime('%H:%M'),
+            'opening_float':  float(my_shift.opening_float),
             'cash_sales':     rec['cash_sales'],
             'mpesa_sales':    rec['mpesa_sales'],
             'credit_sales':   rec['credit_sales'],
@@ -134,9 +194,10 @@ def active_shift_api(request):
             'expected_cash':  rec['expected_cash'],
             'variance':       rec['variance'],
             'elapsed':        rec['elapsed'],
-            'is_mine':        shift.staff_id == request.user.id,
+            'is_mine':        True,
         },
         'can_open': False,
+        'all_shifts': all_shifts_data,
     })
 
 
@@ -149,17 +210,17 @@ def open_shift(request):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
-    # Enforce one open shift per business at a time
+    # Each staff member may have one active shift at a time — concurrent shifts across
+    # different staff (e.g. bar counter + kitchen counter) are explicitly allowed.
     existing = Shift.objects.filter(
         business=up.business,
         status__in=('OPEN', 'CLOSED'),
+        staff=request.user,
     ).first()
     if existing:
         return JsonResponse({
             'ok': False,
-            'error': f"Kuna shift iliyofunguliwa tayari na "
-                     f"{existing.staff.get_full_name() or existing.staff.username}. "
-                     f"Imalize kwanza.",
+            'error': "Una shift iliyofunguliwa tayari. Imalize kwanza.",
         }, status=400)
 
     try:

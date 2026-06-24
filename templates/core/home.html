@@ -332,7 +332,7 @@
             {% endif %}
             <div style="text-align:center;">
                 <div id="bar-hero-shift" style="font-family:'Playfair Display',serif; font-size:1.5rem; font-weight:700; color:#888;">—</div>
-                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Shift Status</div>
+                <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Active Shifts</div>
             </div>
             <div style="text-align:center;">
                 <div style="font-family:'Playfair Display',serif; font-size:2rem; font-weight:700; color:{% if kegs_at_risk_count > 0 %}var(--raspberry){% else %}var(--success){% endif %};">{{ kegs_at_risk_count|default:0 }}</div>
@@ -727,40 +727,53 @@
     fetch('/bar/shift/active/')
         .then(function (r) { return r.json(); })
         .then(function (d) {
-            var s = d.shift;
-            /* ── Bar hero: shift status badge ── */
+            var allShifts  = d.all_shifts || [];
+            var openShifts = allShifts.filter(function (s) { return s.status === 'OPEN'; });
+
+            /* ── Bar hero: active-shifts count badge ── */
             if (heroShift) {
-                if (s && s.status === 'OPEN') {
-                    heroShift.textContent = '🟢 Open';
-                    heroShift.style.color = '#5dde7a';
-                } else if (s && s.status === 'CLOSED') {
-                    heroShift.textContent = '🟡 Closing';
-                    heroShift.style.color = '#f39c12';
-                } else {
-                    heroShift.textContent = '🔴 No Shift';
+                if (openShifts.length === 0) {
+                    heroShift.textContent = '🔴 None';
                     heroShift.style.color = '#e74c3c';
+                } else {
+                    heroShift.textContent = '🟢 ' + openShifts.length + ' Active';
+                    heroShift.style.color = '#5dde7a';
                 }
             }
-            /* ── Shift running meter (compact strip below hero) ── */
-            if (!meter || !s || s.status !== 'OPEN') return;
-            meter.style.display = 'flex';
-            meter.style.alignItems = 'center';
-            meter.style.justifyContent = 'space-between';
-            meter.style.flexWrap = 'wrap';
-            meter.style.gap = '.5rem';
-            meter.innerHTML =
-                '<div style="display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">' +
-                '<span style="width:8px; height:8px; border-radius:50%; background:#5dde7a; display:inline-block; flex-shrink:0;"></span>' +
-                '<span style="color:#5dde7a; font-size:.78rem; font-weight:700;">BAR SHIFT OPEN</span>' +
-                '<span style="color:#b0b0b0; font-size:.8rem;">' + s.staff_name + '</span>' +
-                '<span style="color:#888; font-size:.78rem;">· started ' + s.started_at + ' (' + s.elapsed + ')</span>' +
-                '</div>' +
-                '<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center;">' +
-                '<span style="font-size:.78rem; color:#b0b0b0;">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong></span>' +
-                '<span style="font-size:.78rem; color:#b0b0b0;">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong></span>' +
-                '<span style="font-size:.78rem; color:#c9a84c; font-weight:700;">Jumla KES ' + Math.round(s.total_sales) + '</span>' +
-                '<a href="/bar/" style="font-size:.75rem; color:#888; text-decoration:none;">Bar Board ›</a>' +
+
+            /* ── Shift meter: one row per active shift ── */
+            if (!meter || openShifts.length === 0) {
+                if (meter) meter.style.display = 'none';
+                return;
+            }
+            meter.style.display = 'block';
+            meter.style.padding = '.5rem 1rem';
+            meter.style.gap = '';
+
+            var rows = openShifts.map(function (s, idx) {
+                var isBoth    = s.covers_both;
+                var isKitchen = s.section === 'kitchen';
+                var icon      = isBoth ? (isKitchen ? '🍗+🍺' : '🍺+🍗') : (isKitchen ? '🍗' : '🍺');
+                var label     = isBoth ? (isKitchen ? 'KITCHEN & BAR' : 'BAR & KITCHEN') : (isKitchen ? 'KITCHEN' : 'BAR');
+                var link      = isKitchen ? '/kitchen/' : '/bar/';
+                var linkTxt   = isKitchen ? 'Kitchen ›' : 'Bar Board ›';
+                var border    = idx < openShifts.length - 1 ? 'border-bottom:1px solid #222;' : '';
+                return '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.4rem; padding:.3rem 0; ' + border + '">' +
+                    '<div style="display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">' +
+                        '<span style="width:8px; height:8px; border-radius:50%; background:#5dde7a; display:inline-block; flex-shrink:0;"></span>' +
+                        '<span style="color:#5dde7a; font-size:.75rem; font-weight:700;">' + icon + ' ' + label + '</span>' +
+                        '<span style="color:#b0b0b0; font-size:.78rem;">' + s.staff_name + '</span>' +
+                        '<span style="color:#888; font-size:.75rem;">· ' + s.started_at + ' (' + s.elapsed + ')</span>' +
+                    '</div>' +
+                    '<div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:center;">' +
+                        '<span style="font-size:.75rem; color:#b0b0b0;">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong></span>' +
+                        '<span style="font-size:.75rem; color:#b0b0b0;">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong></span>' +
+                        '<span style="font-size:.75rem; color:#c9a84c; font-weight:700;">KES ' + Math.round(s.total_sales) + '</span>' +
+                        '<a href="' + link + '" style="font-size:.72rem; color:#888; text-decoration:none;">' + linkTxt + '</a>' +
+                    '</div>' +
                 '</div>';
+            });
+            meter.innerHTML = rows.join('');
         })
         .catch(function () {});
 })();
