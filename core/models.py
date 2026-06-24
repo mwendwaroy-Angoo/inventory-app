@@ -2149,6 +2149,10 @@ class Receipt(models.Model):
     payment_method = models.CharField(max_length=20, default='cash')
     total = models.DecimalField(max_digits=12, decimal_places=2)
     lines = models.JSONField(default=list)
+    source = models.CharField(
+        max_length=20, blank=True, default='',
+        help_text="'kitchen' for kitchen board sales; '' for bar/quick-sell/debt payments."
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         'auth.User', null=True, blank=True,
@@ -2163,7 +2167,7 @@ class Receipt(models.Model):
         return f"#{self.receipt_number} – {self.business}"
 
     @classmethod
-    def issue(cls, business, lines, payment_method, user=None, customer_name='', customer_phone=''):
+    def issue(cls, business, lines, payment_method, user=None, customer_name='', customer_phone='', source=''):
         import secrets as _secrets
         from django.db import transaction as _tx
         total = sum(float(line.get('subtotal', 0)) for line in lines)
@@ -2184,5 +2188,6 @@ class Receipt(models.Model):
                 payment_method=payment_method,
                 total=Decimal(str(round(total, 2))),
                 lines=lines,
+                source=source or '',
                 created_by=user,
             )

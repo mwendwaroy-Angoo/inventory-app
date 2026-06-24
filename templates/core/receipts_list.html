@@ -22,6 +22,7 @@
 .rct-customer { font-size: 0.78rem; color: #c9a84c; min-width: 80px; max-width: 110px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .rct-items { flex: 1; font-size: 0.80rem; color: #b0b0b0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .rct-total { font-weight: 700; white-space: nowrap; font-size: 0.9rem; }
+.rct-server { font-size: 0.72rem; color: #888; white-space: nowrap; min-width: 70px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
 .pay-badge {
     display: inline-block; padding: 0.15rem 0.5rem;
     border-radius: 10px; font-size: 0.68rem;
@@ -30,6 +31,9 @@
 .pay-cash   { background: rgba(120,180,90,0.15); color: #9fcaa0; }
 .pay-mpesa  { background: rgba(76,175,80,0.15);  color: #4caf50; }
 .pay-credit { background: rgba(192,57,90,0.15);  color: #e87090; }
+.src-badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 8px; font-size: 0.65rem; font-weight: 600; white-space: nowrap; }
+.src-kitchen { background: rgba(255,180,50,0.13); color: #f5a623; }
+.src-bar     { background: rgba(200,117,42,0.13); color: #C8752A; }
 .filter-bar {
     background: var(--onyx-card);
     border: 1px solid #2a2a2a;
@@ -98,6 +102,8 @@
             <span class="pay-badge {% if r.payment_method == 'mpesa' %}pay-mpesa{% elif r.payment_method == 'credit' %}pay-credit{% else %}pay-cash{% endif %}">
                 {% if r.payment_method == 'mpesa' %}M-Pesa{% elif r.payment_method == 'credit' %}Credit{% else %}Cash{% endif %}
             </span>
+            {% if r.source == 'kitchen' %}<span class="src-badge src-kitchen">🍗 Kitchen</span>{% endif %}
+            {% if r.created_by %}<span class="rct-server" title="Served by {{ r.created_by.get_full_name|default:r.created_by.username }}">{{ r.created_by.username }}</span>{% endif %}
         </a>
         {% endfor %}
     {% else %}

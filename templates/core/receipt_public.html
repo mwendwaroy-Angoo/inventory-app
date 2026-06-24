@@ -282,6 +282,12 @@
             </span>
             {% if receipt.customer_name %}<span>{{ receipt.customer_name }}</span>{% endif %}
         </div>
+        {% if receipt.created_by %}
+        <div class="receipt-footer" style="border-top:none; padding-top:0; font-size:0.72rem; color:#777;">
+            <span>Served by: <strong style="color:#b0b0b0;">{{ receipt.created_by.get_full_name|default:receipt.created_by.username }}</strong></span>
+            {% if receipt.source == 'kitchen' %}<span style="color:#f5a623;">🍗 Kitchen</span>{% endif %}
+        </div>
+        {% endif %}
 
         <div class="qr-section no-print">
             <div id="qrCanvas"></div>

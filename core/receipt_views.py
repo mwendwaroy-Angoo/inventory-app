@@ -42,6 +42,11 @@ def receipts_list(request):
     if search:
         qs = qs.filter(customer_name__icontains=search)
 
+    # Kitchen-only staff see only kitchen receipts unless they also have bar access
+    if not user_profile.is_owner and getattr(user_profile, 'is_kitchen_staff', False):
+        if not getattr(user_profile, 'can_access_bar', False):
+            qs = qs.filter(source='kitchen')
+
     receipts = qs.order_by('-created_at')
 
     # Build month options for the filter UI (current year, plus one back)

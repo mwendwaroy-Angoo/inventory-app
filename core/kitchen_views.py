@@ -89,9 +89,9 @@ def kitchen_board(request):
     if not business.has_kitchen and not is_owner:
         return redirect('home')
 
-    # Bar/general staff need explicit kitchen access permission
+    # Bar/general staff need explicit kitchen access permission (off by default for new staff)
     if not is_owner and not up.is_kitchen_staff:
-        if not getattr(up, 'can_access_kitchen', True):
+        if not getattr(up, 'can_access_kitchen', False):
             return redirect('home')
 
     if request.method == 'POST':
@@ -349,6 +349,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 user=request.user,
                 customer_name=credit_name if payment_method == 'credit' else tab_customer,
                 customer_phone=credit_phone if payment_method == 'credit' else tab_phone,
+                source='kitchen',
             )
             receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
             receipt_number = rcpt.receipt_number
