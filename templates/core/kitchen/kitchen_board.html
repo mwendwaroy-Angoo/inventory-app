@@ -544,6 +544,10 @@
             <input type="text" id="kb-tab-name" class="form-control form-control-sm mb-1" placeholder="Jina la mteja (lazima)..." autocomplete="off" list="kb-bar-tab-list">
             <datalist id="kb-bar-tab-list"></datalist>
             <input type="tel" id="kb-tab-phone" class="form-control form-control-sm" placeholder="Simu (hiari — kwa SMS risiti)" autocomplete="off">
+            <input type="hidden" id="kb-merge-tab-id" value="">
+            <div id="kb-merge-hint" style="display:none; font-size:.75rem; margin-top:.35rem; padding:.35rem .6rem;
+                 background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.25); border-radius:6px;
+                 color:#e2c36e; line-height:1.5;"></div>
           </div>
           <!-- Credit (Deni) customer fields -->
           <div id="kb-credit-row" style="display:none; margin-top:0.5rem;">
@@ -887,6 +891,57 @@
   }
 
   /* ── Payment method selector ── */
+  /* ── Cross-counter tab merge detection ────────────────────────── */
+  (function() {
+    var nameInput  = document.getElementById('kb-tab-name');
+    var mergeInput = document.getElementById('kb-merge-tab-id');
+    var hint       = document.getElementById('kb-merge-hint');
+    if (!nameInput) return;
+    nameInput.addEventListener('blur', function() {
+      var name = this.value.trim();
+      hint.style.display = 'none';
+      mergeInput.value = '';
+      if (!name || name.length < 2 || _pm !== 'food_tab') return;
+      fetch('/kitchen/tab/check/?customer=' + encodeURIComponent(name))
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          // Only prompt for cross-counter tabs (bar tab when adding food tab)
+          var barTabs = (data.tabs || []).filter(function(t){ return t.source === 'bar'; });
+          if (!barTabs.length) return;
+          var t = barTabs[0];
+          hint.innerHTML =
+            '⚠️ <strong>' + t.customer_name + '</strong> ana Bar tab iliyo wazi' +
+            ' (KES ' + t.total.toLocaleString() + ', tangu ' + t.opened_at + ').<br>' +
+            '<a href="#" style="color:#c9a84c;" onclick="kbAcceptMerge(' + t.id + ',\'' +
+              t.customer_name.replace(/'/g,'') + '\'); return false;">' +
+              '✓ Ongeza kwa Bar tab hiyo</a>' +
+            ' &nbsp;·&nbsp; <a href="#" style="color:#888;" ' +
+            'onclick="kbDeclineMerge(); return false;">Fungua Food tab mpya</a>';
+          hint.style.display = 'block';
+        })
+        .catch(function(){});
+    });
+  })();
+
+  window.kbAcceptMerge = function(tabId, custName) {
+    document.getElementById('kb-merge-tab-id').value = tabId;
+    var hint = document.getElementById('kb-merge-hint');
+    hint.innerHTML = '✓ Itaongezwa kwenye Bar tab ya <strong>' + custName +
+      '</strong>. <a href="#" style="color:#888;" onclick="kbDeclineMerge(); return false;">Ghairi</a>';
+    hint.style.background = 'rgba(93,222,122,.07)';
+    hint.style.borderColor = 'rgba(93,222,122,.25)';
+    hint.style.color = '#5dde7a';
+  };
+
+  window.kbDeclineMerge = function() {
+    document.getElementById('kb-merge-tab-id').value = '';
+    var hint = document.getElementById('kb-merge-hint');
+    hint.style.display = 'none';
+    hint.style.background = '';
+    hint.style.borderColor = '';
+    hint.style.color = '';
+  };
+
   function selectPM(pm) {
     _pm = pm;
     document.querySelectorAll('.kb-pay-btn').forEach(function(b){ b.classList.remove('selected'); });
@@ -1044,6 +1099,7 @@
     var creditPhone= (document.getElementById('kb-credit-phone').value||'').trim();
     var btn = document.getElementById('kb-checkout-btn');
     btn.disabled = true; btn.textContent = 'Inatuma...';
+    var mergeTabId = (document.getElementById('kb-merge-tab-id').value||'').trim();
     var body = new URLSearchParams({
       cart: JSON.stringify(_cart),
       payment_method: pm,
@@ -1051,6 +1107,7 @@
       tab_phone: tabPhone,
       credit_name: creditName,
       credit_phone: creditPhone,
+      merge_tab_id: mergeTabId,
       csrfmiddlewaretoken: CSRF,
     });
     fetch('/kitchen/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
@@ -1073,8 +1130,10 @@
           document.getElementById('kb-tab-name').value = '';
           document.getElementById('kb-credit-name').value = '';
           document.getElementById('kb-credit-phone').value = '';
+          document.getElementById('kb-merge-tab-id').value = '';
+          document.getElementById('kb-merge-hint').style.display = 'none';
           refreshRevenue();
-          if (pm === 'food_tab') loadFoodTabBadge();
+          if (pm === 'food_tab' || d.merged_tab) loadFoodTabBadge();
         } else {
           showToast('❌ ' + (d.error||'Hitilafu. Jaribu tena.'));
         }

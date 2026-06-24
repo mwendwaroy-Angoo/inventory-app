@@ -927,6 +927,9 @@
            placeholder="Waitress / server (optional)"
            style="background:#111; border:1px solid #444; color:#f0ece4; border-radius:8px;
                   padding:5px 10px; font-size:0.83rem; width:100%;">
+    <div id="bar-merge-hint" style="display:none; font-size:.75rem; margin-top:.35rem; padding:.35rem .6rem;
+         background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.25); border-radius:6px;
+         color:#e2c36e; line-height:1.5;"></div>
   </div>
   <div style="display:none;">
   </div>
@@ -941,6 +944,7 @@
   <input type="hidden" name="payment_method" id="keg-payment-input">
   <input type="hidden" name="tab_customer"   id="keg-tab-customer-input">
   <input type="hidden" name="tab_server"     id="keg-tab-server-input">
+  <input type="hidden" name="merge_tab_id"   id="keg-merge-tab-id" value="">
 </form>
 
 <!-- ════════════════════════════════════════════════════
@@ -1975,9 +1979,12 @@
       document.getElementById('keg-tab-customer-input').value = custName;
       document.getElementById('keg-tab-server-input').value   =
         (document.getElementById('tab-server-input').value || '').trim();
+      document.getElementById('keg-merge-tab-id').value =
+        (window._barMergeTabId || '');
     } else {
       document.getElementById('keg-tab-customer-input').value = '';
       document.getElementById('keg-tab-server-input').value   = '';
+      document.getElementById('keg-merge-tab-id').value       = '';
     }
 
     var cartArray = Object.values(kegCart).map(function (l) {
@@ -3744,5 +3751,58 @@
 
 /* ── Petty Cash ── */
 {% include "core/petty_cash_js.html" %}
+
+/* ── Cross-counter tab merge detection (bar → kitchen food tab) ─── */
+window._barMergeTabId = '';
+(function() {
+  var tabInput = document.getElementById('tab-customer-input');
+  var hint     = document.getElementById('bar-merge-hint');
+  if (!tabInput || !hint) return;
+  tabInput.addEventListener('blur', function() {
+    var name = this.value.trim();
+    hint.style.display = 'none';
+    window._barMergeTabId = '';
+    if (!name || name.length < 2) return;
+    var method = document.querySelector('input[name="keg_payment"]:checked');
+    if (!method || method.value !== 'tab') return;
+    fetch('/kitchen/tab/check/?customer=' + encodeURIComponent(name))
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        // Only prompt for cross-counter kitchen tabs
+        var kitchenTabs = (data.tabs || []).filter(function(t){ return t.source === 'kitchen'; });
+        if (!kitchenTabs.length) return;
+        var t = kitchenTabs[0];
+        hint.innerHTML =
+          '⚠️ <strong>' + t.customer_name + '</strong> ana Kitchen tab iliyo wazi' +
+          ' (KES ' + t.total.toLocaleString() + ', tangu ' + t.opened_at + ').<br>' +
+          '<a href="#" style="color:#c9a84c;" onclick="barAcceptMerge(' + t.id + ',\'' +
+            t.customer_name.replace(/'/g,'') + '\'); return false;">' +
+            '✓ Ongeza kwa Kitchen tab hiyo</a>' +
+          ' &nbsp;·&nbsp; <a href="#" style="color:#888;" ' +
+          'onclick="barDeclineMerge(); return false;">Fungua Bar tab mpya</a>';
+        hint.style.display = 'block';
+      })
+      .catch(function(){});
+  });
+})();
+
+window.barAcceptMerge = function(tabId, custName) {
+  window._barMergeTabId = String(tabId);
+  var hint = document.getElementById('bar-merge-hint');
+  hint.innerHTML = '✓ Itaongezwa kwenye Kitchen tab ya <strong>' + custName +
+    '</strong>. <a href="#" style="color:#888;" onclick="barDeclineMerge(); return false;">Ghairi</a>';
+  hint.style.background = 'rgba(93,222,122,.07)';
+  hint.style.borderColor = 'rgba(93,222,122,.25)';
+  hint.style.color = '#5dde7a';
+};
+
+window.barDeclineMerge = function() {
+  window._barMergeTabId = '';
+  var hint = document.getElementById('bar-merge-hint');
+  hint.style.display = 'none';
+  hint.style.background = '';
+  hint.style.borderColor = '';
+  hint.style.color = '';
+};
 </script>
 {% endblock %}

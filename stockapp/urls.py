@@ -88,6 +88,7 @@ from core.kitchen_views import (
     kitchen_board,
     kitchen_receive,
     kitchen_tabs_list,
+    tab_check_api,
     toggle_kitchen,
 )
 from core.petty_cash_views import (
@@ -260,6 +261,7 @@ urlpatterns = [
     path("kitchen/",                kitchen_board,       name="kitchen_board"),
     path("kitchen/receive/",        kitchen_receive,     name="kitchen_receive"),
     path("kitchen/tabs/",           kitchen_tabs_list,   name="kitchen_tabs_list"),
+    path("kitchen/tab/check/",      tab_check_api,       name="tab_check_api"),
     path("kitchen/toggle/",         toggle_kitchen,      name="toggle_kitchen"),
 
     # ── Petty Cash / Counter Drawdown ────────────────────────────────────────

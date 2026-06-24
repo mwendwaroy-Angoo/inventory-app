@@ -231,6 +231,8 @@ def _kitchen_checkout(request, up, business, is_owner):
         tab_phone    = (request.POST.get('tab_phone') or '').strip()
         credit_name  = (request.POST.get('credit_name') or '').strip()
         credit_phone = (request.POST.get('credit_phone') or '').strip()
+        merge_tab_id_raw = (request.POST.get('merge_tab_id') or '').strip()
+        merge_tab_id = int(merge_tab_id_raw) if merge_tab_id_raw.isdigit() else None
     except (json.JSONDecodeError, Exception):
         return JsonResponse({'ok': False, 'error': 'Invalid request'}, status=400)
 
@@ -246,7 +248,15 @@ def _kitchen_checkout(request, up, business, is_owner):
 
     # Resolve or create a food/bar tab if needed
     active_tab = None
-    if payment_method in ('food_tab', 'bar_tab') and tab_customer:
+    if merge_tab_id:
+        # Cross-counter merge: staff confirmed adding kitchen items to an existing tab (e.g. bar tab)
+        try:
+            active_tab = BarTab.objects.get(id=merge_tab_id, business=business, status='OPEN')
+            tab_customer = active_tab.customer_name
+            payment_method = 'food_tab'  # treat as tab so receipt isn't issued and flow continues
+        except BarTab.DoesNotExist:
+            return JsonResponse({'ok': False, 'error': 'Tab haikupatikana au imefungwa tayari.'}, status=400)
+    elif payment_method in ('food_tab', 'bar_tab') and tab_customer:
         source = 'kitchen' if payment_method == 'food_tab' else 'bar'
         active_tab = BarTab.objects.filter(
             business=business,
@@ -376,6 +386,29 @@ def _kitchen_checkout(request, up, business, is_owner):
             logger.exception('Kitchen credit SMS failed business=%s', business.id)
 
     tab_id = active_tab.id if active_tab else None
+
+    # SMS to customer when kitchen items are merged into an existing cross-counter tab
+    if merge_tab_id and active_tab:
+        try:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            phone = None
+            if active_tab.customer:
+                phone = normalize_ke_phone(active_tab.customer.phone or '')
+            elif tab_phone:
+                phone = normalize_ke_phone(tab_phone)
+            if phone:
+                new_total = float(active_tab.total())
+                counter_label = 'Bar' if active_tab.source == 'bar' else 'Kitchen'
+                sms_msg = (
+                    f"Habari {active_tab.customer_name},\n"
+                    f"{business.name} imeongeza KES {float(total):,.0f} kwenye tab yako "
+                    f"({counter_label}).\n"
+                    f"Jumla sasa: KES {new_total:,.0f}"
+                )
+                send_sms_notification(sms_msg, phone)
+        except Exception:
+            logger.exception('Tab merge SMS failed business=%s', business.id)
+
     return JsonResponse({
         'ok': True,
         'total': float(total),
@@ -385,6 +418,7 @@ def _kitchen_checkout(request, up, business, is_owner):
         'credit_name': credit_name,
         'receipt_url': receipt_url,
         'receipt_number': receipt_number,
+        'merged_tab': bool(merge_tab_id and active_tab),
     })
 
 
@@ -479,6 +513,35 @@ def kitchen_receive(request):
     except Exception as exc:
         logger.exception('kitchen_receive failed business=%s item=%s mode=%s', business.id, item_id, mode)
         return JsonResponse({'ok': False, 'error': f'Hitilafu: {exc}'}, status=500)
+
+
+# ── Cross-counter tab merge check (AJAX GET) ─────────────────────────────────
+
+@login_required
+def tab_check_api(request):
+    """Return any open BarTab rows matching a customer name — used for cross-counter merge prompt."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'tabs': []})
+    name = (request.GET.get('customer') or '').strip()
+    if not name or len(name) < 2:
+        return JsonResponse({'tabs': []})
+    tabs = BarTab.objects.filter(
+        business=up.business,
+        customer_name__iexact=name,
+        status='OPEN',
+    ).order_by('-opened_at')
+    result = []
+    for tab in tabs:
+        result.append({
+            'id':            tab.id,
+            'source':        tab.source,
+            'source_label':  'Bar' if tab.source == 'bar' else 'Kitchen',
+            'customer_name': tab.customer_name,
+            'total':         float(tab.total()),
+            'opened_at':     tab.opened_at.strftime('%H:%M'),
+        })
+    return JsonResponse({'tabs': result})
 
 
 # ── Food tabs API (reuses same settle/void/debt endpoints as bar tabs) ─────────

@@ -221,6 +221,8 @@ def bar_board(request):
         payment_method = request.POST.get('payment_method', 'cash')
         tab_customer = (request.POST.get('tab_customer') or '').strip()
         tab_server = (request.POST.get('tab_server') or '').strip()
+        merge_tab_id_raw = (request.POST.get('merge_tab_id') or '').strip()
+        merge_tab_id = int(merge_tab_id_raw) if merge_tab_id_raw.isdigit() else None
 
         try:
             cart = json.loads(cart_json)
@@ -230,28 +232,37 @@ def bar_board(request):
         # Resolve tab for tab-payment sales
         active_tab = None
         if payment_method == 'tab' and tab_customer:
-            active_tab = BarTab.objects.filter(
-                business=business,
-                customer_name__iexact=tab_customer,
-                status='OPEN',
-            ).first()
-            if not active_tab:
-                first_barrel = None
-                for entry in cart:
-                    try:
-                        bid = int(entry.get('barrel_id', 0))
-                        first_barrel = KegBarrel.objects.filter(id=bid, business=business).first()
-                        if first_barrel:
-                            break
-                    except (TypeError, ValueError):
-                        pass
-                active_tab = BarTab.objects.create(
+            if merge_tab_id:
+                # Cross-counter merge: bar items added to an existing kitchen food tab
+                try:
+                    active_tab = BarTab.objects.get(id=merge_tab_id, business=business, status='OPEN')
+                    tab_customer = active_tab.customer_name
+                except BarTab.DoesNotExist:
+                    from django.http import JsonResponse as _JR
+                    return _JR({'ok': False, 'error': 'Tab haikupatikana au imefungwa tayari.'}, status=400)
+            else:
+                active_tab = BarTab.objects.filter(
                     business=business,
-                    store=first_barrel.store if first_barrel else None,
-                    customer_name=tab_customer,
-                    server_name=tab_server,
-                    served_by=request.user if not tab_server else None,
-                )
+                    customer_name__iexact=tab_customer,
+                    status='OPEN',
+                ).first()
+                if not active_tab:
+                    first_barrel = None
+                    for entry in cart:
+                        try:
+                            bid = int(entry.get('barrel_id', 0))
+                            first_barrel = KegBarrel.objects.filter(id=bid, business=business).first()
+                            if first_barrel:
+                                break
+                        except (TypeError, ValueError):
+                            pass
+                    active_tab = BarTab.objects.create(
+                        business=business,
+                        store=first_barrel.store if first_barrel else None,
+                        customer_name=tab_customer,
+                        server_name=tab_server,
+                        served_by=request.user if not tab_server else None,
+                    )
 
         # Auto-create Customer so tab sales appear in debt tracker.
         # filter().first() instead of get_or_create — the Customer model has no
@@ -335,6 +346,28 @@ def bar_board(request):
                 'receipt_url': receipt_url,
                 'receipt_id': receipt_id,
             }
+
+            # SMS notification when bar items are merged into an existing kitchen food tab
+            if merge_tab_id and active_tab:
+                try:
+                    from .notifications import normalize_ke_phone, send_sms_notification
+                    phone = None
+                    if active_tab.customer:
+                        phone = normalize_ke_phone(active_tab.customer.phone or '')
+                    if phone:
+                        new_total = float(active_tab.total())
+                        counter_label = 'Bar' if active_tab.source == 'bar' else 'Kitchen'
+                        sms_msg = (
+                            f"Habari {active_tab.customer_name},\n"
+                            f"{business.name} imeongeza KES {float(total_revenue):,.0f} "
+                            f"kwenye tab yako ({counter_label}).\n"
+                            f"Jumla sasa: KES {new_total:,.0f}"
+                        )
+                        send_sms_notification(sms_msg, phone)
+                except Exception:
+                    logger.exception(
+                        "Tab merge SMS failed in bar_board (business=%s)", business.id
+                    )
 
     try:
         non_keg_items = list(
