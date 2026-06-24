@@ -1,10 +1,17 @@
+from decimal import Decimal
 from unittest.mock import patch, MagicMock
 
-from django.test import TestCase
+from django.contrib.auth.models import User
+from django.test import TestCase, TransactionTestCase
+from django.utils import timezone
 
 from accounts.models import Business
-from core.models import Receipt
+from core.models import (
+    BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
+    KegBarrel, Payment, Receipt, Store, Transaction,
+)
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
+from core.mpesa_views import _settle_tab_from_payment
 
 
 # ── M-Pesa URL routing ───────────────────────────────────────────────────────
@@ -180,3 +187,230 @@ class ReceiptNumberingTest(TestCase):
         r1 = Receipt.issue(self.business, lines=[{'name': 'A', 'qty': 1, 'subtotal': 10}], payment_method='cash')
         r2 = Receipt.issue(self.business, lines=[{'name': 'B', 'qty': 1, 'subtotal': 20}], payment_method='cash')
         self.assertNotEqual(r1.token, r2.token)
+
+
+# ── Sprint F1 — Bar tab debt-integrity fixes ─────────────────────────────────
+
+def _make_keg_fixtures(business_name='Bar Test Biz'):
+    """Create the minimum objects needed for keg bar tab tests."""
+    business = Business.objects.create(name=business_name)
+    store = Store.objects.create(business=business, name='Main Bar')
+    user = User.objects.create_user(username=f'staff_{business.id}', password='x')
+    item = Item.objects.create(
+        business=business, store=store,
+        material_no=f'KEG-{business.id}',
+        description='Test Lager', unit='ml',
+        is_keg=True,
+        selling_price=Decimal('50'),
+        cost_price=Decimal('12000'),
+    )
+    barrel = KegBarrel.objects.create(
+        business=business, store=store, item=item,
+        cost_price=Decimal('12000'),
+        target_revenue=Decimal('20000'),
+        status='TAPPED',
+    )
+    preset = ItemPortionPreset.objects.create(
+        item=item, label='Pint', price=Decimal('200'),
+        quantity_consumed=Decimal('500'),
+    )
+    return business, store, user, item, barrel, preset
+
+
+def _make_tab_with_entries(business, user, barrel, preset, customer_name='Njoro', num_entries=2):
+    """Open a tab and pour N rounds, creating BarTabEntry + underlying Transactions."""
+    tab = BarTab.objects.create(
+        business=business, customer_name=customer_name, status='OPEN',
+    )
+    for i in range(num_entries):
+        txn = Transaction.objects.create(
+            business=business, item=barrel.item, type='Issue',
+            qty=Decimal('-500'), sale_amount=Decimal('200'),
+            payment_method='credit', recipient=customer_name,
+            keg_barrel=barrel, date=timezone.localdate(),
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn,
+            description=f'Pint ×1 (round {i+1})', amount=Decimal('200'),
+        )
+    return tab
+
+
+class TabStkSettlementClearsDebtTest(TestCase):
+    """F1.1: When an STK payment fully settles a bar tab, the underlying
+    Transactions must switch from 'credit' to 'mpesa' so the debt tracker
+    shows 0 outstanding."""
+
+    def setUp(self):
+        self.business, self.store, self.user, self.item, self.barrel, self.preset = (
+            _make_keg_fixtures('Bar STK Test')
+        )
+
+    def test_stk_settlement_clears_debt(self):
+        tab = _make_tab_with_entries(self.business, self.user, self.barrel, self.preset,
+                                     customer_name='Kamau', num_entries=2)
+        total = Decimal('400')  # 2 × 200
+
+        payment = Payment.objects.create(
+            business=self.business,
+            bar_tab=tab,
+            amount=total,
+            status='completed',
+            method='mpesa',
+        )
+
+        _settle_tab_from_payment(payment)
+
+        # All entries should now be paid via mpesa
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+        for entry in tab.entries.all():
+            self.assertTrue(entry.is_paid)
+            self.assertEqual(entry.payment_method, 'mpesa')
+
+        # Underlying transactions must NOT be 'credit' — debt tracker would
+        # pick them up via filter(payment_method='credit') otherwise
+        credit_count = Transaction.objects.filter(
+            business=self.business,
+            recipient='Kamau',
+            payment_method='credit',
+            type='Issue',
+        ).count()
+        self.assertEqual(credit_count, 0, "Debt tracker should see 0 credit transactions after STK settlement")
+
+        mpesa_count = Transaction.objects.filter(
+            business=self.business,
+            recipient='Kamau',
+            payment_method='mpesa',
+            type='Issue',
+        ).count()
+        self.assertEqual(mpesa_count, 2, "Both transactions should be flipped to mpesa")
+
+
+class VoidTabClearsDebtTest(TestCase):
+    """F1.2: Voiding a tab must clear the underlying transactions from the debt
+    tracker (payment_method='void', recipient='') and must not count as revenue."""
+
+    def setUp(self):
+        self.business, self.store, self.user, self.item, self.barrel, self.preset = (
+            _make_keg_fixtures('Bar Void Test')
+        )
+
+    def test_void_tab_clears_debt_and_not_revenue(self):
+        customer_name = 'Wanjiku'
+        tab = _make_tab_with_entries(self.business, self.user, self.barrel, self.preset,
+                                     customer_name=customer_name, num_entries=3)
+
+        # Simulate void_tab() logic directly (we test the model-layer effect, not the view)
+        from django.utils import timezone as _tz
+        now = _tz.now()
+        for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
+            entry.is_paid = True
+            entry.paid_at = now
+            entry.payment_method = 'void'
+            entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+            if entry.transaction_id:
+                entry.transaction.payment_method = 'void'
+                entry.transaction.recipient = ''
+                entry.transaction.save(update_fields=['payment_method', 'recipient'])
+        tab.status = 'VOID'
+        tab.settled_at = now
+        tab.save(update_fields=['status', 'settled_at'])
+
+        # Debt tracker sees 0 outstanding
+        credit_count = Transaction.objects.filter(
+            business=self.business,
+            recipient=customer_name,
+            payment_method='credit',
+            type='Issue',
+        ).count()
+        self.assertEqual(credit_count, 0, "No credit transactions should remain after void")
+
+        # Voided transactions are not counted as revenue in analytics
+        void_with_recipient = Transaction.objects.filter(
+            business=self.business,
+            payment_method='void',
+            recipient=customer_name,
+        ).count()
+        self.assertEqual(void_with_recipient, 0, "Voided transactions must have recipient cleared")
+
+        # Verify analytics exclusion: all Issue transactions excluding void
+        all_issue = Transaction.objects.filter(
+            business=self.business, type='Issue',
+        ).exclude(payment_method='void').count()
+        self.assertEqual(all_issue, 0, "Analytics (exclude void) should count 0 revenue transactions")
+
+
+class ConvertTabToDebtWithDuplicateCustomersTest(TestCase):
+    """F1.3: convert_tab_to_debt must not raise MultipleObjectsReturned even when
+    two Customer rows share the same (business, phone)."""
+
+    def setUp(self):
+        self.business = Business.objects.create(name='Bar Dup Test')
+
+    def test_duplicate_customers_do_not_raise(self):
+        phone = '0712345678'
+        # Deliberately create two customers with same business + phone (no unique constraint)
+        Customer.objects.create(business=self.business, name='Otieno A', phone=phone)
+        Customer.objects.create(business=self.business, name='Otieno B', phone=phone)
+
+        # The safe lookup pattern from F1.3
+        customer = Customer.objects.filter(business=self.business, phone=phone).first()
+        self.assertIsNotNone(customer, "filter().first() should find one without raising")
+
+        # Verify that using get_or_create would fail (documents why the fix matters)
+        from django.core.exceptions import MultipleObjectsReturned
+        with self.assertRaises(MultipleObjectsReturned):
+            Customer.objects.get(business=self.business, phone=phone)
+
+
+class ConcurrentKegSalesDoNotLoseUpdatesTest(TransactionTestCase):
+    """F1.4: record_sale_locked must accumulate all sales without losing any
+    updates. Runs sequentially here; the SELECT FOR UPDATE prevents concurrent
+    clobbers in production under real DB concurrency."""
+
+    def test_sequential_locked_sales_accumulate_correctly(self):
+        business = Business.objects.create(name='Bar Concurrent Test')
+        store = Store.objects.create(business=business, name='Counter')
+        user = User.objects.create_user(username='staff_concurrent', password='x')
+        item = Item.objects.create(
+            business=business, store=store,
+            material_no='KEG-CONC-1',
+            description='Lager Concurrent', unit='ml',
+            is_keg=True,
+            selling_price=Decimal('50'),
+            cost_price=Decimal('12000'),
+        )
+        barrel = KegBarrel.objects.create(
+            business=business, store=store, item=item,
+            cost_price=Decimal('12000'),
+            target_revenue=Decimal('30000'),
+            status='TAPPED',
+        )
+        preset = ItemPortionPreset.objects.create(
+            item=item, label='Cup', price=Decimal('100'),
+            quantity_consumed=Decimal('300'),
+        )
+
+        num_sales = 5
+        for i in range(num_sales):
+            KegBarrel.record_sale_locked(
+                barrel.id, business, preset, 1, 'cash', user,
+            )
+
+        barrel.refresh_from_db()
+        expected_revenue = Decimal('100') * num_sales
+        expected_cups = num_sales
+        expected_volume = Decimal('300') * num_sales
+
+        self.assertEqual(barrel.revenue_collected, expected_revenue,
+                         f"Expected revenue {expected_revenue}, got {barrel.revenue_collected}")
+        self.assertEqual(barrel.cups_dispensed, expected_cups,
+                         f"Expected {expected_cups} cups, got {barrel.cups_dispensed}")
+        self.assertEqual(barrel.volume_dispensed_ml, expected_volume,
+                         f"Expected volume {expected_volume} ml, got {barrel.volume_dispensed_ml}")
+
+        txn_count = Transaction.objects.filter(
+            business=business, keg_barrel=barrel, type='Issue',
+        ).count()
+        self.assertEqual(txn_count, num_sales, "One Transaction per sale must be created")

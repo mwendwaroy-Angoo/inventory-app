@@ -264,7 +264,7 @@ def home(request):
                     txns = Transaction.objects.filter(
                         business=business, type='Issue',
                         date__gte=start, date__lte=end,
-                    ).select_related('item')
+                    ).exclude(payment_method='void').select_related('item')
                     return sum(t.revenue() for t in txns)
 
                 def _get_target(ttype):

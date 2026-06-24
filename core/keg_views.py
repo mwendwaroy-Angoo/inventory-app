@@ -231,6 +231,7 @@ def bar_board(request):
 
         # Resolve tab for tab-payment sales
         active_tab = None
+        tab_phone = (request.POST.get('tab_phone') or '').strip()
         if payment_method == 'tab' and tab_customer:
             if merge_tab_id:
                 # Cross-counter merge: bar items added to an existing kitchen food tab
@@ -241,6 +242,19 @@ def bar_board(request):
                     from django.http import JsonResponse as _JR
                     return _JR({'ok': False, 'error': 'Tab haikupatikana au imefungwa tayari.'}, status=400)
             else:
+                # Resolve or create the Customer first (filter().first() — no unique_together on
+                # Customer(business, name), get_or_create raises MultipleObjectsReturned in prod).
+                linked_customer = Customer.objects.filter(
+                    business=business, name__iexact=tab_customer,
+                ).first()
+                if linked_customer is None:
+                    linked_customer = Customer.objects.create(
+                        business=business, name=tab_customer, phone=tab_phone,
+                    )
+                elif tab_phone and not (linked_customer.phone or '').strip():
+                    linked_customer.phone = tab_phone
+                    linked_customer.save(update_fields=['phone'])
+
                 active_tab = BarTab.objects.filter(
                     business=business,
                     customer_name__iexact=tab_customer,
@@ -260,19 +274,10 @@ def bar_board(request):
                         business=business,
                         store=first_barrel.store if first_barrel else None,
                         customer_name=tab_customer,
+                        customer=linked_customer,
                         server_name=tab_server,
                         served_by=request.user if not tab_server else None,
                     )
-
-        # Auto-create Customer so tab sales appear in debt tracker.
-        # filter().first() instead of get_or_create — the Customer model has no
-        # unique_together on (business, name), so duplicate rows can exist in
-        # production; get_or_create raises MultipleObjectsReturned in that case.
-        if payment_method == 'tab' and tab_customer:
-            from .models import Customer as _Customer
-            _cust = _Customer.objects.filter(business=business, name=tab_customer).first()
-            if _cust is None:
-                _Customer.objects.create(business=business, name=tab_customer)
 
         receipt_lines = []
         total_revenue = Decimal('0')
@@ -300,7 +305,13 @@ def bar_board(request):
             if not preset:
                 continue
 
-            barrel.record_sale(preset, qty, payment_method, request.user, tab=active_tab)
+            try:
+                KegBarrel.record_sale_locked(
+                    barrel.id, business, preset, qty, payment_method,
+                    request.user, tab=active_tab,
+                )
+            except KegBarrel.DoesNotExist:
+                continue  # depleted between fetch and lock
             amount = Decimal(str(float(preset.price) * qty))
             total_revenue += amount
             receipt_lines.append({
@@ -875,11 +886,16 @@ def void_tab(request, tab_id):
     reason = (request.POST.get('reason') or 'Imetupwa').strip()
 
     now = timezone.now()
-    for entry in tab.entries.filter(is_paid=False):
+    for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
         entry.is_paid = True
         entry.paid_at = now
         entry.payment_method = 'void'
         entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+        # Remove from debt tracker: written off, not owed
+        if entry.transaction_id:
+            entry.transaction.payment_method = 'void'
+            entry.transaction.recipient = ''
+            entry.transaction.save(update_fields=['payment_method', 'recipient'])
 
     tab.status = 'VOID'
     tab.settled_at = now
@@ -901,24 +917,20 @@ def convert_tab_to_debt(request, tab_id):
     customer_name = (request.POST.get('customer_name') or tab.customer_name).strip()
     phone = (request.POST.get('phone') or '').strip()
 
-    # Find or create the Customer record
+    # Find or create the Customer record.
+    # Customer has no unique_together on (business, name/phone) so get_or_create raises
+    # MultipleObjectsReturned when duplicate rows exist — always use filter().first().
+    customer = None
     if phone:
-        customer, _ = Customer.objects.get_or_create(
-            business=up.business,
-            phone=phone,
-            defaults={'name': customer_name},
-        )
-    else:
+        customer = Customer.objects.filter(business=up.business, phone=phone).first()
+    if customer is None:
         customer = Customer.objects.filter(
-            business=up.business,
-            name__iexact=customer_name,
+            business=up.business, name__iexact=customer_name,
         ).first()
-        if not customer:
-            customer = Customer.objects.create(
-                business=up.business,
-                name=customer_name,
-                phone=phone,
-            )
+    if customer is None:
+        customer = Customer.objects.create(
+            business=up.business, name=customer_name, phone=phone,
+        )
 
     unpaid_total = float(tab.unpaid_total())
 

@@ -79,12 +79,12 @@ def analytics_dashboard(request):
     current_sales = Transaction.objects.filter(
         business=business, type='Issue',
         date__gte=start_date, date__lte=today,
-    ).select_related('item', 'keg_barrel', 'produce_bunch')
+    ).exclude(payment_method='void').select_related('item', 'keg_barrel', 'produce_bunch')
 
     prev_sales = Transaction.objects.filter(
         business=business, type='Issue',
         date__gte=prev_start, date__lte=prev_end,
-    ).select_related('item', 'keg_barrel', 'produce_bunch')
+    ).exclude(payment_method='void').select_related('item', 'keg_barrel', 'produce_bunch')
 
     if selected_product:
         current_sales = current_sales.filter(item_id=selected_product)
@@ -402,7 +402,7 @@ def analytics_dashboard(request):
         # All-time sales and expenses — not period filtered
         all_sales = Transaction.objects.filter(
             business=business, type='Issue'
-        ).select_related('item', 'keg_barrel', 'produce_bunch').order_by('date')
+        ).exclude(payment_method='void').select_related('item', 'keg_barrel', 'produce_bunch').order_by('date')
 
         all_expenses = BusinessExpense.objects.filter(
             business=business
@@ -917,7 +917,7 @@ def analytics_api(request):
     sales = Transaction.objects.filter(
         business=business, type='Issue',
         date__gte=start_date, date__lte=today,
-    ).select_related('item')
+    ).exclude(payment_method='void').select_related('item')
 
     daily = defaultdict(lambda: {'revenue': 0, 'profit': 0, 'units': 0})
     for t in sales:
@@ -1414,7 +1414,7 @@ def revenue_target_progress(request):
             type='Issue',
             date__gte=start,
             date__lte=end,
-        ).select_related('item')
+        ).exclude(payment_method='void').select_related('item')
         return sum(t.revenue() for t in sales)
 
     actual_daily   = period_revenue(today, today)
@@ -1444,7 +1444,7 @@ def revenue_target_progress(request):
             type='Issue',
             date=today,
             item__store=store,
-        ).select_related('item')
+        ).exclude(payment_method='void').select_related('item')
         store_actual = sum(t.revenue() for t in store_sales)
         store_target_obj = RevenueTarget.objects.filter(
             business=business, target_type='daily', store=store
@@ -1547,6 +1547,7 @@ def expense_report(request):
     sales_qs = (
         Transaction.objects
         .filter(business=business, type='Issue', date__gte=twelve_months_ago)
+        .exclude(payment_method='void')
         .select_related('item', 'produce_bunch', 'keg_barrel')
     )
     for t in sales_qs.iterator(chunk_size=500):

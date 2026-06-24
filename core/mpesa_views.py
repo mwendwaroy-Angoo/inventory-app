@@ -76,7 +76,7 @@ def _settle_tab_from_payment(payment):
             return
 
         paid_amount = float(payment.amount)
-        unpaid_entries = list(tab.entries.filter(is_paid=False).order_by('id'))
+        unpaid_entries = list(tab.entries.filter(is_paid=False).order_by('id').select_related('transaction'))
         now = timezone.now()
         for entry in unpaid_entries:
             if paid_amount <= 0:
@@ -87,6 +87,10 @@ def _settle_tab_from_payment(payment):
                 entry.payment_method = 'mpesa'
                 entry.paid_at = now
                 entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
+                # Flip the underlying transaction so it drops out of the debt tracker
+                if entry.transaction_id:
+                    entry.transaction.payment_method = 'mpesa'
+                    entry.transaction.save(update_fields=['payment_method'])
                 paid_amount -= entry_amt
 
         if not tab.entries.filter(is_paid=False).exists():

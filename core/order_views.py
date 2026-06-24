@@ -280,12 +280,13 @@ def _create_transactions_for_order(order, up):
                     status='TAPPED',
                 ).first()
                 if barrel:
-                    barrel.record_sale(
-                        preset=oi.preset,
-                        qty=int(qty),
-                        payment_method=order.payment_method,
-                        recorded_by=order.waitress,
-                    )
+                    try:
+                        KegBarrel.record_sale_locked(
+                            barrel.id, up.business, oi.preset, int(qty),
+                            order.payment_method, order.waitress,
+                        )
+                    except KegBarrel.DoesNotExist:
+                        pass  # barrel depleted between fetch and lock — skip
                     continue
             # Non-keg or no barrel found — create Transaction directly
             amount = qty * oi.unit_price

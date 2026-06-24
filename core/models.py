@@ -1876,6 +1876,21 @@ class KegBarrel(models.Model):
 
         return txn
 
+    @classmethod
+    def record_sale_locked(cls, barrel_id, business, preset, qty, payment_method,
+                           recorded_by, tab=None, server_name=''):
+        """Thread-safe wrapper around record_sale using SELECT FOR UPDATE."""
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            barrel = (
+                cls.objects
+                .select_for_update()
+                .select_related('item')
+                .get(id=barrel_id, business=business, status='TAPPED')
+            )
+            return barrel.record_sale(preset, qty, payment_method, recorded_by,
+                                      tab=tab, server_name=server_name)
+
 
 class KegWeightReading(models.Model):
     READING_TYPES = [
