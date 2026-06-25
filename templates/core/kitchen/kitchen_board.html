@@ -110,7 +110,80 @@
   font-size:.82rem; display:inline-flex; align-items:center; gap:.4rem;
 }
 
+/* ── Shift panel ─────────────────────────────────────── */
+#shift-panel {
+  background: var(--onyx-card, #2a2a2a);
+  border: 1px solid var(--onyx-border, #3a3a3a);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+#shift-panel .shift-label {
+  font-size: 0.82rem;
+  color: #b0b0b0;
+}
+#shift-panel .shift-value {
+  font-size: 0.88rem;
+  color: #f0ece4;
+  font-weight: 600;
+}
+#shift-panel .shift-gold {
+  color: #c9a84c;
+}
+.shift-open-btn {
+  background: linear-gradient(135deg, #c9a84c, #e2c36e);
+  color: #1a1a1a;
+  border: none;
+  border-radius: 8px;
+  padding: 0.4rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.shift-open-btn:hover {
+  opacity: 0.9;
+}
+#shift-no-shift-banner {
+  background: rgba(192,57,90,0.1);
+  border: 1px solid rgba(192,57,90,0.3);
+  border-radius: 10px;
+  padding: 0.65rem 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.82rem;
+  color: #c0395a;
+  display: none;
+}
+#shift-no-shift-banner.visible {
+  display: block;
+}
+
+.shift-stat { display:inline-flex; flex-direction:column; min-width:80px; }
+.shift-stat .s-label { font-size:.68rem; color:#888; text-transform:uppercase; letter-spacing:.04em; }
+.shift-stat .s-val   { font-size:.95rem; font-weight:600; color:#f0ece4; }
+.shift-var-ok     { color:#4caf50; }
+.shift-var-warn   { color:#ff9800; }
+.shift-var-danger { color:#c0395a; }
+.shift-close-btn {
+  background: rgba(192,57,90,.12);
+  border: 1px solid rgba(192,57,90,.3);
+  color: #c0395a;
+  border-radius: 8px;
+  padding: 0.4rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.shift-close-btn:hover {
+  opacity: 0.9;
+}
+
 @media(max-width:640px){
+
   .kb-wrap { flex-direction:column; }
   .kb-cart-panel { width:100%; position:static; }
 }
@@ -140,6 +213,18 @@
               onclick="openReceiveModal()">+ Pata Stok</button>
       {% endif %}
     </div>
+  </div>
+
+  <!-- ── Shift panel ─────────────────────────────────────── -->
+  <!-- Shift panel — populated by loadShift() -->
+  <div id="shift-panel" style="display:none;"></div>
+
+  <!-- No-shift banner (shown to staff without an open shift) -->
+  <div id="shift-no-shift-banner"{% if has_my_shift or is_owner %} style="display:none;"{% endif %}
+       style="background:rgba(192,57,90,0.1); border:1px solid rgba(192,57,90,0.3);
+              border-radius:10px; padding:0.65rem 1rem; margin-bottom:0.75rem;
+              font-size:0.82rem; color:#c0395a;">
+    ⚠️ Hujafungua shift. Fungua shift kabla ya kuanza mauzo.
   </div>
 
   <div class="kb-wrap">
@@ -766,6 +851,165 @@
       <div class="modal-footer" style="border-top:1px solid #2a2a2a;padding:.6rem 1rem;gap:.5rem;">
         <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Acha</button>
         <button class="btn btn-sm" style="background:rgba(192,57,90,.15);border:1px solid rgba(192,57,90,.4);color:#c0395a;" onclick="submitKitchenTabDeni()">Weka Deni →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     OPEN SHIFT MODAL
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="openShiftModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h5 class="modal-title" style="font-family:'Playfair Display',serif; color:#c9a84c;">Fungua Shift</h5>
+        <button type="button" data-bs-dismiss="modal" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem;">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- Handover suggestion box -->
+        <div id="open-shift-suggestion" style="display:none; background:#111; border:1px solid #333;
+             border-radius:8px; padding:.75rem; margin-bottom:1rem;">
+          <p style="font-size:.8rem; color:#888; margin:0 0 .5rem;">
+            Shift iliyopita iliisha na:
+            <strong id="open-shift-prev-amount" style="color:#c9a84c;"></strong>
+          </p>
+          <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+            <button type="button" id="open-shift-use-prev"
+                    style="flex:1; background:rgba(201,168,76,.12); border:1px solid rgba(201,168,76,.4);
+                           color:#c9a84c; border-radius:6px; padding:5px 10px; font-size:.8rem; cursor:pointer;">
+              Tumia kiasi hiki kama float
+            </button>
+            <button type="button" id="open-shift-manual-entry"
+                    style="flex:1; background:transparent; border:1px solid #444;
+                           color:#b0b0b0; border-radius:6px; padding:5px 10px; font-size:.8rem; cursor:pointer;">
+              Ingiza manually
+            </button>
+          </div>
+        </div>
+
+        <!-- Banking deduction row -->
+        <div id="open-shift-banking-row" style="display:none; margin-bottom:.75rem;">
+          <label class="form-label">Kiasi kilichoondolewa / kubanked (KES)</label>
+          <input type="number" step="1" min="0" id="open-shift-banked" class="form-control"
+                 placeholder="0 — kama hakuna kilichoondolewa" value="0">
+          <div class="form-text" id="open-shift-float-preview"
+               style="color:#c9a84c; font-size:.8rem; margin-top:4px;"></div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" id="open-shift-float-label">Float ya Kuanza (KES)</label>
+          <input type="number" step="1" min="0" id="open-shift-float" class="form-control"
+                 placeholder="e.g. 500" value="0">
+          <div class="form-text">Pesa zilizopo kwenye kasabuni unapoanza shift.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Maelezo (optional)</label>
+          <input type="text" id="open-shift-notes" class="form-control"
+                 placeholder="e.g. Morning shift">
+        </div>
+        <div id="open-shift-error" style="display:none; color:#c0395a; font-size:.85rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;">
+        <button type="button" data-bs-dismiss="modal"
+                class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Funga</button>
+        <button type="button" id="open-shift-btn" class="btn btn-gold btn-sm"
+                onclick="window.submitOpenShift()">Fungua Shift</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     CLOSE SHIFT MODAL
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="closeShiftModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h5 class="modal-title" style="font-family:'Playfair Display',serif; color:#c9a84c;">Funga Shift</h5>
+        <button type="button" data-bs-dismiss="modal" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem;">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- Pre-close summary injected here -->
+        <div id="close-shift-summary" style="margin-bottom:1rem;"></div>
+        <div class="mb-3">
+          <label class="form-label">Hesabu Pesa Mkononi (KES)</label>
+          <input type="number" step="1" min="0" id="close-shift-cash" class="form-control"
+                 placeholder="Hesabu kila noti na koin">
+          <div class="form-text">Jumla ya pesa zote zilizopo ndani ya kasabuni sasa hivi.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Maelezo (optional)</label>
+          <input type="text" id="close-shift-notes" class="form-control"
+                 placeholder="e.g. Kila kitu sawa">
+        </div>
+        <!-- Offline sales adjustment -->
+        <div>
+          <hr style="border-color:#333; margin:.75rem 0;">
+          <div style="color:#c9a84c; font-size:.82rem; font-weight:600; margin-bottom:.25rem;">📵 Mauzo Yasiyorekodiwa (Optional)</div>
+          <p style="font-size:.75rem; color:#888; margin-bottom:.5rem;">
+            Ulikusanya pesa bila kuingiza kwenye app? Ingiza jumla yake hapa.<br>
+            <strong style="color:#ff9800;">Kumbuka:</strong> ukishaingiza transactions hizo baadaye kwa wakati sahihi, futa nambari hii ili usihesabu mara mbili.
+          </p>
+          <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+            <div style="flex:0 0 120px;">
+              <label style="font-size:.76rem; color:#b0b0b0; display:block; margin-bottom:3px;">Pesa za ziada (KES)</label>
+              <input type="number" step="1" min="0" id="close-offline-amount"
+                     class="form-control form-control-sm" placeholder="0" value="0">
+            </div>
+            <div style="flex:1; min-width:150px;">
+              <label style="font-size:.76rem; color:#b0b0b0; display:block; margin-bottom:3px;">Maelezo (optional)</label>
+              <input type="text" id="close-offline-note" class="form-control form-control-sm"
+                     placeholder="e.g. Chips 3, mtandao ulikatika 3-5pm">
+            </div>
+          </div>
+        </div>
+        <!-- Variance result shown after submit -->
+        <div id="close-shift-result" style="display:none;"></div>
+        <div id="close-shift-error" style="display:none; color:#c0395a; font-size:.85rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;">
+        <button type="button" data-bs-dismiss="modal"
+                class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Funga</button>
+        <button type="button" id="close-shift-btn" class="btn btn-gold btn-sm"
+                onclick="window.submitCloseShift()">Funga Shift</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     STOCK TAKE MODAL (end-of-shift physical count)
+════════════════════════════════════════════════════ -->
+<div class="modal fade bar-modal" id="stockTakeModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h5 class="modal-title" style="font-family:'Playfair Display',serif; color:#c9a84c;">
+          📦 Hesabu Stock — Mwisho wa Shift
+        </h5>
+        <button type="button" data-bs-dismiss="modal" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem;">✕</button>
+      </div>
+      <div class="modal-body" style="max-height:65vh; overflow-y:auto;">
+        <p style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.75rem;">
+          Hesabu bidhaa zilizobaki. Ingiza idadi halisi — mfumo utaonyesha tofauti.
+        </p>
+        <div id="stock-take-loading" style="text-align:center; padding:1.5rem 0; color:#b0b0b0;">
+          Inapakua orodha...
+        </div>
+        <div id="stock-take-form" style="display:none;"></div>
+        <div id="stock-take-results" style="display:none; margin-top:0.75rem;"></div>
+        <div id="stock-take-error" style="display:none; color:#c0395a; font-size:0.82rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;">
+        <button type="button" data-bs-dismiss="modal"
+                style="background:#333; border:1px solid #444; color:#b0b0b0; border-radius:6px;
+                       padding:5px 14px; font-size:0.82rem; cursor:pointer;">Ruka</button>
+        <button type="button" id="stock-take-submit-btn" class="btn btn-gold btn-sm"
+                onclick="window.submitStockTake()" style="display:none;">
+          Hifadhi Hesabu
+        </button>
       </div>
     </div>
   </div>
@@ -1629,11 +1873,557 @@
   };
   {% endif %}
 
+  /* ════════════════════════════════════════════════════════
+     SHIFT HANDOVER MODULE
+  ════════════════════════════════════════════════════════ */
+  var _activeShiftId   = null;
+  var _shiftBlockMsg   = null;
+  var _currentUserId   = {{ current_user_id|default:0 }};
+  var _isOwner         = {% if is_owner %}true{% else %}false{% endif %};
+
+  /* ── Bootstrap modal helpers ───────────────────────────── */
+  function showModal(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    (bootstrap.Modal.getInstance(el) || new bootstrap.Modal(el)).show();
+  }
+  function hideModal(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var m = bootstrap.Modal.getInstance(el);
+    if (m) m.hide();
+  }
+
+  function _updateBoardShiftState() {
+    if (_isOwner) return;
+    var banner = document.getElementById('shift-no-shift-banner');
+    if (_myShiftOpen) {
+      if (banner) banner.style.display = 'none';
+    } else {
+      if (banner) banner.style.display = 'block';
+    }
+  }
+
+  function loadShift() {
+    fetch('/kitchen/shift/active/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) { renderShiftPanel(d); })
+      .catch(function () {});
+  }
+
+  function _varColor(v) {
+    if (v === null || v === undefined) return '';
+    v = parseFloat(v);
+    if (Math.abs(v) <= 50)  return 'shift-var-ok';
+    if (Math.abs(v) <= 200) return 'shift-var-warn';
+    return 'shift-var-danger';
+  }
+  function _fmt(n) { return 'KES ' + (Math.round(parseFloat(n) || 0)).toLocaleString(); }
+
+  function renderShiftPanel(d) {
+    var panel = document.getElementById('shift-panel');
+    if (!panel) return;
+
+    if (!d.shift) {
+      _activeShiftId  = null;
+      _shiftBlockMsg  = null;
+      _myShiftOpen    = false;
+      panel.style.display = 'block';
+      panel.innerHTML =
+        '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem;">' +
+        '<span style="color:#888; font-size:.83rem;">Hakuna shift iliyofunguliwa</span>' +
+        '<button class="shift-open-btn" onclick="window.openShiftModal()">+ Fungua Shift</button>' +
+        '</div>';
+      _updateBoardShiftState();
+      return;
+    }
+
+    var s = d.shift;
+    _activeShiftId = s.id;
+    _myShiftOpen   = (s.is_mine && s.status === 'OPEN');
+    if (!_isOwner && !s.is_mine && s.status === 'OPEN') {
+      _shiftBlockMsg = 'Shift imefunguliwa na ' + s.staff_name +
+                       '. Fungua shift yako mwenyewe kwanza.';
+    } else {
+      _shiftBlockMsg = null;
+    }
+    _updateBoardShiftState();
+    panel.style.display = 'block';
+
+    var statusColor = s.status === 'OPEN' ? '#5dde7a' : '#f0a840';
+    var statusLabel = s.status === 'OPEN' ? 'OPEN' : 'CLOSED';
+    var varHtml = '';
+    if (s.variance !== null && s.variance !== undefined) {
+      var sign = parseFloat(s.variance) >= 0 ? '+' : '';
+      varHtml = '<div class="shift-stat"><span class="s-label">Tofauti</span>' +
+        '<span class="s-val ' + _varColor(s.variance) + '">' + sign + 'KES ' + Math.round(parseFloat(s.variance)) + '</span></div>';
+    }
+    var closeBtnHtml = '';
+    if (s.is_mine && s.status === 'OPEN') {
+      closeBtnHtml = '<button class="shift-close-btn" onclick="window.openCloseShiftModal()">Funga Shift</button>';
+    }
+    var histLink = '<a href="/kitchen/shift/history/" style="color:#888; font-size:.75rem; white-space:nowrap;">Historia ›</a>';
+
+    panel.innerHTML =
+      '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem; margin-bottom:.5rem;">' +
+        '<div style="display:flex; align-items:center; gap:.5rem;">' +
+          '<span style="width:8px; height:8px; border-radius:50%; background:' + statusColor + '; display:inline-block;"></span>' +
+          '<span style="color:' + statusColor + '; font-size:.78rem; font-weight:700;">' + statusLabel + '</span>' +
+          '<span style="color:#b0b0b0; font-size:.8rem;">' + s.staff_name + ' · started ' + s.started_at + ' (' + s.elapsed + ')</span>' +
+        '</div>' +
+        '<div style="display:flex; align-items:center; gap:.5rem;">' +
+          closeBtnHtml + histLink +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
+        '<div class="shift-stat"><span class="s-label">Float</span><span class="s-val">' + _fmt(s.opening_float) + '</span></div>' +
+        '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(s.cash_sales) + '</span></div>' +
+        '<div class="shift-stat"><span class="s-label">M-Pesa</span><span class="s-val">' + _fmt(s.mpesa_sales) + '</span></div>' +
+        (s.credit_sales > 0 ? '<div class="shift-stat"><span class="s-label">Credit</span><span class="s-val">' + _fmt(s.credit_sales) + '</span></div>' : '') +
+        '<div class="shift-stat"><span class="s-label">Jumla</span><span class="s-val">' + _fmt(s.total_sales) + '</span></div>' +
+        (s.variance !== null && s.variance !== undefined
+          ? '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(s.expected_cash) + '</span></div>'
+          : '') +
+        varHtml +
+      '</div>';
+  }
+
+  var _prevClosing = null;
+
+  function _resetOpenShiftModal() {
+    document.getElementById('open-shift-float').value = '0';
+    document.getElementById('open-shift-notes').value = '';
+    document.getElementById('open-shift-suggestion').style.display = 'none';
+    document.getElementById('open-shift-banking-row').style.display = 'none';
+    var errEl = document.getElementById('open-shift-error');
+    if (errEl) errEl.style.display = 'none';
+    _prevClosing = null;
+  }
+
+  window.openShiftModal = function () {
+    _resetOpenShiftModal();
+    showModal('openShiftModal');
+    fetch('/kitchen/shift/active/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.last_closing !== null && d.last_closing !== undefined) {
+          _prevClosing = d.last_closing;
+          var amtEl = document.getElementById('open-shift-prev-amount');
+          if (amtEl) amtEl.textContent = 'KES ' + Math.round(_prevClosing).toLocaleString();
+          document.getElementById('open-shift-suggestion').style.display = 'block';
+          document.getElementById('open-shift-use-prev').onclick = function () {
+            document.getElementById('open-shift-suggestion').style.display = 'none';
+            document.getElementById('open-shift-banking-row').style.display = 'block';
+            document.getElementById('open-shift-float').value = Math.round(_prevClosing);
+            document.getElementById('open-shift-float-label').textContent = 'Float ya Kuanza (KES) — imefikiriwa';
+            _updateFloatPreview();
+          };
+          document.getElementById('open-shift-manual-entry').onclick = function () {
+            document.getElementById('open-shift-suggestion').style.display = 'none';
+            document.getElementById('open-shift-banking-row').style.display = 'none';
+            document.getElementById('open-shift-float').value = '';
+            document.getElementById('open-shift-float-label').textContent = 'Float ya Kuanza (KES)';
+            _prevClosing = null;
+          };
+          var bankedEl = document.getElementById('open-shift-banked');
+          if (bankedEl) bankedEl.addEventListener('input', _updateFloatPreview);
+        }
+      })
+      .catch(function () {});
+  };
+
+  function _updateFloatPreview() {
+    if (_prevClosing === null) return;
+    var banked = parseFloat(document.getElementById('open-shift-banked').value) || 0;
+    var newFloat = Math.max(0, Math.round(_prevClosing - banked));
+    document.getElementById('open-shift-float').value = newFloat;
+    var prevEl = document.getElementById('open-shift-float-preview');
+    if (prevEl) prevEl.textContent = 'KES ' + Math.round(_prevClosing).toLocaleString() +
+      ' − KES ' + Math.round(banked).toLocaleString() +
+      ' = Float KES ' + newFloat.toLocaleString();
+  }
+
+  /* ── Open shift step 2: confirm barrel weights ─────────────────────────── */
+  function _showBarrelConfirmStep(tappedBarrels, openingFloat) {
+    var modalBody  = document.querySelector('#openShiftModal .modal-body');
+    var modalTitle = document.querySelector('#openShiftModal .modal-title');
+    var btn        = document.getElementById('open-shift-btn');
+    modalTitle.textContent = 'Thibitisha Uzito wa Mabarel';
+    var html = '<p style="font-size:.82rem; color:#b0b0b0; margin-bottom:.75rem;">' +
+      'Pima kila barrel kwenye scale. Linganisha na kipimo cha shift iliyoisha.</p>';
+    tappedBarrels.forEach(function (b) {
+      html += '<div class="confirm-barrel-row" data-barrel-id="' + b.barrel_id + '"' +
+        ' style="margin-bottom:.8rem; padding:.65rem; background:#111; border:1px solid #333; border-radius:8px;">';
+      html += '<div style="font-size:.84rem; color:#c9a84c; font-weight:700; margin-bottom:4px;">' + b.name + '</div>';
+      if (b.last_close_kg !== null && b.last_close_kg !== undefined) {
+        html += '<div style="font-size:.75rem; color:#888; margin-bottom:6px;">' +
+          'Shift iliyoisha: gross <strong style="color:#b0b0b0;">' + b.last_close_kg.toFixed(2) + ' kg</strong>' +
+          ' → NET <strong style="color:#c9a84c;">' + (b.last_close_net !== null ? b.last_close_net.toFixed(2) : '?') + ' kg</strong>';
+        if (b.last_close_by) html += ' — ' + b.last_close_by;
+        if (b.last_close_at) html += ' @ ' + b.last_close_at;
+        html += '</div>';
+      } else {
+        html += '<div style="font-size:.75rem; color:#555; margin-bottom:6px;">Hakuna kipimo cha shift iliyoisha.</div>';
+      }
+      html += '<div style="display:flex; align-items:center; gap:.5rem;">' +
+        '<input type="number" step="0.1" min="0" placeholder="Gross kutoka scale (kg)"' +
+        ' class="form-control form-control-sm confirm-barrel-weight" data-tare="' + b.tare_kg + '"' +
+        ' style="max-width:165px;">' +
+        '<span class="confirm-barrel-net" style="font-size:.78rem; color:#c9a84c;"></span>' +
+        '</div></div>';
+    });
+    html += '<p style="font-size:.75rem; color:#555; margin-top:.4rem;">Unaweza ruka hii ukibonyeza "Ruka".</p>';
+    modalBody.innerHTML = html;
+    modalBody.querySelectorAll('.confirm-barrel-weight').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var gross = parseFloat(this.value) || 0;
+        var tare  = parseFloat(this.dataset.tare) || 0;
+        var net   = Math.max(0, gross - tare).toFixed(2);
+        this.parentNode.querySelector('.confirm-barrel-net').textContent =
+          gross > 0 ? 'NET: ' + net + ' kg' : '';
+      });
+    });
+    var footer = document.querySelector('#openShiftModal .modal-footer');
+    footer.innerHTML =
+      '<button type="button" class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;"' +
+      ' onclick="window._skipBarrelConfirm(' + openingFloat + ')">Ruka</button>' +
+      '<button type="button" id="open-shift-btn" class="btn btn-gold btn-sm"' +
+      ' onclick="window._submitConfirmBarrelWeights(' + openingFloat + ')">Thibitisha</button>';
+  }
+
+  window._skipBarrelConfirm = function (openingFloat) {
+    hideModal('openShiftModal');
+    loadShift();
+    showToast('✓ Shift imefunguliwa na float ya KES ' + Math.round(parseFloat(openingFloat)));
+  };
+
+  window._submitConfirmBarrelWeights = function (openingFloat) {
+    var btn = document.getElementById('open-shift-btn');
+    var barrelWeights = [];
+    document.querySelectorAll('.confirm-barrel-row').forEach(function (row) {
+      var inp = row.querySelector('.confirm-barrel-weight');
+      var wkg = inp ? parseFloat(inp.value) : 0;
+      if (wkg > 0) {
+        barrelWeights.push({ barrel_id: parseInt(row.dataset.barrelId), weight_kg: wkg.toFixed(2) });
+      }
+    });
+    if (barrelWeights.length === 0) {
+      window._skipBarrelConfirm(openingFloat);
+      return;
+    }
+    btn.disabled = true; btn.textContent = 'Inathibitisha...';
+    var fd = new FormData();
+    fd.append('barrel_weights', JSON.stringify(barrelWeights));
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('/kitchen/shift/confirm-weights/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false;
+        if (!d.ok) {
+          btn.textContent = 'Thibitisha';
+          showToast((d.error || 'Hitilafu.'));
+          return;
+        }
+        var modalBody = document.querySelector('#openShiftModal .modal-body');
+        var html = '<div style="color:#4caf50; font-size:.83rem; font-weight:600; margin-bottom:.5rem;">✓ Uzito umethibitishwa</div>';
+        d.readings.forEach(function (r) {
+          var flagColor = r.flag === 'ok' ? '#4caf50' : (r.flag === 'warn' ? '#ff9800' : '#c0395a');
+          var icon      = r.flag === 'ok' ? '✓' : (r.flag === 'warn' ? '⚠' : '🚨');
+          html += '<div style="margin-bottom:.5rem; padding:.5rem; background:#111; border:1px solid #2a2a2a; border-radius:6px;">';
+          html += '<div style="font-size:.83rem; color:#f0ece4;">' + r.name + '</div>';
+          html += '<div style="font-size:.78rem; color:#b0b0b0;">NET unaoona: <strong style="color:#c9a84c;">' + r.net_kg.toFixed(2) + ' kg</strong>';
+          if (r.last_close_kg !== null && r.diff_kg !== null) {
+            var sign = r.diff_kg >= 0 ? '+' : '';
+            html += ' &nbsp;·&nbsp; Tofauti: <strong style="color:' + flagColor + ';">' +
+              sign + r.diff_kg.toFixed(2) + ' kg ' + icon + '</strong>';
+          }
+          html += '</div></div>';
+        });
+        modalBody.innerHTML = html;
+        var footer = document.querySelector('#openShiftModal .modal-footer');
+        footer.innerHTML = '<button class="btn btn-gold btn-sm" onclick="window._skipBarrelConfirm(' + openingFloat + ')">Done</button>';
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Thibitisha';
+        showToast('Hitilafu ya mtandao.');
+      });
+  };
+
+  window.submitOpenShift = function () {
+    var btn = document.getElementById('open-shift-btn');
+    var errEl = document.getElementById('open-shift-error');
+    var fl = (document.getElementById('open-shift-float').value || '0').trim();
+    var notes = (document.getElementById('open-shift-notes').value || '').trim();
+    var banked = '0';
+    var bankingRow = document.getElementById('open-shift-banking-row');
+    if (bankingRow && bankingRow.style.display !== 'none') {
+      banked = (document.getElementById('open-shift-banked').value || '0').trim();
+    }
+    if (errEl) errEl.style.display = 'none';
+    btn.disabled = true; btn.textContent = 'Inafungua...';
+    var fd = new FormData();
+    fd.append('opening_float', fl);
+    fd.append('notes', notes);
+    fd.append('banked_amount', banked);
+    if (_prevClosing !== null) fd.append('prev_closing', String(_prevClosing));
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('/kitchen/shift/open/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false; btn.textContent = 'Fungua Shift';
+        if (d.ok) {
+          if (d.tapped_barrels && d.tapped_barrels.length > 0) {
+            _showBarrelConfirmStep(d.tapped_barrels, d.opening_float);
+          } else {
+            hideModal('openShiftModal');
+            loadShift();
+            showToast('✓ Shift imefunguliwa na float ya KES ' + Math.round(parseFloat(d.opening_float)));
+          }
+        } else {
+          if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
+        }
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Fungua Shift';
+        if (errEl) { errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; }
+      });
+  };
+
+  window.openCloseShiftModal = function () {
+    if (!_activeShiftId) return;
+    document.getElementById('close-shift-cash').value = '';
+    document.getElementById('close-shift-notes').value = '';
+    var summEl      = document.getElementById('close-shift-summary');
+    var resEl       = document.getElementById('close-shift-result');
+    var errEl       = document.getElementById('close-shift-error');
+    if (resEl)      { resEl.style.display = 'none'; resEl.innerHTML = ''; }
+    if (errEl)      errEl.style.display = 'none';
+    var offAmtEl = document.getElementById('close-offline-amount');
+    var offNoteEl = document.getElementById('close-offline-note');
+    if (offAmtEl)  offAmtEl.value  = '0';
+    if (offNoteEl) offNoteEl.value = '';
+    if (summEl)     summEl.innerHTML = '<span style="color:#888; font-size:.82rem;">Inapakia muhtasari...</span>';
+
+    fetch('/kitchen/shift/active/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.shift || !summEl) return;
+        var s = d.shift;
+        summEl.innerHTML =
+          '<div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:.5rem;">' +
+          '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(s.cash_sales) + '</span></div>' +
+          '<div class="shift-stat"><span class="s-label">Float</span><span class="s-val">' + _fmt(s.opening_float) + '</span></div>' +
+          '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(s.expected_cash) + '</span></div>' +
+          '</div><p style="font-size:.78rem; color:#888;">Hesabu pesa zote zilizopo mkononi sasa hivi, kisha ingiza hapa chini.</p>';
+      });
+
+    showModal('closeShiftModal');
+  };
+
+  window.submitCloseShift = function () {
+    if (!_activeShiftId) return;
+    var btn   = document.getElementById('close-shift-btn');
+    var errEl = document.getElementById('close-shift-error');
+    var resEl = document.getElementById('close-shift-result');
+    var cash  = (document.getElementById('close-shift-cash').value || '').trim();
+    var notes = (document.getElementById('close-shift-notes').value || '').trim();
+    if (!cash) {
+      if (errEl) { errEl.textContent = 'Tafadhali ingiza pesa zilizohesabiwa.'; errEl.style.display = 'block'; }
+      return;
+    }
+    if (errEl) errEl.style.display = 'none';
+    btn.disabled = true; btn.textContent = 'Inafunga...';
+    var offlineAmt  = (document.getElementById('close-offline-amount').value  || '0').trim();
+    var offlineNote = (document.getElementById('close-offline-note').value   || '').trim();
+    var fd = new FormData();
+    fd.append('closing_cash_counted',  cash);
+    fd.append('notes',                 notes);
+    fd.append('offline_sales_amount',  offlineAmt);
+    fd.append('offline_sales_note',    offlineNote);
+    fd.append('csrfmiddlewaretoken',   '{{ csrf_token }}');
+    fetch('/kitchen/shift/' + _activeShiftId + '/close/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false; btn.textContent = 'Funga Shift';
+        if (d.ok) {
+          var sign = parseFloat(d.variance) >= 0 ? '+' : '';
+          var vc = _varColor(d.variance);
+          if (resEl) {
+            resEl.style.display = 'block';
+            var offlineHtml = '';
+            if (parseFloat(d.offline_sales_amount) > 0) {
+              offlineHtml =
+                '<div style="margin-top:.4rem; padding:.4rem .6rem; background:rgba(255,152,0,0.08); border:1px solid rgba(255,152,0,0.25); border-radius:6px;">' +
+                '<span style="color:#ff9800; font-size:.76rem;">📵 Mauzo yasiyorekodiwa: <strong>KES ' + Math.round(d.offline_sales_amount) + '</strong>' +
+                (d.offline_sales_note ? ' — ' + d.offline_sales_note : '') +
+                '</span></div>';
+            }
+            resEl.innerHTML =
+              '<div style="background:#111; border-radius:8px; padding:.75rem; margin-bottom:.75rem;">' +
+              '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
+              '<div class="shift-stat"><span class="s-label">Mauzo Yote</span><span class="s-val">' + _fmt(d.total_sales) + '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(d.cash_sales) + '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(d.expected_cash) + '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">Tofauti</span><span class="s-val ' + vc + '">' + sign + 'KES ' + Math.round(parseFloat(d.variance)) + '</span></div>' +
+              '</div>' +
+              offlineHtml +
+              (Math.abs(parseFloat(d.variance)) > 50
+                ? '<p style="font-size:.78rem; color:#ff9800; margin:.5rem 0 0;">⚠ Tofauti kubwa — angalia kwa uangalifu.</p>'
+                : '<p style="font-size:.78rem; color:#4caf50; margin:.5rem 0 0;">✓ Hesabu iko sawa.</p>') +
+              '</div>';
+          }
+          btn.style.display = 'none';
+          var doneBtn = document.createElement('button');
+          doneBtn.className = 'btn btn-sm';
+          doneBtn.style.cssText = 'background:#333; border:1px solid #444; color:#b0b0b0;';
+          doneBtn.textContent = 'Maliza';
+          doneBtn.onclick = function () { hideModal('closeShiftModal'); loadShift(); };
+          btn.parentNode.insertBefore(doneBtn, btn);
+
+          var stBtn = document.createElement('button');
+          stBtn.className = 'btn btn-gold btn-sm';
+          stBtn.textContent = '📦 Hesabu Stock';
+          stBtn.onclick = function () { window.openStockTake(_activeShiftId); };
+          btn.parentNode.insertBefore(stBtn, btn);
+        } else {
+          if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
+        }
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Funga Shift';
+        if (errEl) { errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; }
+      });
+  };
+
+  /* ════════════════════════════════════════════════════════
+     STOCK TAKE
+  ════════════════════════════════════════════════════════ */
+  var _stockTakeShiftId = null;
+  var _stockTakeItems   = [];
+
+  window.openStockTake = function (shiftId) {
+    _stockTakeShiftId = shiftId;
+    _stockTakeItems   = [];
+    var loadEl   = document.getElementById('stock-take-loading');
+    var formEl   = document.getElementById('stock-take-form');
+    var resEl    = document.getElementById('stock-take-results');
+    var errEl    = document.getElementById('stock-take-error');
+    var submitBtn = document.getElementById('stock-take-submit-btn');
+    loadEl.style.display  = 'block';
+    formEl.style.display  = 'none';
+    resEl.style.display   = 'none';
+    errEl.style.display   = 'none';
+    if (submitBtn) submitBtn.style.display = 'none';
+    showModal('stockTakeModal');
+
+    fetch('/kitchen/shift/' + shiftId + '/stock-take/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        loadEl.style.display = 'none';
+        if (!d.ok || !d.items || d.items.length === 0) {
+          formEl.innerHTML = '<p style="color:#b0b0b0; font-size:0.82rem;">Hakuna bidhaa za kuhesabu kwa sasa.</p>';
+          formEl.style.display = 'block';
+          return;
+        }
+        _stockTakeItems = d.items;
+        var html = '<div style="display:grid; grid-template-columns:1fr auto auto; gap:0.4rem 0.75rem; align-items:center;">' +
+          '<div style="font-size:0.72rem; color:#888; font-weight:600; text-transform:uppercase;">Bidhaa</div>' +
+          '<div style="font-size:0.72rem; color:#888; font-weight:600; text-transform:uppercase; text-align:right;">Kitabu</div>' +
+          '<div style="font-size:0.72rem; color:#888; font-weight:600; text-transform:uppercase; text-align:center;">Hesabu Yako</div>';
+        d.items.forEach(function (item) {
+          html +=
+            '<div style="font-size:0.83rem; color:#f0ece4;">' + item.name +
+            (item.unit ? '<span style="color:#888; font-size:0.72rem;"> (' + item.unit + ')</span>' : '') + '</div>' +
+            '<div style="font-size:0.83rem; color:#b0b0b0; text-align:right;">' + item.book_balance + '</div>' +
+            '<div><input type="number" step="0.1" min="0" data-item-id="' + item.item_id + '"' +
+            ' placeholder="' + item.book_balance + '"' +
+            ' style="width:80px; background:#111; border:1px solid #444; border-radius:6px; color:#f0ece4;' +
+            ' padding:3px 6px; font-size:0.83rem; text-align:center;"></div>';
+        });
+        html += '</div>';
+        formEl.innerHTML = html;
+        formEl.style.display = 'block';
+        if (submitBtn) submitBtn.style.display = 'inline-block';
+      })
+      .catch(function () {
+        loadEl.style.display = 'none';
+        errEl.textContent = 'Hitilafu ya mtandao.';
+        errEl.style.display = 'block';
+      });
+  };
+
+  window.submitStockTake = function () {
+    if (!_stockTakeShiftId) return;
+    var formEl    = document.getElementById('stock-take-form');
+    var resEl     = document.getElementById('stock-take-results');
+    var errEl     = document.getElementById('stock-take-error');
+    var submitBtn = document.getElementById('stock-take-submit-btn');
+
+    var counts = [];
+    formEl.querySelectorAll('input[data-item-id]').forEach(function (inp) {
+      var val = inp.value.trim();
+      if (val !== '') {
+        counts.push({ item_id: parseInt(inp.dataset.itemId), actual_count: parseFloat(val) || 0 });
+      }
+    });
+    if (counts.length === 0) {
+      errEl.textContent = 'Ingiza angalau hesabu moja.';
+      errEl.style.display = 'block';
+      return;
+    }
+    errEl.style.display = 'none';
+    submitBtn.disabled  = true;
+    submitBtn.textContent = 'Inahifadhi...';
+
+    var fd = new FormData();
+    fd.append('counts', JSON.stringify(counts));
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('/kitchen/shift/' + _stockTakeShiftId + '/stock-take/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        submitBtn.disabled  = false;
+        submitBtn.textContent = 'Hifadhi Hesabu';
+        if (!d.ok) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; return; }
+        formEl.style.display = 'none';
+        submitBtn.style.display = 'none';
+        var html = '<div style="font-size:0.78rem; color:#4caf50; margin-bottom:0.5rem;">✓ Hesabu zimehifadhiwa.</div>' +
+          '<div style="display:grid; grid-template-columns:1fr auto auto auto; gap:0.3rem 0.6rem; align-items:center;">' +
+          '<div style="font-size:0.7rem; color:#888; text-transform:uppercase;">Bidhaa</div>' +
+          '<div style="font-size:0.7rem; color:#888; text-transform:uppercase; text-align:right;">Kitabu</div>' +
+          '<div style="font-size:0.7rem; color:#888; text-transform:uppercase; text-align:right;">Halisi</div>' +
+          '<div style="font-size:0.7rem; color:#888; text-transform:uppercase; text-align:right;">Tofauti</div>';
+        d.results.forEach(function (r) {
+          var vc = r.variance === 0 ? '#4caf50' : (r.variance > 0 ? '#c9a84c' : '#c0395a');
+          var sign = r.variance > 0 ? '+' : '';
+          html +=
+            '<div style="font-size:0.82rem; color:#f0ece4;">' + r.name + '</div>' +
+            '<div style="font-size:0.82rem; color:#b0b0b0; text-align:right;">' + r.book + '</div>' +
+            '<div style="font-size:0.82rem; color:#f0ece4; text-align:right;">' + r.actual + '</div>' +
+            '<div style="font-size:0.82rem; color:' + vc + '; text-align:right; font-weight:600;">' +
+            sign + r.variance + '</div>';
+        });
+        html += '</div>';
+        resEl.innerHTML = html;
+        resEl.style.display = 'block';
+      })
+      .catch(function () {
+        submitBtn.disabled   = false;
+        submitBtn.textContent = 'Hifadhi Hesabu';
+        errEl.textContent    = 'Hitilafu ya mtandao.';
+        errEl.style.display  = 'block';
+      });
+  };
+
   /* ── Init ── */
   buildPortionGrid();
   buildBatchGrid();
   selectPM('cash');
   loadFoodTabBadge();
+  loadShift();
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { loadShift(); }
+  });
 
 }());
 
@@ -1641,3 +2431,4 @@
 {% include "core/petty_cash_js.html" %}
 </script>
 {% endblock %}
+

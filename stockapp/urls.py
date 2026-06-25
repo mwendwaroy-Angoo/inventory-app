@@ -269,6 +269,14 @@ urlpatterns = [
     path("kitchen/tabs/",           kitchen_tabs_list,   name="kitchen_tabs_list"),
     path("kitchen/tab/check/",      tab_check_api,       name="tab_check_api"),
     path("kitchen/toggle/",         toggle_kitchen,      name="toggle_kitchen"),
+    # ── Kitchen Shift Handover Module ────────────────────────────────────────
+    path("kitchen/shift/open/",                   open_shift,             name="kitchen_open_shift"),
+    path("kitchen/shift/<int:shift_id>/close/",   close_shift,            name="kitchen_close_shift"),
+    path("kitchen/shift/<int:shift_id>/confirm/", confirm_shift,          name="kitchen_confirm_shift"),
+    path("kitchen/shift/confirm-weights/",        confirm_barrel_weights, name="kitchen_confirm_barrel_weights"),
+    path("kitchen/shift/active/",                 active_shift_api,       name="kitchen_active_shift_api"),
+    path("kitchen/shift/history/",                shift_history,          name="kitchen_shift_history"),
+    path("kitchen/shift/<int:shift_id>/stock-take/", stock_take_api,      name="kitchen_stock_take_api"),
 
     # ── Petty Cash / Counter Drawdown ────────────────────────────────────────
     path("petty-cash/",                           petty_cash_list,    name="petty_cash_list"),

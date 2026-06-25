@@ -207,6 +207,16 @@ def kitchen_board(request):
         business.daraja_consumer_key and
         (business.mpesa_till or business.mpesa_paybill)
     )
+
+    # ── Shift status ──────────────────────────────────────────────────────────
+    if is_owner:
+        has_my_shift = True
+    else:
+        from .models import Shift as _ShiftCheck
+        has_my_shift = _ShiftCheck.objects.filter(
+            business=business, status='OPEN', staff=request.user
+        ).exists()
+
     return render(request, 'core/kitchen/kitchen_board.html', {
         'is_owner': is_owner,
         'business': business,
@@ -219,6 +229,7 @@ def kitchen_board(request):
         'kitchen_revenue_today': kitchen_revenue_today,
         'food_tab_count': len(food_tabs_data),
         'has_stk': has_stk,
+        'has_my_shift': has_my_shift,
     })
 
 
