@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Keg Shrinkage Report{% endblock %}
+
+{% block extra_css %}
+<style>
+  .shrinkage-card {
+    background: var(--onyx-card);
+    border: 1px solid rgba(201,168,76,0.15);
+    border-radius: 10px;
+  }
+  .page-title { color: var(--gold); font-family: 'Playfair Display', serif; }
+  .section-label { color: var(--gold-light); font-size: .78rem; letter-spacing: .05em; text-transform: uppercase; }
+  .metric-val { font-size: 1.35rem; font-weight: 700; color: var(--pearl); }
+  .metric-sub { font-size: .78rem; }
+  .badge-danger-custom { background: var(--raspberry); color: #fff; }
+  .badge-ok { background: rgba(40,167,69,.25); color: #7de08a; }
+  .partial-badge {
+    font-size: .7rem; color: #b0b0b0; border: 1px solid #555;
+    padding: 1px 5px; border-radius: 4px;
+  }
+  th { color: #b0b0b0; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  td { color: var(--pearl); vertical-align: middle; }
+  .trend-up   { color: var(--raspberry); }
+  .trend-down { color: #7de08a; }
+  .trend-flat { color: #b0b0b0; }
+  .coverage-low { color: #b0b0b0; font-style: italic; }
+  .coverage-ok  { color: #7de08a; }
+  .explainer {
+    background: rgba(201,168,76,.08);
+    border-left: 3px solid var(--gold);
+    border-radius: 6px;
+    padding: .65rem 1rem;
+    font-size: .82rem;
+    color: #b0b0b0;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+      <h4 class="page-title mb-0">Keg Shrinkage Report</h4>
+      <small style="color:#b0b0b0">{{ date_from }} → {{ date_to }}</small>
+    </div>
+    <a href="{% url 'keg_reconciliation' %}" class="btn btn-sm btn-outline-secondary">
+      ← Reconciliation
+    </a>
+  </div>
+
+  {# Date range filter #}
+  <form method="get" class="shrinkage-card p-3 mb-4 d-flex align-items-end gap-3 flex-wrap">
+    <div>
+      <label class="section-label d-block mb-1">From</label>
+      <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}"
+             class="form-control form-control-sm" style="background:#1a1a1a;color:var(--pearl);border-color:#444;">
+    </div>
+    <div>
+      <label class="section-label d-block mb-1">To</label>
+      <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}"
+             class="form-control form-control-sm" style="background:#1a1a1a;color:var(--pearl);border-color:#444;">
+    </div>
+    <button type="submit" class="btn btn-gold btn-sm">Filter</button>
+  </form>
+
+  {# Attribution honesty explainer #}
+  <div class="explainer mb-4">
+    <strong style="color:var(--gold-light)">How is this measured?</strong>
+    Weight-based loss is only fully attributable to a staff member when a barrel is weighed at
+    every staff changeover. Gaps in weighing mean part of the window is unmeasured — rows marked
+    <span class="partial-badge">partially measured</span> should be read with caution.
+    Loss % is calculated as <em>total KES loss ÷ total KES throughput</em> (not an average of per-barrel
+    percentages, which would distort results across barrels with different costs).
+  </div>
+
+  {% if leaderboard %}
+  <div class="shrinkage-card p-0 overflow-hidden">
+    <table class="table table-dark table-borderless mb-0" style="--bs-table-bg: transparent;">
+      <thead style="border-bottom:1px solid rgba(201,168,76,.15)">
+        <tr>
+          <th class="ps-3">Staff</th>
+          <th>Shifts</th>
+          <th>Book Revenue</th>
+          <th>Loss (KES)</th>
+          <th>Loss %</th>
+          <th>Coverage</th>
+          <th>vs Previous</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in leaderboard %}
+        {% with r=item.row %}
+        <tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+          <td class="ps-3 fw-semibold">
+            {{ r.staff_name }}
+            {% if item.low_coverage %}
+              <span class="partial-badge ms-1">partially measured</span>
+            {% endif %}
+          </td>
+          <td>{{ r.shifts_worked }}</td>
+          <td>KES {{ r.book_revenue_kes|floatformat:0 }}</td>
+          <td>
+            {% if r.loss_kes > 0 %}
+              <span class="badge badge-danger-custom">KES {{ r.loss_kes|floatformat:0 }}</span>
+            {% else %}
+              <span class="badge badge-ok">KES 0</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if r.loss_pct > 0 %}
+              <span class="{% if r.loss_pct > 10 %}trend-up{% elif r.loss_pct > 5 %}text-warning{% else %}trend-flat{% endif %}">
+                {{ r.loss_pct|floatformat:1 }}%
+              </span>
+            {% else %}
+              <span class="trend-flat">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if r.windows_total > 0 %}
+              <span class="{% if item.low_coverage %}coverage-low{% else %}coverage-ok{% endif %}">
+                {{ r.coverage_pct|floatformat:0 }}%
+                <small>({{ r.windows_with_weight }}/{{ r.windows_total }})</small>
+              </span>
+            {% else %}
+              <span style="color:#b0b0b0">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if item.trend_kes > 0 %}
+              <span class="trend-up">▲ KES {{ item.trend_kes|floatformat:0 }}</span>
+            {% elif item.trend_kes < 0 %}
+              <span class="trend-down">▼ KES {{ item.trend_kes|floatformat:0|slice:"1:" }}</span>
+            {% else %}
+              <span class="trend-flat">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endwith %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% else %}
+  <div class="shrinkage-card p-4 text-center" style="color:#b0b0b0">
+    Hakuna data ya shift kwa kipindi hiki. Hakikisha shifts zimefungwa na uzito wa barrels
+    umerekodiwa kwenye mwisho wa kila shift.
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

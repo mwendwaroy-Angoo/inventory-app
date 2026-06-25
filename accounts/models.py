@@ -121,6 +121,14 @@ class Business(models.Model):
         max_digits=4, decimal_places=2, default=Decimal('1.50'),
         help_text='Suggested barrel target = cost × this. 5000 × 1.5 = 7500, matching common owner targets.'
     )
+    keg_alerts_enabled = models.BooleanField(
+        default=True,
+        help_text='Send in-app + SMS alerts when keg variance crosses the danger threshold.'
+    )
+    keg_alert_min_litres = models.DecimalField(
+        max_digits=5, decimal_places=1, default=Decimal('5.0'),
+        help_text='Minimum litres dispensed before a SPOT variance alert fires (prevents false alarms on tiny volumes).'
+    )
 
     # ── Kitchen / Grill Side Venture ─────────────────────────────────────────
     has_kitchen = models.BooleanField(
