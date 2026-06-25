@@ -344,6 +344,10 @@ def edit_business(request):
         form = BusinessEditForm(request.POST, instance=business)
         if form.is_valid():
             form.save()
+            # Save kra_pin (not in BusinessEditForm — handled outside the form)
+            kra_pin_val = request.POST.get('kra_pin', '').strip().upper()
+            business.kra_pin = kra_pin_val[:20]
+            business.save(update_fields=['kra_pin'])
             # Handle delivery tiers
             _save_delivery_tiers(request, business)
             messages.success(

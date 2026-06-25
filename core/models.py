@@ -2212,6 +2212,10 @@ class Receipt(models.Model):
         max_length=20, blank=True, default='',
         help_text="'kitchen' for kitchen board sales; '' for bar/quick-sell/debt payments."
     )
+    # F6 — eTIMS fields (nullable until KRA integration is live)
+    etims_receipt_no  = models.CharField(max_length=50, blank=True, default='')
+    etims_url         = models.URLField(max_length=300, blank=True, default='')
+    etims_submitted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         'auth.User', null=True, blank=True,

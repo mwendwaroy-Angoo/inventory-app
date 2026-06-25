@@ -289,6 +289,15 @@
         </div>
         {% endif %}
 
+        {% if receipt.etims_receipt_no %}
+        <div class="receipt-footer" style="font-size:.7rem; color:#888; border-top:1px solid #eee; padding-top:.4rem; gap:.3rem; flex-direction:column; align-items:flex-start;">
+            <span>eTIMS Receipt: <strong>{{ receipt.etims_receipt_no }}</strong></span>
+            {% if receipt.etims_url %}
+            <a href="{{ receipt.etims_url }}" target="_blank" rel="noopener" style="color:#555; font-size:.68rem;">Verify with KRA &#8594;</a>
+            {% endif %}
+        </div>
+        {% endif %}
+
         <div class="qr-section no-print">
             <div id="qrCanvas"></div>
             <p>Scan to view this receipt</p>

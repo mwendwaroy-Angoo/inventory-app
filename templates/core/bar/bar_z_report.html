@@ -265,6 +265,42 @@
   </div>
   {% endif %}
 
+  <!-- M-Pesa STK cross-check — only show when STK data exists -->
+  {% if has_stk_data %}
+  <div class="zr-card" style="{% if mpesa_cross_check_gap > 500 %}border-color:rgba(192,57,90,.3){% elif mpesa_cross_check_gap > 100 %}border-color:rgba(255,183,77,.3){% endif %}">
+    <div class="zr-header" style="color:var(--gold);">&#128242; M-Pesa Cross-Check</div>
+    <div class="zr-body">
+      <div class="info-row">
+        <span class="info-label">Recorded M-Pesa sales</span>
+        <span class="info-val">KES {{ day_mpesa|floatformat:0 }}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">STK Push completions</span>
+        <span class="info-val">KES {{ stk_mpesa_total|floatformat:0 }}</span>
+      </div>
+      <div class="info-row" style="border-top:1px solid rgba(201,168,76,.15);margin-top:.3rem;padding-top:.45rem;">
+        <span class="info-label">Gap (recorded &#8722; STK)</span>
+        <span class="info-val" style="{% if mpesa_cross_check_gap > 500 %}color:var(--raspberry){% elif mpesa_cross_check_gap > 100 %}color:#ffb74d{% elif mpesa_cross_check_gap < -100 %}color:#ffb74d{% else %}color:#7de08a{% endif %}">
+          {% if mpesa_cross_check_gap >= 0 %}+{% endif %}{{ mpesa_cross_check_gap|floatformat:0 }}
+        </span>
+      </div>
+      <div style="font-size:.78rem;color:#b0b0b0;margin-top:.4rem;">
+        Positive gap = manual M-Pesa entries unverified by STK. Zero = fully reconciled via STK push.
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- KRA / eTIMS PIN reminder -->
+  {% if kra_pin %}
+  <div class="zr-card">
+    <div class="zr-header" style="color:#b0b0b0;">&#127981; KRA PIN: {{ kra_pin }}</div>
+    <div class="zr-body" style="font-size:.78rem;color:#b0b0b0;">
+      eTIMS fields are ready on receipts — connect your KRA eTIMS API when ready to go live.
+    </div>
+  </div>
+  {% endif %}
+
   {% endif %}{# end counted_shifts > 0 #}
 
 </div>

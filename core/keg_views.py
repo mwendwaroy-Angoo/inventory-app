@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from . import keg_metrics
-from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, PettyCash, Receipt, Shift, Transaction
+from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Payment, PettyCash, Receipt, Shift, Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -1674,6 +1674,19 @@ def bar_z_report(request):
         loss_units = max(0.0, float(sc.book_balance) - float(sc.actual_count))
         day_bottle_variance_kes += loss_units * sc.item.bottle_expected_revenue_per_unit()
 
+    # F6 — M-Pesa cross-check: STK push completions vs staff-recorded M-Pesa sales
+    stk_mpesa_total = float(
+        Payment.objects.filter(
+            business=business,
+            method='mpesa',
+            status='completed',
+            created_at__gte=day_start,
+            created_at__lte=day_end,
+        ).aggregate(total=Sum('amount'))['total'] or 0
+    )
+    mpesa_cross_check_gap = round(day_mpesa - stk_mpesa_total, 2)
+    has_stk_data = stk_mpesa_total > 0
+
     # Yesterday for navigation
     yesterday = report_date - timedelta(days=1)
     tomorrow  = report_date + timedelta(days=1)
@@ -1696,6 +1709,10 @@ def bar_z_report(request):
         'open_tab_kes':        round(open_tab_kes, 2),
         'day_keg_variance_kes':    round(day_keg_variance_kes, 2),
         'day_bottle_variance_kes': round(day_bottle_variance_kes, 2),
+        'stk_mpesa_total':         round(stk_mpesa_total, 2),
+        'mpesa_cross_check_gap':   mpesa_cross_check_gap,
+        'has_stk_data':            has_stk_data,
+        'kra_pin':                 business.kra_pin or '',
         'counted_shifts':          counted_shifts,
         'business':            business,
     })

@@ -260,6 +260,19 @@
                 </div>
             </div>
 
+            <!-- KRA / eTIMS section -->
+            <div class="section-divider mt-3"><span>&#127981; {% trans 'KRA / eTIMS' %}</span></div>
+            <div class="mb-3">
+                <label class="form-label" style="color:#b0b0b0; font-size:0.82rem;">{% trans 'KRA PIN' %}</label>
+                <input type="text" name="kra_pin" maxlength="20"
+                       value="{{ business.kra_pin|default:'' }}"
+                       placeholder="e.g. P051234567M"
+                       class="form-control" style="background:#1a1a1a;color:var(--pearl);border-color:#444;">
+                <div style="color:#b0b0b0; font-size:0.75rem; margin-top:0.3rem;">
+                    {% trans 'Required for KRA eTIMS invoice submission. Leave blank until integration is live.' %}
+                </div>
+            </div>
+
             <div class="d-flex gap-2 mt-4">
                 <button type="submit" class="btn btn-gold flex-fill py-2">{% trans 'Save Changes' %}</button>
                 <a href="{% url 'home' %}" class="btn btn-secondary flex-fill py-2">{% trans 'Cancel' %}</a>

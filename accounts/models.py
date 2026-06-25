@@ -138,6 +138,12 @@ class Business(models.Model):
         help_text='Number of depleted barrels in the current baseline sample.'
     )
 
+    # ── KRA / eTIMS ──────────────────────────────────────────────────────────
+    kra_pin = models.CharField(
+        max_length=20, blank=True, default='',
+        help_text='KRA PIN for eTIMS invoice submission (e.g. P051234567M). Leave blank until eTIMS integration is live.'
+    )
+
     # ── Kitchen / Grill Side Venture ─────────────────────────────────────────
     has_kitchen = models.BooleanField(
         default=False,
