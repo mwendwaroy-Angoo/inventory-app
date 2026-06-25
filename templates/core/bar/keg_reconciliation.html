@@ -187,6 +187,15 @@
         <span style="font-size:0.72rem; color:#b0b0b0; font-family:'DM Sans',sans-serif; margin-left:0.5rem;">
             Click "Details" to see shift-by-shift spillage breakdown
         </span>
+        {% if baseline.is_learned %}
+        <span style="font-size:0.72rem; font-family:'DM Sans',sans-serif; margin-left:1rem; color:#7de08a;">
+            Baseline: {{ baseline.baseline_pct }}% (learned from {{ baseline.sample }} barrel{{ baseline.sample|pluralize }})
+        </span>
+        {% else %}
+        <span style="font-size:0.72rem; font-family:'DM Sans',sans-serif; margin-left:1rem; color:#b0b0b0;">
+            Baseline: 10% (still learning — {{ baseline.sample }}/3 barrels)
+        </span>
+        {% endif %}
     </div>
     <div class="scroll-wrap">
     <table class="barrel-table">

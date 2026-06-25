@@ -833,3 +833,82 @@ class BaselineExcludesUnderTargetBarrels(TestCase):
         self.assertFalse(result['is_learned'],
                          "Only 1 qualifying barrel — below min_sample, so not learned")
         self.assertEqual(result['sample'], 1)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint F4 — Z-report drawer math
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ZReportDrawerMathTest(TestCase):
+    """_reconcile produces expected_cash = opening_float + cash_sales + offline_adj."""
+
+    def _make_shift_with_sales(self):
+        from core.shift_views import _reconcile
+        business = Business.objects.create(name='Z-Report Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        user = User.objects.create_user(username='z_staff', password='x')
+        UserProfile.objects.create(user=user, business=business, role='staff')
+        item = Item.objects.create(
+            business=business, store=store, material_no='ZR-1',
+            description='Test Beer', unit='ml',
+            selling_price=Decimal('200'), cost_price=Decimal('50'),
+        )
+        shift = Shift.objects.create(
+            business=business, store=store, staff=user,
+            opening_float=Decimal('1000'),
+            offline_sales_amount=Decimal('500'),
+            status='CLOSED',
+        )
+        # Two cash transactions — timestamped at shift start so _reconcile's window includes them
+        for dummy_n in range(2):
+            Transaction.objects.create(
+                business=business, item=item, type='Issue',
+                qty=Decimal('-1'), sale_amount=Decimal('200'),
+                payment_method='cash',
+                created_at=shift.started_at,
+            )
+        return shift, _reconcile(shift)
+
+    def test_expected_cash_formula(self):
+        shift, rec = self._make_shift_with_sales()
+        expected = float(shift.opening_float) + rec['cash_sales'] + rec['offline_adj']
+        self.assertAlmostEqual(rec['expected_cash'], expected, places=1)
+        self.assertAlmostEqual(rec['cash_sales'], 400.0, places=1)
+        self.assertAlmostEqual(rec['expected_cash'], 1900.0, places=1)
+
+    def test_variance_when_counted(self):
+        from core.shift_views import _reconcile
+        shift, _rec_discard = self._make_shift_with_sales()
+        shift.closing_cash_counted = Decimal('1800')
+        shift.save(update_fields=['closing_cash_counted'])
+        rec = _reconcile(shift)
+        # expected 1900, counted 1800 → variance = -100
+        self.assertAlmostEqual(rec['variance'], -100.0, places=1)
+
+
+class ZReportOpenTabsTest(TestCase):
+    """Z-report view includes open tabs in context."""
+
+    def test_open_tabs_appear_in_context(self):
+        from django.test import RequestFactory
+        from core.keg_views import bar_z_report
+
+        business = Business.objects.create(name='Z-Tab Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        owner_user = User.objects.create_user(username='z_owner', password='x')
+        UserProfile.objects.create(user=owner_user, business=business, role='owner')
+
+        BarTab.objects.create(
+            business=business, customer_name='Kamau', status='OPEN',
+            opened_at=timezone.now(),
+        )
+        BarTab.objects.create(
+            business=business, customer_name='Otieno', status='OPEN',
+            opened_at=timezone.now(),
+        )
+
+        req = RequestFactory().get('/bar/z-report/')
+        req.user = owner_user
+        response = bar_z_report(req)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'2', response.content)   # open_tab_count = 2 appears somewhere

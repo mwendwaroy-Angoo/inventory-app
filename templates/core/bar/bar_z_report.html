@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+{% block title %}Z-Report — {{ report_date|date:"d M Y" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .zr-card {
+    background: var(--onyx-card);
+    border: 1px solid rgba(201,168,76,0.15);
+    border-radius: 10px;
+    margin-bottom: 1.2rem;
+  }
+  .zr-header {
+    padding: .65rem 1rem;
+    border-bottom: 1px solid rgba(201,168,76,0.12);
+    color: var(--gold);
+    font-family: 'Playfair Display', serif;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  .zr-body { padding: .75rem 1rem; }
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: .3rem 0;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    font-size: .88rem;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-label { color: #b0b0b0; }
+  .info-val   { color: var(--pearl); font-weight: 600; }
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: .75rem;
+    padding: .75rem 1rem;
+  }
+  .metric-box {
+    background: rgba(255,255,255,.04);
+    border-radius: 8px;
+    padding: .55rem .75rem;
+    text-align: center;
+  }
+  .metric-num { font-size: 1.25rem; font-weight: 700; color: var(--pearl); }
+  .metric-lbl { font-size: .72rem; color: #b0b0b0; text-transform: uppercase; letter-spacing: .04em; margin-top: .15rem; }
+  .variance-ok      { color: #7de08a; }
+  .variance-warn    { color: #ffb74d; }
+  .variance-danger  { color: var(--raspberry); }
+  .badge-open  { background: rgba(201,168,76,.15); color: var(--gold-light); font-size: .72rem; padding: 2px 7px; border-radius: 4px; }
+  .shift-table { width: 100%; border-collapse: collapse; font-size: .83rem; }
+  .shift-table th { color: #b0b0b0; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; padding: .45rem .6rem; text-align: right; border-bottom: 1px solid rgba(201,168,76,.12); }
+  .shift-table th:first-child { text-align: left; }
+  .shift-table td { padding: .4rem .6rem; text-align: right; color: var(--pearl); vertical-align: middle; border-bottom: 1px solid rgba(255,255,255,.04); }
+  .shift-table td:first-child { text-align: left; }
+  .page-nav { display: flex; gap: .6rem; align-items: center; }
+  .nav-btn {
+    background: rgba(201,168,76,.1);
+    border: 1px solid rgba(201,168,76,.3);
+    color: var(--gold);
+    padding: .3rem .75rem;
+    border-radius: 6px;
+    text-decoration: none;
+    font-size: .82rem;
+  }
+  .nav-btn:hover { background: rgba(201,168,76,.2); color: var(--gold-light); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+  <!-- Header -->
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+      <h4 style="color:var(--gold);font-family:'Playfair Display',serif;margin-bottom:.1rem;">
+        Z-Report
+      </h4>
+      <small style="color:#b0b0b0;">{{ report_date|date:"l, d F Y" }}</small>
+    </div>
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+      <!-- Date navigation -->
+      <div class="page-nav">
+        <a href="?date={{ yesterday|date:'Y-m-d' }}" class="nav-btn">&#8592; Prev</a>
+        {% if report_date != today %}
+        <a href="?date={{ tomorrow|date:'Y-m-d' }}" class="nav-btn">Next &#8594;</a>
+        {% endif %}
+        {% if report_date != today %}
+        <a href="?" class="nav-btn">Today</a>
+        {% endif %}
+      </div>
+      {% if is_owner %}
+      <button class="btn btn-sm btn-gold" onclick="shareReport()">&#128241; Share SMS</button>
+      {% endif %}
+      <a href="{% url 'keg_reconciliation' %}" class="btn btn-sm btn-outline-secondary">&#8592; Reconciliation</a>
+    </div>
+  </div>
+
+  {% if counted_shifts == 0 %}
+  <div class="zr-card">
+    <div class="zr-body text-center" style="color:#b0b0b0;padding:2rem;">
+      Hakuna shift za bar kwa {{ report_date|date:"d M Y" }}.
+    </div>
+  </div>
+  {% else %}
+
+  <!-- Day summary metrics -->
+  <div class="zr-card">
+    <div class="zr-header">&#128202; Day Summary — {{ counted_shifts }} shift{{ counted_shifts|pluralize }}</div>
+    <div class="metric-grid">
+      <div class="metric-box">
+        <div class="metric-num">{{ day_total|floatformat:0 }}</div>
+        <div class="metric-lbl">Total Sales (KES)</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-num">{{ day_cash|floatformat:0 }}</div>
+        <div class="metric-lbl">&#128181; Cash</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-num">{{ day_mpesa|floatformat:0 }}</div>
+        <div class="metric-lbl">&#128242; M-Pesa</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-num">{{ day_credit|floatformat:0 }}</div>
+        <div class="metric-lbl">&#128203; Credit</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-num" style="{% if open_tab_count > 0 %}color:#ffb74d{% endif %}">
+          {{ open_tab_kes|floatformat:0 }}
+        </div>
+        <div class="metric-lbl">&#128466; Open Tabs KES ({{ open_tab_count }})</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-num" style="{% if day_keg_variance_kes > 500 %}color:var(--raspberry){% elif day_keg_variance_kes > 200 %}color:#ffb74d{% else %}color:#7de08a{% endif %}">
+          {{ day_keg_variance_kes|floatformat:0 }}
+        </div>
+        <div class="metric-lbl">&#128167; Keg Loss (KES)</div>
+      </div>
+    </div>
+
+    <!-- Drawer summary -->
+    <div class="zr-body" style="border-top:1px solid rgba(201,168,76,.1);">
+      <div class="info-row">
+        <span class="info-label">Day opening float</span>
+        <span class="info-val">KES {{ day_opening_float|floatformat:0 }}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Cash sales</span>
+        <span class="info-val">KES {{ day_cash|floatformat:0 }}</span>
+      </div>
+      {% if day_petty_cash > 0 %}
+      <div class="info-row">
+        <span class="info-label">Petty cash out</span>
+        <span class="info-val" style="color:#ffb74d;">&#8722; KES {{ day_petty_cash|floatformat:0 }}</span>
+      </div>
+      {% endif %}
+      <div class="info-row" style="border-top:1px solid rgba(201,168,76,.15);margin-top:.3rem;padding-top:.45rem;">
+        <span class="info-label">Expected drawer</span>
+        <span class="info-val">KES {{ day_expected_cash|floatformat:0 }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-shift breakdown -->
+  {% if shift_rows|length > 0 %}
+  <div class="zr-card">
+    <div class="zr-header">&#128197; Per-Shift Breakdown</div>
+    <div style="overflow-x:auto;">
+    <table class="shift-table">
+      <thead>
+        <tr>
+          <th>Staff</th>
+          <th>Duration</th>
+          <th>Float</th>
+          <th>Cash</th>
+          <th>M-Pesa</th>
+          <th>Credit</th>
+          <th>Total</th>
+          <th>Petty Cash</th>
+          <th>Expected Drawer</th>
+          <th>Counted</th>
+          <th>Variance</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in shift_rows %}
+        <tr>
+          <td>{{ row.shift.staff.get_full_name|default:row.shift.staff.username }}</td>
+          <td style="color:#b0b0b0;">{{ row.elapsed }}</td>
+          <td>{{ row.opening_float|floatformat:0 }}</td>
+          <td>{{ row.cash_sales|floatformat:0 }}</td>
+          <td>{{ row.mpesa_sales|floatformat:0 }}</td>
+          <td style="color:#b0b0b0;">{{ row.credit_sales|floatformat:0 }}</td>
+          <td style="color:var(--gold);font-weight:600;">{{ row.total_sales|floatformat:0 }}</td>
+          <td style="color:#ffb74d;">{% if row.petty_cash > 0 %}{{ row.petty_cash|floatformat:0 }}{% else %}—{% endif %}</td>
+          <td>{{ row.expected_cash|floatformat:0 }}</td>
+          <td>
+            {% if row.closing_counted is not None %}
+              {{ row.closing_counted|floatformat:0 }}
+            {% else %}
+              <span style="color:#555;">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.variance is not None %}
+              {% if row.variance > 0 %}
+                <span class="variance-ok">+{{ row.variance|floatformat:0 }}</span>
+              {% elif row.variance < 0 %}
+                <span class="variance-danger">{{ row.variance|floatformat:0 }}</span>
+              {% else %}
+                <span class="variance-ok">0</span>
+              {% endif %}
+            {% else %}
+              <span style="color:#555;">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.status == 'OPEN' %}
+              <span class="badge-open">Open</span>
+            {% elif row.status == 'CLOSED' %}
+              <span style="color:#ffb74d;font-size:.75rem;">Closed</span>
+            {% else %}
+              <span style="color:#7de08a;font-size:.75rem;">Confirmed</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Open tabs still outstanding -->
+  {% if open_tab_count > 0 %}
+  <div class="zr-card">
+    <div class="zr-header" style="color:#ffb74d;">
+      &#128466; Open Tabs — {{ open_tab_count }} tab{{ open_tab_count|pluralize }}, KES {{ open_tab_kes|floatformat:0 }} outstanding
+    </div>
+    <div class="zr-body" style="font-size:.83rem;color:#b0b0b0;">
+      Cash still on the floor. Settle or convert to Deni before closing.
+      <a href="{% url 'bar_board' %}" style="color:var(--gold);margin-left:.5rem;">Go to Bar Board &#8594;</a>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Keg variance callout -->
+  {% if day_keg_variance_kes > 200 %}
+  <div class="zr-card" style="border-color:rgba(192,57,90,.3);">
+    <div class="zr-header" style="color:var(--raspberry);">
+      &#128167; Keg Variance — KES {{ day_keg_variance_kes|floatformat:0 }} unaccounted
+    </div>
+    <div class="zr-body" style="font-size:.83rem;color:#b0b0b0;">
+      Weight-implied pour differs from recorded sales. Check barrel details for shift attribution.
+      <a href="{% url 'keg_reconciliation' %}" style="color:var(--gold);margin-left:.5rem;">Reconciliation &#8594;</a>
+    </div>
+  </div>
+  {% endif %}
+
+  {% endif %}{# end counted_shifts > 0 #}
+
+</div>
+
+<!-- Share SMS modal feedback -->
+<div id="share-toast" style="display:none;position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;background:#2a2a2a;border:1px solid rgba(201,168,76,.35);border-radius:10px;padding:.65rem 1.1rem;color:var(--pearl);font-size:.85rem;min-width:200px;"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  var CSRF = '{{ csrf_token }}';
+  var REPORT_DATE = '{{ report_date|date:"Y-m-d" }}';
+
+  function showToast(msg, isErr) {
+    var el = document.getElementById('share-toast');
+    el.textContent = msg;
+    el.style.color = isErr ? '#c0395a' : '#7de08a';
+    el.style.display = 'block';
+    setTimeout(function(){ el.style.display = 'none'; }, 3500);
+  }
+
+  window.shareReport = function() {
+    var btn = document.querySelector('[onclick="shareReport()"]');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Inatuma...'; }
+    fetch('{% url "bar_z_report_share" %}', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({csrfmiddlewaretoken: CSRF, date: REPORT_DATE}),
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (btn) { btn.disabled = false; btn.textContent = '📱 Share SMS'; }
+      showToast(d.ok ? '✅ SMS imetumwa kwa mmiliki.' : '❌ ' + (d.error || 'Imeshindwa.'), !d.ok);
+    })
+    .catch(function(){
+      if (btn) { btn.disabled = false; btn.textContent = '📱 Share SMS'; }
+      showToast('❌ Hitilafu ya mtandao.', true);
+    });
+  };
+})();
+</script>
+{% endblock %}

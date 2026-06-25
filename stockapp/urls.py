@@ -67,6 +67,8 @@ from core.keg_views import (
     keg_target_recommendation,
     record_breakage,
     bar_shrinkage_report,
+    bar_z_report,
+    bar_z_report_share,
 )
 from core.shift_views import (
     open_shift,
@@ -225,6 +227,8 @@ urlpatterns = [
     path("bar/", bar_board, name="bar_board"),
     path("bar/daily-report/", bar_daily_report, name="bar_daily_report"),
     path("bar/shrinkage/", bar_shrinkage_report, name="bar_shrinkage_report"),
+    path("bar/z-report/", bar_z_report, name="bar_z_report"),
+    path("bar/z-report/share/", bar_z_report_share, name="bar_z_report_share"),
     path("bar/reconciliation/", keg_reconciliation, name="keg_reconciliation"),
     path("bar/reconciliation/<int:barrel_id>/", keg_barrel_detail, name="keg_barrel_detail"),
     path("stock/bar/item/<int:item_id>/target-recommendation/", keg_target_recommendation, name="keg_target_recommendation"),

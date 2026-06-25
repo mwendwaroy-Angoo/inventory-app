@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from . import keg_metrics
-from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Receipt, Shift, Transaction
+from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, PettyCash, Receipt, Shift, Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -1545,3 +1545,206 @@ def bar_shrinkage_report(request):
         'prev_from':   prev_from,
         'prev_to':     prev_to,
     })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint F4 — End-of-night Z-report
+# ══════════════════════════════════════════════════════════════════════════════
+
+@login_required
+def bar_z_report(request):
+    """End-of-night Z-report. Owner sees all bar shifts for the day; staff sees own shift only."""
+    from .shift_views import _reconcile
+
+    up = _get_up(request)
+    if not up:
+        return redirect('login')
+
+    business = up.business
+    is_owner = getattr(up, 'is_owner', False)
+
+    # Date filter — default today
+    date_str = request.GET.get('date', '')
+    try:
+        report_date = date_type.fromisoformat(date_str)
+    except ValueError:
+        report_date = timezone.localdate()
+
+    day_start = timezone.make_aware(timezone.datetime.combine(report_date, timezone.datetime.min.time()))
+    day_end   = timezone.make_aware(timezone.datetime.combine(report_date, timezone.datetime.max.time()))
+
+    # Fetch bar shifts for the day (exclude kitchen shifts)
+    qs = Shift.objects.filter(
+        business=business,
+        started_at__gte=day_start,
+        started_at__lte=day_end,
+    ).select_related('staff', 'store').order_by('started_at')
+
+    if not is_owner:
+        qs = qs.filter(staff=request.user)
+
+    # Build per-shift rows, excluding kitchen-staff shifts from the bar report
+    shift_rows = []
+    day_cash = day_mpesa = day_credit = day_total = 0.0
+    day_opening_float = 0.0
+    day_expected_cash = 0.0
+    day_petty_cash = 0.0
+    counted_shifts = 0
+
+    for shift in qs:
+        try:
+            is_kitchen_shift = shift.staff.userprofile.role == 'kitchen'
+        except Exception:
+            is_kitchen_shift = False
+        if is_kitchen_shift:
+            continue
+
+        rec = _reconcile(shift)
+
+        # Petty cash approved on this date attributed to this shift window
+        shift_end = shift.ended_at or timezone.now()
+        petty_qs = PettyCash.objects.filter(
+            business=business,
+            status='approved',
+            created_at__gte=shift.started_at,
+            created_at__lte=shift_end,
+        )
+        petty_total = float(petty_qs.aggregate(t=Sum('amount'))['t'] or 0)
+
+        # Adjusted expected cash includes petty cash out
+        adj_expected = round(rec['expected_cash'] - petty_total, 2)
+        adj_variance = (round(float(shift.closing_cash_counted) - adj_expected, 2)
+                        if shift.closing_cash_counted is not None else None)
+
+        shift_rows.append({
+            'shift':          shift,
+            'cash_sales':     rec['cash_sales'],
+            'mpesa_sales':    rec['mpesa_sales'],
+            'credit_sales':   rec['credit_sales'],
+            'total_sales':    rec['total_sales'],
+            'opening_float':  float(shift.opening_float),
+            'offline_adj':    rec['offline_adj'],
+            'petty_cash':     petty_total,
+            'expected_cash':  adj_expected,
+            'closing_counted': float(shift.closing_cash_counted) if shift.closing_cash_counted is not None else None,
+            'variance':       adj_variance,
+            'elapsed':        rec['elapsed'],
+            'status':         shift.status,
+        })
+
+        day_cash         += rec['cash_sales']
+        day_mpesa        += rec['mpesa_sales']
+        day_credit       += rec['credit_sales']
+        day_total        += rec['total_sales']
+        day_opening_float += float(shift.opening_float)
+        day_expected_cash += adj_expected
+        day_petty_cash   += petty_total
+        counted_shifts   += 1
+
+    # Open tabs (cash still on the floor)
+    open_tabs = BarTab.objects.filter(
+        business=business, status='OPEN',
+        opened_at__gte=day_start,
+    ).prefetch_related('entries')
+    open_tab_count = open_tabs.count()
+    open_tab_kes = sum(
+        float(e.amount) for tab in open_tabs for e in tab.entries.filter(is_paid=False)
+    )
+
+    # Keg variance KES for the day — sum from all active/depleted barrels
+    barrels = KegBarrel.objects.filter(
+        business=business,
+    ).prefetch_related('weight_readings').select_related('item')
+    day_keg_variance_kes = 0.0
+    for b in barrels:
+        bv = keg_metrics.barrel_variance(b)
+        if bv.wastage_kes is not None:
+            day_keg_variance_kes += bv.wastage_kes
+
+    # Yesterday for navigation
+    yesterday = report_date - timedelta(days=1)
+    tomorrow  = report_date + timedelta(days=1)
+
+    return render(request, 'core/bar/bar_z_report.html', {
+        'report_date':         report_date,
+        'yesterday':           yesterday,
+        'tomorrow':            tomorrow,
+        'today':               timezone.localdate(),
+        'shift_rows':          shift_rows,
+        'is_owner':            is_owner,
+        'day_cash':            round(day_cash, 2),
+        'day_mpesa':           round(day_mpesa, 2),
+        'day_credit':          round(day_credit, 2),
+        'day_total':           round(day_total, 2),
+        'day_opening_float':   round(day_opening_float, 2),
+        'day_expected_cash':   round(day_expected_cash, 2),
+        'day_petty_cash':      round(day_petty_cash, 2),
+        'open_tab_count':      open_tab_count,
+        'open_tab_kes':        round(open_tab_kes, 2),
+        'day_keg_variance_kes': round(day_keg_variance_kes, 2),
+        'counted_shifts':      counted_shifts,
+        'business':            business,
+    })
+
+
+@login_required
+@require_POST
+def bar_z_report_share(request):
+    """Send the day's Z-report summary SMS to the owner's phone."""
+    from .notifications import normalize_ke_phone, send_sms_notification
+    from .shift_views import _reconcile
+    from accounts.models import UserProfile
+
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner', False):
+        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+
+    business = up.business
+
+    date_str = request.POST.get('date', '')
+    try:
+        report_date = date_type.fromisoformat(date_str)
+    except ValueError:
+        report_date = timezone.localdate()
+
+    day_start = timezone.make_aware(timezone.datetime.combine(report_date, timezone.datetime.min.time()))
+    day_end   = timezone.make_aware(timezone.datetime.combine(report_date, timezone.datetime.max.time()))
+
+    shifts = Shift.objects.filter(
+        business=business, started_at__gte=day_start, started_at__lte=day_end,
+    ).select_related('staff')
+
+    total_sales = total_cash = total_mpesa = 0.0
+    for shift in shifts:
+        try:
+            if shift.staff.userprofile.role == 'kitchen':
+                continue
+        except Exception:
+            pass
+        rec = _reconcile(shift)
+        total_sales += rec['total_sales']
+        total_cash  += rec['cash_sales']
+        total_mpesa += rec['mpesa_sales']
+
+    open_tabs = BarTab.objects.filter(
+        business=business, status='OPEN', opened_at__gte=day_start,
+    ).count()
+
+    msg = (
+        f"Z-Report {report_date} — {business.name}\n"
+        f"Jumla: KES {total_sales:,.0f} "
+        f"(Cash {total_cash:,.0f} | M-Pesa {total_mpesa:,.0f})\n"
+        f"Tabs bado wazi: {open_tabs}\n"
+        f"Tuma na Duka Mwecheche"
+    )
+
+    owner_up = UserProfile.objects.filter(business=business, role='owner').select_related('user').first()
+    phone = normalize_ke_phone(getattr(owner_up, 'phone', '') or '') if owner_up else None
+    if not phone:
+        return JsonResponse({'ok': False, 'error': 'Hakuna nambari ya simu ya mmiliki.'})
+
+    try:
+        send_sms_notification(msg, phone)
+        return JsonResponse({'ok': True})
+    except Exception as exc:
+        return JsonResponse({'ok': False, 'error': str(exc)})
