@@ -707,15 +707,13 @@
       <div class="modal-body" style="padding:.85rem;">
         <div id="kb-settle-amount" style="font-size:1.05rem;color:#c9a84c;font-weight:700;margin-bottom:.65rem;"></div>
         <input type="tel" id="kb-settle-phone" class="form-control form-control-sm mb-2"
-               placeholder="Simu ya mteja{% if has_stk %} (lazima kwa STK){% else %} (hiari — kwa SMS risiti){% endif %}">
+               placeholder="Simu ya mteja (lazima kwa STK, hiari kwa SMS risiti)">
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
           <button class="btn btn-gold flex-fill" onclick="settleKitchenTab('cash')">💵 Cash</button>
           <button class="btn btn-sm flex-fill" style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
                   onclick="settleKitchenTab('mpesa')">📱 M-Pesa</button>
-          {% if has_stk %}
           <button id="kb-settle-stk-btn" class="btn btn-sm flex-fill" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.35);color:#c9a84c;"
                   onclick="settleKitchenTabStk()">📲 STK Push</button>
-          {% endif %}
         </div>
         <div id="kb-settle-stk-result" style="display:none;margin-top:.5rem;padding:.4rem .55rem;border-radius:6px;font-size:.78rem;"></div>
         <div id="kb-settle-receipt-banner" style="display:none;margin-top:.65rem;padding:.45rem .6rem;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:8px;text-align:center;">
