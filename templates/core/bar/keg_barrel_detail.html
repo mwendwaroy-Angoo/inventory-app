@@ -167,6 +167,25 @@
             <span class="info-val" style="color:#ffb74d; font-weight:600;">KES {{ total_wastage_kes|floatformat:0 }}</span>
         </div>
         {% endif %}
+        {% if baseline.is_learned and baseline_vs is not None %}
+        <div class="info-row">
+            <span class="info-label">vs Learned baseline</span>
+            <span class="info-val">
+                {% if baseline_vs > 5 %}
+                    <span style="color:#c0395a; font-weight:600;">&#9888; {{ total_wastage_pct|floatformat:1 }}% &#8212; +{{ baseline_vs }}% above {{ baseline.baseline_pct }}% avg ({{ baseline.sample }} barrels)</span>
+                {% elif baseline_vs > 0 %}
+                    <span style="color:#ffb74d;">{{ total_wastage_pct|floatformat:1 }}% &#8212; slightly above {{ baseline.baseline_pct }}% avg ({{ baseline.sample }} barrels)</span>
+                {% else %}
+                    <span style="color:#7de08a;">&#10003; {{ total_wastage_pct|floatformat:1 }}% &#8212; at or below {{ baseline.baseline_pct }}% avg ({{ baseline.sample }} barrels)</span>
+                {% endif %}
+            </span>
+        </div>
+        {% elif not baseline.is_learned %}
+        <div class="info-row">
+            <span class="info-label">Baseline</span>
+            <span class="info-val" style="color:#b0b0b0; font-size:0.85rem;">Still learning &#8212; {{ baseline.sample }}/3 depleted barrels recorded</span>
+        </div>
+        {% endif %}
         <div class="info-row">
             <span class="info-label">Servings sold</span>
             <span class="info-val">

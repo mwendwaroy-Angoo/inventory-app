@@ -1705,6 +1705,20 @@ class Shift(models.Model):
         return f"{self.staff.get_full_name() or self.staff.username} — {self.started_at.strftime('%d %b %Y %H:%M')} ({self.status})"
 
 
+def _refresh_keg_baseline(barrel):
+    """Recompute and cache the business loss baseline after a barrel becomes DEPLETED."""
+    try:
+        from . import keg_metrics
+        from accounts.models import Business as _Business
+        data = keg_metrics.business_keg_loss_baseline(barrel.business)
+        _Business.objects.filter(pk=barrel.business_id).update(
+            keg_loss_baseline_pct=data['baseline_pct'],
+            keg_loss_baseline_sample=data['sample'],
+        )
+    except Exception:
+        pass
+
+
 class KegBarrel(models.Model):
     STATUS_CHOICES = [
         ('SEALED',   _('Sealed — received, not tapped')),
@@ -1812,6 +1826,8 @@ class KegBarrel(models.Model):
                 self.note = (self.note + ' | ' if self.note else '') + reason
                 update_fields.append('note')
             self.save(update_fields=update_fields)
+            if self.status == 'DEPLETED':
+                _refresh_keg_baseline(self)
 
     def record_sale(self, preset, qty, payment_method, recorded_by, tab=None, server_name=''):
         """
@@ -1857,14 +1873,18 @@ class KegBarrel(models.Model):
             self.cups_dispensed = (self.cups_dispensed or 0) + int(qty)
             update_fields = ['revenue_collected', 'volume_dispensed_ml', 'cups_dispensed']
 
+        auto_depleted = False
         if (self.remaining_envelope() <= 0
                 and self.latest_weight() <= float(self.tare_weight_kg) + 0.5
                 and self.status == 'TAPPED'):
             self.status = 'DEPLETED'
             self.closed_at = timezone.now()
             update_fields += ['status', 'closed_at']
+            auto_depleted = True
 
         self.save(update_fields=update_fields)
+        if auto_depleted:
+            _refresh_keg_baseline(self)
 
         if tab is not None:
             BarTabEntry.objects.create(

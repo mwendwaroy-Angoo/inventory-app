@@ -692,3 +692,144 @@ class AlertsMutedWhenDisabledTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(notifs_before, notifs_after,
                          "keg_alerts_enabled=False must suppress Notifications entirely")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint F3 — Learned loss baseline
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_depleted_barrel(business, store, item, cost=12000, target=20000,
+                          book_l=30.0, net_vol_l=50.0, name_suffix=''):
+    """Create a DEPLETED barrel with a weight reading so business_keg_loss_baseline counts it."""
+    gross_kg = net_vol_l + 10.0  # tare = 10 kg
+    barrel = KegBarrel.objects.create(
+        business=business, store=store, item=item,
+        cost_price=Decimal(str(cost)),
+        target_revenue=Decimal(str(target)),
+        gross_weight_kg=Decimal(str(gross_kg)),
+        tare_weight_kg=Decimal('10'),
+        status='DEPLETED',
+        revenue_collected=Decimal(str(target)),   # fully sold → counts toward baseline
+        volume_dispensed_ml=Decimal(str(book_l * 1000)),
+    )
+    # Must have at least one weight reading for baseline to count it
+    KegWeightReading.objects.create(
+        barrel=barrel, weight_kg=Decimal('10.1'),
+        reading_type='SHIFT_CLOSE',
+        recorded_by=User.objects.filter(username__startswith='baseln').first()
+                   or User.objects.create_user(username=f'baseln{barrel.id}', password='x'),
+    )
+    return barrel
+
+
+class BaselineNotLearnedBelowMinSampleTest(TestCase):
+    """Below 3 depleted barrels, is_learned=False and baseline_pct=default."""
+
+    def test_returns_default_when_too_few_samples(self):
+        from core import keg_metrics
+        business = Business.objects.create(name='Baseline Few Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='BLF-1',
+            description='Test Lager', unit='ml', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        _make_depleted_barrel(business, store, item)   # 1 barrel — below min_sample=3
+        result = keg_metrics.business_keg_loss_baseline(business, min_sample=3, default_pct=10.0)
+        self.assertFalse(result['is_learned'])
+        self.assertEqual(result['baseline_pct'], 10.0)
+        self.assertEqual(result['sample'], 1)
+
+
+class BaselineLearnedAtMinSampleTest(TestCase):
+    """At 3+ depleted barrels with weight readings, is_learned=True and pct is computed."""
+
+    def test_baseline_pct_is_mean_of_loss_pcts(self):
+        from core import keg_metrics
+        business = Business.objects.create(name='Baseline Full Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='BLF-2',
+            description='Test Lager', unit='ml', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        # Three barrels: 50 L net, book 45 L → 10% loss each
+        for dummy_n in range(3):
+            _make_depleted_barrel(business, store, item, net_vol_l=50.0, book_l=45.0)
+        result = keg_metrics.business_keg_loss_baseline(business, min_sample=3)
+        self.assertTrue(result['is_learned'])
+        self.assertEqual(result['sample'], 3)
+        self.assertAlmostEqual(result['baseline_pct'], 10.0, places=0)
+
+
+class BaselineCachedOnDepletedTest(TestCase):
+    """When a barrel is closed (DEPLETED), Business.keg_loss_baseline_pct is updated."""
+
+    def test_close_depleted_updates_business_cache(self):
+        business = Business.objects.create(name='Baseline Cache Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='BLC-1',
+            description='Test Lager', unit='ml', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        # Pre-seed 2 depleted barrels with weight readings so sample=2 (not learned yet)
+        for dummy_n in range(2):
+            _make_depleted_barrel(business, store, item, net_vol_l=50.0, book_l=45.0)
+
+        # Create a TAPPED barrel and then close it → triggers _refresh_keg_baseline
+        tapped = KegBarrel.objects.create(
+            business=business, store=store, item=item,
+            cost_price=Decimal('12000'),
+            target_revenue=Decimal('20000'),
+            gross_weight_kg=Decimal('60'), tare_weight_kg=Decimal('10'),
+            status='TAPPED',
+            revenue_collected=Decimal('20000'),
+            volume_dispensed_ml=Decimal('45000'),
+        )
+        KegWeightReading.objects.create(
+            barrel=tapped, weight_kg=Decimal('10.1'),
+            reading_type='SHIFT_CLOSE',
+            recorded_by=User.objects.create_user(username='blc_staff', password='x'),
+        )
+        tapped.close()   # no reason → DEPLETED → triggers _refresh_keg_baseline
+
+        business.refresh_from_db()
+        self.assertIsNotNone(business.keg_loss_baseline_pct,
+                             "close() must persist baseline_pct to Business")
+        self.assertEqual(business.keg_loss_baseline_sample, 3)
+
+
+class BaselineExcludesUnderTargetBarrels(TestCase):
+    """Barrels that didn't reach 95% of target revenue are excluded from baseline."""
+
+    def test_low_revenue_barrel_not_counted(self):
+        from core import keg_metrics
+        business = Business.objects.create(name='Baseline Excl Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='BLE-1',
+            description='Test Lager', unit='ml', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        user = User.objects.create_user(username='ble_staff', password='x')
+        # Barrel 1: reached target (counts)
+        b1 = _make_depleted_barrel(business, store, item, net_vol_l=50.0, book_l=45.0)
+        # Barrel 2: only 50% of target revenue → must be excluded
+        b2 = KegBarrel.objects.create(
+            business=business, store=store, item=item,
+            cost_price=Decimal('12000'),
+            target_revenue=Decimal('20000'),
+            gross_weight_kg=Decimal('60'), tare_weight_kg=Decimal('10'),
+            status='DEPLETED',
+            revenue_collected=Decimal('10000'),   # only 50% → excluded
+            volume_dispensed_ml=Decimal('45000'),
+        )
+        KegWeightReading.objects.create(
+            barrel=b2, weight_kg=Decimal('10.1'),
+            reading_type='SHIFT_CLOSE', recorded_by=user,
+        )
+        result = keg_metrics.business_keg_loss_baseline(business, min_sample=3)
+        self.assertFalse(result['is_learned'],
+                         "Only 1 qualifying barrel — below min_sample, so not learned")
+        self.assertEqual(result['sample'], 1)

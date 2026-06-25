@@ -129,6 +129,14 @@ class Business(models.Model):
         max_digits=5, decimal_places=1, default=Decimal('5.0'),
         help_text='Minimum litres dispensed before a SPOT variance alert fires (prevents false alarms on tiny volumes).'
     )
+    keg_loss_baseline_pct = models.DecimalField(
+        max_digits=5, decimal_places=1, null=True, blank=True,
+        help_text='Cached average loss % learned from fully-depleted barrels with weight readings.'
+    )
+    keg_loss_baseline_sample = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text='Number of depleted barrels in the current baseline sample.'
+    )
 
     # ── Kitchen / Grill Side Venture ─────────────────────────────────────────
     has_kitchen = models.BooleanField(

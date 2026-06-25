@@ -1276,8 +1276,15 @@ def keg_reconciliation(request):
     keg_item_ids = KegBarrel.objects.filter(business=business).values_list('item_id', flat=True).distinct()
     keg_items = Item.objects.filter(id__in=keg_item_ids).order_by('description')
 
+    baseline = keg_metrics.business_keg_loss_baseline(business)
+    baseline_pct = baseline['baseline_pct']
+    for row in barrels:
+        wp = row['wastage_pct']
+        row['vs_baseline'] = round(wp - baseline_pct, 1) if wp is not None else None
+
     return render(request, 'core/bar/keg_reconciliation.html', {
         'barrels':         barrels,
+        'baseline':        baseline,
         'date_from':       date_from,
         'date_to':         date_to,
         'status_filter':   status_filter,
@@ -1416,8 +1423,14 @@ def keg_barrel_detail(request, barrel_id):
     profit = revenue - cost
     margin = (profit / cost * 100) if cost else 0.0
 
+    baseline = keg_metrics.business_keg_loss_baseline(barrel.business)
+    baseline_vs = (round(float(total_wastage_pct) - baseline['baseline_pct'], 1)
+                   if total_wastage_pct is not None else None)
+
     return render(request, 'core/bar/keg_barrel_detail.html', {
         'barrel':                     barrel,
+        'baseline':                   baseline,
+        'baseline_vs':                baseline_vs,
         'net_vol_l':                  net_vol_l,
         'cost':                       cost,
         'revenue':                    revenue,

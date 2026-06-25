@@ -278,6 +278,16 @@
                 <td style="text-align:right;">
                     {% if row.wastage_pct is not None %}
                         <span style="color:#b0b0b0; font-size:0.82rem;">{{ row.wastage_pct|floatformat:1 }}%</span>
+                        {% if baseline.is_learned and row.vs_baseline is not None %}
+                          <br>
+                          {% if row.vs_baseline > 5 %}
+                            <span style="font-size:0.7rem; color:#c0395a;" title="Baseline {{ baseline.baseline_pct }}% ({{ baseline.sample }} barrels)">▲ +{{ row.vs_baseline }}% base</span>
+                          {% elif row.vs_baseline > 0 %}
+                            <span style="font-size:0.7rem; color:#ffb74d;" title="Baseline {{ baseline.baseline_pct }}% ({{ baseline.sample }} barrels)">▲ +{{ row.vs_baseline }}% base</span>
+                          {% else %}
+                            <span style="font-size:0.7rem; color:#7de08a;" title="Baseline {{ baseline.baseline_pct }}% ({{ baseline.sample }} barrels)">✓ base</span>
+                          {% endif %}
+                        {% endif %}
                     {% else %}
                         <span style="color:#555;">—</span>
                     {% endif %}
