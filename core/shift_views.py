@@ -281,8 +281,11 @@ def open_shift(request):
         except Exception:
             pass
 
-    # Return tapped barrels so the frontend can show the confirmation step
-    tapped = _tapped_barrels_for_business(up.business)
+    # Kitchen staff have no kegs — skip barrel confirm step entirely
+    if getattr(up, 'role', '') == 'kitchen':
+        tapped = []
+    else:
+        tapped = _tapped_barrels_for_business(up.business)
 
     return JsonResponse({
         'ok': True,

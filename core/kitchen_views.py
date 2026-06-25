@@ -217,6 +217,9 @@ def kitchen_board(request):
             business=business, status='OPEN', staff=request.user
         ).exists()
 
+    can_access_bar = is_owner or getattr(up, 'can_access_bar', False)
+    can_receive_stock = is_owner or getattr(up, 'can_receive_kitchen_stock', False)
+
     return render(request, 'core/kitchen/kitchen_board.html', {
         'is_owner': is_owner,
         'business': business,
@@ -225,11 +228,13 @@ def kitchen_board(request):
         'batch_items': json.dumps(batch_items),
         'mix_siblings_json': json.dumps(mix_siblings),
         'food_tabs': json.dumps(food_tabs_data),
-        'bar_tab_names': json.dumps(bar_tab_names),
+        'bar_tab_names': json.dumps(bar_tab_names if can_access_bar else []),
         'kitchen_revenue_today': kitchen_revenue_today,
         'food_tab_count': len(food_tabs_data),
         'has_stk': has_stk,
         'has_my_shift': has_my_shift,
+        'can_access_bar': can_access_bar,
+        'can_receive_stock': can_receive_stock,
     })
 
 
@@ -433,15 +438,18 @@ def _kitchen_checkout(request, up, business, is_owner):
     })
 
 
-# ── Receive kitchen stock (owner only) ────────────────────────────────────────
+# ── Receive kitchen stock (owner or permitted kitchen staff) ──────────────────
 
 @login_required
 @require_POST
 def kitchen_receive(request):
     """Receive kitchen stock — portion items (Receipt txn) or batch items (ProduceBunch)."""
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    can_receive = getattr(up, 'is_owner', False) or getattr(up, 'can_receive_kitchen_stock', False)
+    if not can_receive:
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya kupokea stok inahitajika'}, status=403)
 
     business = up.business
     kitchen_store = _ensure_kitchen_store(business)

@@ -884,6 +884,7 @@ def settle_tab(request, tab_id):
             user=request.user,
             customer_name=tab.customer_name,
             customer_phone=customer_phone,
+            source=tab.source or '',
         )
         receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
         receipt_id = rcpt.id

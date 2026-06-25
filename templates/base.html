@@ -471,6 +471,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>
                         {% if user.userprofile.can_access_bar and biz_profile.modules.keg %}<li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                     </ul>
 
                     {% elif user.userprofile.is_staff_member %}
@@ -650,6 +651,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>
                         {% if user.userprofile.can_access_bar and biz_profile.modules.keg %}<li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                     </ul>
 
                     {% elif user.userprofile.is_staff_member %}

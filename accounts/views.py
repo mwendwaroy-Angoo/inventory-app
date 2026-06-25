@@ -229,9 +229,11 @@ def staff_permissions(request, staff_id):
         staff_profile.can_access_kitchen = request.POST.get('can_access_kitchen') == 'on'
         staff_profile.can_access_bar = request.POST.get('can_access_bar') == 'on'
         staff_profile.kitchen_requires_shift = request.POST.get('kitchen_requires_shift') == 'on'
+        staff_profile.can_receive_kitchen_stock = request.POST.get('can_receive_kitchen_stock') == 'on'
         staff_profile.save(update_fields=[
             'can_input_cost_price', 'can_override_restrictions',
             'can_access_kitchen', 'can_access_bar', 'kitchen_requires_shift',
+            'can_receive_kitchen_stock',
         ])
         staff_name = staff_profile.user.get_full_name() or staff_profile.user.username
         messages.success(request, _(f'Permissions updated for {staff_name}.'))

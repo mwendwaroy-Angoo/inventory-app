@@ -207,7 +207,7 @@
       </div>
       <button class="btn btn-sm" style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);color:#ff9800;font-size:.8rem;"
               onclick="window.openPettyCashModal()">🪙 Counter Cash</button>
-      {% if is_owner %}
+      {% if can_receive_stock %}
       <a href="{% url 'kitchen_receive' %}" style="display:none;" id="kb-receive-btn-placeholder"></a>
       <button class="btn btn-sm" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#c9a84c;font-size:.8rem;"
               onclick="openReceiveModal()">+ Pata Stok</button>
@@ -619,7 +619,7 @@
           <div class="kb-pay-row">
             <button class="kb-pay-btn pm-credit" onclick="selectPM('credit')" style="border-color:#c0395a;color:#c0395a;">🤝 Deni</button>
             <button class="kb-pay-btn pm-food-tab" onclick="selectPM('food_tab')">🍽 Food Tab</button>
-            <button class="kb-pay-btn pm-bar-tab" onclick="selectPM('bar_tab')">🍺 Bar Tab</button>
+            {% if can_access_bar %}<button class="kb-pay-btn pm-bar-tab" onclick="selectPM('bar_tab')">🍺 Bar Tab</button>{% endif %}
           </div>
           <!-- STK Push phone input -->
           <div id="kb-stk-row" style="display:none; margin-top:0.5rem;">
@@ -700,8 +700,8 @@
   </div>
 </div>
 
-<!-- ── Receive stock modal (owner only) ── -->
-{% if is_owner %}
+<!-- ── Receive stock modal (owner or permitted kitchen staff) ── -->
+{% if can_receive_stock %}
 <div class="modal fade" id="kbReceiveModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
@@ -1151,9 +1151,9 @@
           var barTabs = (data.tabs || []).filter(function(t){ return t.source === 'bar'; });
           if (!barTabs.length) return;
           var t = barTabs[0];
+          var tabDetail = {% if can_access_bar %}' (KES ' + t.total.toLocaleString() + ', tangu ' + t.opened_at + ')'{% else %}' (tangu ' + t.opened_at + ')'{% endif %};
           hint.innerHTML =
-            '⚠️ <strong>' + t.customer_name + '</strong> ana Bar tab iliyo wazi' +
-            ' (KES ' + t.total.toLocaleString() + ', tangu ' + t.opened_at + ').<br>' +
+            '⚠️ <strong>' + t.customer_name + '</strong> ana Bar tab iliyo wazi' + tabDetail + '.<br>' +
             '<a href="#" style="color:#c9a84c;" onclick="kbAcceptMerge(' + t.id + ',\'' +
               t.customer_name.replace(/'/g,'') + '\'); return false;">' +
               '✓ Ongeza kwa Bar tab hiyo</a>' +
@@ -1716,7 +1716,7 @@
       .catch(function(){ showToast('❌ Hitilafu ya mtandao.'); });
   };
 
-  {% if is_owner %}
+  {% if can_receive_stock %}
   /* ── Receive stock modal ── */
   var _allItems = _portionItems.concat(_batchItems);
 

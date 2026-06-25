@@ -17,6 +17,11 @@ _SHIFT_EXEMPT_NAMES = {
     'active_shift_api', 'shift_history',
     # bar board (needed to open shift)
     'bar_board', 'bar_board_api',
+    # kitchen board (needed for kitchen staff to open their shift)
+    'kitchen_board',
+    # receipts and debt — always accessible so staff can handle customers
+    'receipts_list', 'public_receipt', 'send_receipt',
+    'debt_dashboard', 'customer_debt_detail', 'record_debt_payment',
     # auth / misc
     'health_check', 'offline', 'manifest_json', 'service_worker',
     'password_change', 'password_change_done', 'password_reset',
@@ -35,7 +40,9 @@ _SHIFT_EXEMPT_PREFIXES = (
     '/stock/bar/',    # board API
     '/mpesa/',        # M-Pesa STK push, callbacks, prompts — never block payment flows
     '/r/',            # public receipt pages (unauthenticated)
+    '/receipts/',     # receipt history — always accessible
     '/kitchen/',      # kitchen/grill board — independent of bar shift system
+    '/debt/',         # debt tracker — always accessible so staff can handle credit customers
     '/petty-cash/',   # petty cash recording — staff must be able to log during any shift state
     '/sw.js',
     '/manifest.json',
@@ -52,6 +59,9 @@ class ShiftEnforcementMiddleware:
 
     def __call__(self, request):
         if self._should_enforce(request):
+            role = getattr(request, '_shift_block_role', '')
+            if role == 'kitchen':
+                return redirect('kitchen_board')
             return redirect('bar_board')
         return self.get_response(request)
 
@@ -128,4 +138,6 @@ class ShiftEnforcementMiddleware:
                 request,
                 'Fungua shift yako kwanza ili uweze kufanya kazi.'
             )
+        # Store the role on the request so __call__ can pick the right redirect
+        request._shift_block_role = getattr(up, 'role', '')
         return True

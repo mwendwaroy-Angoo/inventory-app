@@ -286,6 +286,10 @@ class UserProfile(models.Model):
         default=False,
         help_text='Kitchen staff must open a shift before they can work. Off by default — kitchen staff normally bypass shift enforcement.'
     )
+    can_receive_kitchen_stock = models.BooleanField(
+        default=False,
+        help_text='Kitchen staff may receive stock (Pata Stok) on the kitchen board. Off by default — grant explicitly when owner trusts staff with stock intake.'
+    )
 
     # ── Session Control ────────────────────────────────────────────────
     current_session_key = models.CharField(

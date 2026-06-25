@@ -144,6 +144,32 @@
                 </div>
             </div>
         </div>
+
+        {% if biz_profile.modules.kitchen and staff_profile.role == 'kitchen' %}
+        <div class="card mb-3" style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:12px;">
+            <div class="card-body d-flex justify-content-between align-items-start">
+                <div style="flex:1; padding-right:1rem;">
+                    <div style="color:#f0ece4; font-weight:600; margin-bottom:.3rem;">
+                        📦 {% trans 'Receive Stock (Pata Stok)' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans 'When on, this kitchen staff member can receive stock deliveries from the kitchen board (+Pata Stok button). Off by default — grant when owner trusts staff with stock intake.' %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'Use when the owner cannot always be present to receive market deliveries.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_receive_kitchen_stock"
+                           id="can_receive_kitchen_stock"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_receive_kitchen_stock %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         {% endif %}
 
         {% if not biz_profile.modules.kitchen and not biz_profile.modules.keg %}
