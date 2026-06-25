@@ -21,7 +21,7 @@ _SHIFT_EXEMPT_NAMES = {
     'kitchen_board',
     # receipts and debt — always accessible so staff can handle customers
     'receipts_list', 'public_receipt', 'send_receipt',
-    'debt_dashboard', 'customer_debt_detail', 'record_debt_payment',
+    'debt_dashboard', 'customer_debt_profile', 'record_debt_payment',
     # auth / misc
     'health_check', 'offline', 'manifest_json', 'service_worker',
     'password_change', 'password_change_done', 'password_reset',

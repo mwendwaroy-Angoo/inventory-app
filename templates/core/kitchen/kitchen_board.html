@@ -198,7 +198,7 @@
       <span style="font-size:1.4rem;">🍗</span>
       <div>
         <div style="font-family:'Playfair Display',serif; font-size:1.1rem; color:#f0ece4;">Kitchen Board</div>
-        <div style="font-size:.75rem;" style="color:#b0b0b0;">{{ business.name }}</div>
+        <div style="font-size:.75rem; color:#b0b0b0;">{{ business.name }}</div>
       </div>
     </div>
     <div style="display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;">
@@ -219,11 +219,8 @@
   <!-- Shift panel — populated by loadShift() -->
   <div id="shift-panel" style="display:none;"></div>
 
-  <!-- No-shift banner (shown to staff without an open shift) -->
-  <div id="shift-no-shift-banner"{% if has_my_shift or is_owner %} style="display:none;"{% endif %}
-       style="background:rgba(192,57,90,0.1); border:1px solid rgba(192,57,90,0.3);
-              border-radius:10px; padding:0.65rem 1rem; margin-bottom:0.75rem;
-              font-size:0.82rem; color:#c0395a;">
+  <!-- No-shift banner — CSS class handles all visual styling; JS controls visibility -->
+  <div id="shift-no-shift-banner" style="display:none;">
     ⚠️ Hujafungua shift. Fungua shift kabla ya kuanza mauzo.
   </div>
 

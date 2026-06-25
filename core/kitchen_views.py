@@ -258,6 +258,10 @@ def _kitchen_checkout(request, up, business, is_owner):
     if payment_method == 'credit' and not credit_name:
         return JsonResponse({'ok': False, 'error': 'Jina la mteja linahitajika kwa deni'}, status=400)
 
+    can_access_bar = is_owner or getattr(up, 'can_access_bar', False)
+    if payment_method == 'bar_tab' and not can_access_bar:
+        return JsonResponse({'ok': False, 'error': 'Hauna ruhusa ya kufikia bar tab.'}, status=403)
+
     kitchen_store = _kitchen_store(business)
     if not kitchen_store:
         return JsonResponse({'ok': False, 'error': 'Kitchen not configured'}, status=400)
