@@ -176,6 +176,12 @@
             .navbar-collapse::-webkit-scrollbar { width: 3px; }
             .navbar-collapse::-webkit-scrollbar-track { background: transparent; }
             .navbar-collapse::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 2px; }
+            /* On mobile, dropdowns sit inside the scrollable navbar-collapse.
+               Remove max-height so items below "Feedback" aren't clipped. */
+            .navbar-collapse .dropdown-menu {
+                max-height: none;
+                overflow-y: visible;
+            }
         }
         .dropdown-item {
             color: var(--pearl);
