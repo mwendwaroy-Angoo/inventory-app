@@ -451,6 +451,51 @@
                 </div>
             </div>
 
+            <!-- Bottle / Spirits envelope — only for non-keg, non-produce bar items -->
+            {% if biz_profile.modules.keg %}
+            <div class="section-divider"><span>🍾 {% trans 'Spirits Accountability' %}</span></div>
+            <div class="mb-3">
+                <div class="form-check">
+                    <input type="checkbox" name="bottle_envelope" id="bottle_envelope"
+                           class="form-check-input"
+                           {% if form.instance.bottle_envelope %}checked{% endif %}>
+                    <label class="form-check-label" for="bottle_envelope">
+                        {% trans 'Track per-bottle shrinkage — staff must do a physical count at shift close to measure spirits loss in KES' %}
+                    </label>
+                </div>
+                <div style="color:#b0b0b0; font-size:0.78rem; margin-top:0.35rem; margin-left:1.75rem;">
+                    {% trans 'Enable for whiskies, gins, brandy and other bottled spirits. Sets up revenue-envelope accounting: tot size × price × missing bottles = KES lost.' %}
+                </div>
+                <div id="bottleEnvelopeFields" style="{% if not form.instance.bottle_envelope %}display:none;{% endif %} margin-top:0.65rem; padding:0.65rem 0.8rem; background:rgba(201,168,76,0.04); border:1px solid rgba(201,168,76,0.15); border-radius:8px;">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label" style="color:#b0b0b0; font-size:0.78rem;">{% trans 'Volume per bottle (ml)' %}</label>
+                            <input type="number" name="volume_ml" id="volume_ml_bottle"
+                                   value="{{ form.instance.volume_ml|default:'' }}"
+                                   min="1" step="1" placeholder="e.g. 750"
+                                   class="form-control form-control-sm" style="background:#1a1a1a;color:var(--pearl);border-color:#444;">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" style="color:#b0b0b0; font-size:0.78rem;">{% trans 'Tot size (ml)' %}</label>
+                            <input type="number" name="tot_ml" id="tot_ml"
+                                   value="{{ form.instance.tot_ml|default:'' }}"
+                                   min="1" step="0.5" placeholder="e.g. 25"
+                                   class="form-control form-control-sm" style="background:#1a1a1a;color:var(--pearl);border-color:#444;"
+                                   oninput="calcTots()">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" style="color:#b0b0b0; font-size:0.78rem;">{% trans 'Tots per bottle' %}</label>
+                            <input type="number" name="tots_per_unit" id="tots_per_unit"
+                                   value="{{ form.instance.tots_per_unit|default:'' }}"
+                                   min="1" step="0.5" placeholder="e.g. 30"
+                                   class="form-control form-control-sm" style="background:#1a1a1a;color:var(--pearl);border-color:#444;">
+                            <small style="color:#b0b0b0; font-size:0.72rem;">{% trans 'Auto-filled from volume ÷ tot size' %}</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}{# end bottle envelope #}
+
             {% endif %}{# end not produce #}
 
             {% if kitchen_store_ids_json %}
@@ -901,6 +946,29 @@
                     if (hint)    hint.style.display    = hideIt ? 'block' : 'none';
                 };
                 window._updateCostPriceVisibility();
+
+                // Bottle envelope toggle
+                var bottleEnvCb = document.getElementById('bottle_envelope');
+                var bottleEnvFields = document.getElementById('bottleEnvelopeFields');
+                if (bottleEnvCb && bottleEnvFields) {
+                    bottleEnvCb.addEventListener('change', function() {
+                        bottleEnvFields.style.display = this.checked ? 'block' : 'none';
+                    });
+                }
+
+                window.calcTots = function() {
+                    var volEl  = document.getElementById('volume_ml_bottle');
+                    var totEl  = document.getElementById('tot_ml');
+                    var tpuEl  = document.getElementById('tots_per_unit');
+                    if (!volEl || !totEl || !tpuEl) return;
+                    var vol = parseFloat(volEl.value);
+                    var tot = parseFloat(totEl.value);
+                    if (vol > 0 && tot > 0) {
+                        tpuEl.value = Math.round(vol / tot * 10) / 10;
+                    }
+                };
+                // Auto-calc on load if both values present
+                calcTots();
 
                 function applyProduceToggle(checked) {
                     var kegCb = document.getElementById('is_keg');

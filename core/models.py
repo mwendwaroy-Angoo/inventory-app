@@ -329,6 +329,30 @@ class Item(models.Model):
         blank=True,
         help_text='Keg items only — beer type for analytics grouping (Regular, Dark, Gold).',
     )
+    bottle_envelope = models.BooleanField(
+        default=False,
+        help_text='Track this item as a bottle/spirits envelope — shift stock counts compute per-bottle '
+                  'revenue variance so shrinkage is in KES, not just units.'
+    )
+    tot_ml = models.DecimalField(
+        max_digits=6, decimal_places=1, null=True, blank=True,
+        help_text='Serving size in ml (e.g. 25 ml for a single tot of spirits). '
+                  'Combined with volume_ml to derive tots_per_unit automatically if not set.'
+    )
+    tots_per_unit = models.DecimalField(
+        max_digits=6, decimal_places=1, null=True, blank=True,
+        help_text='Number of servings per bottle/unit (e.g. 30 tots from 750 ml @ 25 ml each). '
+                  'Used to convert unit variance to expected KES loss.'
+    )
+
+    def bottle_expected_revenue_per_unit(self):
+        """KES expected per bottle = tots_per_unit × avg preset price. Falls back to selling_price."""
+        tpu = float(self.tots_per_unit or 0)
+        if tpu <= 0:
+            return float(self.selling_price or 0)
+        preset_prices = list(self.portion_presets.values_list('price', flat=True))
+        avg_price = float(sum(preset_prices)) / len(preset_prices) if preset_prices else float(self.selling_price or 0)
+        return round(tpu * avg_price, 2)
 
     def default_bunch_target(self, cost):
         """Suggested envelope for a freshly received bunch: cost × multiplier."""

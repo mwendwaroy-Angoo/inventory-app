@@ -1515,9 +1515,18 @@ def add_item(request):
                 except (ValueError, InvalidOperation):
                     item.revenue_multiplier = Decimal('1.70')
                 item.is_keg = request.POST.get('is_keg') == 'on'
+                item.bottle_envelope = request.POST.get('bottle_envelope') == 'on'
+                try:
+                    item.tot_ml = Decimal(request.POST.get('tot_ml')) if request.POST.get('tot_ml') else None
+                except InvalidOperation:
+                    item.tot_ml = None
+                try:
+                    item.tots_per_unit = Decimal(request.POST.get('tots_per_unit')) if request.POST.get('tots_per_unit') else None
+                except InvalidOperation:
+                    item.tots_per_unit = None
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
                                          'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier',
-                                         'is_keg'])
+                                         'is_keg', 'bottle_envelope', 'tot_ml', 'tots_per_unit'])
 
                 # ── PRODUCE PORTION PRESETS ───────────────────────────────────
                 preset_labels   = request.POST.getlist('preset_label')
@@ -1645,9 +1654,18 @@ def edit_item(request, item_id):
                 except (ValueError, InvalidOperation):
                     item.revenue_multiplier = Decimal('1.70')
                 item.is_keg = request.POST.get('is_keg') == 'on'
+                item.bottle_envelope = request.POST.get('bottle_envelope') == 'on'
+                try:
+                    item.tot_ml = Decimal(request.POST.get('tot_ml')) if request.POST.get('tot_ml') else None
+                except InvalidOperation:
+                    item.tot_ml = None
+                try:
+                    item.tots_per_unit = Decimal(request.POST.get('tots_per_unit')) if request.POST.get('tots_per_unit') else None
+                except InvalidOperation:
+                    item.tots_per_unit = None
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
                                          'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier',
-                                         'is_keg'])
+                                         'is_keg', 'bottle_envelope', 'tot_ml', 'tots_per_unit'])
 
                 # ── PRODUCE PORTION PRESETS ───────────────────────────────────
                 preset_labels   = request.POST.getlist('preset_label')

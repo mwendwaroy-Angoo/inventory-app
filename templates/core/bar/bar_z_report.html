@@ -135,6 +135,14 @@
         </div>
         <div class="metric-lbl">&#128167; Keg Loss (KES)</div>
       </div>
+      {% if day_bottle_variance_kes > 0 %}
+      <div class="metric-box">
+        <div class="metric-num" style="{% if day_bottle_variance_kes > 500 %}color:var(--raspberry){% elif day_bottle_variance_kes > 200 %}color:#ffb74d{% else %}color:#7de08a{% endif %}">
+          {{ day_bottle_variance_kes|floatformat:0 }}
+        </div>
+        <div class="metric-lbl">&#127870; Bottle Variance (KES)</div>
+      </div>
+      {% endif %}
     </div>
 
     <!-- Drawer summary -->

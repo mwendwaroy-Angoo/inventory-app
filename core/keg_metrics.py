@@ -91,10 +91,15 @@ class StaffShrinkage:
     staff_name: str
     shifts_worked: int = 0
     book_revenue_kes: float = 0.0     # throughput this staff recorded (denominator)
-    loss_kes: float = 0.0             # sum of POSITIVE per-window losses
+    loss_kes: float = 0.0             # sum of POSITIVE per-window keg losses
     net_variance_kes: float = 0.0     # signed sum (loss minus any overcount), for transparency
     windows_with_weight: int = 0      # how many (shift×barrel) windows had a usable weigh-in
     windows_total: int = 0
+    bottle_loss_kes: float = 0.0      # F5: spirits/bottle revenue variance from ShiftStockCount
+
+    @property
+    def total_loss_kes(self) -> float:
+        return self.loss_kes + self.bottle_loss_kes
 
     @property
     def loss_pct(self) -> float:
@@ -281,7 +286,7 @@ def staff_shrinkage(business, date_from: date_type, date_to: date_type) -> list[
     Returns rows sorted by loss_kes DESC. Prefetch aggressively to avoid N+1.
     """
     from django.utils import timezone
-    from .models import Shift, KegBarrel, Transaction
+    from .models import Shift, KegBarrel, ShiftStockCount, Transaction
 
     start_dt = timezone.make_aware(timezone.datetime.combine(date_from, timezone.datetime.min.time()))
     end_dt   = timezone.make_aware(timezone.datetime.combine(date_to,   timezone.datetime.max.time()))
@@ -330,7 +335,34 @@ def staff_shrinkage(business, date_from: date_type, date_to: date_type) -> list[
                 if sv.wastage_kes > 0:
                     row.loss_kes += sv.wastage_kes
 
-    return sorted(acc.values(), key=lambda r: r.loss_kes, reverse=True)
+    # F5 — bottle/spirits loss from ShiftStockCount for bottle_envelope items
+    bottle_counts = list(
+        ShiftStockCount.objects
+        .filter(shift__business=business,
+                shift__started_at__gte=start_dt,
+                shift__started_at__lt=end_dt,
+                item__bottle_envelope=True)
+        .select_related('shift__staff', 'item')
+        .prefetch_related('item__portion_presets')
+    )
+    for sc in bottle_counts:
+        sid = getattr(sc.shift.staff, 'id', None)
+        row = acc.get(sid)
+        if row is None:
+            # Staff had only bottle counts, no keg shifts in range
+            row = StaffShrinkage(
+                staff_id=sid,
+                staff_name=(sc.shift.staff.get_full_name() or sc.shift.staff.username)
+                            if sc.shift.staff_id else '—',
+            )
+            acc[sid] = row
+        variance_units = float(sc.book_balance) - float(sc.actual_count)
+        if variance_units > 0:
+            row.bottle_loss_kes += round(
+                variance_units * sc.item.bottle_expected_revenue_per_unit(), 2
+            )
+
+    return sorted(acc.values(), key=lambda r: r.total_loss_kes, reverse=True)
 
 
 def models_Q_ended_or_open(start_dt):

@@ -912,3 +912,106 @@ class ZReportOpenTabsTest(TestCase):
         response = bar_z_report(req)
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'2', response.content)   # open_tab_count = 2 appears somewhere
+
+
+# ── F5 Bottle / spirits envelope ─────────────────────────────────────────────
+
+class BottleExpectedRevenueTest(TestCase):
+    """bottle_expected_revenue_per_unit() = tots_per_unit × avg preset price."""
+
+    def setUp(self):
+        biz = Business.objects.create(name='Spirits Biz')
+        store = Store.objects.create(business=biz, name='Bar')
+        self.item = Item.objects.create(
+            business=biz, store=store, description='Whiskey 750ml',
+            material_no='WHSKY-BTL-01',
+            selling_price=Decimal('200'),
+            bottle_envelope=True, tots_per_unit=Decimal('30'), tot_ml=Decimal('25'),
+        )
+        ItemPortionPreset.objects.create(item=self.item, label='Single', price=Decimal('200'), quantity_consumed=Decimal('1'))
+        ItemPortionPreset.objects.create(item=self.item, label='Double', price=Decimal('350'), quantity_consumed=Decimal('2'))
+
+    def test_expected_revenue_per_unit_uses_avg_preset(self):
+        avg = (200 + 350) / 2  # 275
+        expected = 30 * avg    # 8250
+        self.assertAlmostEqual(self.item.bottle_expected_revenue_per_unit(), expected, places=1)
+
+    def test_expected_revenue_falls_back_to_selling_price_when_no_presets(self):
+        biz = Business.objects.create(name='NP Biz')
+        store = Store.objects.create(business=biz, name='S')
+        item = Item.objects.create(
+            business=biz, store=store, description='Brandy', material_no='BRANDY-NP-01',
+            selling_price=Decimal('4000'),
+            bottle_envelope=True, tots_per_unit=Decimal('20'),
+        )
+        self.assertAlmostEqual(item.bottle_expected_revenue_per_unit(), 20 * 4000, places=1)
+
+
+class BottleShrinkageLeaderboardTest(TestCase):
+    """staff_shrinkage() includes bottle_loss_kes when ShiftStockCount has bottle_envelope items."""
+
+    def test_bottle_loss_included_in_leaderboard(self):
+        from core import keg_metrics as km
+        from core.models import ShiftStockCount
+
+        biz = Business.objects.create(name='Bottle Biz')
+        store = Store.objects.create(business=biz, name='Bar')
+        user = User.objects.create_user(username='btl_staff', password='x')
+        UserProfile.objects.create(user=user, business=biz, role='staff')
+
+        item = Item.objects.create(
+            business=biz, store=store, description='Gin 750ml',
+            material_no='GIN-BTL-01',
+            selling_price=Decimal('300'),
+            bottle_envelope=True, tots_per_unit=Decimal('30'), tot_ml=Decimal('25'),
+        )
+        ItemPortionPreset.objects.create(item=item, label='Single', price=Decimal('300'), quantity_consumed=Decimal('1'))
+
+        shift = Shift.objects.create(
+            business=biz, staff=user, store=store,
+            opening_float=Decimal('0'), status='CLOSED',
+        )
+        ShiftStockCount.objects.create(
+            shift=shift, item=item,
+            book_balance=Decimal('5'),   # 5 bottles on book
+            actual_count=Decimal('3'),   # only 3 counted → 2 bottles missing
+            recorded_by=user,
+        )
+
+        today = timezone.localdate()
+        rows = km.staff_shrinkage(biz, today, today)
+        self.assertGreater(len(rows), 0)
+        row = rows[0]
+        # 2 bottles × (30 tots × 300 KES) = 18000 KES
+        self.assertAlmostEqual(row.bottle_loss_kes, 18000.0, places=1)
+
+    def test_surplus_count_does_not_add_to_bottle_loss(self):
+        from core import keg_metrics as km
+        from core.models import ShiftStockCount
+
+        biz = Business.objects.create(name='Surplus Biz')
+        store = Store.objects.create(business=biz, name='Bar')
+        user = User.objects.create_user(username='surp_staff', password='x')
+        UserProfile.objects.create(user=user, business=biz, role='staff')
+
+        item = Item.objects.create(
+            business=biz, store=store, description='Vodka 750ml',
+            material_no='VDK-BTL-01',
+            selling_price=Decimal('250'),
+            bottle_envelope=True, tots_per_unit=Decimal('20'),
+        )
+        shift = Shift.objects.create(
+            business=biz, staff=user, store=store,
+            opening_float=Decimal('0'), status='CLOSED',
+        )
+        # actual > book → surplus (overcount), no loss
+        ShiftStockCount.objects.create(
+            shift=shift, item=item,
+            book_balance=Decimal('3'),
+            actual_count=Decimal('5'),
+            recorded_by=user,
+        )
+        today = timezone.localdate()
+        rows = km.staff_shrinkage(biz, today, today)
+        if rows:
+            self.assertAlmostEqual(rows[0].bottle_loss_kes, 0.0, places=1)

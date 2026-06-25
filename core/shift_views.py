@@ -588,14 +588,18 @@ def stock_take_api(request, shift_id):
             .exclude(is_keg=True)
             .exclude(is_produce=True)
             .order_by('description')
+            .prefetch_related('portion_presets')
         )
         data = []
         for item in items:
             data.append({
-                'item_id':    item.id,
-                'name':       item.description,
-                'unit':       item.unit or '',
+                'item_id':      item.id,
+                'name':         item.description,
+                'unit':         item.unit or '',
                 'book_balance': float(item.current_balance()),
+                'bottle_envelope':  item.bottle_envelope,
+                'tots_per_unit':    float(item.tots_per_unit or 0),
+                'expected_rev_per_unit': item.bottle_expected_revenue_per_unit(),
             })
         return JsonResponse({'ok': True, 'items': data})
 
@@ -623,13 +627,20 @@ def stock_take_api(request, shift_id):
                     }
                 )
                 variance = float(actual) - float(book)
-                results.append({
+                result_row = {
                     'name':       item.description,
                     'unit':       item.unit or '',
                     'book':       float(book),
                     'actual':     float(actual),
                     'variance':   round(variance, 2),
-                })
+                }
+                if item.bottle_envelope:
+                    loss_units = max(0.0, float(book) - float(actual))
+                    result_row['bottle_envelope'] = True
+                    result_row['variance_kes'] = round(
+                        loss_units * item.bottle_expected_revenue_per_unit(), 2
+                    )
+                results.append(result_row)
             except Exception:
                 continue
 

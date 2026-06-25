@@ -1661,6 +1661,19 @@ def bar_z_report(request):
         if bv.wastage_kes is not None:
             day_keg_variance_kes += bv.wastage_kes
 
+    # F5 — bottle/spirits variance for the day from ShiftStockCount
+    from .models import ShiftStockCount
+    bottle_counts_today = ShiftStockCount.objects.filter(
+        shift__business=business,
+        shift__started_at__gte=day_start,
+        shift__started_at__lte=day_end,
+        item__bottle_envelope=True,
+    ).select_related('item').prefetch_related('item__portion_presets')
+    day_bottle_variance_kes = 0.0
+    for sc in bottle_counts_today:
+        loss_units = max(0.0, float(sc.book_balance) - float(sc.actual_count))
+        day_bottle_variance_kes += loss_units * sc.item.bottle_expected_revenue_per_unit()
+
     # Yesterday for navigation
     yesterday = report_date - timedelta(days=1)
     tomorrow  = report_date + timedelta(days=1)
@@ -1681,8 +1694,9 @@ def bar_z_report(request):
         'day_petty_cash':      round(day_petty_cash, 2),
         'open_tab_count':      open_tab_count,
         'open_tab_kes':        round(open_tab_kes, 2),
-        'day_keg_variance_kes': round(day_keg_variance_kes, 2),
-        'counted_shifts':      counted_shifts,
+        'day_keg_variance_kes':    round(day_keg_variance_kes, 2),
+        'day_bottle_variance_kes': round(day_bottle_variance_kes, 2),
+        'counted_shifts':          counted_shifts,
         'business':            business,
     })
 
