@@ -359,6 +359,24 @@ def close_shift(request, shift_id):
                 recorded_by=request.user,
                 note='Mwisho wa shift',
             )
+            # F2: check variance on SHIFT_CLOSE — no volume threshold, fire if danger
+            if up.business.keg_alerts_enabled:
+                try:
+                    from . import keg_metrics
+                    bv = keg_metrics.barrel_variance(barrel)
+                    if bv.wastage_pct is not None:
+                        tol = float(up.business.keg_variance_tolerance_pct)
+                        if keg_metrics.variance_flag(bv.wastage_pct, tol) == 'danger':
+                            from .keg_views import _fire_keg_alert
+                            _fire_keg_alert(
+                                up.business,
+                                barrel.item.description,
+                                request.user.get_full_name() or request.user.username,
+                                bv.wastage_kes or 0.0,
+                                bv.wastage_pct,
+                            )
+                except Exception:
+                    pass
             net_kg = round(float(wkg) - float(barrel.tare_weight_kg), 2)
             weight_readings.append({
                 'barrel_id': barrel.id,
@@ -437,6 +455,40 @@ def confirm_barrel_weights(request):
             if last_close:
                 diff = round(float(wkg) - float(last_close.weight_kg), 2)
                 flag = 'ok' if abs(diff) <= 0.3 else ('warn' if abs(diff) <= 1.0 else 'danger')
+                # F2: overnight barrel-loss alert when handover gap > 1.0 kg
+                if abs(diff) > 1.0 and up.business.keg_alerts_enabled:
+                    try:
+                        from accounts.models import UserProfile
+                        from .models import Notification
+                        from .notifications import normalize_ke_phone, send_sms_notification
+                        from django.utils import timezone as _tz
+                        msg = (
+                            f"⚠️ Barrel {barrel.item.description}: imepoteza"
+                            f" {abs(diff):.2f} kg usiku"
+                            f" (SHIFT_CLOSE→SHIFT_OPEN). Kagua."
+                        )
+                        now = _tz.now()
+                        can_sms = (
+                            not up.business.last_txn_sms_at or
+                            (now - up.business.last_txn_sms_at).total_seconds() > 600
+                        )
+                        owners = UserProfile.objects.filter(
+                            business=up.business, role='owner'
+                        ).select_related('user')
+                        for op in owners:
+                            Notification.objects.create(
+                                user=op.user, title='Keg Barrel Alert', message=msg,
+                                notification_type='warning',
+                            )
+                            if can_sms and op.phone:
+                                normalized = normalize_ke_phone(op.phone)
+                                if normalized:
+                                    send_sms_notification(msg, normalized)
+                        if can_sms:
+                            up.business.last_txn_sms_at = now
+                            up.business.save(update_fields=['last_txn_sms_at'])
+                    except Exception:
+                        pass
             else:
                 diff = None
                 flag = 'ok'
