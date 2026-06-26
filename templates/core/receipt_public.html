@@ -195,6 +195,65 @@
             margin-top: 0.2rem;
         }
 
+        /* ── K4: Credit standing + statement ─────────────────── */
+        .standing-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.78rem;
+            font-weight: 700;
+        }
+        .standing-row {
+            padding: 0.75rem 1.2rem;
+            border-top: 1px solid #2a2a2a;
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+        }
+        .standing-label-txt { font-size: 0.75rem; color: #b0b0b0; }
+        .warn-bar {
+            margin: 0.4rem 1.2rem 0;
+            padding: 0.55rem 0.9rem;
+            border-left: 3px solid #fbbf24;
+            border-radius: 0 6px 6px 0;
+            background: rgba(251,191,36,0.08);
+            font-size: 0.8rem;
+            color: #fbbf24;
+            font-weight: 600;
+        }
+        .outstanding-block {
+            margin: 0.6rem 1.2rem;
+            padding: 0.7rem 1rem;
+            border-radius: 8px;
+            background: rgba(192,57,90,0.08);
+            border: 1px solid rgba(192,57,90,0.22);
+        }
+        .outstanding-label { font-size: 0.78rem; color: #e87090; font-weight: 600; }
+        .outstanding-amount { font-size: 1.05rem; font-weight: 700; color: #f87171; margin-top: 0.1rem; }
+        .outstanding-due { font-size: 0.72rem; color: #b0b0b0; margin-top: 0.15rem; }
+        .statement-header {
+            background: rgba(201,168,76,0.05);
+            border-bottom: 1px solid #2a2a2a;
+            padding: 0.75rem 1.2rem;
+        }
+        .statement-title {
+            font-size: 0.72rem;
+            color: #b0b0b0;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.45rem;
+        }
+        .aged-chips { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+        .aged-chip {
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 0.18rem 0.55rem;
+            border-radius: 10px;
+        }
+
         /* ── Thermal print ──────────────────────────────────── */
         @media print {
             * { -webkit-print-color-adjust: exact; color-adjust: exact; }
@@ -240,12 +299,46 @@
 
     <div class="receipt-card">
         <div class="receipt-header">
-            <div class="receipt-number">Risiti #{{ receipt.receipt_number }}</div>
+            <div class="receipt-number">
+                {% if receipt.meta.is_statement %}Taarifa ya Deni{% else %}Risiti #{{ receipt.receipt_number }}{% endif %}
+            </div>
             <div class="receipt-date">
                 {{ receipt.created_at|date:"d M Y" }}<br>
                 <span style="font-size:0.72rem;">{{ receipt.created_at|date:"H:i" }}</span>
             </div>
         </div>
+
+        {% if receipt.meta.is_statement %}
+        <div class="statement-header">
+            <div class="statement-title">
+                Taarifa ya Deni{% if receipt.meta.scope and receipt.meta.scope != 'all' %} — {{ receipt.meta.scope|capfirst }}{% endif %}
+            </div>
+            {% if receipt.meta.aged %}
+            <div class="aged-chips">
+                {% if receipt.meta.aged.current %}
+                <span class="aged-chip" style="background:rgba(110,231,183,0.12); color:#6ee7b7;">
+                    Sasa: KES {{ receipt.meta.aged.current|floatformat:"0" }}
+                </span>
+                {% endif %}
+                {% if receipt.meta.aged.overdue_30 %}
+                <span class="aged-chip" style="background:rgba(251,191,36,0.12); color:#fbbf24;">
+                    30+ siku: KES {{ receipt.meta.aged.overdue_30|floatformat:"0" }}
+                </span>
+                {% endif %}
+                {% if receipt.meta.aged.overdue_60 %}
+                <span class="aged-chip" style="background:rgba(248,113,113,0.12); color:#f87171;">
+                    60+ siku: KES {{ receipt.meta.aged.overdue_60|floatformat:"0" }}
+                </span>
+                {% endif %}
+                {% if receipt.meta.aged.overdue_90 %}
+                <span class="aged-chip" style="background:rgba(192,57,90,0.15); color:#e87090;">
+                    90+ siku: KES {{ receipt.meta.aged.overdue_90|floatformat:"0" }}
+                </span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
 
         <div class="receipt-lines">
             {% for line in receipt.lines %}
@@ -273,12 +366,46 @@
             <span class="total-amount">KES {{ receipt.total|floatformat:"0" }}</span>
         </div>
 
+        {% if receipt.meta.credit_score %}
+        <div class="standing-row">
+            <span class="standing-label-txt">Hadhi ya Mkopo:</span>
+            <span class="standing-badge
+                {% if receipt.meta.credit_score == 'reliable' %}
+                    " style="background:rgba(110,231,183,0.15); color:#6ee7b7;">
+                {% elif receipt.meta.credit_score == 'high_risk' %}
+                    " style="background:rgba(192,57,90,0.15); color:#f87171;">
+                {% else %}
+                    " style="background:rgba(251,191,36,0.15); color:#fbbf24;">
+                {% endif %}
+                {{ receipt.meta.score_label }}
+            </span>
+        </div>
+        {% endif %}
+
+        {% if receipt.meta.outstanding and not receipt.meta.is_statement %}
+        <div class="outstanding-block">
+            <div class="outstanding-label">Jumla ya Deni Lako Sasa</div>
+            <div class="outstanding-amount">KES {{ receipt.meta.outstanding|floatformat:"0" }}</div>
+            {% if receipt.meta.due_date %}
+            <div class="outstanding-due">Lipa kabla: {{ receipt.meta.due_date }}</div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if receipt.meta.warn and receipt.meta.warn_msg %}
+        <div class="warn-bar">⚠️ {{ receipt.meta.warn_msg }}</div>
+        {% endif %}
+
         <div class="receipt-footer">
             <span>
+                {% if receipt.meta.is_statement %}
+                <span class="payment-badge" style="background:rgba(201,168,76,0.12); color:#c9a84c;">📄 Taarifa</span>
+                {% else %}
                 Malipo:
                 <span class="payment-badge {% if receipt.payment_method == 'mpesa' %}pay-mpesa{% elif receipt.payment_method == 'credit' %}pay-credit{% elif receipt.payment_method == 'tab' %}pay-tab{% else %}pay-cash{% endif %}">
                     {% if receipt.payment_method == 'mpesa' %}M-Pesa{% elif receipt.payment_method == 'credit' %}Credit / Deni{% elif receipt.payment_method == 'tab' %}Tab{% else %}Cash{% endif %}
                 </span>
+                {% endif %}
             </span>
             {% if receipt.customer_name %}<span>{{ receipt.customer_name }}</span>{% endif %}
         </div>

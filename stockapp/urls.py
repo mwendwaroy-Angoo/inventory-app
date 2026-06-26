@@ -191,6 +191,7 @@ from core.debt_views import (
     send_debt_reminder,
     toggle_credit_approval,
     update_customer_credit_settings,
+    customer_debt_statement,
 )
 from core.haki_views import (
     staff_contribution_report,
@@ -349,6 +350,7 @@ urlpatterns = [
     path("debt/<int:customer_id>/reminder/", send_debt_reminder, name="send_debt_reminder"),
     path("debt/<int:customer_id>/toggle-credit/", toggle_credit_approval, name="toggle_credit_approval"),
     path("debt/<int:customer_id>/settings/", update_customer_credit_settings, name="update_customer_credit_settings"),
+    path("debt/<int:customer_id>/statement/", customer_debt_statement, name="customer_debt_statement"),
     # ── Haki (Staff Contribution + Salary) ──
     path("staff/contribution/", staff_contribution_report, name="staff_contribution_report"),
     path("staff/<int:profile_id>/salary/", record_salary_payment, name="record_salary_payment"),

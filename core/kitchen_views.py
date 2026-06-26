@@ -406,6 +406,18 @@ def _kitchen_checkout(request, up, business, is_owner):
     receipt_number = None
     if payment_method in ('cash', 'mpesa', 'credit'):
         try:
+            kitchen_meta = {}
+            if payment_method == 'credit' and credit_name:
+                try:
+                    from .models import Customer as _CustMeta
+                    from core.debt_views import _build_credit_receipt_meta
+                    _cust_m = _CustMeta.objects.filter(
+                        business=business, name__iexact=credit_name
+                    ).first()
+                    if _cust_m:
+                        kitchen_meta = _build_credit_receipt_meta(business, _cust_m, 'kitchen')
+                except Exception:
+                    pass
             rcpt = Receipt.issue(
                 business=business,
                 lines=receipt_lines,
@@ -414,6 +426,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 customer_name=credit_name if payment_method == 'credit' else tab_customer,
                 customer_phone=credit_phone if payment_method == 'credit' else tab_phone,
                 source='kitchen',
+                meta=kitchen_meta,
             )
             receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
             receipt_number = rcpt.receipt_number

@@ -2396,6 +2396,19 @@ def quick_sell(request):
                 rcpt = None
                 try:
                     from .models import Receipt
+                    rcpt_meta = {}
+                    if payment_method_qs == "credit" and credit_recipient:
+                        try:
+                            from core.debt_views import _build_credit_receipt_meta
+                            _cust_for_meta = _Customer.objects.filter(
+                                business=user_profile.business, name=credit_recipient
+                            ).first()
+                            if _cust_for_meta:
+                                rcpt_meta = _build_credit_receipt_meta(
+                                    user_profile.business, _cust_for_meta, 'bar'
+                                )
+                        except Exception:
+                            pass
                     rcpt = Receipt.issue(
                         business=user_profile.business,
                         lines=recorded,
@@ -2403,6 +2416,7 @@ def quick_sell(request):
                         user=request.user,
                         customer_name=credit_recipient if payment_method_qs == "credit" else "",
                         customer_phone=credit_phone if payment_method_qs == "credit" else "",
+                        meta=rcpt_meta,
                     )
                     receipt_token = rcpt.token
                     receipt_number = rcpt.receipt_number

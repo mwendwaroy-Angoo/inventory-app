@@ -1431,3 +1431,189 @@ class CreditGateCreditLimitTest(TestCase):
         )
         decision = evaluate_credit(self.biz, self.customer, amount=Decimal('50'))
         self.assertTrue(decision.allowed)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint K4 — Customer-Facing Accountability Receipts
+# ══════════════════════════════════════════════════════════════════════════════
+
+from core.debt_views import _build_credit_receipt_meta
+
+
+class ReceiptMetaFieldTest(TestCase):
+    """K4.1: Receipt.meta JSONField exists and Receipt.issue accepts meta kwarg."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K4 Meta Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+
+    def test_issue_with_no_meta_creates_empty_dict(self):
+        lines = [{'name': 'Chai', 'qty': 1, 'subtotal': 50}]
+        rcpt = Receipt.issue(
+            business=self.biz, lines=lines, payment_method='cash',
+        )
+        self.assertEqual(rcpt.meta, {})
+
+    def test_issue_stores_meta_dict(self):
+        lines = [{'name': 'Mandazi', 'qty': 2, 'subtotal': 40}]
+        meta = {'credit_score': 'reliable', 'score_label': 'Reliable', 'outstanding': 0.0}
+        rcpt = Receipt.issue(
+            business=self.biz, lines=lines, payment_method='credit', meta=meta,
+        )
+        self.assertEqual(rcpt.meta['credit_score'], 'reliable')
+        self.assertEqual(rcpt.meta['outstanding'], 0.0)
+
+    def test_cash_receipt_has_no_credit_score(self):
+        lines = [{'name': 'Soda', 'qty': 1, 'subtotal': 50}]
+        rcpt = Receipt.issue(
+            business=self.biz, lines=lines, payment_method='cash',
+        )
+        self.assertNotIn('credit_score', rcpt.meta)
+
+
+class BuildCreditReceiptMetaTest(TestCase):
+    """K4.2: _build_credit_receipt_meta returns correct score and outstanding."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='K4 Build Meta Biz',
+            credit_policy_enabled=True,
+            credit_window_days=30,
+        )
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Meta Kamau', credit_approved=True,
+        )
+
+    def test_no_debt_returns_new_score(self):
+        meta = _build_credit_receipt_meta(self.biz, self.customer, 'bar')
+        self.assertEqual(meta['credit_score'], 'new')
+        self.assertEqual(meta['outstanding'], 0.0)
+        self.assertIn('due_date', meta)
+        self.assertFalse(meta['warn'])
+
+    def test_credit_sale_outstanding_reflects_db_state(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='K4 Beer',
+            material_no='K4-B-01', selling_price=Decimal('300'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('300'),
+        )
+        meta = _build_credit_receipt_meta(self.biz, self.customer, 'bar')
+        self.assertAlmostEqual(meta['outstanding'], 300.0, places=1)
+        self.assertIn('due_date', meta)
+
+    def test_scope_bar_excludes_kitchen_debt(self):
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        item = Item.objects.create(
+            business=self.biz, store=kitchen_store, description='K4 Chips',
+            material_no='K4-C-01', selling_price=Decimal('200'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('200'),
+        )
+        meta = _build_credit_receipt_meta(self.biz, self.customer, 'bar')
+        self.assertEqual(meta['outstanding'], 0.0, "Bar scope should exclude kitchen debts")
+
+
+class CreditReceiptWarnTierTest(TestCase):
+    """K4.3: warn=True set on receipt meta when customer is on warn tier."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='K4 Warn Biz',
+            credit_policy_enabled=True,
+            credit_window_days=30,
+            block_if_overdue=True,
+        )
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Warn Hassan', credit_approved=True,
+            credit_limit=Decimal('1000'),
+        )
+
+    def test_near_limit_triggers_warn(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='K4 Spirit',
+            material_no='K4-S-01', selling_price=Decimal('850'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('850'),
+        )
+        meta = _build_credit_receipt_meta(self.biz, self.customer, 'bar')
+        # 850/1000 = 85% → should trigger warn tier
+        self.assertTrue(meta['warn'])
+        self.assertIn('Onyo', meta['warn_msg'])
+
+    def test_well_within_limit_no_warn(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='K4 Small',
+            material_no='K4-SM-01', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('100'),
+        )
+        meta = _build_credit_receipt_meta(self.biz, self.customer, 'bar')
+        self.assertFalse(meta['warn'])
+
+
+class CustomerDebtStatementViewTest(TestCase):
+    """K4.4: customer_debt_statement generates a receipt and redirects."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K4 Statement Biz', credit_window_days=30)
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner_user = User.objects.create_user(username='k4_stmt_owner', password='pass')
+        self.owner_profile = UserProfile.objects.create(
+            user=self.owner_user, business=self.biz, role='owner',
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Stmt Wanjiku', credit_approved=True,
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='K4 Chai',
+            material_no='K4-CH-01', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('100'),
+        )
+
+    def test_statement_creates_receipt_with_meta(self):
+        self.client.force_login(self.owner_user)
+        count_before = Receipt.objects.filter(business=self.biz).count()
+        resp = self.client.post(f'/debt/{self.customer.id}/statement/', follow=True)
+        count_after = Receipt.objects.filter(business=self.biz).count()
+        self.assertEqual(count_after, count_before + 1)
+        stmt_receipt = Receipt.objects.filter(business=self.biz).order_by('-id').first()
+        self.assertTrue(stmt_receipt.meta.get('is_statement'))
+        self.assertEqual(stmt_receipt.payment_method, 'statement')
+
+    def test_statement_is_scope_correct(self):
+        self.client.force_login(self.owner_user)
+        self.client.post(f'/debt/{self.customer.id}/statement/')
+        stmt_receipt = Receipt.objects.filter(
+            business=self.biz, payment_method='statement'
+        ).order_by('-id').first()
+        self.assertIsNotNone(stmt_receipt)
+        self.assertIn('aged', stmt_receipt.meta)
+
+    def test_no_statement_when_no_outstanding(self):
+        customer_no_debt = Customer.objects.create(
+            business=self.biz, name='Zero Debt', credit_approved=True,
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/debt/{customer_no_debt.id}/statement/')
+        self.assertRedirects(
+            resp, f'/debt/{customer_no_debt.id}/', fetch_redirect_response=False
+        )

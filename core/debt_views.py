@@ -402,6 +402,13 @@ def record_debt_payment(request, customer_id):
     receipt_token = None
     try:
         from .models import Receipt
+        receipt_meta = {
+            'credit_score': post_data.get('score', 'new'),
+            'score_label': str(post_data.get('score_label', '')),
+            'score_color': post_data.get('score_color', '#888'),
+            'outstanding': float(post_data.get('outstanding', 0)),
+            'scope': payment_scope,
+        }
         rcpt = Receipt.issue(
             business=business,
             lines=receipt_lines,
@@ -409,6 +416,7 @@ def record_debt_payment(request, customer_id):
             user=request.user,
             customer_name=customer.name,
             customer_phone=customer.phone or '',
+            meta=receipt_meta,
         )
         receipt_token = rcpt.token
         receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
@@ -481,6 +489,131 @@ def send_debt_reminder(request, customer_id):
         )
 
     return redirect('customer_debt_profile', customer_id=customer_id)
+
+
+# ── K4: Receipt meta helpers + statement view ─────────────────────────────────
+
+def _build_credit_receipt_meta(business, customer, scope, when=None):
+    """Build the meta dict for a credit/tab receipt (K4.2 + K4.3).
+
+    Call AFTER the credit transactions have been written to DB so
+    _get_customer_debt_data reflects the updated outstanding.
+    """
+    from datetime import timedelta
+    from django.utils import timezone as _tz
+    from core.credit_policy import evaluate_credit
+
+    data = _get_customer_debt_data(customer, business, scope)
+    window = data['effective_window']
+
+    if data['unpaid_transactions']:
+        oldest_date = data['unpaid_transactions'][0]['txn'].date
+        due_date_str = (oldest_date + timedelta(days=window)).strftime('%d %b %Y')
+    else:
+        due_date_str = (_tz.localdate() + timedelta(days=window)).strftime('%d %b %Y')
+
+    try:
+        decision = evaluate_credit(business, customer, scope=scope, when=when)
+        warn = decision.tier == 'warn'
+        warn_msg = (
+            'Onyo: ukichelewa kulipa deni hili, hutaweza kupata deni tena hadi ulipe.'
+            if warn else ''
+        )
+    except Exception:
+        warn = False
+        warn_msg = ''
+
+    return {
+        'credit_score': data.get('score', 'new'),
+        'score_label': str(data.get('score_label', '')),
+        'score_color': data.get('score_color', '#888'),
+        'outstanding': float(data.get('outstanding', 0)),
+        'due_date': due_date_str,
+        'scope': scope,
+        'warn': warn,
+        'warn_msg': warn_msg,
+    }
+
+
+@login_required
+@require_POST
+def customer_debt_statement(request, customer_id):
+    """Generate a scoped debt statement receipt and redirect to its public URL.
+
+    Privacy: _debt_scope() gates kitchen-only staff to their ledger only.
+    """
+    up = get_user_profile(request)
+    if not up:
+        return redirect('login')
+    business = up.business
+    scope = _debt_scope(up, business)
+    customer = get_object_or_404(Customer, id=customer_id, business=business)
+
+    data = _get_customer_debt_data(customer, business, scope)
+
+    if data['outstanding'] <= 0:
+        messages.info(
+            request,
+            _('%(customer)s hana deni kwa sasa.') % {'customer': customer.name}
+        )
+        return redirect('customer_debt_profile', customer_id=customer_id)
+
+    from datetime import timedelta
+    from django.utils import timezone as _tz
+
+    window = data['effective_window']
+    today = _tz.localdate()
+
+    lines = []
+    for entry in data['unpaid_transactions']:
+        txn = entry['txn']
+        overdue_tag = ' ✗' if entry['is_overdue'] else ''
+        lines.append({
+            'name': (
+                f"{txn.item.description} — {txn.date.strftime('%d %b %Y')}"
+                f" · siku {entry['days_outstanding']}{overdue_tag}"
+            ),
+            'qty': 1,
+            'subtotal': entry['amount'],
+        })
+
+    if data['unpaid_transactions']:
+        oldest_date = data['unpaid_transactions'][0]['txn'].date
+        due_date_str = (oldest_date + timedelta(days=window)).strftime('%d %b %Y')
+    else:
+        due_date_str = (today + timedelta(days=window)).strftime('%d %b %Y')
+
+    lines.append({
+        'name': f"Jumla: KES {data['outstanding']:,.0f} · Lipa kabla {due_date_str}",
+        'qty': 0,
+        'subtotal': 0,
+    })
+
+    meta = {
+        'is_statement': True,
+        'credit_score': data.get('score', 'new'),
+        'score_label': str(data.get('score_label', '')),
+        'score_color': data.get('score_color', '#888'),
+        'outstanding': float(data['outstanding']),
+        'due_date': due_date_str,
+        'scope': scope,
+        'aged': data.get('aged', {}),
+        'warn': False,
+        'warn_msg': '',
+    }
+
+    from .models import Receipt
+    rcpt = Receipt.issue(
+        business=business,
+        lines=lines,
+        payment_method='statement',
+        user=request.user,
+        customer_name=customer.name,
+        customer_phone=customer.phone or '',
+        source=scope if scope != 'all' else '',
+        meta=meta,
+    )
+    return redirect('public_receipt', token=rcpt.token)
 
 
 @login_required

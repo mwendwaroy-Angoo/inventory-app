@@ -339,12 +339,22 @@ def bar_board(request):
             receipt_id = None
             try:
                 receipt_pm = payment_method
+                rcpt_meta = {}
+                if payment_method == 'tab' and tab_customer and linked_customer:
+                    try:
+                        from core.debt_views import _build_credit_receipt_meta
+                        rcpt_meta = _build_credit_receipt_meta(business, linked_customer, 'bar')
+                        # Tab entries aren't debt yet — suppress the outstanding block
+                        rcpt_meta['outstanding'] = 0.0
+                    except Exception:
+                        pass
                 rcpt = Receipt.issue(
                     business=business,
                     lines=receipt_lines,
                     payment_method=receipt_pm,
                     user=request.user,
                     customer_name=tab_customer if payment_method == 'tab' else '',
+                    meta=rcpt_meta,
                 )
                 receipt_token = rcpt.token
                 receipt_number = rcpt.receipt_number
@@ -905,6 +915,14 @@ def settle_tab(request, tab_id):
             {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
             for e in all_entries
         ]
+        settle_meta = {}
+        if pay == 'credit' and tab.customer:
+            try:
+                from core.debt_views import _build_credit_receipt_meta
+                source_scope = 'kitchen' if (tab.source == 'kitchen') else 'bar'
+                settle_meta = _build_credit_receipt_meta(tab.business, tab.customer, source_scope)
+            except Exception:
+                pass
         rcpt = _Receipt.issue(
             business=tab.business,
             lines=lines,
@@ -913,6 +931,7 @@ def settle_tab(request, tab_id):
             customer_name=tab.customer_name,
             customer_phone=customer_phone,
             source=tab.source or '',
+            meta=settle_meta,
         )
         receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
         receipt_id = rcpt.id

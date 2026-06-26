@@ -94,6 +94,17 @@
             </button>
         </form>
         {% endif %}
+
+        <!-- Generate debt statement -->
+        {% if outstanding > 0 %}
+        <form method="post" action="{% url 'customer_debt_statement' customer.id %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-secondary"
+                    style="border-color:rgba(201,168,76,0.4); color:var(--gold);">
+                📄 {% trans 'Taarifa' %}
+            </button>
+        </form>
+        {% endif %}
     </div>
 </div>
 

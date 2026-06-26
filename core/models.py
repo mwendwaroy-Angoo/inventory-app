@@ -2320,6 +2320,8 @@ class Receipt(models.Model):
     etims_receipt_no  = models.CharField(max_length=50, blank=True, default='')
     etims_url         = models.URLField(max_length=300, blank=True, default='')
     etims_submitted_at = models.DateTimeField(null=True, blank=True)
+    # K4 — structured customer standing data (score, outstanding, due_date, warn)
+    meta = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         'auth.User', null=True, blank=True,
@@ -2334,7 +2336,7 @@ class Receipt(models.Model):
         return f"#{self.receipt_number} – {self.business}"
 
     @classmethod
-    def issue(cls, business, lines, payment_method, user=None, customer_name='', customer_phone='', source=''):
+    def issue(cls, business, lines, payment_method, user=None, customer_name='', customer_phone='', source='', meta=None):
         import secrets as _secrets
         from django.db import transaction as _tx
         total = sum(float(line.get('subtotal', 0)) for line in lines)
@@ -2356,5 +2358,6 @@ class Receipt(models.Model):
                 total=Decimal(str(round(total, 2))),
                 lines=lines,
                 source=source or '',
+                meta=meta or {},
                 created_by=user,
             )

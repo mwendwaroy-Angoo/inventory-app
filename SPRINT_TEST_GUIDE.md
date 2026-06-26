@@ -11,7 +11,7 @@ Run with:
 python manage.py test
 ```
 
-Expected: **61 tests, 0 failures**.
+Expected: **72 tests, 0 failures**.
 
 ### Full test list (`core/tests.py`)
 
@@ -100,6 +100,22 @@ Expected: **61 tests, 0 failures**.
 | `CreditGateMonthlyMidMonthTest` | `test_monthly_biz_allows_mid_month` |
 | `CreditGateCreditLimitTest` | `test_at_limit_is_blocked` |
 | `CreditGateCreditLimitTest` | `test_below_limit_is_allowed` |
+
+**K4 — Customer-Facing Accountability Receipts (11 tests)**
+
+| Class | Test |
+|---|---|
+| `ReceiptMetaFieldTest` | `test_issue_with_no_meta_creates_empty_dict` |
+| `ReceiptMetaFieldTest` | `test_issue_stores_meta_dict` |
+| `ReceiptMetaFieldTest` | `test_cash_receipt_has_no_credit_score` |
+| `BuildCreditReceiptMetaTest` | `test_no_debt_returns_new_score` |
+| `BuildCreditReceiptMetaTest` | `test_credit_sale_outstanding_reflects_db_state` |
+| `BuildCreditReceiptMetaTest` | `test_scope_bar_excludes_kitchen_debt` |
+| `CreditReceiptWarnTierTest` | `test_near_limit_triggers_warn` |
+| `CreditReceiptWarnTierTest` | `test_well_within_limit_no_warn` |
+| `CustomerDebtStatementViewTest` | `test_statement_creates_receipt_with_meta` |
+| `CustomerDebtStatementViewTest` | `test_statement_is_scope_correct` |
+| `CustomerDebtStatementViewTest` | `test_no_statement_when_no_outstanding` |
 
 ---
 
