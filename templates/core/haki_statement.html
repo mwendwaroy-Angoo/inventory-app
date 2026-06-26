@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Statement' %} — {{ user.get_full_name|default:user.username }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stmt-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.25rem;
+        max-width: 640px;
+    }
+    .stmt-divider { border-top: 1px solid #2a2a2a; margin: 1rem 0; }
+    .stmt-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.35rem 0;
+        font-size: 0.875rem;
+    }
+    .stmt-label { color: #b0b0b0; }
+    .stmt-value { color: var(--pearl); font-weight: 600; }
+    @media print {
+        .btn, .no-print { display: none !important; }
+        body { background: #fff !important; color: #000 !important; }
+        .stmt-card { border: 1px solid #ccc !important; background: #fff !important; }
+        .stmt-label { color: #666 !important; }
+        .stmt-value { color: #000 !important; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'staff_contribution_report' %}" style="color:var(--gold);">{% trans 'Haki' %}</a>
+    <span class="mx-1">›</span>
+    <span>{{ user.get_full_name|default:user.username }}</span>
+</nav>
+
+<div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-3 no-print">
+    <h1 class="page-title mb-0">📄 {% trans 'Staff Statement' %}</h1>
+    <div class="d-flex gap-2">
+        <button onclick="window.print()" class="btn btn-sm btn-outline-secondary">🖨️ {% trans 'Print' %}</button>
+        {% if profile.phone %}
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="send_sms" value="1">
+            <button type="submit" class="btn btn-sm btn-gold">📱 {% trans 'Send SMS' %}</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+{% if sms_sent %}
+<div class="alert alert-success mb-3" style="background:rgba(110,231,183,0.1); border:1px solid rgba(110,231,183,0.3); color:#6ee7b7;">
+    ✅ {% trans 'Statement SMS sent.' %}
+</div>
+{% endif %}
+
+<div class="stmt-card">
+    <!-- Header -->
+    <div style="margin-bottom:1rem;">
+        <div style="font-size:1.15rem; font-weight:700; color:var(--pearl);">
+            {{ user.get_full_name|default:user.username }}
+        </div>
+        <div style="color:#b0b0b0; font-size:0.82rem;">
+            {{ profile.get_role_display }} · {{ business.name }} · {{ period_label }}
+        </div>
+    </div>
+    <div class="stmt-divider"></div>
+
+    <!-- Contribution -->
+    <div style="color:var(--gold); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.5rem;">
+        {% trans 'Contribution' %}
+    </div>
+    <div class="stmt-row">
+        <span class="stmt-label">{% trans 'Revenue generated' %}</span>
+        <span class="stmt-value" style="color:var(--gold);">KES {{ revenue_kes|floatformat:0 }}</span>
+    </div>
+    <div class="stmt-row">
+        <span class="stmt-label">{% trans 'Shifts worked' %}</span>
+        <span class="stmt-value">{{ shift_count }} ({{ hours }}h)</span>
+    </div>
+    <div class="stmt-row">
+        <span class="stmt-label">{% trans 'Debts recovered' %}</span>
+        <span class="stmt-value" style="color:#6ee7b7;">KES {{ debts_recovered_kes|floatformat:0 }}</span>
+    </div>
+    {% if clean_keg_record and shift_count > 0 %}
+    <div class="stmt-row">
+        <span class="stmt-label">{% trans 'Keg handling' %}</span>
+        <span class="stmt-value" style="color:#6ee7b7;">✨ {% trans 'Clean record' %}</span>
+    </div>
+    {% elif keg_loss_kes > 0 %}
+    <div class="stmt-row">
+        <span class="stmt-label">{% trans 'Keg variance' %}</span>
+        <span class="stmt-value" style="color:#f87171;">KES {{ keg_loss_kes|floatformat:0 }}</span>
+    </div>
+    {% endif %}
+
+    {% if milestones %}
+    <div class="stmt-divider"></div>
+    <div style="color:var(--gold); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.5rem;">
+        {% trans 'Milestones' %}
+    </div>
+    {% for badge in milestones %}
+    <div class="stmt-row">
+        <span class="stmt-value">{{ badge }}</span>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <div class="stmt-divider"></div>
+
+    <!-- Salary -->
+    <div style="color:var(--gold); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.5rem;">
+        {% trans 'Salary' %} — {{ period_label }}
+    </div>
+    {% if salary %}
+    <div class="stmt-row">
+        <span class="stmt-label">{% trans 'Amount' %}</span>
+        <span class="stmt-value">KES {{ salary.amount|floatformat:0 }}</span>
+    </div>
+    <div class="stmt-row">
+        <span class="stmt-label">{% trans 'Due date' %}</span>
+        <span class="stmt-value">{{ salary.due_date }}</span>
+    </div>
+    <div class="stmt-row">
+        <span class="stmt-label">{% trans 'Status' %}</span>
+        <span class="stmt-value {% if salary.paid %}salary-paid{% elif salary.days_overdue %}salary-late{% else %}salary-due{% endif %}"
+              style="color:{% if salary.paid %}#6ee7b7{% elif salary.days_overdue %}#f87171{% else %}#fbbf24{% endif %};">
+            {% if salary.paid %}✓ {% trans 'Paid' %}{% if salary.paid_at %} — {{ salary.paid_at|date:"d M Y" }}{% endif %}
+            {% elif salary.days_overdue %}⚠️ {{ salary.days_overdue }} {% trans 'days overdue' %}
+            {% else %}⏳ {% trans 'Pending' %}{% endif %}
+        </span>
+    </div>
+    {% else %}
+    <div class="stmt-row">
+        <span style="color:#888; font-size:0.85rem;">{% trans 'No salary registered.' %}</span>
+    </div>
+    {% endif %}
+
+    {% if pay_history %}
+    <div class="stmt-divider"></div>
+    <div style="color:var(--gold); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.5rem;">
+        {% trans 'Payment History' %}
+    </div>
+    {% for pay in pay_history %}
+    <div class="stmt-row" style="font-size:0.82rem;">
+        <span class="stmt-label">{{ pay.period }}</span>
+        <span>
+            <span class="stmt-value">KES {{ pay.amount|floatformat:0 }}</span>
+            {% if pay.paid %}
+            <span style="color:#6ee7b7; margin-left:0.5rem;">✓</span>
+            {% else %}
+            <span style="color:#f87171; margin-left:0.5rem;">✗</span>
+            {% endif %}
+        </span>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <div class="stmt-divider"></div>
+    <div style="color:#888; font-size:0.72rem; text-align:center; margin-top:0.5rem;">
+        {% trans 'Generated by Duka Mwecheche' %} · {{ period_label }}
+    </div>
+</div>
+
+{% endblock %}

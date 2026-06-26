@@ -19,8 +19,12 @@ from django.contrib.auth.decorators import login_required
 
 from decimal import Decimal
 
-from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt, BarTab, BarTabEntry, Receipt, ItemPortionPreset
-from .mpesa import initiate_stk_push, format_phone_ke, query_stk_status, register_c2b_url, generate_mpesa_qr, generate_emv_qr_string
+from .models import Payment, Order, Transaction, Item, PendingTransactionPrompt, BarTab, BarTabEntry, Receipt, ItemPortionPreset, Store
+from .mpesa import (
+    initiate_stk_push, format_phone_ke, query_stk_status,
+    register_c2b_url, generate_mpesa_qr, generate_emv_qr_string,
+    resolve_mpesa_config, resolve_account_by_shortcode,
+)
 from .notifications import notify_transaction, create_in_app_notification
 
 logger = logging.getLogger(__name__)
@@ -301,33 +305,44 @@ def stk_push_view(request):
         account_ref = f"DUKA-{business.id}"
     description = "Duka Mwecheche"
 
-    # Create pending payment record
+    # Determine store/source for per-counter routing
+    stk_store = None
+    if bar_tab:
+        stk_store = getattr(bar_tab, 'store', None)
+        if stk_store is None:
+            # Derive from tab source: kitchen tabs are on the kitchen store
+            if getattr(bar_tab, 'source', '') == 'kitchen':
+                stk_store = Store.objects.filter(business=business, is_kitchen=True).first()
+
+    cfg = resolve_mpesa_config(business, stk_store)
+    stk_shortcode = (cfg['till'] or cfg['paybill'] or '').strip() or None
+
+    # Create pending payment record (tagged with source)
     payment = Payment.objects.create(
         order=order,
         bar_tab=bar_tab,
         business=business,
+        store=cfg['store'],
+        source=cfg['source'],
         amount=amount,
         method='mpesa',
         status='pending',
         phone=phone_formatted,
     )
 
-    # Resolve shortcode: prefer Till (Buy Goods) over Paybill
-    biz_shortcode = (business.mpesa_till or business.mpesa_paybill or '').strip() or None
-
-    # Call Safaricom STK Push — use business's own Daraja credentials if configured
+    # Call Safaricom STK Push — use resolved credentials
     result = initiate_stk_push(
         phone_number=phone_formatted,
         amount=amount,
         account_reference=account_ref,
         description=description,
         callback_url=callback_url,
-        consumer_key=business.daraja_consumer_key or None,
-        consumer_secret=business.daraja_consumer_secret or None,
-        shortcode=biz_shortcode,
-        passkey=business.daraja_passkey or None,
-        use_till=bool(business.mpesa_till),
-        env=business.daraja_environment,
+        consumer_key=cfg['consumer_key'] or None,
+        consumer_secret=cfg['consumer_secret'] or None,
+        shortcode=stk_shortcode,
+        passkey=cfg['passkey'] or None,
+        use_till=bool(cfg['till']),
+        env=cfg['environment'],
     )
 
     if result and result.get('ResponseCode') == '0':
@@ -370,13 +385,14 @@ def payment_status(request, payment_id):
     # All failure marking must come exclusively from mpesa_callback.
     if payment.status == 'pending' and payment.checkout_request_id:
         biz = payment.business
+        cfg = resolve_mpesa_config(biz, payment.store)
         stk_result = query_stk_status(
             payment.checkout_request_id,
-            consumer_key=biz.daraja_consumer_key or None,
-            consumer_secret=biz.daraja_consumer_secret or None,
-            shortcode=(biz.mpesa_till or biz.mpesa_paybill or '').strip() or None,
-            passkey=biz.daraja_passkey or None,
-            env=biz.daraja_environment,
+            consumer_key=cfg['consumer_key'] or None,
+            consumer_secret=cfg['consumer_secret'] or None,
+            shortcode=(cfg['till'] or cfg['paybill'] or '').strip() or None,
+            passkey=cfg['passkey'] or None,
+            env=cfg['environment'],
         )
         if stk_result and stk_result.get('ResultCode') is not None:
             result_code = int(stk_result['ResultCode'])
@@ -433,28 +449,15 @@ def c2b_confirmation(request):
         trans_id, trans_amount, shortcode, msisdn, bill_ref_number,
     )
 
-    # Match shortcode to a business by till, paybill, or pochi
-    from accounts.models import Business
-    business = None
-    channel = ''
-
-    if shortcode:
-        business = Business.objects.filter(mpesa_till=shortcode).first()
-        if business:
-            channel = 'till'
-        if not business:
-            business = Business.objects.filter(mpesa_paybill=shortcode).first()
-            if business:
-                channel = 'paybill'
-        if not business:
-            # Pochi la Biashara sometimes uses the phone as shortcode
-            business = Business.objects.filter(mpesa_pochi=shortcode).first()
-            if business:
-                channel = 'pochi'
+    # Match shortcode to a business (and optional store) using the resolver
+    business, matched_store, channel = resolve_account_by_shortcode(shortcode)
 
     if not business:
         logger.warning("C2B: No business found for shortcode %s", shortcode)
         return JsonResponse({'ResultCode': 0, 'ResultDesc': 'Accepted'})
+
+    # Determine source from the matched store
+    c2b_source = 'kitchen' if (matched_store and getattr(matched_store, 'is_kitchen', False)) else 'bar'
 
     # Avoid duplicate prompts for the same receipt
     if trans_id and PendingTransactionPrompt.objects.filter(mpesa_receipt=trans_id).exists():
@@ -475,7 +478,20 @@ def c2b_confirmation(request):
         payment_channel=channel,
     )
 
-    # Notify all staff + owner for this business
+    # Also create a tagged Payment record for cross-check reconciliation
+    Payment.objects.create(
+        business=business,
+        store=matched_store,
+        source=c2b_source,
+        amount=amount,
+        method='mpesa',
+        status='completed',
+        phone=msisdn,
+        mpesa_receipt=trans_id,
+        completed_at=timezone.now(),
+    )
+
+    # Notify staff + owner for this business
     from accounts.models import UserProfile
     biz_users = UserProfile.objects.filter(
         business=business, role__in=['owner', 'staff']
@@ -486,8 +502,9 @@ def c2b_confirmation(request):
             user=profile.user,
             title='💰 Payment Received!',
             message=(
-                f"KES {amount:,.0f} received from {msisdn} via {channel.upper()}. "
-                f"Receipt: {trans_id}. Please confirm what was sold."
+                f"KES {amount:,.0f} received from {msisdn} via {channel.upper()}"
+                + (f" [{c2b_source.capitalize()}]" if c2b_source == 'kitchen' else "")
+                + f". Receipt: {trans_id}. Please confirm what was sold."
             ),
             notification_type='transaction',
         )
@@ -655,20 +672,25 @@ def confirm_prompt(request, prompt_id):
 
 @require_GET
 def mpesa_qr_view(request):
-    """Generate an M-Pesa payment QR code for a business.
+    """Generate an M-Pesa payment QR code for a business (or a specific counter).
 
-    GET /mpesa/qr/?business_id=X&amount=Y (amount optional)
+    GET /mpesa/qr/?business_id=X&amount=Y&store_id=Z (amount + store_id optional)
+
+    When store_id is provided and the store has has_own_mpesa=True, the QR encodes
+    that counter's till/paybill. Otherwise falls back to business config.
 
     Path 1 — calls Safaricom Daraja Dynamic QR API, returns base64 PNG.
-    Path 2 — if Daraja fails, returns the payment page URL so the client
-              can render a URL-link QR using qrcodejs (guaranteed to work).
+    Path 2 — if Daraja fails, builds EMVCo string for client-side QR rendering.
+    Path 3 — fallback URL QR.
 
     Response JSON:
-        {"mode": "img",  "data": "<base64>"}   — Path 1 success: render <img>
-        {"mode": "url",  "data": "<url>"}       — Path 2 fallback: render URL QR
+        {"mode": "img", "data": "<base64>"}   — Path 1 success
+        {"mode": "emv", "data": "<string>"}   — Path 2 EMVCo
+        {"mode": "url", "data": "<url>"}      — Path 3 fallback
     """
     business_id = request.GET.get('business_id')
     amount_str = request.GET.get('amount', '')
+    store_id = request.GET.get('store_id')
 
     if not business_id:
         return JsonResponse({'error': 'business_id required'}, status=400)
@@ -679,15 +701,17 @@ def mpesa_qr_view(request):
     except (_Business.DoesNotExist, ValueError, TypeError):
         return JsonResponse({'error': 'Business not found'}, status=404)
 
-    # Determine shortcode + transaction type (prefer Till over Paybill)
-    shortcode = ''
-    trx_code = ''
-    if business.mpesa_till:
-        shortcode = business.mpesa_till.strip()
-        trx_code = 'BG'  # Buy Goods (Till)
-    elif business.mpesa_paybill:
-        shortcode = business.mpesa_paybill.strip()
-        trx_code = 'PB'  # Pay Bill
+    # Resolve store for per-counter QR
+    qr_store = None
+    if store_id:
+        try:
+            qr_store = Store.objects.get(id=int(store_id), business=business)
+        except (Store.DoesNotExist, ValueError, TypeError):
+            pass
+
+    cfg = resolve_mpesa_config(business, qr_store)
+    shortcode = cfg['till'] or cfg['paybill']
+    trx_code = 'BG' if cfg['till'] else ('PB' if cfg['paybill'] else '')
 
     amount = None
     if amount_str:
@@ -711,7 +735,6 @@ def mpesa_qr_view(request):
         if qr_b64:
             return JsonResponse({'mode': 'img', 'data': qr_b64})
 
-        # Path 2: client-side EMVCo MPMQR string — customer scans with M-Pesa app
         emv_str = generate_emv_qr_string(
             merchant_name=business.name,
             shortcode=shortcode,
@@ -721,7 +744,6 @@ def mpesa_qr_view(request):
         if emv_str:
             return JsonResponse({'mode': 'emv', 'data': emv_str})
 
-    # Final fallback: URL pointing to this business's payment page
     return JsonResponse({'mode': 'url', 'data': fallback_url})
 
 

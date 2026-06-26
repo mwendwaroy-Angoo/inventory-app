@@ -1015,3 +1015,254 @@ class BottleShrinkageLeaderboardTest(TestCase):
         rows = km.staff_shrinkage(biz, today, today)
         if rows:
             self.assertAlmostEqual(rows[0].bottle_loss_kes, 0.0, places=1)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint K1 — Source-scoped debt
+# ══════════════════════════════════════════════════════════════════════════════
+
+from core.models import CustomerDebtPayment
+
+
+class DebtPaymentSourceFieldTest(TestCase):
+    """K1: CustomerDebtPayment.source defaults to 'bar' and accepts 'kitchen'."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K1 Biz')
+        store = Store.objects.create(business=self.biz, name='Bar')
+        self.customer = Customer.objects.create(business=self.biz, name='Kamau')
+        self.user = User.objects.create_user(username='k1_owner', password='x')
+        UserProfile.objects.create(user=self.user, business=self.biz, role='owner')
+
+    def test_source_defaults_to_bar(self):
+        pay = CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('100'),
+        )
+        self.assertEqual(pay.source, 'bar')
+
+    def test_source_accepts_kitchen(self):
+        pay = CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('200'),
+            source='kitchen',
+        )
+        self.assertEqual(pay.source, 'kitchen')
+
+    def test_filter_by_source_partitions_ledger(self):
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('300'), source='bar',
+        )
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('150'), source='kitchen',
+        )
+        bar_total = CustomerDebtPayment.objects.filter(
+            business=self.biz, source='bar'
+        ).aggregate(t=__import__('django.db.models', fromlist=['Sum']).Sum('amount_paid'))['t']
+        kitchen_total = CustomerDebtPayment.objects.filter(
+            business=self.biz, source='kitchen'
+        ).aggregate(t=__import__('django.db.models', fromlist=['Sum']).Sum('amount_paid'))['t']
+        self.assertEqual(bar_total, Decimal('300'))
+        self.assertEqual(kitchen_total, Decimal('150'))
+
+
+class DebtScopeHelperTest(TestCase):
+    """K1: _debt_scope() returns correct scope based on staff role and business kitchen flag."""
+
+    def _make_biz(self, has_kitchen=True):
+        biz = Business.objects.create(name=f'K1 Scope Biz {has_kitchen}')
+        biz.has_kitchen = has_kitchen
+        biz.save()
+        return biz
+
+    def test_owner_gets_all_scope(self):
+        from core.debt_views import _debt_scope
+        biz = self._make_biz(has_kitchen=True)
+        owner_user = User.objects.create_user(username='k1_scope_owner', password='x')
+        profile = UserProfile.objects.create(user=owner_user, business=biz, role='owner')
+        self.assertEqual(_debt_scope(profile, biz), 'all')
+
+    def test_kitchen_staff_gets_kitchen_scope(self):
+        from core.debt_views import _debt_scope
+        biz = self._make_biz(has_kitchen=True)
+        staff_user = User.objects.create_user(username='k1_kitch_staff', password='x')
+        profile = UserProfile.objects.create(
+            user=staff_user, business=biz, role='kitchen',
+            can_access_bar=False, can_access_kitchen=True,
+        )
+        self.assertEqual(_debt_scope(profile, biz), 'kitchen')
+
+    def test_no_kitchen_business_gets_all_scope(self):
+        from core.debt_views import _debt_scope
+        biz = self._make_biz(has_kitchen=False)
+        staff_user = User.objects.create_user(username='k1_nokit_staff', password='x')
+        profile = UserProfile.objects.create(user=staff_user, business=biz, role='staff')
+        self.assertEqual(_debt_scope(profile, biz), 'all')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint K2a — Per-counter M-Pesa resolver
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ResolveMpesaConfigTest(TestCase):
+    """K2a: resolve_mpesa_config() returns store config when store.has_own_mpesa=True."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='K2a Biz',
+            mpesa_till='111111',
+            mpesa_paybill='',
+        )
+        self.bar_store = Store.objects.create(
+            business=self.biz, name='Bar',
+            has_own_mpesa=False,
+        )
+        self.kitchen_store = Store.objects.create(
+            business=self.biz, name='Kitchen', is_kitchen=True,
+            has_own_mpesa=True,
+            mpesa_till='999999',
+        )
+
+    def test_no_override_returns_business_config(self):
+        from core.mpesa import resolve_mpesa_config
+        cfg = resolve_mpesa_config(self.biz, self.bar_store)
+        self.assertEqual(cfg['till'], '111111')
+        # store is None in the returned config when using business-level M-Pesa
+        self.assertIsNone(cfg['store'])
+
+    def test_store_override_returns_store_config(self):
+        from core.mpesa import resolve_mpesa_config
+        cfg = resolve_mpesa_config(self.biz, self.kitchen_store)
+        self.assertEqual(cfg['till'], '999999')
+        self.assertEqual(cfg['source'], 'kitchen')
+
+    def test_no_store_returns_business_config(self):
+        from core.mpesa import resolve_mpesa_config
+        cfg = resolve_mpesa_config(self.biz, store=None)
+        self.assertEqual(cfg['till'], '111111')
+        self.assertIsNone(cfg['store'])
+
+
+class ResolveAccountByShortcodeTest(TestCase):
+    """K2a: resolve_account_by_shortcode() finds Store override before Business."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K2a SC Biz', mpesa_till='777777')
+        self.kit_store = Store.objects.create(
+            business=self.biz, name='Kitchen', is_kitchen=True,
+            has_own_mpesa=True, mpesa_till='888888',
+        )
+
+    def test_finds_store_shortcode_first(self):
+        from core.mpesa import resolve_account_by_shortcode
+        found_biz, found_store, channel = resolve_account_by_shortcode('888888')
+        self.assertEqual(found_biz, self.biz)
+        self.assertEqual(found_store, self.kit_store)
+        self.assertEqual(channel, 'till')
+
+    def test_falls_back_to_business_shortcode(self):
+        from core.mpesa import resolve_account_by_shortcode
+        found_biz, found_store, channel = resolve_account_by_shortcode('777777')
+        self.assertEqual(found_biz, self.biz)
+        self.assertIsNone(found_store)
+
+    def test_unknown_shortcode_returns_none(self):
+        from core.mpesa import resolve_account_by_shortcode
+        found_biz, found_store, channel = resolve_account_by_shortcode('000000')
+        self.assertIsNone(found_biz)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint H — Haki module
+# ══════════════════════════════════════════════════════════════════════════════
+
+from core.models import SalaryPayment
+from core.haki_views import _check_and_fire_recognition
+
+
+class SalaryPaymentModelTest(TestCase):
+    """H2: SalaryPayment model constraints and computed properties."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Haki Biz')
+        owner_user = User.objects.create_user(username='haki_owner', password='x')
+        self.owner_profile = UserProfile.objects.create(
+            user=owner_user, business=self.biz, role='owner',
+        )
+        staff_user = User.objects.create_user(username='haki_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(
+            user=staff_user, business=self.biz, role='staff',
+        )
+
+    def test_salary_payment_created_and_unique(self):
+        from django.db import IntegrityError
+        from datetime import date
+        SalaryPayment.objects.create(
+            business=self.biz, staff=self.staff_profile,
+            period='2026-06', amount=Decimal('20000'),
+            due_date=date(2026, 6, 30),
+        )
+        with self.assertRaises(IntegrityError):
+            SalaryPayment.objects.create(
+                business=self.biz, staff=self.staff_profile,
+                period='2026-06', amount=Decimal('20000'),
+                due_date=date(2026, 6, 30),
+            )
+
+    def test_days_overdue_is_positive_when_past_due(self):
+        from datetime import date, timedelta
+        past_due = timezone.localdate() - timedelta(days=5)
+        pay = SalaryPayment.objects.create(
+            business=self.biz, staff=self.staff_profile,
+            period='2025-01', amount=Decimal('15000'),
+            due_date=past_due, paid=False,
+        )
+        self.assertGreater(pay.days_overdue, 0)
+
+    def test_days_overdue_is_zero_when_paid(self):
+        from datetime import date, timedelta
+        past_due = timezone.localdate() - timedelta(days=5)
+        pay = SalaryPayment.objects.create(
+            business=self.biz, staff=self.staff_profile,
+            period='2025-02', amount=Decimal('15000'),
+            due_date=past_due, paid=True, paid_at=timezone.now(),
+        )
+        self.assertEqual(pay.days_overdue, 0)
+
+
+class HakiRecognitionNudgeTest(TestCase):
+    """H4: _check_and_fire_recognition creates a Notification for milestone badges."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Haki Recog Biz')
+        owner_user = User.objects.create_user(username='haki_recog_owner', password='x')
+        self.owner_profile = UserProfile.objects.create(
+            user=owner_user, business=self.biz, role='owner',
+        )
+        staff_user = User.objects.create_user(username='haki_recog_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(
+            user=staff_user, business=self.biz, role='staff',
+        )
+
+    def test_milestone_creates_notification(self):
+        contrib = {
+            'milestones': ['🏅 30+ shifts'],
+            'revenue_kes': 0.0,
+        }
+        notifs_before = Notification.objects.filter(user=self.owner_profile.user).count()
+        _check_and_fire_recognition(self.staff_profile, self.biz, contrib)
+        notifs_after = Notification.objects.filter(user=self.owner_profile.user).count()
+        self.assertGreater(notifs_after, notifs_before)
+
+    def test_duplicate_milestone_not_re_notified(self):
+        contrib = {'milestones': ['✨ Clean handling'], 'revenue_kes': 0.0}
+        _check_and_fire_recognition(self.staff_profile, self.biz, contrib)
+        notifs_first = Notification.objects.filter(user=self.owner_profile.user).count()
+        _check_and_fire_recognition(self.staff_profile, self.biz, contrib)
+        notifs_second = Notification.objects.filter(user=self.owner_profile.user).count()
+        self.assertEqual(notifs_first, notifs_second, "Same milestone must not fire twice")
+
+    def test_no_milestones_no_notification(self):
+        contrib = {'milestones': [], 'revenue_kes': 0.0}
+        notifs_before = Notification.objects.filter(user=self.owner_profile.user).count()
+        _check_and_fire_recognition(self.staff_profile, self.biz, contrib)
+        notifs_after = Notification.objects.filter(user=self.owner_profile.user).count()
+        self.assertEqual(notifs_before, notifs_after)

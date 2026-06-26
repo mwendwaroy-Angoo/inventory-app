@@ -211,6 +211,23 @@ class Store(models.Model):
     suitable_for_types = models.ManyToManyField(BusinessType, related_name='suitable_stores', blank=True)
     is_kitchen = models.BooleanField(default=False, help_text='Kitchen / grill side venture — separate POS board')
 
+    # ── Per-counter M-Pesa overrides (Sprint K2a) ────────────────────────────
+    has_own_mpesa = models.BooleanField(
+        default=False,
+        help_text='This counter receives M-Pesa on its own Till/Paybill, separate from the business default.',
+    )
+    mpesa_till = models.CharField(max_length=20, blank=True)
+    mpesa_paybill = models.CharField(max_length=20, blank=True)
+    mpesa_paybill_account = models.CharField(max_length=50, blank=True)
+    mpesa_pochi = models.CharField(max_length=20, blank=True)
+    daraja_consumer_key = models.CharField(max_length=255, blank=True)
+    daraja_consumer_secret = models.CharField(max_length=255, blank=True)
+    daraja_passkey = models.CharField(max_length=255, blank=True)
+    daraja_environment = models.CharField(
+        max_length=10, blank=True,
+        help_text="Leave blank to inherit from business. Set 'sandbox' or 'production' to override.",
+    )
+
     def __str__(self):
         business_name = self.business.name if self.business else "No Business"
         return f"{self.name} ({business_name})"
@@ -904,9 +921,22 @@ class Payment(models.Model):
         ('failed', _('Failed')),
     ]
 
+    SOURCE_CHOICES = [
+        ('bar',     _('Bar')),
+        ('kitchen', _('Kitchen')),
+    ]
+
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
     bar_tab = models.ForeignKey('BarTab', on_delete=models.SET_NULL, null=True, blank=True, related_name='stk_payments')
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='payments')
+    store = models.ForeignKey(
+        'Store', on_delete=models.SET_NULL, null=True, blank=True, related_name='payments',
+        help_text='Which store/counter received this payment (for per-counter M-Pesa reconciliation).',
+    )
+    source = models.CharField(
+        max_length=10, choices=SOURCE_CHOICES, default='bar',
+        help_text="Counter source: 'bar' or 'kitchen'. Drives per-counter cross-check in Z-report.",
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     method = models.CharField(max_length=10, choices=METHOD_CHOICES, default='mpesa')
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
@@ -1323,6 +1353,10 @@ class CustomerDebtPayment(models.Model):
         ('cash',  _('Cash')),
         ('mpesa', _('M-Pesa')),
     ]
+    SOURCE_CHOICES = [
+        ('bar',     _('Bar')),
+        ('kitchen', _('Kitchen')),
+    ]
 
     customer = models.ForeignKey(
         Customer,
@@ -1340,6 +1374,12 @@ class CustomerDebtPayment(models.Model):
         choices=PAYMENT_METHOD_CHOICES,
         default='cash',
     )
+    source = models.CharField(
+        max_length=10,
+        choices=SOURCE_CHOICES,
+        default='bar',
+        help_text="Which sub-ledger this payment settles. Kitchen staff post 'kitchen'; bar/general staff post 'bar'.",
+    )
     paid_at = models.DateTimeField(default=timezone.now)
     notes = models.TextField(blank=True)
     recorded_by = models.ForeignKey(
@@ -1356,6 +1396,62 @@ class CustomerDebtPayment(models.Model):
 
     def __str__(self):
         return f"{self.customer.name} paid KES {self.amount_paid:,.2f} on {self.paid_at.strftime('%d %b %Y')}"
+
+
+# ────────────────────────────────────────────────
+# SALARY PAYMENT  (Sprint H2 — Haki module)
+# ────────────────────────────────────────────────
+
+class SalaryPayment(models.Model):
+    """Records whether a staff member's salary was paid for a given period."""
+    METHOD_CHOICES = [
+        ('cash',  _('Cash')),
+        ('mpesa', _('M-Pesa')),
+        ('bank',  _('Bank Transfer')),
+    ]
+
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='salary_payments',
+    )
+    staff = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.CASCADE, related_name='salary_payments',
+    )
+    period = models.CharField(
+        max_length=7,
+        help_text="Period string in YYYY-MM format (e.g. '2026-06').",
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    due_date = models.DateField()
+    paid = models.BooleanField(default=False)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    method = models.CharField(max_length=10, choices=METHOD_CHOICES, default='cash', blank=True)
+    notes = models.CharField(max_length=255, blank=True)
+    recorded_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='salary_payments_recorded',
+    )
+
+    class Meta:
+        ordering = ['-period', 'staff']
+        unique_together = [('business', 'staff', 'period')]
+        verbose_name = 'Salary Payment'
+        verbose_name_plural = 'Salary Payments'
+
+    def __str__(self):
+        status = 'Paid' if self.paid else 'Due'
+        return f"{self.staff.user.get_full_name() or self.staff.user.username} — {self.period} — KES {self.amount:,.0f} [{status}]"
+
+    @property
+    def days_overdue(self):
+        from django.utils import timezone
+        today = timezone.localdate()
+        if not self.paid and self.due_date < today:
+            return (today - self.due_date).days
+        return 0
+
+    @property
+    def is_overdue(self):
+        return self.days_overdue > 0
 
 
 # ────────────────────────────────────────────────

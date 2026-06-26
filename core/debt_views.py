@@ -1,5 +1,10 @@
 """
-core/debt_views.py
+core/debt_views.py — Sprint K1: source-scoped debt sub-ledgers.
+
+Kitchen-only staff see/settle only kitchen-origin credit.
+Bar/general staff see/settle only bar-origin credit.
+Owner (and cross-authorised staff) see both ledgers as separate sections.
+Discriminator: Transaction.item.store.is_kitchen == True → kitchen; False → bar.
 """
 
 from collections import defaultdict
@@ -17,25 +22,59 @@ from core.models import Customer, CustomerDebtPayment, Transaction
 from core.views import get_user_profile, owner_required
 
 
-def _get_customer_debt_data(customer, business):
+# ── Scope helper ─────────────────────────────────────────────────────────────
+
+def _debt_scope(profile, business):
+    """Return 'bar', 'kitchen', or 'all' for the current user.
+
+    'all' = owner or cross-authorised staff (sees both sub-ledgers as two sections).
+    'kitchen' = kitchen-only staff (can_access_kitchen and NOT can_access_bar).
+    'bar' = everyone else (bar/general staff, no kitchen access).
+    """
+    if not getattr(business, 'has_kitchen', False):
+        return 'all'
+    if profile.is_owner:
+        return 'all'
+    if profile.can_access_bar and profile.can_access_kitchen:
+        return 'all'
+    if profile.is_kitchen_staff or (profile.can_access_kitchen and not profile.can_access_bar):
+        return 'kitchen'
+    return 'bar'
+
+
+# ── Core data helper ──────────────────────────────────────────────────────────
+
+def _get_customer_debt_data(customer, business, scope='all'):
+    """Compute debt data for one customer, optionally filtered to a sub-ledger.
+
+    scope='bar'     → only bar-origin credit txns + bar-tagged payments
+    scope='kitchen' → only kitchen-origin txns + kitchen-tagged payments
+    scope='all'     → entire ledger (owner view / businesses without kitchen)
+    """
     today = timezone.now().date()
     window = business.credit_window_days or 30
 
-    credit_txns = list(
-        Transaction.objects.filter(
-            business=business,
-            recipient=customer.name,
-            payment_method='credit',
-            type='Issue',
-        ).order_by('date').select_related('item')
-    )
+    credit_qs = Transaction.objects.filter(
+        business=business,
+        recipient=customer.name,
+        payment_method='credit',
+        type='Issue',
+    ).order_by('date').select_related('item__store')
 
-    payments = list(
-        CustomerDebtPayment.objects.filter(
-            customer=customer,
-            business=business,
-        ).order_by('paid_at')
-    )
+    payment_qs = CustomerDebtPayment.objects.filter(
+        customer=customer,
+        business=business,
+    ).order_by('paid_at')
+
+    if scope == 'kitchen':
+        credit_qs = credit_qs.filter(item__store__is_kitchen=True)
+        payment_qs = payment_qs.filter(source='kitchen')
+    elif scope == 'bar':
+        credit_qs = credit_qs.filter(item__store__is_kitchen=False)
+        payment_qs = payment_qs.filter(source='bar')
+
+    credit_txns = list(credit_qs)
+    payments    = list(payment_qs)
 
     total_credit_amount = sum(float(t.revenue()) for t in credit_txns)
     total_paid = sum(float(p.amount_paid) for p in payments)
@@ -88,7 +127,7 @@ def _get_customer_debt_data(customer, business):
         score_pct   = 0
     else:
         completion_rate = (total_paid / total_credit_amount * 100) if total_credit_amount > 0 else 0
-        avg_days = _calc_avg_payment_days(customer, business)
+        avg_days = _calc_avg_payment_days(customer, business, scope)
 
         if has_overdue and outstanding > 0:
             score = 'high_risk'
@@ -136,29 +175,39 @@ def _get_customer_debt_data(customer, business):
     }
 
 
-def _calc_avg_payment_days(customer, business):
-    payments = CustomerDebtPayment.objects.filter(
+def _calc_avg_payment_days(customer, business, scope='all'):
+    payment_qs = CustomerDebtPayment.objects.filter(
         customer=customer,
         business=business,
     ).order_by('paid_at')
 
-    if not payments.exists():
-        return None
-
-    first_txn = Transaction.objects.filter(
+    txn_qs = Transaction.objects.filter(
         business=business,
         recipient=customer.name,
         payment_method='credit',
         type='Issue',
-    ).order_by('date').first()
+    ).select_related('item__store')
 
+    if scope == 'kitchen':
+        payment_qs = payment_qs.filter(source='kitchen')
+        txn_qs = txn_qs.filter(item__store__is_kitchen=True)
+    elif scope == 'bar':
+        payment_qs = payment_qs.filter(source='bar')
+        txn_qs = txn_qs.filter(item__store__is_kitchen=False)
+
+    if not payment_qs.exists():
+        return None
+
+    first_txn = txn_qs.order_by('date').first()
     if not first_txn:
         return None
 
-    first_payment = payments.first()
+    first_payment = payment_qs.first()
     days = (first_payment.paid_at.date() - first_txn.date).days
     return max(0, days)
 
+
+# ── Views ─────────────────────────────────────────────────────────────────────
 
 @login_required
 def debt_dashboard(request):
@@ -166,6 +215,7 @@ def debt_dashboard(request):
     business = user_profile.business
     today = timezone.now().date()
     window = business.credit_window_days or 30
+    scope = _debt_scope(user_profile, business)
 
     customers_with_credit = Customer.objects.filter(
         business=business,
@@ -176,7 +226,7 @@ def debt_dashboard(request):
     total_overdue = 0.0
 
     for customer in customers_with_credit:
-        data = _get_customer_debt_data(customer, business)
+        data = _get_customer_debt_data(customer, business, scope)
         if data['outstanding'] > 0 or data['txn_count'] > 0:
             dashboard_rows.append(data)
             total_outstanding += data['outstanding']
@@ -185,6 +235,8 @@ def debt_dashboard(request):
 
     dashboard_rows.sort(key=lambda x: (-int(x['has_overdue']), -x['outstanding']))
 
+    scope_label = {'bar': 'Bar', 'kitchen': 'Kitchen', 'all': 'All'}.get(scope, 'All')
+
     return render(request, 'core/debt_dashboard.html', {
         'rows':              dashboard_rows,
         'total_outstanding': round(total_outstanding, 2),
@@ -192,6 +244,8 @@ def debt_dashboard(request):
         'customer_count':    len([r for r in dashboard_rows if r['outstanding'] > 0]),
         'credit_window':     window,
         'today':             today.strftime('%B %d, %Y'),
+        'scope':             scope,
+        'scope_label':       scope_label,
     })
 
 
@@ -200,13 +254,27 @@ def customer_debt_profile(request, customer_id):
     user_profile = get_user_profile(request)
     business = user_profile.business
     is_owner = user_profile.is_owner
+    scope = _debt_scope(user_profile, business)
 
     customer = get_object_or_404(Customer, id=customer_id, business=business)
-    data = _get_customer_debt_data(customer, business)
+
+    if scope == 'all':
+        # Owner sees two separate sub-ledger sections plus a combined total
+        bar_data     = _get_customer_debt_data(customer, business, scope='bar')
+        kitchen_data = _get_customer_debt_data(customer, business, scope='kitchen')
+        data         = _get_customer_debt_data(customer, business, scope='all')
+        data['bar_data']     = bar_data
+        data['kitchen_data'] = kitchen_data
+        has_kitchen = getattr(business, 'has_kitchen', False)
+    else:
+        data = _get_customer_debt_data(customer, business, scope)
+        has_kitchen = False  # non-owner scoped view is single-ledger
 
     return render(request, 'core/customer_debt_profile.html', {
         **data,
         'is_owner':    is_owner,
+        'scope':       scope,
+        'has_kitchen': has_kitchen,
         'today':       timezone.now().date().isoformat(),
         'today_label': timezone.now().date().strftime('%B %d, %Y'),
         'payment_methods': CustomerDebtPayment.PAYMENT_METHOD_CHOICES,
@@ -218,11 +286,22 @@ def customer_debt_profile(request, customer_id):
 def record_debt_payment(request, customer_id):
     user_profile = get_user_profile(request)
     business = user_profile.business
+    scope = _debt_scope(user_profile, business)
     customer = get_object_or_404(Customer, id=customer_id, business=business)
 
     amount_raw = request.POST.get('amount_paid', '').strip()
     method     = request.POST.get('payment_method', 'cash')
     notes      = request.POST.get('notes', '').strip()
+
+    # Owner must specify which sub-ledger they're settling
+    if scope == 'all':
+        debt_source = request.POST.get('debt_source', 'bar')
+        if debt_source not in ('bar', 'kitchen'):
+            messages.error(request, _('Please specify whether this payment is for Bar or Kitchen debt.'))
+            return redirect('customer_debt_profile', customer_id=customer_id)
+        payment_scope = debt_source
+    else:
+        payment_scope = scope
 
     try:
         amount = Decimal(amount_raw)
@@ -232,13 +311,17 @@ def record_debt_payment(request, customer_id):
         messages.error(request, _('Please enter a valid payment amount.'))
         return redirect('customer_debt_profile', customer_id=customer_id)
 
-    # Snapshot debt data BEFORE recording payment — needed for receipt lines + validation
-    data = _get_customer_debt_data(customer, business)
+    # Validate against the SCOPED outstanding balance
+    data = _get_customer_debt_data(customer, business, payment_scope)
     if amount > Decimal(str(data['outstanding'])):
         messages.error(
             request,
-            _('Payment of KES %(amount)s exceeds outstanding balance of KES %(outstanding)s.')
-            % {'amount': f'{amount:,.2f}', 'outstanding': f"{data['outstanding']:,.2f}"}
+            _('Payment of KES %(amount)s exceeds the %(scope)s outstanding balance of KES %(outstanding)s.')
+            % {
+                'amount': f'{amount:,.2f}',
+                'scope': payment_scope.capitalize(),
+                'outstanding': f"{data['outstanding']:,.2f}",
+            }
         )
         return redirect('customer_debt_profile', customer_id=customer_id)
 
@@ -251,16 +334,17 @@ def record_debt_payment(request, customer_id):
         business=business,
         amount_paid=amount,
         payment_method=method,
+        source=payment_scope,
         notes=notes,
         recorded_by=request.user,
     )
 
-    # Recompute score AFTER payment — shows the customer's current standing
-    post_data       = _get_customer_debt_data(customer, business)
+    # Recompute score AFTER payment
+    post_data       = _get_customer_debt_data(customer, business, payment_scope)
     score_label     = post_data.get('score_label', '')
     effective_window = post_data.get('effective_window', business.credit_window_days or 30)
 
-    # Build receipt lines: show each original credit transaction being cleared (FIFO)
+    # Build receipt lines: FIFO coverage of unpaid transactions
     receipt_lines = []
     paid_remaining = float(amount)
     max_days = 0
@@ -279,7 +363,7 @@ def record_debt_payment(request, customer_id):
     if not receipt_lines:
         receipt_lines.append({'name': notes or 'Malipo ya deni', 'qty': 1, 'subtotal': float(amount)})
 
-    # Remaining balance — show on receipt if this was a partial payment
+    # Remaining balance
     remaining_balance = round(max(0.0, data['outstanding'] - float(amount)), 2)
     if remaining_balance > 0:
         receipt_lines.append({
@@ -288,7 +372,7 @@ def record_debt_payment(request, customer_id):
             'subtotal': remaining_balance,
         })
 
-    # Days label: how long the customer actually took to pay vs their window
+    # Days label
     if max_days == 0:
         days_label = 'umelipa leo'
     elif max_days == 1:
@@ -299,14 +383,13 @@ def record_debt_payment(request, customer_id):
 
     receipt_lines.append({
         'name': (
-            f"Malipo: {method_label} · {days_label} ({window_label})"
+            f"Malipo: {method_label} · {payment_scope.capitalize()} · {days_label} ({window_label})"
             f" · {score_label} · alirekodiwa na {recorder}"
         ),
         'qty': 0,
         'subtotal': 0,
     })
 
-    # Issue receipt and redirect straight to it
     receipt_token = None
     try:
         from .models import Receipt
@@ -320,7 +403,6 @@ def record_debt_payment(request, customer_id):
         )
         receipt_token = rcpt.token
         receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
-        # Auto-SMS the payment confirmation to the customer
         if customer.phone:
             from .notifications import normalize_ke_phone, send_sms_notification
             normalized = normalize_ke_phone(customer.phone)
@@ -350,8 +432,9 @@ def record_debt_payment(request, customer_id):
 def send_debt_reminder(request, customer_id):
     user_profile = get_user_profile(request)
     business = user_profile.business
+    scope = _debt_scope(user_profile, business)
     customer = get_object_or_404(Customer, id=customer_id, business=business)
-    data = _get_customer_debt_data(customer, business)
+    data = _get_customer_debt_data(customer, business, scope)
 
     if data['outstanding'] <= 0:
         messages.info(request, _('%(customer)s has no outstanding balance.') % {'customer': customer.name})

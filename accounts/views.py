@@ -726,10 +726,28 @@ def payment_settings(request):
         messages.error(request, _("No business found."))
         return redirect('home')
 
+    # Fetch kitchen store for per-counter M-Pesa section
+    from core.models import Store
+    kitchen_store = Store.objects.filter(business=business, is_kitchen=True).first()
+
     if request.method == 'POST':
         form = PaymentSettingsForm(request.POST, instance=business)
         if form.is_valid():
             form.save()
+            # ── Save kitchen M-Pesa overrides if kitchen exists ──
+            if kitchen_store and request.POST.get('kitchen_has_own_mpesa') == '1':
+                kitchen_store.has_own_mpesa = True
+                kitchen_store.mpesa_till = request.POST.get('kitchen_mpesa_till', '').strip()
+                kitchen_store.mpesa_paybill = request.POST.get('kitchen_mpesa_paybill', '').strip()
+                kitchen_store.mpesa_paybill_account = request.POST.get('kitchen_mpesa_paybill_account', '').strip()
+                kitchen_store.mpesa_pochi = request.POST.get('kitchen_mpesa_pochi', '').strip()
+                kitchen_store.save(update_fields=[
+                    'has_own_mpesa', 'mpesa_till', 'mpesa_paybill',
+                    'mpesa_paybill_account', 'mpesa_pochi',
+                ])
+            elif kitchen_store:
+                kitchen_store.has_own_mpesa = False
+                kitchen_store.save(update_fields=['has_own_mpesa'])
             messages.success(request, _("Payment settings updated successfully."))
             return redirect('payment_settings')
     else:
@@ -738,6 +756,7 @@ def payment_settings(request):
     return render(request, 'accounts/payment_settings.html', {
         'form': form,
         'business': business,
+        'kitchen_store': kitchen_store,
     })
 
 

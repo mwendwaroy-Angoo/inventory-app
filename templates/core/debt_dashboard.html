@@ -36,6 +36,11 @@
         <p style="color:#b0b0b0; font-size:0.875rem; margin-bottom:0;">
             {% trans 'Outstanding customer credit balances' %} ·
             {% trans 'Credit window' %}: <strong style="color:var(--gold);">{{ credit_window }} {% trans 'days' %}</strong>
+            {% if scope != 'all' %}
+            · <span style="font-size:0.78rem; background:rgba(201,168,76,0.12); color:var(--gold); border:1px solid rgba(201,168,76,0.3); border-radius:12px; padding:0.1rem 0.55rem;">
+                {% if scope == 'kitchen' %}🍗{% else %}🍺{% endif %} {{ scope_label }}
+              </span>
+            {% endif %}
         </p>
     </div>
     <div class="d-flex gap-2">

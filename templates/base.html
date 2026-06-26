@@ -464,6 +464,7 @@
                     <ul class="navbar-nav me-auto d-lg-none">
                         <li class="nav-item"><a class="nav-link" href="{% url 'waitress_screen' %}">📋 {% trans 'Order Desk' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
+                        {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                     </ul>
 
                     {% elif user.userprofile.is_kitchen_staff %}
@@ -472,6 +473,7 @@
                         {% if user.userprofile.can_access_bar and biz_profile.modules.keg %}<li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
+                        {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                     </ul>
 
                     {% elif user.userprofile.is_staff_member %}
@@ -489,6 +491,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'fulfillment_list' %}">📋 {% trans 'Order Fulfillment' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'pending_prompts' %}">💰 {% trans 'Payments' %}</a></li>
+                        {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                     </ul>
 
                     {% else %}
@@ -542,6 +545,7 @@
                                 <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
+                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
                                 <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
                             </ul>
                         </li>
@@ -644,6 +648,7 @@
                     <ul class="navbar-nav flex-row">
                         <li class="nav-item"><a class="nav-link" href="{% url 'waitress_screen' %}">📋 {% trans 'Order Desk' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
+                        {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                     </ul>
 
                     {% elif user.userprofile.is_kitchen_staff %}
@@ -652,6 +657,7 @@
                         {% if user.userprofile.can_access_bar and biz_profile.modules.keg %}<li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
+                        {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                     </ul>
 
                     {% elif user.userprofile.is_staff_member %}
@@ -668,6 +674,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'fulfillment_list' %}">📋 {% trans 'Order Fulfillment' %}</a></li>
+                        {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                         <li class="nav-item">
                             <a class="nav-link position-relative" href="{% url 'pending_prompts' %}">💰 {% trans 'Payments' %}
                                 <span id="prompts-badge"
@@ -734,6 +741,7 @@
                                 <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
+                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
                                 <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
                             </ul>
                         </li>

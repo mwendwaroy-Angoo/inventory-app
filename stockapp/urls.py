@@ -192,6 +192,12 @@ from core.debt_views import (
     toggle_credit_approval,
     update_customer_credit_settings,
 )
+from core.haki_views import (
+    staff_contribution_report,
+    record_salary_payment,
+    my_work_and_pay,
+    haki_recognition_statement,
+)
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -343,6 +349,11 @@ urlpatterns = [
     path("debt/<int:customer_id>/reminder/", send_debt_reminder, name="send_debt_reminder"),
     path("debt/<int:customer_id>/toggle-credit/", toggle_credit_approval, name="toggle_credit_approval"),
     path("debt/<int:customer_id>/settings/", update_customer_credit_settings, name="update_customer_credit_settings"),
+    # ── Haki (Staff Contribution + Salary) ──
+    path("staff/contribution/", staff_contribution_report, name="staff_contribution_report"),
+    path("staff/<int:profile_id>/salary/", record_salary_payment, name="record_salary_payment"),
+    path("staff/<int:profile_id>/statement/", haki_recognition_statement, name="haki_recognition_statement"),
+    path("me/", my_work_and_pay, name="my_work_and_pay"),
     # ── Revenue Targets ───────────────────────────────────────────────────────
     path("analytics/targets/", revenue_target_settings, name="revenue_target_settings"),
     path("analytics/targets/progress/", revenue_target_progress, name="revenue_target_progress"),

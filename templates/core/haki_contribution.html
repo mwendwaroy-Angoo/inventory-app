@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Haki — {% trans 'Staff Contribution' %}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .contrib-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        transition: border-color 0.2s;
+    }
+    .contrib-card:hover { border-color: rgba(201,168,76,0.3); }
+    .contrib-card-header {
+        padding: 0.85rem 1.25rem;
+        border-bottom: 1px solid #2a2a2a;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    .metric-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.78rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 20px;
+        background: rgba(255,255,255,0.06);
+        color: #b0b0b0;
+        border: 1px solid rgba(255,255,255,0.08);
+    }
+    .badge-pill {
+        font-size: 0.72rem;
+        padding: 0.15rem 0.5rem;
+        border-radius: 20px;
+        background: rgba(201,168,76,0.12);
+        color: var(--gold);
+        border: 1px solid rgba(201,168,76,0.25);
+    }
+    .salary-due   { color: #fbbf24; }
+    .salary-paid  { color: #6ee7b7; }
+    .salary-late  { color: #f87171; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-start justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="page-title mb-1">🌟 {% trans 'Haki — Staff Contribution' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem; margin-bottom:0;">
+            {{ date_from_label }} → {{ date_to_label }} ·
+            <span style="color:var(--gold);">{{ rows|length }} {% trans 'staff member(s)' %}</span>
+        </p>
+    </div>
+    <div>
+        <form method="get" class="d-flex gap-2 align-items-center flex-wrap">
+            <input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm"
+                   style="max-width:140px;">
+            <span style="color:#888;">→</span>
+            <input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm"
+                   style="max-width:140px;">
+            <button type="submit" class="btn btn-sm btn-outline-secondary">{% trans 'Filter' %}</button>
+        </form>
+    </div>
+</div>
+
+{% if rows %}
+{% for row in rows %}
+<div class="contrib-card">
+    <div class="contrib-card-header">
+        <div class="d-flex align-items-center gap-3">
+            <div>
+                <div style="font-weight:700; color:var(--pearl); font-size:1rem;">
+                    {{ row.user.get_full_name|default:row.user.username }}
+                </div>
+                <div style="color:#888; font-size:0.78rem;">
+                    {{ row.profile.get_role_display }}
+                    {% if row.profile.phone %} · {{ row.profile.phone }}{% endif %}
+                </div>
+            </div>
+            {% for badge in row.milestones %}
+            <span class="badge-pill">{{ badge }}</span>
+            {% endfor %}
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="{% url 'haki_recognition_statement' row.profile.id %}"
+               class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;">
+                📄 {% trans 'Statement' %}
+            </a>
+        </div>
+    </div>
+
+    <div class="p-3">
+        <div class="d-flex flex-wrap gap-3 mb-3">
+            <div class="metric-chip">
+                💰 {% trans 'Revenue' %}: <strong style="color:var(--gold);">KES {{ row.revenue_kes|floatformat:0 }}</strong>
+            </div>
+            <div class="metric-chip">
+                🕐 {{ row.shift_count }} {% trans 'shifts' %} · {{ row.hours }}{% trans 'h' %}
+            </div>
+            <div class="metric-chip">
+                💳 {% trans 'Debts recovered' %}: <strong style="color:#6ee7b7;">KES {{ row.debts_recovered_kes|floatformat:0 }}</strong>
+            </div>
+            {% if row.clean_keg_record %}
+            <div class="metric-chip" style="background:rgba(110,231,183,0.08); border-color:rgba(110,231,183,0.2); color:#6ee7b7;">
+                ✨ {% trans 'Clean keg record' %}
+            </div>
+            {% elif row.keg_loss_kes > 0 %}
+            <div class="metric-chip" style="background:rgba(248,113,113,0.08); border-color:rgba(248,113,113,0.2); color:#f87171;">
+                ⚠️ KES {{ row.keg_loss_kes|floatformat:0 }} {% trans 'keg variance' %}
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Salary status + record payment -->
+        {% if row.salary %}
+        <div style="background:rgba(255,255,255,0.03); border-radius:8px; padding:0.75rem 1rem; border:1px solid #2a2a2a;">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                    <span style="font-size:0.78rem; color:#b0b0b0;">
+                        {% trans 'Salary' %} {{ row.salary.period }}:
+                        <strong style="color:#e0e0e0;">KES {{ row.salary.amount|floatformat:0 }}</strong>
+                        · {% trans 'due' %} {{ row.salary.due_date }}
+                    </span>
+                    {% if row.salary.paid %}
+                    <span class="ms-2 salary-paid">✓ {% trans 'Paid' %}
+                        {% if row.salary.paid_at %}{{ row.salary.paid_at|date:"d M Y" }}{% endif %}
+                    </span>
+                    {% elif row.salary.days_overdue > 0 %}
+                    <span class="ms-2 salary-late">⚠️ {{ row.salary.days_overdue }} {% trans 'days overdue' %}</span>
+                    {% else %}
+                    <span class="ms-2 salary-due">⏳ {% trans 'Due' %}</span>
+                    {% endif %}
+                </div>
+                {% if not row.salary.paid %}
+                <button type="button" class="btn btn-sm btn-gold"
+                        data-bs-toggle="modal" data-bs-target="#salaryModal{{ row.profile.id }}">
+                    ✅ {% trans 'Mark Paid' %}
+                </button>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Salary Modal -->
+{% if row.salary and not row.salary.paid %}
+<div class="modal fade" id="salaryModal{{ row.profile.id }}" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0" style="background:#1e1e1e; border:1px solid rgba(255,255,255,0.1) !important;">
+            <div class="modal-header border-0">
+                <h6 class="modal-title" style="color:var(--gold); font-family:'Playfair Display',serif;">
+                    ✅ {% trans 'Record Salary Payment' %} — {{ row.user.get_full_name|default:row.user.username }}
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'record_salary_payment' row.profile.id %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <input type="hidden" name="period" value="{{ row.salary.period }}">
+                    <div class="mb-3">
+                        <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
+                            {% trans 'Amount (KES)' %} *
+                        </label>
+                        <input type="number" name="amount" class="form-control"
+                               step="0.01" min="1" value="{{ row.salary.amount|floatformat:2 }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
+                            {% trans 'Payment Method' %}
+                        </label>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <input type="radio" class="btn-check" name="method" id="pm_cash_{{ row.profile.id }}" value="cash" checked>
+                            <label class="btn btn-sm btn-outline-warning" for="pm_cash_{{ row.profile.id }}">💵 {% trans 'Cash' %}</label>
+                            <input type="radio" class="btn-check" name="method" id="pm_mpesa_{{ row.profile.id }}" value="mpesa">
+                            <label class="btn btn-sm btn-outline-success" for="pm_mpesa_{{ row.profile.id }}">📱 M-Pesa</label>
+                            <input type="radio" class="btn-check" name="method" id="pm_bank_{{ row.profile.id }}" value="bank">
+                            <label class="btn btn-sm btn-outline-info" for="pm_bank_{{ row.profile.id }}">🏦 {% trans 'Bank' %}</label>
+                        </div>
+                    </div>
+                    <div class="mb-1">
+                        <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
+                            {% trans 'Notes' %} <span style="color:#888;">({% trans 'optional' %})</span>
+                        </label>
+                        <input type="text" name="notes" class="form-control"
+                               placeholder="{% trans 'e.g. bank ref, partial note' %}">
+                    </div>
+                    <p class="mt-2" style="color:#888; font-size:0.78rem;">
+                        {% trans 'An SMS confirmation will be sent to the staff member.' %}
+                    </p>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">
+                        {% trans 'Cancel' %}
+                    </button>
+                    <button type="submit" class="btn btn-gold px-4 btn-sm">
+                        ✅ {% trans 'Confirm Payment' %}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endfor %}
+
+{% else %}
+<div class="card border-0 text-center py-5" style="background:rgba(255,255,255,0.03);">
+    <div style="font-size:2.5rem; margin-bottom:0.75rem;">👥</div>
+    <h6 style="color:var(--gold);">{% trans 'No Staff Found' %}</h6>
+    <p style="color:#b0b0b0; font-size:0.875rem;">
+        {% trans 'Add staff to your business to see their contribution.' %}
+    </p>
+</div>
+{% endif %}
+
+{% endblock %}

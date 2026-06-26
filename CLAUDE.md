@@ -598,6 +598,32 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   the TransactionType must change to `CustomerPayBillOnline`. Add logic when building
   the payload: check whether shortcode matches mpesa_till or mpesa_paybill.
 
+## Cause-&-Effect Protocol (run for EVERY feature or module)
+
+A feature is not its happy path — it is its happy path PLUS every consequence. Before writing code, write a
+**Cause-&-Effect Map** in the sprint notes / PR description: a table of every connected surface, whether this
+feature touches it, and how. Do not start coding until the map is filled. Missing a row here is the root cause
+of nearly every "you forgot X" regression in this project (kitchen debt with no payment path; kitchen shift
+with no open/close UI; debt module blind to kitchen vs bar; kitchen M-Pesa routed to the bar till).
+
+**The two dimensions most often missed — check these first:**
+1. **Inverse / counterpart actions** — every CREATE needs its RESOLVE, every state its exit:
+   debt→record payment · open shift→close shift (with the UI on the right navbar) · open tab→settle/void/
+   convert-to-debt · receive stock→discard/adjust · enable→disable. Cause without effect = broken by definition.
+2. **Access & visibility scoping** — for every new data surface answer, in the map:
+   **Who can SEE it?** **Who can ACT on it?** **Is it partitioned by role AND store AND source?** Respect
+   `is_owner`, `is_kitchen_staff`, `can_access_bar`, `can_access_kitchen`. A kitchen-only staffer must never
+   see or act on bar data, and vice versa — on the view AND the URL.
+3. **Discriminator consistency** — if a separation exists ANYWHERE, reuse the SAME key everywhere. Kitchen vs
+   bar = `item.store.is_kitchen`. Bunch vs portion = `produce_bunch_id`. One source of truth.
+
+**Standard surfaces to walk every time** (extend per feature): Debt tracker · Receipts · SMS/notifications ·
+Analytics (right section, no bleed) · Home dashboard tiles · Revenue targets · Expiry alerts · Tabs→debt ·
+Shift open/close · Navbar links (per role) · Access gate on view AND URL · M-Pesa routing (per counter) ·
+Staff contribution/Haki ledger · The inverse action.
+
+Fill the map, implement every "yes" row, then run the regression-sweep grep before marking done.
+
 ## End-of-sprint ritual:
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
@@ -629,3 +655,7 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
 - Sprint F6 (2026-06-25): M-Pesa cross-check + eTIMS-ready receipts — Receipt.etims_receipt_no/etims_url/etims_submitted_at (migration 0066, nullable stubs); Business.kra_pin (accounts migration 0038); M-Pesa cross-check tile in Z-report: Payment(mpesa, completed) for day vs day_mpesa, signed gap, shown only when STK data exists; KRA PIN reminder card in Z-report when kra_pin set; public receipt shows eTIMS receipt no + KRA verify link; Business Settings form gains KRA/eTIMS section. 42 tests pass.
 - FINAL (2026-06-25): SPRINT_TEST_GUIDE.md produced — 42 automated tests listed with class/method/sprint; manual smoke tests for F1–F6 with pass/fail criteria for each step. BAR_MODULE_MASTER_SPEC.md deleted (all sprints confirmed shipped). Bar module sequence complete.
 - Sprint F5 (2026-06-25): Bottle & spirits revenue envelope — Item.bottle_envelope/tot_ml/tots_per_unit (migration 0065); bottle_expected_revenue_per_unit() = tots_per_unit × avg preset price; stock_take_api GET returns bottle fields, POST returns variance_kes; StaffShrinkage.bottle_loss_kes + total_loss_kes; staff_shrinkage() aggregates ShiftStockCount for bottle_envelope items by date range; leaderboard adds Bottle/Spirits Loss column; Z-report shows day_bottle_variance_kes tile when > 0; item form gains Spirits Accountability section (keg businesses) with auto-calc tots_per_unit from volume ÷ tot_ml. 42 tests pass. Next: Sprint F6 (M-Pesa cross-check + eTIMS-ready receipts).
+- Sprint 0 (2026-06-26): Cause-&-Effect Protocol appended to CLAUDE.md Coding Preferences — inverse actions, access/visibility scoping, discriminator consistency, and standard surfaces checklist. No code changes.
+- Sprint K1 (2026-06-26): Source-scoped debt — CustomerDebtPayment.source CharField ('bar'|'kitchen', default='bar', migration 0067 + 0068 backfill); _debt_scope(profile, business) helper returns 'bar'/'kitchen'/'all' based on staff role + business.has_kitchen; debt_views.py rewritten: all list/payment queries scoped by _debt_scope; owner sees dual sub-ledger tabs on customer profile; kitchen staff only see kitchen debts; Payment modal sets hidden debt_source field per ledger. 51 tests pass.
+- Sprint K2a (2026-06-26): Per-counter M-Pesa — Store-level M-Pesa override fields (migration 0069: has_own_mpesa, till/paybill/pochi, daraja creds); Payment.store FK + source (migration 0069); resolve_mpesa_config(business, store) single resolver (store override wins if has_own_mpesa=True, else business fallback); resolve_account_by_shortcode(shortcode) checks Store overrides first for C2B attribution; mpesa_views.py updated: stk_push_view + payment_status + c2b_confirmation + mpesa_qr_view all use resolver; payment_settings.html gains Kitchen M-Pesa section. 51 tests pass.
+- Sprint H1-H4 (2026-06-26): Haki module — Business.haki_enabled (accounts migration 0040); SalaryPayment model (migration 0070, unique_together business+staff+period, days_overdue property); haki_views.py: staff_contribution_report /staff/contribution/ (H1), record_salary_payment /staff/<id>/salary/ with SMS to employee (H2), my_work_and_pay /me/ staff self-service (H3), haki_recognition_statement /staff/<id>/statement/ with print + SMS (H4), _check_and_fire_recognition() deduplicated milestone nudge to owner; Haki nav links added to all staff role sections (mobile + desktop) gated on haki_enabled; 18 new tests (K1/K2a/H), 51 total. All pass.

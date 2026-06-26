@@ -11,7 +11,7 @@ Run with:
 python manage.py test
 ```
 
-Expected: **42 tests, 0 failures**.
+Expected: **51 tests, 0 failures**.
 
 ### Full test list (`core/tests.py`)
 
@@ -52,6 +52,39 @@ Expected: **42 tests, 0 failures**.
 | `BottleShrinkageLeaderboardTest` | `test_surplus_count_does_not_add_to_bottle_loss` | F5 |
 
 *(9 additional tests exist for M-Pesa URL routing edge cases — all in `MpesaUrlRoutingTest`.)*
+
+**K1 — Source-scoped debt (3 tests)**
+
+| Class | Test |
+|---|---|
+| `DebtPaymentSourceFieldTest` | `test_source_defaults_to_bar` |
+| `DebtPaymentSourceFieldTest` | `test_source_accepts_kitchen` |
+| `DebtPaymentSourceFieldTest` | `test_filter_by_source_partitions_ledger` |
+| `DebtScopeHelperTest` | `test_owner_gets_all_scope` |
+| `DebtScopeHelperTest` | `test_kitchen_staff_gets_kitchen_scope` |
+| `DebtScopeHelperTest` | `test_no_kitchen_business_gets_all_scope` |
+
+**K2a — Per-counter M-Pesa resolver (6 tests)**
+
+| Class | Test |
+|---|---|
+| `ResolveMpesaConfigTest` | `test_no_override_returns_business_config` |
+| `ResolveMpesaConfigTest` | `test_store_override_returns_store_config` |
+| `ResolveMpesaConfigTest` | `test_no_store_returns_business_config` |
+| `ResolveAccountByShortcodeTest` | `test_finds_store_shortcode_first` |
+| `ResolveAccountByShortcodeTest` | `test_falls_back_to_business_shortcode` |
+| `ResolveAccountByShortcodeTest` | `test_unknown_shortcode_returns_none` |
+
+**H1-H4 — Haki module (6 tests)**
+
+| Class | Test |
+|---|---|
+| `SalaryPaymentModelTest` | `test_salary_payment_created_and_unique` |
+| `SalaryPaymentModelTest` | `test_days_overdue_is_positive_when_past_due` |
+| `SalaryPaymentModelTest` | `test_days_overdue_is_zero_when_paid` |
+| `HakiRecognitionNudgeTest` | `test_milestone_creates_notification` |
+| `HakiRecognitionNudgeTest` | `test_duplicate_milestone_not_re_notified` |
+| `HakiRecognitionNudgeTest` | `test_no_milestones_no_notification` |
 
 ---
 
@@ -224,7 +257,7 @@ After all smoke tests pass:
 ```
 python manage.py check        # 0 issues
 python manage.py makemigrations --check   # No changes detected
-python manage.py test         # 42 tests, 0 failures
+python manage.py test         # 51 tests, 0 failures
 ```
 
 All green = bar sprint sequence complete.

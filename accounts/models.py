@@ -150,6 +150,12 @@ class Business(models.Model):
         help_text='Enable the Kitchen / Grill module. Auto-creates a Kitchen store on first enable.'
     )
 
+    # ── Haki (Staff Fairness) module ─────────────────────────────────────────
+    haki_enabled = models.BooleanField(
+        default=True,
+        help_text='Enable the Haki staff contribution + salary transparency module.',
+    )
+
     # ── Recurring Expenses ────────────────────────────────────────────────────
     last_expense_review_date = models.DateField(
         null=True, blank=True,

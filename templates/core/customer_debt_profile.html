@@ -224,13 +224,63 @@
     </div>
 </div>
 
+<!-- Owner: dual sub-ledger breakdown -->
+{% if scope == 'all' and has_kitchen %}
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="section-card" style="border-left:3px solid #C8752A;">
+            <div class="section-card-header">
+                <h6>🍺 {% trans 'Bar Ledger' %}</h6>
+                <span style="color:#fbbf24; font-weight:700;">KES {{ bar_data.outstanding|floatformat:0 }}</span>
+            </div>
+            <div class="p-3">
+                <div style="color:#b0b0b0; font-size:0.8rem;">
+                    {% trans 'Total credit' %}: KES {{ bar_data.total_credit|floatformat:0 }} ·
+                    {% trans 'Paid' %}: KES {{ bar_data.total_paid|floatformat:0 }}
+                </div>
+                {% if bar_data.outstanding > 0 %}
+                <button type="button" class="btn btn-sm btn-outline-warning mt-2"
+                        data-bs-toggle="modal" data-bs-target="#paymentModal"
+                        onclick="document.getElementById('debtSourceInput').value='bar'; document.getElementById('debtSourceLabel').textContent='Bar'; document.getElementById('modalMaxAmount').value='{{ bar_data.outstanding|floatformat:2 }}'; document.getElementById('amountInput').max='{{ bar_data.outstanding|floatformat:2 }}'; document.getElementById('amountInput').value='{{ bar_data.outstanding|floatformat:2 }}';">
+                    💰 {% trans 'Record Bar Payment' %}
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="section-card" style="border-left:3px solid #4ade80;">
+            <div class="section-card-header">
+                <h6>🍗 {% trans 'Kitchen Ledger' %}</h6>
+                <span style="color:#fbbf24; font-weight:700;">KES {{ kitchen_data.outstanding|floatformat:0 }}</span>
+            </div>
+            <div class="p-3">
+                <div style="color:#b0b0b0; font-size:0.8rem;">
+                    {% trans 'Total credit' %}: KES {{ kitchen_data.total_credit|floatformat:0 }} ·
+                    {% trans 'Paid' %}: KES {{ kitchen_data.total_paid|floatformat:0 }}
+                </div>
+                {% if kitchen_data.outstanding > 0 %}
+                <button type="button" class="btn btn-sm btn-outline-success mt-2"
+                        data-bs-toggle="modal" data-bs-target="#paymentModal"
+                        onclick="document.getElementById('debtSourceInput').value='kitchen'; document.getElementById('debtSourceLabel').textContent='Kitchen'; document.getElementById('modalMaxAmount').value='{{ kitchen_data.outstanding|floatformat:2 }}'; document.getElementById('amountInput').max='{{ kitchen_data.outstanding|floatformat:2 }}'; document.getElementById('amountInput').value='{{ kitchen_data.outstanding|floatformat:2 }}';">
+                    💰 {% trans 'Record Kitchen Payment' %}
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Record Payment button + modal -->
 {% if outstanding > 0 %}
 <div class="d-flex justify-content-end mb-3">
+    {% if not has_kitchen or scope != 'all' %}
     <button type="button" class="btn btn-gold px-4" id="record-payment-btn"
             data-bs-toggle="modal" data-bs-target="#paymentModal">
         💰 {% trans 'Record Payment' %}
     </button>
+    {% endif %}
 </div>
 {% endif %}
 
@@ -383,14 +433,22 @@
             </div>
             <form method="post" action="{% url 'record_debt_payment' customer.id %}">
                 {% csrf_token %}
+                {% if scope == 'all' and has_kitchen %}
+                <input type="hidden" name="debt_source" id="debtSourceInput" value="bar">
+                {% endif %}
                 <div class="modal-body pt-1">
 
                     <!-- Outstanding balance reminder -->
                     <div style="background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.2);
                                 border-radius:8px; padding:0.6rem 0.9rem; margin-bottom:1rem;">
+                        {% if scope == 'all' and has_kitchen %}
+                        <div style="color:#b0b0b0; font-size:0.75rem;">
+                            {% trans 'Settling' %}: <strong id="debtSourceLabel" style="color:var(--gold);">Bar</strong> {% trans 'ledger' %}
+                        </div>
+                        {% endif %}
                         <div style="color:#b0b0b0; font-size:0.75rem;">{% trans 'Outstanding Balance' %}</div>
                         <div style="color:#fbbf24; font-weight:700; font-size:1.2rem;">
-                            KES {{ outstanding|floatformat:2 }}
+                            KES <span id="modalOutstandingDisplay">{{ outstanding|floatformat:2 }}</span>
                         </div>
                     </div>
 
@@ -398,8 +456,8 @@
                         <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
                             {% trans 'Amount Received (KES)' %} *
                         </label>
-                        <input type="number" name="amount_paid" class="form-control"
-                               step="0.01" min="0.01" max="{{ outstanding }}"
+                        <input type="number" name="amount_paid" id="amountInput" class="form-control"
+                               step="0.01" min="0.01" max="{{ outstanding }}" id="modalMaxAmount"
                                value="{{ outstanding|floatformat:2 }}" required>
                     </div>
 

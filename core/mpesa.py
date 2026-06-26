@@ -382,6 +382,86 @@ def generate_emv_qr_string(merchant_name: str, shortcode: str, trx_code: str, am
     return data + _crc16_ccitt(data)
 
 
+# ── PER-COUNTER RESOLVER (Sprint K2a) ────────────────────────────────────────
+
+def resolve_mpesa_config(business, store=None):
+    """Effective M-Pesa account for a sale at `store`.
+
+    Store overrides Business when store.has_own_mpesa is True.
+    Backward compatible: no store or has_own_mpesa=False → returns Business config.
+
+    Returns a dict with keys:
+        till, paybill, paybill_account, pochi,
+        consumer_key, consumer_secret, passkey, environment,
+        store (Store instance or None), source ('bar' | 'kitchen')
+    """
+    if store is not None and getattr(store, 'has_own_mpesa', False):
+        return {
+            'till':             (store.mpesa_till or '').strip(),
+            'paybill':          (store.mpesa_paybill or '').strip(),
+            'paybill_account':  (store.mpesa_paybill_account or '').strip(),
+            'pochi':            (store.mpesa_pochi or '').strip(),
+            'consumer_key':     store.daraja_consumer_key or business.daraja_consumer_key,
+            'consumer_secret':  store.daraja_consumer_secret or business.daraja_consumer_secret,
+            'passkey':          store.daraja_passkey or business.daraja_passkey,
+            'environment':      (store.daraja_environment or business.daraja_environment or 'sandbox'),
+            'store':            store,
+            'source':           'kitchen' if getattr(store, 'is_kitchen', False) else 'bar',
+        }
+    return {
+        'till':             (business.mpesa_till or '').strip(),
+        'paybill':          (business.mpesa_paybill or '').strip(),
+        'paybill_account':  (business.mpesa_paybill_account or '').strip(),
+        'pochi':            (business.mpesa_pochi or '').strip(),
+        'consumer_key':     business.daraja_consumer_key,
+        'consumer_secret':  business.daraja_consumer_secret,
+        'passkey':          business.daraja_passkey,
+        'environment':      business.daraja_environment or 'sandbox',
+        'store':            None,
+        'source':           'kitchen' if (store is not None and getattr(store, 'is_kitchen', False)) else 'bar',
+    }
+
+
+def resolve_account_by_shortcode(shortcode):
+    """Reverse lookup for an incoming C2B payment.
+
+    Checks Store-level overrides (more specific) first, then falls back to Business.
+
+    Returns (business, store_or_None, channel_str) where channel is 'till'/'paybill'/'pochi'.
+    Returns (None, None, '') if not found.
+    """
+    from django.db.models import Q
+    from accounts.models import Business
+    from .models import Store
+
+    sc = (shortcode or '').strip()
+    if not sc:
+        return None, None, ''
+
+    store = (
+        Store.objects
+        .filter(has_own_mpesa=True)
+        .filter(Q(mpesa_till=sc) | Q(mpesa_paybill=sc) | Q(mpesa_pochi=sc))
+        .select_related('business')
+        .first()
+    )
+    if store:
+        if store.mpesa_till == sc:
+            ch = 'till'
+        elif store.mpesa_paybill == sc:
+            ch = 'paybill'
+        else:
+            ch = 'pochi'
+        return store.business, store, ch
+
+    for field, ch in (('mpesa_till', 'till'), ('mpesa_paybill', 'paybill'), ('mpesa_pochi', 'pochi')):
+        biz = Business.objects.filter(**{field: sc}).first()
+        if biz:
+            return biz, None, ch
+
+    return None, None, ''
+
+
 # ── PHONE FORMATTING ─────────────────────────────────────────────────────────
 
 def format_phone_ke(phone):
