@@ -731,6 +731,30 @@ def payment_settings(request):
     kitchen_store = Store.objects.filter(business=business, is_kitchen=True).first()
 
     if request.method == 'POST':
+        section = request.POST.get('_section', 'mpesa')
+
+        if section == 'credit_policy':
+            # Save credit policy fields directly — avoids overwriting M-Pesa fields
+            # when the credit policy form is submitted (boolean checkboxes not sent = False)
+            from core.models import Store as _Store
+            try:
+                Business.objects.filter(pk=business.pk).update(
+                    credit_policy_enabled=request.POST.get('credit_policy_enabled') == '1',
+                    credit_window_days=max(1, int(request.POST.get('credit_window_days') or 30)),
+                    debt_cycle=request.POST.get('debt_cycle', 'rolling'),
+                    debt_cutoff_days_before_month_end=max(0, int(request.POST.get('debt_cutoff_days_before_month_end') or 5)),
+                    block_if_overdue=request.POST.get('block_if_overdue') == '1',
+                    overdue_grace_days=max(0, int(request.POST.get('overdue_grace_days') or 0)),
+                    late_repayment_strikes=max(1, int(request.POST.get('late_repayment_strikes') or 3)),
+                    late_threshold_days=max(1, int(request.POST.get('late_threshold_days') or 7)),
+                    defaulter_permanent=request.POST.get('defaulter_permanent') == '1',
+                    cooldown_days=max(0, int(request.POST.get('cooldown_days') or 14)),
+                )
+                messages.success(request, _("Sera ya Deni imehifadhiwa."))
+            except (ValueError, TypeError):
+                messages.error(request, _("Tafadhali ingiza nambari sahihi kwa mipangilio ya deni."))
+            return redirect('payment_settings')
+
         form = PaymentSettingsForm(request.POST, instance=business)
         if form.is_valid():
             form.save()

@@ -49,6 +49,7 @@
       <div class="card-body">
         <form method="post" id="payment-settings-form">
           {% csrf_token %}
+          <input type="hidden" name="_section" value="mpesa">
           <!-- Preserve Daraja credentials so they aren't erased when saving channels -->
           <input type="hidden" name="daraja_consumer_key" value="{{ business.daraja_consumer_key }}">
           <input type="hidden" name="daraja_consumer_secret" value="{{ business.daraja_consumer_secret }}">
@@ -407,6 +408,7 @@
 
         <form method="post" action="{% url 'payment_settings' %}">
           {% csrf_token %}
+          <input type="hidden" name="_section" value="mpesa">
           <!-- Preserve all business Daraja fields -->
           <input type="hidden" name="daraja_consumer_key" value="{{ business.daraja_consumer_key }}">
           <input type="hidden" name="daraja_consumer_secret" value="{{ business.daraja_consumer_secret }}">
@@ -481,6 +483,132 @@
   </div>
 </div>
 {% endif %}
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- CREDIT POLICY — Sera ya Deni (K3.C)                                    -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="row">
+  <div class="col-lg-8">
+    <div class="card mb-4" style="border:1px solid rgba(201,168,76,0.25);">
+      <div class="card-body">
+        <h5 style="color:var(--gold); font-family:'Playfair Display',serif; margin-bottom:0.5rem;">
+          🛡️ {% trans 'Sera ya Deni (Credit Policy)' %}
+        </h5>
+        <p style="color:#b0b0b0; font-size:0.83rem; margin-bottom:1.25rem;">
+          {% trans 'Sheria hizi zinatekelezwa kwa wafanyakazi wote na haziwezi kupitishwa kwenye duka — zinaweza tu kubadilishwa hapa.' %}
+        </p>
+        <form method="post" action="{% url 'payment_settings' %}">
+          {% csrf_token %}
+          <input type="hidden" name="_section" value="credit_policy">
+          <!-- Preserve M-Pesa and Daraja fields so this form doesn't erase them -->
+          <input type="hidden" name="mpesa_till" value="{{ business.mpesa_till }}">
+          <input type="hidden" name="mpesa_paybill" value="{{ business.mpesa_paybill }}">
+          <input type="hidden" name="mpesa_paybill_account" value="{{ business.mpesa_paybill_account }}">
+          <input type="hidden" name="mpesa_pochi" value="{{ business.mpesa_pochi }}">
+          <input type="hidden" name="mpesa_phone" value="{{ business.mpesa_phone }}">
+          <input type="hidden" name="preferred_payment_channel" value="{{ business.preferred_payment_channel }}">
+          <input type="hidden" name="daraja_consumer_key" value="{{ business.daraja_consumer_key }}">
+          <input type="hidden" name="daraja_consumer_secret" value="{{ business.daraja_consumer_secret }}">
+          <input type="hidden" name="daraja_passkey" value="{{ business.daraja_passkey }}">
+          <input type="hidden" name="daraja_environment" value="{{ business.daraja_environment }}">
+
+          <!-- Enable / Disable gate -->
+          <div class="mb-3 d-flex align-items-center gap-3">
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" name="credit_policy_enabled"
+                     id="credit_policy_enabled" value="1" role="switch"
+                     {% if business.credit_policy_enabled %}checked{% endif %}>
+              <label class="form-check-label" for="credit_policy_enabled"
+                     style="color:var(--pearl);">
+                {% trans 'Washa Kinga ya Deni' %}
+              </label>
+            </div>
+          </div>
+
+          <div class="row g-3">
+            <!-- Debt cycle -->
+            <div class="col-12 col-md-6">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">{% trans 'Mzunguko wa Deni' %}</label>
+              <select name="debt_cycle" class="form-control">
+                <option value="rolling" {% if business.debt_cycle == 'rolling' %}selected{% endif %}>{% trans 'Rolling (daima)' %}</option>
+                <option value="monthly" {% if business.debt_cycle == 'monthly' %}selected{% endif %}>{% trans 'Monthly (mwisho wa mwezi)' %}</option>
+              </select>
+            </div>
+
+            <!-- Credit window -->
+            <div class="col-12 col-md-6">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">{% trans 'Dirisha la Mkopo (siku)' %}</label>
+              <input type="number" name="credit_window_days" class="form-control"
+                     value="{{ business.credit_window_days }}" min="1" max="365">
+            </div>
+
+            <!-- Monthly cutoff -->
+            <div class="col-12 col-md-6">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">{% trans 'Siku za Kuzuia Mwishoni mwa Mwezi' %}</label>
+              <input type="number" name="debt_cutoff_days_before_month_end" class="form-control"
+                     value="{{ business.debt_cutoff_days_before_month_end }}" min="0" max="15">
+              <div style="font-size:0.72rem; color:#888; margin-top:0.25rem;">{% trans 'Monthly cycle only' %}</div>
+            </div>
+
+            <!-- Overdue grace -->
+            <div class="col-12 col-md-6">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">{% trans 'Siku za Neema Baada ya Kuchelewa' %}</label>
+              <input type="number" name="overdue_grace_days" class="form-control"
+                     value="{{ business.overdue_grace_days }}" min="0" max="30">
+            </div>
+
+            <!-- Late strikes -->
+            <div class="col-12 col-md-6">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">{% trans 'Maombi ya Kuchelewa kabla ya Kuzuia' %}</label>
+              <input type="number" name="late_repayment_strikes" class="form-control"
+                     value="{{ business.late_repayment_strikes }}" min="1" max="20">
+            </div>
+
+            <!-- Late threshold -->
+            <div class="col-12 col-md-6">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">{% trans 'Siku za Kuchelewa Sana' %}</label>
+              <input type="number" name="late_threshold_days" class="form-control"
+                     value="{{ business.late_threshold_days }}" min="1" max="60">
+            </div>
+
+            <!-- Cooldown -->
+            <div class="col-12 col-md-6">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">{% trans 'Siku za Kupumzika Baada ya Kulipa' %}</label>
+              <input type="number" name="cooldown_days" class="form-control"
+                     value="{{ business.cooldown_days }}" min="0" max="90">
+            </div>
+          </div>
+
+          <!-- Booleans -->
+          <div class="mt-3 d-flex flex-wrap gap-4">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="block_if_overdue"
+                     id="block_if_overdue" value="1"
+                     {% if business.block_if_overdue %}checked{% endif %}>
+              <label class="form-check-label" for="block_if_overdue" style="color:var(--pearl);">
+                {% trans 'Zuia ikiwa kuna deni lililochakaa' %}
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="defaulter_permanent"
+                     id="defaulter_permanent" value="1"
+                     {% if business.defaulter_permanent %}checked{% endif %}>
+              <label class="form-check-label" for="defaulter_permanent" style="color:var(--pearl);">
+                {% trans 'Zuia kabisa wateja walioandikwa vibaya' %}
+              </label>
+            </div>
+          </div>
+
+          <div class="mt-3">
+            <button type="submit" class="btn btn-gold">
+              💾 {% trans 'Hifadhi Sera ya Deni' %}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
 
 {% endblock %}
 

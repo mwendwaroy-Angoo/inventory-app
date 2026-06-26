@@ -11,7 +11,7 @@ Run with:
 python manage.py test
 ```
 
-Expected: **51 tests, 0 failures**.
+Expected: **61 tests, 0 failures**.
 
 ### Full test list (`core/tests.py`)
 
@@ -85,6 +85,21 @@ Expected: **51 tests, 0 failures**.
 | `HakiRecognitionNudgeTest` | `test_milestone_creates_notification` |
 | `HakiRecognitionNudgeTest` | `test_duplicate_milestone_not_re_notified` |
 | `HakiRecognitionNudgeTest` | `test_no_milestones_no_notification` |
+
+**K3 — Credit Discipline Gate (10 tests)**
+
+| Class | Test |
+|---|---|
+| `CreditGatePolicyOffTest` | `test_policy_off_allows_any_customer` |
+| `CreditGateApprovalTest` | `test_unapproved_customer_is_blocked` |
+| `CreditGateApprovalTest` | `test_approved_customer_with_no_history_is_ok` |
+| `CreditGateDefaulterTest` | `test_defaulter_permanently_blocked` |
+| `CreditGateDefaulterTest` | `test_non_defaulter_not_blocked_by_flag` |
+| `CreditGateMonthlyMidMonthTest` | `test_rolling_biz_ignores_monthly_cutoff` |
+| `CreditGateMonthlyMidMonthTest` | `test_monthly_biz_blocks_at_month_end` |
+| `CreditGateMonthlyMidMonthTest` | `test_monthly_biz_allows_mid_month` |
+| `CreditGateCreditLimitTest` | `test_at_limit_is_blocked` |
+| `CreditGateCreditLimitTest` | `test_below_limit_is_allowed` |
 
 ---
 
@@ -391,4 +406,115 @@ python manage.py makemigrations --check   # No changes detected
 python manage.py test         # 51 tests, 0 failures
 ```
 
-All green = bar sprint sequence + K1/K2a/H1-H4/shift gate complete.
+All green = bar sprint sequence + K1/K2a/H1-H4/shift gate/K3 complete.
+
+---
+
+### Sprint K3.A — Kitchen staff in salary/expense lists
+
+**K3A-1: Kitchen staff appears in recurring expense salary list**
+1. Log in as RoyMwendwa (owner).
+2. Go to `/analytics/expenses/` → Manage Recurring Expenses.
+3. Click "Add Salary Line" → the staff dropdown should include any kitchen-role staff (e.g. Morrine if set to kitchen role).
+- ✅ Correct: kitchen staff name visible in dropdown.
+- ❌ Bug if: dropdown only shows 'staff' and 'waitress' roles, skipping kitchen.
+
+**K3A-2: Kitchen staff appears in Haki contribution report**
+1. Go to `/staff/contribution/` → the table should include kitchen-role staff rows.
+- ✅ Correct: kitchen staff listed with their shift count and revenue.
+
+---
+
+### Sprint K3.B — Kazi Yangu scorecard parity
+
+**K3B-1: Staff numbers match owner's view**
+1. Log in as owner → `/staff/contribution/` → note the revenue figure for a staff member.
+2. Log in as that staff member → `/me/` (Kazi Yangu).
+3. Their revenue figure should be identical to the owner's view.
+- ✅ Correct: same figure to the shilling.
+- ❌ Bug if: two different numbers shown.
+
+**K3B-2: Staff can share their own statement**
+1. Log in as staff → `/me/` → click "🌟 Taarifa Yangu".
+2. Page should load (their own statement) with a "📱 SMS" button.
+3. Click SMS → statement SMS sent to their own phone.
+- ✅ Correct: statement page loads, SMS sent.
+- ❌ Bug if: 403 error or redirected away.
+
+**K3B-3: Staff cannot view another staff member's statement**
+1. As staff, manually navigate to `/staff/<other_staff_id>/statement/`.
+- ✅ Correct: 403 Forbidden.
+- ❌ Bug if: statement of another staff member loads.
+
+---
+
+### Sprint K3.C — Credit Discipline Gate
+
+**K3C-1: Unapproved customer blocked at Quick Sell (deni)**
+1. Log in as owner. Go to Quick Sell.
+2. Add an item to cart, select "Deni", type a NEW customer name (e.g. "Testjohn").
+3. Submit checkout.
+- ✅ Correct: error message "Deni haliwezi kutolewa: Mteja huyu hajaruhusiwa..." — sale does NOT go through.
+- ❌ Bug if: credit transaction is created for an unapproved customer.
+
+**K3C-2: Owner also cannot bypass the gate at the counter**
+1. As owner (RoyMwendwa), repeat K3C-1 with the same new customer name.
+- ✅ Correct: SAME block applies — even the owner is blocked at the POS counter.
+- ❌ Bug if: owner's credit sale goes through without approval.
+
+**K3C-3: Approve customer → credit then works**
+1. After K3C-1, go to Debt Tracker → find "Testjohn" → click "Approve for Credit".
+2. Return to Quick Sell → deni sale to "Testjohn" → submit.
+- ✅ Correct: credit transaction recorded, debt tracker updated.
+
+**K3C-4: Cash/M-Pesa always available even when credit is blocked**
+1. With "Testjohn" still unapproved, go to Quick Sell → add item → select CASH → checkout.
+- ✅ Correct: cash sale succeeds without any credit-gate message.
+
+**K3C-5: Overdue customer blocked at bar tab**
+1. Give a customer credit → wait (or manually set their transaction date back in Django admin to > 30 days ago).
+2. Go to Bar Board → try to open a tab for that customer.
+- ✅ Correct: JSON error "Tab imezuiwa: Mteja ana deni la zamani...".
+- ❌ Bug if: tab opens for an overdue customer.
+
+**K3C-6: Monthly cutoff blocks on last days of month**
+1. In Payment Settings → Sera ya Deni → set Debt Cycle = Monthly, cutoff days = 5.
+2. On the 26th+ of a month (5 days before month end for a 30-day month), try to give credit.
+- ✅ Correct: "Deni jipya haliwezi kutolewa ndani ya siku 5 za mwisho wa mwezi".
+- ❌ Bug if: credit goes through without the monthly-cutoff block.
+
+**K3C-7: Rolling-cycle business unaffected by monthly cutoff**
+1. In Payment Settings → set Debt Cycle = Rolling (default).
+2. On any day of the month, try to give credit to an approved customer.
+- ✅ Correct: no monthly-cutoff block regardless of what day it is.
+
+**K3C-8: Credit limit blocks when outstanding ≥ limit**
+1. In Debt Tracker → customer profile → set Credit Limit = KES 500.
+2. Give that customer KES 500 credit (Quick Sell deni).
+3. Try to give any more credit to the same customer.
+- ✅ Correct: "Kikomo cha deni ni KES 500..." error.
+
+**K3C-9: Credit Policy Settings save correctly**
+1. Go to Payment Settings → Sera ya Deni section.
+2. Toggle "Washa Kinga ya Deni" OFF → click "Hifadhi Sera ya Deni".
+3. Reload the page → toggle should be OFF.
+4. Toggle back ON and save.
+- ✅ Correct: each setting persists correctly after reload.
+- Confirm: M-Pesa settings (till, paybill) are NOT erased when saving credit policy.
+
+**K3C-10: Credit standing card on customer profile**
+1. Go to Debt Tracker → click any customer.
+2. A coloured card "Hali ya Mkopo" should appear below the header buttons.
+- ✅ Correct: green "Sawa" for approved/no-block, red "Imezuiwa" for blocked customers with reason.
+
+---
+
+## Final Checks
+
+After all smoke tests pass:
+
+```
+python manage.py check        # 0 issues
+python manage.py makemigrations --check   # No changes detected
+python manage.py test         # 61 tests, 0 failures
+```

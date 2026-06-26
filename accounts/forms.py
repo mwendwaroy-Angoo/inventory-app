@@ -319,7 +319,7 @@ class BusinessEditForm(forms.ModelForm):
 
 
 class PaymentSettingsForm(forms.ModelForm):
-    """Form for business owners to configure their M-Pesa payment receiving details."""
+    """Form for business owners to configure M-Pesa channels and Credit Policy."""
     class Meta:
         model = Business
         fields = [
@@ -327,6 +327,11 @@ class PaymentSettingsForm(forms.ModelForm):
             'mpesa_pochi', 'mpesa_phone', 'preferred_payment_channel',
             'daraja_consumer_key', 'daraja_consumer_secret', 'daraja_passkey',
             'daraja_environment',
+            # Credit Policy (K3.C)
+            'credit_policy_enabled', 'credit_window_days', 'debt_cycle',
+            'debt_cutoff_days_before_month_end', 'block_if_overdue', 'overdue_grace_days',
+            'late_repayment_strikes', 'late_threshold_days', 'defaulter_permanent',
+            'cooldown_days',
         ]
         widgets = {
             'mpesa_till': forms.TextInput(attrs={'placeholder': 'e.g. 5XXXXXX'}),

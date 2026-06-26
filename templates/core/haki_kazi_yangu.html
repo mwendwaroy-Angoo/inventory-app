@@ -50,11 +50,17 @@
 {% endblock %}
 
 {% block content %}
-<div class="mb-4">
-    <h1 class="page-title mb-1">🙌 {% trans 'Kazi Yangu' %}</h1>
-    <p style="color:#b0b0b0; font-size:0.875rem;">
-        {{ user.get_full_name|default:user.username }} · {{ period_label }}
-    </p>
+<div class="mb-4 d-flex align-items-start justify-content-between flex-wrap gap-2">
+    <div>
+        <h1 class="page-title mb-1">🙌 {% trans 'Kazi Yangu' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem;">
+            {{ user.get_full_name|default:user.username }} · {{ period_label }}
+        </p>
+    </div>
+    <a href="{% url 'haki_recognition_statement' profile.id %}"
+       class="btn btn-sm btn-outline-secondary" style="border-color:rgba(201,168,76,0.4); color:var(--gold);">
+        🌟 {% trans 'Taarifa Yangu' %}
+    </a>
 </div>
 
 <!-- Contribution this month -->

@@ -256,6 +256,18 @@ def bar_board(request):
                     linked_customer.phone = tab_phone
                     linked_customer.save(update_fields=['phone'])
 
+                # ── CREDIT DISCIPLINE GATE ────────────────────────────────────
+                from core.credit_policy import evaluate_credit
+                _decision = evaluate_credit(business, linked_customer)
+                if not _decision.allowed:
+                    from django.http import JsonResponse as _JR
+                    return _JR({
+                        'ok': False,
+                        'credit_blocked': True,
+                        'error': f'Tab imezuiwa: {_decision.reason} — Pokea malipo ya cash au M-Pesa.',
+                    }, status=403)
+                # ─────────────────────────────────────────────────────────────
+
                 active_tab = BarTab.objects.filter(
                     business=business,
                     customer_name__iexact=tab_customer,
@@ -951,6 +963,16 @@ def void_tab(request, tab_id):
     tab.status = 'VOID'
     tab.settled_at = now
     tab.save(update_fields=['status', 'settled_at'])
+
+    # Mark customer as defaulter when tab with credit transactions is voided
+    if tab.customer_name:
+        had_credit = tab.entries.filter(payment_method='void').exists()
+        if had_credit:
+            cust_obj = Customer.objects.filter(
+                business=up.business, name=tab.customer_name
+            ).first()
+            if cust_obj:
+                Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
 
     return JsonResponse({'ok': True, 'reason': reason})
 

@@ -97,6 +97,32 @@
     </div>
 </div>
 
+<!-- Credit Standing (K3.C) -->
+{% if credit_standing.decision %}
+<div class="mb-3 p-3" style="background:rgba(255,255,255,0.03); border-left:3px solid {{ credit_standing.standing_color }}; border-radius:0 8px 8px 0;">
+    <div class="d-flex align-items-start gap-3 flex-wrap">
+        <div>
+            <span style="font-size:0.72rem; color:#b0b0b0; text-transform:uppercase; letter-spacing:0.05em;">{% trans 'Hali ya Mkopo' %}</span>
+            <div style="font-weight:700; color:{{ credit_standing.standing_color }}; margin-top:0.1rem;">
+                {{ credit_standing.standing_label }}
+            </div>
+            {% if credit_standing.decision.reason %}
+            <div style="font-size:0.8rem; color:#b0b0b0; margin-top:0.3rem;">{{ credit_standing.decision.reason }}</div>
+            {% endif %}
+            {% if credit_standing.restore_hint %}
+            <div style="font-size:0.75rem; color:#888; margin-top:0.2rem;">💡 {{ credit_standing.restore_hint }}</div>
+            {% endif %}
+        </div>
+        {% if is_owner and not credit_standing.decision.allowed and not customer.credit_approved %}
+        <form method="post" action="{% url 'toggle_credit_approval' customer.id %}" class="ms-auto">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-gold">{% trans 'Ruhusu Mkopo' %}</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Score + stat row -->
 <div class="row g-3 mb-4" id="debt-stats">
 

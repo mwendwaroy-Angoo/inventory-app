@@ -270,14 +270,18 @@ def customer_debt_profile(request, customer_id):
         data = _get_customer_debt_data(customer, business, scope)
         has_kitchen = False  # non-owner scoped view is single-ledger
 
+    from core.credit_policy import get_credit_standing
+    credit_standing = get_credit_standing(business, customer, scope=scope)
+
     return render(request, 'core/customer_debt_profile.html', {
         **data,
-        'is_owner':    is_owner,
-        'scope':       scope,
-        'has_kitchen': has_kitchen,
-        'today':       timezone.now().date().isoformat(),
-        'today_label': timezone.now().date().strftime('%B %d, %Y'),
+        'is_owner':       is_owner,
+        'scope':          scope,
+        'has_kitchen':    has_kitchen,
+        'today':          timezone.now().date().isoformat(),
+        'today_label':    timezone.now().date().strftime('%B %d, %Y'),
         'payment_methods': CustomerDebtPayment.PAYMENT_METHOD_CHOICES,
+        'credit_standing': credit_standing,
     })
 
 
@@ -343,6 +347,11 @@ def record_debt_payment(request, customer_id):
     post_data       = _get_customer_debt_data(customer, business, payment_scope)
     score_label     = post_data.get('score_label', '')
     effective_window = post_data.get('effective_window', business.credit_window_days or 30)
+
+    # Stamp last_cleared_at when outstanding drops to zero
+    if float(post_data['outstanding']) == 0:
+        from django.utils import timezone as _tz
+        Customer.objects.filter(pk=customer.pk).update(last_cleared_at=_tz.now())
 
     # Build receipt lines: FIFO coverage of unpaid transactions
     receipt_lines = []

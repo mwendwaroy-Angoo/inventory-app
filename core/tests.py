@@ -1266,3 +1266,168 @@ class HakiRecognitionNudgeTest(TestCase):
         _check_and_fire_recognition(self.staff_profile, self.biz, contrib)
         notifs_after = Notification.objects.filter(user=self.owner_profile.user).count()
         self.assertEqual(notifs_before, notifs_after)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint K3 — Credit Discipline Gate
+# ══════════════════════════════════════════════════════════════════════════════
+
+from core.credit_policy import evaluate_credit, CreditDecision
+
+
+class CreditGatePolicyOffTest(TestCase):
+    """K3C: When credit_policy_enabled=False, gate always allows."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K3 Policy Off Biz', credit_policy_enabled=False)
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Otieno', credit_approved=False,
+        )
+
+    def test_policy_off_allows_any_customer(self):
+        decision = evaluate_credit(self.biz, self.customer)
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.tier, 'ok')
+
+
+class CreditGateApprovalTest(TestCase):
+    """K3C: credit_approved=False blocks the customer; True allows."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K3 Approval Biz', credit_policy_enabled=True)
+        self.blocked = Customer.objects.create(
+            business=self.biz, name='Blocked Kamau', credit_approved=False,
+        )
+        self.approved = Customer.objects.create(
+            business=self.biz, name='Approved Wanjiku', credit_approved=True,
+        )
+
+    def test_unapproved_customer_is_blocked(self):
+        decision = evaluate_credit(self.biz, self.blocked)
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.tier, 'blocked')
+        self.assertFalse(decision.overridable)
+
+    def test_approved_customer_with_no_history_is_ok(self):
+        decision = evaluate_credit(self.biz, self.approved)
+        self.assertTrue(decision.allowed)
+
+
+class CreditGateDefaulterTest(TestCase):
+    """K3C: is_defaulter + defaulter_permanent=True permanently blocks."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='K3 Defaulter Biz',
+            credit_policy_enabled=True,
+            defaulter_permanent=True,
+        )
+        self.defaulter = Customer.objects.create(
+            business=self.biz, name='Bad Moraa',
+            credit_approved=True, is_defaulter=True,
+        )
+        self.clean = Customer.objects.create(
+            business=self.biz, name='Clean Akinyi', credit_approved=True,
+        )
+
+    def test_defaulter_permanently_blocked(self):
+        decision = evaluate_credit(self.biz, self.defaulter)
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.tier, 'blocked')
+        self.assertFalse(decision.overridable)
+
+    def test_non_defaulter_not_blocked_by_flag(self):
+        decision = evaluate_credit(self.biz, self.clean)
+        self.assertTrue(decision.allowed)
+
+
+class CreditGateMonthlyMidMonthTest(TestCase):
+    """K3C-AC4: Monthly cutoff blocks only in last N days; rolling ignores it."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='K3 Monthly Biz',
+            credit_policy_enabled=True,
+            debt_cycle='monthly',
+            debt_cutoff_days_before_month_end=5,
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Monthly Juma', credit_approved=True,
+        )
+
+    def test_rolling_biz_ignores_monthly_cutoff(self):
+        rolling_biz = Business.objects.create(
+            name='K3 Rolling Biz', credit_policy_enabled=True, debt_cycle='rolling',
+            debt_cutoff_days_before_month_end=5,
+        )
+        cust = Customer.objects.create(
+            business=rolling_biz, name='Rolling Njeri', credit_approved=True,
+        )
+        import calendar
+        # Use a date that would be in the cutoff window (day 27 of 30-day month)
+        cutoff_date = timezone.localdate().replace(day=27)
+        try:
+            decision = evaluate_credit(rolling_biz, cust, when=cutoff_date)
+            self.assertTrue(decision.allowed)
+        except ValueError:
+            pass  # Day 27 may not exist in this month — skip
+
+    def test_monthly_biz_blocks_at_month_end(self):
+        import calendar
+        today = timezone.localdate()
+        last_day = calendar.monthrange(today.year, today.month)[1]
+        end_date = today.replace(day=last_day)
+        decision = evaluate_credit(self.biz, self.customer, when=end_date)
+        self.assertFalse(decision.allowed)
+        self.assertIn('mwezi', decision.reason)
+
+    def test_monthly_biz_allows_mid_month(self):
+        import calendar
+        today = timezone.localdate()
+        last_day = calendar.monthrange(today.year, today.month)[1]
+        # Only test if there are days far enough from month end
+        if last_day >= 16:
+            mid_date = today.replace(day=10)
+            decision = evaluate_credit(self.biz, self.customer, when=mid_date)
+            self.assertTrue(decision.allowed)
+
+
+class CreditGateCreditLimitTest(TestCase):
+    """K3C: Credit limit block when outstanding >= limit."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='K3 Limit Biz', credit_policy_enabled=True,
+        )
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.customer = Customer.objects.create(
+            business=self.biz, name='At Limit Hassan',
+            credit_approved=True, credit_limit=Decimal('500'),
+        )
+
+    def test_at_limit_is_blocked(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Test Item K3',
+            material_no='K3-ITEM-01', selling_price=Decimal('500'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('500'),
+        )
+        decision = evaluate_credit(self.biz, self.customer, amount=Decimal('1'))
+        self.assertFalse(decision.allowed)
+        self.assertFalse(decision.overridable)
+
+    def test_below_limit_is_allowed(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Test Item K3b',
+            material_no='K3-ITEM-02', selling_price=Decimal('200'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('100'),
+        )
+        decision = evaluate_credit(self.biz, self.customer, amount=Decimal('50'))
+        self.assertTrue(decision.allowed)

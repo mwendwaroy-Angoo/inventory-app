@@ -344,16 +344,20 @@ def _check_and_fire_recognition(staff_profile, business, contrib):
 
 
 @login_required
-@owner_required
 def haki_recognition_statement(request, profile_id):
     """Generate a shareable pay + contribution statement for one staff member.
 
-    Can be shared via SMS (sends to staff phone) or printed.
-    Reuses receipt infrastructure for consistent branding.
+    Owner can view any staff member's statement.
+    Staff can view ONLY their own statement (H2-AC2 privacy).
     """
     user_profile = get_user_profile(request)
     business = user_profile.business
     staff_profile = get_object_or_404(UserProfile, id=profile_id, business=business)
+
+    # Privacy gate: staff can only see their own statement
+    if not user_profile.is_owner and staff_profile.id != user_profile.id:
+        from django.http import HttpResponseForbidden
+        return HttpResponseForbidden('Huwezi kuona taarifa ya mwenzio.')
 
     if not getattr(business, 'haki_enabled', True):
         return redirect('home')

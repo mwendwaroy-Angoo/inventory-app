@@ -268,6 +268,30 @@ def _kitchen_checkout(request, up, business, is_owner):
     if payment_method == 'credit' and not credit_name:
         return JsonResponse({'ok': False, 'error': 'Jina la mteja linahitajika kwa deni'}, status=400)
 
+    # ── CREDIT DISCIPLINE GATE (kitchen credit + food_tab) ────────────────────
+    if payment_method in ('credit', 'food_tab'):
+        recipient_name = credit_name if payment_method == 'credit' else tab_customer
+        if recipient_name:
+            from core.models import Customer as _CustomerModel
+            from core.credit_policy import evaluate_credit
+            _cust_gate = _CustomerModel.objects.filter(
+                business=business, name=recipient_name
+            ).first()
+            if _cust_gate is None:
+                _cust_gate = _CustomerModel.objects.create(
+                    business=business,
+                    name=recipient_name,
+                    phone=credit_phone if payment_method == 'credit' else tab_phone,
+                )
+            _decision = evaluate_credit(business, _cust_gate, scope='kitchen')
+            if not _decision.allowed:
+                return JsonResponse({
+                    'ok': False,
+                    'credit_blocked': True,
+                    'error': f'Deni imezuiwa: {_decision.reason} — Pokea malipo ya cash au M-Pesa.',
+                }, status=403)
+    # ─────────────────────────────────────────────────────────────────────────
+
     can_access_bar = is_owner or getattr(up, 'can_access_bar', False)
     if payment_method == 'bar_tab' and not can_access_bar:
         return JsonResponse({'ok': False, 'error': 'Hauna ruhusa ya kufikia bar tab.'}, status=403)

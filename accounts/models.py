@@ -95,10 +95,48 @@ class Business(models.Model):
                   'Used to show the full break-even timeline including pre-app history.'
     )
 
-    # ── Credit Settings ──
+    # ── Credit Settings & Discipline Policy (K3.C) ──────────────────────────
     credit_window_days = models.PositiveIntegerField(
         default=30,
         help_text='Maximum days a customer debt may remain outstanding before it is flagged as overdue.',
+    )
+    credit_policy_enabled = models.BooleanField(
+        default=True,
+        help_text='Enforce the credit discipline gate at every issuance point.',
+    )
+    debt_cycle = models.CharField(
+        max_length=10,
+        choices=[('rolling', 'Rolling'), ('monthly', 'Monthly')],
+        default='rolling',
+        help_text='Rolling = always-on window. Monthly = reset at month-end.',
+    )
+    debt_cutoff_days_before_month_end = models.PositiveIntegerField(
+        default=5,
+        help_text='Monthly cycle only: block new credit in the last N days of the month.',
+    )
+    block_if_overdue = models.BooleanField(
+        default=True,
+        help_text='Block new credit while the customer has any debt overdue past the window.',
+    )
+    overdue_grace_days = models.PositiveIntegerField(
+        default=0,
+        help_text='Extra days beyond the credit window before a debt is treated as blocking.',
+    )
+    late_repayment_strikes = models.PositiveIntegerField(
+        default=3,
+        help_text='Block after this many significantly-late repayments.',
+    )
+    late_threshold_days = models.PositiveIntegerField(
+        default=7,
+        help_text='A repayment is "significantly late" if it lands this many days past the credit window.',
+    )
+    defaulter_permanent = models.BooleanField(
+        default=False,
+        help_text='Permanently block customers whose debt was written off as bad debt.',
+    )
+    cooldown_days = models.PositiveIntegerField(
+        default=14,
+        help_text='Clean days required after clearing all debt before credit resumes (for repeat late-payers).',
     )
 
     last_txn_sms_at = models.DateTimeField(

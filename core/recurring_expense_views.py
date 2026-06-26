@@ -111,7 +111,8 @@ def recurring_expense_list(request):
     expenses = RecurringExpense.objects.filter(business=business).order_by('category', 'description')
 
     from accounts.models import UserProfile
-    staff_profiles = UserProfile.objects.filter(business=business, role__in=['staff', 'waitress']).select_related('user')
+    STAFF_PAY_ROLES = ['staff', 'waitress', 'kitchen']
+    staff_profiles = UserProfile.objects.filter(business=business, role__in=STAFF_PAY_ROLES).select_related('user')
 
     return render(request, 'core/recurring_expense_list.html', {
         'expenses':       expenses,

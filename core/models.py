@@ -156,6 +156,14 @@ class Customer(models.Model):
         null=True, blank=True,
         help_text='Expected days this customer takes to pay. Cannot exceed the business credit window.',
     )
+    is_defaulter = models.BooleanField(
+        default=False,
+        help_text='Had a debt written off as bad debt; permanently high-risk flag.',
+    )
+    last_cleared_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Timestamp when this customer last had their outstanding balance reach zero.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

@@ -572,6 +572,28 @@ def add_transaction(request):
                 )
             recipient = customer.name
 
+        # ── CREDIT DISCIPLINE GATE for add_transaction ───────────────────────
+        if (trans_type == "Issue"
+                and request.POST.get("payment_method", "cash") == "credit"
+                and recipient):
+            from core.credit_policy import evaluate_credit
+            _cust_gate = Customer.objects.filter(
+                business=user_profile.business, name=recipient
+            ).first()
+            if _cust_gate is None:
+                _cust_gate = Customer.objects.create(
+                    business=user_profile.business, name=recipient,
+                )
+            _decision = evaluate_credit(user_profile.business, _cust_gate)
+            if not _decision.allowed:
+                messages.error(
+                    request,
+                    f'Deni haliwezi kutolewa: {_decision.reason} — '
+                    'Badilisha njia ya malipo.'
+                )
+                return redirect('add_transaction')
+        # ─────────────────────────────────────────────────────────────────────
+
         item = get_object_or_404(Item, id=item_id)
 
         # ── PRODUCE PRESET HANDLING ───────────────────────────────────────────
@@ -2167,6 +2189,30 @@ def quick_sell(request):
         # as keg tab convention) but routed to BarTab instead of debt tracker.
         is_tab_sale = (payment_method_raw == "tab")
         payment_method_qs = "credit" if is_tab_sale else payment_method_raw
+
+        # ── CREDIT DISCIPLINE GATE ────────────────────────────────────────────
+        if payment_method_raw in ('credit', 'tab') and credit_recipient:
+            from core.models import Customer as _CustomerModel
+            from core.credit_policy import evaluate_credit
+            _cust_gate = _CustomerModel.objects.filter(
+                business=user_profile.business, name=credit_recipient
+            ).first()
+            if _cust_gate is None:
+                # Auto-create with credit_approved=False so gate can evaluate
+                _cust_gate = _CustomerModel.objects.create(
+                    business=user_profile.business,
+                    name=credit_recipient,
+                    phone=credit_phone,
+                )
+            _decision = evaluate_credit(user_profile.business, _cust_gate)
+            if not _decision.allowed:
+                messages.error(
+                    request,
+                    f'Deni haliwezi kutolewa: {_decision.reason} — '
+                    'Lipa kwa cash au M-Pesa badala yake.'
+                )
+                return redirect('quick_sell')
+        # ─────────────────────────────────────────────────────────────────────
 
         recorded = []
         last_transaction = None
