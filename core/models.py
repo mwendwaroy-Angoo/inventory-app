@@ -2002,13 +2002,17 @@ class KegBarrel(models.Model):
             update_fields = ['revenue_collected', 'volume_dispensed_ml', 'cups_dispensed']
 
         auto_depleted = False
-        if (self.remaining_envelope() <= 0
-                and self.latest_weight() <= float(self.tare_weight_kg) + 0.5
-                and self.status == 'TAPPED'):
-            self.status = 'DEPLETED'
-            self.closed_at = timezone.now()
-            update_fields += ['status', 'closed_at']
-            auto_depleted = True
+        weighs = getattr(self.business, 'weighs_kegs', False)
+        if self.status == 'TAPPED':
+            if weighs:
+                # Weight-based depletion: scale is ground truth.
+                # Envelope reaching zero is informational on weighing bars.
+                if self.latest_weight() <= float(self.tare_weight_kg) + 0.5:
+                    self.status = 'DEPLETED'
+                    self.closed_at = timezone.now()
+                    update_fields += ['status', 'closed_at']
+                    auto_depleted = True
+            # Non-weighing bar: no auto-depletion — frontend prompts at the envelope boundary.
 
         self.save(update_fields=update_fields)
         if auto_depleted:

@@ -178,6 +178,27 @@
 
     </div>
 
+    <!-- K5.D — Debt visibility (read-only, computed from role + access flags) -->
+    <div class="p-4" style="border-top:1px solid #3a3a3a;">
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+            <div>
+                <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                    🧾 {% trans 'Debt Ledger Visibility' %}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                    {% trans 'Which debt sub-ledger this staff member can view and process payments for.' %}
+                </div>
+            </div>
+            <div>
+                <span style="background:#2a3a2a; color:#6ee7b7; font-size:0.82rem;
+                             font-weight:600; padding:0.3rem 0.75rem; border-radius:6px;
+                             border:1px solid #3a5a3a;">
+                    {{ debt_scope_label }}
+                </span>
+            </div>
+        </div>
+    </div>
+
     <div class="d-flex justify-content-end">
         <button type="submit" class="btn btn-gold px-5">
             💾 {% trans 'Save Permissions' %}

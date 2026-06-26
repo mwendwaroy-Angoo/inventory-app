@@ -1617,3 +1617,252 @@ class CustomerDebtStatementViewTest(TestCase):
         self.assertRedirects(
             resp, f'/debt/{customer_no_debt.id}/', fetch_redirect_response=False
         )
+
+
+# ── K5 tests ─────────────────────────────────────────────────────────────────
+
+class BarrelDepletionWeighingVsNonWeighingTest(TestCase):
+    """K5.A: weighs_kegs flag controls auto-depletion path.
+
+    Weighing bar: barrel auto-depletes when weight <= tare + 0.5 kg.
+    Non-weighing bar: no auto-depletion via weight (frontend envelope prompt handles it).
+    """
+
+    def _make_barrel(self, weighs_kegs=False, revenue_collected=Decimal('0')):
+        biz = Business.objects.create(name=f'K5 Depletion {weighs_kegs}', weighs_kegs=weighs_kegs)
+        store = Store.objects.create(business=biz, name='Bar')
+        item = Item.objects.create(
+            business=biz, store=store, description='Tusker K5', unit='ml',
+            material_no=f'K5-KEG-{biz.id}', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        barrel = KegBarrel.objects.create(
+            business=biz, store=store, item=item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+            gross_weight_kg=Decimal('60'), tare_weight_kg=Decimal('10'),
+            status='TAPPED', revenue_collected=revenue_collected,
+        )
+        preset = ItemPortionPreset.objects.create(
+            item=item, label='Cup', price=Decimal('100'),
+            quantity_consumed=Decimal('300'), serving_type='cup',
+        )
+        user = User.objects.create_user(username=f'k5_staff_{biz.id}', password='x')
+        return biz, barrel, preset, user
+
+    def test_weighing_bar_depletes_when_weight_at_tare(self):
+        biz, barrel, preset, user = self._make_barrel(weighs_kegs=True)
+        # Put a reading at tare weight so latest_weight() returns tare
+        KegWeightReading.objects.create(
+            barrel=barrel, weight_kg=Decimal('10.3'),  # <= tare(10) + 0.5
+            reading_type='SPOT', recorded_by=user,
+        )
+        KegBarrel.record_sale_locked(barrel.id, biz, preset, 1, 'cash', user)
+        barrel.refresh_from_db()
+        self.assertEqual(barrel.status, 'DEPLETED',
+                         'Weighing bar should auto-deplete when weight <= tare + 0.5')
+
+    def test_non_weighing_bar_does_not_auto_deplete_at_envelope(self):
+        biz, barrel, preset, user = self._make_barrel(
+            weighs_kegs=False, revenue_collected=Decimal('19900'),
+        )
+        # Sell one more cup (100 KES) → revenue_collected = 20000 = target
+        KegBarrel.record_sale_locked(barrel.id, biz, preset, 1, 'cash', user)
+        barrel.refresh_from_db()
+        self.assertEqual(barrel.status, 'TAPPED',
+                         'Non-weighing bar must NOT auto-deplete at envelope boundary')
+
+
+class EnvelopeReachedInApiResponseTest(TestCase):
+    """K5.A: bar_board_api returns envelope_reached per keg and weighs_kegs at root level."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K5 API Biz', weighs_kegs=True)
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='k5_api_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='K5 Lager', unit='ml',
+            material_no='K5-API-01', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        self.barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('1000'),
+            status='TAPPED', revenue_collected=Decimal('1000'),  # envelope exactly 0
+        )
+
+    def test_api_returns_weighs_kegs(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/bar/board/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data.get('weighs_kegs'), 'weighs_kegs must be True in API response')
+
+    def test_api_returns_envelope_reached_when_zero(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/bar/board/')
+        data = resp.json()
+        kegs = {k['item_id']: k for k in data.get('kegs', [])}
+        barrel_item_id = self.barrel.item_id
+        self.assertIn(barrel_item_id, kegs)
+        self.assertTrue(kegs[barrel_item_id].get('envelope_reached'),
+                        'envelope_reached must be True when revenue_collected >= target_revenue')
+
+
+class DepleteBArrelEndpointTest(TestCase):
+    """K5.A: /stock/bar/deplete/<id>/ marks a TAPPED barrel DEPLETED with no wastage transaction."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K5 Deplete Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='k5_dep_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='K5 D Lager', unit='ml',
+            material_no='K5-DEP-01', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        self.barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('500'),
+            status='TAPPED',
+        )
+
+    def test_deplete_marks_barrel_depleted(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/bar/deplete/{self.barrel.id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.status, 'DEPLETED')
+
+    def test_deplete_creates_no_wastage_transaction(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/stock/bar/deplete/{self.barrel.id}/')
+        wastage_count = Transaction.objects.filter(
+            business=self.biz, type='Wastage',
+        ).count()
+        self.assertEqual(wastage_count, 0, 'Funga Pipa must not create a wastage transaction')
+
+    def test_deplete_is_owner_only(self):
+        staff = User.objects.create_user(username='k5_dep_staff', password='x')
+        UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        self.client.force_login(staff)
+        resp = self.client.post(f'/stock/bar/deplete/{self.barrel.id}/')
+        self.assertEqual(resp.status_code, 403)
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.status, 'TAPPED', 'Staff must not be able to deplete a barrel')
+
+
+class VoidTabLeaderboardAttributionTest(TestCase):
+    """K5.C: void_count and void_kes are attributed to served_by staff in shrinkage leaderboard."""
+
+    def setUp(self):
+        from core.keg_metrics import staff_shrinkage
+        self.staff_shrinkage = staff_shrinkage
+        self.biz = Business.objects.create(name='K5 Void Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.staff_user = User.objects.create_user(
+            username='k5_void_staff', password='x', first_name='Void', last_name='Staff',
+        )
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        # Shift so the staff member appears in the leaderboard aggregation
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            status='CLOSED', opening_float=Decimal('0'),
+        )
+        self.shift.ended_at = timezone.now()
+        self.shift.save(update_fields=['ended_at'])
+
+    def test_voided_tab_counted_against_served_by(self):
+        store = Store.objects.create(business=self.biz, name='K5 Bar')
+        item = Item.objects.create(
+            business=self.biz, store=store, description='K5 Void Beer', unit='ml',
+            material_no='K5-VOID-01', is_keg=True, selling_price=Decimal('200'),
+        )
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Test Patron',
+            status='VOID', served_by=self.staff_user,
+        )
+        for i in range(2):
+            txn = Transaction.objects.create(
+                business=self.biz, item=item, type='Issue',
+                qty=Decimal('-500'), sale_amount=Decimal('200'),
+                payment_method='void', date=timezone.localdate(),
+            )
+            BarTabEntry.objects.create(tab=tab, transaction=txn, description='Pint', amount=Decimal('200'))
+
+        today = timezone.localdate()
+        rows = self.staff_shrinkage(self.biz, today, today)
+        staff_row = next((r for r in rows if r.staff_id == self.staff_user.id), None)
+        self.assertIsNotNone(staff_row, 'Staff with void tabs must appear in leaderboard')
+        self.assertEqual(staff_row.void_count, 1)
+        self.assertAlmostEqual(staff_row.void_kes, 400.0)
+
+    def test_no_voids_shows_zero(self):
+        today = timezone.localdate()
+        rows = self.staff_shrinkage(self.biz, today, today)
+        staff_row = next((r for r in rows if r.staff_id == self.staff_user.id), None)
+        if staff_row:
+            self.assertEqual(staff_row.void_count, 0)
+            self.assertEqual(staff_row.void_kes, 0.0)
+
+
+class RecordDebtPaymentShiftGateTest(TestCase):
+    """K5.E: record_debt_payment is blocked for non-owner staff without an open shift."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K5 Shift Gate Biz', credit_window_days=30)
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='k5_sg_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='k5_sg_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff, business=self.biz, role='staff',
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='K5 SG Item',
+            material_no='K5-SG-01', selling_price=Decimal('50'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='SG Patron', credit_approved=True,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('100'),
+        )
+
+    def test_owner_can_pay_without_shift(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/debt/{self.customer.id}/payment/',
+            {'amount_paid': '100', 'payment_method': 'cash', 'debt_source': 'bar'},
+        )
+        # Owner must not get a shift-gate redirect (success or validation error both fine)
+        self.assertNotEqual(resp.status_code, 403)
+
+    def test_staff_blocked_without_open_shift(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f'/debt/{self.customer.id}/payment/',
+            {'amount_paid': '100', 'payment_method': 'cash'},
+            follow=False,
+        )
+        # Must redirect back to customer profile (shift gate fires before payment logic)
+        self.assertRedirects(
+            resp, f'/debt/{self.customer.id}/', fetch_redirect_response=False,
+        )
+
+    def test_staff_can_pay_with_open_shift(self):
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f'/debt/{self.customer.id}/payment/',
+            {'amount_paid': '100', 'payment_method': 'cash'},
+            follow=False,
+        )
+        # With open shift the gate passes — redirect to receipt page (not customer profile)
+        self.assertNotEqual(resp.url, f'/debt/{self.customer.id}/')

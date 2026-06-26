@@ -84,6 +84,7 @@
           <th>Book Revenue</th>
           <th>Keg Loss</th>
           <th>Bottle/Spirits Loss</th>
+          <th>Voids</th>
           <th>Keg Loss %</th>
           <th>Coverage</th>
           <th>vs Previous</th>
@@ -111,6 +112,16 @@
           <td>
             {% if r.bottle_loss_kes > 0 %}
               <span class="badge badge-danger-custom">KES {{ r.bottle_loss_kes|floatformat:0 }}</span>
+            {% else %}
+              <span style="color:#b0b0b0">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if r.void_count > 0 %}
+              <span class="badge badge-danger-custom" title="KES {{ r.void_kes|floatformat:0 }} voided">
+                {{ r.void_count }} tab{% if r.void_count != 1 %}s{% endif %}
+                <small style="opacity:.8;">/ KES {{ r.void_kes|floatformat:0 }}</small>
+              </span>
             {% else %}
               <span style="color:#b0b0b0">—</span>
             {% endif %}

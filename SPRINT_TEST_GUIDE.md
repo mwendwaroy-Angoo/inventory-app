@@ -11,7 +11,7 @@ Run with:
 python manage.py test
 ```
 
-Expected: **72 tests, 0 failures**.
+Expected: **84 tests, 0 failures** (72 original + 12 K5).
 
 ### Full test list (`core/tests.py`)
 
@@ -532,5 +532,102 @@ After all smoke tests pass:
 ```
 python manage.py check        # 0 issues
 python manage.py makemigrations --check   # No changes detected
-python manage.py test         # 61 tests, 0 failures
+python manage.py test         # 84 tests, 0 failures
 ```
+
+---
+
+## Sprint K5 — Barrel Depletion, Theft Controls, Shift Gate
+
+### K5.A — Envelope-based depletion (non-weighing bars)
+
+**K5A-1: Non-weighing bar shows "Funga Pipa / Endelea" prompt at envelope boundary**
+1. In Payment Settings → Barrel & Keg → ensure "Bar ina Mizani" is OFF.
+2. Tap a barrel, sell until revenue hits the target (envelope = 0).
+3. Tap the barrel tile again to open the sell modal.
+- ✅ Correct: browser `confirm()` prompt "Barrel imefika lengo..." appears.
+- Owner clicks OK (Funga Pipa) → barrel disappears from board (DEPLETED).
+- Owner clicks Cancel (Endelea) → sell modal opens normally.
+- ❌ Bug if: sell modal opens immediately without any prompt.
+
+**K5A-2: Staff see toast (not prompt) at envelope boundary**
+1. Log in as staff (not owner), repeat sell until envelope reached.
+2. Try to open a TAPPED tile.
+- ✅ Correct: toast "Barrel imefika lengo. Mwambie mwenye biashara..." and no modal.
+
+**K5A-3: block_sales_past_target hard-blocks sales**
+1. In Django admin → Business → enable "Block Sales Past Target".
+2. Sell until envelope reached, then try to sell more (as owner or staff).
+- ✅ Correct: toast "⛔ Barrel imefika lengo — mauzo yamezuiwa. Funga barrel kwanza."
+- ❌ Bug if: sell modal still opens.
+
+**K5A-4: Funga Pipa creates no wastage transaction**
+1. Trigger the "Funga Pipa" confirm on a barrel whose envelope is reached.
+2. Go to Stock → Transaction History for that item.
+- ✅ Correct: no Wastage transaction created — barrel just becomes DEPLETED.
+
+**K5A-5: Weighing bar shows weight input in tap modal**
+1. In Payment Settings → enable "Bar ina Mizani".
+2. Tap a SEALED barrel (click "Fungua Barrel" button).
+- ✅ Correct: tap modal shows "Uzito wa barrel wakati wa kufungua (kg)" input field.
+- Enter a weight and click Fungua.
+- ❌ Bug if: weight input is hidden even when weighs_kegs is true.
+
+### K5.B — Light-at-tap theft detection
+
+**K5B-1: Entering weight lighter than gross triggers alert**
+1. Enable "Bar ina Mizani". Receive a barrel with gross_weight = 60 kg.
+2. When tapping, enter starting_weight = 55 kg (5 kg missing > 2 kg threshold).
+- ✅ Correct: owner receives in-app notification "⚠️ [barrel]: pipa limepimwa likiwa pungufu..."
+- ❌ Bug if: no notification appears despite > 2 kg discrepancy.
+
+**K5B-2: Small discrepancy (≤ 2 kg) fires no alert**
+1. Same setup, but enter starting_weight = 58.5 kg (1.5 kg below gross).
+- ✅ Correct: barrel taps without any alert notification.
+
+### K5.C — Void tab attribution on shrinkage leaderboard
+
+**K5C-1: Voided tabs appear on the leaderboard**
+1. Open and void a bar tab (as owner, click Void on the tab).
+2. Go to /bar/shrinkage/ (Shrinkage Leaderboard) for today's date.
+- ✅ Correct: the staff who served the tab shows a "Voids" column entry
+  with count and KES total.
+- ❌ Bug if: Voids column shows "—" despite confirmed voided tabs.
+
+**K5C-2: Zero voids show "—"**
+1. A staff member with shifts but no voided tabs in the period.
+- ✅ Correct: Voids column shows "—" for that staff row.
+
+### K5.D — Debt visibility label on staff permissions
+
+**K5D-1: Staff permissions page shows debt scope**
+1. Go to /staff/<id>/permissions/ for a regular bar staff member.
+- ✅ Correct: a "🧾 Debt Ledger Visibility" row appears at the bottom.
+- For bar-only staff: badge reads "Bar debts only".
+- For kitchen-only staff (role=kitchen, can_access_bar=off): "Kitchen debts only".
+- For cross-authorized staff (can_access_bar+can_access_kitchen both on): "Bar + Kitchen debts (all)".
+
+### K5.E — Shift gate on debt payment + reminder
+
+**K5E-1: Staff blocked from recording debt payment without a shift**
+1. Log in as staff (not owner) with no open shift.
+2. Go to Debt Tracker → click a customer with outstanding debt.
+3. Submit a payment.
+- ✅ Correct: error toast "Fungua shift yako kwanza kabla ya kurekodi malipo ya deni."
+  and redirect back to customer profile — no payment created.
+
+**K5E-2: Staff can record debt payment with an open shift**
+1. Staff opens a shift (/bar/shift/open/ or kitchen shift).
+2. Retry step 3 from K5E-1.
+- ✅ Correct: payment is accepted and receipt is issued.
+
+**K5E-3: Staff blocked from sending debt reminder without a shift**
+1. Log in as staff with no open shift.
+2. Customer profile → click "Tuma Kikumbusha".
+- ✅ Correct: error "Fungua shift yako kwanza kabla ya kutuma kikumbusha."
+- ❌ Bug if: SMS reminder fires without checking shift status.
+
+**K5E-4: Owner bypasses shift gate on debt payment**
+1. Log in as owner (no shift required).
+2. Record a debt payment directly.
+- ✅ Correct: payment goes through immediately.

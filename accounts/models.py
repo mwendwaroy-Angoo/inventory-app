@@ -175,6 +175,16 @@ class Business(models.Model):
         null=True, blank=True,
         help_text='Number of depleted barrels in the current baseline sample.'
     )
+    weighs_kegs = models.BooleanField(
+        default=False,
+        help_text='Bar has a scale. Enables weight-based auto-depletion and light-at-tap theft detection. '
+                  'Without weighing the app tracks recorded sales + envelope only and cannot detect fully off-book theft.'
+    )
+    block_sales_past_target = models.BooleanField(
+        default=False,
+        help_text='Block all sales once a barrel hits its revenue target. '
+                  'Default off — staff are prompted to close or continue knowingly instead.'
+    )
 
     # ── KRA / eTIMS ──────────────────────────────────────────────────────────
     kra_pin = models.CharField(

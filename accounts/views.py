@@ -239,9 +239,21 @@ def staff_permissions(request, staff_id):
         messages.success(request, _(f'Permissions updated for {staff_name}.'))
         return redirect('staff_permissions', staff_id=staff_id)
 
+    business = user_profile.business
+    # Compute debt visibility scope label for K5.D display
+    if staff_profile.role == 'kitchen' and not getattr(staff_profile, 'can_access_bar', False):
+        debt_scope_label = _('Kitchen debts only')
+    elif (getattr(business, 'has_kitchen', False)
+          and getattr(staff_profile, 'can_access_bar', False)
+          and getattr(staff_profile, 'can_access_kitchen', False)):
+        debt_scope_label = _('Bar + Kitchen debts (all)')
+    else:
+        debt_scope_label = _('Bar debts only')
+
     return render(request, 'core/staff_permissions.html', {
         'staff_profile': staff_profile,
         'staff_name': staff_profile.user.get_full_name() or staff_profile.user.username,
+        'debt_scope_label': debt_scope_label,
     })
 
 

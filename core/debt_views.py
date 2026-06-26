@@ -293,6 +293,13 @@ def record_debt_payment(request, customer_id):
     scope = _debt_scope(user_profile, business)
     customer = get_object_or_404(Customer, id=customer_id, business=business)
 
+    # K5.E — shift gate: staff must have an open shift to record debt payments
+    if not user_profile.is_owner:
+        from .shift_views import get_active_staff_shift
+        if get_active_staff_shift(user_profile, business) is False:
+            messages.error(request, _('Fungua shift yako kwanza kabla ya kurekodi malipo ya deni.'))
+            return redirect('customer_debt_profile', customer_id=customer_id)
+
     amount_raw = request.POST.get('amount_paid', '').strip()
     method     = request.POST.get('payment_method', 'cash')
     notes      = request.POST.get('notes', '').strip()
@@ -451,6 +458,14 @@ def send_debt_reminder(request, customer_id):
     business = user_profile.business
     scope = _debt_scope(user_profile, business)
     customer = get_object_or_404(Customer, id=customer_id, business=business)
+
+    # K5.E — shift gate: staff must have an open shift to send debt reminders
+    if not user_profile.is_owner:
+        from .shift_views import get_active_staff_shift
+        if get_active_staff_shift(user_profile, business) is False:
+            messages.error(request, _('Fungua shift yako kwanza kabla ya kutuma kikumbusha.'))
+            return redirect('customer_debt_profile', customer_id=customer_id)
+
     data = _get_customer_debt_data(customer, business, scope)
 
     if data['outstanding'] <= 0:

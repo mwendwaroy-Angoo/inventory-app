@@ -114,6 +114,8 @@ def bar_board_api(request):
             'next_sealed_target':   float(next_sealed.target_revenue) if next_sealed else 0.0,
             'next_sealed_gross':    float(next_sealed.gross_weight_kg) if next_sealed else 0.0,
             'next_sealed_tare':     float(next_sealed.tare_weight_kg) if next_sealed else 0.0,
+            # K5.A — envelope + depletion control flags
+            'envelope_reached':    (float(primary.remaining_envelope()) <= 0) if primary else False,
             # Cup / jug tracking
             'cups_300_bought': cup_300_bought,
             'cups_500_bought': cup_500_bought,
@@ -158,6 +160,8 @@ def bar_board_api(request):
         'open_tabs': open_tabs_qs.count(),
         'open_tab_names': list(open_tabs_qs.values_list('customer_name', flat=True).distinct()),
         'active_waitresses': active_w,
+        'weighs_kegs': bool(getattr(business, 'weighs_kegs', False)),
+        'block_sales_past_target': bool(getattr(business, 'block_sales_past_target', False)),
     })
 
 
@@ -553,13 +557,64 @@ def tap_barrel(request, barrel_id):
         )
 
     barrel.tap(request.user)
+
+    # K5.B — tap-time weigh-in for weighing bars
+    if getattr(up.business, 'weighs_kegs', False):
+        w_raw = (request.POST.get('starting_weight_kg') or '').strip()
+        if w_raw:
+            try:
+                start_w = float(w_raw)
+                KegWeightReading.objects.create(
+                    barrel=barrel,
+                    weight_kg=start_w,
+                    reading_type='SPOT',  # tap-time check reuses SPOT slot
+                    recorded_by=request.user,
+                )
+                expected = float(barrel.gross_weight_kg)
+                missing_kg = expected - start_w
+                if missing_kg > 2.0:
+                    missing_l = round(missing_kg, 1)
+                    msg = (
+                        f"⚠️ {barrel.item.description}: pipa limepimwa likiwa "
+                        f"pungufu wakati wa kufungua — takriban {missing_l} L "
+                        f"imeisha kabla ya mauzo kurekodiwa. Angalia haraka!"
+                    )
+                    _fire_owner_alert_msg(up.business, barrel.item.description, msg)
+            except (ValueError, TypeError):
+                pass
+
     return JsonResponse({'ok': True, 'barrel_id': barrel.id, 'status': barrel.status})
+
+
+# ── Alert helpers ─────────────────────────────────────────────────────────────
+
+def _fire_owner_alert_msg(business, title, msg):
+    """Send in-app Notification + SMS (rate-limited) to all owners."""
+    from accounts.models import UserProfile
+    from .models import Notification
+    from .notifications import normalize_ke_phone, send_sms_notification
+
+    now = timezone.now()
+    can_sms = (
+        not business.last_txn_sms_at or
+        (now - business.last_txn_sms_at).total_seconds() > 600
+    )
+    owners = UserProfile.objects.filter(business=business, role='owner').select_related('user')
+    for op in owners:
+        Notification.objects.create(
+            user=op.user, title=title, message=msg, notification_type='warning'
+        )
+        if can_sms and op.phone:
+            normalized = normalize_ke_phone(op.phone)
+            if normalized:
+                send_sms_notification(msg, normalized)
+    if can_sms:
+        business.last_txn_sms_at = now
+        business.save(update_fields=['last_txn_sms_at'])
 
 
 # ── Weigh / spot-check ────────────────────────────────────────────────────────
 
-@login_required
-@require_POST
 def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pct):
     """Notify all owners of a dangerous keg variance (in-app + SMS, respects bundling window)."""
     from accounts.models import UserProfile
@@ -587,6 +642,8 @@ def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pc
         business.save(update_fields=['last_txn_sms_at'])
 
 
+@login_required
+@require_POST
 def weigh_barrel(request, barrel_id):
     """Record a SPOT weight reading and return a variance mini-report."""
     up = _get_up(request)
@@ -748,6 +805,31 @@ def discard_barrel(request, barrel_id):
     reason = (request.POST.get('reason') or 'Imerudishwa / discarded').strip()
     barrel.close(reason=reason)
     return JsonResponse({'ok': True, 'status': barrel.status})
+
+
+@login_required
+@require_POST
+def deplete_barrel(request, barrel_id):
+    """K5.A — Mark a TAPPED barrel as DEPLETED (no wastage) for non-weighing bars.
+
+    Called from the 'Funga Pipa' prompt when the revenue envelope is reached.
+    Only applies when the barrel is still TAPPED — if already DEPLETED/DISCARDED, no-op.
+    """
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner', False):
+        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+
+    barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
+
+    if barrel.status != 'TAPPED':
+        return JsonResponse({'ok': True, 'status': barrel.status})
+
+    barrel.status    = 'DEPLETED'
+    barrel.closed_at = timezone.now()
+    barrel.save(update_fields=['status', 'closed_at'])
+    from .models import _refresh_keg_baseline
+    _refresh_keg_baseline(barrel)
+    return JsonResponse({'ok': True, 'status': 'DEPLETED'})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -1028,6 +1028,19 @@
       </div>
       <div class="modal-body">
         <p id="tap-confirm-text" style="color:#f0ece4; margin:0;"></p>
+        <!-- K5.B — weighing bar tap-time weight input (hidden for non-weighing bars) -->
+        <div id="tap-weight-row" style="display:none; margin-top:1rem;">
+          <label style="color:#b0b0b0; font-size:0.85rem; margin-bottom:0.3rem; display:block;">
+            Uzito wa barrel wakati wa kufungua (kg)
+          </label>
+          <input type="number" id="tap-starting-weight" step="0.1" min="0"
+                 class="form-control form-control-sm"
+                 style="background:#1a1a1a; border:1px solid #555; color:#f0ece4; width:120px;"
+                 placeholder="e.g. 50.2">
+          <div style="color:#b0b0b0; font-size:0.75rem; margin-top:0.25rem;">
+            Inaweza kutambua unyevu au upotevu kabla ya mauzo.
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" onclick="window.closeTapModal()"
@@ -1523,8 +1536,10 @@
   var _myShiftOpen = {% if has_my_shift %}true{% else %}false{% endif %};
 
   /* ── State ─────────────────────────────────────────────── */
-  var _boardData  = {};   // item_id → keg data from board API
-  var _presetData = {};   // preset_id → {id, label, price, quantity_consumed}
+  var _boardData            = {};    // item_id → keg data from board API
+  var _presetData           = {};    // preset_id → {id, label, price, quantity_consumed}
+  var _weighsKegs           = false; // K5.A — business has a scale
+  var _blockSalesPastTarget = false; // K5.A — hard-stop when envelope reached
   // Cart: keyed by 'barrelId:presetId' for grouping — avoids duplicate lines
   var kegCart     = {};
   var _lastKey    = null; // last modified cart key (for Futa undo)
@@ -1590,6 +1605,10 @@
   function renderTiles(data) {
     var board = document.getElementById('keg-board');
     var kegs  = data.kegs || [];
+
+    // K5.A — top-level business flags
+    _weighsKegs           = !!data.weighs_kegs;
+    _blockSalesPastTarget = !!data.block_sales_past_target;
 
     // Rebuild caches
     _boardData  = {};
@@ -1832,6 +1851,34 @@
     if (_shiftBlockMsg) { showToast(_shiftBlockMsg); return; }
     var kg = _boardData[itemId];
     if (!kg || !kg.tapped_barrel_id) return;
+
+    // K5.A — envelope gate (non-weighing bars only; weighing bars use weight-based depletion)
+    if (!_weighsKegs && kg.envelope_reached) {
+      if (_blockSalesPastTarget) {
+        showToast('⛔ ' + kg.name + ' imefika lengo — mauzo yamezuiwa. Funga barrel kwanza.');
+        return;
+      }
+      // Soft prompt: Funga Pipa or continue
+      if (QS_IS_OWNER) {
+        if (window.confirm(
+          '⚠️ ' + kg.name + ' imefika lengo lake la mapato!\n\n' +
+          'Bonyeza OK = Funga Pipa (imekwisha)\n' +
+          'Bonyeza Cancel = Endelea kuuza (override)'
+        )) {
+          post('/stock/bar/deplete/' + kg.tapped_barrel_id + '/', {})
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (d.ok) { loadBarBoard(); showToast('✓ Barrel imefungwa.'); }
+              else { alert(d.error || 'Hitilafu.'); }
+            });
+          return;
+        }
+        // else: owner chose to continue — fall through to sell modal
+      } else {
+        showToast('⚠️ Barrel imefika lengo. Mwambie mwenye biashara aendelee au aifunge.');
+        return;
+      }
+    }
 
     document.getElementById('sell-modal-title').textContent = kg.name;
 
@@ -2094,6 +2141,11 @@
       'Fungua barrel ya ' + (kg ? kg.name : 'keg') + '? Barrel itakuwa tayari kuuza.';
     document.getElementById('tap-confirm-btn').textContent = 'Fungua';
     document.getElementById('tap-confirm-btn').disabled    = false;
+    // K5.B — show weight input only for weighing bars
+    var weightRow = document.getElementById('tap-weight-row');
+    var weightIn  = document.getElementById('tap-starting-weight');
+    if (weightRow) weightRow.style.display = _weighsKegs ? 'block' : 'none';
+    if (weightIn)  weightIn.value = '';
     showModal('tapModal');
   };
 
@@ -2104,7 +2156,13 @@
     var btn = document.getElementById('tap-confirm-btn');
     btn.disabled    = true;
     btn.textContent = 'Inafungua...';
-    post('/stock/bar/tap/' + _pendingTapId + '/', {})
+    var payload = {};
+    // K5.B — send starting weight for weighing bars
+    if (_weighsKegs) {
+      var wEl = document.getElementById('tap-starting-weight');
+      if (wEl && wEl.value.trim()) payload.starting_weight_kg = wEl.value.trim();
+    }
+    post('/stock/bar/tap/' + _pendingTapId + '/', payload)
       .then(function (r) { return r.json(); })
       .then(function (d) {
         hideModal('tapModal');

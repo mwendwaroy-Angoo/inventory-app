@@ -96,6 +96,8 @@ class StaffShrinkage:
     windows_with_weight: int = 0      # how many (shift×barrel) windows had a usable weigh-in
     windows_total: int = 0
     bottle_loss_kes: float = 0.0      # F5: spirits/bottle revenue variance from ShiftStockCount
+    void_count: int = 0               # K5.C: tabs voided by this staff in the period
+    void_kes: float = 0.0             # K5.C: KES value of voided tabs
 
     @property
     def total_loss_kes(self) -> float:
@@ -361,6 +363,26 @@ def staff_shrinkage(business, date_from: date_type, date_to: date_type) -> list[
             row.bottle_loss_kes += round(
                 variance_units * sc.item.bottle_expected_revenue_per_unit(), 2
             )
+
+    # K5.C — void tabs attributed to the staff who served them
+    from .models import BarTab, BarTabEntry
+    from django.db.models import Sum as _Sum
+    void_tabs = list(
+        BarTab.objects.filter(
+            business=business,
+            status='VOID',
+            opened_at__gte=start_dt,
+            opened_at__lte=end_dt,
+            served_by__isnull=False,
+        ).annotate(tab_total=_Sum('entries__amount'))
+        .values('served_by', 'tab_total')
+    )
+    for vt in void_tabs:
+        sb_id = vt['served_by']
+        row = acc.get(sb_id)
+        if row:
+            row.void_count += 1
+            row.void_kes += float(vt['tab_total'] or 0)
 
     return sorted(acc.values(), key=lambda r: r.total_loss_kes, reverse=True)
 

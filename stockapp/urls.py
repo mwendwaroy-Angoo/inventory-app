@@ -54,6 +54,7 @@ from core.keg_views import (
     tap_barrel,
     weigh_barrel,
     discard_barrel,
+    deplete_barrel,
     edit_barrel,
     add_cups,
     tabs_list,
@@ -244,6 +245,7 @@ urlpatterns = [
     path("stock/bar/tap/<int:barrel_id>/", tap_barrel, name="tap_barrel"),
     path("stock/bar/weigh/<int:barrel_id>/", weigh_barrel, name="weigh_barrel"),
     path("stock/bar/discard/<int:barrel_id>/", discard_barrel, name="discard_barrel"),
+    path("stock/bar/deplete/<int:barrel_id>/", deplete_barrel, name="deplete_barrel"),
     path("stock/bar/edit/<int:barrel_id>/", edit_barrel, name="edit_barrel"),
     path("stock/bar/breakage/", record_breakage, name="record_breakage"),
     # ── Bar Cups (Sprint 4) ──────────────────────────────────────────────────
