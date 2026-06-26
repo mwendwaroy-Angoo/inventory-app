@@ -540,6 +540,16 @@ def add_transaction(request):
     customers = Customer.objects.filter(business=user_profile.business)
 
     if request.method == "POST":
+        # Shift gate: staff must have an open shift to write any transaction
+        if not user_profile.is_owner:
+            from core.shift_views import get_active_staff_shift
+            if get_active_staff_shift(user_profile, user_profile.business) is False:
+                messages.error(
+                    request,
+                    'Fungua shift yako kwanza kabla ya kuingiza muamala.'
+                )
+                return redirect('add_transaction')
+
         item_id = request.POST["item"]
         trans_type = request.POST["type"]
         try:
@@ -2134,35 +2144,15 @@ def quick_sell(request):
     success_data = None
 
     if request.method == "POST":
-        # Shift enforcement — staff in a bar business must have their own open shift
+        # Shift gate: ALL staff (any business type) must have their own open shift
         if not user_profile.is_owner:
-            has_keg = Item.objects.filter(
-                store__business=user_profile.business, is_keg=True
-            ).exists()
-            if has_keg:
-                from .models import Shift as _Shift
-                my_shift = _Shift.objects.filter(
-                    business=user_profile.business,
-                    status='OPEN',
-                    staff=request.user,
-                ).first()
-                if not my_shift:
-                    any_shift = _Shift.objects.filter(
-                        business=user_profile.business, status='OPEN'
-                    ).first()
-                    if any_shift:
-                        owner_name = any_shift.staff.get_full_name() or any_shift.staff.username
-                        messages.error(
-                            request,
-                            f'Shift imefunguliwa na {owner_name}. '
-                            f'Fungua shift yako mwenyewe kwanza kabla ya kuuza.'
-                        )
-                    else:
-                        messages.error(
-                            request,
-                            'Hakuna shift iliyofunguliwa. Fungua shift kwanza kabla ya kuuza.'
-                        )
-                    return redirect('quick_sell')
+            from core.shift_views import get_active_staff_shift
+            if get_active_staff_shift(user_profile, user_profile.business) is False:
+                messages.error(
+                    request,
+                    'Fungua shift yako kwanza kabla ya kuuza.'
+                )
+                return redirect('quick_sell')
 
         cart_json = request.POST.get("cart", "[]")
         try:

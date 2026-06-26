@@ -28,6 +28,30 @@ def _get_up(request):
     return get_user_profile(request)
 
 
+def get_active_staff_shift(user_profile, business):
+    """Return the caller's open Shift, or None.
+
+    Owner always returns None — meaning "no gate needed, proceed".
+    Staff must have their own OPEN shift regardless of business type.
+    Use the return value like:
+        shift = get_active_staff_shift(up, business)
+        if shift is False:      # staff with no open shift
+            return error(...)   # block the action
+        # proceed (shift is either the Shift object or None for owner)
+    Returns:
+        None  — caller is owner; no shift gate required
+        Shift — caller has an open shift; proceed
+        False — caller is staff with no open shift; block
+    """
+    if getattr(user_profile, 'is_owner', False):
+        return None
+    from .models import Shift
+    active = Shift.objects.filter(
+        business=business, status='OPEN', staff=user_profile.user
+    ).first()
+    return active if active else False
+
+
 # ── Reconciliation helper ─────────────────────────────────────────────────────
 
 def _reconcile(shift):

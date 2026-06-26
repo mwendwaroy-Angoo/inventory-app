@@ -1029,6 +1029,9 @@
 (function () {
   var CSRF = '{{ csrf_token }}';
   var IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
+  // Seeded server-side so the shift gate fires immediately on page load,
+  // before the async /kitchen/shift/active/ fetch completes.
+  var _myShiftOpen = {% if is_owner %}true{% elif has_my_shift %}true{% else %}false{% endif %};
 
   var _portionItems = {{ portion_items|safe }};
   var _batchItems   = {{ batch_items|safe }};
@@ -1292,6 +1295,12 @@
 
   /* ── Cart management ── */
   function addToCart(entry) {
+    if (!IS_OWNER && !_myShiftOpen) {
+      showToast('⚠️ Fungua shift yako kwanza kabla ya kuuza.');
+      var banner = document.getElementById('shift-no-shift-banner');
+      if (banner) banner.classList.add('visible');
+      return;
+    }
     _cart.push(entry);
     renderCart();
     showToast('✓ ' + entry.description);
@@ -2416,6 +2425,9 @@
   buildBatchGrid();
   selectPM('cash');
   loadFoodTabBadge();
+  // Show/hide the no-shift banner immediately using the server-seeded value,
+  // before the async loadShift() fetch completes.
+  _updateBoardShiftState();
   loadShift();
 
   document.addEventListener('visibilitychange', function () {

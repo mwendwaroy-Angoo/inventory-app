@@ -240,6 +240,16 @@ def kitchen_board(request):
 
 def _kitchen_checkout(request, up, business, is_owner):
     """Handle kitchen sale POST."""
+    # Shift gate: staff must have an open shift
+    if not is_owner:
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True,
+                 'error': 'Fungua shift yako kwanza kabla ya kuuza.'},
+                status=403,
+            )
+
     try:
         cart = json.loads(request.POST.get('cart', '[]'))
         payment_method = request.POST.get('payment_method', 'cash')
@@ -454,6 +464,16 @@ def kitchen_receive(request):
     can_receive = getattr(up, 'is_owner', False) or getattr(up, 'can_receive_kitchen_stock', False)
     if not can_receive:
         return JsonResponse({'ok': False, 'error': 'Ruhusa ya kupokea stok inahitajika'}, status=403)
+
+    # Shift gate: staff must have an open shift even to receive stock
+    if not getattr(up, 'is_owner', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True,
+                 'error': 'Fungua shift yako kwanza kabla ya kupokea stok.'},
+                status=403,
+            )
 
     business = up.business
     kitchen_store = _ensure_kitchen_store(business)

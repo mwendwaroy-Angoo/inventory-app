@@ -776,6 +776,14 @@ def tick_entry(request, entry_id):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
+    if not getattr(up, 'is_owner', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
     entry = get_object_or_404(
         BarTabEntry.objects.select_related('tab', 'transaction'),
         id=entry_id,
@@ -839,6 +847,14 @@ def settle_tab(request, tab_id):
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza ili kulipa tab.'},
+                status=403,
+            )
 
     tab = BarTab.objects.filter(id=tab_id, business=up.business).first()
     if not tab:
@@ -946,6 +962,14 @@ def convert_tab_to_debt(request, tab_id):
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
 
     tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
 
@@ -1466,6 +1490,14 @@ def record_breakage(request):
     up = _get_up(request)
     if not up:
         return JsonResponse({"ok": False, "error": "Auth required"}, status=403)
+
+    if not getattr(up, 'is_owner', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
 
     business = up.business
     item = Item.objects.filter(
