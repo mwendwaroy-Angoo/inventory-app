@@ -177,7 +177,12 @@ def evaluate_credit(business, customer, amount=None, scope='all', when=None):
 
 
 def _count_late_repayments(customer, business, scope, window, threshold):
-    """Count payments made when the oldest unpaid credit txn was already overdue past threshold."""
+    """Count payments where the oldest UNPAID credit txn (FIFO) was overdue past threshold.
+
+    Uses cumulative FIFO to avoid counting already-paid transactions as strikes — without
+    this, a customer who paid off old debt and then took new debt would accumulate unfair
+    strikes from the paid-off balance appearing in every subsequent payment check.
+    """
     from core.models import CustomerDebtPayment, Transaction
 
     payments = list(
@@ -193,7 +198,7 @@ def _count_late_repayments(customer, business, scope, window, threshold):
         recipient=customer.name,
         payment_method='credit',
         type='Issue',
-    ).order_by('date')
+    ).order_by('date').select_related('item')
 
     if scope == 'bar':
         credit_qs = credit_qs.filter(item__store__is_kitchen=False)
@@ -201,16 +206,34 @@ def _count_late_repayments(customer, business, scope, window, threshold):
         credit_qs = credit_qs.filter(item__store__is_kitchen=True)
 
     credit_txns = list(credit_qs)
+    if not credit_txns:
+        return 0
+
     late_count = 0
+    cumulative_paid = 0.0
 
     for payment in payments:
         payment_date = payment.paid_at.date() if hasattr(payment.paid_at, 'date') else payment.paid_at
+        # FIFO: skip txns already fully covered by prior payments, find the oldest
+        # still-unpaid txn at the moment this payment was made.
+        remaining_prior = cumulative_paid
+        oldest_unpaid_date = None
         for txn in credit_txns:
-            if txn.date < payment_date:
-                days_outstanding = (payment_date - txn.date).days
-                if days_outstanding > (window + threshold):
-                    late_count += 1
-                    break  # One overdue txn per payment is enough to count as a strike
+            if txn.date > payment_date:
+                break  # txn not yet issued at payment time
+            txn_amount = float(txn.revenue())
+            if remaining_prior >= txn_amount:
+                remaining_prior -= txn_amount  # fully covered by earlier payments
+            else:
+                oldest_unpaid_date = txn.date
+                break  # this is the oldest still-unpaid txn as of this payment date
+
+        if oldest_unpaid_date is not None:
+            days = (payment_date - oldest_unpaid_date).days
+            if days > (window + threshold):
+                late_count += 1
+
+        cumulative_paid += float(payment.amount_paid)
 
     return late_count
 

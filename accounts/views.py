@@ -736,7 +736,6 @@ def payment_settings(request):
         if section == 'credit_policy':
             # Save credit policy fields directly — avoids overwriting M-Pesa fields
             # when the credit policy form is submitted (boolean checkboxes not sent = False)
-            from core.models import Store as _Store
             try:
                 Business.objects.filter(pk=business.pk).update(
                     credit_policy_enabled=request.POST.get('credit_policy_enabled') == '1',

@@ -232,6 +232,7 @@ def bar_board(request):
 
         # Resolve tab for tab-payment sales
         active_tab = None
+        linked_customer = None  # always initialised — avoids NameError in merge-tab receipt block
         tab_phone = (request.POST.get('tab_phone') or '').strip()
         if payment_method == 'tab' and tab_customer:
             if merge_tab_id:
@@ -239,6 +240,7 @@ def bar_board(request):
                 try:
                     active_tab = BarTab.objects.get(id=merge_tab_id, business=business, status='OPEN')
                     tab_customer = active_tab.customer_name
+                    linked_customer = active_tab.customer  # carry FK into receipt meta
                 except BarTab.DoesNotExist:
                     from django.http import JsonResponse as _JR
                     return _JR({'ok': False, 'error': 'Tab haikupatikana au imefungwa tayari.'}, status=400)
