@@ -250,6 +250,137 @@ Log in as **RoyMwendwa** (owner) at https://www.dukamwecheche.co.ke. Staff test 
 
 ---
 
+### Sprint K1 — Source-scoped debt sub-ledgers
+
+**K1-1: Kitchen staff only sees kitchen debt**
+1. Log in as a kitchen staff account.
+2. Go to `/debt/` (Debt Tracker).
+3. Only debts from kitchen sales (items in `is_kitchen=True` store) should appear.
+- ✅ Correct: bar debts are hidden from kitchen staff.
+- ❌ Bug if: bar customer debts are listed.
+
+**K1-2: Owner sees dual sub-ledger on customer profile**
+1. Log in as RoyMwendwa (owner).
+2. Go to Debt Tracker → open any customer who has both bar and kitchen credit sales.
+3. The profile should show two separate cards — "🍺 Bar" and "🍗 Kitchen" with separate outstanding balances.
+- ✅ Correct: two ledger cards, independent balances.
+
+**K1-3: Payment settles the correct sub-ledger**
+1. From a customer profile, click "Lipa" on the Bar sub-ledger card → pay.
+2. The Bar outstanding should decrease; Kitchen balance unchanged.
+- ✅ Correct: source-scoped settlement.
+
+---
+
+### Sprint K2a — Per-counter M-Pesa resolver
+
+**K2a-1: Kitchen store M-Pesa override routes STK Push correctly**
+1. In Business Settings → Kitchen M-Pesa section → enter a separate till number for the kitchen counter.
+2. Trigger an STK Push from the kitchen board.
+3. The STK Push should use the kitchen till, not the main bar till.
+- ✅ Correct: kitchen payment goes to kitchen till.
+- ❌ Bug if: STK Push always uses the business-level till regardless of counter.
+
+**K2a-2: No kitchen override falls back to business M-Pesa**
+1. Remove the kitchen till override (or leave it blank).
+2. Trigger an STK Push from the kitchen board.
+3. Should use the business-level M-Pesa config.
+- ✅ Correct: graceful fallback.
+
+---
+
+### Sprint H1-H4 — Haki (Staff Fairness Ledger)
+
+**H1-1: Contribution report loads**
+1. Log in as owner → Staff dropdown → "🌟 Haki — Staff".
+2. Should see a table of all staff with revenue, transaction count, and salary status.
+- ✅ Correct: table renders with data.
+- ❌ Bug if: 500 error or blank page.
+
+**H2-1: Record salary payment**
+1. On the Haki contribution page → click the 💵 Pay button for a staff member.
+2. Enter amount, method (cash/mpesa), and period (e.g. 2026-06).
+3. Submit.
+- ✅ Correct: payment recorded, salary card updates to "✓ Umelipwa", staff receives SMS.
+- ❌ Bug if: duplicate payment possible or SMS not sent.
+
+**H3-1: Staff sees Kazi Yangu**
+1. Log in as a staff account (Morrine).
+2. Navbar → "🙌 Kazi Yangu" link should be visible (only if `haki_enabled=True` on the business).
+3. Click it → should see personal contribution stats and salary status.
+- ✅ Correct: page loads with the staff's own data only.
+- ❌ Bug if: link missing or page shows another staff's data.
+
+**H4-1: Recognition statement**
+1. On Haki contribution page → click "🌟 Statement" for a staff member.
+2. Page should render a printable statement with contribution metrics.
+3. Click "📱 SMS" → staff receives the statement as an SMS.
+- ✅ Correct: statement page loads; SMS sent.
+
+**H4-2: Milestone nudge deduplication**
+1. Trigger a milestone condition (e.g. staff reaches 100 transactions in the date range).
+2. Reload the contribution report → notification appears in owner's bell.
+3. Reload again → NO duplicate notification.
+- ✅ Correct: milestone fires once per staff per period.
+
+---
+
+### Shift Gate Enforcement (`get_active_staff_shift`)
+
+The `get_active_staff_shift(user_profile, business)` helper in `core/shift_views.py` controls
+whether a staff member can perform any action. Return values:
+- `None` → caller is owner; skip the gate entirely
+- `Shift` object → caller has an open shift; proceed
+- `False` → caller is staff with no open shift; block with 403/error
+
+Gates are applied at:
+- **Quick Sell** POST checkout — all staff, all business types
+- **Add Transaction** — all staff
+- **Kitchen checkout** (`_kitchen_checkout`) — kitchen staff
+- **Kitchen receive** (`kitchen_receive`) — kitchen staff
+- **Bar board** `tick_entry`, `settle_tab`, `convert_tab_to_debt`, `record_breakage`
+
+**SG-1: Kitchen staff cannot use tiles without an open shift**
+1. Log in as kitchen staff with no open shift (or close your shift).
+2. Open Kitchen Board (`/kitchen/`).
+3. Try to tap any food tile to add to cart.
+- ✅ Correct: toast "⚠️ Fungua shift yako kwanza kabla ya kuuza." appears; item NOT added.
+- ❌ Bug if: item is added to cart and sale proceeds.
+
+**SG-2: Kitchen staff cannot receive stock without an open shift**
+1. As kitchen staff with no open shift, open Kitchen Board.
+2. Tap "+Pata Stok" (receive modal).
+3. Submit a receipt.
+- ✅ Correct: 403 response; error shown in modal.
+- ❌ Bug if: stock receipt recorded successfully.
+
+**SG-3: Add Transaction blocked without shift**
+1. As any staff (not owner), close your shift.
+2. Go to `/stock/add/` (Add Transaction).
+3. Submit any Receipt.
+- ✅ Correct: error message "Fungua shift yako kwanza..." and redirect back.
+- ❌ Bug if: transaction recorded.
+
+**SG-4: Quick Sell blocked without shift**
+1. As any staff with no open shift, go to Quick Sell.
+2. Add item to cart → click Checkout.
+- ✅ Correct: redirect to Quick Sell with error message.
+- ❌ Bug if: sale completes.
+
+**SG-5: Owner always bypasses all gates**
+1. Log in as RoyMwendwa (owner, no active shift needed).
+2. Perform any of SG-1 through SG-4 actions.
+- ✅ Correct: all actions succeed without needing to open a shift.
+- ❌ Bug if: owner is blocked by the shift gate.
+
+**SG-6: Bar board actions blocked without shift**
+1. As bar staff with no open shift, go to Bar Board.
+2. Try to add a drink (tick_entry), settle a tab, or void a tab.
+- ✅ Correct: 403 JSON response `{"ok": false, "shift_required": true}`.
+- ❌ Bug if: action completes.
+
+---
+
 ## Final Checks
 
 After all smoke tests pass:
@@ -260,4 +391,4 @@ python manage.py makemigrations --check   # No changes detected
 python manage.py test         # 51 tests, 0 failures
 ```
 
-All green = bar sprint sequence complete.
+All green = bar sprint sequence + K1/K2a/H1-H4/shift gate complete.

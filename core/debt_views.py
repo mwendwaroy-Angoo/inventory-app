@@ -363,8 +363,8 @@ def record_debt_payment(request, customer_id):
     if not receipt_lines:
         receipt_lines.append({'name': notes or 'Malipo ya deni', 'qty': 1, 'subtotal': float(amount)})
 
-    # Remaining balance
-    remaining_balance = round(max(0.0, data['outstanding'] - float(amount)), 2)
+    # Remaining balance — use post_data (recomputed after payment was recorded)
+    remaining_balance = round(max(0.0, float(post_data['outstanding'])), 2)
     if remaining_balance > 0:
         receipt_lines.append({
             'name': 'Bado unalipa',
