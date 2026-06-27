@@ -519,3 +519,68 @@ def business_cup_pool(business) -> dict:
         # when bought == 0 the owner hasn't set up cup tracking yet — not a shortage.
         'low_stock':         total_bought > 0 and remaining < 30,
     }
+
+
+def kitchen_consumable_pool(business) -> dict:
+    """Return the business-wide kitchen consumable stock balances.
+
+    Tracks: 1/4 khaki bags, 1/2 khaki bags, tomato sauce.
+    Oil and electricity are shared overheads — excluded from per-batch tracking.
+
+    Bought:   SUM(KitchenConsumableLog.qty) by consumable_type
+    Used:     SUM(KitchenBatch.khaki_small_used + khaki_large_used) across all batches
+
+    Returns a dict:
+        khaki_small_bought    int
+        khaki_large_bought    int
+        khaki_small_used      int  (deducted from all batches, any status)
+        khaki_large_used      int
+        khaki_small_remaining int
+        khaki_large_remaining int
+        sauce_jerricans_bought float
+        khaki_small_low       bool  remaining < 20 and bought > 0
+        khaki_large_low       bool  remaining < 20 and bought > 0
+    """
+    from django.db.models import Sum
+    from .models import KitchenConsumableLog, KitchenBatch
+
+    def _bought(ctype):
+        return float(KitchenConsumableLog.objects.filter(
+            business=business, consumable_type=ctype,
+        ).aggregate(q=Sum('qty'))['q'] or 0)
+
+    def _cost(ctype):
+        return float(KitchenConsumableLog.objects.filter(
+            business=business, consumable_type=ctype,
+        ).aggregate(c=Sum('total_cost'))['c'] or 0)
+
+    ks_bought = _bought('KHAKI_SMALL')
+    kl_bought = _bought('KHAKI_LARGE')
+    sauce_bought = _bought('SAUCE_TOMATO')
+
+    batch_agg = KitchenBatch.objects.filter(business=business).aggregate(
+        ks=Sum('khaki_small_used'),
+        kl=Sum('khaki_large_used'),
+    )
+    ks_used = int(batch_agg['ks'] or 0)
+    kl_used = int(batch_agg['kl'] or 0)
+
+    ks_bought_i = int(ks_bought)
+    kl_bought_i = int(kl_bought)
+    ks_rem = ks_bought_i - ks_used
+    kl_rem = kl_bought_i - kl_used
+
+    return {
+        'khaki_small_bought':    ks_bought_i,
+        'khaki_large_bought':    kl_bought_i,
+        'khaki_small_used':      ks_used,
+        'khaki_large_used':      kl_used,
+        'khaki_small_remaining': ks_rem,
+        'khaki_large_remaining': kl_rem,
+        'sauce_jerricans_bought': float(sauce_bought),
+        'khaki_small_cost':      _cost('KHAKI_SMALL'),
+        'khaki_large_cost':      _cost('KHAKI_LARGE'),
+        'sauce_cost':            _cost('SAUCE_TOMATO'),
+        'khaki_small_low':       ks_bought_i > 0 and ks_rem < 20,
+        'khaki_large_low':       kl_bought_i > 0 and kl_rem < 20,
+    }

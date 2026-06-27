@@ -335,6 +335,14 @@ class Item(models.Model):
                     '(1.70 → a 40/= bunch targets 68/=). Overridable per bunch by eye.'),
     )
 
+    # ── Kitchen Batch Module fields (migration 0075) ──────────────────────
+    is_kitchen_batch = models.BooleanField(
+        default=False,
+        help_text='Kitchen batch item — sold by price point from an open KitchenBatch. '
+                  'Used for chips, stew, ugali and other cooked-to-batch food. '
+                  'Stock is NOT counted by unit; the batch tracks cost vs revenue.'
+    )
+
     # ── Bar / Keg Module fields (migration 0043) ───────────────────────────
     is_keg = models.BooleanField(
         default=False,
@@ -566,6 +574,11 @@ class Transaction(models.Model):
         'KegBarrel', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='transactions',
         help_text='The keg barrel this pour was drawn from. Discriminator for keg analytics — parallel to produce_bunch_id.',
+    )
+    kitchen_batch = models.ForeignKey(
+        'KitchenBatch', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sales',
+        help_text='Kitchen batch this sale was drawn from. Discriminator for kitchen batch analytics.',
     )
     created_at = models.DateTimeField(
         default=timezone.now, null=True, blank=True,
@@ -1596,6 +1609,17 @@ class ItemPortionPreset(models.Model):
         help_text="For keg presets: how this serving is counted in daily reports. 'cup' for kikombe/shots, 'pint' for pints, 'jug' for jugs.",
     )
 
+    KHAKI_CHOICES = [
+        ('NONE',  'No khaki bag used'),
+        ('SMALL', '1/4 Khaki (small)'),
+        ('LARGE', '1/2 Khaki (large)'),
+    ]
+    khaki_type = models.CharField(
+        max_length=8, choices=KHAKI_CHOICES, default='NONE',
+        help_text='For kitchen batch presets: how many khaki bags this serving uses. '
+                  'Drives the business-wide khaki pool deduction counter.',
+    )
+
     class Meta:
         ordering = ['display_order', 'price']
         verbose_name = 'Item Portion Preset'
@@ -2315,6 +2339,178 @@ class TableOrderItem(models.Model):
     def line_total(self):
         return self.quantity * self.unit_price
 
+
+# ────────────────────────────────────────────────
+# KITCHEN BATCH MODULE (Sprint KF1)
+# ────────────────────────────────────────────────
+
+class KitchenBatch(models.Model):
+    """
+    Revenue envelope for one cooking session / pot / batch.
+    Used for chips (viazi), stew (mchuzi), ugali, etc.
+    No mandatory target — she cooks, sells until done, sees P&L.
+
+    Each batch tracks:
+        cost_total  → what she spent on raw material (e.g. KES 1,500 for 2 debe ya viazi)
+        revenue_collected → running total as she sells by price point
+        profit property → revenue - cost
+
+    Not to be confused with ProduceBunch (greens/sack produce) — KitchenBatch
+    has no target, no size, and is for cooked food only.
+    Discriminator on Transaction: kitchen_batch_id (not produce_bunch_id).
+    """
+    STATUS_CHOICES = [
+        ('OPEN',      'Open — selling'),
+        ('DEPLETED',  'Depleted — all sold'),
+        ('DISCARDED', 'Discarded — went to waste'),
+    ]
+    business          = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='kitchen_batches',
+    )
+    store             = models.ForeignKey(
+        'Store', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='kitchen_batches',
+    )
+    item              = models.ForeignKey(
+        'Item', on_delete=models.PROTECT, related_name='kitchen_batches',
+    )
+    cost_total        = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0'),
+        help_text='Total raw-material cost for this batch (e.g. cost of potatoes, nyama etc.).',
+    )
+    cost_note         = models.CharField(
+        max_length=200, blank=True,
+        help_text='Optional note: "2 debe ya viazi @ 750 = 1500".',
+    )
+    revenue_collected = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0'),
+    )
+    khaki_small_used  = models.PositiveIntegerField(
+        default=0,
+        help_text='1/4 khaki bags consumed from this batch (deducted from business khaki pool).',
+    )
+    khaki_large_used  = models.PositiveIntegerField(
+        default=0,
+        help_text='1/2 khaki bags consumed from this batch.',
+    )
+    status            = models.CharField(
+        max_length=12, choices=STATUS_CHOICES, default='OPEN',
+    )
+    received_on       = models.DateField(default=timezone.localdate)
+    closed_on         = models.DateTimeField(null=True, blank=True)
+    note              = models.CharField(max_length=200, blank=True)
+    recorded_by       = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='kitchen_batches_recorded',
+    )
+
+    class Meta:
+        ordering = ['-received_on', '-id']
+        verbose_name = 'Kitchen Batch'
+        verbose_name_plural = 'Kitchen Batches'
+
+    def __str__(self):
+        return f"{self.item.description} batch #{self.id} — {self.status}"
+
+    @property
+    def profit(self):
+        return self.revenue_collected - self.cost_total
+
+    @property
+    def profit_pct(self):
+        if not self.cost_total or self.cost_total <= 0:
+            return None
+        return round(float(self.profit) / float(self.cost_total) * 100, 1)
+
+    @property
+    def days_open(self):
+        from django.utils import timezone as _tz
+        end = self.closed_on.date() if self.closed_on else _tz.localdate()
+        return (end - self.received_on).days + 1
+
+    def record_sale(self, amount, payment_method='cash', recipient='', preset=None):
+        """Sell from this batch. Creates Transaction, updates revenue_collected + khaki count."""
+        amount = Decimal(str(amount))
+        if amount <= 0:
+            return None
+        txn = Transaction.objects.create(
+            item=self.item,
+            business=self.business,
+            type='Issue',
+            qty=Decimal('-1'),
+            sale_amount=amount,
+            payment_method=payment_method or 'cash',
+            recipient=recipient or '',
+            kitchen_batch=self,
+        )
+        self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
+        if preset:
+            if preset.khaki_type == 'SMALL':
+                self.khaki_small_used = (self.khaki_small_used or 0) + 1
+            elif preset.khaki_type == 'LARGE':
+                self.khaki_large_used = (self.khaki_large_used or 0) + 1
+        self.save(update_fields=['revenue_collected', 'khaki_small_used', 'khaki_large_used'])
+        return txn
+
+    def deplete(self):
+        """Mark batch as sold out."""
+        if self.status != 'OPEN':
+            return
+        from django.utils import timezone as _tz
+        self.status = 'DEPLETED'
+        self.closed_on = _tz.now()
+        self.save(update_fields=['status', 'closed_on'])
+
+    def discard(self, reason=''):
+        """Write off unsold remainder."""
+        if self.status == 'DISCARDED':
+            return
+        from django.utils import timezone as _tz
+        self.status = 'DISCARDED'
+        self.closed_on = _tz.now()
+        self.note = (self.note + ' | ' if self.note else '') + (reason or 'Discarded')
+        self.save(update_fields=['status', 'closed_on', 'note'])
+
+
+class KitchenConsumableLog(models.Model):
+    """
+    Tracks purchases of kitchen consumables that are pooled business-wide:
+    khaki bags (1/4 and 1/2 sizes) and other consumables like tomato sauce.
+    Oil and gas/electricity are excluded — shared overhead, not per-sale cost.
+    """
+    CONSUMABLE_CHOICES = [
+        ('KHAKI_SMALL', '1/4 Khaki bags'),
+        ('KHAKI_LARGE', '1/2 Khaki bags'),
+        ('SAUCE_TOMATO', 'Tomato sauce (jerrican)'),
+        ('OTHER', 'Other'),
+    ]
+    business         = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='kitchen_consumable_logs',
+    )
+    consumable_type  = models.CharField(max_length=16, choices=CONSUMABLE_CHOICES)
+    qty              = models.DecimalField(
+        max_digits=8, decimal_places=1,
+        help_text='Units bought: pieces for khaki, jerricans for sauce.',
+    )
+    unit_cost        = models.DecimalField(max_digits=8, decimal_places=2)
+    total_cost       = models.DecimalField(max_digits=10, decimal_places=2)
+    date             = models.DateField(default=timezone.localdate)
+    note             = models.CharField(max_length=120, blank=True)
+    recorded_by      = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='kitchen_consumable_logs_recorded',
+    )
+
+    class Meta:
+        ordering = ['-date', '-id']
+        verbose_name = 'Kitchen Consumable Log'
+        verbose_name_plural = 'Kitchen Consumable Logs'
+
+    def __str__(self):
+        return f"{self.get_consumable_type_display()} ×{self.qty} @ KES {self.unit_cost} — {self.date}"
+
+
+# ────────────────────────────────────────────────
 
 class Receipt(models.Model):
     business = models.ForeignKey(

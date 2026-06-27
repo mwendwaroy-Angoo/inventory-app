@@ -89,7 +89,12 @@ from core.order_views import (
     my_orders_api,
 )
 from core.kitchen_views import (
+    deplete_kitchen_batch,
+    discard_kitchen_batch,
+    kitchen_batch_receive,
     kitchen_board,
+    kitchen_consumable_add,
+    kitchen_consumable_pool_api,
     kitchen_receive,
     kitchen_tabs_list,
     tab_check_api,
@@ -273,11 +278,17 @@ urlpatterns = [
     path("bar/orders/<int:order_id>/cancel/", cancel_table_order,     name="cancel_table_order"),
 
     # ── Kitchen / Grill side venture ─────────────────────────────────────────
-    path("kitchen/",                kitchen_board,       name="kitchen_board"),
-    path("kitchen/receive/",        kitchen_receive,     name="kitchen_receive"),
-    path("kitchen/tabs/",           kitchen_tabs_list,   name="kitchen_tabs_list"),
-    path("kitchen/tab/check/",      tab_check_api,       name="tab_check_api"),
-    path("kitchen/toggle/",         toggle_kitchen,      name="toggle_kitchen"),
+    path("kitchen/",                  kitchen_board,               name="kitchen_board"),
+    path("kitchen/receive/",          kitchen_receive,             name="kitchen_receive"),
+    path("kitchen/tabs/",             kitchen_tabs_list,           name="kitchen_tabs_list"),
+    path("kitchen/tab/check/",        tab_check_api,               name="tab_check_api"),
+    path("kitchen/toggle/",           toggle_kitchen,              name="toggle_kitchen"),
+    # ── Kitchen Batch (KF1) ──────────────────────────────────────────────────
+    path("kitchen/batch/receive/",                kitchen_batch_receive,        name="kitchen_batch_receive"),
+    path("kitchen/batch/<int:batch_id>/deplete/", deplete_kitchen_batch,        name="deplete_kitchen_batch"),
+    path("kitchen/batch/<int:batch_id>/discard/", discard_kitchen_batch,        name="discard_kitchen_batch"),
+    path("kitchen/consumable/add/",               kitchen_consumable_add,       name="kitchen_consumable_add"),
+    path("kitchen/consumable/pool/",              kitchen_consumable_pool_api,  name="kitchen_consumable_pool_api"),
     # ── Kitchen Shift Handover Module ────────────────────────────────────────
     path("kitchen/shift/open/",                   open_shift,             name="kitchen_open_shift"),
     path("kitchen/shift/<int:shift_id>/close/",   close_shift,            name="kitchen_close_shift"),

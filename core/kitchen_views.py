@@ -21,9 +21,10 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .models import (
-    BarTab, BarTabEntry, Item, ItemPortionPreset, ProduceBunch,
-    Receipt, Store, Transaction,
+    BarTab, BarTabEntry, Item, ItemPortionPreset, KitchenBatch,
+    KitchenConsumableLog, ProduceBunch, Receipt, Store, Transaction,
 )
+from . import keg_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,8 @@ def kitchen_board(request):
     # ── GET: build board data ──────────────────────────────────────────────────
     kitchen_store = _kitchen_store(business)
     portion_items = []
-    batch_items = []
+    batch_items = []      # grill/nyama choma — ProduceBunch envelope
+    kitchen_batches = []  # chips/stew — KitchenBatch P&L envelope
 
     if kitchen_store:
         items_qs = (
@@ -111,11 +113,29 @@ def kitchen_board(request):
         )
         for item in items_qs:
             presets = [
-                {'id': p.id, 'label': p.label, 'price': float(p.price), 'qty': float(p.quantity_consumed)}
+                {
+                    'id': p.id, 'label': p.label, 'price': float(p.price),
+                    'qty': float(p.quantity_consumed), 'khaki_type': p.khaki_type,
+                }
                 for p in item.portion_presets.all().order_by('display_order', 'price')
             ]
-            if item.is_produce and item.produce_mode == 'BUNCH':
-                # Batch item (nyama choma, mutura) — show revenue envelope
+            if item.is_kitchen_batch:
+                # Kitchen batch item (chips, stew, ugali) — KitchenBatch P&L
+                open_batches = list(
+                    KitchenBatch.objects.filter(
+                        item=item, business=business, status='OPEN'
+                    ).order_by('received_on')
+                )
+                kitchen_batches.append({
+                    'id': item.id,
+                    'name': item.description,
+                    'unit': item.unit,
+                    'presets': presets,
+                    'open_batches': [_batch_to_dict(b) for b in open_batches],
+                    'has_open_batch': bool(open_batches),
+                })
+            elif item.is_produce and item.produce_mode == 'BUNCH':
+                # Grill batch item (nyama choma, mutura) — ProduceBunch envelope
                 open_bunches = list(
                     ProduceBunch.objects.filter(
                         item=item, business=business, status='OPEN'
@@ -142,7 +162,7 @@ def kitchen_board(request):
                     'has_stock': any(b.remaining() > 0 for b in open_bunches),
                 })
             else:
-                # Portion item (chipo, chicken wing, smokie, samosa)
+                # Portion item (chicken wing, smokie, samosa)
                 balance = float(item.current_balance())
                 portion_items.append({
                     'id': item.id,
@@ -220,12 +240,16 @@ def kitchen_board(request):
     can_access_bar = is_owner or getattr(up, 'can_access_bar', False)
     can_receive_stock = is_owner or getattr(up, 'can_receive_kitchen_stock', False)
 
+    khaki_pool = keg_metrics.kitchen_consumable_pool(business)
+
     return render(request, 'core/kitchen/kitchen_board.html', {
         'is_owner': is_owner,
         'business': business,
         'kitchen_store': kitchen_store,
         'portion_items': json.dumps(portion_items),
         'batch_items': json.dumps(batch_items),
+        'kitchen_batches': json.dumps(kitchen_batches),
+        'khaki_pool': json.dumps(khaki_pool),
         'mix_siblings_json': json.dumps(mix_siblings),
         'food_tabs': json.dumps(food_tabs_data),
         'bar_tab_names': json.dumps(bar_tab_names if can_access_bar else []),
@@ -236,6 +260,22 @@ def kitchen_board(request):
         'can_access_bar': can_access_bar,
         'can_receive_stock': can_receive_stock,
     })
+
+
+def _batch_to_dict(batch):
+    """Serialize a KitchenBatch to a JS-friendly dict."""
+    return {
+        'id': batch.id,
+        'item_id': batch.item_id,
+        'cost_total': float(batch.cost_total),
+        'revenue_collected': float(batch.revenue_collected),
+        'profit': float(batch.profit),
+        'profit_pct': batch.profit_pct,
+        'status': batch.status,
+        'received_on': str(batch.received_on),
+        'days_open': batch.days_open,
+        'cost_note': batch.cost_note or '',
+    }
 
 
 def _kitchen_checkout(request, up, business, is_owner):
@@ -342,9 +382,31 @@ def _kitchen_checkout(request, up, business, is_owner):
         qty = Decimal(str(entry.get('qty', 1)))
         desc = entry.get('description', '')
         bunch_id = entry.get('bunch_id')
+        batch_id = entry.get('batch_id')
 
-        if bunch_id:
-            # Batch/grill item — use ProduceBunch revenue envelope
+        if batch_id:
+            # Kitchen batch item (chips, stew) — KitchenBatch P&L envelope
+            try:
+                batch = KitchenBatch.objects.get(id=batch_id, business=business, status='OPEN')
+            except KitchenBatch.DoesNotExist:
+                continue
+            preset = None
+            if preset_id:
+                preset = ItemPortionPreset.objects.filter(id=preset_id, item=batch.item).first()
+            txn = batch.record_sale(
+                amount=amount,
+                payment_method=txn_pm,
+                recipient=txn_recipient,
+                preset=preset,
+            )
+            if active_tab and txn:
+                BarTabEntry.objects.create(
+                    tab=active_tab, transaction=txn, description=desc, amount=amount,
+                )
+            receipt_lines.append({'name': desc, 'subtotal': float(amount)})
+            total += amount
+        elif bunch_id:
+            # Grill batch item (nyama choma, mutura) — ProduceBunch revenue envelope
             try:
                 bunch = ProduceBunch.objects.get(id=bunch_id, business=business, status='OPEN')
             except ProduceBunch.DoesNotExist:
@@ -515,7 +577,32 @@ def kitchen_receive(request):
     business = up.business
     kitchen_store = _ensure_kitchen_store(business)
 
-    mode = request.POST.get('mode', 'portion')  # 'portion', 'batch', or 'batch_group'
+    mode = request.POST.get('mode', 'portion')  # 'portion', 'batch', 'batch_group', or 'kitchen_batch'
+
+    # ── kitchen_batch: create a KitchenBatch for is_kitchen_batch items ──────
+    if mode == 'kitchen_batch':
+        item_id = request.POST.get('item_id')
+        try:
+            item = Item.objects.get(id=item_id, store=kitchen_store, is_kitchen_batch=True)
+        except Item.DoesNotExist:
+            return JsonResponse({'ok': False, 'error': 'Bidhaa haikupatikana'}, status=404)
+        except (ValueError, TypeError):
+            return JsonResponse({'ok': False, 'error': 'item_id batili'}, status=400)
+        try:
+            cost_total = Decimal(str(request.POST.get('cost_total', '0') or '0'))
+            cost_note  = (request.POST.get('cost_note') or '').strip()[:200]
+            note       = (request.POST.get('note') or '').strip()[:200]
+        except Exception:
+            return JsonResponse({'ok': False, 'error': 'Nambari batili'}, status=400)
+        if cost_total <= 0:
+            return JsonResponse({'ok': False, 'error': 'Gharama lazima iwe zaidi ya 0'}, status=400)
+        batch = KitchenBatch.objects.create(
+            business=business, store=kitchen_store, item=item,
+            cost_total=cost_total, cost_note=cost_note, note=note,
+            recorded_by=request.user,
+        )
+        return JsonResponse({'ok': True, 'mode': 'kitchen_batch', 'batch': _batch_to_dict(batch),
+                             'item_id': item.id, 'item_name': item.description})
 
     # ── batch_group: one sack split proportionally across multiple items ──────
     if mode == 'batch_group':
@@ -654,3 +741,168 @@ def kitchen_tabs_list(request):
             'opened_at': tab.opened_at.strftime('%H:%M'),
         })
     return JsonResponse({'tabs': result})
+
+
+# ── Kitchen Batch endpoints (Sprint KF1) ──────────────────────────────────────
+
+def _kb_gate(request):
+    """
+    Common auth + business + shift gate for kitchen batch endpoints.
+    Returns (up, business, error_response) where error_response is non-None on failure.
+    """
+    if not request.user.is_authenticated:
+        return None, None, JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
+    up = _get_up(request)
+    if not up:
+        return None, None, JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
+    business = up.business
+    is_owner = getattr(up, 'is_owner', False)
+    if not is_owner:
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, business) is False:
+            return up, business, JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza'},
+                status=403,
+            )
+    return up, business, None
+
+
+@login_required
+@require_POST
+def kitchen_batch_receive(request):
+    """Create a new KitchenBatch for a is_kitchen_batch item (owner or receive-permitted staff)."""
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+
+    is_owner = getattr(up, 'is_owner', False)
+    can_receive = is_owner or getattr(up, 'can_receive_kitchen_stock', False)
+    if not can_receive:
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya kupokea stok inahitajika'}, status=403)
+
+    kitchen_store = _ensure_kitchen_store(business)
+    item_id = (request.POST.get('item_id') or '').strip()
+
+    try:
+        item = Item.objects.get(id=item_id, store=kitchen_store, is_kitchen_batch=True)
+    except Item.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'Bidhaa haikupatikana'}, status=404)
+    except (ValueError, TypeError):
+        return JsonResponse({'ok': False, 'error': 'item_id batili'}, status=400)
+
+    try:
+        cost_total = Decimal(str(request.POST.get('cost_total', '0') or '0'))
+        cost_note  = (request.POST.get('cost_note') or '').strip()[:200]
+        note       = (request.POST.get('note') or '').strip()[:200]
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'Nambari batili'}, status=400)
+
+    if cost_total <= 0:
+        return JsonResponse({'ok': False, 'error': 'Gharama lazima iwe zaidi ya 0'}, status=400)
+
+    # Warn if a batch is already open for this item — allow anyway (multi-pot)
+    already_open = KitchenBatch.objects.filter(
+        item=item, business=business, status='OPEN'
+    ).exists()
+
+    batch = KitchenBatch.objects.create(
+        business=business,
+        store=kitchen_store,
+        item=item,
+        cost_total=cost_total,
+        cost_note=cost_note,
+        note=note,
+        recorded_by=request.user,
+    )
+    return JsonResponse({
+        'ok': True,
+        'batch': _batch_to_dict(batch),
+        'already_had_open': already_open,
+        'item_id': item.id,
+        'item_name': item.description,
+    })
+
+
+@login_required
+@require_POST
+def deplete_kitchen_batch(request, batch_id):
+    """Mark a KitchenBatch as DEPLETED (all sold, batch done)."""
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+
+    try:
+        batch = KitchenBatch.objects.get(id=batch_id, business=business, status='OPEN')
+    except KitchenBatch.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'Batch haikupatikana au imefungwa tayari'}, status=404)
+
+    batch.deplete()
+    return JsonResponse({'ok': True, 'batch': _batch_to_dict(batch)})
+
+
+@login_required
+@require_POST
+def discard_kitchen_batch(request, batch_id):
+    """Discard a KitchenBatch — food went to waste / thrown away."""
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+
+    try:
+        batch = KitchenBatch.objects.get(id=batch_id, business=business)
+    except KitchenBatch.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'Batch haikupatikana'}, status=404)
+
+    if batch.status == 'DISCARDED':
+        return JsonResponse({'ok': False, 'error': 'Imeshatupwa tayari'}, status=400)
+
+    reason = (request.POST.get('reason') or '').strip() or 'Chakula kimemwagwa / kimeoza'
+    batch.discard(reason)
+    return JsonResponse({'ok': True, 'batch': _batch_to_dict(batch)})
+
+
+@login_required
+@require_POST
+def kitchen_consumable_add(request):
+    """Log a kitchen consumable purchase (khaki bags, tomato sauce)."""
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+
+    consumable_type = (request.POST.get('consumable_type') or '').strip().upper()
+    valid_types = ('KHAKI_SMALL', 'KHAKI_LARGE', 'SAUCE_TOMATO', 'OTHER')
+    if consumable_type not in valid_types:
+        return JsonResponse({'ok': False, 'error': 'Aina ya bidhaa batili'}, status=400)
+
+    try:
+        qty        = Decimal(str(request.POST.get('qty', '0') or '0'))
+        unit_cost  = Decimal(str(request.POST.get('unit_cost', '0') or '0'))
+        total_cost = qty * unit_cost
+        note       = (request.POST.get('note') or '').strip()[:120]
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'Nambari batili'}, status=400)
+
+    if qty <= 0 or unit_cost <= 0:
+        return JsonResponse({'ok': False, 'error': 'Idadi na bei lazima ziwe zaidi ya 0'}, status=400)
+
+    KitchenConsumableLog.objects.create(
+        business=business,
+        consumable_type=consumable_type,
+        qty=qty,
+        unit_cost=unit_cost,
+        total_cost=total_cost,
+        note=note,
+        recorded_by=request.user,
+    )
+    pool = keg_metrics.kitchen_consumable_pool(business)
+    return JsonResponse({'ok': True, 'pool': pool, 'total_cost': float(total_cost)})
+
+
+@login_required
+def kitchen_consumable_pool_api(request):
+    """AJAX GET — current kitchen consumable pool balances."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False}, status=403)
+    pool = keg_metrics.kitchen_consumable_pool(up.business)
+    return JsonResponse({'ok': True, 'pool': pool})

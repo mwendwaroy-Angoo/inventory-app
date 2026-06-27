@@ -9,7 +9,8 @@ from django.utils import timezone
 from accounts.models import Business, UserProfile
 from core.models import (
     BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
-    KegBarrel, KegWeightReading, Notification, Payment, Receipt, Shift, Store, Transaction,
+    KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
+    Notification, Payment, Receipt, Shift, Store, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -2149,3 +2150,221 @@ class AddCupsViewTest(TestCase):
         data = resp.json()
         self.assertIn('cup_pool', data)
         self.assertEqual(data['cup_pool']['cups_300_bought'], 100)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint KF1 — Kitchen Batch model
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_kitchen_setup(test_cls, biz_suffix='kf1'):
+    """Create a minimal kitchen setup for KF1 tests."""
+    from django.contrib.auth.models import User as _User
+    test_cls.biz   = Business.objects.create(name=f'KF1 Biz {biz_suffix}', has_kitchen=True)
+    test_cls.store = Store.objects.create(business=test_cls.biz, name='Kitchen', is_kitchen=True)
+    test_cls.item  = Item.objects.create(
+        store=test_cls.store,
+        description='Chips / Chipo',
+        unit='Batch',
+        selling_price=Decimal('100'),
+        is_kitchen_batch=True,
+    )
+    test_cls.preset = ItemPortionPreset.objects.create(
+        item=test_cls.item,
+        label='Ya 50',
+        price=Decimal('50'),
+        quantity_consumed=Decimal('1'),
+        khaki_type='SMALL',
+    )
+    test_cls.owner_user = _User.objects.create_user(
+        username=f'kf1owner_{biz_suffix}', password='pass123',
+    )
+    test_cls.owner_up = UserProfile.objects.create(
+        user=test_cls.owner_user, business=test_cls.biz, role='owner',
+    )
+
+
+class KitchenBatchModelTest(TestCase):
+    """KF1: KitchenBatch model records cost, revenue, and computes profit correctly."""
+
+    def setUp(self):
+        _make_kitchen_setup(self)
+
+    def test_batch_created_with_correct_cost(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1500'),
+            cost_note='2 debe ya viazi',
+        )
+        self.assertEqual(batch.status, 'OPEN')
+        self.assertEqual(batch.revenue_collected, Decimal('0'))
+        self.assertEqual(batch.profit, Decimal('-1500'))
+
+    def test_record_sale_updates_revenue_and_creates_transaction(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1500'),
+        )
+        txn = batch.record_sale(Decimal('50'), payment_method='cash', preset=self.preset)
+        batch.refresh_from_db()
+        self.assertEqual(batch.revenue_collected, Decimal('50'))
+        self.assertEqual(batch.khaki_small_used, 1)
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.kitchen_batch_id, batch.id)
+        self.assertEqual(txn.sale_amount, Decimal('50'))
+        self.assertEqual(txn.type, 'Issue')
+
+    def test_record_multiple_sales_accumulates_revenue(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1500'),
+        )
+        batch.record_sale(Decimal('50'), preset=self.preset)
+        batch.record_sale(Decimal('100'), preset=self.preset)
+        batch.refresh_from_db()
+        self.assertEqual(batch.revenue_collected, Decimal('150'))
+        self.assertEqual(batch.khaki_small_used, 2)
+        self.assertEqual(batch.profit, Decimal('-1350'))
+
+    def test_deplete_sets_status_depleted(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1500'),
+        )
+        batch.deplete()
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, 'DEPLETED')
+        self.assertIsNotNone(batch.closed_on)
+
+    def test_discard_sets_status_discarded(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1500'),
+        )
+        batch.discard('Imechomeka')
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, 'DISCARDED')
+        self.assertIn('Imechomeka', batch.note)
+
+    def test_profit_pct_computed_correctly(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1000'),
+        )
+        batch.record_sale(Decimal('1500'))
+        batch.refresh_from_db()
+        self.assertEqual(batch.profit_pct, 50.0)
+
+
+class KitchenConsumablePoolTest(TestCase):
+    """KF1: kitchen_consumable_pool() aggregates khaki bought vs used."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='pool')
+        from core import keg_metrics
+        self.keg_metrics = keg_metrics
+
+    def test_empty_pool_returns_zero(self):
+        pool = self.keg_metrics.kitchen_consumable_pool(self.biz)
+        self.assertEqual(pool['khaki_small_bought'], 0)
+        self.assertEqual(pool['khaki_small_remaining'], 0)
+        self.assertFalse(pool['khaki_small_low'])
+
+    def test_bought_khaki_increases_remaining(self):
+        KitchenConsumableLog.objects.create(
+            business=self.biz, consumable_type='KHAKI_SMALL',
+            qty=Decimal('100'), unit_cost=Decimal('2'), total_cost=Decimal('200'),
+        )
+        pool = self.keg_metrics.kitchen_consumable_pool(self.biz)
+        self.assertEqual(pool['khaki_small_bought'], 100)
+        self.assertEqual(pool['khaki_small_remaining'], 100)
+
+    def test_batch_sales_deduct_khaki_from_pool(self):
+        KitchenConsumableLog.objects.create(
+            business=self.biz, consumable_type='KHAKI_SMALL',
+            qty=Decimal('100'), unit_cost=Decimal('2'), total_cost=Decimal('200'),
+        )
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1500'),
+        )
+        batch.record_sale(Decimal('50'), preset=self.preset)  # SMALL khaki
+        batch.record_sale(Decimal('50'), preset=self.preset)  # SMALL khaki
+        pool = self.keg_metrics.kitchen_consumable_pool(self.biz)
+        self.assertEqual(pool['khaki_small_used'], 2)
+        self.assertEqual(pool['khaki_small_remaining'], 98)
+
+    def test_low_stock_only_fires_when_bought(self):
+        pool = self.keg_metrics.kitchen_consumable_pool(self.biz)
+        self.assertFalse(pool['khaki_small_low'])  # 0 bought → no alert
+
+        KitchenConsumableLog.objects.create(
+            business=self.biz, consumable_type='KHAKI_SMALL',
+            qty=Decimal('10'), unit_cost=Decimal('2'), total_cost=Decimal('20'),
+        )
+        pool = self.keg_metrics.kitchen_consumable_pool(self.biz)
+        self.assertTrue(pool['khaki_small_low'])  # 10 < 20 threshold, bought > 0
+
+
+class KitchenBatchReceiveViewTest(TestCase):
+    """KF1: /kitchen/receive/ with mode=kitchen_batch creates a KitchenBatch."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='recv')
+        self.client.force_login(self.owner_user)
+
+    def test_owner_can_create_batch(self):
+        resp = self.client.post('/kitchen/receive/', {
+            'mode': 'kitchen_batch',
+            'item_id': self.item.id,
+            'cost_total': '1500',
+            'cost_note': '2 debe ya viazi',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertEqual(data['mode'], 'kitchen_batch')
+        batch = KitchenBatch.objects.get(id=data['batch']['id'])
+        self.assertEqual(batch.cost_total, Decimal('1500'))
+        self.assertEqual(batch.status, 'OPEN')
+
+    def test_cost_zero_is_rejected(self):
+        resp = self.client.post('/kitchen/receive/', {
+            'mode': 'kitchen_batch',
+            'item_id': self.item.id,
+            'cost_total': '0',
+        })
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+
+    def test_deplete_endpoint(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1000'),
+        )
+        resp = self.client.post(f'/kitchen/batch/{batch.id}/deplete/')
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, 'DEPLETED')
+
+    def test_discard_endpoint(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1000'),
+        )
+        resp = self.client.post(f'/kitchen/batch/{batch.id}/discard/', {'reason': 'Imechomeka'})
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, 'DISCARDED')
+
+    def test_consumable_add_endpoint(self):
+        resp = self.client.post('/kitchen/consumable/add/', {
+            'consumable_type': 'KHAKI_SMALL',
+            'qty': '200',
+            'unit_cost': '2',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertEqual(KitchenConsumableLog.objects.filter(business=self.biz).count(), 1)
+        pool = data['pool']
+        self.assertEqual(pool['khaki_small_bought'], 200)

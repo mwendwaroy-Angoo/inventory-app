@@ -1533,6 +1533,7 @@ def add_item(request):
                     item.restricted_quantity = max(0, int(request.POST.get('restricted_quantity', 0)))
                 except (ValueError, TypeError):
                     item.restricted_quantity = 0
+                item.is_kitchen_batch = request.POST.get('is_kitchen_batch') == 'on'
                 item.is_produce = request.POST.get('is_produce') == 'on'
                 pmode = request.POST.get('produce_mode', 'PORTION')
                 item.produce_mode = pmode if pmode in ('PORTION', 'BUNCH') else 'PORTION'
@@ -1557,15 +1558,17 @@ def add_item(request):
                 except InvalidOperation:
                     item.tots_per_unit = None
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
-                                         'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier',
-                                         'is_keg', 'bottle_envelope', 'tot_ml', 'tots_per_unit'])
+                                         'is_kitchen_batch', 'is_produce', 'produce_mode', 'mix_group',
+                                         'revenue_multiplier', 'is_keg', 'bottle_envelope',
+                                         'tot_ml', 'tots_per_unit'])
 
-                # ── PRODUCE PORTION PRESETS ───────────────────────────────────
+                # ── PRODUCE / KITCHEN BATCH PORTION PRESETS ──────────────────
                 preset_labels   = request.POST.getlist('preset_label')
                 preset_prices   = request.POST.getlist('preset_price')
                 preset_qty      = request.POST.getlist('preset_qty_consumed')
                 preset_ids      = request.POST.getlist('preset_id')
                 preset_servings = request.POST.getlist('preset_serving_type')
+                preset_khakis   = request.POST.getlist('preset_khaki_type')
 
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
                 item.portion_presets.exclude(id__in=submitted_ids).delete()
@@ -1578,8 +1581,8 @@ def add_item(request):
                     except (ValueError, InvalidOperation, IndexError):
                         continue
                     if not label:
-                        if is_bunch:
-                            label = f"KES {price:g}"   # greens: label is just the price point
+                        if is_bunch or item.is_kitchen_batch:
+                            label = f"Ya {price:g}"
                         else:
                             continue
                     try:
@@ -1592,16 +1595,20 @@ def add_item(request):
                     serving = preset_servings[i] if i < len(preset_servings) else 'cup'
                     if serving not in ('cup', 'pint', 'jug'):
                         serving = 'cup'
+                    khaki = preset_khakis[i] if i < len(preset_khakis) else 'NONE'
+                    if khaki not in ('NONE', 'SMALL', 'LARGE'):
+                        khaki = 'NONE'
                     pid = preset_ids[i].strip() if i < len(preset_ids) else ''
                     if pid:
                         ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
                             label=label, price=price, quantity_consumed=qty_c,
-                            display_order=order, serving_type=serving
+                            display_order=order, serving_type=serving, khaki_type=khaki,
                         )
                     else:
                         ItemPortionPreset.objects.create(
                             item=item, label=label, price=price,
-                            quantity_consumed=qty_c, display_order=order, serving_type=serving
+                            quantity_consumed=qty_c, display_order=order,
+                            serving_type=serving, khaki_type=khaki,
                         )
                 # ─────────────────────────────────────────────────────────────
 
@@ -1672,6 +1679,7 @@ def edit_item(request, item_id):
                     item.restricted_quantity = max(0, int(request.POST.get('restricted_quantity', 0)))
                 except (ValueError, TypeError):
                     item.restricted_quantity = 0
+                item.is_kitchen_batch = request.POST.get('is_kitchen_batch') == 'on'
                 item.is_produce = request.POST.get('is_produce') == 'on'
                 pmode = request.POST.get('produce_mode', 'PORTION')
                 item.produce_mode = pmode if pmode in ('PORTION', 'BUNCH') else 'PORTION'
@@ -1696,15 +1704,17 @@ def edit_item(request, item_id):
                 except InvalidOperation:
                     item.tots_per_unit = None
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
-                                         'is_produce', 'produce_mode', 'mix_group', 'revenue_multiplier',
-                                         'is_keg', 'bottle_envelope', 'tot_ml', 'tots_per_unit'])
+                                         'is_kitchen_batch', 'is_produce', 'produce_mode', 'mix_group',
+                                         'revenue_multiplier', 'is_keg', 'bottle_envelope',
+                                         'tot_ml', 'tots_per_unit'])
 
-                # ── PRODUCE PORTION PRESETS ───────────────────────────────────
+                # ── PRODUCE / KITCHEN BATCH PORTION PRESETS ──────────────────
                 preset_labels   = request.POST.getlist('preset_label')
                 preset_prices   = request.POST.getlist('preset_price')
                 preset_qty      = request.POST.getlist('preset_qty_consumed')
                 preset_ids      = request.POST.getlist('preset_id')
                 preset_servings = request.POST.getlist('preset_serving_type')
+                preset_khakis   = request.POST.getlist('preset_khaki_type')
 
                 submitted_ids = [int(pid) for pid in preset_ids if pid.strip()]
                 item.portion_presets.exclude(id__in=submitted_ids).delete()
@@ -1717,8 +1727,8 @@ def edit_item(request, item_id):
                     except (ValueError, InvalidOperation, IndexError):
                         continue
                     if not label:
-                        if is_bunch:
-                            label = f"KES {price:g}"   # greens: label is just the price point
+                        if is_bunch or item.is_kitchen_batch:
+                            label = f"Ya {price:g}"
                         else:
                             continue
                     try:
@@ -1731,16 +1741,20 @@ def edit_item(request, item_id):
                     serving = preset_servings[i] if i < len(preset_servings) else 'cup'
                     if serving not in ('cup', 'pint', 'jug'):
                         serving = 'cup'
+                    khaki = preset_khakis[i] if i < len(preset_khakis) else 'NONE'
+                    if khaki not in ('NONE', 'SMALL', 'LARGE'):
+                        khaki = 'NONE'
                     pid = preset_ids[i].strip() if i < len(preset_ids) else ''
                     if pid:
                         ItemPortionPreset.objects.filter(id=int(pid), item=item).update(
                             label=label, price=price, quantity_consumed=qty_c,
-                            display_order=order, serving_type=serving
+                            display_order=order, serving_type=serving, khaki_type=khaki,
                         )
                     else:
                         ItemPortionPreset.objects.create(
                             item=item, label=label, price=price,
-                            quantity_consumed=qty_c, display_order=order, serving_type=serving
+                            quantity_consumed=qty_c, display_order=order,
+                            serving_type=serving, khaki_type=khaki,
                         )
                 # ─────────────────────────────────────────────────────────────
 

@@ -291,6 +291,24 @@ def _food(name, unit='Pcs', presets=None):
         'presets': presets or [{'label': 'Kimoja', 'price': None, 'qty': 1.0}],
     }
 
+# Kitchen batch items — she cooks a batch (e.g. a pot of chips from 2 debe ya viazi),
+# sells by price point (ya 50 / ya 100) until the batch is done.
+# No mandatory target. Tracks cost vs revenue for P&L only.
+def _batch_food(name, unit='Batch', presets=None, khaki_presets=None):
+    """
+    presets: list of {label, price, qty, khaki_type}
+    khaki_type: 'NONE' | 'SMALL' (1/4 khaki) | 'LARGE' (1/2 khaki)
+    """
+    default_presets = [
+        {'label': 'Ya 50',  'price': 50,  'qty': 1.0, 'khaki_type': 'SMALL'},
+        {'label': 'Ya 100', 'price': 100, 'qty': 1.0, 'khaki_type': 'LARGE'},
+    ]
+    return {
+        'name': name, 'unit': unit, 'is_keg': False, 'is_produce': False,
+        'is_kitchen_batch': True,
+        'presets': presets or khaki_presets or default_presets,
+    }
+
 # Batch/revenue-envelope items (buy a whole animal/batch, sell by price point)
 def _grill_batch(name, unit='Kg'):
     return {
@@ -299,11 +317,39 @@ def _grill_batch(name, unit='Kg'):
     }
 
 KITCHEN_CATALOG = [
-    # Fast food — PORTION mode (count known upfront)
-    _food('Chips / Chipo', 'Pcs', [
-        {'label': 'Regular',  'price': 100, 'qty': 1.0},
-        {'label': 'Large',    'price': 150, 'qty': 1.0},
+    # ── Kitchen Batch items — sold from a batch, P&L tracked ─────────────────
+    _batch_food('Chips / Chipo', 'Batch', presets=[
+        {'label': 'Ya 50',  'price': 50,  'qty': 1.0, 'khaki_type': 'SMALL'},
+        {'label': 'Ya 100', 'price': 100, 'qty': 1.0, 'khaki_type': 'LARGE'},
+        {'label': 'Ya 150', 'price': 150, 'qty': 1.0, 'khaki_type': 'LARGE'},
     ]),
+    _batch_food('Bhajia / Viazi Karai', 'Batch', presets=[
+        {'label': 'Ya 30',  'price': 30,  'qty': 1.0, 'khaki_type': 'SMALL'},
+        {'label': 'Ya 50',  'price': 50,  'qty': 1.0, 'khaki_type': 'SMALL'},
+        {'label': 'Ya 100', 'price': 100, 'qty': 1.0, 'khaki_type': 'LARGE'},
+    ]),
+    _batch_food('Mchuzi wa Nyama / Beef Stew', 'Pot', presets=[
+        {'label': 'Portion', 'price': 100, 'qty': 1.0, 'khaki_type': 'NONE'},
+        {'label': 'Ndogo',   'price': 150, 'qty': 1.0, 'khaki_type': 'NONE'},
+        {'label': 'Kubwa',   'price': 200, 'qty': 1.0, 'khaki_type': 'NONE'},
+    ]),
+    _batch_food('Ugali', 'Pot', presets=[
+        {'label': 'Moja',   'price': 30,  'qty': 1.0, 'khaki_type': 'NONE'},
+        {'label': 'Mbili',  'price': 60,  'qty': 1.0, 'khaki_type': 'NONE'},
+    ]),
+    _batch_food('Wali / Rice', 'Pot', presets=[
+        {'label': 'Moja',   'price': 50,  'qty': 1.0, 'khaki_type': 'NONE'},
+        {'label': 'Kubwa',  'price': 100, 'qty': 1.0, 'khaki_type': 'NONE'},
+    ]),
+    _batch_food('Maharagwe / Beans', 'Pot', presets=[
+        {'label': 'Portion', 'price': 50,  'qty': 1.0, 'khaki_type': 'NONE'},
+        {'label': 'Kubwa',   'price': 100, 'qty': 1.0, 'khaki_type': 'NONE'},
+    ]),
+    _batch_food('Sukuma Wiki / Kales', 'Pot', presets=[
+        {'label': 'Portion', 'price': 30,  'qty': 1.0, 'khaki_type': 'NONE'},
+    ]),
+
+    # ── Portion items (count known upfront) ───────────────────────────────────
     _food('Chicken Wing / Bawa', 'Pcs', [
         {'label': 'Kimoja',   'price': 70,  'qty': 1.0},
         {'label': 'Mbili',    'price': 130, 'qty': 2.0},
@@ -335,10 +381,7 @@ KITCHEN_CATALOG = [
     _food('Chips + Smokie', 'Set', [
         {'label': 'Regular',  'price': 150, 'qty': 1.0},
     ]),
-    _food('Ugali', 'Pcs', [
-        {'label': 'Moja',     'price': 30,  'qty': 1.0},
-    ]),
-    _food('Ugali + Nyama',  'Set', [
+    _food('Ugali + Nyama', 'Set', [
         {'label': 'Regular',  'price': 200, 'qty': 1.0},
     ]),
     _food('Chapati', 'Pcs', [
