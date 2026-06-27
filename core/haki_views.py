@@ -81,8 +81,12 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
     )
 
     # ── Keg clean-handling from shrinkage module ──
+    # Only relevant for staff who actually have bar access. Kitchen-only staff
+    # never touch kegs, so showing "clean keg record" is meaningless and misleading.
+    has_bar_access = getattr(staff_profile, 'can_access_bar', False) or staff_profile.role in ('owner', 'staff', 'waitress')
     keg_loss = 0.0
-    if getattr(business, 'has_keg', False) or Shift.objects.filter(business=business).exists():
+    is_keg_business = getattr(business, 'has_keg', False)
+    if is_keg_business and has_bar_access:
         try:
             from core.keg_metrics import staff_shrinkage
             rows = staff_shrinkage(business, date_from, date_to)
@@ -93,7 +97,9 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
         except Exception:
             pass
 
-    clean_keg = keg_loss == 0.0
+    # Only set clean_keg_record=True when the business has kegs AND the staff
+    # member has bar access — never for kitchen-only staff.
+    clean_keg = is_keg_business and has_bar_access and keg_loss == 0.0
 
     # ── Milestone badges (positive only — H1-AC1) ──
     milestones = []
