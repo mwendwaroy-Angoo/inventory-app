@@ -187,13 +187,14 @@ class Business(models.Model):
     )
     cups_per_pint = models.PositiveIntegerField(
         default=0,
-        help_text='Physical disposable cups consumed per pint serving. 0 = served in glass/mug. '
-                  'Set to 1 if your bar pours pints into disposable cups.'
+        help_text='How many 300ml cups are used per pint — whether to measure the pour, '
+                  'serve the customer, or both. 0 = served in a glass or mug (no cups used).'
     )
     cups_per_jug  = models.PositiveIntegerField(
         default=6,
-        help_text='Physical disposable cups consumed per jug serving (shared at a table). '
-                  'Default 6 — a 2L jug split between 6 people. Adjust to match your typical group size.'
+        help_text='How many 300ml cups are used per jug — whether to measure the pour '
+                  '(e.g. 3 cups = 900ml) or serve customers at the table. '
+                  'Set to 3 if you fill 3 cups to measure before pouring a jug.'
     )
     cup_low_notified_at = models.DateTimeField(
         null=True, blank=True,

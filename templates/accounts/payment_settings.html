@@ -622,7 +622,7 @@
           🥤 {% trans 'Disposable Cup Consumption' %}
         </h5>
         <p style="color:#b0b0b0; font-size:0.83rem; margin-bottom:1.25rem;">
-          {% trans 'Tell the app how many disposable cups each serving type uses. This is how the business-wide cup pool balance is computed on the Bar Board.' %}
+          {% trans 'Tell the app how many 300ml disposable cups each serving type uses — whether you use them to measure the pour, serve the customer, or both. This is how the Bar Board tracks your cup stock balance.' %}
         </p>
         <form method="post" action="{% url 'payment_settings' %}">
           {% csrf_token %}
@@ -636,7 +636,7 @@
                      value="{{ business.cups_per_pint }}" min="0" max="10"
                      style="background:#222; border-color:#444; color:#f0ece4;">
               <div style="font-size:0.72rem; color:#666; margin-top:0.3rem;">
-                {% trans '0 = pint served in glass/mug' %}
+                {% trans '0 = served in a glass or mug, no cups used' %}
               </div>
             </div>
             <div class="col-6 col-md-4">
@@ -647,7 +647,7 @@
                      value="{{ business.cups_per_jug }}" min="0" max="20"
                      style="background:#222; border-color:#444; color:#f0ece4;">
               <div style="font-size:0.72rem; color:#666; margin-top:0.3rem;">
-                {% trans 'Default 6 — one per person at a table of 6' %}
+                {% trans 'e.g. 3 if you fill 3 × 300ml cups to measure a jug pour' %}
               </div>
             </div>
           </div>
