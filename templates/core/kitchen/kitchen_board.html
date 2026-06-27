@@ -1538,15 +1538,22 @@
     updateTabBadge(tabs.length);
     body.innerHTML = tabs.map(function(tab){
       var entriesHtml = tab.entries.map(function(e){
-        return '<div style="display:flex;justify-content:space-between;font-size:.8rem;padding:.2rem 0;color:' + (e.is_paid?'#555':'#b0b0b0') + ';">' +
-               '<span>' + (e.is_paid?'<s>':'') + e.description + (e.is_paid?'</s>':'') + '</span>' +
-               '<span>KES ' + fmt(e.amount) + '</span></div>';
+        return '<div style="display:flex;align-items:center;gap:.4rem;font-size:.8rem;padding:.2rem 0;">' +
+               (e.is_paid
+                 ? '<input type="checkbox" checked disabled style="accent-color:#c9a84c;flex-shrink:0;">'
+                 : '<input type="checkbox" class="kb-entry-cb" data-entry-id="' + e.id +
+                   '" data-amount="' + e.amount + '" data-tab-id="' + tab.id +
+                   '" style="accent-color:#c9a84c;flex-shrink:0;" onchange="window.updateKbSelection(' + tab.id + ')">') +
+               '<span style="flex:1;color:' + (e.is_paid?'#555':'#b0b0b0') + ';">' +
+               (e.is_paid?'<s>':'') + e.description + (e.is_paid?'</s>':'') + '</span>' +
+               '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span></div>';
       }).join('');
       return '<div style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:10px;padding:.65rem .75rem;margin-bottom:.6rem;">' +
              '<div style="display:flex;justify-content:space-between;margin-bottom:.35rem;">' +
              '<strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +
              '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
              entriesHtml +
+             '<div id="kb-sel-row-' + tab.id + '" style="display:none;font-size:.75rem;color:#b0b0b0;margin:.25rem 0 0;">Vilivyochaguliwa: <strong id="kb-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></div>' +
              '<div style="border-top:1px solid #333;margin-top:.4rem;padding-top:.4rem;display:flex;justify-content:space-between;font-size:.85rem;">' +
              '<strong style="color:#c9a84c;">Deni: KES ' + fmt(tab.unpaid_total) + '</strong></div>' +
              '<div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap;">' +
@@ -1571,12 +1578,31 @@
       .catch(function(){});
   }
 
+  window.updateKbSelection = function(tabId) {
+    var checked = document.querySelectorAll('.kb-entry-cb[data-tab-id="' + tabId + '"]:checked');
+    var total = 0;
+    checked.forEach(function(cb) { total += parseFloat(cb.dataset.amount || 0); });
+    var selRow   = document.getElementById('kb-sel-row-' + tabId);
+    var selTotal = document.getElementById('kb-sel-total-' + tabId);
+    if (selRow)   selRow.style.display   = checked.length > 0 ? 'block' : 'none';
+    if (selTotal) selTotal.textContent   = 'KES ' + fmt(total);
+  };
+
   window.openKitchenTabSettle = function(btn) {
     _settleTabId = parseInt(btn.getAttribute('data-tab-id'), 10);
     _settleTabAmount = parseFloat(btn.getAttribute('data-unpaid')) || 0;
     var customerName = btn.getAttribute('data-customer');
     document.getElementById('kb-settle-modal-title').textContent = 'Lipa Tab ya ' + customerName;
-    document.getElementById('kb-settle-amount').textContent = 'KES ' + fmt(_settleTabAmount);
+    // Show partial selection total if any entries are checked
+    var checked = document.querySelectorAll('.kb-entry-cb[data-tab-id="' + _settleTabId + '"]:checked');
+    var selectedTotal = 0;
+    checked.forEach(function(cb) { selectedTotal += parseFloat(cb.dataset.amount || 0); });
+    var amtEl = document.getElementById('kb-settle-amount');
+    if (checked.length > 0) {
+      amtEl.textContent = 'KES ' + fmt(selectedTotal) + ' (kati ya KES ' + fmt(_settleTabAmount) + ')';
+    } else {
+      amtEl.textContent = 'KES ' + fmt(_settleTabAmount);
+    }
     document.getElementById('kb-settle-phone').value = '';
     document.getElementById('kb-settle-receipt-banner').style.display = 'none';
     document.getElementById('kb-settle-error').style.display = 'none';
@@ -1593,18 +1619,22 @@
     var errEl = document.getElementById('kb-settle-error');
     errEl.style.display = 'none';
     var body = new URLSearchParams({payment_method: pm, customer_phone: phone, csrfmiddlewaretoken: CSRF});
+    // Include checked entry_ids for partial settle (if any)
+    var checked = document.querySelectorAll('.kb-entry-cb[data-tab-id="' + _settleTabId + '"]:checked');
+    checked.forEach(function(cb) { body.append('entry_ids', cb.dataset.entryId); });
     fetch('/bar/tabs/' + _settleTabId + '/settle/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (d.ok) {
-          showToast('✓ Tab imelipwa.');
+          if (d.tab_settled) showToast('✓ Tab imelipwa kabisa.');
+          else showToast('✓ KES ' + fmt(d.settled_amount) + ' imelipwa. Tab bado iko wazi.');
           if (d.receipt_url) {
             document.getElementById('kb-settle-receipt-link').href = d.receipt_url;
             document.getElementById('kb-settle-receipt-banner').style.display = 'block';
           }
           loadFoodTabs();
           _settleTabId = null;
-          if (!d.receipt_url) {
+          if (!d.receipt_url || !d.tab_settled) {
             setTimeout(function(){
               var m = bootstrap.Modal.getInstance(document.getElementById('kbSettleModal'));
               if (m) m.hide();

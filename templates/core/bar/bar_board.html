@@ -2282,8 +2282,9 @@
         entriesHtml +=
           '<div class="tab-entry-row' + (e.is_paid ? ' paid' : '') + '" id="tab-entry-' + e.id + '">' +
           '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0;">' +
-          '<input type="checkbox"' + (e.is_paid ? ' checked disabled' : '') +
-          ' onchange="window.tickEntry(' + e.id + ',\'' + safeDesc + '\',\'' + fmt(e.amount) + '\')"' +
+          '<input type="checkbox" class="tab-entry-cb"' +
+          ' data-entry-id="' + e.id + '" data-amount="' + e.amount + '"' +
+          (e.is_paid ? ' checked disabled' : ' onchange="window.updateTabSelectionUI(' + tab.id + ')"') +
           ' style="accent-color:#c9a84c; flex-shrink:0;">' +
           '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">' + safeDesc + '</span>' +
           '</label>' +
@@ -2301,7 +2302,12 @@
         (tab.server_name
           ? '<div class="tab-server-label">via ' + tab.server_name + ' · ' + tab.opened_at + '</div>'
           : '<div class="tab-server-label">' + tab.opened_at + '</div>') +
-        '<div class="tab-entries-list">' + entriesHtml + '</div>' +
+        '<div class="tab-entries-list" id="tab-entries-' + tab.id + '">' + entriesHtml + '</div>' +
+        '<div id="tab-sel-row-' + tab.id + '" style="display:none; background:rgba(201,168,76,0.07); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:.35rem .55rem; margin:.35rem 0; align-items:center; gap:.4rem; flex-wrap:wrap;">' +
+        '<span style="color:#b0b0b0; font-size:.78rem;">Vilivyochaguliwa: <strong id="tab-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
+        '<button id="tab-partial-cash-' + tab.id + '" class="tab-action-btn tab-btn-cash" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
+        '<button id="tab-partial-mpesa-' + tab.id + '" class="tab-action-btn tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
+        '</div>' +
         '<div class="tab-actions-row">' +
         '<button class="tab-action-btn tab-btn-cash" onclick="window.settleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
         '<button class="tab-action-btn tab-btn-mpesa" onclick="window.settleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
@@ -2355,7 +2361,10 @@
       .then(function (d) {
         document.querySelectorAll('.tab-action-btn').forEach(function (b) { b.disabled = false; });
         if (d.ok) {
-          if (!d.already_settled) showToast('✓ Tab imelipwa! KES ' + fmt(d.total));
+          if (!d.already_settled) {
+            if (d.partial) showToast('✓ KES ' + fmt(d.settled_amount) + ' imelipwa. Tab bado iko wazi.');
+            else showToast('✓ Tab imelipwa kabisa! KES ' + fmt(d.total));
+          }
           if (d.receipt_url) {
             var banner = document.getElementById('tabReceiptBanner');
             var link = document.getElementById('tabReceiptLink');
@@ -2365,7 +2374,60 @@
             }
           }
           window.loadTabs();
-          loadBarBoard();
+          if (!d.partial) loadBarBoard();
+        } else {
+          showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+        }
+      })
+      .catch(function () {
+        document.querySelectorAll('.tab-action-btn').forEach(function (b) { b.disabled = false; });
+        showToast('Hitilafu ya mtandao. Jaribu tena.');
+      });
+  };
+
+  window.updateTabSelectionUI = function (tabId) {
+    var container = document.getElementById('tab-entries-' + tabId);
+    if (!container) return;
+    var checked = container.querySelectorAll('.tab-entry-cb:not(:disabled):checked');
+    var total = 0;
+    checked.forEach(function (cb) { total += parseFloat(cb.dataset.amount || 0); });
+    var selRow   = document.getElementById('tab-sel-row-' + tabId);
+    var selTotal = document.getElementById('tab-sel-total-' + tabId);
+    var btnCash  = document.getElementById('tab-partial-cash-' + tabId);
+    var btnMpesa = document.getElementById('tab-partial-mpesa-' + tabId);
+    if (selRow)   selRow.style.display   = checked.length > 0 ? 'flex' : 'none';
+    if (selTotal) selTotal.textContent   = 'KES ' + fmt(total);
+    if (btnCash)  btnCash.disabled       = checked.length === 0;
+    if (btnMpesa) btnMpesa.disabled      = checked.length === 0;
+  };
+
+  window.settleTabPartial = function (tabId, payMethod) {
+    var container = document.getElementById('tab-entries-' + tabId);
+    if (!container) return;
+    var checked = container.querySelectorAll('.tab-entry-cb:not(:disabled):checked');
+    if (!checked.length) return;
+    var body = new URLSearchParams({payment_method: payMethod, csrfmiddlewaretoken: CSRF});
+    checked.forEach(function (cb) { body.append('entry_ids', cb.dataset.entryId); });
+    document.querySelectorAll('.tab-action-btn').forEach(function (b) { b.disabled = true; });
+    _tabsJustSettled = false;
+    fetch('/bar/tabs/' + tabId + '/settle/', {method: 'POST', body: body, headers: {'X-CSRFToken': CSRF}})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        document.querySelectorAll('.tab-action-btn').forEach(function (b) { b.disabled = false; });
+        if (d.ok) {
+          if (d.tab_settled) {
+            showToast('✓ Tab imelipwa kabisa! KES ' + fmt(d.total));
+            _tabsJustSettled = true;
+            loadBarBoard();
+          } else {
+            showToast('✓ KES ' + fmt(d.settled_amount) + ' imelipwa. Bado kuna balance.');
+          }
+          if (d.receipt_url) {
+            var banner = document.getElementById('tabReceiptBanner');
+            var link   = document.getElementById('tabReceiptLink');
+            if (banner && link) { link.href = d.receipt_url; banner.style.display = 'flex'; }
+          }
+          window.loadTabs();
         } else {
           showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
         }

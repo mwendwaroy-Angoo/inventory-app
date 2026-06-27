@@ -1866,3 +1866,125 @@ class RecordDebtPaymentShiftGateTest(TestCase):
         )
         # With open shift the gate passes — redirect to receipt page (not customer profile)
         self.assertNotEqual(resp.url, f'/debt/{self.customer.id}/')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint K6 — Partial tab settlement
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_tab_two_entries(business, store):
+    """Helper: open BarTab with two distinct entries (no barrel needed)."""
+    item = Item.objects.create(
+        business=business, store=store, description='K6 Test Item', unit='Pcs',
+        material_no='K6-ITEM-01', selling_price=Decimal('100'),
+    )
+    tab = BarTab.objects.create(business=business, customer_name='K6 Patron', status='OPEN')
+    for i, amt in enumerate([Decimal('100'), Decimal('150')], start=1):
+        txn = Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amt,
+            payment_method='credit', recipient='K6 Patron', date=timezone.localdate(),
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn,
+            description=f'Item {i}', amount=amt,
+        )
+    return tab
+
+
+class PartialTabSettleTest(TestCase):
+    """K6.A: settle_tab supports optional entry_ids[] for partial settlement."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K6 Partial Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='k6_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.tab = _make_tab_two_entries(self.biz, self.store)
+        self.entries = list(self.tab.entries.order_by('id'))
+
+    def test_settle_all_without_entry_ids_closes_tab(self):
+        """Omitting entry_ids settles everything and closes the tab — backward compat."""
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/tabs/{self.tab.id}/settle/',
+            {'payment_method': 'cash'},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertTrue(data['tab_settled'])
+        self.assertFalse(data['partial'])
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.status, 'SETTLED')
+
+    def test_partial_settle_leaves_tab_open(self):
+        """Settling only one entry must leave the tab in OPEN status."""
+        entry_id = self.entries[0].id
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/tabs/{self.tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [str(entry_id)]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertFalse(data['tab_settled'])
+        self.assertTrue(data['partial'])
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.status, 'OPEN', 'Tab must remain OPEN after partial settlement')
+
+    def test_partial_settle_marks_only_selected_entry_paid(self):
+        """Only the selected entry is marked is_paid=True; the other stays unpaid."""
+        first_id = self.entries[0].id
+        second_id = self.entries[1].id
+        self.client.force_login(self.owner)
+        self.client.post(
+            f'/bar/tabs/{self.tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(first_id)]},
+        )
+        self.entries[0].refresh_from_db()
+        self.entries[1].refresh_from_db()
+        self.assertTrue(self.entries[0].is_paid)
+        self.assertFalse(self.entries[1].is_paid)
+
+    def test_partial_settle_returns_correct_settled_amount(self):
+        """settled_amount must equal the sum of settled entries only."""
+        entry = self.entries[0]  # amount=100
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/tabs/{self.tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [str(entry.id)]},
+        )
+        data = resp.json()
+        self.assertAlmostEqual(data['settled_amount'], float(entry.amount), places=2)
+
+    def test_two_round_partial_settle_closes_tab(self):
+        """Second partial covering the remaining entry closes the tab."""
+        first_id = self.entries[0].id
+        second_id = self.entries[1].id
+        self.client.force_login(self.owner)
+        self.client.post(
+            f'/bar/tabs/{self.tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [str(first_id)]},
+        )
+        resp2 = self.client.post(
+            f'/bar/tabs/{self.tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [str(second_id)]},
+        )
+        data2 = resp2.json()
+        self.assertTrue(data2['tab_settled'])
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.status, 'SETTLED')
+
+    def test_empty_entry_ids_with_all_paid_returns_400(self):
+        """Passing entry_ids that are all already paid returns 400."""
+        entry = self.entries[0]
+        entry.is_paid = True
+        entry.save(update_fields=['is_paid'])
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/tabs/{self.tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [str(entry.id)]},
+        )
+        self.assertEqual(resp.status_code, 400)

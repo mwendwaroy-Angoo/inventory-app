@@ -949,7 +949,11 @@ def tick_entry(request, entry_id):
 @login_required
 @require_POST
 def settle_tab(request, tab_id):
-    """Settle all unpaid entries on a tab at once and issue a receipt."""
+    """Settle unpaid entries on a tab and issue a receipt.
+
+    Partial settle: POST entry_ids[] to settle only specific entries and keep
+    the tab OPEN with remaining balance. Omit entry_ids to settle everything.
+    """
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
@@ -973,31 +977,53 @@ def settle_tab(request, tab_id):
     if pay not in ('cash', 'mpesa'):
         pay = 'cash'
 
+    # Partial settle: optional entry_ids[] selects which entries to settle now
+    raw_ids = request.POST.getlist('entry_ids')
+    selected_ids = None
+    if raw_ids:
+        try:
+            selected_ids = {int(i) for i in raw_ids if i.strip().isdigit()}
+        except (ValueError, TypeError):
+            selected_ids = None
+
     now = timezone.now()
     all_entries = list(tab.entries.all().select_related('transaction'))
-    for entry in all_entries:
-        if not entry.is_paid:
-            entry.is_paid = True
-            entry.paid_at = now
-            entry.payment_method = pay
-            entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
-            entry.transaction.payment_method = pay
-            entry.transaction.save(update_fields=['payment_method'])
 
-    tab.status = 'SETTLED'
-    tab.settled_at = now
-    tab.save(update_fields=['status', 'settled_at'])
+    entries_to_settle = (
+        [e for e in all_entries if not e.is_paid and e.id in selected_ids]
+        if selected_ids is not None else
+        [e for e in all_entries if not e.is_paid]
+    )
 
+    if not entries_to_settle:
+        return JsonResponse({'ok': False, 'error': 'Hakuna entries zilizochaguliwa.'}, status=400)
+
+    for entry in entries_to_settle:
+        entry.is_paid = True
+        entry.paid_at = now
+        entry.payment_method = pay
+        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+        entry.transaction.payment_method = pay
+        entry.transaction.save(update_fields=['payment_method'])
+
+    # Close the tab only when ALL entries are now paid
+    tab_fully_settled = not tab.entries.filter(is_paid=False).exists()
+    if tab_fully_settled:
+        tab.status = 'SETTLED'
+        tab.settled_at = now
+        tab.save(update_fields=['status', 'settled_at'])
+
+    settled_amount = sum(float(e.amount) for e in entries_to_settle)
     customer_phone = (request.POST.get('customer_phone') or '').strip()
 
-    # Issue a unified receipt for all entries on this tab
+    # Issue a receipt covering only the entries just settled
     receipt_url = None
     receipt_id = None
     try:
         from .models import Receipt as _Receipt
         lines = [
             {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
-            for e in all_entries
+            for e in entries_to_settle
         ]
         settle_meta = {}
         if pay == 'credit' and tab.customer:
@@ -1025,7 +1051,7 @@ def settle_tab(request, tab_id):
             if normalized:
                 sms_msg = (
                     f"Duka: {tab.business.name}\n"
-                    f"Umelipa tab: KES {float(tab.total()):,.0f}\n"
+                    f"Umelipa: KES {settled_amount:,.0f}\n"
                     f"Risiti: {receipt_url}"
                 )
                 send_sms_notification(sms_msg, normalized)
@@ -1034,6 +1060,9 @@ def settle_tab(request, tab_id):
 
     return JsonResponse({
         'ok': True,
+        'tab_settled': tab_fully_settled,
+        'partial': not tab_fully_settled,
+        'settled_amount': settled_amount,
         'total': float(tab.total()),
         'receipt_url': receipt_url,
         'receipt_id': receipt_id,
