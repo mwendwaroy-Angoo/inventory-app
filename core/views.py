@@ -1534,7 +1534,7 @@ def add_item(request):
                 except (ValueError, TypeError):
                     item.restricted_quantity = 0
                 item.is_kitchen_batch = request.POST.get('is_kitchen_batch') == 'on'
-                item.is_produce = request.POST.get('is_produce') == 'on'
+                item.is_produce = request.POST.get('is_produce') == 'on' and not item.is_kitchen_batch
                 pmode = request.POST.get('produce_mode', 'PORTION')
                 item.produce_mode = pmode if pmode in ('PORTION', 'BUNCH') else 'PORTION'
                 # km_mix_group is submitted by kitchen batch items via a hidden input to avoid
@@ -1680,7 +1680,7 @@ def edit_item(request, item_id):
                 except (ValueError, TypeError):
                     item.restricted_quantity = 0
                 item.is_kitchen_batch = request.POST.get('is_kitchen_batch') == 'on'
-                item.is_produce = request.POST.get('is_produce') == 'on'
+                item.is_produce = request.POST.get('is_produce') == 'on' and not item.is_kitchen_batch
                 pmode = request.POST.get('produce_mode', 'PORTION')
                 item.produce_mode = pmode if pmode in ('PORTION', 'BUNCH') else 'PORTION'
                 # km_mix_group is submitted by kitchen batch items via a hidden input to avoid

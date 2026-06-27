@@ -1,4 +1,4 @@
-const CACHE_NAME = 'duka-v7';
+const CACHE_NAME = 'duka-v8';
 const OFFLINE_URL = '/offline/';
 
 const PRECACHE_URLS = [
@@ -88,6 +88,8 @@ self.addEventListener('fetch', event => {
     request.url.includes('/api/') ||
     request.url.includes('/bar/tabs/') ||
     request.url.includes('/bar/shift/') ||
+    request.url.includes('/kitchen/shift/') ||
+    request.url.includes('/kitchen/consumable/') ||
     request.url.includes('/stock/bar/board/') ||
     request.url.includes('/stock/produce/board/') ||
     request.url.includes('/notifications/') ||

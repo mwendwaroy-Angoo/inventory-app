@@ -1351,13 +1351,15 @@
                 var row = document.createElement('div');
                 row.className = 'preset-row';
                 row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr 80px auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
+                var isKitchen = typeof _kitchenActive !== 'undefined' && _kitchenActive;
+                var typeSelectHtml = isKitchen
+                    ? '<select name="preset_khaki_type" style="background:#1a1a1a;color:#f0ece4;border:1px solid #333;border-radius:4px;font-size:0.75rem;padding:2px 4px;width:100%;"><option value="NONE">— Bila mfuko</option><option value="SMALL">🛍 ¼ Khaki</option><option value="LARGE">🛍 ½ Khaki</option></select>'
+                    : '<select name="preset_serving_type" style="background:#1a1a1a;color:#f0ece4;border:1px solid #333;border-radius:4px;font-size:0.75rem;padding:2px 4px;width:100%;"><option value="cup">☕ Cup</option><option value="pint">🍺 Pint</option><option value="jug">🫙 Jug</option></select>';
                 row.innerHTML = '<input type="hidden" name="preset_id" value="">' +
                     buildLabelSelectHtml() +
                     '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="40">' +
                     '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" placeholder="—" readonly style="opacity:0.55;">' +
-                    '<select name="preset_serving_type" style="background:#1a1a1a;color:#f0ece4;border:1px solid #333;border-radius:4px;font-size:0.75rem;padding:2px 4px;width:100%;">' +
-                    '<option value="cup">☕ Cup</option><option value="pint">🍺 Pint</option><option value="jug">🫙 Jug</option>' +
-                    '</select>' +
+                    typeSelectHtml +
                     '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
                 rowsContainer.appendChild(row);
                 // Apply current filter to the newly added row's dropdown
@@ -1868,8 +1870,11 @@
     // Initial state from the saved item — used by setupKitchenModeToggle to restore
     // km_batch / km_portion without querying is_produce / pm_bunch DOM elements,
     // which are absent on bar business forms (gated by the keg module flag).
-    var _ITEM_IS_BATCH = {{ form.instance.is_produce|yesno:"true,false" }} &&
-                         '{{ form.instance.produce_mode }}' === 'BUNCH';
+    // Also check is_kitchen_batch — items saved with the corrected form submit set
+    // this flag instead of is_produce+produce_mode=BUNCH.
+    var _ITEM_IS_BATCH = ({{ form.instance.is_produce|yesno:"true,false" }} &&
+                          '{{ form.instance.produce_mode }}' === 'BUNCH') ||
+                         {{ form.instance.is_kitchen_batch|yesno:"true,false" }};
 
     var storeSelect = document.getElementById('id_store');
     if (!storeSelect) return;
@@ -1956,13 +1961,48 @@
         }
     }
 
+    // Swap preset rows' serving-type select ↔ khaki-type select depending on mode.
+    function _syncPresetTypeCol(isKitchen) {
+        var hdr = document.getElementById('presetTypeColHeader');
+        if (hdr) {
+            if (isKitchen) {
+                hdr.textContent = '🛍 Khaki';
+                hdr.title = 'Khaki bag used per serving (drives the khaki pool counter)';
+                hdr.style.display = '';
+            } else {
+                hdr.textContent = '🥤 Type';
+                hdr.title = 'Keg serving type — used in daily bar report.';
+                hdr.style.display = '';
+            }
+        }
+        document.querySelectorAll('.preset-row').forEach(function(row) {
+            var sel = row.querySelector('select[name="preset_serving_type"], select[name="preset_khaki_type"]');
+            if (!sel) return;
+            var cur = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].value : '';
+            if (isKitchen) {
+                sel.name = 'preset_khaki_type';
+                sel.innerHTML = '<option value="NONE">— Bila mfuko</option>' +
+                                '<option value="SMALL">🛍 ¼ Khaki (ndogo)</option>' +
+                                '<option value="LARGE">🛍 ½ Khaki (kubwa)</option>';
+                // Restore previous value if it matches khaki options
+                if (cur === 'SMALL' || cur === 'LARGE') sel.value = cur;
+            } else {
+                sel.name = 'preset_serving_type';
+                sel.innerHTML = '<option value="cup">☕ Cup</option>' +
+                                '<option value="pint">🍺 Pint</option>' +
+                                '<option value="jug">🫙 Jug</option>';
+                if (cur === 'cup' || cur === 'pint' || cur === 'jug') sel.value = cur;
+            }
+        });
+    }
+
     function applyKitchenMode(isKitchen) {
         _kitchenActive = isKitchen;
 
         if (kegDividerEl) kegDividerEl.style.display = isKitchen ? 'none' : '';
         if (kegBlock)     kegBlock.style.display     = isKitchen ? 'none' : '';
         if (kegHint)      kegHint.style.display      = isKitchen ? 'none' : '';
-        if (typeColHeader) typeColHeader.style.display = isKitchen ? 'none' : '';
+        _syncPresetTypeCol(isKitchen);
 
         var kitchenModeSec = document.getElementById('kitchenModeSection');
         if (kitchenModeSec) kitchenModeSec.style.display = isKitchen ? 'block' : 'none';
@@ -2047,32 +2087,19 @@
         });
     }
 
-    // On form submit: inject is_produce + produce_mode + km_mix_group for kitchen batch items
+    // On form submit: inject is_kitchen_batch for kitchen batch items.
+    // NOTE: do NOT inject is_produce=on here — kitchen batch items use the KitchenBatch
+    // model (cost-vs-revenue envelope), not ProduceBunch. Injecting is_produce would
+    // save the item as a grill/nyama-choma type and it would appear in the wrong board section.
     var form = document.getElementById('itemForm');
     if (form) {
         form.addEventListener('submit', function() {
             if (!_kitchenActive) return;
             var kmBatch = document.getElementById('km_batch');
             if (kmBatch && kmBatch.checked) {
-                var fp = document.createElement('input');
-                fp.type = 'hidden'; fp.name = 'is_produce'; fp.value = 'on';
-                form.appendChild(fp);
-                var fm = document.createElement('input');
-                fm.type = 'hidden'; fm.name = 'produce_mode'; fm.value = 'BUNCH';
-                form.appendChild(fm);
-                // km_mix_group uses a distinct name to take priority over the produce section's
-                // mix_group_input (which stays empty in kitchen mode and would shadow this value).
-                var mgEl = document.getElementById('km-mix-group-input');
-                var fmg = document.createElement('input');
-                fmg.type = 'hidden'; fmg.name = 'km_mix_group'; fmg.value = mgEl ? mgEl.value.trim() : '';
-                form.appendChild(fmg);
-                // km_revenue_multiplier: per-item markup target for kitchen batch items.
-                // Views read this first (before the produce section's revenue_multiplier).
-                var mulEl = document.getElementById('km-multiplier-input');
-                var fmul = document.createElement('input');
-                fmul.type = 'hidden'; fmul.name = 'km_revenue_multiplier';
-                fmul.value = mulEl && mulEl.value.trim() ? mulEl.value.trim() : '1.70';
-                form.appendChild(fmul);
+                var fkb = document.createElement('input');
+                fkb.type = 'hidden'; fkb.name = 'is_kitchen_batch'; fkb.value = 'on';
+                form.appendChild(fkb);
             }
         });
     }
