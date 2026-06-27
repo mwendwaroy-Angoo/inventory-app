@@ -135,6 +135,10 @@ def recurring_expense_add(request):
     period       = request.POST.get('period', 'MONTHLY')
     staff_id     = request.POST.get('staff_profile', '') or None
     notes        = (request.POST.get('notes') or '').strip()
+    try:
+        pay_day = max(0, min(28, int(request.POST.get('pay_day', '0') or 0)))
+    except (ValueError, TypeError):
+        pay_day = 0
 
     try:
         amount = Decimal(str(amount_raw))
@@ -156,6 +160,7 @@ def recurring_expense_add(request):
         amount=amount,
         period=period,
         staff_profile=staff_profile,
+        pay_day=pay_day,
         notes=notes,
     )
     return JsonResponse({'ok': True})
@@ -173,6 +178,10 @@ def recurring_expense_edit(request, expense_id):
     expense.period      = request.POST.get('period', expense.period)
     expense.notes       = (request.POST.get('notes') or '').strip()
     expense.is_active   = request.POST.get('is_active', '1') == '1'
+    try:
+        expense.pay_day = max(0, min(28, int(request.POST.get('pay_day', '0') or 0)))
+    except (ValueError, TypeError):
+        expense.pay_day = 0
 
     amount_raw = request.POST.get('amount')
     if amount_raw:

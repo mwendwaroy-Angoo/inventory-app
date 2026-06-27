@@ -146,9 +146,13 @@ def _salary_status(staff_profile, business):
         period=period_str,
     ).first()
 
-    # Due date: last day of current month
+    # Due date: owner-configured pay_day, or last day of month if pay_day=0
     last_day = calendar.monthrange(today.year, today.month)[1]
-    due_date = date(today.year, today.month, last_day)
+    pay_day = int(salary_entry.pay_day or 0)
+    if pay_day == 0:
+        due_date = date(today.year, today.month, last_day)
+    else:
+        due_date = date(today.year, today.month, min(pay_day, last_day))
 
     return {
         'amount': salary_entry.amount,

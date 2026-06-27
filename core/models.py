@@ -835,6 +835,10 @@ class RecurringExpense(models.Model):
     period            = models.CharField(max_length=10, choices=PERIOD_CHOICES, default='MONTHLY')
     # For salary lines: link to a specific staff UserProfile
     staff_profile     = models.ForeignKey('accounts.UserProfile', null=True, blank=True, on_delete=models.SET_NULL, related_name='salary_entries')
+    pay_day           = models.PositiveSmallIntegerField(
+        default=0,
+        help_text='Day of month salary is due (1–28). 0 = last day of the month.',
+    )
     is_active         = models.BooleanField(default=True)
     last_confirmed_at = models.DateTimeField(null=True, blank=True)
     last_notified_at  = models.DateTimeField(null=True, blank=True)
