@@ -248,8 +248,8 @@ urlpatterns = [
     path("stock/bar/deplete/<int:barrel_id>/", deplete_barrel, name="deplete_barrel"),
     path("stock/bar/edit/<int:barrel_id>/", edit_barrel, name="edit_barrel"),
     path("stock/bar/breakage/", record_breakage, name="record_breakage"),
-    # ── Bar Cups (Sprint 4) ──────────────────────────────────────────────────
-    path("bar/barrel/<int:barrel_id>/cups/", add_cups, name="add_cups"),
+    # ── Bar Cups — business-wide pool (K6.C) ────────────────────────────────
+    path("bar/cups/add/", add_cups, name="add_cups"),
     # ── Bar Tabs (Sprint 3) ───────────────────────────────────────────────────
     path("bar/tabs/", tabs_list, name="tabs_list"),
     path("bar/tabs/<int:tab_id>/settle/", settle_tab, name="settle_tab"),

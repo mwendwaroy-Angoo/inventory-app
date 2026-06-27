@@ -194,6 +194,17 @@
                 &nbsp;·&nbsp; 🫙 {{ jugs }} jug{{ jugs|pluralize }}
             </span>
         </div>
+        {% if barrel_cup_total_cost > 0 %}
+        <div class="info-row">
+            <span class="info-label">🥤 Cup cost (for this barrel)</span>
+            <span class="info-val" style="color:#b0b0b0;">
+                KES {{ barrel_cup_total_cost|floatformat:0 }}
+                <span style="font-size:0.75rem; color:#666; display:block; margin-top:2px;">
+                    Cup stock balance is tracked business-wide — see the Bar Board.
+                </span>
+            </span>
+        </div>
+        {% endif %}
         {% if theoretical_gross_max %}
         <div class="info-row" style="border-top:1px dashed #2a2a2a; margin-top:2px; padding-top:10px;">
             <span class="info-label">

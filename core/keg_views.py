@@ -42,7 +42,7 @@ def bar_board_api(request):
     keg_items = (
         Item.objects
         .filter(store__business=business, is_keg=True)
-        .prefetch_related('portion_presets', 'keg_barrels', 'keg_barrels__cup_logs')
+        .prefetch_related('portion_presets', 'keg_barrels')
         .order_by('description')
     )
 
@@ -65,27 +65,6 @@ def bar_board_api(request):
             }
             for p in it.portion_presets.all().order_by('display_order', 'id')
         ]
-
-        # ── Cup stats for the tapped barrel ──────────────────────────────
-        cup_300_bought = 0
-        cup_500_bought = 0
-        cup_300_cost   = 0.0
-        cup_500_cost   = 0.0
-        if primary:
-            for log in primary.cup_logs.all():
-                if log.cup_size == '300':
-                    cup_300_bought += log.qty
-                    cup_300_cost   += float(log.total_cost)
-                else:
-                    cup_500_bought += log.qty
-                    cup_500_cost   += float(log.total_cost)
-            cups_used  = primary.cups_dispensed or 0
-            jugs_used  = primary.jugs_dispensed or 0
-            pints_used = primary.pints_dispensed or 0
-        else:
-            cups_used  = 0
-            jugs_used  = 0
-            pints_used = 0
 
         kegs.append({
             'item_id': it.id,
@@ -116,14 +95,6 @@ def bar_board_api(request):
             'next_sealed_tare':     float(next_sealed.tare_weight_kg) if next_sealed else 0.0,
             # K5.A — envelope + depletion control flags
             'envelope_reached':    (float(primary.remaining_envelope()) <= 0) if primary else False,
-            # Cup / jug tracking
-            'cups_300_bought': cup_300_bought,
-            'cups_500_bought': cup_500_bought,
-            'cups_300_cost':   round(cup_300_cost, 2),
-            'cups_500_cost':   round(cup_500_cost, 2),
-            'cups_used':       cups_used,
-            'jugs_used':       jugs_used,
-            'pints_used':      pints_used,
         })
 
     open_tabs_qs = BarTab.objects.filter(business=business, status='OPEN')
@@ -154,6 +125,8 @@ def bar_board_api(request):
             'total':   total,
         })
 
+    cup_pool = keg_metrics.business_cup_pool(business)
+
     return JsonResponse({
         'kegs': kegs,
         'can_receive': bool(getattr(up, 'is_owner', False)),
@@ -162,6 +135,7 @@ def bar_board_api(request):
         'active_waitresses': active_w,
         'weighs_kegs': bool(getattr(business, 'weighs_kegs', False)),
         'block_sales_past_target': bool(getattr(business, 'block_sales_past_target', False)),
+        'cup_pool': cup_pool,
     })
 
 
@@ -1170,13 +1144,28 @@ def convert_tab_to_debt(request, tab_id):
 
 @login_required
 @require_POST
-def add_cups(request, barrel_id):
-    """Owner logs a cup purchase for a specific barrel (300ml or 500ml)."""
-    up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+def add_cups(request):
+    """Log a disposable cup purchase into the business-wide cup pool.
 
-    barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
+    Available to: owner (shift-exempt) and bar staff with an active shift.
+    barrel_id is optional POST context for cost allocation only — the pool is business-wide.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
+
+    business = up.business
+    is_owner = getattr(up, 'is_owner', False)
+
+    # Bar staff need an active shift; owner is always exempt
+    if not is_owner:
+        from .shift_views import get_active_staff_shift
+        shift = get_active_staff_shift(up, business)
+        if shift is False:
+            return JsonResponse({'ok': False, 'error': 'Fungua shift kwanza'}, status=403)
+        # Also gate to bar staff (role == staff/waitress on bar counter, not kitchen-only)
+        if up.role not in ('owner', 'staff', 'waitress'):
+            return JsonResponse({'ok': False, 'error': 'Hakuna ruhusa'}, status=403)
 
     try:
         cup_size  = request.POST.get('cup_size', '300')
@@ -1193,33 +1182,50 @@ def add_cups(request, barrel_id):
     total_cost = (unit_cost * qty).quantize(Decimal('0.01'))
     note = (request.POST.get('note') or '').strip()
 
+    # Optional: barrel context for cost allocation (not required)
+    barrel = None
+    barrel_id_raw = request.POST.get('barrel_id', '').strip()
+    if barrel_id_raw.isdigit():
+        barrel = KegBarrel.objects.filter(id=int(barrel_id_raw), business=business).first()
+
     BarCupLog.objects.create(
+        business=business,
         barrel=barrel,
-        business=up.business,
         cup_size=cup_size,
         qty=qty,
         unit_cost=unit_cost,
         total_cost=total_cost,
         note=note,
+        recorded_by=request.user,
     )
 
-    # Return updated cup stats for this barrel
-    logs = barrel.cup_logs.all()
-    cups_300 = sum(l.qty for l in logs if l.cup_size == '300')
-    cups_500 = sum(l.qty for l in logs if l.cup_size == '500')
-    cups_used  = barrel.cups_dispensed or 0
-    jugs_used  = barrel.jugs_dispensed or 0
-    pints_used = barrel.pints_dispensed or 0
+    pool = keg_metrics.business_cup_pool(business)
 
-    return JsonResponse({
-        'ok': True,
-        'cups_300_bought': cups_300,
-        'cups_500_bought': cups_500,
-        'cups_used':   cups_used,
-        'jugs_used':   jugs_used,
-        'pints_used':  pints_used,
-        'total_cost': float(total_cost),
-    })
+    # Fire low-stock alert once when pool drops below 30 (reset when healthy stock logged)
+    if pool['low_stock'] and pool['total_cups_bought'] > 0:
+        from django.utils import timezone as _tz
+        business.refresh_from_db(fields=['cup_low_notified_at'])
+        if business.cup_low_notified_at is None:
+            from .models import Notification
+            from accounts.models import UserProfile as _UP
+            for op in _UP.objects.filter(business=business, role='owner').select_related('user'):
+                Notification.objects.create(
+                    user=op.user,
+                    title='Vikombe vimekwisha',
+                    message=(
+                        f"⚠️ Vikombe vimekwisha! Bado {pool['remaining']} vikombe — "
+                        "nunua vikombe zaidi mapema."
+                    ),
+                    notification_type='warning',
+                )
+            from accounts.models import Business as _Biz
+            _Biz.objects.filter(pk=business.pk).update(cup_low_notified_at=_tz.now())
+    elif not pool['low_stock'] and business.cup_low_notified_at is not None:
+        # Reset the notified flag when healthy stock is logged
+        from accounts.models import Business as _Biz
+        _Biz.objects.filter(pk=business.pk).update(cup_low_notified_at=None)
+
+    return JsonResponse({'ok': True, 'pool': pool, 'total_cost': float(total_cost)})
 
 
 # ── Daily Bar Report ───────────────────────────────────────────────────────────
@@ -1606,6 +1612,14 @@ def keg_barrel_detail(request, barrel_id):
     baseline_vs = (round(float(total_wastage_pct) - baseline['baseline_pct'], 1)
                    if total_wastage_pct is not None else None)
 
+    # Per-barrel cup cost allocation (cups logged against this specific barrel only)
+    barrel_cup_logs = BarCupLog.objects.filter(barrel=barrel)
+    barrel_cup_cost_300 = float(barrel_cup_logs.filter(cup_size='300').aggregate(
+        s=Sum('total_cost'))['s'] or 0)
+    barrel_cup_cost_500 = float(barrel_cup_logs.filter(cup_size='500').aggregate(
+        s=Sum('total_cost'))['s'] or 0)
+    barrel_cup_total_cost = barrel_cup_cost_300 + barrel_cup_cost_500
+
     return render(request, 'core/bar/keg_barrel_detail.html', {
         'barrel':                     barrel,
         'baseline':                   baseline,
@@ -1632,6 +1646,9 @@ def keg_barrel_detail(request, barrel_id):
         'target_is_unrealistic':      target_is_unrealistic,
         'shortfall':                  shortfall,
         'pct_achieved':               pct_achieved,
+        'barrel_cup_total_cost':      barrel_cup_total_cost,
+        'barrel_cup_cost_300':        barrel_cup_cost_300,
+        'barrel_cup_cost_500':        barrel_cup_cost_500,
     })
 
 

@@ -670,6 +670,14 @@
     ⚠️ Fungua shift yako kwanza kabla ya kuuza. Bonyeza <strong style="color:#c9a84c; margin:0 4px;">Fungua Shift</strong> juu.
   </div>
 
+  <!-- Business-wide cup pool tile (rendered by JS from cup_pool in board API) -->
+  <div id="cup-pool-area" style="display:none; margin-bottom:0.75rem;">
+    <div id="cup-pool-tile" style="background:rgba(255,255,255,0.04); border:1px solid #3a3a3a;
+         border-radius:10px; padding:0.6rem 1rem; display:flex; align-items:center;
+         gap:0.75rem; flex-wrap:wrap; font-size:0.82rem;">
+    </div>
+  </div>
+
   <!-- Keg tile grid — rendered by JS after board API call -->
   <div id="keg-board" class="row g-3">
     <div class="col-12 text-center py-5" style="color:#b0b0b0;">
@@ -1218,7 +1226,6 @@
                 style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; line-height:1;">✕</button>
       </div>
       <div class="modal-body">
-        <input type="hidden" id="cups-barrel-id">
         <div class="mb-3">
           <label class="form-label">Aina ya Kikombe</label>
           <div class="d-flex gap-3">
@@ -1640,6 +1647,9 @@
       }
     }
 
+    // Cup pool tile — business-wide
+    _renderCupPoolTile(data.cup_pool || {});
+
     // Tab badge
     var openTabs = data.open_tabs || 0;
     var badge = document.getElementById('tabs-badge');
@@ -1756,39 +1766,6 @@
           typeBadge = '<span class="keg-type-badge ' + tClass + '">' + tLabel + '</span>';
         }
 
-        // ── Cup / pint / jug panel ───────────────────────────
-        var cups300   = kg.cups_300_bought || 0;
-        var cups500   = kg.cups_500_bought || 0;
-        var cupsUsed  = kg.cups_used   || 0;
-        var jugsUsed  = kg.jugs_used   || 0;
-        var pintsUsed = kg.pints_used  || 0;
-        var cupPanel = '';
-        if (cups300 > 0 || cups500 > 0) {
-          var rem300 = Math.max(0, cups300 - cupsUsed);
-          var rem300Class = rem300 <= 10 ? 'cup-low' : 'cup-ok';
-          var cupParts = ['🥤'];
-          if (cups300 > 0) cupParts.push('<span class="' + rem300Class + '">' + rem300 + '/' + cups300 + ' 300ml</span>');
-          if (cups500 > 0) cupParts.push('<span>' + cups500 + ' 500ml</span>');
-          if (pintsUsed > 0) cupParts.push('<span style="color:#c9a84c;">🍺 ' + pintsUsed + ' pint' + (pintsUsed !== 1 ? 's' : '') + '</span>');
-          if (jugsUsed > 0) cupParts.push('<span style="color:#c9a84c;">🫙 ' + jugsUsed + ' jug' + (jugsUsed !== 1 ? 's' : '') + '</span>');
-          if (QS_IS_OWNER) {
-            cupParts.push('<button class="cup-add-btn" onclick="event.stopPropagation();window.openAddCupsModal(' + kg.tapped_barrel_id + ')">+</button>');
-          }
-          cupPanel = '<div class="cup-panel">' + cupParts.join(' ') + '</div>';
-        } else if (QS_IS_OWNER) {
-          var extraStr = '';
-          if (pintsUsed > 0) extraStr += ' · <span style="color:#c9a84c;">🍺 ' + pintsUsed + ' pints</span>';
-          if (jugsUsed > 0)  extraStr += ' · <span style="color:#c9a84c;">🫙 ' + jugsUsed + ' jugs</span>';
-          cupPanel = '<div class="cup-panel"><span style="color:#555;">🥤 Vikombe havijawekwa</span>'
-            + extraStr
-            + '<button class="cup-add-btn" onclick="event.stopPropagation();window.openAddCupsModal(' + kg.tapped_barrel_id + ')">+ Vikombe</button></div>';
-        } else if (jugsUsed > 0 || pintsUsed > 0) {
-          var pourStr = [];
-          if (pintsUsed > 0) pourStr.push('🍺 ' + pintsUsed + ' pint' + (pintsUsed !== 1 ? 's' : ''));
-          if (jugsUsed > 0)  pourStr.push('🫙 ' + jugsUsed + ' jug' + (jugsUsed !== 1 ? 's' : ''));
-          cupPanel = '<div class="cup-panel"><span style="color:#c9a84c;">' + pourStr.join(' · ') + ' poured</span></div>';
-        }
-
         html +=
           '<div class="col-6 col-md-4 col-lg-3">' +
           '<div class="keg-tile' + (kg.stale ? ' stale' : '') + '" ' +
@@ -1801,7 +1778,6 @@
               '<div class="keg-meta">' + kg.net_liters + ' L' + (_isOwner ? ' · Target ' + fmt(kg.target_open) : '') + badge + '</div>' +
               bottomWarn +
               '<div class="mt-2">' + presetChips + '</div>' +
-              cupPanel +
             '</div>' +
           '</div>' +
           actionHtml +
@@ -2853,8 +2829,37 @@
   /* ════════════════════════════════════════════════════════
      ADD CUPS MODAL
   ════════════════════════════════════════════════════════ */
-  window.openAddCupsModal = function (barrelId) {
-    document.getElementById('cups-barrel-id').value = barrelId;
+  /* _renderCupPoolTile — renders the business-wide cup pool summary tile */
+  function _renderCupPoolTile(pool) {
+    var area = document.getElementById('cup-pool-area');
+    var tile = document.getElementById('cup-pool-tile');
+    if (!area || !tile) return;
+    var bought = (pool.total_cups_bought || 0);
+    var remaining = (pool.remaining !== undefined ? pool.remaining : bought);
+    var low = !!pool.low_stock;
+    if (bought === 0 && !QS_IS_OWNER) { area.style.display = 'none'; return; }
+    area.style.display = 'block';
+    var remColor = low ? '#c0395a' : (remaining < 60 ? '#ff9800' : '#4caf50');
+    var remFw    = low ? '700' : '600';
+    var parts = [
+      '🥤 <span style="font-weight:600; color:#f0ece4;">Vikombe:</span>',
+      '<span style="color:' + remColor + '; font-weight:' + remFw + ';">' + remaining + ' baki</span>',
+    ];
+    if (bought > 0) parts.push('<span style="color:#b0b0b0;">/ ' + bought + ' zilizonunuliwa</span>');
+    if (low) parts.push('<span style="color:#c0395a; font-size:0.78rem;">⚠️ Nunua vikombe zaidi!</span>');
+    if (pool.pints_dispensed > 0 && pool.cups_per_pint > 0) {
+      parts.push('<span style="color:#c9a84c;">🍺 ' + pool.pints_dispensed + ' pints × ' + pool.cups_per_pint + ' = ' + pool.cups_from_pints + ' vikombe</span>');
+    }
+    if (pool.jugs_dispensed > 0 && pool.cups_per_jug > 0) {
+      parts.push('<span style="color:#c9a84c;">🫙 ' + pool.jugs_dispensed + ' jugs × ' + pool.cups_per_jug + ' = ' + pool.cups_from_jugs + ' vikombe</span>');
+    }
+    // Log purchase button for bar staff (any role) + owner
+    parts.push('<button class="cup-add-btn" onclick="event.stopPropagation();window.openAddCupsModal()" style="margin-left:auto;">'
+      + (bought === 0 ? '+ Vikombe' : '+') + '</button>');
+    tile.innerHTML = parts.join(' ');
+  }
+
+  window.openAddCupsModal = function () {
     var errEl = document.getElementById('cups-error');
     if (errEl) errEl.style.display = 'none';
     document.getElementById('cups-cups-preview').textContent = '—';
@@ -2890,7 +2895,6 @@
   });
 
   window.submitAddCups = function () {
-    var barrelId = (document.getElementById('cups-barrel-id')  || {}).value;
     var packs    = parseInt((document.getElementById('cups-packs')    || {}).value) || 0;
     var packCost = parseFloat((document.getElementById('cups-pack-cost') || {}).value) || 0;
     var perPack  = parseInt((document.getElementById('cups-per-pack')  || {}).value) || 0;
@@ -2899,7 +2903,6 @@
     var errEl    = document.getElementById('cups-error');
     if (errEl) errEl.style.display = 'none';
 
-    if (!barrelId) return;
     if (!packs || packs < 1) {
       if (errEl) { errEl.textContent = 'Ingiza idadi ya pakiti.'; errEl.style.display = 'block'; }
       return;
@@ -2921,7 +2924,7 @@
     var btn = document.getElementById('cups-submit-btn');
     btn.disabled = true; btn.textContent = 'Inahifadhi...';
 
-    post('/bar/barrel/' + barrelId + '/cups/', {
+    post('/bar/cups/add/', {
       cup_size: cupSize, qty: totalCups,
       unit_cost: unitCostPerCup.toFixed(4), note: autoNote,
     })

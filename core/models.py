@@ -2148,19 +2148,29 @@ class BarTabEntry(models.Model):
 
 
 class BarCupLog(models.Model):
-    """Records one batch of disposable cups purchased for a specific barrel."""
+    """Records one batch of disposable cups purchased for the business's shared cup pool.
+
+    barrel and item are optional cost-allocation context only — the pool math
+    is done business-wide via keg_metrics.business_cup_pool(), not per-barrel.
+    """
     CUP_SIZES = [
         ('300', '300 ml'),
         ('500', '500 ml'),
     ]
-    barrel     = models.ForeignKey(KegBarrel, on_delete=models.CASCADE, related_name='cup_logs')
-    business   = models.ForeignKey('accounts.Business', on_delete=models.CASCADE)
-    cup_size   = models.CharField(max_length=3, choices=CUP_SIZES, default='300')
-    qty        = models.PositiveIntegerField()
-    unit_cost  = models.DecimalField(max_digits=8, decimal_places=2)
-    total_cost = models.DecimalField(max_digits=10, decimal_places=2)
-    date       = models.DateField(default=timezone.localdate)
-    note       = models.CharField(max_length=120, blank=True)
+    business    = models.ForeignKey('accounts.Business', on_delete=models.CASCADE,
+                                    related_name='cup_logs')
+    barrel      = models.ForeignKey(KegBarrel, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name='cup_logs')
+    item        = models.ForeignKey('Item', on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name='cup_logs')
+    cup_size    = models.CharField(max_length=3, choices=CUP_SIZES, default='300')
+    qty         = models.PositiveIntegerField()
+    unit_cost   = models.DecimalField(max_digits=8, decimal_places=2)
+    total_cost  = models.DecimalField(max_digits=10, decimal_places=2)
+    date        = models.DateField(default=timezone.localdate)
+    note        = models.CharField(max_length=120, blank=True)
+    recorded_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name='cup_logs_recorded')
 
     class Meta:
         ordering = ['-date', '-id']
@@ -2168,7 +2178,8 @@ class BarCupLog(models.Model):
         verbose_name_plural = 'Bar Cup Logs'
 
     def __str__(self):
-        return f"Barrel #{self.barrel_id} — {self.qty}× {self.cup_size}ml cups @ KES {self.unit_cost}"
+        barrel_ctx = f" — Barrel #{self.barrel_id}" if self.barrel_id else ''
+        return f"{self.business_id}{barrel_ctx}: {self.qty}× {self.cup_size}ml cups @ KES {self.unit_cost}"
 
 
 class ShiftStockCount(models.Model):

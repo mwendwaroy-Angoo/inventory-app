@@ -610,6 +610,57 @@
   </div>
 </div>
 
+{% if biz_profile.modules.bar %}
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- CUP CONFIG — Bar cup consumption (K6.C)                                -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="row">
+  <div class="col-12">
+    <div class="card mb-4">
+      <div class="card-body">
+        <h5 style="color:var(--gold); font-family:'Playfair Display',serif; margin-bottom:0.5rem;">
+          🥤 {% trans 'Disposable Cup Consumption' %}
+        </h5>
+        <p style="color:#b0b0b0; font-size:0.83rem; margin-bottom:1.25rem;">
+          {% trans 'Tell the app how many disposable cups each serving type uses. This is how the business-wide cup pool balance is computed on the Bar Board.' %}
+        </p>
+        <form method="post" action="{% url 'payment_settings' %}">
+          {% csrf_token %}
+          <input type="hidden" name="_section" value="cup_config">
+          <div class="row g-3 mb-3">
+            <div class="col-6 col-md-4">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.82rem;">
+                ☕ Cups per Pint
+              </label>
+              <input type="number" name="cups_per_pint" class="form-control"
+                     value="{{ business.cups_per_pint }}" min="0" max="10"
+                     style="background:#222; border-color:#444; color:#f0ece4;">
+              <div style="font-size:0.72rem; color:#666; margin-top:0.3rem;">
+                {% trans '0 = pint served in glass/mug' %}
+              </div>
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.82rem;">
+                🫙 Cups per Jug
+              </label>
+              <input type="number" name="cups_per_jug" class="form-control"
+                     value="{{ business.cups_per_jug }}" min="0" max="20"
+                     style="background:#222; border-color:#444; color:#f0ece4;">
+              <div style="font-size:0.72rem; color:#666; margin-top:0.3rem;">
+                {% trans 'Default 6 — one per person at a table of 6' %}
+              </div>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-gold">
+            💾 {% trans 'Hifadhi Mipangilio ya Vikombe' %}
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block extra_js %}

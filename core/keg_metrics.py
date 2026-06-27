@@ -435,3 +435,87 @@ def business_keg_loss_baseline(business, min_sample: int = 3, default_pct: float
         return {'baseline_pct': round(sum(samples) / len(samples), 1),
                 'sample': len(samples), 'is_learned': True}
     return {'baseline_pct': default_pct, 'sample': len(samples), 'is_learned': False}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# K6.C — Business-wide disposable cup pool
+# ──────────────────────────────────────────────────────────────────────────────
+
+def business_cup_pool(business) -> dict:
+    """Return the business-wide disposable cup stock balance.
+
+    Bought:    SUM(BarCupLog.qty) scoped to business, split by cup_size.
+    Consumed:  computed from Transaction cup counts (cups_dispensed stored on each tx)
+               PLUS the per-pint/jug multiplier from business.cups_per_pint / cups_per_jug.
+
+    Returns a dict:
+        cups_300_bought   int
+        cups_500_bought   int
+        cups_300_cost     float   (total spend on 300 ml cups)
+        cups_500_cost     float
+        cups_used         int     (consumed via explicit cup transactions, size agnostic)
+        pints_dispensed   int     (sum of keg pints across all open/depleted barrels)
+        jugs_dispensed    int
+        cups_per_pint     int     (from business config)
+        cups_per_jug      int
+        cups_from_pints   int     = pints_dispensed × cups_per_pint
+        cups_from_jugs    int     = jugs_dispensed  × cups_per_jug
+        total_cups_bought int     = cups_300_bought + cups_500_bought
+        total_cups_used   int     = cups_used + cups_from_pints + cups_from_jugs
+        remaining         int     = total_cups_bought - total_cups_used
+        low_stock         bool    remaining < 30
+    """
+    from django.db.models import Sum
+    from .models import BarCupLog, KegBarrel
+
+    logs = BarCupLog.objects.filter(business=business)
+    agg_300 = logs.filter(cup_size='300').aggregate(q=Sum('qty'), c=Sum('total_cost'))
+    agg_500 = logs.filter(cup_size='500').aggregate(q=Sum('qty'), c=Sum('total_cost'))
+
+    cups_300_bought = int(agg_300['q'] or 0)
+    cups_500_bought = int(agg_500['q'] or 0)
+    cups_300_cost   = float(agg_300['c'] or 0)
+    cups_500_cost   = float(agg_500['c'] or 0)
+
+    # Cups consumed as explicit cup transactions (BarCupLog tracks purchase; cups_dispensed
+    # on KegBarrel tracks how many 300ml cups were poured directly as cup sales).
+    barrel_agg = (KegBarrel.objects
+                  .filter(business=business)
+                  .exclude(status='DISCARDED')
+                  .aggregate(
+                      cups=Sum('cups_dispensed'),
+                      pints=Sum('pints_dispensed'),
+                      jugs=Sum('jugs_dispensed'),
+                  ))
+    cups_used     = int(barrel_agg['cups']  or 0)
+    pints_total   = int(barrel_agg['pints'] or 0)
+    jugs_total    = int(barrel_agg['jugs']  or 0)
+
+    cpp = int(business.cups_per_pint)
+    cpj = int(business.cups_per_jug)
+    cups_from_pints = pints_total * cpp
+    cups_from_jugs  = jugs_total  * cpj
+
+    total_bought = cups_300_bought + cups_500_bought
+    total_used   = cups_used + cups_from_pints + cups_from_jugs
+    remaining    = total_bought - total_used
+
+    return {
+        'cups_300_bought':   cups_300_bought,
+        'cups_500_bought':   cups_500_bought,
+        'cups_300_cost':     cups_300_cost,
+        'cups_500_cost':     cups_500_cost,
+        'cups_used':         cups_used,
+        'pints_dispensed':   pints_total,
+        'jugs_dispensed':    jugs_total,
+        'cups_per_pint':     cpp,
+        'cups_per_jug':      cpj,
+        'cups_from_pints':   cups_from_pints,
+        'cups_from_jugs':    cups_from_jugs,
+        'total_cups_bought': total_bought,
+        'total_cups_used':   total_used,
+        'remaining':         remaining,
+        # low_stock only fires when cups have actually been logged (bought > 0);
+        # when bought == 0 the owner hasn't set up cup tracking yet — not a shortage.
+        'low_stock':         total_bought > 0 and remaining < 30,
+    }

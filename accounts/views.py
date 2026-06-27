@@ -766,6 +766,17 @@ def payment_settings(request):
                 messages.error(request, _("Tafadhali ingiza nambari sahihi kwa mipangilio ya deni."))
             return redirect('payment_settings')
 
+        if section == 'cup_config':
+            try:
+                Business.objects.filter(pk=business.pk).update(
+                    cups_per_pint=max(0, int(request.POST.get('cups_per_pint') or 0)),
+                    cups_per_jug=max(0, int(request.POST.get('cups_per_jug') or 0)),
+                )
+                messages.success(request, _("Mipangilio ya vikombe imehifadhiwa."))
+            except (ValueError, TypeError):
+                messages.error(request, _("Tafadhali ingiza nambari sahihi."))
+            return redirect('payment_settings')
+
         form = PaymentSettingsForm(request.POST, instance=business)
         if form.is_valid():
             form.save()

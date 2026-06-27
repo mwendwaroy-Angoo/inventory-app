@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from accounts.models import Business, UserProfile
 from core.models import (
-    BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
+    BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
     KegBarrel, KegWeightReading, Notification, Payment, Receipt, Shift, Store, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
@@ -1988,3 +1988,164 @@ class PartialTabSettleTest(TestCase):
             {'payment_method': 'cash', 'entry_ids': [str(entry.id)]},
         )
         self.assertEqual(resp.status_code, 400)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sprint K6.C — Business-level cup pool
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_keg_setup(test_cls, biz_suffix='k6c'):
+    """Create a minimal business + bar store + keg item + tapped barrel for K6.C tests."""
+    test_cls.biz = Business.objects.create(name=f'K6C Biz {biz_suffix}', cups_per_pint=1, cups_per_jug=6)
+    test_cls.store = Store.objects.create(business=test_cls.biz, name='Bar')
+    test_cls.owner = User.objects.create_user(username=f'k6c_owner_{biz_suffix}', password='x')
+    UserProfile.objects.create(user=test_cls.owner, business=test_cls.biz, role='owner')
+    test_cls.staff = User.objects.create_user(username=f'k6c_staff_{biz_suffix}', password='x')
+    UserProfile.objects.create(user=test_cls.staff, business=test_cls.biz, role='staff')
+    test_cls.item = Item.objects.create(
+        business=test_cls.biz, store=test_cls.store, description='K6C Lager',
+        unit='ml', material_no=f'K6C-{biz_suffix}', is_keg=True,
+        selling_price=Decimal('50'), cost_price=Decimal('12000'),
+    )
+    test_cls.barrel = KegBarrel.objects.create(
+        business=test_cls.biz, store=test_cls.store, item=test_cls.item,
+        cost_price=Decimal('12000'), target_revenue=Decimal('18000'),
+        status='TAPPED', pints_dispensed=10, jugs_dispensed=2,
+    )
+
+
+class BusinessCupPoolHelperTest(TestCase):
+    """K6.C: business_cup_pool() aggregates bought and consumed cups correctly."""
+
+    def setUp(self):
+        _make_keg_setup(self, 'pool')
+
+    def test_empty_pool_returns_zero_bought_and_no_low_stock(self):
+        from core.keg_metrics import business_cup_pool
+        # With cups_per_pint=0 (no glass-to-cup tracking), consumption from pints/jugs is 0
+        self.biz.cups_per_pint = 0
+        self.biz.cups_per_jug  = 0
+        self.biz.save(update_fields=['cups_per_pint', 'cups_per_jug'])
+        pool = business_cup_pool(self.biz)
+        self.assertEqual(pool['total_cups_bought'], 0)
+        self.assertEqual(pool['remaining'], 0)
+        self.assertFalse(pool['low_stock'])
+
+    def test_pool_counts_300_and_500_separately(self):
+        from core.keg_metrics import business_cup_pool
+        BarCupLog.objects.create(
+            business=self.biz, barrel=self.barrel,
+            cup_size='300', qty=100, unit_cost=Decimal('0.5'), total_cost=Decimal('50'),
+        )
+        BarCupLog.objects.create(
+            business=self.biz, barrel=self.barrel,
+            cup_size='500', qty=50, unit_cost=Decimal('1.0'), total_cost=Decimal('50'),
+        )
+        pool = business_cup_pool(self.biz)
+        self.assertEqual(pool['cups_300_bought'], 100)
+        self.assertEqual(pool['cups_500_bought'], 50)
+        self.assertEqual(pool['total_cups_bought'], 150)
+
+    def test_pool_deducts_pints_and_jugs_consumption(self):
+        from core.keg_metrics import business_cup_pool
+        # biz.cups_per_pint=1, cups_per_jug=6; barrel has 10 pints + 2 jugs dispensed
+        BarCupLog.objects.create(
+            business=self.biz, barrel=self.barrel,
+            cup_size='300', qty=200, unit_cost=Decimal('0.5'), total_cost=Decimal('100'),
+        )
+        pool = business_cup_pool(self.biz)
+        # consumed = 10*1 + 2*6 = 22
+        self.assertEqual(pool['cups_from_pints'], 10)
+        self.assertEqual(pool['cups_from_jugs'], 12)
+        self.assertEqual(pool['total_cups_used'], 22)
+        self.assertEqual(pool['remaining'], 200 - 22)
+
+    def test_low_stock_flag_when_below_30(self):
+        from core.keg_metrics import business_cup_pool
+        BarCupLog.objects.create(
+            business=self.biz, barrel=self.barrel,
+            cup_size='300', qty=25, unit_cost=Decimal('0.5'), total_cost=Decimal('12.5'),
+        )
+        pool = business_cup_pool(self.biz)
+        self.assertTrue(pool['low_stock'])
+
+    def test_not_low_stock_when_above_30(self):
+        from core.keg_metrics import business_cup_pool
+        BarCupLog.objects.create(
+            business=self.biz, barrel=self.barrel,
+            cup_size='300', qty=500, unit_cost=Decimal('0.5'), total_cost=Decimal('250'),
+        )
+        pool = business_cup_pool(self.biz)
+        self.assertFalse(pool['low_stock'])
+
+
+class AddCupsViewTest(TestCase):
+    """K6.C: /bar/cups/add/ is accessible to owner and bar staff with open shift."""
+
+    def setUp(self):
+        _make_keg_setup(self, 'add')
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+
+    def _post_cups(self, user, data=None):
+        self.client.force_login(user)
+        return self.client.post('/bar/cups/add/', data or {
+            'cup_size': '300', 'qty': '50',
+            'unit_cost': '0.50', 'note': '',
+        })
+
+    def test_owner_can_log_cups(self):
+        resp = self._post_cups(self.owner)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(BarCupLog.objects.filter(business=self.biz).count(), 1)
+
+    def test_bar_staff_with_shift_can_log_cups(self):
+        resp = self._post_cups(self.staff)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+
+    def test_staff_without_shift_is_blocked(self):
+        self.shift.status = 'CLOSED'
+        self.shift.save(update_fields=['status'])
+        resp = self._post_cups(self.staff)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_pool_is_returned_in_response(self):
+        resp = self._post_cups(self.owner)
+        data = resp.json()
+        self.assertIn('pool', data)
+        self.assertIn('remaining', data['pool'])
+
+    def test_cup_log_has_no_barrel_when_not_provided(self):
+        self._post_cups(self.owner, {
+            'cup_size': '300', 'qty': '10', 'unit_cost': '0.50',
+        })
+        log = BarCupLog.objects.filter(business=self.biz).first()
+        self.assertIsNotNone(log)
+        self.assertIsNone(log.barrel)
+
+    def test_cup_log_records_barrel_context_when_provided(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/bar/cups/add/', {
+            'cup_size': '300', 'qty': '20', 'unit_cost': '0.50',
+            'barrel_id': str(self.barrel.id),
+        })
+        self.assertEqual(resp.status_code, 200)
+        log = BarCupLog.objects.filter(business=self.biz).first()
+        self.assertEqual(log.barrel_id, self.barrel.id)
+
+    def test_board_api_returns_cup_pool_at_root(self):
+        BarCupLog.objects.create(
+            business=self.biz, cup_size='300', qty=100,
+            unit_cost=Decimal('0.5'), total_cost=Decimal('50'),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/bar/board/')
+        data = resp.json()
+        self.assertIn('cup_pool', data)
+        self.assertEqual(data['cup_pool']['cups_300_bought'], 100)

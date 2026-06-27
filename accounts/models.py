@@ -185,6 +185,20 @@ class Business(models.Model):
         help_text='Block all sales once a barrel hits its revenue target. '
                   'Default off — staff are prompted to close or continue knowingly instead.'
     )
+    cups_per_pint = models.PositiveIntegerField(
+        default=0,
+        help_text='Physical disposable cups consumed per pint serving. 0 = served in glass/mug. '
+                  'Set to 1 if your bar pours pints into disposable cups.'
+    )
+    cups_per_jug  = models.PositiveIntegerField(
+        default=6,
+        help_text='Physical disposable cups consumed per jug serving (shared at a table). '
+                  'Default 6 — a 2L jug split between 6 people. Adjust to match your typical group size.'
+    )
+    cup_low_notified_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Last time a cup low-stock alert was fired. Reset when new cups are logged.'
+    )
 
     # ── KRA / eTIMS ──────────────────────────────────────────────────────────
     kra_pin = models.CharField(
