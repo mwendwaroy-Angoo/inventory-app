@@ -314,6 +314,9 @@ KITCHEN_CATALOG = [
     _food('Chicken Thigh', 'Pcs', [
         {'label': 'Kimoja',   'price': 120, 'qty': 1.0},
     ]),
+    _food('Chicken Breast / Kifua', 'Pcs', [
+        {'label': 'Kimoja',   'price': 150, 'qty': 1.0},
+    ]),
     _food('Smokie', 'Pcs', [
         {'label': 'Kimoja',   'price': 60,  'qty': 1.0},
         {'label': 'Mbili',    'price': 110, 'qty': 2.0},
