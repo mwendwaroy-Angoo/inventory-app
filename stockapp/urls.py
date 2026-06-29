@@ -96,6 +96,7 @@ from core.kitchen_views import (
     kitchen_consumable_add,
     kitchen_consumable_pool_api,
     kitchen_receive,
+    kitchen_stats_api,
     kitchen_tabs_list,
     tab_check_api,
     toggle_kitchen,
@@ -289,6 +290,7 @@ urlpatterns = [
     path("kitchen/batch/<int:batch_id>/discard/", discard_kitchen_batch,        name="discard_kitchen_batch"),
     path("kitchen/consumable/add/",               kitchen_consumable_add,       name="kitchen_consumable_add"),
     path("kitchen/consumable/pool/",              kitchen_consumable_pool_api,  name="kitchen_consumable_pool_api"),
+    path("kitchen/stats/",                        kitchen_stats_api,            name="kitchen_stats_api"),
     # ── Kitchen Shift Handover Module ────────────────────────────────────────
     path("kitchen/shift/open/",                   open_shift,             name="kitchen_open_shift"),
     path("kitchen/shift/<int:shift_id>/close/",   close_shift,            name="kitchen_close_shift"),

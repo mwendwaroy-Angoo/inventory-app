@@ -228,7 +228,7 @@
     </div>
     <div style="display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;">
       <div class="kb-revenue-badge">
-        🍽 Leo: <strong>KES {{ kitchen_revenue_today|floatformat:0 }}</strong>
+        🍽 Leo: <strong id="kb-revenue-amount">KES {{ kitchen_revenue_today|floatformat:0 }}</strong>
       </div>
       <button class="btn btn-sm" style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);color:#ff9800;font-size:.8rem;"
               onclick="window.openPettyCashModal()">🪙 Counter Cash</button>
@@ -1476,7 +1476,7 @@
     if (!IS_OWNER && !_myShiftOpen) {
       showToast('⚠️ Fungua shift yako kwanza kabla ya kuuza.');
       var banner = document.getElementById('shift-no-shift-banner');
-      if (banner) banner.classList.add('visible');
+      if (banner) banner.style.display = 'block';
       return;
     }
     _cart.push(entry);
@@ -1541,9 +1541,11 @@
       .then(function(d){
         btn.disabled = false; btn.textContent = 'Maliza Mauzo';
         if (d.ok) {
-          var msg = '✓ KES ' + fmt(d.total);
-          if (d.tab_customer) msg += ' — Tab ya ' + d.tab_customer;
-          if (d.credit_name)  msg += ' — Deni: ' + d.credit_name;
+          var _pmLabels = {cash:'Cash', mpesa:'M-Pesa', stk:'M-Pesa (STK)',
+                           food_tab:'Food Tab', bar_tab:'Bar Tab', credit:'Deni'};
+          var msg = '✓ KES ' + fmt(d.total) + ' — ' + (_pmLabels[pm] || pm);
+          if (d.tab_customer) msg += ' · ' + d.tab_customer;
+          if (d.credit_name)  msg += ' · Deni: ' + d.credit_name;
           showToast(msg, 3500);
           if (d.receipt_url) {
             var banner = document.getElementById('kb-receipt-banner');
@@ -1682,9 +1684,15 @@
   }
 
   function refreshRevenue() {
-    fetch('/kitchen/', {headers:{'Accept':'application/json'}}).catch(function(){});
-    // Reload the revenue badge by reloading the page silently after 2s
-    setTimeout(function(){ location.reload(); }, 2500);
+    fetch('/kitchen/stats/', {headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) {
+          var el = document.getElementById('kb-revenue-amount');
+          if (el) el.textContent = 'KES ' + Math.round(d.revenue_today).toLocaleString();
+        }
+      })
+      .catch(function(){});
   }
 
   /* ── Food Tabs drawer ── */
@@ -2639,44 +2647,13 @@
       return;
     }
     if (!batchId || batchId <= 0) { showToast('Hakuna batch iliyo wazi', 2000); return; }
-
-    var payMethod = _pm;
-    var tabCustomer = (document.getElementById('kb-tab-name') || {}).value || '';
-    var creditName  = (document.getElementById('kb-credit-name') || {}).value || '';
-    var mergeTabId  = (document.getElementById('kb-merge-tab-id') || {}).value || '';
-
-    var cart = JSON.stringify([{
-      batch_id: batchId, preset_id: presetId, amount: amount,
-      description: label || ('Ya ' + amount), qty: 1,
-    }]);
-
-    var body = new URLSearchParams();
-    body.append('csrfmiddlewaretoken', CSRF);
-    body.append('cart', cart);
-    body.append('payment_method', payMethod);
-    if (tabCustomer) body.append('tab_customer', tabCustomer);
-    if (creditName)  body.append('credit_name',  creditName);
-    if (mergeTabId)  body.append('merge_tab_id', mergeTabId);
-
-    fetch('/kitchen/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d.ok) {
-          showToast('✓ ' + label + ' — KES ' + fmt(amount));
-          // Update the batch tile P&L live without full reload
-          setTimeout(function(){
-            fetch('/kitchen/consumable/pool/')
-              .then(function(r){ return r.json(); })
-              .then(function(pd){ if (pd.ok) { _renderKhakiPoolTile(pd.pool); } })
-              .catch(function(){});
-            // Refresh batch tiles from server
-            location.reload();
-          }, 800);
-        } else {
-          showToast('❌ ' + (d.error || 'Hitilafu'), 3000);
-        }
-      })
-      .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });
+    addToCart({
+      batch_id: batchId,
+      preset_id: presetId,
+      description: (label || ('Ya ' + amount)),
+      amount: amount,
+      qty: 1,
+    });
   };
 
   window.kbDepleteBatch = function(batchId, itemName) {

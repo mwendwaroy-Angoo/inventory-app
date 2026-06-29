@@ -211,7 +211,9 @@ def kitchen_board(request):
         .order_by('customer_name')
     )
 
-    # Today's kitchen revenue
+    # Today's kitchen revenue — cash + mpesa + credit (food tab, bar tab, deni).
+    # 'void' is excluded. Credit-method transactions are the same DB rows as
+    # the later settled ones, so there is no double-counting when tabs settle.
     kitchen_revenue_today = Decimal('0')
     if kitchen_store:
         txns = Transaction.objects.filter(
@@ -219,7 +221,7 @@ def kitchen_board(request):
             type='Issue',
             date=timezone.localdate(),
             item__store=kitchen_store,
-            payment_method__in=['cash', 'mpesa'],
+            payment_method__in=['cash', 'mpesa', 'credit'],
         ).select_related('item')
         kitchen_revenue_today = sum(Decimal(str(t.revenue())) for t in txns)
 
@@ -906,3 +908,24 @@ def kitchen_consumable_pool_api(request):
         return JsonResponse({'ok': False}, status=403)
     pool = keg_metrics.kitchen_consumable_pool(up.business)
     return JsonResponse({'ok': True, 'pool': pool})
+
+
+@login_required
+def kitchen_stats_api(request):
+    """AJAX GET — today's kitchen revenue for the live badge update."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False}, status=403)
+    business = up.business
+    kitchen_store = _kitchen_store(business)
+    revenue_today = Decimal('0')
+    if kitchen_store:
+        txns = Transaction.objects.filter(
+            business=business,
+            type='Issue',
+            date=timezone.localdate(),
+            item__store=kitchen_store,
+            payment_method__in=['cash', 'mpesa', 'credit'],
+        ).select_related('item')
+        revenue_today = sum(Decimal(str(t.revenue())) for t in txns)
+    return JsonResponse({'ok': True, 'revenue_today': float(revenue_today)})
