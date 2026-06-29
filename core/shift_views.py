@@ -10,6 +10,7 @@ Reconciliation:
   variance = closing_cash_counted − expected_closing_cash
 """
 import json
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
@@ -129,6 +130,92 @@ def _tapped_barrels_for_business(business):
     return result
 
 
+# ── Auto-close stale shifts ───────────────────────────────────────────────────
+
+_SHIFT_AUTO_CLOSE_GRACE_HOURS = 2   # grace period after closing time before auto-close fires
+
+
+def _auto_close_expired_shifts(business):
+    """Close any OPEN shifts that ran past the business's closing time + grace.
+
+    Returns a list of dicts describing what was auto-closed (for toast/notification).
+    Does nothing when:
+      - business.closing_time is not set (treat as 24-hour / unrestricted)
+      - closing_time == opening_time (ambiguous — also treated as 24-hour)
+    Handles overnight businesses (opening_time > closing_time, e.g. bar opens
+    22:00, closes 02:00) by projecting the close onto the following calendar day.
+    """
+    closing_time = getattr(business, 'closing_time', None)
+    opening_time = getattr(business, 'opening_time', None)
+
+    if not closing_time or closing_time == opening_time:
+        return []   # 24-hour or no hours configured — never auto-close
+
+    now_local = timezone.localtime(timezone.now())
+    local_tz  = timezone.get_current_timezone()
+    grace     = timedelta(hours=_SHIFT_AUTO_CLOSE_GRACE_HOURS)
+    is_overnight = closing_time < opening_time  # e.g. opens 22:00, closes 02:00
+
+    open_shifts = list(
+        Shift.objects.filter(business=business, status='OPEN').select_related('staff')
+    )
+    auto_closed = []
+
+    for shift in open_shifts:
+        start_local = timezone.localtime(shift.started_at)
+        shift_date  = start_local.date()
+
+        # Scheduled close: closing_time on shift_date, or next day for overnight
+        close_date   = (shift_date + timedelta(days=1)) if is_overnight else shift_date
+        close_naive  = datetime.combine(close_date, closing_time)
+        scheduled_close = timezone.make_aware(close_naive, local_tz)
+
+        # If the computed close is at or before shift start, the shift opened in an
+        # unusual window (e.g. opened after closing time). Skip — don't auto-close.
+        if scheduled_close <= shift.started_at:
+            continue
+
+        if now_local >= timezone.localtime(scheduled_close + grace):
+            staff_name = shift.staff.get_full_name() or shift.staff.username
+            note = (
+                f'[Auto-closed at {closing_time.strftime("%H:%M")} — '
+                f'business hours ended. Staff may have forgotten.]'
+            )
+            shift.status  = 'CLOSED'
+            shift.ended_at = scheduled_close
+            shift.notes    = (shift.notes + '\n' + note).strip() if shift.notes else note
+            shift.save(update_fields=['status', 'ended_at', 'notes'])
+            auto_closed.append({
+                'shift_id':        shift.id,
+                'staff_name':      staff_name,
+                'scheduled_close': closing_time.strftime('%H:%M'),
+            })
+
+    if auto_closed:
+        try:
+            from accounts.models import UserProfile as _UP
+            from core.notifications import create_in_app_notification
+            owner_profile = _UP.objects.filter(
+                business=business, role='owner'
+            ).select_related('user').first()
+            if owner_profile:
+                names   = ', '.join(r['staff_name'] for r in auto_closed)
+                close_t = auto_closed[0]['scheduled_close']
+                create_in_app_notification(
+                    user=owner_profile.user,
+                    title='⏰ Shift Auto-Closed',
+                    message=(
+                        f"{names}: shift auto-closed at {close_t} "
+                        f"(business hours ended). Staff may have forgotten to close shift."
+                    ),
+                    notification_type='shift',
+                )
+        except Exception:
+            pass
+
+    return auto_closed
+
+
 # ── Active shift API (for bar board polling) ──────────────────────────────────
 
 @login_required
@@ -141,6 +228,10 @@ def active_shift_api(request):
     up = _get_up(request)
     if not up:
         return JsonResponse({'shift': None, 'all_shifts': []})
+
+    # Sweep before building the response so stale shifts are already CLOSED
+    # when we query all_open and my_shift below.
+    auto_closed = _auto_close_expired_shifts(up.business)
 
     def _section(s):
         try:
@@ -201,6 +292,7 @@ def active_shift_api(request):
             'can_open': True,
             'last_closing': last_closing,
             'all_shifts': all_shifts_data,
+            'auto_closed': len(auto_closed),
         })
 
     rec = _reconcile(my_shift)
@@ -222,6 +314,7 @@ def active_shift_api(request):
         },
         'can_open': False,
         'all_shifts': all_shifts_data,
+        'auto_closed': len(auto_closed),
     })
 
 

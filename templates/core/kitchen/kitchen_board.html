@@ -2149,7 +2149,12 @@
   function loadShift() {
     fetch('/kitchen/shift/active/')
       .then(function (r) { return r.json(); })
-      .then(function (d) { renderShiftPanel(d); })
+      .then(function (d) {
+        if (d.auto_closed) {
+          showToast('⏰ Shift ' + d.auto_closed + ' imefungwa kiotomatiki — muda wa biashara umekwisha.', 5000);
+        }
+        renderShiftPanel(d);
+      })
       .catch(function () {});
   }
 
