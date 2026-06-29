@@ -494,6 +494,7 @@ def _kitchen_checkout(request, up, business, is_owner):
 
     receipt_url = None
     receipt_number = None
+    rcpt = None
     if payment_method in ('cash', 'mpesa', 'credit'):
         try:
             kitchen_meta = {}
@@ -522,6 +523,26 @@ def _kitchen_checkout(request, up, business, is_owner):
             receipt_number = rcpt.receipt_number
         except Exception:
             logger.exception('Kitchen Receipt.issue failed business=%s', business.id)
+
+    # SMS receipt to the customer who initiated a kitchen STK push
+    if payment_method == 'mpesa' and stk_payment_id_raw.isdigit() and rcpt:
+        try:
+            from core.models import Payment as _PmtSms
+            from .notifications import normalize_ke_phone, send_sms_notification
+            _pmt_for_sms = _PmtSms.objects.filter(
+                id=int(stk_payment_id_raw), business=business
+            ).first()
+            if _pmt_for_sms and _pmt_for_sms.phone:
+                _normalized = normalize_ke_phone(_pmt_for_sms.phone)
+                if _normalized:
+                    _sms_url = f"https://www.dukamwecheche.co.ke/r/{rcpt.token}/"
+                    _sms_msg = (
+                        f"Asante! KES {int(float(total))} kwa "
+                        f"{business.name}. Risiti: {_sms_url}"
+                    )
+                    send_sms_notification(_sms_msg, _normalized)
+        except Exception:
+            logger.exception('Kitchen STK receipt SMS failed business=%s', business.id)
 
     # SMS to customer on direct credit sale (same pattern as Quick Sell)
     if payment_method == 'credit' and credit_phone and receipt_url:

@@ -2176,11 +2176,19 @@
       _shiftBlockMsg  = null;
       if (!_isOwner) _myShiftOpen = false;  // owners bypass shift gate always
       panel.style.display = 'block';
+      var missedHtml = '';
+      if (d.missed_tasks && d.missed_tasks.length) {
+        missedHtml = '<div style="margin-top:.6rem;padding:.6rem .8rem;background:rgba(192,57,90,.13);border:1px solid rgba(192,57,90,.4);border-radius:8px;">' +
+          '<div style="color:#c0395a;font-weight:600;font-size:.82rem;margin-bottom:.35rem;">⚠️ Shift iliyofungwa kiotomatiki — kazi hizi hazikufanywa:</div>' +
+          d.missed_tasks.map(function(t){ return '<div style="color:#e07090;font-size:.8rem;padding-left:.5rem;">• ' + t + '</div>'; }).join('') +
+          '<div style="color:#b0b0b0;font-size:.76rem;margin-top:.35rem;">Tafadhali fanya hizi mapema iwezekanavyo kabla ya kuanza shift mpya.</div>' +
+          '</div>';
+      }
       panel.innerHTML =
         '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem;">' +
         '<span style="color:#888; font-size:.83rem;">Hakuna shift iliyofunguliwa</span>' +
         '<button class="shift-open-btn" onclick="window.openShiftModal()">+ Fungua Shift</button>' +
-        '</div>';
+        '</div>' + missedHtml;
       _updateBoardShiftState();
       return;
     }

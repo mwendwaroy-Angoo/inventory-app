@@ -1859,6 +1859,10 @@ class Shift(models.Model):
         related_name='shifts_confirmed'
     )
     notes         = models.TextField(blank=True)
+    auto_closed   = models.BooleanField(
+        default=False,
+        help_text='True when the shift was closed automatically by the business-hours sweep.',
+    )
 
     class Meta:
         ordering = ['-started_at']

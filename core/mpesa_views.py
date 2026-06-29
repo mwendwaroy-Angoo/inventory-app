@@ -32,6 +32,31 @@ logger = logging.getLogger(__name__)
 
 # ── HELPERS ──────────────────────────────────────────────────────────────────
 
+_SITE_URL = 'https://www.dukamwecheche.co.ke'
+
+
+def _sms_receipt_to_payer(payment, receipt):
+    """Send an SMS receipt link to the customer who initiated the STK push.
+
+    Uses payment.phone (the number M-Pesa prompted). Fires silently — any
+    failure is swallowed so it never blocks the settlement path."""
+    phone = (payment.phone or '').strip()
+    if not phone or not receipt:
+        return
+    try:
+        from .notifications import normalize_ke_phone, send_sms_notification
+        normalized = normalize_ke_phone(phone)
+        if normalized:
+            receipt_url = f"{_SITE_URL}/r/{receipt.token}/"
+            sms = (
+                f"Asante! KES {int(float(payment.amount))} kwa "
+                f"{payment.business.name}. Risiti: {receipt_url}"
+            )
+            send_sms_notification(sms, normalized)
+    except Exception:
+        pass
+
+
 def _bridge_stk_to_prompt(payment):
     """Create a PendingTransactionPrompt for a completed STK Push that has no
     linked order or bar tab — i.e. a manual 'Request Payment' from the dashboard.
@@ -108,12 +133,13 @@ def _settle_tab_from_payment(payment):
                 {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
                 for e in all_entries
             ]
-            _Receipt.issue(
+            tab_rcpt = _Receipt.issue(
                 business=tab.business,
                 lines=lines,
                 payment_method='mpesa',
                 customer_name=tab.customer_name,
             )
+            _sms_receipt_to_payer(payment, tab_rcpt)
             logger.info("Tab #%s settled via STK receipt=%s", tab.id, payment.mpesa_receipt)
     except Exception as exc:
         logger.warning("Tab STK settlement failed for tab_id=%s: %s", getattr(payment, 'bar_tab_id', '?'), exc)
@@ -195,7 +221,7 @@ def _settle_kitchen_order_from_payment(payment):
                     logger.warning("Kitchen STK: item %s not found in kitchen store", item_id)
 
         if receipt_lines:
-            Receipt.issue(
+            kb_rcpt = Receipt.issue(
                 business=business,
                 lines=receipt_lines,
                 payment_method='mpesa',
@@ -204,6 +230,7 @@ def _settle_kitchen_order_from_payment(payment):
                 customer_phone='',
                 source='kitchen',
             )
+            _sms_receipt_to_payer(payment, kb_rcpt)
             logger.info("Kitchen STK settled from callback: payment_id=%s lines=%d total=%s",
                         payment.id, len(receipt_lines), total)
 

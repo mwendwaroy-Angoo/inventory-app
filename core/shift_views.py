@@ -181,10 +181,11 @@ def _auto_close_expired_shifts(business):
                 f'[Auto-closed at {closing_time.strftime("%H:%M")} — '
                 f'business hours ended. Staff may have forgotten.]'
             )
-            shift.status  = 'CLOSED'
-            shift.ended_at = scheduled_close
-            shift.notes    = (shift.notes + '\n' + note).strip() if shift.notes else note
-            shift.save(update_fields=['status', 'ended_at', 'notes'])
+            shift.status     = 'CLOSED'
+            shift.ended_at   = scheduled_close
+            shift.auto_closed = True
+            shift.notes      = (shift.notes + '\n' + note).strip() if shift.notes else note
+            shift.save(update_fields=['status', 'ended_at', 'auto_closed', 'notes'])
             auto_closed.append({
                 'shift_id':        shift.id,
                 'staff_name':      staff_name,
@@ -214,6 +215,37 @@ def _auto_close_expired_shifts(business):
             pass
 
     return auto_closed
+
+
+def _missed_tasks_for_shift(shift, business):
+    """Return a list of human-readable task descriptions that were skipped on
+    an auto-closed shift. Empty list means nothing was missed.
+
+    Checks:
+      1. Stock take  — ShiftStockCount rows linked to the shift
+      2. Barrel readings (SHIFT_CLOSE) — keg businesses with TAPPED barrels only
+    """
+    from .models import ShiftStockCount, KegWeightReading, KegBarrel
+    missed = []
+
+    if not ShiftStockCount.objects.filter(shift=shift).exists():
+        missed.append('Hesabu ya bidhaa (stock take) haikufanywa')
+
+    has_keg = getattr(business, 'has_keg', False)
+    if has_keg:
+        tapped = KegBarrel.objects.filter(business=business, status='TAPPED').exists()
+        if tapped:
+            end = shift.ended_at or timezone.now()
+            had_reading = KegWeightReading.objects.filter(
+                barrel__business=business,
+                reading_type='SHIFT_CLOSE',
+                recorded_at__gte=shift.started_at,
+                recorded_at__lte=end,
+            ).exists()
+            if not had_reading:
+                missed.append('Uzito wa pipa (barrel scale reading) haukupimwa')
+
+    return missed
 
 
 # ── Active shift API (for bar board polling) ──────────────────────────────────
@@ -287,12 +319,24 @@ def active_shift_api(request):
             staff=request.user,
         ).order_by('-ended_at').first()
         last_closing = float(last.closing_cash_counted) if last else None
+
+        # Missed-tasks reminder: check the most recent CLOSED auto-closed shift
+        # for this staff member. Remind until the shift is CONFIRMED.
+        prev_auto = Shift.objects.filter(
+            business=up.business,
+            staff=request.user,
+            status='CLOSED',
+            auto_closed=True,
+        ).order_by('-ended_at').first()
+        missed_tasks = _missed_tasks_for_shift(prev_auto, up.business) if prev_auto else []
+
         return JsonResponse({
             'shift': None,
             'can_open': True,
             'last_closing': last_closing,
             'all_shifts': all_shifts_data,
             'auto_closed': len(auto_closed),
+            'missed_tasks': missed_tasks,
         })
 
     rec = _reconcile(my_shift)
