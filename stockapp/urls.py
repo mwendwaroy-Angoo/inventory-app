@@ -218,6 +218,8 @@ from core.performer_views import (
     session_list,
     session_checkin_public,
     session_feedback_public,
+    session_live_display,
+    session_announce,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -395,8 +397,10 @@ urlpatterns = [
     path("bar/session/<int:session_id>/update/", session_update,       name="session_update"),
     path("bar/session/<int:session_id>/pay/",    session_pay,          name="session_pay"),
     path("bar/session/<int:session_id>/checkin-status/", session_checkin_poll, name="session_checkin_poll"),
-    path("p/<uuid:token>/checkin/",             session_checkin_public,  name="session_checkin_public"),
-    path("p/<uuid:token>/",                     session_feedback_public, name="session_feedback_public"),
+    path("bar/session/<int:session_id>/announce/", session_announce,      name="session_announce"),
+    path("p/<uuid:token>/checkin/",              session_checkin_public,  name="session_checkin_public"),
+    path("p/<uuid:token>/display/",              session_live_display,    name="session_live_display"),
+    path("p/<uuid:token>/",                      session_feedback_public, name="session_feedback_public"),
     # ── Revenue Targets ───────────────────────────────────────────────────────
     path("analytics/targets/", revenue_target_settings, name="revenue_target_settings"),
     path("analytics/targets/progress/", revenue_target_progress, name="revenue_target_progress"),

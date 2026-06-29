@@ -4,7 +4,7 @@ DJ / MC Performer Session Management.
 Who can do what:
   - Owner: full access — create performers, start/end/pay sessions, view history
   - Counter staff with open shift: start/end sessions, approve performer check-in
-  - Public (no login): performer check-in URL, customer feedback URL
+  - Public (no login): performer check-in URL, customer feedback URL, live display
 """
 import hashlib
 import json
@@ -15,12 +15,19 @@ from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_POST
 
 from .models import (
-    BusinessExpense, Performer, PerformerFeedback, PerformerSession, Shift,
+    BusinessExpense,
+    Customer,
+    Notification,
+    Performer,
+    PerformerFeedback,
+    PerformerSession,
+    RecurringExpense,
+    Shift,
 )
+from .notifications import normalize_ke_phone, send_sms_notification
 
 logger = logging.getLogger(__name__)
 
@@ -53,19 +60,16 @@ def _fire_session_started_notification(session, started_by):
     business = session.business
     performer_name = session.performer.name if session.performer else 'Unknown'
     fee = session.agreed_fee
+    staff_label = started_by.get_full_name() or started_by.username
     msg = (
         f"\U0001f3a4 DJ/MC session started — {performer_name}, "
-        f"KES {fee:,.0f}. Staff: {started_by.get_full_name() or started_by.username}."
+        f"KES {fee:,.0f}. Staff: {staff_label}."
     )
-    # In-app notification to all owners
-    from .models import Notification
     for up in business.users.filter(role='owner').select_related('user'):
         Notification.objects.create(business=business, user=up.user, message=msg)
 
-    # SMS if enabled
     if business.event_sms_enabled and business.phone:
         try:
-            from .notifications import send_sms_notification
             send_sms_notification(msg, business.phone)
         except Exception:
             logger.exception("DJ session start SMS failed (business=%s)", business.id)
@@ -79,13 +83,11 @@ def _fire_unverified_alert(session):
         f"⚠️ DJ/MC session ended but {performer_name} never confirmed presence. "
         f"Session date: {session.date}, KES {session.agreed_fee:,.0f}."
     )
-    from .models import Notification
     for up in business.users.filter(role='owner').select_related('user'):
         Notification.objects.create(business=business, user=up.user, message=msg)
 
     if business.event_sms_enabled and business.phone:
         try:
-            from .notifications import send_sms_notification
             send_sms_notification(msg, business.phone)
         except Exception:
             logger.exception("DJ unverified alert SMS failed (business=%s)", business.id)
@@ -106,8 +108,8 @@ def performer_list(request):
         p.stat_customer = p.avg_customer_rating()
     return render(request, 'core/performer_list.html', {
         'performers': performers_qs,
-        'business': business,
-        'is_owner': True,
+        'business':   business,
+        'is_owner':   True,
     })
 
 
@@ -128,12 +130,12 @@ def performer_form(request, performer_id=None):
         phone         = request.POST.get('phone', '').strip()
         genre         = request.POST.get('genre', '').strip()
         contract_type = request.POST.get('contract_type', 'ONE_OFF')
+        notes         = request.POST.get('notes', '').strip()
+        is_active     = request.POST.get('is_active') == '1'
         try:
-            standard_rate = Decimal(str(request.POST.get('standard_rate', '0') or '0'))
+            standard_rate = Decimal(str(request.POST.get('standard_rate') or '0'))
         except Exception:
             standard_rate = Decimal('0')
-        notes     = request.POST.get('notes', '').strip()
-        is_active = request.POST.get('is_active') == '1'
 
         if not name:
             return render(request, 'core/performer_form.html', {
@@ -142,31 +144,23 @@ def performer_form(request, performer_id=None):
             })
 
         if performer:
-            performer.name          = name
+            performer.name           = name
             performer.performer_type = ptype
-            performer.phone         = phone
-            performer.genre         = genre
-            performer.contract_type = contract_type
-            performer.standard_rate = standard_rate
-            performer.notes         = notes
-            performer.is_active     = is_active
+            performer.phone          = phone
+            performer.genre          = genre
+            performer.contract_type  = contract_type
+            performer.standard_rate  = standard_rate
+            performer.notes          = notes
+            performer.is_active      = is_active
             performer.save()
         else:
             performer = Performer.objects.create(
-                business=business,
-                name=name,
-                performer_type=ptype,
-                phone=phone,
-                genre=genre,
-                contract_type=contract_type,
-                standard_rate=standard_rate,
-                notes=notes,
-                is_active=True,
+                business=business, name=name, performer_type=ptype,
+                phone=phone, genre=genre, contract_type=contract_type,
+                standard_rate=standard_rate, notes=notes, is_active=True,
             )
 
-        # Offer to create RecurringExpense for retainer
         if contract_type == 'RETAINER' and request.POST.get('create_recurring') == '1':
-            from .models import RecurringExpense
             already = RecurringExpense.objects.filter(
                 business=business,
                 description__icontains=performer.name,
@@ -188,8 +182,8 @@ def performer_form(request, performer_id=None):
 
     return render(request, 'core/performer_form.html', {
         'performer': performer,
-        'business': business,
-        'is_owner': True,
+        'business':  business,
+        'is_owner':  True,
     })
 
 
@@ -197,12 +191,13 @@ def performer_form(request, performer_id=None):
 
 @login_required
 def session_today_api(request):
-    """GET — return today's sessions for the bar board modal."""
+    """GET — return today's sessions + performer roster for the bar board modal."""
     up, err = _staff_or_owner(request)
     if err:
         return err
     business = up.business
     today = timezone.localdate()
+
     sessions = (
         PerformerSession.objects
         .filter(business=business, date=today)
@@ -215,32 +210,48 @@ def session_today_api(request):
         .order_by('name')
         .values('id', 'name', 'performer_type', 'standard_rate')
     )
+
     result = []
     for s in sessions:
+        checkin_at = (
+            s.performer_checkin_at.strftime('%H:%M')
+            if s.performer_checkin_at else None
+        )
         result.append({
-            'id': s.id,
-            'performer_name': s.performer.name if s.performer else 'Unknown',
-            'performer_type': s.performer.get_performer_type_display() if s.performer else '',
-            'status': s.status,
-            'started_at': s.started_at.strftime('%H:%M') if s.started_at else None,
-            'ended_at':   s.ended_at.strftime('%H:%M')   if s.ended_at   else None,
-            'agreed_fee': float(s.agreed_fee),
-            'payment_status': s.payment_status,
-            'staff_rating':   s.staff_rating,
+            'id':               s.id,
+            'performer_name':   s.performer.name if s.performer else 'Unknown',
+            'performer_type':   (
+                s.performer.get_performer_type_display() if s.performer else ''
+            ),
+            'status':           s.status,
+            'started_at':       s.started_at.strftime('%H:%M') if s.started_at else None,
+            'ended_at':         s.ended_at.strftime('%H:%M')   if s.ended_at   else None,
+            'agreed_fee':       float(s.agreed_fee),
+            'payment_status':   s.payment_status,
+            'staff_rating':     s.staff_rating,
             'performer_checked_in':  s.performer_checked_in,
-            'performer_checkin_at':  s.performer_checkin_at.strftime('%H:%M') if s.performer_checkin_at else None,
-            'checkin_short_code': s.checkin_short_code,
-            'checkin_token': str(s.checkin_token),
-            'feedback_token': str(s.feedback_token),
-            'avg_customer_rating': s.avg_customer_rating,
+            'performer_checkin_at':  checkin_at,
+            'checkin_short_code':    s.checkin_short_code,
+            'checkin_token':         str(s.checkin_token),
+            'feedback_token':        str(s.feedback_token),
+            'avg_customer_rating':   s.avg_customer_rating,
             'total_customer_ratings': s.total_customer_ratings,
-            'duration_hours': s.duration_hours,
+            'duration_hours':        s.duration_hours,
         })
+
+    customer_sms_count = (
+        Customer.objects
+        .filter(business=business)
+        .exclude(phone='').exclude(phone__isnull=True)
+        .count()
+    )
+
     return JsonResponse({
-        'ok': True,
-        'sessions': result,
-        'performers': performers,
-        'is_owner': getattr(up, 'is_owner', False),
+        'ok':                True,
+        'sessions':          result,
+        'performers':        performers,
+        'is_owner':          getattr(up, 'is_owner', False),
+        'customer_sms_count': customer_sms_count,
     })
 
 
@@ -257,7 +268,9 @@ def session_start(request):
     if not is_owner:
         from .shift_views import get_active_staff_shift
         if get_active_staff_shift(up, business) is False:
-            return JsonResponse({'ok': False, 'error': 'Fungua shift kwanza.'}, status=403)
+            return JsonResponse(
+                {'ok': False, 'error': 'Fungua shift kwanza.'}, status=403
+            )
 
     try:
         data = json.loads(request.body)
@@ -266,27 +279,29 @@ def session_start(request):
 
     performer_id = data.get('performer_id')
     try:
-        agreed_fee = Decimal(str(data.get('agreed_fee', '0') or '0'))
+        agreed_fee = Decimal(str(data.get('agreed_fee') or '0'))
     except Exception:
         agreed_fee = Decimal('0')
     notes = (data.get('notes') or '').strip()
 
     performer = None
     if performer_id:
-        performer = Performer.objects.filter(id=performer_id, business=business, is_active=True).first()
+        performer = Performer.objects.filter(
+            id=performer_id, business=business, is_active=True
+        ).first()
 
-    now = timezone.now()
+    now   = timezone.now()
     today = timezone.localdate()
 
-    # Determine status — approval gate
     threshold = business.performer_approval_threshold or 0
-    if threshold > 0 and agreed_fee >= threshold and not is_owner:
+    if 0 < threshold <= agreed_fee and not is_owner:
         status = PerformerSession.STATUS_PENDING_APPROVAL
     else:
         status = PerformerSession.STATUS_ACTIVE
 
-    # Link to current open shift if one exists
-    open_shift = Shift.objects.filter(business=business, status='OPEN', staff=request.user).first()
+    open_shift = Shift.objects.filter(
+        business=business, status='OPEN', staff=request.user
+    ).first()
     if not open_shift:
         open_shift = Shift.objects.filter(business=business, status='OPEN').first()
 
@@ -306,11 +321,12 @@ def session_start(request):
         _fire_session_started_notification(session, request.user)
 
     return JsonResponse({
-        'ok': True,
-        'session_id': session.id,
-        'status': status,
+        'ok':               True,
+        'session_id':       session.id,
+        'status':           status,
         'checkin_short_code': session.checkin_short_code,
-        'checkin_token': str(session.checkin_token),
+        'checkin_token':    str(session.checkin_token),
+        'feedback_token':   str(session.feedback_token),
         'pending_approval': status == PerformerSession.STATUS_PENDING_APPROVAL,
     })
 
@@ -318,13 +334,12 @@ def session_start(request):
 @login_required
 @require_POST
 def session_update(request, session_id):
-    """End session + record staff rating."""
+    """End session + record staff rating, or approve/cancel."""
     up, err = _staff_or_owner(request)
     if err:
         return err
     business = up.business
-
-    session = get_object_or_404(PerformerSession, id=session_id, business=business)
+    session  = get_object_or_404(PerformerSession, id=session_id, business=business)
 
     try:
         data = json.loads(request.body)
@@ -336,7 +351,7 @@ def session_update(request, session_id):
     if action == 'approve':
         if not getattr(up, 'is_owner', False):
             return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
-        session.status = PerformerSession.STATUS_ACTIVE
+        session.status     = PerformerSession.STATUS_ACTIVE
         session.started_at = timezone.now()
         session.save(update_fields=['status', 'started_at'])
         _fire_session_started_notification(session, request.user)
@@ -348,17 +363,18 @@ def session_update(request, session_id):
         return JsonResponse({'ok': True})
 
     # Default: end session
-    staff_rating = data.get('staff_rating')
-    staff_notes  = (data.get('staff_notes') or '').strip()
+    staff_notes = (data.get('staff_notes') or '').strip()
+    staff_rating = None
     try:
-        staff_rating = int(staff_rating) if staff_rating else None
-        if staff_rating and not (1 <= staff_rating <= 5):
-            staff_rating = None
+        raw = data.get('staff_rating')
+        if raw:
+            val = int(raw)
+            staff_rating = val if 1 <= val <= 5 else None
     except (ValueError, TypeError):
-        staff_rating = None
+        pass
 
-    session.status      = PerformerSession.STATUS_COMPLETED
-    session.ended_at    = timezone.now()
+    session.status       = PerformerSession.STATUS_COMPLETED
+    session.ended_at     = timezone.now()
     session.staff_rating = staff_rating
     session.staff_notes  = staff_notes
     session.save(update_fields=['status', 'ended_at', 'staff_rating', 'staff_notes'])
@@ -367,8 +383,8 @@ def session_update(request, session_id):
         _fire_unverified_alert(session)
 
     return JsonResponse({
-        'ok': True,
-        'duration_hours': session.duration_hours,
+        'ok':                   True,
+        'duration_hours':       session.duration_hours,
         'performer_checked_in': session.performer_checked_in,
     })
 
@@ -381,8 +397,8 @@ def session_pay(request, session_id):
     if err:
         return err
     business = up.business
+    session  = get_object_or_404(PerformerSession, id=session_id, business=business)
 
-    session = get_object_or_404(PerformerSession, id=session_id, business=business)
     if session.payment_status == PerformerSession.PAYMENT_PAID:
         return JsonResponse({'ok': False, 'error': 'Already paid'}, status=400)
 
@@ -395,12 +411,12 @@ def session_pay(request, session_id):
     if payment_method not in ('cash', 'mpesa'):
         payment_method = 'cash'
 
-    now = timezone.now()
+    now            = timezone.now()
     performer_name = session.performer.name if session.performer else 'DJ/MC'
-    duration_label = f", {session.duration_hours}h" if session.duration_hours else ''
-    start_label = session.started_at.strftime('%H:%M') if session.started_at else ''
-    end_label   = session.ended_at.strftime('%H:%M')   if session.ended_at   else ''
-    time_label  = f" ({start_label}–{end_label}{duration_label})" if start_label else ''
+    dur_label      = f", {session.duration_hours}h" if session.duration_hours else ''
+    start_lbl      = session.started_at.strftime('%H:%M') if session.started_at else ''
+    end_lbl        = session.ended_at.strftime('%H:%M')   if session.ended_at   else ''
+    time_label     = f" ({start_lbl}–{end_lbl}{dur_label})" if start_lbl else ''
 
     expense = BusinessExpense.objects.create(
         business=business,
@@ -427,10 +443,14 @@ def session_checkin_poll(request, session_id):
     if err:
         return err
     session = get_object_or_404(PerformerSession, id=session_id, business=up.business)
+    checkin_at = (
+        session.performer_checkin_at.strftime('%H:%M')
+        if session.performer_checkin_at else None
+    )
     return JsonResponse({
-        'ok': True,
+        'ok':                   True,
         'performer_checked_in': session.performer_checked_in,
-        'performer_checkin_at': session.performer_checkin_at.strftime('%H:%M') if session.performer_checkin_at else None,
+        'performer_checkin_at': checkin_at,
     })
 
 
@@ -443,7 +463,6 @@ def session_list(request):
         return redirect('home')
     business = up.business
 
-    # Filters — template uses filter_from / filter_to / filter_performer
     filter_performer = request.GET.get('performer', '')
     filter_from      = request.GET.get('from', '')
     filter_to        = request.GET.get('to', '')
@@ -463,13 +482,13 @@ def session_list(request):
 
     performers = Performer.objects.filter(business=business).order_by('name')
     return render(request, 'core/session_list.html', {
-        'sessions':          qs[:200],
-        'performers':        performers,
-        'filter_performer':  filter_performer,
-        'filter_from':       filter_from,
-        'filter_to':         filter_to,
-        'business':          business,
-        'is_owner':          True,
+        'sessions':         qs[:200],
+        'performers':       performers,
+        'filter_performer': filter_performer,
+        'filter_from':      filter_from,
+        'filter_to':        filter_to,
+        'business':         business,
+        'is_owner':         True,
     })
 
 
@@ -477,8 +496,8 @@ def session_list(request):
 
 def session_checkin_public(request, token):
     """
-    Public page — no login. DJ/MC opens this URL from bar board QR and taps
-    "Ndio, niko hapa" to confirm their presence. Server-timestamped.
+    Public — no login. DJ/MC taps confirm on their phone.
+    Server-timestamped; staff cannot fake it.
     """
     session = get_object_or_404(PerformerSession, checkin_token=token)
 
@@ -490,7 +509,7 @@ def session_checkin_public(request, token):
         return JsonResponse({'ok': True})
 
     return render(request, 'core/performer_checkin_public.html', {
-        'session': session,
+        'session':           session,
         'already_checked_in': session.performer_checked_in,
     })
 
@@ -499,8 +518,8 @@ def session_checkin_public(request, token):
 
 def session_feedback_public(request, token):
     """
-    Public page — no login. Customers scan QR at table and submit 1–5 star rating.
-    Soft dedup: one submission per session+IP hash.
+    Public — no login. Customers scan QR and submit 1–5 star rating.
+    Soft dedup: one submission per session + IP hash.
     """
     session = get_object_or_404(PerformerSession, feedback_token=token)
 
@@ -509,8 +528,7 @@ def session_feedback_public(request, token):
         or request.META.get('REMOTE_ADDR', '')
     )
     ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip else ''
-
-    already_rated = (
+    already_rated = bool(
         ip_hash and
         PerformerFeedback.objects.filter(session=session, ip_hash=ip_hash).exists()
     )
@@ -523,15 +541,76 @@ def session_feedback_public(request, token):
         if 1 <= rating <= 5:
             comment = (request.POST.get('comment') or '').strip()[:200]
             PerformerFeedback.objects.create(
-                session=session,
-                rating=rating,
-                comment=comment,
-                ip_hash=ip_hash,
+                session=session, rating=rating, comment=comment, ip_hash=ip_hash,
             )
             return JsonResponse({'ok': True})
         return JsonResponse({'ok': False, 'error': 'Tathmini lazima iwe 1–5.'})
 
     return render(request, 'core/performer_feedback_public.html', {
-        'session': session,
+        'session':          session,
         'already_submitted': already_rated,
     })
+
+
+# ── Public: Live Display (TV / second monitor) ────────────────────────────────
+
+def session_live_display(request, token):
+    """
+    Public full-screen display page for a TV or secondary screen.
+    Shows performer name + large feedback QR so customers at tables can scan.
+    No login required — keyed off feedback_token (unguessable UUID).
+    Auto-refreshes every 30 s. ?print=1 triggers browser print on load.
+    """
+    session      = get_object_or_404(PerformerSession, feedback_token=token)
+    feedback_url = request.build_absolute_uri(f'/p/{token}/')
+    auto_print   = request.GET.get('print') == '1'
+    return render(request, 'core/session_live.html', {
+        'session':      session,
+        'feedback_url': feedback_url,
+        'auto_print':   auto_print,
+    })
+
+
+# ── Owner: SMS blast to registered customers ──────────────────────────────────
+
+@login_required
+@require_POST
+def session_announce(request, session_id):
+    """
+    One-shot SMS to all customers with a known phone, announcing the live session
+    and linking to the feedback page. Capped at 200 to control AT costs. Owner-only.
+    """
+    up, err = _owner_required(request)
+    if err:
+        return err
+    business = up.business
+    session  = get_object_or_404(PerformerSession, id=session_id, business=business)
+
+    if session.status != PerformerSession.STATUS_ACTIVE:
+        return JsonResponse({'ok': False, 'error': 'Sesheni haipo hai sasa hivi.'})
+
+    feedback_url   = request.build_absolute_uri(f'/p/{session.feedback_token}/')
+    performer_name = session.performer.name if session.performer else 'DJ/MC'
+    message = (
+        f"\U0001f3a4 Usiku wa leo: {performer_name} LIVE @ {business.name}! "
+        f"Piga kura yako hapa: {feedback_url}"
+    )
+
+    phones = list(
+        Customer.objects
+        .filter(business=business)
+        .exclude(phone='').exclude(phone__isnull=True)
+        .values_list('phone', flat=True)[:200]
+    )
+
+    sent = 0
+    for raw_phone in phones:
+        try:
+            phone = normalize_ke_phone(raw_phone)
+            if phone:
+                send_sms_notification(message, phone)
+                sent += 1
+        except Exception:
+            logger.exception("Announce SMS failed for phone %s", raw_phone)
+
+    return JsonResponse({'ok': True, 'sent': sent, 'total': len(phones)})

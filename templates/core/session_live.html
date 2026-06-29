@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>{{ session.performer.name|default:"DJ/MC" }} — Live @ {{ session.business.name }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;900&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #1a1a1a;
+  color: #f0ece4;
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.card {
+  background: #2a2a2a;
+  border: 1px solid rgba(201,168,76,.3);
+  border-radius: 24px;
+  padding: 2.5rem 2rem;
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+}
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  background: rgba(192,57,90,.15);
+  border: 1px solid rgba(192,57,90,.35);
+  border-radius: 999px;
+  padding: .25rem .9rem;
+  font-size: .78rem;
+  font-weight: 700;
+  color: #e87090;
+  letter-spacing: .06em;
+  margin-bottom: 1.25rem;
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e87090;
+  animation: pulse 1.4s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: .35; transform: scale(.75); }
+}
+
+.mic-icon   { font-size: 3rem; margin-bottom: .5rem; }
+.venue      { font-size: .82rem; color: #b0b0b0; margin-bottom: .25rem; }
+.performer  { font-family: 'Playfair Display', serif; font-size: 2.2rem; font-weight: 900; color: #f0ece4; line-height: 1.15; margin-bottom: .4rem; }
+.ptype      { color: #c9a84c; font-size: .88rem; font-weight: 600; margin-bottom: 1.75rem; }
+
+.qr-section { margin-bottom: 1.5rem; }
+.qr-box     { display: inline-block; background: #fff; border-radius: 16px; padding: 14px; margin-bottom: .75rem; }
+.qr-label   { font-size: 1.05rem; font-weight: 700; color: #f0ece4; margin-bottom: .2rem; }
+.qr-sub     { font-size: .8rem; color: #b0b0b0; }
+
+.stars-display {
+  display: flex;
+  justify-content: center;
+  gap: .3rem;
+  font-size: 1.3rem;
+  margin: 1rem 0 .3rem;
+  color: #c9a84c;
+}
+.rating-count { font-size: .78rem; color: #b0b0b0; }
+
+.footer { margin-top: 1.75rem; font-size: .72rem; color: #b0b0b0; }
+
+/* ── Print layout — table card ────────────────────────────────────────────── */
+@media print {
+  body {
+    background: #fff;
+    color: #111;
+    display: block;
+    padding: 0;
+  }
+  .card {
+    background: #fff;
+    border: 2px solid #c9a84c;
+    border-radius: 16px;
+    padding: 1.5rem;
+    max-width: 320px;
+    margin: 1rem auto;
+    page-break-inside: avoid;
+  }
+  .live-badge    { display: none; }
+  .mic-icon      { font-size: 2.2rem; }
+  .performer     { color: #111; font-size: 1.6rem; }
+  .venue, .ptype { color: #555; }
+  .qr-sub        { color: #555; }
+  .stars-display { color: #c9a84c; }
+  .rating-count  { color: #555; }
+  .footer        { color: #888; }
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <!-- Live badge (hidden on print) -->
+  <div class="live-badge">
+    <span class="live-dot"></span>
+    LIVE USIKU WA LEO
+  </div>
+
+  <div class="mic-icon">&#127908;</div>
+  <div class="venue">{{ session.business.name }}</div>
+  <div class="performer">{{ session.performer.name|default:"DJ / MC" }}</div>
+  <div class="ptype">
+    {% if session.performer %}{{ session.performer.get_performer_type_display }}{% endif %}
+    &nbsp;&#183;&nbsp;
+    {% if session.started_at %}Ilianza {{ session.started_at|time:"H:i" }}{% else %}Usiku wa leo{% endif %}
+  </div>
+
+  <!-- QR code for customer feedback -->
+  <div class="qr-section">
+    <div class="qr-label">Piga kura yako &#11088;</div>
+    <div class="qr-sub" style="margin-bottom:.75rem;">Scan QR hapa chini kutoa tathmini yako</div>
+    <div class="qr-box" id="qr-box"></div>
+    <div class="qr-sub" style="margin-top:.5rem; font-size:.7rem; word-break:break-all; color:#888;" id="qr-url"></div>
+  </div>
+
+  <!-- Live rating summary (auto-refreshed by meta tag) -->
+  {% if session.total_customer_ratings %}
+  <div>
+    <div class="stars-display">
+      {% with avg=session.avg_customer_rating %}
+      {% for i in "12345" %}
+        {% if forloop.counter <= avg %}<span>&#9733;</span>{% else %}<span style="color:#444;">&#9733;</span>{% endif %}
+      {% endfor %}
+      {% endwith %}
+    </div>
+    <div class="rating-count">
+      {{ session.avg_customer_rating|floatformat:1 }} / 5
+      &nbsp;&#183;&nbsp; {{ session.total_customer_ratings }} tathmini
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="footer">
+    Powered by Duka Mwecheche &nbsp;&#183;&nbsp;
+    Scan QR kwa simu yako
+  </div>
+</div>
+
+<!-- qrcode.js from CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function () {
+  var url = "{{ feedback_url|escapejs }}";
+  document.getElementById('qr-url').textContent = url;
+  try {
+    new QRCode(document.getElementById('qr-box'), {
+      text:          url,
+      width:         200,
+      height:        200,
+      colorDark:     '#000000',
+      colorLight:    '#ffffff',
+      correctLevel:  QRCode.CorrectLevel.H,
+    });
+  } catch (e) {
+    document.getElementById('qr-box').innerHTML =
+      '<div style="padding:1rem; font-size:.75rem; color:#c9a84c;">' + url + '</div>';
+  }
+
+  {% if auto_print %}
+  window.addEventListener('load', function () {
+    setTimeout(function () { window.print(); }, 600);
+  });
+  {% endif %}
+})();
+</script>
+</body>
+</html>

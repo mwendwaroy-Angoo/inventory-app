@@ -3980,7 +3980,7 @@ window.barDeclineMerge = function() {
   var CSRF      = (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '';
   var IS_OWNER  = {{ is_owner|yesno:"true,false" }};
 
-  var _state = { sessions: [], performers: [], loaded: false };
+  var _state = { sessions: [], performers: [], loaded: false, customer_sms_count: 0 };
 
   window.openDjMcModal = function () {
     backdrop.style.display = 'flex';
@@ -3998,8 +3998,9 @@ window.barDeclineMerge = function() {
     fetch('/bar/session/today/')
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        _state.sessions   = d.sessions   || [];
-        _state.performers = d.performers || [];
+        _state.sessions          = d.sessions   || [];
+        _state.performers        = d.performers || [];
+        _state.customer_sms_count = d.customer_sms_count || 0;
         _state.loaded = true;
         _render();
         _updateDot();
@@ -4020,6 +4021,31 @@ window.barDeclineMerge = function() {
 
   function _showStatus(el, msg, color) {
     el.textContent = msg; el.style.color = color; el.style.display = 'block';
+  }
+
+  /* ─── distribution section: share feedback link with customers ─── */
+  function _distribSection(s) {
+    var fbUrl   = location.origin + '/p/' + s.feedback_token + '/';
+    var dispUrl = location.origin + '/p/' + s.feedback_token + '/display/';
+    var prtUrl  = location.origin + '/p/' + s.feedback_token + '/display/?print=1';
+    var waText  = encodeURIComponent('🎤 Tathmini DJ/MC usiku wa leo: ' + fbUrl);
+    var h = '<div style="margin-top:.65rem;border-top:1px solid #2e2e2e;padding-top:.6rem;">';
+    h += '<div style="font-size:.72rem;color:#b0b0b0;font-weight:600;margin-bottom:.4rem;">Sambaza Kwa Wateja</div>';
+    h += '<div id="feedback-qr-share-' + s.id + '" style="display:inline-block;background:#fff;padding:5px;border-radius:6px;margin-bottom:.5rem;"></div>';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem;">';
+    h += '<a href="https://wa.me/?text=' + waText + '" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;gap:.3rem;padding:.4rem;background:rgba(37,211,102,.1);border:1px solid rgba(37,211,102,.28);border-radius:7px;color:#4cda6f;font-size:.75rem;font-weight:600;text-decoration:none;">&#128172; WhatsApp</a>';
+    h += '<a href="' + dispUrl + '" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;gap:.3rem;padding:.4rem;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.22);border-radius:7px;color:#c9a84c;font-size:.75rem;font-weight:600;text-decoration:none;">&#128250; Live Display</a>';
+    h += '<a href="' + prtUrl + '" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;gap:.3rem;padding:.4rem;background:rgba(255,255,255,.04);border:1px solid #333;border-radius:7px;color:#b0b0b0;font-size:.75rem;font-weight:600;text-decoration:none;">&#128438; Print Card</a>';
+    if (IS_OWNER) {
+      var cnt = _state.customer_sms_count || 0;
+      if (cnt > 0) {
+        h += '<button id="sms-announce-' + s.id + '" onclick="window._djAnnounce(' + s.id + ')" style="display:flex;align-items:center;justify-content:center;padding:.4rem;background:rgba(33,150,243,.1);border:1px solid rgba(33,150,243,.28);border-radius:7px;color:#64b5f6;font-size:.75rem;font-weight:600;cursor:pointer;">&#128241; SMS ' + cnt + ' Wateja</button>';
+      } else {
+        h += '<div style="padding:.4rem;font-size:.7rem;color:#555;border:1px solid #2a2a2a;border-radius:7px;text-align:center;">Hakuna wateja</div>';
+      }
+    }
+    h += '</div></div>';
+    return h;
   }
 
   function _render() {
@@ -4062,6 +4088,7 @@ window.barDeclineMerge = function() {
         html += '<input type="text" id="notes-' + s.id + '" placeholder="Maelezo (optional)" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.82rem;margin-bottom:.5rem;">';
         html += '<button onclick="window._djEndSession(' + s.id + ')" style="width:100%;padding:.5rem;background:#c0395a;border:none;border-radius:8px;color:#fff;font-weight:700;font-size:.88rem;cursor:pointer;">Maliza Sesheni</button>';
         html += '</div>';
+        html += _distribSection(s);
       }
 
       if (s.status === 'COMPLETED') {
@@ -4072,6 +4099,7 @@ window.barDeclineMerge = function() {
         html += '</div>';
         var ratingInfo = s.avg_customer_rating ? '&#11088; ' + s.avg_customer_rating + ' (' + s.total_customer_ratings + ' maoni)' : 'Bado hakuna maoni';
         html += '<div style="font-size:.75rem;color:#b0b0b0;margin-bottom:.5rem;">' + ratingInfo + '</div>';
+        html += _distribSection(s);
         if (IS_OWNER && s.payment_status === 'PENDING') {
           html += '<div style="display:flex;gap:.5rem;">';
           html += '<button onclick="window._djPaySession(' + s.id + ',\'cash\')" style="flex:1;padding:.45rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.3);border-radius:8px;color:#81c784;font-size:.82rem;cursor:pointer;">&#128181; Lipa Cash</button>';
@@ -4116,7 +4144,7 @@ window.barDeclineMerge = function() {
 
     body.innerHTML = html;
 
-    /* Generate check-in QRs */
+    /* Generate check-in QRs and feedback share QRs */
     sessions.forEach(function (s) {
       if (s.status === 'ACTIVE' && !s.performer_checked_in) {
         var el = document.getElementById('checkin-qr-' + s.id);
@@ -4129,6 +4157,11 @@ window.barDeclineMerge = function() {
         if (fel && window.QRCode) {
           new QRCode(fel, {text: location.origin + '/p/' + s.feedback_token + '/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
         }
+      }
+      /* Feedback share QR appears in both ACTIVE and COMPLETED distribution sections */
+      var shareEl = document.getElementById('feedback-qr-share-' + s.id);
+      if (shareEl && window.QRCode) {
+        new QRCode(shareEl, {text: location.origin + '/p/' + s.feedback_token + '/', width: 80, height: 80, colorDark: '#000', colorLight: '#fff'});
       }
     });
 
@@ -4213,6 +4246,32 @@ window.barDeclineMerge = function() {
   window._djPaySession = function (sessionId, method) {
     _post('/bar/session/' + sessionId + '/pay/', {payment_method: method}, function (d) {
       if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    });
+  };
+
+  window._djAnnounce = function (sessionId) {
+    var btn = document.getElementById('sms-announce-' + sessionId);
+    if (btn) { btn.disabled = true; btn.textContent = 'Inatuma...'; }
+    fetch('/bar/session/' + sessionId + '/announce/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF},
+      body: JSON.stringify({}),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        if (btn) {
+          btn.textContent = '✓ Imetumwa kwa ' + d.sent + ' wateja';
+          btn.style.color = '#4caf50';
+          btn.style.borderColor = 'rgba(76,175,80,.3)';
+        }
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = 'SMS Wateja'; }
+        alert(d.error || 'Hitilafu ya kutuma SMS.');
+      }
+    })
+    .catch(function () {
+      if (btn) { btn.disabled = false; btn.textContent = 'SMS Wateja'; }
     });
   };
 }());
