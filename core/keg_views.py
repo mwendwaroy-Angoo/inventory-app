@@ -386,7 +386,7 @@ def bar_board(request):
     try:
         non_keg_items = list(
             Item.objects
-            .filter(store__business=business, is_keg=False)
+            .filter(store__business=business, is_keg=False, store__is_kitchen=False)
             .order_by('description')
             .values('id', 'description', 'unit', 'selling_price')
         )

@@ -98,6 +98,7 @@ from core.kitchen_views import (
     kitchen_receive,
     kitchen_stats_api,
     kitchen_tabs_list,
+    kitchen_wastage,
     tab_check_api,
     toggle_kitchen,
 )
@@ -284,6 +285,7 @@ urlpatterns = [
     path("kitchen/tabs/",             kitchen_tabs_list,           name="kitchen_tabs_list"),
     path("kitchen/tab/check/",        tab_check_api,               name="tab_check_api"),
     path("kitchen/toggle/",           toggle_kitchen,              name="toggle_kitchen"),
+    path("kitchen/wastage/",          kitchen_wastage,             name="kitchen_wastage"),
     # ── Kitchen Batch (KF1) ──────────────────────────────────────────────────
     path("kitchen/batch/receive/",                kitchen_batch_receive,        name="kitchen_batch_receive"),
     path("kitchen/batch/<int:batch_id>/deplete/", deplete_kitchen_batch,        name="deplete_kitchen_batch"),

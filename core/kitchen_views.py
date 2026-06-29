@@ -70,6 +70,58 @@ def toggle_kitchen(request):
     return JsonResponse({'ok': True, 'has_kitchen': enable})
 
 
+# ── Kitchen Food Wastage ─────────────────────────────────────────────────────
+
+@login_required
+@require_POST
+def kitchen_wastage(request):
+    """Record food spoilage / drops as a Wastage transaction on a kitchen item."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({"ok": False, "error": "Auth required"}, status=403)
+
+    business = up.business
+    is_owner = bool(getattr(up, 'is_owner', False))
+
+    if not is_owner:
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    kitchen_store = _kitchen_store(business)
+    if not kitchen_store:
+        return JsonResponse({"ok": False, "error": "Kitchen not configured"}, status=400)
+
+    item = Item.objects.filter(
+        id=request.POST.get("item_id"),
+        store=kitchen_store,
+    ).first()
+    if not item:
+        return JsonResponse({"ok": False, "error": "Item not found"}, status=404)
+
+    try:
+        qty = Decimal(str(request.POST.get("qty", "1")))
+        if qty <= 0:
+            raise ValueError
+    except (ValueError, Exception):
+        return JsonResponse({"ok": False, "error": "Invalid quantity"}, status=400)
+
+    note = request.POST.get("note", "").strip()
+
+    Transaction.objects.create(
+        business=business,
+        item=item,
+        type="Wastage",
+        qty=-qty,
+        recipient=note or "Food wastage",
+        payment_method="cash",
+    )
+    return JsonResponse({"ok": True})
+
+
 # ── Kitchen Board (GET = render, POST = checkout) ─────────────────────────────
 
 @login_required
@@ -173,6 +225,13 @@ def kitchen_board(request):
                     'presets': presets,
                 })
 
+    # Flat list for the food wastage modal — all kitchen items, sorted by name.
+    wastage_items = sorted(
+        [{'id': i['id'], 'name': i['name'], 'unit': i.get('unit', '')}
+         for i in portion_items + batch_items + kitchen_batches],
+        key=lambda x: x['name'],
+    )
+
     # Build mix_group → sibling list for the receive modal (group sack receives)
     mix_siblings = {}
     for b in batch_items:
@@ -261,6 +320,7 @@ def kitchen_board(request):
         'has_my_shift': has_my_shift,
         'can_access_bar': can_access_bar,
         'can_receive_stock': can_receive_stock,
+        'wastage_items_json': json.dumps(wastage_items),
     })
 
 
