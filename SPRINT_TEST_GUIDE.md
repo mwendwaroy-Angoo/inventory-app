@@ -11,7 +11,7 @@ Run with:
 python manage.py test
 ```
 
-Expected: **84 tests, 0 failures** (72 original + 12 K5).
+Expected: **126 tests, 0 failures** (84 original + K3/K4/SG/K5/K6/DJ1 additions; pre-existing 301 trailing-slash failures in K2a–K6 tests are known and non-blocking).
 
 ### Full test list (`core/tests.py`)
 
@@ -631,3 +631,135 @@ python manage.py test         # 84 tests, 0 failures
 1. Log in as owner (no shift required).
 2. Record a debt payment directly.
 - ✅ Correct: payment goes through immediately.
+
+---
+
+## Sprint DJ1 — DJ / MC Performer Session Management
+
+### DJ1 core flow
+
+**DJ1-1: Add a performer**
+1. Log in as RoyMwendwa (owner) → Navbar → 🎤 DJ / MC → "Rekodi za Sesheni" → or go to `/bar/performers/` directly.
+2. Click "+ Ongeza Mwanamuziki".
+3. Fill: Name = "DJ Kamau", Type = DJ, Contract = One-Off, Rate = KES 3,000, Genre = Afrobeats.
+4. Save.
+- ✅ Correct: performer appears in the roster list with stat badges.
+- ❌ Bug if: 500 error or blank page.
+
+**DJ1-2: Start a session from the bar board**
+1. Bar Board → click "🎤 DJ/MC" button (header row).
+2. Modal opens → select "DJ Kamau" from dropdown → fee pre-fills to KES 3,000 → click "▶ Anza Sesheni".
+3. Modal should transition to State 1 (ACTIVE):
+   - Green "ACTIVE" badge visible.
+   - Check-in QR code rendered + short code below it.
+   - 5-star rating widget and "Maliza Sesheni" button.
+   - Distribution section: WhatsApp, Live Display, Print Card, SMS Wateja buttons.
+- ✅ Correct: session starts, DJ modal shows ACTIVE state.
+- ❌ Bug if: modal stays on the "Start Session" form.
+
+**DJ1-3: Performer self-check-in (anti-fraud)**
+1. From the modal, show the check-in QR to a second device (or copy the checkin URL).
+2. Open `/p/<checkin_token>/checkin/` on another device (no login needed).
+3. See "Confirm you are performing at [Bar Name]" page → tap "Ndio, niko hapa".
+4. Wait up to 30 seconds (or reopen the modal).
+- ✅ Correct: check-in badge turns green "✓ Amethibitisha HH:MM".
+- ❌ Bug if: badge stays amber "Hajajibu bado" even after confirmation.
+
+**DJ1-4: Customer feedback via QR**
+1. From the modal's distribution section, scan the feedback QR code (or open `/p/<feedback_token>/`).
+2. Public feedback page loads — star rating + optional comment.
+3. Tap 4 stars → "Tuma Maoni".
+4. Reopen the DJ/MC modal → ACTIVE state.
+- ✅ Correct: the small feedback QR is visible in the distribution section; submitting on the public page works.
+
+**DJ1-5: End session + record staff rating**
+1. In the DJ/MC modal → give 5-star staff rating → click "Maliza Sesheni".
+2. Modal transitions to State 2 (COMPLETED):
+   - Duration shown (e.g. "1.2h").
+   - Existing feedback QR shown.
+   - Distribution section still visible.
+   - "Lipa Cash" / "Lipa M-Pesa" buttons visible (owner only).
+- ✅ Correct: session transitions to COMPLETED state.
+
+**DJ1-6: Mark session paid → expense created**
+1. In COMPLETED state → click "Lipa Cash".
+2. Go to `/analytics/expenses/report/` (Expense Intelligence).
+3. Look for 'Entertainment' category in the category breakdown chart.
+4. Also check `/bar/z-report/` for today → "🎤 Entertainment (KES)" tile should be visible.
+- ✅ Correct: expense appears in analytics AND Z-report.
+- ❌ Bug if: BusinessExpense row not created or doesn't appear in Expense Intelligence.
+
+**DJ1-7: Unverified session alert (fraud scenario)**
+1. Start a new session but do NOT let the performer check in.
+2. End the session immediately.
+3. Check owner's in-app notification bell.
+- ✅ Correct: notification "⚠️ DJ/MC session ended but [Name] never confirmed presence."
+- ❌ Bug if: no notification when performer_checked_in is False at session end.
+
+**DJ1-8: Session history page**
+1. Go to `/bar/sessions/`.
+2. Filter by performer "DJ Kamau".
+- ✅ Correct: the sessions just created appear with Date, Duration, Fee, Paid status, Staff Rating ⭐, Customer Avg ⭐.
+- Amber "Unverified" badge on any session where performer never checked in.
+
+---
+
+### DJ1 distribution channels
+
+**DJ1-D1: WhatsApp share**
+1. Open the DJ/MC modal on an ACTIVE or COMPLETED session.
+2. Click "💬 WhatsApp" in the distribution section.
+3. New tab opens with `wa.me/?text=<message>`.
+- ✅ Correct: WhatsApp opens (or prompts) with pre-filled text including the performer name and feedback URL.
+- On mobile: WhatsApp app opens directly with the message pre-filled.
+
+**DJ1-D2: Live Display (TV screen)**
+1. Click "📺 Live Display" in the distribution section.
+2. `/p/<feedback_token>/display/` opens in a new tab.
+- ✅ Correct: dark full-screen page shows:
+  - Animated "LIVE USIKU WA LEO" badge with pulsing dot.
+  - Performer name in large Playfair Display font.
+  - Business name and start time.
+  - Large QR code (feedback URL) with white background.
+  - Auto-refresh every 30 s (check page source for `<meta http-equiv="refresh" content="30">`).
+- ❌ Bug if: 404 or QR fails to render.
+
+**DJ1-D3: Print Card**
+1. Click "🖨 Print Card" in the distribution section.
+2. `/p/<feedback_token>/display/?print=1` opens in a new tab.
+- ✅ Correct: same page opens AND browser print dialog launches automatically.
+- Print preview should show a white card (not dark background) with gold border, QR code, and feedback URL text.
+
+**DJ1-D4: SMS blast to customers**
+*(Only visible to owner; only clickable when business has registered customers with phone numbers.)*
+1. As owner, ensure at least 1 customer exists with a phone number (Debt Tracker → any customer with a recorded phone).
+2. Click "📱 SMS N Wateja" in the distribution section of an ACTIVE session.
+- ✅ Correct: button shows "✓ Imetumwa kwa N wateja" in green after a moment.
+- ❌ Bug if: error toast or no button at all despite customers existing.
+3. Session must be ACTIVE (not COMPLETED) for SMS to send; clicking on a COMPLETED session should return an error if the view rejects non-active sessions.
+
+**DJ1-D5: SMS count updates on modal open**
+1. Add a new customer with a phone number to the Debt Tracker.
+2. Close and reopen the DJ/MC modal (this triggers `session_today_api` refresh).
+- ✅ Correct: SMS button label updates to reflect the new count (e.g. "SMS 5 Wateja" → "SMS 6 Wateja").
+
+---
+
+### DJ1 approval gate (optional — requires `performer_approval_threshold` set)
+
+**DJ1-AP1: High-fee session requires owner approval**
+1. In Django admin → Business → set `performer_approval_threshold = 2000`.
+2. Log in as a staff member (not owner) → open the DJ/MC modal → start a session with fee KES 3,000.
+3. Status should be "PENDING_APPROVAL" (amber badge), not ACTIVE.
+4. Log in as owner → approve from the modal.
+- ✅ Correct: session transitions to ACTIVE after owner approval.
+
+---
+
+## Final Checks (post-DJ1)
+
+```
+python manage.py check                  # 0 issues
+python manage.py makemigrations --check # No changes detected
+python manage.py test                   # 126 tests; pre-existing trailing-slash 301 failures in K2a–K6 are known
+```
