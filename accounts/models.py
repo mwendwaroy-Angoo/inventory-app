@@ -225,6 +225,17 @@ class Business(models.Model):
         help_text='Date owner last reviewed and confirmed recurring expenses.'
     )
 
+    # ── DJ / MC Performer Module ──────────────────────────────────────────────
+    event_sms_enabled = models.BooleanField(
+        default=False,
+        help_text='SMS the owner when a DJ/MC session is started by counter staff.'
+    )
+    performer_approval_threshold = models.PositiveIntegerField(
+        default=0,
+        help_text='Sessions with agreed_fee >= this value require owner approval before going ACTIVE. '
+                  '0 = disabled (all sessions start immediately).'
+    )
+
     def __str__(self):
         return self.name
 

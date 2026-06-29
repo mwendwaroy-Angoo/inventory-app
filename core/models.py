@@ -1,4 +1,5 @@
 import datetime
+import uuid
 from decimal import Decimal
 from django.db import models
 from django.utils import timezone
@@ -759,6 +760,7 @@ class BusinessExpense(models.Model):
         ('maintenance', _('Maintenance & Repairs')),
         ('supplies', _('Office Supplies')),
         ('tax', _('Taxes & Licenses')),
+        ('entertainment', _('Entertainment / DJ / MC Fees')),
         ('other', _('Other')),
     ]
 
@@ -2598,3 +2600,147 @@ class Receipt(models.Model):
                 meta=meta or {},
                 created_by=user,
             )
+
+
+# ── DJ / MC Performer Management ─────────────────────────────────────────────
+
+class Performer(models.Model):
+    TYPE_DJ   = 'DJ'
+    TYPE_MC   = 'MC'
+    TYPE_BOTH = 'BOTH'
+    TYPE_CHOICES = [
+        (TYPE_DJ,   _('DJ')),
+        (TYPE_MC,   _('MC')),
+        (TYPE_BOTH, _('DJ & MC')),
+    ]
+
+    CONTRACT_ONE_OFF  = 'ONE_OFF'
+    CONTRACT_RETAINER = 'RETAINER'
+    CONTRACT_CHOICES  = [
+        (CONTRACT_ONE_OFF,  _('Per session (one-off)')),
+        (CONTRACT_RETAINER, _('Monthly retainer')),
+    ]
+
+    business       = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='performers')
+    name           = models.CharField(max_length=100)
+    performer_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_DJ)
+    phone          = models.CharField(max_length=20, blank=True)
+    genre          = models.CharField(max_length=50, blank=True, help_text='e.g. Afrobeats, House, Gospel')
+    contract_type  = models.CharField(max_length=10, choices=CONTRACT_CHOICES, default=CONTRACT_ONE_OFF)
+    standard_rate  = models.DecimalField(max_digits=10, decimal_places=2, default=0,
+                                         help_text='Per-session fee (ONE_OFF) or monthly rate (RETAINER)')
+    is_active      = models.BooleanField(default=True)
+    notes          = models.TextField(blank=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.get_performer_type_display()})"
+
+    def session_count(self):
+        return self.sessions.exclude(status='CANCELLED').count()
+
+    def avg_staff_rating(self):
+        from django.db.models import Avg as _Avg
+        result = self.sessions.filter(
+            staff_rating__isnull=False
+        ).aggregate(avg=_Avg('staff_rating'))['avg']
+        return round(result, 1) if result else None
+
+    def avg_customer_rating(self):
+        from django.db.models import Avg as _Avg
+        result = PerformerFeedback.objects.filter(
+            session__performer=self
+        ).aggregate(avg=_Avg('rating'))['avg']
+        return round(result, 1) if result else None
+
+
+class PerformerSession(models.Model):
+    STATUS_PENDING_APPROVAL = 'PENDING_APPROVAL'
+    STATUS_ACTIVE           = 'ACTIVE'
+    STATUS_COMPLETED        = 'COMPLETED'
+    STATUS_CANCELLED        = 'CANCELLED'
+    STATUS_CHOICES = [
+        (STATUS_PENDING_APPROVAL, _('Pending owner approval')),
+        (STATUS_ACTIVE,           _('Active / in progress')),
+        (STATUS_COMPLETED,        _('Completed')),
+        (STATUS_CANCELLED,        _('Cancelled / no-show')),
+    ]
+
+    PAYMENT_PENDING = 'PENDING'
+    PAYMENT_PAID    = 'PAID'
+    PAYMENT_CHOICES = [
+        (PAYMENT_PENDING, _('Unpaid')),
+        (PAYMENT_PAID,    _('Paid')),
+    ]
+
+    business       = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='performer_sessions')
+    performer      = models.ForeignKey(Performer, on_delete=models.SET_NULL, null=True, related_name='sessions')
+    shift          = models.ForeignKey('Shift', on_delete=models.SET_NULL, null=True, blank=True, related_name='performer_sessions')
+    date           = models.DateField()
+    status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    started_at     = models.DateTimeField(null=True, blank=True)
+    ended_at       = models.DateTimeField(null=True, blank=True)
+    agreed_fee     = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    payment_status = models.CharField(max_length=10, choices=PAYMENT_CHOICES, default=PAYMENT_PENDING)
+    payment_method = models.CharField(max_length=10,
+                                      choices=[('cash', _('Cash')), ('mpesa', _('M-Pesa'))],
+                                      default='cash')
+    paid_at        = models.DateTimeField(null=True, blank=True)
+    expense        = models.ForeignKey('BusinessExpense', on_delete=models.SET_NULL, null=True, blank=True)
+    staff_rating   = models.IntegerField(null=True, blank=True,
+                                         choices=[(i, i) for i in range(1, 6)])
+    staff_notes    = models.TextField(blank=True)
+    # Performer self-check-in (no account needed — browser tap on checkin_token URL)
+    performer_checked_in = models.BooleanField(default=False)
+    performer_checkin_at = models.DateTimeField(null=True, blank=True)
+    checkin_token  = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    feedback_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    notes          = models.TextField(blank=True)
+    created_by     = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name='performer_sessions_created')
+    created_at     = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-started_at']
+
+    def __str__(self):
+        name = self.performer.name if self.performer else 'Unknown'
+        return f"{name} — {self.date}"
+
+    @property
+    def duration_hours(self):
+        if self.started_at and self.ended_at:
+            return round((self.ended_at - self.started_at).total_seconds() / 3600, 1)
+        return None
+
+    @property
+    def avg_customer_rating(self):
+        from django.db.models import Avg as _Avg
+        result = self.customer_feedback.aggregate(avg=_Avg('rating'))['avg']
+        return round(result, 1) if result else None
+
+    @property
+    def total_customer_ratings(self):
+        return self.customer_feedback.count()
+
+    @property
+    def checkin_short_code(self):
+        return str(self.checkin_token).replace('-', '')[:6].upper()
+
+
+class PerformerFeedback(models.Model):
+    """Customer rating submitted via QR code — no login required."""
+    session      = models.ForeignKey(PerformerSession, on_delete=models.CASCADE, related_name='customer_feedback')
+    rating       = models.IntegerField(choices=[(i, i) for i in range(1, 6)])
+    comment      = models.TextField(blank=True, max_length=200)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    ip_hash      = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        ordering = ['-submitted_at']
+
+    def __str__(self):
+        return f"⭐{self.rating} — {self.session}"

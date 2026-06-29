@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maoni ya DJ/MC — {{ session.performer.name|default:"Performance" }}</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1a1a1a; color: #f0ece4; font-family: 'DM Sans', sans-serif; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+.card { background: #2a2a2a; border: 1px solid rgba(201,168,76,.25); border-radius: 20px; padding: 2rem 1.75rem; max-width: 400px; width: 100%; text-align: center; }
+.logo { font-family: 'Playfair Display', serif; color: #c9a84c; font-size: 1rem; margin-bottom: 1.5rem; letter-spacing: .5px; }
+.icon { font-size: 2.5rem; margin-bottom: .6rem; }
+.headline { font-family: 'Playfair Display', serif; color: #f0ece4; font-size: 1.2rem; font-weight: 700; margin-bottom: .4rem; }
+.subline { color: #b0b0b0; font-size: .85rem; margin-bottom: 1.25rem; }
+.stars-row { display: flex; justify-content: center; gap: .5rem; margin-bottom: 1rem; }
+.star { font-size: 2.4rem; cursor: pointer; color: #444; transition: color .15s; user-select: none; }
+.star.active { color: #c9a84c; }
+textarea { width: 100%; background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 10px; color: #f0ece4; padding: .6rem .85rem; font-size: .85rem; font-family: inherit; resize: none; margin-bottom: .85rem; }
+textarea:focus { outline: none; border-color: #c9a84c; }
+.btn-submit { display: block; width: 100%; padding: .8rem; background: linear-gradient(135deg,#c9a84c,#e2c36e); color: #1a1a1a; border: none; border-radius: 12px; font-weight: 800; font-size: .95rem; cursor: pointer; }
+.btn-submit:disabled { opacity: .5; cursor: not-allowed; }
+.done-box { display: none; background: rgba(76,175,80,.08); border: 1px solid rgba(76,175,80,.25); border-radius: 12px; padding: 1.5rem 1rem; }
+.rating-prompt { font-size: .78rem; color: #b0b0b0; height: 1.1rem; margin-bottom: .5rem; }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="card">
+  <div class="logo">Duka Mwecheche &#127908;</div>
+
+  {% if already_submitted %}
+  <div class="done-box" style="display:block;">
+    <div style="font-size:2.2rem; margin-bottom:.5rem;">&#127928;</div>
+    <div style="font-weight:700; font-size:1.05rem; margin-bottom:.35rem;">Asante kwa maoni yako!</div>
+    <div style="font-size:.83rem; color:#b0b0b0;">Umeshakabidhi maoni kwa sehemu hii.</div>
+  </div>
+  {% else %}
+  <div id="form-view">
+    <div class="icon">&#127928;</div>
+    <div class="headline">Vipi kuhusu onyesho la usiku?</div>
+    <div class="subline">{{ session.performer.name|default:"DJ/MC" }} · {{ session.date }} · {{ session.business.name }}</div>
+
+    <div class="stars-row" id="stars">
+      <span class="star" data-v="1">&#9733;</span>
+      <span class="star" data-v="2">&#9733;</span>
+      <span class="star" data-v="3">&#9733;</span>
+      <span class="star" data-v="4">&#9733;</span>
+      <span class="star" data-v="5">&#9733;</span>
+    </div>
+    <div class="rating-prompt" id="rating-prompt">Gusa nyota kutoa tathmini yako</div>
+
+    <textarea id="comment-field" rows="3" maxlength="200" placeholder="Maoni yako (optional)..."></textarea>
+
+    <div id="submit-status" style="display:none; font-size:.8rem; margin-bottom:.5rem;"></div>
+    <button class="btn-submit" id="submit-btn" onclick="submitFeedback()">Tuma Maoni</button>
+  </div>
+  <div class="done-box" id="done-view">
+    <div style="font-size:2.2rem; margin-bottom:.5rem;">&#11088;</div>
+    <div style="font-weight:700; font-size:1.05rem; margin-bottom:.35rem;">Asante sana!</div>
+    <div style="font-size:.83rem; color:#b0b0b0;">Maoni yako yamesajiliwa. Karibu tena! &#127928;</div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+var _rating = 0;
+var labels = ['', 'Mbaya sana', 'Mbaya', 'Sawa', 'Nzuri', 'Bora kabisa!'];
+var stars = document.querySelectorAll('.star');
+stars.forEach(function (s) {
+  s.addEventListener('click', function () {
+    _rating = parseInt(this.getAttribute('data-v'));
+    stars.forEach(function (st, idx) {
+      st.classList.toggle('active', idx < _rating);
+    });
+    var prompt = document.getElementById('rating-prompt');
+    if (prompt) prompt.textContent = labels[_rating] || '';
+  });
+  s.addEventListener('mouseover', function () {
+    var v = parseInt(this.getAttribute('data-v'));
+    stars.forEach(function (st, idx) { st.classList.toggle('active', idx < v); });
+  });
+  s.addEventListener('mouseout', function () {
+    stars.forEach(function (st, idx) { st.classList.toggle('active', idx < _rating); });
+  });
+});
+
+function submitFeedback() {
+  if (!_rating) {
+    var status = document.getElementById('submit-status');
+    status.textContent = 'Tafadhali chagua nyota kwanza.';
+    status.style.color = '#e87090';
+    status.style.display = 'block';
+    return;
+  }
+  var btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Inatuma...';
+
+  var comment = document.getElementById('comment-field').value || '';
+  fetch(window.location.href, {
+    method: 'POST',
+    headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'rating=' + _rating + '&comment=' + encodeURIComponent(comment),
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (d) {
+    if (d.ok) {
+      document.getElementById('form-view').style.display = 'none';
+      document.getElementById('done-view').style.display = 'block';
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Tuma Maoni';
+      var status = document.getElementById('submit-status');
+      status.textContent = d.error || 'Hitilafu. Jaribu tena.';
+      status.style.color = '#e87090';
+      status.style.display = 'block';
+    }
+  })
+  .catch(function () {
+    btn.disabled = false;
+    btn.textContent = 'Tuma Maoni';
+  });
+}
+</script>
+</body>
+</html>

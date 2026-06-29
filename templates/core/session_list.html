@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Rekodi za Sesheni — {{ business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.sess-row { background:#2a2a2a; border:1px solid #333; border-radius:10px; padding:.85rem 1rem; margin-bottom:.6rem; }
+.badge { display:inline-block; border-radius:4px; padding:1px 7px; font-size:.72rem; font-weight:600; }
+.badge-active  { background:rgba(76,175,80,.15);  color:#4caf50; }
+.badge-done    { background:rgba(201,168,76,.12); color:#c9a84c; }
+.badge-pending { background:rgba(255,152,0,.12);  color:#ffb74d; }
+.badge-cancel  { background:rgba(100,100,100,.15);color:#888;    }
+.badge-paid    { background:rgba(76,175,80,.1);   color:#81c784; }
+.badge-unpaid  { background:rgba(192,57,90,.1);   color:#e87090; }
+.badge-check   { background:rgba(76,175,80,.1);   color:#4caf50; }
+.badge-unver   { background:rgba(255,152,0,.1);   color:#ffb74d; }
+.btn-ghost { background:transparent; border:1px solid #3a3a3a; border-radius:8px; padding:.35rem .85rem; color:#b0b0b0; font-size:.78rem; cursor:pointer; text-decoration:none; display:inline-block; }
+.filter-ctrl { background:#1a1a1a; border:1px solid #3a3a3a; border-radius:8px; color:#f0ece4; padding:.35rem .65rem; font-size:.83rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:760px; padding:1.5rem 1rem;">
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; flex-wrap:wrap; gap:.5rem;">
+    <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">&#127908; Rekodi za Sesheni</h4>
+    <a href="{% url 'performer_list' %}" class="btn-ghost">&#8592; Wanamuziki</a>
+  </div>
+
+  <!-- Filters -->
+  <form method="get" style="display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:1.25rem; align-items:flex-end;">
+    <div>
+      <div style="font-size:.72rem; color:#b0b0b0; margin-bottom:.2rem;">Kutoka</div>
+      <input type="date" name="from" value="{{ filter_from }}" class="filter-ctrl">
+    </div>
+    <div>
+      <div style="font-size:.72rem; color:#b0b0b0; margin-bottom:.2rem;">Mpaka</div>
+      <input type="date" name="to" value="{{ filter_to }}" class="filter-ctrl">
+    </div>
+    <div>
+      <div style="font-size:.72rem; color:#b0b0b0; margin-bottom:.2rem;">Mwanamuziki</div>
+      <select name="performer" class="filter-ctrl">
+        <option value="">Wote</option>
+        {% for p in performers %}
+        <option value="{{ p.id }}" {% if filter_performer == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" style="background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.3);border-radius:8px;padding:.35rem .85rem;color:#c9a84c;font-size:.82rem;cursor:pointer;">Chuja</button>
+  </form>
+
+  {% if not sessions %}
+  <div style="text-align:center; color:#b0b0b0; padding:2.5rem 1rem; font-size:.85rem;">Hakuna sesheni katika kipindi hiki.</div>
+  {% else %}
+  {% for s in sessions %}
+  <div class="sess-row">
+    <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:.35rem; margin-bottom:.35rem;">
+      <div>
+        <strong style="color:#f0ece4;">{{ s.performer.name|default:"—" }}</strong>
+        <span style="color:#b0b0b0; font-size:.75rem; margin-left:.4rem;">{{ s.performer.get_performer_type_display|default:"" }}</span>
+        &nbsp;
+        {% if s.status == 'ACTIVE' %}<span class="badge badge-active">Inaendelea</span>
+        {% elif s.status == 'COMPLETED' %}<span class="badge badge-done">Imekwisha</span>
+        {% elif s.status == 'PENDING_APPROVAL' %}<span class="badge badge-pending">Inangojea</span>
+        {% elif s.status == 'CANCELLED' %}<span class="badge badge-cancel">Imefutwa</span>{% endif %}
+      </div>
+      <div style="font-size:.78rem; color:#b0b0b0;">{{ s.date }}</div>
+    </div>
+    <div style="font-size:.78rem; color:#b0b0b0; margin-bottom:.35rem;">
+      KES {{ s.agreed_fee|floatformat:0 }}
+      {% if s.started_at %}&nbsp;&#183;&nbsp; {{ s.started_at|date:"H:i" }}{% if s.ended_at %} – {{ s.ended_at|date:"H:i" }} ({{ s.duration_hours|floatformat:1 }}h){% endif %}{% endif %}
+    </div>
+    <div style="display:flex; flex-wrap:wrap; gap:.3rem;">
+      {% if s.payment_status == 'PAID' %}<span class="badge badge-paid">&#10003; Amelipwa</span>
+      {% elif s.status == 'COMPLETED' %}<span class="badge badge-unpaid">Hajalipwa</span>{% endif %}
+      {% if s.performer_checked_in %}<span class="badge badge-check">&#10003; Alikuja</span>
+      {% elif s.status == 'COMPLETED' or s.status == 'CANCELLED' %}<span class="badge badge-unver">&#9888; Hajakagua</span>{% endif %}
+      {% if s.staff_rating %}<span class="badge badge-done">Staff: {{ s.staff_rating }}/5 &#11088;</span>{% endif %}
+      {% if s.avg_customer_rating %}<span class="badge" style="background:rgba(255,255,255,.05);color:#d0d0d0;">Wateja: {{ s.avg_customer_rating|floatformat:1 }}/5 ({{ s.total_customer_ratings }})</span>{% endif %}
+    </div>
+    {% if s.staff_notes %}
+    <div style="font-size:.73rem; color:#b0b0b0; margin-top:.35rem; font-style:italic;">{{ s.staff_notes }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

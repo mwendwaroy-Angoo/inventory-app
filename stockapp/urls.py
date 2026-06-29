@@ -207,6 +207,18 @@ from core.haki_views import (
     my_work_and_pay,
     haki_recognition_statement,
 )
+from core.performer_views import (
+    performer_list,
+    performer_form,
+    session_today_api,
+    session_start,
+    session_update,
+    session_pay,
+    session_checkin_poll,
+    session_list,
+    session_checkin_public,
+    session_feedback_public,
+)
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -373,6 +385,18 @@ urlpatterns = [
     path("staff/<int:profile_id>/salary/", record_salary_payment, name="record_salary_payment"),
     path("staff/<int:profile_id>/statement/", haki_recognition_statement, name="haki_recognition_statement"),
     path("me/", my_work_and_pay, name="my_work_and_pay"),
+    # ── DJ / MC Performer Module ──────────────────────────────────────────────
+    path("bar/performers/",                     performer_list,        name="performer_list"),
+    path("bar/performer/add/",                  performer_form,        name="performer_add"),
+    path("bar/performer/<int:performer_id>/edit/", performer_form,     name="performer_edit"),
+    path("bar/sessions/",                       session_list,          name="session_list"),
+    path("bar/session/today/",                  session_today_api,     name="session_today_api"),
+    path("bar/session/start/",                  session_start,         name="session_start"),
+    path("bar/session/<int:session_id>/update/", session_update,       name="session_update"),
+    path("bar/session/<int:session_id>/pay/",    session_pay,          name="session_pay"),
+    path("bar/session/<int:session_id>/checkin-status/", session_checkin_poll, name="session_checkin_poll"),
+    path("p/<uuid:token>/checkin/",             session_checkin_public,  name="session_checkin_public"),
+    path("p/<uuid:token>/",                     session_feedback_public, name="session_feedback_public"),
     # ── Revenue Targets ───────────────────────────────────────────────────────
     path("analytics/targets/", revenue_target_settings, name="revenue_target_settings"),
     path("analytics/targets/progress/", revenue_target_progress, name="revenue_target_progress"),

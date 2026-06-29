@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}{% if performer %}Hariri {{ performer.name }}{% else %}Ongeza DJ / MC{% endif %} — {{ business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.form-card { background:#2a2a2a; border:1px solid rgba(201,168,76,.18); border-radius:12px; padding:1.5rem; }
+.form-label { font-size:.8rem; color:#b0b0b0; margin-bottom:.3rem; display:block; font-weight:500; }
+.form-ctrl { width:100%; box-sizing:border-box; background:#1a1a1a; border:1px solid #3a3a3a; border-radius:8px; color:#f0ece4; padding:.45rem .75rem; font-size:.9rem; }
+.form-ctrl:focus { outline:none; border-color:#c9a84c; }
+.btn-gold { background:linear-gradient(135deg,#c9a84c,#e2c36e); color:#1a1a1a; border:none; border-radius:8px; padding:.5rem 1.25rem; font-weight:700; font-size:.88rem; cursor:pointer; }
+.btn-ghost { background:transparent; border:1px solid #3a3a3a; border-radius:8px; padding:.45rem 1rem; color:#b0b0b0; font-size:.82rem; cursor:pointer; text-decoration:none; display:inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:560px; padding:1.5rem 1rem;">
+  <div style="display:flex; align-items:center; gap:.75rem; margin-bottom:1.25rem;">
+    <a href="{% url 'performer_list' %}" style="color:#b0b0b0; text-decoration:none; font-size:1.1rem;">&#8592;</a>
+    <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">
+      {% if performer %}Hariri {{ performer.name }}{% else %}Ongeza DJ / MC{% endif %}
+    </h4>
+  </div>
+
+  {% if messages %}
+  {% for m in messages %}
+  <div style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.3);border-radius:8px;padding:.6rem 1rem;margin-bottom:1rem;color:#81c784;font-size:.85rem;">{{ m }}</div>
+  {% endfor %}
+  {% endif %}
+
+  <div class="form-card">
+    <form method="post">
+      {% csrf_token %}
+      <div style="display:grid; gap:.9rem;">
+        <div>
+          <label class="form-label">Jina *</label>
+          <input name="name" class="form-ctrl" required maxlength="100" value="{{ performer.name|default:'' }}">
+        </div>
+        <div>
+          <label class="form-label">Aina *</label>
+          <select name="performer_type" class="form-ctrl">
+            <option value="DJ" {% if performer.performer_type == 'DJ' %}selected{% endif %}>DJ</option>
+            <option value="MC" {% if performer.performer_type == 'MC' %}selected{% endif %}>MC</option>
+            <option value="BOTH" {% if performer.performer_type == 'BOTH' %}selected{% endif %}>DJ &amp; MC</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Nambari ya Simu</label>
+          <input name="phone" class="form-ctrl" maxlength="20" value="{{ performer.phone|default:'' }}" placeholder="07XX XXX XXX">
+        </div>
+        <div>
+          <label class="form-label">Genre / Mtindo wa Muziki</label>
+          <input name="genre" class="form-ctrl" maxlength="60" value="{{ performer.genre|default:'' }}" placeholder="House, Afrobeats, Reggae...">
+        </div>
+        <div>
+          <label class="form-label">Aina ya Mkataba *</label>
+          <select name="contract_type" class="form-ctrl" id="contract-type-sel">
+            <option value="ONE_OFF" {% if performer.contract_type == 'ONE_OFF' or not performer %}selected{% endif %}>Kila Sesheni (Mara Moja)</option>
+            <option value="RETAINER" {% if performer.contract_type == 'RETAINER' %}selected{% endif %}>Retainer ya Kila Mwezi</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Bei ya Kawaida (KES) *</label>
+          <input name="standard_rate" type="number" min="0" step="100" class="form-ctrl" required value="{{ performer.standard_rate|default:'0' }}">
+        </div>
+        <div id="retainer-hint" style="display:none; background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.2); border-radius:8px; padding:.6rem .85rem; font-size:.78rem; color:#c9a84c;">
+          Mwanamuziki wa retainer — tunaweza kuunda gharama ya kila mwezi moja kwa moja katika RecurringExpenses.
+          <label style="display:flex; align-items:center; gap:.4rem; margin-top:.4rem; color:#f0ece4; font-size:.8rem; cursor:pointer;">
+            <input type="checkbox" name="create_recurring" value="1" style="accent-color:#c9a84c;">
+            Unda RecurringExpense ya KES <span id="retainer-rate-display">0</span>/mwezi
+          </label>
+        </div>
+        <div>
+          <label class="form-label">Maelezo</label>
+          <textarea name="notes" class="form-ctrl" rows="2" placeholder="Contact info, style notes...">{{ performer.notes|default:'' }}</textarea>
+        </div>
+        {% if performer %}
+        <div>
+          <label style="display:flex; align-items:center; gap:.4rem; font-size:.82rem; color:#b0b0b0; cursor:pointer;">
+            <input type="checkbox" name="is_active" value="1" {% if performer.is_active %}checked{% endif %} style="accent-color:#c9a84c;">
+            Anafanya kazi (Active)
+          </label>
+        </div>
+        {% endif %}
+      </div>
+      <div style="display:flex; gap:.75rem; margin-top:1.25rem;">
+        <button type="submit" class="btn-gold">&#10003; Hifadhi</button>
+        <a href="{% url 'performer_list' %}" class="btn-ghost">Rudi</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% block extra_js %}
+<script>
+(function () {
+  var sel  = document.getElementById('contract-type-sel');
+  var hint = document.getElementById('retainer-hint');
+  var rate = document.querySelector('[name="standard_rate"]');
+  var rateDisplay = document.getElementById('retainer-rate-display');
+
+  function _toggle() {
+    var isRetainer = sel.value === 'RETAINER';
+    hint.style.display = isRetainer ? 'block' : 'none';
+    if (rateDisplay) rateDisplay.textContent = rate ? Number(rate.value).toLocaleString() : '0';
+  }
+  sel.addEventListener('change', _toggle);
+  if (rate) rate.addEventListener('input', function () { if (rateDisplay) rateDisplay.textContent = Number(rate.value).toLocaleString(); });
+  _toggle();
+}());
+</script>
+{% endblock %}
+{% endblock %}

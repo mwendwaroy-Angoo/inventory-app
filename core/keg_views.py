@@ -1891,6 +1891,17 @@ def bar_z_report(request):
     mpesa_cross_check_gap = round(day_mpesa - stk_mpesa_total, 2)
     has_stk_data = stk_mpesa_total > 0
 
+    # DJ / MC entertainment costs for the day
+    from .models import PerformerSession as _PS
+    _ent_aggs = _PS.objects.filter(
+        business=business, date=report_date,
+    ).exclude(status=_PS.STATUS_CANCELLED).aggregate(
+        paid=Sum('agreed_fee', filter=Q(payment_status=_PS.PAYMENT_PAID)),
+        unpaid=Sum('agreed_fee', filter=Q(payment_status=_PS.PAYMENT_PENDING)),
+    )
+    day_entertainment_paid   = float(_ent_aggs['paid']   or 0)
+    day_entertainment_unpaid = float(_ent_aggs['unpaid'] or 0)
+
     # Yesterday for navigation
     yesterday = report_date - timedelta(days=1)
     tomorrow  = report_date + timedelta(days=1)
@@ -1916,9 +1927,11 @@ def bar_z_report(request):
         'stk_mpesa_total':         round(stk_mpesa_total, 2),
         'mpesa_cross_check_gap':   mpesa_cross_check_gap,
         'has_stk_data':            has_stk_data,
-        'kra_pin':                 business.kra_pin or '',
-        'counted_shifts':          counted_shifts,
-        'business':            business,
+        'kra_pin':                   business.kra_pin or '',
+        'counted_shifts':            counted_shifts,
+        'business':                  business,
+        'day_entertainment_paid':    round(day_entertainment_paid, 2),
+        'day_entertainment_unpaid':  round(day_entertainment_unpaid, 2),
     })
 
 

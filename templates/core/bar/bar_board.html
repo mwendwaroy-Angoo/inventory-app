@@ -625,6 +625,16 @@
                      cursor:pointer;">
         🪙 Counter Cash
       </button>
+      <button onclick="window.openDjMcModal()"
+              id="djmc-btn"
+              style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.35);
+                     color:#c9a84c; border-radius:8px; padding:4px 12px; font-size:0.82rem;
+                     cursor:pointer; position:relative;">
+        🎤 DJ/MC
+        <span id="djmc-active-dot"
+              style="display:none; position:absolute; top:-4px; right:-4px;
+                     width:8px; height:8px; border-radius:50%; background:#4caf50;"></span>
+      </button>
       {% if is_owner %}
       <a href="{% url 'bar_daily_report' %}"
          style="background:rgba(76,175,80,0.1); border:1px solid rgba(76,175,80,0.3);
@@ -1527,6 +1537,21 @@
 
 <!-- Petty Cash modal -->
 {% include "core/petty_cash_modal.html" %}
+
+<!-- ── DJ / MC Session Modal ─────────────────────────────────────── -->
+<div id="djmcBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:1200; align-items:flex-start; justify-content:center; padding-top:4rem; overflow-y:auto;">
+  <div style="background:#2a2a2a; border:1px solid rgba(201,168,76,.25); border-radius:16px; width:100%; max-width:460px; margin:0 1rem 2rem;">
+    <!-- Header -->
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:1rem 1.25rem 0.75rem; border-bottom:1px solid #333;">
+      <div style="font-family:'Playfair Display',serif; color:#c9a84c; font-size:1.05rem; font-weight:600;">🎤 DJ / MC Session</div>
+      <button onclick="window.closeDjMcModal()" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; cursor:pointer; line-height:1;">×</button>
+    </div>
+    <!-- Body — dynamically rendered by JS -->
+    <div id="djmcBody" style="padding:1rem 1.25rem 1.25rem; min-height:120px;">
+      <div style="color:#b0b0b0; font-size:0.85rem; text-align:center; padding:2rem 0;">Inapakia...</div>
+    </div>
+  </div>
+</div>
 
 {% endblock %}
 
@@ -3946,5 +3971,250 @@ window.barDeclineMerge = function() {
   hint.style.borderColor = '';
   hint.style.color = '';
 };
+
+/* ── DJ / MC Session Manager ── */
+(function () {
+  var backdrop  = document.getElementById('djmcBackdrop');
+  var body      = document.getElementById('djmcBody');
+  var activeBtn = document.getElementById('djmc-active-dot');
+  var CSRF      = (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '';
+  var IS_OWNER  = {{ is_owner|yesno:"true,false" }};
+
+  var _state = { sessions: [], performers: [], loaded: false };
+
+  window.openDjMcModal = function () {
+    backdrop.style.display = 'flex';
+    _loadState();
+  };
+  window.closeDjMcModal = function () {
+    backdrop.style.display = 'none';
+  };
+  backdrop.addEventListener('click', function (e) {
+    if (e.target === backdrop) window.closeDjMcModal();
+  });
+
+  function _loadState() {
+    body.innerHTML = '<div style="color:#b0b0b0;font-size:.85rem;text-align:center;padding:2rem 0;">Inapakia...</div>';
+    fetch('/bar/session/today/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        _state.sessions   = d.sessions   || [];
+        _state.performers = d.performers || [];
+        _state.loaded = true;
+        _render();
+        _updateDot();
+      })
+      .catch(function () {
+        body.innerHTML = '<div style="color:#e87090;font-size:.85rem;padding:1rem;">Hitilafu — jaribu tena.</div>';
+      });
+  }
+
+  function _updateDot() {
+    var hasActive = _state.sessions.some(function (s) { return s.status === 'ACTIVE'; });
+    activeBtn.style.display = hasActive ? 'block' : 'none';
+  }
+
+  function _statusLabel(s) {
+    return {ACTIVE:'● Inaendelea', COMPLETED:'✓ Imekwisha', PENDING_APPROVAL:'⏳ Inangojea', CANCELLED:'✗ Imefutwa'}[s] || s;
+  }
+
+  function _showStatus(el, msg, color) {
+    el.textContent = msg; el.style.color = color; el.style.display = 'block';
+  }
+
+  function _render() {
+    var sessions = _state.sessions;
+    var html = '';
+
+    sessions.forEach(function (s) {
+      var statusColor = s.status === 'ACTIVE' ? '#4caf50' : s.status === 'COMPLETED' ? '#c9a84c' : '#ffb74d';
+      var checkinBadge = s.performer_checked_in
+        ? '<span style="background:rgba(76,175,80,.15);color:#4caf50;border-radius:4px;padding:1px 6px;font-size:.73rem;">&#10003; Amethibitisha ' + (s.performer_checkin_at || '') + '</span>'
+        : '<span style="background:rgba(255,152,0,.12);color:#ffb74d;border-radius:4px;padding:1px 6px;font-size:.73rem;">&#8987; Hajajibu bado</span>';
+
+      html += '<div style="background:#1e1e1e;border:1px solid #333;border-radius:10px;padding:.85rem;margin-bottom:.75rem;">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.5rem;">';
+      html += '<div><strong style="color:#f0ece4;">' + s.performer_name + '</strong>';
+      html += '<span style="color:#b0b0b0;font-size:.75rem;margin-left:.5rem;">' + s.performer_type + '</span></div>';
+      html += '<span style="color:' + statusColor + ';font-size:.75rem;font-weight:600;">' + _statusLabel(s.status) + '</span>';
+      html += '</div>';
+      html += '<div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.4rem;">KES ' + s.agreed_fee.toLocaleString() + ' &nbsp;&#183;&nbsp; Kuanzia: ' + (s.started_at || '&#8212;') + (s.ended_at ? ' &#8211; ' + s.ended_at : '') + '</div>';
+
+      if (s.status === 'ACTIVE') {
+        if (!s.performer_checked_in) {
+          html += '<div style="margin:.6rem 0;padding:.6rem;background:#111;border-radius:8px;text-align:center;">';
+          html += '<div style="color:#c9a84c;font-size:.78rem;margin-bottom:.4rem;font-weight:600;">Mwambie DJ/MC ascan QR hii kuthibitisha uwepo wake</div>';
+          html += '<div id="checkin-qr-' + s.id + '" style="display:inline-block;background:#fff;padding:6px;border-radius:6px;margin-bottom:.3rem;"></div>';
+          html += '<div style="font-family:monospace;font-size:1.1rem;color:#c9a84c;letter-spacing:2px;font-weight:700;">' + s.checkin_short_code + '</div>';
+          html += '</div>';
+          html += '<div id="checkin-badge-' + s.id + '">' + checkinBadge + '</div>';
+          window._startCheckinPoll(s.id, s.checkin_token);
+        } else {
+          html += '<div style="margin:.4rem 0;">' + checkinBadge + '</div>';
+        }
+        html += '<div style="margin-top:.75rem;">';
+        html += '<div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.3rem;">Tathmini ya kazi (optional)</div>';
+        html += '<div id="stars-' + s.id + '" style="display:flex;gap:.25rem;margin-bottom:.5rem;">';
+        for (var i = 1; i <= 5; i++) {
+          html += '<span onclick="_djSetStar(' + s.id + ',' + i + ')" data-star="' + i + '" style="font-size:1.4rem;cursor:pointer;color:#555;">&#9733;</span>';
+        }
+        html += '</div>';
+        html += '<input type="text" id="notes-' + s.id + '" placeholder="Maelezo (optional)" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.82rem;margin-bottom:.5rem;">';
+        html += '<button onclick="window._djEndSession(' + s.id + ')" style="width:100%;padding:.5rem;background:#c0395a;border:none;border-radius:8px;color:#fff;font-weight:700;font-size:.88rem;cursor:pointer;">Maliza Sesheni</button>';
+        html += '</div>';
+      }
+
+      if (s.status === 'COMPLETED') {
+        html += '<div style="margin:.4rem 0;">' + checkinBadge + '</div>';
+        html += '<div style="margin:.6rem 0;padding:.6rem;background:#111;border-radius:8px;text-align:center;">';
+        html += '<div style="color:#b0b0b0;font-size:.75rem;margin-bottom:.4rem;">Onyesha QR hii kwa wateja kwa maoni ya DJ/MC</div>';
+        html += '<div id="feedback-qr-' + s.id + '" style="display:inline-block;background:#fff;padding:6px;border-radius:6px;"></div>';
+        html += '</div>';
+        var ratingInfo = s.avg_customer_rating ? '&#11088; ' + s.avg_customer_rating + ' (' + s.total_customer_ratings + ' maoni)' : 'Bado hakuna maoni';
+        html += '<div style="font-size:.75rem;color:#b0b0b0;margin-bottom:.5rem;">' + ratingInfo + '</div>';
+        if (IS_OWNER && s.payment_status === 'PENDING') {
+          html += '<div style="display:flex;gap:.5rem;">';
+          html += '<button onclick="window._djPaySession(' + s.id + ',\'cash\')" style="flex:1;padding:.45rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.3);border-radius:8px;color:#81c784;font-size:.82rem;cursor:pointer;">&#128181; Lipa Cash</button>';
+          html += '<button onclick="window._djPaySession(' + s.id + ',\'mpesa\')" style="flex:1;padding:.45rem;background:rgba(33,150,243,.1);border:1px solid rgba(33,150,243,.3);border-radius:8px;color:#64b5f6;font-size:.82rem;cursor:pointer;">&#128241; Lipa M-Pesa</button>';
+          html += '</div>';
+        } else if (s.payment_status === 'PAID') {
+          html += '<div style="color:#4caf50;font-size:.78rem;">&#10003; Amelipwa</div>';
+        }
+      }
+
+      if (s.status === 'PENDING_APPROVAL' && IS_OWNER) {
+        html += '<div style="font-size:.8rem;color:#ffb74d;margin:.4rem 0;">&#8987; Inasubiri idhini yako</div>';
+        html += '<div style="display:flex;gap:.5rem;">';
+        html += '<button onclick="window._djApproveSession(' + s.id + ')" style="flex:1;padding:.45rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.3);border-radius:8px;color:#81c784;font-size:.82rem;cursor:pointer;">&#10003; Idhibiti</button>';
+        html += '<button onclick="window._djCancelSession(' + s.id + ')" style="flex:1;padding:.45rem;background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:8px;color:#e87090;font-size:.82rem;cursor:pointer;">&#10007; Futa</button>';
+        html += '</div>';
+      }
+
+      html += '</div>';
+    });
+
+    /* Generate QR codes after HTML injection */
+    var needFeedbackQr = sessions.filter(function (s) { return s.status === 'COMPLETED'; });
+
+    if (_state.performers.length === 0) {
+      html += '<div style="font-size:.83rem;color:#b0b0b0;text-align:center;padding:.75rem 0;">Hakuna wanamuziki. <a href="/bar/performers/" style="color:#c9a84c;">Ongeza hapa &#8594;</a></div>';
+    } else {
+      html += '<div style="border-top:1px solid #333;padding-top:.85rem;margin-top:' + (sessions.length ? '.5rem' : '0') + ';">';
+      html += '<div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.5rem;font-weight:600;">+ Anza Sesheni Mpya</div>';
+      html += '<select id="djmc-performer-sel" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.85rem;margin-bottom:.5rem;">';
+      html += '<option value="">-- Chagua DJ/MC --</option>';
+      _state.performers.forEach(function (p) {
+        html += '<option value="' + p.id + '" data-rate="' + p.standard_rate + '">' + p.name + ' (' + p.performer_type + ')</option>';
+      });
+      html += '</select>';
+      html += '<div style="flex:1;margin-bottom:.5rem;"><div style="font-size:.75rem;color:#b0b0b0;margin-bottom:.2rem;">Bei iliyokubalika (KES)</div>';
+      html += '<input type="number" id="djmc-fee" min="0" step="100" value="0" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.85rem;"></div>';
+      html += '<div id="djmc-start-status" style="display:none;font-size:.8rem;margin-bottom:.4rem;"></div>';
+      html += '<button onclick="window._djStartSession()" style="width:100%;padding:.55rem;background:rgba(201,168,76,.2);border:1px solid rgba(201,168,76,.4);border-radius:8px;color:#c9a84c;font-weight:700;font-size:.88rem;cursor:pointer;">&#9654; Anza Sesheni</button>';
+      html += '</div>';
+    }
+
+    body.innerHTML = html;
+
+    /* Generate check-in QRs */
+    sessions.forEach(function (s) {
+      if (s.status === 'ACTIVE' && !s.performer_checked_in) {
+        var el = document.getElementById('checkin-qr-' + s.id);
+        if (el && window.QRCode) {
+          new QRCode(el, {text: location.origin + '/p/' + s.checkin_token + '/checkin/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
+        }
+      }
+      if (s.status === 'COMPLETED') {
+        var fel = document.getElementById('feedback-qr-' + s.id);
+        if (fel && window.QRCode) {
+          new QRCode(fel, {text: location.origin + '/p/' + s.feedback_token + '/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
+        }
+      }
+    });
+
+    var sel = document.getElementById('djmc-performer-sel');
+    if (sel) {
+      sel.addEventListener('change', function () {
+        var opt = sel.options[sel.selectedIndex];
+        var rate = opt.getAttribute('data-rate') || '0';
+        document.getElementById('djmc-fee').value = rate;
+      });
+    }
+  }
+
+  /* ─── star rating ─── */
+  window._djSetStar = function (sessionId, rating) {
+    var stars = document.querySelectorAll('#stars-' + sessionId + ' span');
+    stars.forEach(function (s, idx) { s.style.color = idx < rating ? '#c9a84c' : '#555'; });
+    var container = document.getElementById('stars-' + sessionId);
+    if (container) container.dataset.rating = rating;
+  };
+
+  /* ─── checkin poll (every 30s while modal open) ─── */
+  var _checkinPolls = {};
+  window._startCheckinPoll = function (sessionId, token) {
+    if (_checkinPolls[sessionId]) return;
+    _checkinPolls[sessionId] = setInterval(function () {
+      if (backdrop.style.display === 'none') { clearInterval(_checkinPolls[sessionId]); delete _checkinPolls[sessionId]; return; }
+      fetch('/bar/session/' + sessionId + '/checkin-status/')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.performer_checked_in) {
+            clearInterval(_checkinPolls[sessionId]);
+            delete _checkinPolls[sessionId];
+            _loadState();
+          }
+        })
+        .catch(function () {});
+    }, 30000);
+  };
+
+  /* ─── API helpers ─── */
+  function _post(url, payload, cb) {
+    fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF},
+      body: JSON.stringify(payload),
+    }).then(function (r) { return r.json(); }).then(cb).catch(function () { cb({ok: false, error: 'Tatizo la mtandao.'}); });
+  }
+
+  window._djStartSession = function () {
+    var sel      = document.getElementById('djmc-performer-sel');
+    var feeEl    = document.getElementById('djmc-fee');
+    var statusEl = document.getElementById('djmc-start-status');
+    if (!sel.value) { _showStatus(statusEl, 'Chagua DJ/MC kwanza.', '#e87090'); return; }
+    _showStatus(statusEl, 'Inaanza...', '#b0b0b0');
+    _post('/bar/session/start/', {performer_id: sel.value, agreed_fee: feeEl.value || '0'}, function (d) {
+      if (d.ok) { _loadState(); } else { _showStatus(statusEl, d.error || 'Hitilafu.', '#e87090'); }
+    });
+  };
+
+  window._djEndSession = function (sessionId) {
+    var container = document.getElementById('stars-' + sessionId);
+    var rating = container ? (container.dataset.rating || null) : null;
+    var notes  = (document.getElementById('notes-' + sessionId) || {}).value || '';
+    _post('/bar/session/' + sessionId + '/update/', {action: 'end', staff_rating: rating, staff_notes: notes}, function (d) {
+      if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    });
+  };
+
+  window._djApproveSession = function (sessionId) {
+    _post('/bar/session/' + sessionId + '/update/', {action: 'approve'}, function (d) {
+      if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    });
+  };
+
+  window._djCancelSession = function (sessionId) {
+    _post('/bar/session/' + sessionId + '/update/', {action: 'cancel'}, function (d) {
+      if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    });
+  };
+
+  window._djPaySession = function (sessionId, method) {
+    _post('/bar/session/' + sessionId + '/pay/', {payment_method: method}, function (d) {
+      if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    });
+  };
+}());
 </script>
 {% endblock %}

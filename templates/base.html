@@ -501,6 +501,7 @@
                         {% if biz_profile.modules.keg %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
+                        <li class="nav-item"><a class="nav-link" href="{% url 'performer_list' %}">🎤 DJ / MC</a></li>
                         {% endif %}
                         {% if biz_profile.modules.kitchen and user.userprofile.can_access_kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
@@ -697,6 +698,7 @@
                         {% if biz_profile.modules.keg %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         {% if biz_profile.modules.shifts %}<li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>{% endif %}
+                        <li class="nav-item"><a class="nav-link" href="{% url 'performer_list' %}">🎤 DJ / MC</a></li>
                         {% endif %}
                         {% if biz_profile.modules.kitchen and user.userprofile.can_access_kitchen %}<li class="nav-item"><a class="nav-link" href="{% url 'kitchen_board' %}">🍗 Kitchen</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>

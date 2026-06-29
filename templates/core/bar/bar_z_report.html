@@ -143,6 +143,18 @@
         <div class="metric-lbl">&#127870; Bottle Variance (KES)</div>
       </div>
       {% endif %}
+      {% if day_entertainment_paid > 0 %}
+      <div class="metric-box">
+        <div class="metric-num" style="color:#c9a84c;">{{ day_entertainment_paid|floatformat:0 }}</div>
+        <div class="metric-lbl">&#127908; Entertainment (KES)</div>
+      </div>
+      {% endif %}
+      {% if day_entertainment_unpaid > 0 %}
+      <div class="metric-box" style="border:1px solid rgba(255,152,0,.3);">
+        <div class="metric-num" style="color:#ffb74d;">{{ day_entertainment_unpaid|floatformat:0 }}</div>
+        <div class="metric-lbl">&#127908; DJ/MC Unpaid (KES)</div>
+      </div>
+      {% endif %}
     </div>
 
     <!-- Drawer summary -->

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}DJ / MC Performers — {{ business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.perf-card {
+  background: #2a2a2a;
+  border: 1px solid rgba(201,168,76,.18);
+  border-radius: 12px;
+  padding: 1.1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+.perf-card .perf-name { font-family: 'Playfair Display', serif; color: #f0ece4; font-size: 1.05rem; font-weight: 600; }
+.perf-card .perf-type { color: #c9a84c; font-size: .78rem; font-weight: 600; margin-left: .5rem; }
+.perf-card .perf-meta { font-size: .8rem; color: #b0b0b0; margin-top: .25rem; }
+.perf-stat { display: inline-block; background: rgba(255,255,255,.04); border-radius: 6px; padding: 2px 8px; margin-right: .3rem; font-size: .75rem; color: #d0d0d0; }
+.btn-gold { background: linear-gradient(135deg,#c9a84c,#e2c36e); color: #1a1a1a; border: none; border-radius: 8px; padding: .45rem 1.1rem; font-weight: 700; font-size: .85rem; cursor: pointer; text-decoration: none; display: inline-block; }
+.btn-ghost { background: transparent; border: 1px solid #3a3a3a; border-radius: 8px; padding: .4rem .9rem; color: #b0b0b0; font-size: .82rem; cursor: pointer; text-decoration: none; display: inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:680px; padding: 1.5rem 1rem;">
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1.25rem; flex-wrap:wrap; gap:.5rem;">
+    <h4 style="font-family:'Playfair Display',serif; color:#c9a84c; margin:0;">&#127908; DJ / MC Roster</h4>
+    <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+      <a href="{% url 'session_list' %}" class="btn-ghost">Rekodi za Sesheni</a>
+      <a href="{% url 'performer_add' %}" class="btn-gold">+ Ongeza Mwanamuziki</a>
+    </div>
+  </div>
+
+  {% if not performers %}
+  <div style="text-align:center; padding:3rem 1rem; color:#b0b0b0;">
+    <div style="font-size:2.5rem; margin-bottom:.75rem;">&#127908;</div>
+    <div style="font-size:.9rem;">Bado hauna wanamuziki waliohifadhiwa.</div>
+    <a href="{% url 'performer_add' %}" class="btn-gold" style="margin-top:1rem; display:inline-block;">+ Ongeza DJ / MC wa Kwanza</a>
+  </div>
+  {% else %}
+  {% for p in performers %}
+  <div class="perf-card">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:.5rem;">
+      <div>
+        <span class="perf-name">{{ p.name }}</span>
+        <span class="perf-type">{{ p.get_performer_type_display }}</span>
+        {% if not p.is_active %}<span style="color:#b0b0b0; font-size:.72rem; margin-left:.5rem;">(Haifanyi kazi)</span>{% endif %}
+      </div>
+      <div style="display:flex; gap:.4rem;">
+        <a href="{% url 'performer_edit' p.id %}" class="btn-ghost" style="font-size:.75rem; padding:.3rem .75rem;">Hariri</a>
+      </div>
+    </div>
+    <div class="perf-meta" style="margin-top:.5rem;">
+      {% if p.phone %}&#128222; {{ p.phone }} &nbsp;&#183;&nbsp;{% endif %}
+      {{ p.get_contract_type_display }} &nbsp;&#183;&nbsp; KES {{ p.standard_rate|floatformat:0 }}/sesheni
+      {% if p.genre %}&nbsp;&#183;&nbsp; {{ p.genre }}{% endif %}
+    </div>
+    <div style="margin-top:.6rem; display:flex; flex-wrap:wrap; gap:.25rem;">
+      {% if p._sc %}
+      <span class="perf-stat">&#127902; {{ p._sc }} sesheni</span>
+      {% endif %}
+      {% if p._asr %}
+      <span class="perf-stat">&#11088; {{ p._asr|floatformat:1 }} (staff)</span>
+      {% endif %}
+      {% if p._acr %}
+      <span class="perf-stat">&#11088; {{ p._acr|floatformat:1 }} (wateja)</span>
+      {% endif %}
+    </div>
+    {% if p.notes %}
+    <div style="font-size:.75rem; color:#b0b0b0; margin-top:.5rem; font-style:italic;">{{ p.notes }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

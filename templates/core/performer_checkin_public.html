@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thibitisha Uwepo — {{ session.performer.name|default:"DJ/MC" }}</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1a1a1a; color: #f0ece4; font-family: 'DM Sans', sans-serif; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+.card { background: #2a2a2a; border: 1px solid rgba(201,168,76,.25); border-radius: 20px; padding: 2rem 1.75rem; max-width: 420px; width: 100%; text-align: center; }
+.logo { font-family: 'Playfair Display', serif; color: #c9a84c; font-size: 1rem; margin-bottom: 1.5rem; letter-spacing: .5px; }
+.icon { font-size: 3rem; margin-bottom: .75rem; }
+.headline { font-family: 'Playfair Display', serif; color: #f0ece4; font-size: 1.25rem; font-weight: 700; margin-bottom: .5rem; }
+.subline { color: #b0b0b0; font-size: .88rem; line-height: 1.55; margin-bottom: 1.25rem; }
+.meta-row { background: #1e1e1e; border-radius: 10px; padding: .75rem 1rem; margin-bottom: 1.25rem; font-size: .83rem; color: #d0d0d0; text-align: left; }
+.meta-row strong { color: #c9a84c; }
+.btn-confirm { display: block; width: 100%; padding: .85rem; background: linear-gradient(135deg,#c9a84c,#e2c36e); color: #1a1a1a; border: none; border-radius: 12px; font-weight: 800; font-size: 1rem; cursor: pointer; letter-spacing: .3px; }
+.btn-confirm:disabled { opacity: .5; cursor: not-allowed; }
+.done-box { display: none; background: rgba(76,175,80,.1); border: 1px solid rgba(76,175,80,.3); border-radius: 12px; padding: 1.25rem; color: #81c784; }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="card">
+  <div class="logo">Duka Mwecheche &#127908;</div>
+
+  {% if already_checked_in %}
+  <div class="done-box" style="display:block;">
+    <div style="font-size:2rem; margin-bottom:.5rem;">&#10003;</div>
+    <div style="font-weight:700; margin-bottom:.25rem;">Tayari umethibitisha!</div>
+    <div style="font-size:.83rem; color:#b0b0b0;">Uwepo wako umehifadhiwa saa {{ session.performer_checkin_at|date:"H:i" }}.</div>
+  </div>
+  {% else %}
+  <div id="confirm-view">
+    <div class="icon">&#127908;</div>
+    <div class="headline">Je, uko hapa usiku wa leo?</div>
+    <div class="subline">Bonyeza kitufe hapa chini kuthibitisha kwamba uko kwenye sehemu na uko tayari kuanza.</div>
+    <div class="meta-row">
+      <div><strong>Mahali:</strong> {{ session.business.name }}</div>
+      <div><strong>Mwanamuziki:</strong> {{ session.performer.name|default:"—" }}</div>
+      <div><strong>Tarehe:</strong> {{ session.date }}</div>
+      <div><strong>Ada:</strong> KES {{ session.agreed_fee|floatformat:0 }}</div>
+    </div>
+    <button class="btn-confirm" id="confirm-btn" onclick="doConfirm()">Ndio, niko hapa &#10003;</button>
+    <div id="confirm-status" style="margin-top:.75rem; font-size:.82rem; display:none;"></div>
+  </div>
+  <div class="done-box" id="done-view">
+    <div style="font-size:2rem; margin-bottom:.5rem;">&#10003;</div>
+    <div style="font-weight:700; margin-bottom:.25rem;">Asante! Umethibitishwa.</div>
+    <div style="font-size:.83rem; color:#b0b0b0;">Mmiliki amejulishwa. Furahia sehemu! &#127928;</div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+function doConfirm() {
+  var btn = document.getElementById('confirm-btn');
+  var statusEl = document.getElementById('confirm-status');
+  btn.disabled = true;
+  btn.textContent = 'Inatuma...';
+  statusEl.style.display = 'none';
+
+  fetch(window.location.href, {
+    method: 'POST',
+    headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'confirmed=1',
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (d) {
+    if (d.ok) {
+      document.getElementById('confirm-view').style.display = 'none';
+      document.getElementById('done-view').style.display = 'block';
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Ndio, niko hapa ✓';
+      statusEl.textContent = d.error || 'Hitilafu. Jaribu tena.';
+      statusEl.style.color = '#e87090';
+      statusEl.style.display = 'block';
+    }
+  })
+  .catch(function () {
+    btn.disabled = false;
+    btn.textContent = 'Ndio, niko hapa ✓';
+    statusEl.textContent = 'Tatizo la mtandao. Jaribu tena.';
+    statusEl.style.color = '#e87090';
+    statusEl.style.display = 'block';
+  });
+}
+</script>
+</body>
+</html>
