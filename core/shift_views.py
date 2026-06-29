@@ -64,15 +64,21 @@ def _reconcile(shift):
         created_at__gte=shift.started_at,
         created_at__lte=end,
     )
-    # Scope to the correct counter so concurrent bar + kitchen shifts don't bleed into each other.
-    # Kitchen staff shifts only count kitchen store sales; all other shifts count bar/general sales.
+    # Scope to the correct counter so concurrent bar + kitchen shifts don't bleed.
+    # Kitchen staff  → kitchen store only (is_kitchen=True).
+    # Bar/general staff → non-kitchen stores (is_kitchen=False).
+    # Owner → no store filter: the owner may sell on either board and we must not
+    #   exclude their transactions by store type. The is_kitchen filter exists only
+    #   to separate concurrent staff shifts; the owner's shift doesn't need it.
+    #   Also avoids the INNER JOIN that silently drops items with store=None.
     try:
-        is_kitchen_shift = shift.staff.userprofile.role == 'kitchen'
+        staff_role = shift.staff.userprofile.role
     except Exception:
-        is_kitchen_shift = False
-    if is_kitchen_shift:
+        staff_role = 'staff'
+
+    if staff_role == 'kitchen':
         txns = txns.filter(item__store__is_kitchen=True)
-    else:
+    elif staff_role != 'owner':
         txns = txns.filter(item__store__is_kitchen=False)
     # Revenue per transaction: use sale_amount when set (keg pours, preset Quick Sell),
     # otherwise abs(qty) * selling_price (regular Quick Sell without preset).
