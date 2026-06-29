@@ -596,6 +596,13 @@ class Transaction(models.Model):
         null=True, blank=True,
         help_text='Expiry date for this stock-in batch. Set on Receipt transactions only.',
     )
+    recorded_by = models.ForeignKey(
+        'auth.User',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='recorded_transactions',
+        help_text='The staff member or owner who recorded this transaction. Null for async/system-generated transactions.',
+    )
 
     def revenue(self):
         if self.type != 'Issue':
@@ -1731,7 +1738,7 @@ class ProduceBunch(models.Model):
         return (Decimal(str(amount)) / target).quantize(Decimal('0.0001'))
 
     # ── selling ───────────────────────────────────────────────────────────
-    def record_sale(self, amount, payment_method='cash', recipient=''):
+    def record_sale(self, amount, payment_method='cash', recipient='', recorded_by=None):
         """
         Deplete this bunch by `amount` shillings. Creates the stock Transaction
         (Issue, real cash on sale_amount) and updates the envelope. Returns the
@@ -1749,6 +1756,7 @@ class ProduceBunch(models.Model):
             payment_method=payment_method or 'cash',
             recipient=recipient or '',
             produce_bunch=self,
+            recorded_by=recorded_by,
         )
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
         if self.opened_on is None:
@@ -1783,7 +1791,7 @@ class ProduceBunch(models.Model):
 
     # ── generic mix sale: "mboga za kienyeji ya 20" ────────────────────────
     @classmethod
-    def sell_mix(cls, business, mix_group, amount, payment_method='cash', recipient='', item_ids=None):
+    def sell_mix(cls, business, mix_group, amount, payment_method='cash', recipient='', item_ids=None, recorded_by=None):
         """
         Customer doesn't care which kienyeji — just "kienyeji ya 20". Spreads
         `amount` proportionally across the OPEN bunches in this mix group
@@ -1822,7 +1830,7 @@ class ProduceBunch(models.Model):
         for b, share in allocations:
             if share <= 0:
                 continue
-            t = b.record_sale(share, payment_method=payment_method, recipient=recipient)
+            t = b.record_sale(share, payment_method=payment_method, recipient=recipient, recorded_by=recorded_by)
             if t:
                 txns.append(t)
                 breakdown.append({'item': b.item.description, 'amount': float(share)})
@@ -2027,6 +2035,7 @@ class KegBarrel(models.Model):
             keg_barrel=self,
             keg_serving=serving,
             keg_qty=int(qty),
+            recorded_by=recorded_by,
         )
 
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
@@ -2444,7 +2453,7 @@ class KitchenBatch(models.Model):
         end = self.closed_on.date() if self.closed_on else _tz.localdate()
         return (end - self.received_on).days + 1
 
-    def record_sale(self, amount, payment_method='cash', recipient='', preset=None):
+    def record_sale(self, amount, payment_method='cash', recipient='', preset=None, recorded_by=None):
         """Sell from this batch. Creates Transaction, updates revenue_collected + khaki count."""
         amount = Decimal(str(amount))
         if amount <= 0:
@@ -2458,6 +2467,7 @@ class KitchenBatch(models.Model):
             payment_method=payment_method or 'cash',
             recipient=recipient or '',
             kitchen_batch=self,
+            recorded_by=recorded_by,
         )
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
         if preset:

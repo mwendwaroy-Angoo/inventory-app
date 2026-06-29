@@ -30,7 +30,7 @@ from django.views.decorators.http import require_POST
 
 from accounts.models import UserProfile
 from core.models import (
-    BarTab, CustomerDebtPayment, SalaryPayment, Shift, Transaction,
+    CustomerDebtPayment, SalaryPayment, Shift, Transaction,
     RecurringExpense, Notification,
 )
 from core.views import get_user_profile, owner_required
@@ -56,97 +56,34 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
 
     shift_count = shift_qs.count()
     total_hours = 0.0
-    shift_q = Q()
     for sh in shift_qs:
-        end = sh.ended_at or timezone.now()
         if sh.ended_at and sh.started_at:
             delta = (sh.ended_at - sh.started_at).total_seconds() / 3600.0
             total_hours += max(0.0, delta)
-        shift_q |= Q(created_at__gte=sh.started_at, created_at__lte=end)
 
-    # ── Revenue: individually attributed by source ─────────────────────────────
-    # Kitchen staff: shift-window Issue transactions in kitchen store.
-    #   Overlap-free because one kitchen staffer works per shift.
-    # Bar-role staff (staff, waitress):
-    #   A) Keg/tab revenue via BarTab.served_by — individually attributed per
-    #      person, zero overlap even when multiple bar staff work concurrently.
-    #      Settled tabs broken down by payment_method; open tabs counted as credit
-    #      (the sale already happened, payment is pending).
-    #   B) Non-keg Quick Sell — shift-window, non-kitchen store, keg pours excluded
-    #      (keg_serving='' filters out pours to avoid double-counting with part A).
+    # ── Revenue: individually attributed via Transaction.recorded_by ────────────
+    # Every Issue transaction records the staff member who created it. One query,
+    # zero overlap regardless of concurrent shifts or multiple counters.
     _rev = Case(
         When(sale_amount__isnull=False, then=F('sale_amount')),
         default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
         output_field=DecimalField(max_digits=12, decimal_places=2),
     )
-    cash_revenue   = Decimal('0')
-    mpesa_revenue  = Decimal('0')
-    credit_revenue = Decimal('0')
-    staff_role = staff_profile.role
-
-    if staff_role == 'kitchen':
-        if shift_q:
-            txns = Transaction.objects.filter(
-                shift_q, business=business, type='Issue',
-                item__store__is_kitchen=True,
-            )
-            aggs = txns.aggregate(
-                cash=Sum(_rev, filter=Q(payment_method='cash')),
-                mpesa=Sum(_rev, filter=Q(payment_method='mpesa')),
-                credit=Sum(_rev, filter=Q(payment_method='credit')),
-            )
-            cash_revenue   = Decimal(str(aggs['cash']   or 0))
-            mpesa_revenue  = Decimal(str(aggs['mpesa']  or 0))
-            credit_revenue = Decimal(str(aggs['credit'] or 0))
-    else:
-        # Part A — tab revenue, individually attributed via BarTab.served_by.
-        tab_qs = BarTab.objects.filter(
-            business=business,
-            served_by=user,
-            shift__started_at__date__gte=date_from,
-            shift__started_at__date__lte=date_to,
-        ).exclude(status='VOID')
-
-        for row in (
-            tab_qs.filter(status='SETTLED')
-                  .values('payment_method')
-                  .annotate(total=Sum('entries__amount'))
-        ):
-            amt = Decimal(str(row['total'] or 0))
-            pm = (row['payment_method'] or '').lower()
-            if pm == 'cash':
-                cash_revenue += amt
-            elif pm == 'mpesa':
-                mpesa_revenue += amt
-            else:
-                credit_revenue += amt
-
-        open_total = Decimal(str(
-            tab_qs.filter(status='OPEN')
-                  .aggregate(t=Sum('entries__amount'))['t'] or 0
-        ))
-        credit_revenue += open_total
-
-        # Part B — non-keg Quick Sell, shift-window, non-kitchen items.
-        # keg_serving='' excludes keg pours (cup/pint/jug) already counted above.
-        if shift_q:
-            qs_txns = Transaction.objects.filter(
-                shift_q,
-                business=business,
-                type='Issue',
-                keg_serving='',
-                item__store__is_kitchen=False,
-            )
-            qs_aggs = qs_txns.aggregate(
-                cash=Sum(_rev, filter=Q(payment_method='cash')),
-                mpesa=Sum(_rev, filter=Q(payment_method='mpesa')),
-                credit=Sum(_rev, filter=Q(payment_method='credit')),
-            )
-            cash_revenue   += Decimal(str(qs_aggs['cash']   or 0))
-            mpesa_revenue  += Decimal(str(qs_aggs['mpesa']  or 0))
-            credit_revenue += Decimal(str(qs_aggs['credit'] or 0))
-
-    total_revenue = cash_revenue + mpesa_revenue + credit_revenue
+    aggs = Transaction.objects.filter(
+        business=business,
+        type='Issue',
+        recorded_by=user,
+        date__gte=date_from,
+        date__lte=date_to,
+    ).exclude(payment_method='void').aggregate(
+        cash=Sum(_rev, filter=Q(payment_method='cash')),
+        mpesa=Sum(_rev, filter=Q(payment_method='mpesa')),
+        credit=Sum(_rev, filter=Q(payment_method='credit')),
+    )
+    cash_revenue   = Decimal(str(aggs['cash']   or 0))
+    mpesa_revenue  = Decimal(str(aggs['mpesa']  or 0))
+    credit_revenue = Decimal(str(aggs['credit'] or 0))
+    total_revenue  = cash_revenue + mpesa_revenue + credit_revenue
 
     # ── Debts recovered by this staff ──
     debts_recovered = float(

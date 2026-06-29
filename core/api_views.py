@@ -246,6 +246,7 @@ def quick_sell_api(request):
             type="Issue",
             qty=-qty,
             business=business,
+            recorded_by=request.user,
         )
 
         daily_count = Transaction.objects.filter(business=business, date=today).count()

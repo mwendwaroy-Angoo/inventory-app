@@ -299,6 +299,7 @@ def _create_transactions_for_order(order, up):
                 payment_method=order.payment_method,
                 recipient=order.table_label,
                 date=timezone.localdate(),
+                recorded_by=request.user,
             )
         except Exception:
             continue

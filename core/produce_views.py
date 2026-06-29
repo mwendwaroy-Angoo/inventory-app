@@ -20,7 +20,7 @@ from .models import Item, Transaction, ProduceBunch
 # ──────────────────────────────────────────────────────────────────────────
 # SALE HELPERS (called from quick_sell)
 # ──────────────────────────────────────────────────────────────────────────
-def _sell_item_amount(business, item, amount, payment_method='cash', recipient=''):
+def _sell_item_amount(business, item, amount, payment_method='cash', recipient='', recorded_by=None):
     amount = Decimal(str(amount))
     bunches = [
         b for b in item.bunches.filter(business=business, status='OPEN')
@@ -35,21 +35,21 @@ def _sell_item_amount(business, item, amount, payment_method='cash', recipient='
         if amount <= 0:
             break
         take = min(b.remaining(), amount)
-        t = b.record_sale(take, payment_method, recipient)
+        t = b.record_sale(take, payment_method, recipient, recorded_by=recorded_by)
         if t:
             txns.append(t)
             sold += take
             amount -= take
 
     if amount > 0 and bunches:
-        t = bunches[-1].record_sale(amount, payment_method, recipient)
+        t = bunches[-1].record_sale(amount, payment_method, recipient, recorded_by=recorded_by)
         if t:
             txns.append(t)
             sold += amount
     return txns, sold
 
 
-def handle_bunch_cart_entry(entry, business, payment_method, recipient=''):
+def handle_bunch_cart_entry(entry, business, payment_method, recipient='', recorded_by=None):
     try:
         amount = Decimal(str(entry.get('amount', 0)))
     except Exception:
@@ -65,7 +65,7 @@ def handle_bunch_cart_entry(entry, business, payment_method, recipient=''):
             return None, None
         raw_ids = entry.get('selected_ids') or []
         item_ids = [int(x) for x in raw_ids if str(x).isdigit() or isinstance(x, int)] or None
-        txns, _breakdown = ProduceBunch.sell_mix(business, group, amount, payment_method, recipient=recipient, item_ids=item_ids)
+        txns, _breakdown = ProduceBunch.sell_mix(business, group, amount, payment_method, recipient=recipient, item_ids=item_ids, recorded_by=recorded_by)
         if not txns:
             return None, None
         name = entry.get('label') or f"Mboga za kienyeji ({group})"
@@ -75,7 +75,7 @@ def handle_bunch_cart_entry(entry, business, payment_method, recipient=''):
         item = Item.objects.filter(id=entry.get('id'), store__business=business).first()
         if not item:
             return None, None
-        txns, sold = _sell_item_amount(business, item, amount, payment_method, recipient)
+        txns, sold = _sell_item_amount(business, item, amount, payment_method, recipient, recorded_by=recorded_by)
         if not txns:
             return None, None
         return {'name': item.description, 'qty': 1, 'subtotal': float(sold)}, txns[-1]

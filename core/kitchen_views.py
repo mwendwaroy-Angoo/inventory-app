@@ -426,6 +426,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 payment_method=txn_pm,
                 recipient=txn_recipient,
                 preset=preset,
+                recorded_by=request.user,
             )
             if active_tab and txn:
                 BarTabEntry.objects.create(
@@ -443,6 +444,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 amount=amount,
                 payment_method=txn_pm,
                 recipient=txn_recipient,
+                recorded_by=request.user,
             )
             if active_tab:
                 BarTabEntry.objects.create(
@@ -467,6 +469,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 sale_amount=amount,
                 payment_method=txn_pm,
                 recipient=txn_recipient,
+                recorded_by=request.user,
             )
             if active_tab:
                 BarTabEntry.objects.create(

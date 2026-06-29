@@ -2241,6 +2241,7 @@ def quick_sell(request):
                     user_profile.business,
                     payment_method_qs,
                     recipient=credit_recipient if payment_method_qs == "credit" else "",
+                    recorded_by=request.user,
                 )
                 if line:
                     recorded.append(line)
@@ -2312,6 +2313,7 @@ def quick_sell(request):
                 payment_method=payment_method_qs,
                 sale_amount=sale_amt,
                 recipient=credit_recipient if payment_method_qs == "credit" else "",
+                recorded_by=request.user,
             )
             recorded.append(
                 {
