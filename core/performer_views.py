@@ -20,14 +20,17 @@ from django.views.decorators.http import require_POST
 from .models import (
     BusinessExpense,
     Customer,
-    Notification,
     Performer,
     PerformerFeedback,
     PerformerSession,
     RecurringExpense,
     Shift,
 )
-from .notifications import normalize_ke_phone, send_sms_notification
+from .notifications import (
+    create_in_app_notification,
+    normalize_ke_phone,
+    send_sms_notification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +69,7 @@ def _fire_session_started_notification(session, started_by):
         f"KES {fee:,.0f}. Staff: {staff_label}."
     )
     for up in business.users.filter(role='owner').select_related('user'):
-        Notification.objects.create(business=business, user=up.user, message=msg)
+        create_in_app_notification(up.user, '🎤 DJ/MC Sesheni Imeanza', msg)
 
     if business.event_sms_enabled and business.phone:
         try:
@@ -84,7 +87,7 @@ def _fire_unverified_alert(session):
         f"Session date: {session.date}, KES {session.agreed_fee:,.0f}."
     )
     for up in business.users.filter(role='owner').select_related('user'):
-        Notification.objects.create(business=business, user=up.user, message=msg)
+        create_in_app_notification(up.user, '⚠️ DJ/MC Hajakuthibitishwa', msg)
 
     if business.event_sms_enabled and business.phone:
         try:

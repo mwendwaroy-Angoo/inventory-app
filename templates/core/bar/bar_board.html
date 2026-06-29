@@ -4125,7 +4125,9 @@ window.barDeclineMerge = function() {
     var needFeedbackQr = sessions.filter(function (s) { return s.status === 'COMPLETED'; });
 
     if (_state.performers.length === 0) {
-      html += '<div style="font-size:.83rem;color:#b0b0b0;text-align:center;padding:.75rem 0;">Hakuna wanamuziki. <a href="/bar/performers/" style="color:#c9a84c;">Ongeza hapa &#8594;</a></div>';
+      html += '<div style="font-size:.83rem;color:#b0b0b0;text-align:center;padding:.75rem 0;">Hakuna wanamuziki.' +
+        (IS_OWNER ? ' <a href="/bar/performers/" style="color:#c9a84c;">Ongeza hapa &#8594;</a>' : '') +
+        '</div>';
     } else {
       html += '<div style="border-top:1px solid #333;padding-top:.85rem;margin-top:' + (sessions.length ? '.5rem' : '0') + ';">';
       html += '<div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.5rem;font-weight:600;">+ Anza Sesheni Mpya</div>';
