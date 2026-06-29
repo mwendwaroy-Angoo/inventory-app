@@ -1517,7 +1517,7 @@
   }
 
   /* ── Checkout ── */
-  function _submitCheckout(pmOverride) {
+  function _submitCheckout(pmOverride, meta) {
     var pm = pmOverride || _pm;
     var tabName    = (document.getElementById('kb-tab-name').value||'').trim();
     var tabPhone   = (document.getElementById('kb-tab-phone').value||'').trim();
@@ -1534,6 +1534,7 @@
       credit_name: creditName,
       credit_phone: creditPhone,
       merge_tab_id: mergeTabId,
+      stk_payment_id: (meta && meta.stk_payment_id) ? String(meta.stk_payment_id) : '',
       csrfmiddlewaretoken: CSRF,
     });
     fetch('/kitchen/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
@@ -1541,6 +1542,13 @@
       .then(function(d){
         btn.disabled = false; btn.textContent = 'Maliza Mauzo';
         if (d.ok) {
+          // already_settled=true means the Daraja callback processed the cart
+          // before the JS poll could — just clear and refresh, no double-counting.
+          if (d.already_settled) {
+            _cart = []; renderCart(); refreshRevenue();
+            showToast('✅ KES ' + fmt(d.total) + ' — M-Pesa (Kulipwa)', 3500);
+            return;
+          }
           var _pmLabels = {cash:'Cash', mpesa:'M-Pesa', stk:'M-Pesa (STK)',
                            food_tab:'Food Tab', bar_tab:'Bar Tab', credit:'Deni'};
           var msg = '✓ KES ' + fmt(d.total) + ' — ' + (_pmLabels[pm] || pm);
@@ -1621,7 +1629,11 @@
     fetch('/mpesa/stk-push/', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({phone: phone, amount: Math.round(total)}),
+      body: JSON.stringify({
+        phone: phone,
+        amount: Math.round(total),
+        kitchen_cart: JSON.parse(JSON.stringify(_cart)),
+      }),
     })
     .then(function(r){ return r.json(); })
     .then(function(d){
@@ -1661,7 +1673,15 @@
             setTimeout(function() {
               var m = bootstrap.Modal.getInstance(document.getElementById('kbStkModal'));
               if (m) m.hide();
-              _submitCheckout('mpesa');
+              if (data.kitchen_settled) {
+                // Daraja callback already processed the cart server-side;
+                // just clear the cart and update the revenue badge.
+                _cart = []; renderCart(); refreshRevenue();
+                showToast('✅ KES ' + fmt(data.amount) + ' — M-Pesa (Kulipwa)', 3500);
+              } else {
+                // Normal path: JS poll won the race — submit the cart now.
+                _submitCheckout('mpesa', {stk_payment_id: paymentId});
+              }
             }, 1500);
           } else if (data.status === 'failed') {
             clearInterval(interval);

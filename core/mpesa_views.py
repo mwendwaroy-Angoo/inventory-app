@@ -36,8 +36,8 @@ def _bridge_stk_to_prompt(payment):
     """Create a PendingTransactionPrompt for a completed STK Push that has no
     linked order or bar tab — i.e. a manual 'Request Payment' from the dashboard.
     Idempotent: skips if a prompt for this payment already exists."""
-    if payment.order_id or payment.bar_tab_id:
-        return  # Tab/order have their own completion logic
+    if payment.order_id or payment.bar_tab_id or payment.kitchen_cart:
+        return  # Tab/order/kitchen each have their own completion logic
     receipt = payment.mpesa_receipt
     # When the active-poll path confirms success before the callback arrives,
     # mpesa_receipt is empty. Use a synthetic key so the prompt still appears.
@@ -119,6 +119,98 @@ def _settle_tab_from_payment(payment):
         logger.warning("Tab STK settlement failed for tab_id=%s: %s", getattr(payment, 'bar_tab_id', '?'), exc)
 
 
+def _settle_kitchen_order_from_payment(payment):
+    """Process a kitchen cart after STK Push success — server-side fallback.
+
+    Called from mpesa_callback and payment_status poll when payment.kitchen_cart
+    is set. Idempotent: uses payment.kitchen_settled + select_for_update so only
+    one of (Daraja callback, JS poll path) processes the cart, whichever arrives
+    first. The other path detects kitchen_settled=True and skips."""
+    from django.db import transaction as db_txn
+    from core.models import KitchenBatch, ProduceBunch
+    from core.kitchen_views import _kitchen_store
+
+    try:
+        with db_txn.atomic():
+            pmt = Payment.objects.select_for_update().get(id=payment.id)
+            if pmt.kitchen_settled:
+                logger.info("Kitchen STK already settled: payment_id=%s", payment.id)
+                return
+            pmt.kitchen_settled = True
+            pmt.save(update_fields=['kitchen_settled'])
+
+        cart = payment.kitchen_cart or []
+        business = payment.business
+        kitchen_store = _kitchen_store(business)
+        if not kitchen_store:
+            logger.warning("Kitchen STK: no kitchen store for business=%s", business.id)
+            return
+
+        receipt_lines = []
+        total = Decimal('0')
+
+        for entry in cart:
+            amount = Decimal(str(entry.get('amount', 0)))
+            qty = Decimal(str(entry.get('qty', 1)))
+            desc = entry.get('description', '')
+            batch_id  = entry.get('batch_id')
+            bunch_id  = entry.get('bunch_id')
+            item_id   = entry.get('item_id')
+            preset_id = entry.get('preset_id')
+
+            if not amount:
+                continue
+
+            if batch_id:
+                try:
+                    batch = KitchenBatch.objects.get(id=batch_id, business=business, status='OPEN')
+                    preset = ItemPortionPreset.objects.filter(id=preset_id, item=batch.item).first() if preset_id else None
+                    batch.record_sale(amount=amount, payment_method='mpesa', recipient='', preset=preset)
+                    receipt_lines.append({'name': desc, 'subtotal': float(amount)})
+                    total += amount
+                except KitchenBatch.DoesNotExist:
+                    logger.warning("Kitchen STK: batch %s not found or not OPEN", batch_id)
+
+            elif bunch_id:
+                try:
+                    bunch = ProduceBunch.objects.get(id=bunch_id, business=business, status='OPEN')
+                    bunch.record_sale(amount=amount, payment_method='mpesa', recipient='')
+                    receipt_lines.append({'name': desc, 'subtotal': float(amount)})
+                    total += amount
+                except ProduceBunch.DoesNotExist:
+                    logger.warning("Kitchen STK: bunch %s not found or not OPEN", bunch_id)
+
+            elif item_id:
+                try:
+                    item = Item.objects.get(id=item_id, store=kitchen_store)
+                    Transaction.objects.create(
+                        business=business, item=item, type='Issue',
+                        qty=-qty, sale_amount=amount,
+                        payment_method='mpesa', recipient='',
+                        date=timezone.localdate(),
+                    )
+                    receipt_lines.append({'name': desc, 'subtotal': float(amount), 'qty': float(qty)})
+                    total += amount
+                except Item.DoesNotExist:
+                    logger.warning("Kitchen STK: item %s not found in kitchen store", item_id)
+
+        if receipt_lines:
+            Receipt.issue(
+                business=business,
+                lines=receipt_lines,
+                payment_method='mpesa',
+                user=None,
+                customer_name='',
+                customer_phone='',
+                source='kitchen',
+            )
+            logger.info("Kitchen STK settled from callback: payment_id=%s lines=%d total=%s",
+                        payment.id, len(receipt_lines), total)
+
+    except Exception as exc:
+        logger.warning("Kitchen STK settlement failed: payment_id=%s %s", payment.id, exc)
+
+
 # ── STK PUSH CALLBACK (from Safaricom) ──────────────────────────────────────
 
 @csrf_exempt
@@ -188,7 +280,11 @@ def mpesa_callback(request):
         if payment.bar_tab_id:
             _settle_tab_from_payment(payment)
 
-        # Create reconciliation prompt for manual STK pushes (no order, no tab)
+        # Settle kitchen cart if this was a kitchen STK push
+        if payment.kitchen_cart:
+            _settle_kitchen_order_from_payment(payment)
+
+        # Create reconciliation prompt for manual STK pushes (no order, no tab, no kitchen)
         _bridge_stk_to_prompt(payment)
 
         logger.info("Payment completed: %s receipt=%s", payment.id, receipt)
@@ -247,6 +343,7 @@ def stk_push_view(request):
     amount = data.get('amount', 0)
     order_id = data.get('order_id')
     tab_id = data.get('tab_id')
+    kitchen_cart = data.get('kitchen_cart')  # list or None — set by kitchen board STK push
 
     if not phone or not amount:
         return JsonResponse({'error': 'Phone and amount required'}, status=400)
@@ -321,6 +418,7 @@ def stk_push_view(request):
     payment = Payment.objects.create(
         order=order,
         bar_tab=bar_tab,
+        kitchen_cart=kitchen_cart if isinstance(kitchen_cart, list) else None,
         business=business,
         store=cfg['store'],
         source=cfg['source'],
@@ -406,6 +504,8 @@ def payment_status(request, payment_id):
                 payment.refresh_from_db()
                 if payment.bar_tab_id:
                     _settle_tab_from_payment(payment)
+                if payment.kitchen_cart:
+                    _settle_kitchen_order_from_payment(payment)
                 _bridge_stk_to_prompt(payment)
 
     return JsonResponse({
@@ -413,6 +513,7 @@ def payment_status(request, payment_id):
         'status': payment.status,
         'mpesa_receipt': payment.mpesa_receipt,
         'amount': float(payment.amount),
+        'kitchen_settled': payment.kitchen_settled,
     })
 
 

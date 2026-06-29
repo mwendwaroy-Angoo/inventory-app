@@ -301,8 +301,34 @@ def _kitchen_checkout(request, up, business, is_owner):
         credit_phone = (request.POST.get('credit_phone') or '').strip()
         merge_tab_id_raw = (request.POST.get('merge_tab_id') or '').strip()
         merge_tab_id = int(merge_tab_id_raw) if merge_tab_id_raw.isdigit() else None
+        stk_payment_id_raw = (request.POST.get('stk_payment_id') or '').strip()
     except (json.JSONDecodeError, Exception):
         return JsonResponse({'ok': False, 'error': 'Invalid request'}, status=400)
+
+    # ── STK idempotency gate ──────────────────────────────────────────────────
+    # If this checkout was initiated by a kitchen STK push, claim kitchen_settled
+    # atomically. If the Daraja callback already processed the cart (set
+    # kitchen_settled=True), skip and tell the frontend it's already done.
+    if stk_payment_id_raw.isdigit():
+        from django.db import transaction as _db_txn
+        from core.models import Payment as _Payment
+        try:
+            with _db_txn.atomic():
+                _pmt = _Payment.objects.select_for_update().get(
+                    id=int(stk_payment_id_raw),
+                    business=business,
+                    kitchen_cart__isnull=False,
+                )
+                if _pmt.kitchen_settled:
+                    return JsonResponse({
+                        'ok': True,
+                        'already_settled': True,
+                        'total': float(_pmt.amount),
+                    })
+                _pmt.kitchen_settled = True
+                _pmt.save(update_fields=['kitchen_settled'])
+        except _Payment.DoesNotExist:
+            pass  # No matching kitchen STK payment — proceed normally
 
     if not cart:
         return JsonResponse({'ok': False, 'error': 'Cart is empty'}, status=400)

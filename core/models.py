@@ -953,6 +953,14 @@ class Payment(models.Model):
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
     bar_tab = models.ForeignKey('BarTab', on_delete=models.SET_NULL, null=True, blank=True, related_name='stk_payments')
+    kitchen_cart = models.JSONField(
+        null=True, blank=True,
+        help_text='Serialised cart for kitchen STK push server-side settlement.',
+    )
+    kitchen_settled = models.BooleanField(
+        default=False,
+        help_text='True once kitchen_cart has been processed (by callback or JS poll).',
+    )
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='payments')
     store = models.ForeignKey(
         'Store', on_delete=models.SET_NULL, null=True, blank=True, related_name='payments',
