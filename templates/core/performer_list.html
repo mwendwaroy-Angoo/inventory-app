@@ -54,14 +54,14 @@
       {% if p.genre %}&nbsp;&#183;&nbsp; {{ p.genre }}{% endif %}
     </div>
     <div style="margin-top:.6rem; display:flex; flex-wrap:wrap; gap:.25rem;">
-      {% if p._sc %}
-      <span class="perf-stat">&#127902; {{ p._sc }} sesheni</span>
+      {% if p.stat_count %}
+      <span class="perf-stat">&#127902; {{ p.stat_count }} sesheni</span>
       {% endif %}
-      {% if p._asr %}
-      <span class="perf-stat">&#11088; {{ p._asr|floatformat:1 }} (staff)</span>
+      {% if p.stat_staff %}
+      <span class="perf-stat">&#11088; {{ p.stat_staff|floatformat:1 }} (staff)</span>
       {% endif %}
-      {% if p._acr %}
-      <span class="perf-stat">&#11088; {{ p._acr|floatformat:1 }} (wateja)</span>
+      {% if p.stat_customer %}
+      <span class="perf-stat">&#11088; {{ p.stat_customer|floatformat:1 }} (wateja)</span>
       {% endif %}
     </div>
     {% if p.notes %}

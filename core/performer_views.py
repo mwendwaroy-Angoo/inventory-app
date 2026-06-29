@@ -101,9 +101,9 @@ def performer_list(request):
     business = up.business
     performers_qs = list(Performer.objects.filter(business=business).order_by('name'))
     for p in performers_qs:
-        p._sc  = p.session_count()
-        p._asr = p.avg_staff_rating()
-        p._acr = p.avg_customer_rating()
+        p.stat_count    = p.session_count()
+        p.stat_staff    = p.avg_staff_rating()
+        p.stat_customer = p.avg_customer_rating()
     return render(request, 'core/performer_list.html', {
         'performers': performers_qs,
         'business': business,
