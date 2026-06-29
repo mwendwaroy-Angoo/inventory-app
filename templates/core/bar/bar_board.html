@@ -4064,7 +4064,10 @@ window.barDeclineMerge = function() {
       html += '<span style="color:#b0b0b0;font-size:.75rem;margin-left:.5rem;">' + s.performer_type + '</span></div>';
       html += '<span style="color:' + statusColor + ';font-size:.75rem;font-weight:600;">' + _statusLabel(s.status) + '</span>';
       html += '</div>';
-      html += '<div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.4rem;">KES ' + s.agreed_fee.toLocaleString() + ' &nbsp;&#183;&nbsp; Kuanzia: ' + (s.started_at || '&#8212;') + (s.ended_at ? ' &#8211; ' + s.ended_at : '') + '</div>';
+      html += '<div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.4rem;">' +
+        (IS_OWNER ? 'KES ' + s.agreed_fee.toLocaleString() + ' &nbsp;&#183;&nbsp; ' : '') +
+        'Kuanzia: ' + (s.started_at || '&#8212;') + (s.ended_at ? ' &#8211; ' + s.ended_at : '') +
+        '</div>';
 
       if (s.status === 'ACTIVE') {
         if (!s.performer_checked_in) {
@@ -4089,6 +4092,9 @@ window.barDeclineMerge = function() {
         html += '<button onclick="window._djEndSession(' + s.id + ')" style="width:100%;padding:.5rem;background:#c0395a;border:none;border-radius:8px;color:#fff;font-weight:700;font-size:.88rem;cursor:pointer;">Maliza Sesheni</button>';
         html += '</div>';
         html += _distribSection(s);
+        if (IS_OWNER) {
+          html += '<div style="text-align:right;margin-top:.3rem;"><button onclick="window._djCancelSession(' + s.id + ')" style="background:transparent;border:none;color:#555;font-size:.72rem;cursor:pointer;padding:.15rem .4rem;">&#128465; Futa sesheni hii</button></div>';
+        }
       }
 
       if (s.status === 'COMPLETED') {
@@ -4107,6 +4113,9 @@ window.barDeclineMerge = function() {
           html += '</div>';
         } else if (s.payment_status === 'PAID') {
           html += '<div style="color:#4caf50;font-size:.78rem;">&#10003; Amelipwa</div>';
+        }
+        if (IS_OWNER && s.payment_status !== 'PAID') {
+          html += '<div style="text-align:right;margin-top:.3rem;"><button onclick="window._djCancelSession(' + s.id + ')" style="background:transparent;border:none;color:#555;font-size:.72rem;cursor:pointer;padding:.15rem .4rem;">&#128465; Futa sesheni hii</button></div>';
         }
       }
 
@@ -4137,8 +4146,12 @@ window.barDeclineMerge = function() {
         html += '<option value="' + p.id + '" data-rate="' + p.standard_rate + '">' + p.name + ' (' + p.performer_type + ')</option>';
       });
       html += '</select>';
-      html += '<div style="flex:1;margin-bottom:.5rem;"><div style="font-size:.75rem;color:#b0b0b0;margin-bottom:.2rem;">Bei iliyokubalika (KES)</div>';
-      html += '<input type="number" id="djmc-fee" min="0" step="100" value="0" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.85rem;"></div>';
+      if (IS_OWNER) {
+        html += '<div style="flex:1;margin-bottom:.5rem;"><div style="font-size:.75rem;color:#b0b0b0;margin-bottom:.2rem;">Bei iliyokubalika (KES)</div>';
+        html += '<input type="number" id="djmc-fee" min="0" step="100" value="0" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.85rem;"></div>';
+      } else {
+        html += '<input type="hidden" id="djmc-fee" value="0">';
+      }
       html += '<div id="djmc-start-status" style="display:none;font-size:.8rem;margin-bottom:.4rem;"></div>';
       html += '<button onclick="window._djStartSession()" style="width:100%;padding:.55rem;background:rgba(201,168,76,.2);border:1px solid rgba(201,168,76,.4);border-radius:8px;color:#c9a84c;font-weight:700;font-size:.88rem;cursor:pointer;">&#9654; Anza Sesheni</button>';
       html += '</div>';
@@ -4219,7 +4232,15 @@ window.barDeclineMerge = function() {
     var statusEl = document.getElementById('djmc-start-status');
     if (!sel.value) { _showStatus(statusEl, 'Chagua DJ/MC kwanza.', '#e87090'); return; }
     _showStatus(statusEl, 'Inaanza...', '#b0b0b0');
-    _post('/bar/session/start/', {performer_id: sel.value, agreed_fee: feeEl.value || '0'}, function (d) {
+    var agreedFee;
+    if (IS_OWNER) {
+      agreedFee = feeEl ? (feeEl.value || '0') : '0';
+    } else {
+      /* Staff: use performer's standard_rate (hidden from them), server stores it */
+      var selOpt = sel.options[sel.selectedIndex];
+      agreedFee = selOpt ? (selOpt.getAttribute('data-rate') || '0') : '0';
+    }
+    _post('/bar/session/start/', {performer_id: sel.value, agreed_fee: agreedFee}, function (d) {
       if (d.ok) { _loadState(); } else { _showStatus(statusEl, d.error || 'Hitilafu.', '#e87090'); }
     });
   };
@@ -4240,6 +4261,7 @@ window.barDeclineMerge = function() {
   };
 
   window._djCancelSession = function (sessionId) {
+    if (!confirm('Futa sesheni hii? Hatua hii haiwezi kutendeka tena.')) return;
     _post('/bar/session/' + sessionId + '/update/', {action: 'cancel'}, function (d) {
       if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
     });

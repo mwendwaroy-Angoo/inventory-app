@@ -3,43 +3,180 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Maoni ya DJ/MC — {{ session.performer.name|default:"Performance" }}</title>
+<title>{{ session.performer.name|default:"DJ/MC" }} — Tathmini | {{ session.business.name }}</title>
+<!-- OG tags — WhatsApp shows performer name + compelling prompt -->
+<meta property="og:title" content="🎤 Tathmini {{ session.performer.name|default:'DJ/MC' }} usiku huu!">
+<meta property="og:description" content="Je, alifanya vizuri @ {{ session.business.name }}? Piga kura yako — inachukua sekunde 10 tu!">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ feedback_url }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;900&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #1a1a1a; color: #f0ece4; font-family: 'DM Sans', sans-serif; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
-.card { background: #2a2a2a; border: 1px solid rgba(201,168,76,.25); border-radius: 20px; padding: 2rem 1.75rem; max-width: 400px; width: 100%; text-align: center; }
-.logo { font-family: 'Playfair Display', serif; color: #c9a84c; font-size: 1rem; margin-bottom: 1.5rem; letter-spacing: .5px; }
-.icon { font-size: 2.5rem; margin-bottom: .6rem; }
-.headline { font-family: 'Playfair Display', serif; color: #f0ece4; font-size: 1.2rem; font-weight: 700; margin-bottom: .4rem; }
-.subline { color: #b0b0b0; font-size: .85rem; margin-bottom: 1.25rem; }
-.stars-row { display: flex; justify-content: center; gap: .5rem; margin-bottom: 1rem; }
-.star { font-size: 2.4rem; cursor: pointer; color: #444; transition: color .15s; user-select: none; }
+
+body {
+  background: #1a1a1a;
+  color: #f0ece4;
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+}
+
+.card {
+  background: #2a2a2a;
+  border: 1px solid rgba(201,168,76,.25);
+  border-radius: 20px;
+  padding: 2rem 1.75rem;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+}
+
+.logo {
+  font-family: 'Playfair Display', serif;
+  color: #c9a84c;
+  font-size: .9rem;
+  margin-bottom: 1.5rem;
+  letter-spacing: .5px;
+}
+
+.icon { font-size: 2.4rem; margin-bottom: .5rem; }
+
+.headline {
+  font-family: 'Playfair Display', serif;
+  color: #f0ece4;
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-bottom: .3rem;
+}
+
+.subline { color: #b0b0b0; font-size: .82rem; margin-bottom: 1.4rem; }
+
+/* ── Stars ── */
+.stars-row { display: flex; justify-content: center; gap: .45rem; margin-bottom: .6rem; }
+.star {
+  font-size: 2.6rem;
+  cursor: pointer;
+  color: #3a3a3a;
+  transition: color .12s, transform .1s;
+  user-select: none;
+  line-height: 1;
+}
 .star.active { color: #c9a84c; }
-textarea { width: 100%; background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 10px; color: #f0ece4; padding: .6rem .85rem; font-size: .85rem; font-family: inherit; resize: none; margin-bottom: .85rem; }
-textarea:focus { outline: none; border-color: #c9a84c; }
-.btn-submit { display: block; width: 100%; padding: .8rem; background: linear-gradient(135deg,#c9a84c,#e2c36e); color: #1a1a1a; border: none; border-radius: 12px; font-weight: 800; font-size: .95rem; cursor: pointer; }
-.btn-submit:disabled { opacity: .5; cursor: not-allowed; }
-.done-box { display: none; background: rgba(76,175,80,.08); border: 1px solid rgba(76,175,80,.25); border-radius: 12px; padding: 1.5rem 1rem; }
-.rating-prompt { font-size: .78rem; color: #b0b0b0; height: 1.1rem; margin-bottom: .5rem; }
+.star:hover { transform: scale(1.15); }
+
+.rating-label {
+  font-size: .82rem;
+  color: #b0b0b0;
+  height: 1.3rem;
+  margin-bottom: 1.1rem;
+  transition: color .2s;
+}
+
+/* ── Chips ── */
+.chips-section {
+  text-align: left;
+  margin-bottom: 1rem;
+}
+
+.chips-heading {
+  font-size: .75rem;
+  color: #b0b0b0;
+  font-weight: 600;
+  margin-bottom: .55rem;
+  letter-spacing: .03em;
+}
+
+.chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+}
+
+.chip {
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  color: #d0d0d0;
+  font-size: .8rem;
+  padding: .35rem .85rem;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+  font-family: inherit;
+  line-height: 1.3;
+}
+
+.chip:hover { background: rgba(201,168,76,.1); border-color: rgba(201,168,76,.3); }
+
+.chip.chip-on {
+  background: rgba(201,168,76,.18);
+  border-color: rgba(201,168,76,.55);
+  color: #e2c36e;
+  font-weight: 600;
+}
+
+/* ── Comment ── */
+.note-field {
+  width: 100%;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 10px;
+  color: #f0ece4;
+  padding: .6rem .85rem;
+  font-size: .85rem;
+  font-family: inherit;
+  resize: none;
+  margin-top: .75rem;
+  margin-bottom: .85rem;
+}
+.note-field:focus { outline: none; border-color: rgba(201,168,76,.5); }
+.note-label { font-size: .73rem; color: #b0b0b0; text-align: left; margin-bottom: .25rem; }
+
+/* ── Submit ── */
+.btn-submit {
+  display: block;
+  width: 100%;
+  padding: .85rem;
+  background: linear-gradient(135deg,#c9a84c,#e2c36e);
+  color: #1a1a1a;
+  border: none;
+  border-radius: 12px;
+  font-weight: 800;
+  font-size: .95rem;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.btn-submit:disabled { opacity: .35; cursor: not-allowed; }
+
+.submit-status { display: none; font-size: .8rem; margin-bottom: .5rem; }
+
+/* ── Done state ── */
+.done-view {
+  display: none;
+  background: rgba(76,175,80,.07);
+  border: 1px solid rgba(76,175,80,.2);
+  border-radius: 16px;
+  padding: 1.75rem 1.25rem;
+}
+
+.done-stars { font-size: 2rem; margin-bottom: .6rem; letter-spacing: .2rem; }
+.done-title { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 700; margin-bottom: .5rem; }
+.done-tags { font-size: .83rem; color: #c9a84c; margin-bottom: .5rem; min-height: 1.2rem; }
+.done-sub { font-size: .82rem; color: #b0b0b0; }
 </style>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
 <div class="card">
   <div class="logo">Duka Mwecheche &#127908;</div>
 
-  {% if already_submitted %}
-  <div class="done-box" style="display:block;">
-    <div style="font-size:2.2rem; margin-bottom:.5rem;">&#127928;</div>
-    <div style="font-weight:700; font-size:1.05rem; margin-bottom:.35rem;">Asante kwa maoni yako!</div>
-    <div style="font-size:.83rem; color:#b0b0b0;">Umeshakabidhi maoni kwa sehemu hii.</div>
-  </div>
-  {% else %}
+  <!-- Form view -->
   <div id="form-view">
-    <div class="icon">&#127928;</div>
-    <div class="headline">Vipi kuhusu onyesho la usiku?</div>
-    <div class="subline">{{ session.performer.name|default:"DJ/MC" }} · {{ session.date }} · {{ session.business.name }}</div>
+    <div class="icon">&#127925;</div>
+    <div class="headline">Vipi onyesho la usiku?</div>
+    <div class="subline">{{ session.performer.name|default:"DJ/MC" }} &middot; {{ session.business.name }}</div>
 
     <div class="stars-row" id="stars">
       <span class="star" data-v="1">&#9733;</span>
@@ -48,80 +185,179 @@ textarea:focus { outline: none; border-color: #c9a84c; }
       <span class="star" data-v="4">&#9733;</span>
       <span class="star" data-v="5">&#9733;</span>
     </div>
-    <div class="rating-prompt" id="rating-prompt">Gusa nyota kutoa tathmini yako</div>
+    <div class="rating-label" id="rating-label">Gusa nyota kutoa tathmini yako</div>
 
-    <textarea id="comment-field" rows="3" maxlength="200" placeholder="Maoni yako (optional)..."></textarea>
+    <!-- Tag chips — revealed after star tap -->
+    <div class="chips-section" id="chips-section" style="display:none;">
+      <div class="chips-heading" id="chips-heading"></div>
+      <div class="chips-row" id="chips-row"></div>
+    </div>
 
-    <div id="submit-status" style="display:none; font-size:.8rem; margin-bottom:.5rem;"></div>
-    <button class="btn-submit" id="submit-btn" onclick="submitFeedback()">Tuma Maoni</button>
+    <!-- Free-text note — revealed after star tap -->
+    <div id="note-wrap" style="display:none;">
+      <div class="note-label">Sema zaidi (optional)</div>
+      <textarea class="note-field" id="note-field" rows="2" maxlength="300" placeholder="Eleza kwa undani zaidi..."></textarea>
+    </div>
+
+    <div class="submit-status" id="submit-status"></div>
+    <button class="btn-submit" id="submit-btn" onclick="submitFeedback()" disabled>Tuma Maoni</button>
   </div>
-  <div class="done-box" id="done-view">
-    <div style="font-size:2.2rem; margin-bottom:.5rem;">&#11088;</div>
-    <div style="font-weight:700; font-size:1.05rem; margin-bottom:.35rem;">Asante sana!</div>
-    <div style="font-size:.83rem; color:#b0b0b0;">Maoni yako yamesajiliwa. Karibu tena! &#127928;</div>
+
+  <!-- Done view -->
+  <div class="done-view" id="done-view">
+    <div class="done-stars" id="done-stars">&#11088;</div>
+    <div class="done-title">Asante sana!</div>
+    <div class="done-tags" id="done-tags"></div>
+    <div class="done-sub">Maoni yako yanasaidia mwenye biashara kuchagua onyesho bora. Karibu tena! &#127928;</div>
   </div>
-  {% endif %}
 </div>
 
 <script>
-var _rating = 0;
-var labels = ['', 'Mbaya sana', 'Mbaya', 'Sawa', 'Nzuri', 'Bora kabisa!'];
-var stars = document.querySelectorAll('.star');
-stars.forEach(function (s) {
-  s.addEventListener('click', function () {
-    _rating = parseInt(this.getAttribute('data-v'));
-    stars.forEach(function (st, idx) {
-      st.classList.toggle('active', idx < _rating);
-    });
-    var prompt = document.getElementById('rating-prompt');
-    if (prompt) prompt.textContent = labels[_rating] || '';
-  });
-  s.addEventListener('mouseover', function () {
-    var v = parseInt(this.getAttribute('data-v'));
-    stars.forEach(function (st, idx) { st.classList.toggle('active', idx < v); });
-  });
-  s.addEventListener('mouseout', function () {
-    stars.forEach(function (st, idx) { st.classList.toggle('active', idx < _rating); });
-  });
-});
+(function () {
+  var SESSION_ID = {{ session.id }};
+  var CSRF       = '{{ csrf_token }}';
+  var LS_KEY     = 'duka_feedback_' + SESSION_ID;
 
-function submitFeedback() {
-  if (!_rating) {
-    var status = document.getElementById('submit-status');
-    status.textContent = 'Tafadhali chagua nyota kwanza.';
-    status.style.color = '#e87090';
-    status.style.display = 'block';
+  /* ── localStorage dedup: same device per session only sees the done view ── */
+  var stored = localStorage.getItem(LS_KEY);
+  if (stored) {
+    document.getElementById('form-view').style.display = 'none';
+    var doneEl = document.getElementById('done-view');
+    doneEl.style.display = 'block';
+    document.getElementById('done-stars').textContent = localStorage.getItem(LS_KEY + '_stars') || '⭐';
+    var storedTags = localStorage.getItem(LS_KEY + '_tags') || '';
+    if (storedTags) document.getElementById('done-tags').textContent = storedTags;
     return;
   }
-  var btn = document.getElementById('submit-btn');
-  btn.disabled = true;
-  btn.textContent = 'Inatuma...';
 
-  var comment = document.getElementById('comment-field').value || '';
-  fetch(window.location.href, {
-    method: 'POST',
-    headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/x-www-form-urlencoded'},
-    body: 'rating=' + _rating + '&comment=' + encodeURIComponent(comment),
-  })
-  .then(function (r) { return r.json(); })
-  .then(function (d) {
-    if (d.ok) {
-      document.getElementById('form-view').style.display = 'none';
-      document.getElementById('done-view').style.display = 'block';
-    } else {
+  /* ── Tag sets by star rating ── */
+  var TAGS = {
+    high: [
+      ['🔥', 'Bomba kabisa'],
+      ['🎵', 'Nyimbo nzuri'],
+      ['💃', 'Crowd ilichangamka'],
+      ['🎤', 'Uwasilishaji bora'],
+      ['🔊', 'Sauti ilikuwa sawa'],
+    ],
+    mid: [
+      ['💡', 'Ilikuwa sawa tu'],
+      ['🎵', 'Nyimbo zilikuwa wastani'],
+      ['🔊', 'Sauti ilikuwa wastani'],
+      ['✨', 'Mambo fulani yalikuwa mazuri'],
+    ],
+    low: [
+      ['😴', 'Haikuvutia'],
+      ['🎵', 'Nyimbo hazikupendeza'],
+      ['💤', 'Crowd haikufurahi'],
+      ['🎤', 'Haikuwa professional'],
+      ['🔇', 'Sauti haikuwa nzuri'],
+    ],
+  };
+  var CHIP_HEADINGS = {
+    high: 'Nini kilimfanya vizuri?',
+    mid:  'Eleza zaidi:',
+    low:  'Nini hakikuwa vizuri?',
+  };
+  var STAR_LABELS = ['', 'Mbaya sana 😢', 'Mbaya 😕', 'Sawa 😐', 'Nzuri 😊', 'Bora kabisa! 🔥'];
+
+  var _rating = 0;
+  var _selectedTags = [];
+  var stars = document.querySelectorAll('.star');
+
+  function setRating(v) {
+    _rating = v;
+    _selectedTags = [];
+    stars.forEach(function (st, idx) { st.classList.toggle('active', idx < v); });
+    var lbl = document.getElementById('rating-label');
+    if (lbl) {
+      lbl.textContent = STAR_LABELS[v] || '';
+      lbl.style.color = v >= 4 ? '#c9a84c' : v === 3 ? '#b0b0b0' : '#e87090';
+    }
+    document.getElementById('submit-btn').disabled = false;
+    _buildChips(v);
+    document.getElementById('note-wrap').style.display = 'block';
+  }
+
+  function _buildChips(v) {
+    var set = v >= 4 ? 'high' : v <= 2 ? 'low' : 'mid';
+    var tags = TAGS[set];
+    document.getElementById('chips-heading').textContent = CHIP_HEADINGS[set];
+    var row = document.getElementById('chips-row');
+    row.innerHTML = '';
+    tags.forEach(function (t) {
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.textContent = t[0] + ' ' + t[1];
+      chip.onclick = function () {
+        var val = t[0] + ' ' + t[1];
+        var idx = _selectedTags.indexOf(val);
+        if (idx === -1) {
+          _selectedTags.push(val);
+          chip.classList.add('chip-on');
+        } else {
+          _selectedTags.splice(idx, 1);
+          chip.classList.remove('chip-on');
+        }
+      };
+      row.appendChild(chip);
+    });
+    document.getElementById('chips-section').style.display = 'block';
+  }
+
+  stars.forEach(function (s) {
+    s.addEventListener('click', function () { setRating(parseInt(this.getAttribute('data-v'))); });
+    s.addEventListener('mouseover', function () {
+      var v = parseInt(this.getAttribute('data-v'));
+      stars.forEach(function (st, idx) { st.classList.toggle('active', idx < v); });
+    });
+    s.addEventListener('mouseout', function () {
+      stars.forEach(function (st, idx) { st.classList.toggle('active', idx < _rating); });
+    });
+  });
+
+  window.submitFeedback = function () {
+    if (!_rating) return;
+    var btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Inatuma...';
+
+    var note    = (document.getElementById('note-field').value || '').trim();
+    var tagStr  = _selectedTags.join(' | ');
+    var comment = tagStr + (tagStr && note ? '\n' : '') + note;
+
+    fetch(window.location.href, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'rating=' + _rating + '&comment=' + encodeURIComponent(comment),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        var starsText = '';
+        for (var i = 0; i < _rating; i++) starsText += '⭐';
+        localStorage.setItem(LS_KEY, '1');
+        localStorage.setItem(LS_KEY + '_stars', starsText);
+        localStorage.setItem(LS_KEY + '_tags', tagStr);
+        document.getElementById('form-view').style.display = 'none';
+        document.getElementById('done-stars').textContent = starsText;
+        if (tagStr) document.getElementById('done-tags').textContent = tagStr;
+        document.getElementById('done-view').style.display = 'block';
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Tuma Maoni';
+        var status = document.getElementById('submit-status');
+        status.textContent = d.error || 'Hitilafu. Jaribu tena.';
+        status.style.color = '#e87090';
+        status.style.display = 'block';
+      }
+    })
+    .catch(function () {
       btn.disabled = false;
       btn.textContent = 'Tuma Maoni';
-      var status = document.getElementById('submit-status');
-      status.textContent = d.error || 'Hitilafu. Jaribu tena.';
-      status.style.color = '#e87090';
-      status.style.display = 'block';
-    }
-  })
-  .catch(function () {
-    btn.disabled = false;
-    btn.textContent = 'Tuma Maoni';
-  });
-}
+    });
+  };
+})();
 </script>
 </body>
 </html>

@@ -522,7 +522,8 @@ def session_checkin_public(request, token):
 def session_feedback_public(request, token):
     """
     Public — no login. Customers scan QR and submit 1–5 star rating.
-    Soft dedup: one submission per session + IP hash.
+    Dedup is handled client-side via localStorage (per device, per session).
+    ip_hash is stored for audit only — not used to block submissions.
     """
     session = get_object_or_404(PerformerSession, feedback_token=token)
 
@@ -531,27 +532,24 @@ def session_feedback_public(request, token):
         or request.META.get('REMOTE_ADDR', '')
     )
     ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip else ''
-    already_rated = bool(
-        ip_hash and
-        PerformerFeedback.objects.filter(session=session, ip_hash=ip_hash).exists()
-    )
 
-    if request.method == 'POST' and not already_rated:
+    if request.method == 'POST':
         try:
             rating = int(request.POST.get('rating', 0))
         except (ValueError, TypeError):
             rating = 0
         if 1 <= rating <= 5:
-            comment = (request.POST.get('comment') or '').strip()[:200]
+            comment = (request.POST.get('comment') or '').strip()[:500]
             PerformerFeedback.objects.create(
                 session=session, rating=rating, comment=comment, ip_hash=ip_hash,
             )
             return JsonResponse({'ok': True})
-        return JsonResponse({'ok': False, 'error': 'Tathmini lazima iwe 1–5.'})
+        return JsonResponse({'ok': False, 'error': 'Chagua nyota kwanza (1–5).'})
 
+    feedback_url = request.build_absolute_uri(f'/p/{token}/')
     return render(request, 'core/performer_feedback_public.html', {
-        'session':          session,
-        'already_submitted': already_rated,
+        'session':      session,
+        'feedback_url': feedback_url,
     })
 
 
