@@ -2169,7 +2169,7 @@
     if (!d.shift) {
       _activeShiftId  = null;
       _shiftBlockMsg  = null;
-      _myShiftOpen    = false;
+      if (!_isOwner) _myShiftOpen = false;  // owners bypass shift gate always
       panel.style.display = 'block';
       panel.innerHTML =
         '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem;">' +
@@ -2182,7 +2182,7 @@
 
     var s = d.shift;
     _activeShiftId = s.id;
-    _myShiftOpen   = (s.is_mine && s.status === 'OPEN');
+    _myShiftOpen   = _isOwner || (s.is_mine && s.status === 'OPEN');
     if (!_isOwner && !s.is_mine && s.status === 'OPEN') {
       _shiftBlockMsg = 'Shift imefunguliwa na ' + s.staff_name +
                        '. Fungua shift yako mwenyewe kwanza.';
@@ -2661,7 +2661,7 @@
   ══════════════════════════════════════════════ */
 
   window.kbBatchSell = function(batchId, presetId, amount, label, khakiType) {
-    if (!_myShiftOpen) {
+    if (!IS_OWNER && !_myShiftOpen) {
       showToast('⚠ Fungua shift kwanza!', 2500);
       document.getElementById('shift-no-shift-banner').style.display = 'block';
       return;
