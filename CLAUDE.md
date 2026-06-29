@@ -597,6 +597,12 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   initiate_stk_push — correct for Till. If a business has only a Paybill (no Till),
   the TransactionType must change to `CustomerPayBillOnline`. Add logic when building
   the payload: check whether shortcode matches mpesa_till or mpesa_paybill.
+- Django template engine BLOCKS access to any attribute whose name starts with `_`.
+  Accessing `{{ obj._attr }}` raises `TemplateSyntaxError: Variables and attributes may
+  not begin with underscores` → instant 500. ROOT CAUSE of the DJ/MC performer_list 500
+  (2026-06-29): view attached `p._sc`, `p._asr`, `p._acr` to model instances; template
+  couldn't read them. Fix: always use plain names (`p.stat_count`, `p.stat_staff`, etc.)
+  when attaching ad-hoc attributes to objects that will be passed to a template.
 
 ## Cause-&-Effect Protocol (run for EVERY feature or module)
 
