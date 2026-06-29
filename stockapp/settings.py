@@ -10,9 +10,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-SECRET_KEY = os.getenv(
-    "SECRET_KEY", "django-insecure-#e-h-#sy&d7=%m2v$2g%&x_odbmwfi(%5zoeewt1(@y!$607ju"
-)
+_secret_key = os.getenv("SECRET_KEY")
+if not _secret_key:
+    _is_debug = os.getenv("DEBUG", "False").lower() in ("true", "1")
+    if not _is_debug:
+        raise RuntimeError(
+            "SECRET_KEY environment variable is not set. "
+            "Set it in Render dashboard → Environment before deploying."
+        )
+    # Local dev only. Production always has the env var, so this line never
+    # runs on Render — the RuntimeError fires first if the var is missing.
+    _secret_key = "django-insecure-local-dev-only-not-for-production"
+SECRET_KEY = _secret_key
 
 DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1")
 
