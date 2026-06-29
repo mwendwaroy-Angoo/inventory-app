@@ -69,7 +69,12 @@
     <div class="stat-row">
         <div class="stat-item">
             <div class="si-label">{% trans 'Mapato' %}</div>
-            <div class="si-value" style="color:var(--gold);">KES {{ revenue_kes|floatformat:0 }}</div>
+            <div class="si-value" style="color:var(--gold);">KES {{ total_revenue|floatformat:0 }}</div>
+            <div style="margin-top:0.3rem; font-size:0.73rem; color:#b0b0b0; display:flex; gap:0.75rem; flex-wrap:wrap;">
+                <span>💵 {{ cash_revenue|floatformat:0 }}</span>
+                <span>📱 {{ mpesa_revenue|floatformat:0 }}</span>
+                {% if credit_revenue > 0 %}<span style="color:#fbbf24;">📋 {{ credit_revenue|floatformat:0 }}</span>{% endif %}
+            </div>
         </div>
         <div class="stat-item">
             <div class="si-label">{% trans 'Zamu' %}</div>

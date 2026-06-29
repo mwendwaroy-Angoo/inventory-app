@@ -79,7 +79,12 @@
     </div>
     <div class="stmt-row">
         <span class="stmt-label">{% trans 'Revenue generated' %}</span>
-        <span class="stmt-value" style="color:var(--gold);">KES {{ revenue_kes|floatformat:0 }}</span>
+        <span class="stmt-value" style="color:var(--gold);">KES {{ total_revenue|floatformat:0 }}</span>
+    </div>
+    <div class="stmt-row" style="margin-top:-0.25rem; padding-top:0;">
+        <span class="stmt-label" style="font-size:0.78rem;">
+            💵 Cash {{ cash_revenue|floatformat:0 }} · 📱 M-Pesa {{ mpesa_revenue|floatformat:0 }}{% if credit_revenue > 0 %} · 📋 Deni {{ credit_revenue|floatformat:0 }}{% endif %}
+        </span>
     </div>
     <div class="stmt-row">
         <span class="stmt-label">{% trans 'Shifts worked' %}</span>

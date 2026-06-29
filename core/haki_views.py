@@ -20,7 +20,8 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Sum
+from django.db.models import Case, DecimalField, F, Q, Sum, Value, When
+from django.db.models.functions import Abs, Coalesce
 from django.shortcuts import get_object_or_404, redirect, render
 from django.http import JsonResponse
 from django.utils import timezone
@@ -29,7 +30,7 @@ from django.views.decorators.http import require_POST
 
 from accounts.models import UserProfile
 from core.models import (
-    CustomerDebtPayment, SalaryPayment, Shift, BarTab, Transaction,
+    CustomerDebtPayment, SalaryPayment, Shift, Transaction,
     RecurringExpense, Notification,
 )
 from core.views import get_user_profile, owner_required
@@ -45,30 +46,56 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
     """
     user = staff_profile.user
 
-    # ── Revenue from tabs this staff opened/served ──
-    tab_revenue = (
-        BarTab.objects.filter(
-            business=business,
-            served_by=user,
-            status='SETTLED',
-            shift__started_at__date__gte=date_from,
-            shift__started_at__date__lte=date_to,
-        ).aggregate(total=Sum('entries__amount'))['total'] or Decimal('0')
-    )
-    # Also count Quick Sell / kitchen transactions recorded_by this user
-    # (no FK, so match by username in bar board server_name or via shift)
+    # ── Shifts for this period ─────────────────────────────────────────────────
     shift_qs = Shift.objects.filter(
         business=business,
         staff=user,
         started_at__date__gte=date_from,
         started_at__date__lte=date_to,
-    )
+    ).order_by('started_at')
+
     shift_count = shift_qs.count()
     total_hours = 0.0
+    shift_q = Q()
     for sh in shift_qs:
+        end = sh.ended_at or timezone.now()
         if sh.ended_at and sh.started_at:
             delta = (sh.ended_at - sh.started_at).total_seconds() / 3600.0
             total_hours += max(0.0, delta)
+        shift_q |= Q(created_at__gte=sh.started_at, created_at__lte=end)
+
+    # ── Revenue: shift-window Issue transactions ────────────────────────────────
+    # Attribution: any sale made in this staff's store type during their shift window.
+    # Store scope mirrors _reconcile: kitchen staff → is_kitchen=True,
+    # owner → no filter, other staff → is_kitchen=False.
+    # Single aggregate query over OR'd time windows avoids N queries per shift.
+    cash_revenue   = Decimal('0')
+    mpesa_revenue  = Decimal('0')
+    credit_revenue = Decimal('0')
+
+    if shift_q:
+        _rev = Case(
+            When(sale_amount__isnull=False, then=F('sale_amount')),
+            default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
+            output_field=DecimalField(max_digits=12, decimal_places=2),
+        )
+        txns = Transaction.objects.filter(shift_q, business=business, type='Issue')
+        staff_role = staff_profile.role
+        if staff_role == 'kitchen':
+            txns = txns.filter(item__store__is_kitchen=True)
+        elif staff_role != 'owner':
+            txns = txns.filter(item__store__is_kitchen=False)
+
+        aggs = txns.aggregate(
+            cash=Sum(_rev, filter=Q(payment_method='cash')),
+            mpesa=Sum(_rev, filter=Q(payment_method='mpesa')),
+            credit=Sum(_rev, filter=Q(payment_method='credit')),
+        )
+        cash_revenue   = Decimal(str(aggs['cash']   or 0))
+        mpesa_revenue  = Decimal(str(aggs['mpesa']  or 0))
+        credit_revenue = Decimal(str(aggs['credit'] or 0))
+
+    total_revenue = cash_revenue + mpesa_revenue + credit_revenue
 
     # ── Debts recovered by this staff ──
     debts_recovered = float(
@@ -109,13 +136,17 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
         milestones.append(f'💰 KES {debts_recovered:,.0f} recovered')
     if clean_keg and shift_count >= 10:
         milestones.append('✨ Clean handling')
-    if float(tab_revenue) >= 50000:
-        milestones.append(f'⭐ KES {float(tab_revenue):,.0f} in tabs')
+    if float(total_revenue) >= 50000:
+        milestones.append(f'⭐ KES {float(total_revenue):,.0f} mwezi huu')
 
     return {
         'profile': staff_profile,
         'user': user,
-        'revenue_kes': float(tab_revenue),
+        'revenue_kes': float(total_revenue),
+        'cash_revenue': float(cash_revenue),
+        'mpesa_revenue': float(mpesa_revenue),
+        'credit_revenue': float(credit_revenue),
+        'total_revenue': float(total_revenue),
         'shift_count': shift_count,
         'hours': round(total_hours, 1),
         'debts_recovered_kes': debts_recovered,
