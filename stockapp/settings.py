@@ -185,10 +185,22 @@ MPESA_CONSUMER_SECRET = os.getenv("MPESA_CONSUMER_SECRET", "")
 MPESA_SHORTCODE = os.getenv("MPESA_SHORTCODE", "")
 MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "")
 
+# ── RENDER / REVERSE PROXY ────────────────────────────────────────────────────
+# Render terminates TLS at the edge and forwards to Django over plain HTTP
+# internally, adding X-Forwarded-Proto: https. Without this, request.is_secure()
+# returns False, breaking CSRF validation and HTTPS-only cookie behaviour.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Force-upgrade any stray HTTP hit to HTTPS (Render also does this, but belt+braces).
+SECURE_SSL_REDIRECT = not DEBUG
+
+# CSRF and session cookies must only travel over HTTPS in production.
+CSRF_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SECURE = not DEBUG
+
 # ── SESSION ───────────────────────────────────────────────────────────────────
 SESSION_COOKIE_AGE = 86400        # 24 hours — keeps retail owners logged in all day
-SESSION_SAVE_EVERY_REQUEST = True  # Refresh session expiry on every request (prevents CSRF
-                                    # token/session mismatch after Render free-tier cold start)
+SESSION_SAVE_EVERY_REQUEST = True  # Refresh session expiry on every request
 
 # ── REST FRAMEWORK ────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
