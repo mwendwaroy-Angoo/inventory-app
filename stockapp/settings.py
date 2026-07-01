@@ -3,8 +3,12 @@ Django settings for stockapp project.
 """
 
 import os
+import sys
 import dj_database_url
 from pathlib import Path
+
+# Detect when running under the test runner (manage.py test)
+TESTING = 'test' in sys.argv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -201,11 +205,12 @@ MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "")
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Force-upgrade any stray HTTP hit to HTTPS (Render also does this, but belt+braces).
-SECURE_SSL_REDIRECT = not DEBUG
+# Disabled during `manage.py test` — test client speaks plain HTTP and would get 301s.
+SECURE_SSL_REDIRECT = not DEBUG and not TESTING
 
 # CSRF and session cookies must only travel over HTTPS in production.
-CSRF_COOKIE_SECURE = not DEBUG
-SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG and not TESTING
+SESSION_COOKIE_SECURE = not DEBUG and not TESTING
 
 # ── SESSION ───────────────────────────────────────────────────────────────────
 SESSION_COOKIE_AGE = 86400        # 24 hours — keeps retail owners logged in all day
