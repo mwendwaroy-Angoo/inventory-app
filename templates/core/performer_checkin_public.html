@@ -40,7 +40,6 @@ body { background: #1a1a1a; color: #f0ece4; font-family: 'DM Sans', sans-serif; 
       <div><strong>Mahali:</strong> {{ session.business.name }}</div>
       <div><strong>Mwanamuziki:</strong> {{ session.performer.name|default:"—" }}</div>
       <div><strong>Tarehe:</strong> {{ session.date }}</div>
-      <div><strong>Ada:</strong> KES {{ session.agreed_fee|floatformat:0 }}</div>
     </div>
     <button class="btn-confirm" id="confirm-btn" onclick="doConfirm()">Ndio, niko hapa &#10003;</button>
     <div id="confirm-status" style="margin-top:.75rem; font-size:.82rem; display:none;"></div>
