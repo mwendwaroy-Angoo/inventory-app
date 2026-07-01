@@ -7,7 +7,6 @@ Who can do what:
   - Public (no login): performer check-in URL, customer feedback URL, live display
 """
 import datetime
-import hashlib
 import json
 import logging
 from datetime import timedelta
@@ -555,15 +554,8 @@ def session_feedback_public(request, token):
     """
     Public — no login. Customers scan QR and submit 1–5 star rating.
     Dedup is handled client-side via localStorage (per device, per session).
-    ip_hash is stored for audit only — not used to block submissions.
     """
     session = get_object_or_404(PerformerSession, feedback_token=token)
-
-    client_ip = (
-        request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip()
-        or request.META.get('REMOTE_ADDR', '')
-    )
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip else ''
 
     if request.method == 'POST':
         try:
@@ -573,7 +565,7 @@ def session_feedback_public(request, token):
         if 1 <= rating <= 5:
             comment = (request.POST.get('comment') or '').strip()[:500]
             PerformerFeedback.objects.create(
-                session=session, rating=rating, comment=comment, ip_hash=ip_hash,
+                session=session, rating=rating, comment=comment,
             )
             return JsonResponse({'ok': True})
         return JsonResponse({'ok': False, 'error': 'Chagua nyota kwanza (1–5).'})

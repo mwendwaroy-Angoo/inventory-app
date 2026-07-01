@@ -2740,7 +2740,6 @@ class PerformerFeedback(models.Model):
     rating       = models.IntegerField(choices=[(i, i) for i in range(1, 6)])
     comment      = models.TextField(blank=True, max_length=500)
     submitted_at = models.DateTimeField(auto_now_add=True)
-    ip_hash      = models.CharField(max_length=64, blank=True)
 
     class Meta:
         ordering = ['-submitted_at']
