@@ -3979,8 +3979,9 @@ window.barDeclineMerge = function() {
   var activeBtn = document.getElementById('djmc-active-dot');
   var CSRF      = (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '';
   var IS_OWNER  = {{ is_owner|yesno:"true,false" }};
+  var BNAME     = "{{ business.name|escapejs }}";
 
-  var _state = { sessions: [], performers: [], loaded: false, customer_sms_count: 0 };
+  var _state = { sessions: [], performers: [], upcoming: [], loaded: false, customer_sms_count: 0 };
 
   window.openDjMcModal = function () {
     backdrop.style.display = 'flex';
@@ -4000,6 +4001,7 @@ window.barDeclineMerge = function() {
       .then(function (d) {
         _state.sessions          = d.sessions   || [];
         _state.performers        = d.performers || [];
+        _state.upcoming          = d.upcoming   || [];
         _state.customer_sms_count = d.customer_sms_count || 0;
         _state.loaded = true;
         _render();
@@ -4021,6 +4023,13 @@ window.barDeclineMerge = function() {
 
   function _showStatus(el, msg, color) {
     el.textContent = msg; el.style.color = color; el.style.display = 'block';
+  }
+
+  function _formatDate(dateStr) {
+    var d = new Date(dateStr + 'T00:00:00');
+    var days   = ['Jumapili','Jumatatu','Jumanne','Jumatano','Alhamisi','Ijumaa','Jumamosi'];
+    var months = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Ago','Sep','Okt','Nov','Des'];
+    return days[d.getDay()] + ', ' + d.getDate() + ' ' + months[d.getMonth()];
   }
 
   /* ─── distribution section: share feedback link with customers ─── */
@@ -4050,7 +4059,33 @@ window.barDeclineMerge = function() {
 
   function _render() {
     var sessions = _state.sessions;
+    var upcoming = _state.upcoming || [];
     var html = '';
+
+    /* ── Upcoming scheduled sessions ── */
+    if (upcoming.length) {
+      html += '<div style="font-size:.72rem;color:#c9a84c;font-weight:700;letter-spacing:.05em;margin-bottom:.5rem;text-transform:uppercase;">&#128197; Ratiba Ijayo</div>';
+      upcoming.forEach(function (s) {
+        var promoUrl = location.origin + '/p/' + s.feedback_token + '/promo/';
+        var waMsg = encodeURIComponent('🎤 ' + s.performer_name + ' LIVE @ ' + BNAME + '!\n📅 ' + _formatDate(s.date) + (s.scheduled_start_time ? '\n🕘 Saa ' + s.scheduled_start_time : '') + '\n\nUsikose! 🔥\n' + promoUrl);
+        html += '<div style="background:#1e1e1e;border:1px solid rgba(201,168,76,.2);border-radius:10px;padding:.75rem .85rem;margin-bottom:.6rem;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem;">';
+        html += '<strong style="color:#f0ece4;">' + s.performer_name + '</strong>';
+        html += '<span style="background:rgba(201,168,76,.12);color:#c9a84c;border-radius:4px;padding:1px 7px;font-size:.7rem;font-weight:600;">RATIBA</span>';
+        html += '</div>';
+        html += '<div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.55rem;">&#128197; ' + _formatDate(s.date) + (s.scheduled_start_time ? ' &nbsp;&#183;&nbsp; &#128336; ' + s.scheduled_start_time : '') + '</div>';
+        html += '<div style="display:flex;gap:.4rem;">';
+        html += '<a href="https://wa.me/?text=' + waMsg + '" target="_blank" rel="noopener" style="flex:1;text-align:center;padding:.35rem;background:rgba(37,211,102,.1);border:1px solid rgba(37,211,102,.25);border-radius:7px;color:#25d366;font-size:.75rem;text-decoration:none;">&#128172; Share</a>';
+        html += '<a href="' + promoUrl + '" target="_blank" rel="noopener" style="flex:1;text-align:center;padding:.35rem;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.2);border-radius:7px;color:#c9a84c;font-size:.75rem;text-decoration:none;">&#128202; Promo</a>';
+        html += '<button onclick="window._djActivateSession(' + s.id + ')" style="flex:1;padding:.35rem;background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);border-radius:7px;color:#81c784;font-size:.75rem;cursor:pointer;">&#9654; Anza</button>';
+        if (IS_OWNER) {
+          html += '<button onclick="window._djCancelSession(' + s.id + ')" style="padding:.35rem .55rem;background:transparent;border:1px solid #2a2a2a;border-radius:7px;color:#555;font-size:.75rem;cursor:pointer;">&#128465;</button>';
+        }
+        html += '</div>';
+        html += '</div>';
+      });
+      html += '<hr style="border:none;border-top:1px solid #2e2e2e;margin:.75rem 0 .85rem;">';
+    }
 
     sessions.forEach(function (s) {
       var statusColor = s.status === 'ACTIVE' ? '#4caf50' : s.status === 'COMPLETED' ? '#c9a84c' : '#ffb74d';
@@ -4154,6 +4189,20 @@ window.barDeclineMerge = function() {
       }
       html += '<div id="djmc-start-status" style="display:none;font-size:.8rem;margin-bottom:.4rem;"></div>';
       html += '<button onclick="window._djStartSession()" style="width:100%;padding:.55rem;background:rgba(201,168,76,.2);border:1px solid rgba(201,168,76,.4);border-radius:8px;color:#c9a84c;font-weight:700;font-size:.88rem;cursor:pointer;">&#9654; Anza Sesheni</button>';
+      if (IS_OWNER) {
+        html += '<div style="text-align:center;margin-top:.5rem;">';
+        html += '<button onclick="window._djToggleSchedule()" style="background:transparent;border:none;color:#b0b0b0;font-size:.74rem;cursor:pointer;padding:.2rem .5rem;">&#128197; Panga kwa siku nyingine</button>';
+        html += '</div>';
+        html += '<div id="djmc-schedule-form" style="display:none;margin-top:.65rem;padding:.75rem;background:rgba(0,0,0,.25);border-radius:8px;border:1px solid rgba(201,168,76,.12);">';
+        html += '<div style="font-size:.77rem;color:#c9a84c;font-weight:600;margin-bottom:.55rem;">&#128197; Ratiba ya Siku Ijayo</div>';
+        html += '<div style="margin-bottom:.45rem;"><div style="font-size:.73rem;color:#b0b0b0;margin-bottom:.2rem;">Tarehe</div>';
+        html += '<input type="date" id="djmc-sched-date" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.85rem;"></div>';
+        html += '<div style="margin-bottom:.45rem;"><div style="font-size:.73rem;color:#b0b0b0;margin-bottom:.2rem;">Muda wa kuanza (optional)</div>';
+        html += '<input type="time" id="djmc-sched-time" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.85rem;"></div>';
+        html += '<div id="djmc-sched-status" style="display:none;font-size:.8rem;margin-bottom:.4rem;"></div>';
+        html += '<button onclick="window._djScheduleSession()" style="width:100%;padding:.5rem;background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.35);border-radius:8px;color:#c9a84c;font-weight:700;font-size:.88rem;cursor:pointer;">&#128197; Hifadhi Ratiba</button>';
+        html += '</div>';
+      }
       html += '</div>';
     }
 
@@ -4264,6 +4313,40 @@ window.barDeclineMerge = function() {
     if (!confirm('Futa sesheni hii? Hatua hii haiwezi kutendeka tena.')) return;
     _post('/bar/session/' + sessionId + '/update/', {action: 'cancel'}, function (d) {
       if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    });
+  };
+
+  window._djActivateSession = function (sessionId) {
+    _post('/bar/session/' + sessionId + '/update/', {action: 'activate'}, function (d) {
+      if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    });
+  };
+
+  window._djToggleSchedule = function () {
+    var form = document.getElementById('djmc-schedule-form');
+    if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  };
+
+  window._djScheduleSession = function () {
+    var sel    = document.getElementById('djmc-performer-sel');
+    var fee    = document.getElementById('djmc-fee');
+    var date   = document.getElementById('djmc-sched-date');
+    var time   = document.getElementById('djmc-sched-time');
+    var status = document.getElementById('djmc-sched-status');
+    if (!sel || !sel.value) { _showStatus(status, 'Chagua DJ/MC kwanza.', '#e87090'); return; }
+    if (!date || !date.value) { _showStatus(status, 'Weka tarehe ya onyesho.', '#e87090'); return; }
+    _showStatus(status, 'Inahifadhi...', '#b0b0b0');
+    _post('/bar/session/schedule/', {
+      performer_id:  sel.value,
+      agreed_fee:    fee ? (fee.value || '0') : '0',
+      schedule_date: date.value,
+      start_time:    time ? (time.value || '') : '',
+    }, function (d) {
+      if (d.ok) {
+        _loadState();
+      } else {
+        _showStatus(status, d.error || 'Hitilafu.', '#e87090');
+      }
     });
   };
 

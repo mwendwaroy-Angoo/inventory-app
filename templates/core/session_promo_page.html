@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🎤 {{ session.performer.name|default:"DJ/MC" }} — {{ session.business.name }}</title>
+<!-- OG tags — WhatsApp / Twitter / Facebook preview -->
+<meta property="og:title" content="🎤 {{ session.performer.name|default:'DJ/MC' }} LIVE @ {{ session.business.name }}">
+<meta property="og:description" content="{% if session.scheduled_start_time %}Saa {{ session.scheduled_start_time|time:'H:i' }} — {% endif %}{{ session.date|date:'l, j F Y' }}. Jiandae kwa usiku mkubwa!">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ promo_url }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #1a1a1a;
+  color: #f0ece4;
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.poster {
+  background: linear-gradient(160deg, #2a2a2a 0%, #1e1a10 100%);
+  border: 1px solid rgba(201,168,76,.35);
+  border-radius: 24px;
+  padding: 2.5rem 2rem;
+  max-width: 440px;
+  width: 100%;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle gold shimmer in the background */
+.poster::before {
+  content: '';
+  position: absolute;
+  top: -60px; right: -60px;
+  width: 220px; height: 220px;
+  background: radial-gradient(circle, rgba(201,168,76,.12) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .3rem 1rem;
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  margin-bottom: 1.4rem;
+}
+
+.badge-soon {
+  background: rgba(201,168,76,.15);
+  border: 1px solid rgba(201,168,76,.4);
+  color: #e2c36e;
+}
+
+.badge-tonight {
+  background: rgba(192,57,90,.15);
+  border: 1px solid rgba(192,57,90,.4);
+  color: #e87090;
+}
+
+.badge-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.4s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity:1; transform:scale(1); }
+  50%       { opacity:.35; transform:scale(.75); }
+}
+
+.mic-icon { font-size: 3rem; margin-bottom: .6rem; }
+
+.venue {
+  font-size: .83rem;
+  color: #b0b0b0;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-bottom: .3rem;
+}
+
+.performer-name {
+  font-family: 'Playfair Display', serif;
+  font-size: 2.4rem;
+  font-weight: 900;
+  color: #f0ece4;
+  line-height: 1.1;
+  margin-bottom: .35rem;
+}
+
+.performer-type {
+  color: #c9a84c;
+  font-size: .88rem;
+  font-weight: 600;
+  margin-bottom: 1.5rem;
+}
+
+.event-details {
+  background: rgba(0,0,0,.25);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  text-align: left;
+}
+
+.detail-row {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  font-size: .88rem;
+  color: #d0d0d0;
+  margin-bottom: .5rem;
+}
+.detail-row:last-child { margin-bottom: 0; }
+.detail-icon { font-size: 1rem; flex-shrink: 0; width: 1.4rem; text-align: center; }
+.detail-text strong { color: #f0ece4; }
+
+.divider {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,.06);
+  margin: 1.5rem 0;
+}
+
+/* QR code section */
+.qr-section { margin-bottom: 1.4rem; }
+.qr-label   { font-size: .82rem; font-weight: 600; color: #b0b0b0; margin-bottom: .6rem; }
+.qr-box     { display: inline-block; background: #fff; border-radius: 12px; padding: 10px; }
+
+/* Action buttons */
+.actions {
+  display: flex;
+  gap: .6rem;
+  margin-bottom: 1rem;
+}
+
+.btn-wa {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .4rem;
+  padding: .75rem;
+  background: rgba(37,211,102,.12);
+  border: 1px solid rgba(37,211,102,.3);
+  border-radius: 12px;
+  color: #25d366;
+  font-size: .88rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn-copy {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .4rem;
+  padding: .75rem;
+  background: rgba(201,168,76,.1);
+  border: 1px solid rgba(201,168,76,.25);
+  border-radius: 12px;
+  color: #c9a84c;
+  font-size: .88rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btn-copy:active { background: rgba(201,168,76,.2); }
+
+.btn-print {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .4rem;
+  padding: .65rem;
+  background: rgba(255,255,255,.04);
+  border: 1px solid #333;
+  border-radius: 12px;
+  color: #b0b0b0;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  margin-bottom: 1.25rem;
+}
+
+.footer { font-size: .72rem; color: #555; }
+
+/* ── Print layout ── */
+@media print {
+  body   { background: #fff; color: #111; display: block; padding: 0; }
+  .poster {
+    background: #fff;
+    border: 2px solid #c9a84c;
+    border-radius: 16px;
+    padding: 1.75rem;
+    max-width: 380px;
+    margin: 1rem auto;
+    page-break-inside: avoid;
+  }
+  .poster::before { display: none; }
+  .badge-soon   { border-color: #c9a84c; color: #c9a84c; background: transparent; }
+  .badge-tonight { border-color: #c0395a; color: #c0395a; background: transparent; }
+  .performer-name { color: #111; }
+  .venue, .performer-type, .detail-row, .qr-label, .footer { color: #555; }
+  .detail-row strong { color: #111; }
+  .event-details { background: transparent; border: 1px solid #ddd; }
+  .actions, .btn-print { display: none; }
+  .divider { border-top-color: #eee; }
+}
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <!-- Status badge -->
+  {% now "Y-m-d" as today_str %}
+  {% if session.date|date:"Y-m-d" == today_str %}
+    <div class="badge badge-tonight"><span class="badge-dot"></span> USIKU HUU</div>
+  {% else %}
+    <div class="badge badge-soon">&#127926; INAKUJA HIVI KARIBUNI</div>
+  {% endif %}
+
+  <div class="mic-icon">&#127908;</div>
+  <div class="venue">{{ session.business.name }}</div>
+
+  <div class="performer-name">{{ session.performer.name|default:"DJ / MC" }}</div>
+  <div class="performer-type">
+    {% if session.performer %}{{ session.performer.get_performer_type_display }}{% endif %}
+    {% if session.performer.genre %}&nbsp;&middot;&nbsp; {{ session.performer.genre }}{% endif %}
+  </div>
+
+  <div class="event-details">
+    <div class="detail-row">
+      <span class="detail-icon">&#128197;</span>
+      <span class="detail-text">
+        <strong id="date-display">{{ session.date|date:"l, j F Y" }}</strong>
+      </span>
+    </div>
+    {% if session.scheduled_start_time %}
+    <div class="detail-row">
+      <span class="detail-icon">&#128336;</span>
+      <span class="detail-text">Inaanza <strong>saa {{ session.scheduled_start_time|time:"H:i" }}</strong></span>
+    </div>
+    {% endif %}
+    {% if session.agreed_fee and session.agreed_fee > 0 %}
+    <div class="detail-row">
+      <span class="detail-icon">&#127894;</span>
+      <span class="detail-text">Usiku huu ni <strong>usiku maalum</strong> — usikose!</span>
+    </div>
+    {% else %}
+    <div class="detail-row">
+      <span class="detail-icon">&#127894;</span>
+      <span class="detail-text">Usiku huu ni <strong>usiku maalum</strong> — usikose!</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <hr class="divider">
+
+  <!-- QR linking to this promo page — scan to share on other devices -->
+  <div class="qr-section">
+    <div class="qr-label">Scan au share ukurasa huu</div>
+    <div class="qr-box" id="qr-box"></div>
+  </div>
+
+  <!-- Share / copy actions -->
+  <div class="actions">
+    <a class="btn-wa" id="wa-btn" href="#" target="_blank" rel="noopener">
+      &#128172; WhatsApp
+    </a>
+    <button class="btn-copy" onclick="copyPromoLink()">
+      &#128279; Nakili Link
+    </button>
+  </div>
+
+  <button class="btn-print" onclick="window.print()">
+    &#128438; Print Poster
+  </button>
+
+  <div class="footer">Powered by Duka Mwecheche</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function () {
+  var promoUrl = "{{ promo_url|escapejs }}";
+  var performer = "{{ session.performer.name|default:'DJ/MC'|escapejs }}";
+  var venue     = "{{ session.business.name|escapejs }}";
+  var dateStr   = "{{ session.date|date:'l, j F Y'|escapejs }}";
+  var timeStr   = "{% if session.scheduled_start_time %}{{ session.scheduled_start_time|time:'H:i' }}{% endif %}";
+
+  /* WhatsApp link */
+  var waMsg = '🎤 ' + performer + ' LIVE @ ' + venue + '!\n📅 ' + dateStr +
+    (timeStr ? '\n🕘 Saa ' + timeStr : '') +
+    '\n\nUsikose usiku huu! 🔥\n' + promoUrl;
+  document.getElementById('wa-btn').href = 'https://wa.me/?text=' + encodeURIComponent(waMsg);
+
+  /* QR code */
+  try {
+    new QRCode(document.getElementById('qr-box'), {
+      text:         promoUrl,
+      width:        160,
+      height:       160,
+      colorDark:    '#000000',
+      colorLight:   '#ffffff',
+      correctLevel: QRCode.CorrectLevel.H,
+    });
+  } catch (e) {
+    document.getElementById('qr-box').textContent = promoUrl;
+  }
+
+  /* Auto print */
+  {% if auto_print %}
+  window.addEventListener('load', function () { setTimeout(window.print, 600); });
+  {% endif %}
+})();
+
+function copyPromoLink() {
+  var url = "{{ promo_url|escapejs }}";
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(url).then(function () {
+      var btn = document.querySelector('.btn-copy');
+      btn.textContent = '✓ Imenakiliwa!';
+      setTimeout(function () { btn.innerHTML = '&#128279; Nakili Link'; }, 2000);
+    });
+  }
+}
+</script>
+</body>
+</html>

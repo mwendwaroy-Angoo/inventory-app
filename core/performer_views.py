@@ -6,9 +6,11 @@ Who can do what:
   - Counter staff with open shift: start/end sessions, approve performer check-in
   - Public (no login): performer check-in URL, customer feedback URL, live display
 """
+import datetime
 import hashlib
 import json
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
@@ -199,7 +201,8 @@ def session_today_api(request):
     if err:
         return err
     business = up.business
-    today = timezone.localdate()
+    today     = timezone.localdate()
+    next_week = today + timedelta(days=7)
 
     sessions = (
         PerformerSession.objects
@@ -208,11 +211,29 @@ def session_today_api(request):
         .select_related('performer')
         .order_by('started_at')
     )
+    upcoming_qs = (
+        PerformerSession.objects
+        .filter(business=business, date__gt=today, date__lte=next_week,
+                status=PerformerSession.STATUS_SCHEDULED)
+        .select_related('performer')
+        .order_by('date', 'scheduled_start_time')
+    )
     performers = list(
         Performer.objects.filter(business=business, is_active=True)
         .order_by('name')
         .values('id', 'name', 'performer_type', 'standard_rate')
     )
+
+    upcoming_result = []
+    for s in upcoming_qs:
+        upcoming_result.append({
+            'id':                   s.id,
+            'performer_name':       s.performer.name if s.performer else 'Unknown',
+            'performer_type':       s.performer.get_performer_type_display() if s.performer else '',
+            'date':                 s.date.strftime('%Y-%m-%d'),
+            'scheduled_start_time': s.scheduled_start_time.strftime('%H:%M') if s.scheduled_start_time else None,
+            'feedback_token':       str(s.feedback_token),
+        })
 
     result = []
     for s in sessions:
@@ -252,6 +273,7 @@ def session_today_api(request):
     return JsonResponse({
         'ok':                True,
         'sessions':          result,
+        'upcoming':          upcoming_result,
         'performers':        performers,
         'is_owner':          getattr(up, 'is_owner', False),
         'customer_sms_count': customer_sms_count,
@@ -357,6 +379,16 @@ def session_update(request, session_id):
         session.status     = PerformerSession.STATUS_ACTIVE
         session.started_at = timezone.now()
         session.save(update_fields=['status', 'started_at'])
+        _fire_session_started_notification(session, request.user)
+        return JsonResponse({'ok': True, 'status': session.status})
+
+    if action == 'activate':
+        if session.status != PerformerSession.STATUS_SCHEDULED:
+            return JsonResponse({'ok': False, 'error': 'Sesheni hii si ya ratiba.'})
+        session.status     = PerformerSession.STATUS_ACTIVE
+        session.started_at = timezone.now()
+        session.date       = timezone.localdate()
+        session.save(update_fields=['status', 'started_at', 'date'])
         _fire_session_started_notification(session, request.user)
         return JsonResponse({'ok': True, 'status': session.status})
 
@@ -569,6 +601,90 @@ def session_live_display(request, token):
         'session':      session,
         'feedback_url': feedback_url,
         'auto_print':   auto_print,
+    })
+
+
+# ── Owner: Schedule upcoming session ─────────────────────────────────────────
+
+@login_required
+@require_POST
+def session_schedule(request):
+    """Owner-only: create a SCHEDULED (future) session — generates a promo URL."""
+    up, err = _owner_required(request)
+    if err:
+        return err
+    business = up.business
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        data = request.POST
+
+    performer_id  = data.get('performer_id')
+    agreed_fee    = data.get('agreed_fee', 0)
+    schedule_date = data.get('schedule_date', '')
+    start_time    = data.get('start_time', '')
+
+    if not performer_id:
+        return JsonResponse({'ok': False, 'error': 'Chagua mwanamuziki.'})
+    if not schedule_date:
+        return JsonResponse({'ok': False, 'error': 'Weka tarehe ya onyesho.'})
+
+    try:
+        performer = Performer.objects.get(id=performer_id, business=business)
+    except Performer.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'Mwanamuziki hakupatikana.'})
+
+    try:
+        fee = Decimal(str(agreed_fee or 0))
+    except Exception:
+        fee = Decimal('0')
+
+    try:
+        parsed_date = datetime.date.fromisoformat(schedule_date)
+    except ValueError:
+        return JsonResponse({'ok': False, 'error': 'Tarehe si sahihi.'})
+
+    if parsed_date <= timezone.localdate():
+        return JsonResponse({'ok': False, 'error': 'Chagua siku ya kesho au baadaye.'})
+
+    parsed_time = None
+    if start_time:
+        try:
+            parsed_time = datetime.time.fromisoformat(start_time)
+        except ValueError:
+            pass
+
+    session = PerformerSession.objects.create(
+        business=business,
+        performer=performer,
+        date=parsed_date,
+        scheduled_start_time=parsed_time,
+        agreed_fee=fee,
+        status=PerformerSession.STATUS_SCHEDULED,
+        created_by=request.user,
+    )
+
+    promo_url = request.build_absolute_uri(f'/p/{session.feedback_token}/promo/')
+    return JsonResponse({'ok': True, 'session_id': session.id, 'promo_url': promo_url})
+
+
+# ── Public: Upcoming session promo page ──────────────────────────────────────
+
+def session_promo_page(request, token):
+    """
+    Public promo page for a scheduled/upcoming session.
+    Shareable on WhatsApp before the event to attract customers.
+    No login required — keyed off feedback_token (unguessable UUID).
+    ?print=1 triggers browser print on load.
+    """
+    session   = get_object_or_404(PerformerSession, feedback_token=token)
+    promo_url = request.build_absolute_uri(f'/p/{token}/promo/')
+    auto_print = request.GET.get('print') == '1'
+    return render(request, 'core/session_promo_page.html', {
+        'session':    session,
+        'promo_url':  promo_url,
+        'auto_print': auto_print,
     })
 
 

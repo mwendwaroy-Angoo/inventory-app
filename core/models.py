@@ -2658,11 +2658,13 @@ class Performer(models.Model):
 
 
 class PerformerSession(models.Model):
+    STATUS_SCHEDULED        = 'SCHEDULED'
     STATUS_PENDING_APPROVAL = 'PENDING_APPROVAL'
     STATUS_ACTIVE           = 'ACTIVE'
     STATUS_COMPLETED        = 'COMPLETED'
     STATUS_CANCELLED        = 'CANCELLED'
     STATUS_CHOICES = [
+        (STATUS_SCHEDULED,        _('Scheduled / upcoming')),
         (STATUS_PENDING_APPROVAL, _('Pending owner approval')),
         (STATUS_ACTIVE,           _('Active / in progress')),
         (STATUS_COMPLETED,        _('Completed')),
@@ -2698,6 +2700,7 @@ class PerformerSession(models.Model):
     performer_checkin_at = models.DateTimeField(null=True, blank=True)
     checkin_token  = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     feedback_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    scheduled_start_time = models.TimeField(null=True, blank=True)
     notes          = models.TextField(blank=True)
     created_by     = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,
                                        related_name='performer_sessions_created')
