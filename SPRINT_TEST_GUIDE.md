@@ -763,3 +763,51 @@ python manage.py check                  # 0 issues
 python manage.py makemigrations --check # No changes detected
 python manage.py test                   # 126 tests; pre-existing trailing-slash 301 failures in K2a–K6 are known
 ```
+
+---
+
+## Sprint K7 — Hotfix + Cleanup
+
+### Automated assertions
+- `PerformerFeedback` model has no `ip_hash` field:
+  ```python
+  from core.models import PerformerFeedback
+  assert not hasattr(PerformerFeedback, 'ip_hash')
+  ```
+- `agreed_fee` does not appear on any public (no-login) template — confirmed by:
+  ```
+  grep -rn "agreed_fee" templates/
+  ```
+  Expected files: `bar_board.html` (IS_OWNER gated JS), `session_promo_page.html` (boolean check only,
+  never displays amount), `performer_list.html` (owner-gated), `performer_form.html` (owner-gated),
+  `session_list.html` (owner-gated). NOT present in `performer_checkin_public.html`.
+
+### Manual smoke tests (Render)
+
+**K7-1 — Check-in page fee removed**
+1. Owner creates a performer session (bar board → 🎤 DJ/MC → start session).
+2. Open the check-in URL (`/p/<checkin_token>/checkin/`) in a private browser tab (not logged in).
+3. ✅ Correct: page shows performer name, venue, and date — **no fee amount visible anywhere**.
+4. Click "Ndio, niko hapa ✓" — confirm the check-in succeeds.
+
+**K7-2 — Feedback localStorage dedup still active**
+1. Open the feedback URL (`/p/<feedback_token>/`) in a private browser.
+2. Submit a 4-star rating with at least one tag chip selected.
+3. ✅ Correct: "Asante sana!" done screen appears, showing the submitted stars and tags.
+4. Reload the page in the **same browser**.
+5. ✅ Correct: page immediately shows the done screen (localStorage dedup active — no re-vote form).
+6. Open the same URL in a **different browser** (or clear localStorage).
+7. ✅ Correct: vote form appears again — each device can vote independently.
+
+**K7-3 — ip_hash field gone from DB**
+- Run `python manage.py dbshell` → `\d core_performerfeedback` (PostgreSQL) or
+  `.schema core_performerfeedback` (SQLite).
+- ✅ Correct: no `ip_hash` column present.
+
+### Final checks (post-K7)
+
+```
+python manage.py check                  # 0 issues
+python manage.py makemigrations --check # No changes detected (0084 already applied)
+python manage.py test                   # 121 tests, all pass
+```

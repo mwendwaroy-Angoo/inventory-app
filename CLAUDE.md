@@ -603,6 +603,25 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   (2026-06-29): view attached `p._sc`, `p._asr`, `p._acr` to model instances; template
   couldn't read them. Fix: always use plain names (`p.stat_count`, `p.stat_staff`, etc.)
   when attaching ad-hoc attributes to objects that will be passed to a template.
+- **Business model field bloat (planned refactor — do not do yet):**
+  `accounts.Business` currently has ~87 substantive fields covering M-Pesa credentials, keg settings,
+  credit policy, cup config, performer settings, SMS flags, and more. This will reach ~120+ fields
+  within a few more feature sprints.
+
+  Planned resolution: introduce a `BusinessSettings` model (OneToOneField from Business) that holds all
+  feature-config toggles and operational settings, keeping Business itself to identity/structural fields
+  (name, type, owner, county, contacts, bank/mpesa shortcodes). Each feature sprint that currently
+  adds fields directly to Business should instead add them to BusinessSettings.
+
+  **Do not do this refactor mid-feature.** Schedule it as a standalone migration sprint when the
+  next natural break occurs. Until then: continue adding fields to Business as today, but note each
+  new feature-config field here as a candidate for the eventual move.
+
+  Current candidates for BusinessSettings: keg_alerts_enabled, keg_alert_min_litres, weighs_kegs,
+  block_sales_past_target, cups_per_pint, cups_per_jug, cup_low_notified_at, keg_loss_baseline_pct,
+  keg_loss_baseline_sample, credit_policy_enabled, debt_cycle, debt_cutoff_days_before_month_end,
+  block_if_overdue, overdue_grace_days, late_repayment_strikes, late_threshold_days, cooldown_days,
+  defaulter_permanent, haki_enabled, event_sms_enabled, performer_approval_threshold.
 
 ## Cause-&-Effect Protocol (run for EVERY feature or module)
 
@@ -674,3 +693,4 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
 - Sprint K6.C (2026-06-27): Business-level cup pool — BarCupLog.barrel changed to nullable SET_NULL (migrations 0074/0043); item + recorded_by FKs added; Business.cups_per_pint/cups_per_jug/cup_low_notified_at added; business_cup_pool() helper in keg_metrics.py aggregates bought (SUM BarCupLog.qty) minus consumed (pints×cpp + jugs×cpj + cups direct); add_cups view loses barrel_id from URL/signature, now accessible to bar staff with open shift (not owner-only), barrel optional context for cost allocation; URL changed from bar/barrel/<id>/cups/ to bar/cups/add/; bar_board_api drops per-barrel cup stats, adds cup_pool at root; bar_board.html: per-keg cup panel removed, single business cup tile (_renderCupPoolTile) above keg grid, [+ Log Purchase] for staff+owner, low-stock amber warning when remaining < 30; keg_barrel_detail: per-barrel cup cost row added (allocated logs only), pool balance note references Bar Board; payment_settings.html: Cup Consumption section (cups_per_pint/cups_per_jug) gated on biz_profile.modules.bar; _section=cup_config handler in accounts/views.py; low-stock in-app Notification to owner when pool < 30 (gated by cup_low_notified_at, reset on healthy restock). 12 new K6.C tests. 111 tests pass.
 - Sprint DJ1 (2026-06-29): DJ/MC Performer Session Management — Performer + PerformerSession + PerformerFeedback models (migrations 0080 core / 0045 accounts); Business.event_sms_enabled + performer_approval_threshold; core/performer_views.py (performer CRUD, session start/end/pay/checkin-poll, public check-in + feedback); anti-fraud: performer self-check-in via QR (/p/<checkin_token>/checkin/ — no login), server-timestamped, bar board polls 30s, owner alert if session ends unverified; approval gate: sessions above threshold start PENDING_APPROVAL; pay → auto-creates BusinessExpense(category='entertainment') → Expense Intelligence P&L; Z-report: paid KES tile + amber unpaid line; bar board: 🎤 button with 3-state JS modal; templates: performer_list, performer_form, session_list, performer_checkin_public + performer_feedback_public (both standalone, no base extension); 🎤 DJ/MC nav link in owner keg navbar (mobile + desktop). Note: 117 tests run, failures are all pre-existing K5/K6/SG/K4 trailing-slash 301 issues unrelated to this sprint.
 - Sprint DJ2 (2026-06-30): Pre-scheduled DJ/MC sessions + shareable promo page. PerformerSession.STATUS_SCHEDULED + scheduled_start_time TimeField (migrations 0082/0083); session_schedule view (owner-only POST, creates SCHEDULED session for future date, validates date > today); session_promo_page view (public, /p/<token>/promo/) — standalone dark luxury poster with OG tags for WhatsApp preview, QR code (qrcodejs), WhatsApp share link, copy-link, auto-print (?print=1), print CSS; activate action in session_update flips SCHEDULED→ACTIVE on the night; session_today_api returns upcoming[] (next 7 SCHEDULED sessions); bar_board.html: ratiba ijayo section at top of DJ/MC modal (Share/Promo/Anza/Cancel per entry); owner "Panga kwa siku nyingine" toggle reveals date+time scheduling form; _djActivateSession/_djToggleSchedule/_djScheduleSession JS. Also in this sprint: feedback page localStorage dedup replacing IP-hash (fixes shared-WiFi false "already voted"); dynamic tag chips on feedback page; staff cannot see DJ/MC agreed fee (IS_OWNER gate). 121 tests run, same pre-existing trailing-slash failures.
+- Sprint K7 (2026-06-30): Hotfix + Cleanup. (1) Removed agreed_fee from public performer check-in page — fee was visible to performer before negotiation, to customers scanning the QR, and to anyone forwarded the URL. (2) Dropped dead ip_hash field from PerformerFeedback (migration 0084) — superseded by localStorage dedup in DJ2; removed hashlib import from performer_views.py. (3) BusinessSettings refactor plan documented in Known Issues / Technical Debt — Business model approaching ~87 fields, planned OneToOneField split when next break occurs; 21 current candidates listed. Fix(tests): SECURE_SSL_REDIRECT now gated on not TESTING (sys.argv check) — was causing 301 on all HTTP test-client requests when DEBUG=False; all 121 tests now pass cleanly.
