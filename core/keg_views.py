@@ -11,7 +11,7 @@ from datetime import date as date_type, timedelta
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Prefetch, Q, Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -808,30 +808,63 @@ def tabs_list(request):
     tabs = (
         BarTab.objects
         .filter(business=up.business, status='OPEN')
-        .prefetch_related('entries')
+        .prefetch_related(
+            Prefetch('entries',
+                     queryset=BarTabEntry.objects.select_related('transaction__item__store'))
+        )
         .order_by('-opened_at')
     )
 
     result = []
     for tab in tabs:
-        entries = []
-        for e in tab.entries.all():
-            entries.append({
-                'id': e.id,
-                'description': e.description,
-                'amount': float(e.amount),
-                'is_paid': e.is_paid,
-                'payment_method': e.payment_method,
+        all_entries = list(tab.entries.all())
+
+        if tab.source == 'kitchen':
+            # Food tab on the bar board — show ONLY bar (non-kitchen) items.
+            # Only include this tab if at least one bar entry exists (bar staff
+            # added alcohol to the customer's food tab via cross-counter merge).
+            bar_entries = [
+                e for e in all_entries
+                if e.transaction_id
+                and e.transaction.item_id
+                and e.transaction.item.store_id
+                and not e.transaction.item.store.is_kitchen
+            ]
+            if not bar_entries:
+                continue  # no bar items on this food tab yet — skip
+            entries = [
+                {'id': e.id, 'description': e.description, 'amount': float(e.amount),
+                 'is_paid': e.is_paid, 'payment_method': e.payment_method}
+                for e in bar_entries
+            ]
+            unpaid = sum(float(e['amount']) for e in entries if not e['is_paid'])
+            result.append({
+                'id': tab.id,
+                'customer_name': tab.customer_name,
+                'server_name': tab.server_name,
+                'total': sum(float(e['amount']) for e in entries),
+                'unpaid_total': unpaid,
+                'entries': entries,
+                'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+                'is_food_tab': True,
             })
-        result.append({
-            'id': tab.id,
-            'customer_name': tab.customer_name,
-            'server_name': tab.server_name,
-            'total': float(tab.total()),
-            'unpaid_total': float(tab.unpaid_total()),
-            'entries': entries,
-            'opened_at': tab.opened_at.strftime('%H:%M'),
-        })
+        else:
+            # Bar tab — show all entries as normal
+            entries = [
+                {'id': e.id, 'description': e.description, 'amount': float(e.amount),
+                 'is_paid': e.is_paid, 'payment_method': e.payment_method}
+                for e in all_entries
+            ]
+            result.append({
+                'id': tab.id,
+                'customer_name': tab.customer_name,
+                'server_name': tab.server_name,
+                'total': float(tab.total()),
+                'unpaid_total': float(tab.unpaid_total()),
+                'entries': entries,
+                'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+                'is_food_tab': False,
+            })
 
     return JsonResponse({'tabs': result})
 

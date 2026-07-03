@@ -258,7 +258,7 @@ def kitchen_board(request):
             'total': float(tab.total()),
             'unpaid_total': float(tab.unpaid_total()),
             'entries': entries,
-            'opened_at': tab.opened_at.strftime('%H:%M'),
+            'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
         })
 
     # Open bar tabs (source='bar') — for "add to bar tab" payment option
@@ -313,7 +313,7 @@ def kitchen_board(request):
         'khaki_pool': json.dumps(khaki_pool),
         'mix_siblings_json': json.dumps(mix_siblings),
         'food_tabs': json.dumps(food_tabs_data),
-        'bar_tab_names': json.dumps(bar_tab_names if can_access_bar else []),
+        'bar_tab_names': json.dumps(bar_tab_names),  # all kitchen staff can add food to bar tabs
         'kitchen_revenue_today': kitchen_revenue_today,
         'food_tab_count': len(food_tabs_data),
         'has_stk': has_stk,
@@ -421,9 +421,6 @@ def _kitchen_checkout(request, up, business, is_owner):
     # ─────────────────────────────────────────────────────────────────────────
 
     can_access_bar = is_owner or getattr(up, 'can_access_bar', False)
-    if payment_method == 'bar_tab' and not can_access_bar:
-        return JsonResponse({'ok': False, 'error': 'Hauna ruhusa ya kufikia bar tab.'}, status=403)
-
     kitchen_store = _kitchen_store(business)
     if not kitchen_store:
         return JsonResponse({'ok': False, 'error': 'Kitchen not configured'}, status=400)
@@ -832,14 +829,14 @@ def kitchen_tabs_list(request):
     if not up:
         return JsonResponse({'tabs': []})
 
-    tabs = (
+    food_tabs = (
         BarTab.objects
         .filter(business=up.business, source='kitchen', status='OPEN')
         .prefetch_related('entries')
         .order_by('-opened_at')
     )
     result = []
-    for tab in tabs:
+    for tab in food_tabs:
         entries = [
             {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
             for e in tab.entries.all()
@@ -850,8 +847,46 @@ def kitchen_tabs_list(request):
             'total': float(tab.total()),
             'unpaid_total': float(tab.unpaid_total()),
             'entries': entries,
-            'opened_at': tab.opened_at.strftime('%H:%M'),
+            'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+            'is_bar_tab': False,
         })
+
+    # Bar tabs that have kitchen entries — show read-only (kitchen items only).
+    # Kitchen staff can track what food they've added to a customer's bar tab without
+    # seeing the bar/alcohol portion. Filtered via transaction→item→store.is_kitchen.
+    bar_tabs = (
+        BarTab.objects
+        .filter(
+            business=up.business,
+            source='bar',
+            status='OPEN',
+            entries__transaction__item__store__is_kitchen=True,
+        )
+        .distinct()
+        .order_by('-opened_at')
+    )
+    for tab in bar_tabs:
+        kitchen_entries = list(
+            tab.entries
+            .filter(transaction__item__store__is_kitchen=True)
+            .values('id', 'description', 'amount', 'is_paid')
+        )
+        kitchen_entries = [
+            {'id': e['id'], 'description': e['description'],
+             'amount': float(e['amount']), 'is_paid': e['is_paid']}
+            for e in kitchen_entries
+        ]
+        unpaid = sum(e['amount'] for e in kitchen_entries if not e['is_paid'])
+        result.append({
+            'id': tab.id,
+            'customer_name': tab.customer_name,
+            'total': sum(e['amount'] for e in kitchen_entries),
+            'unpaid_total': float(unpaid),
+            'entries': kitchen_entries,
+            'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+            'is_bar_tab': True,  # renders as read-only — actions stay on bar board
+        })
+
     return JsonResponse({'tabs': result})
 
 

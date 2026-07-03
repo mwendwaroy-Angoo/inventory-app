@@ -652,7 +652,7 @@
           <div class="kb-pay-row">
             <button class="kb-pay-btn pm-credit" onclick="selectPM('credit')" style="border-color:#c0395a;color:#c0395a;">🤝 Deni</button>
             <button class="kb-pay-btn pm-food-tab" onclick="selectPM('food_tab')">🍽 Food Tab</button>
-            {% if can_access_bar %}<button class="kb-pay-btn pm-bar-tab" onclick="selectPM('bar_tab')">🍺 Bar Tab</button>{% endif %}
+            <button class="kb-pay-btn pm-bar-tab" onclick="selectPM('bar_tab')">🍺 Bar Tab</button>
           </div>
           <!-- STK Push phone input -->
           <div id="kb-stk-row" style="display:none; margin-top:0.5rem;">
@@ -1784,6 +1784,12 @@
     updateTabBadge(tabs.length);
     body.innerHTML = tabs.map(function(tab){
       var entriesHtml = tab.entries.map(function(e){
+        if (tab.is_bar_tab) {
+          /* Bar tab — kitchen items shown read-only (no checkboxes, no actions) */
+          return '<div style="display:flex;align-items:center;gap:.4rem;font-size:.8rem;padding:.2rem 0;">' +
+                 '<span style="flex:1;color:#b0b0b0;">🍽 ' + e.description + '</span>' +
+                 '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span></div>';
+        }
         return '<div style="display:flex;align-items:center;gap:.4rem;font-size:.8rem;padding:.2rem 0;">' +
                (e.is_paid
                  ? '<input type="checkbox" checked disabled style="accent-color:#c9a84c;flex-shrink:0;">'
@@ -1794,6 +1800,20 @@
                (e.is_paid?'<s>':'') + e.description + (e.is_paid?'</s>':'') + '</span>' +
                '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span></div>';
       }).join('');
+
+      if (tab.is_bar_tab) {
+        /* Bar tab — show kitchen food items only; settlement managed on bar board */
+        return '<div style="background:#2a2a2a;border:1px solid rgba(201,168,76,.25);border-radius:10px;padding:.65rem .75rem;margin-bottom:.6rem;">' +
+               '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem;">' +
+               '<div><strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +
+               '<span style="margin-left:.4rem;font-size:.7rem;background:rgba(201,168,76,.12);color:#c9a84c;border:1px solid rgba(201,168,76,.3);border-radius:4px;padding:1px 6px;">🍺 Bar Tab</span></div>' +
+               '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
+               entriesHtml +
+               '<div style="border-top:1px solid #333;margin-top:.4rem;padding-top:.4rem;display:flex;justify-content:space-between;font-size:.82rem;">' +
+               '<strong style="color:#c9a84c;">Chakula: KES ' + fmt(tab.unpaid_total) + '</strong>' +
+               '<span style="color:#555;font-size:.72rem;">Lipa kwenye Bar Board</span></div></div>';
+      }
+
       return '<div style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:10px;padding:.65rem .75rem;margin-bottom:.6rem;">' +
              '<div style="display:flex;justify-content:space-between;margin-bottom:.35rem;">' +
              '<strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +

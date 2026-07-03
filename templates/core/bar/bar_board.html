@@ -2286,45 +2286,72 @@
       var entriesHtml = '';
       tab.entries.forEach(function (e) {
         var safeDesc = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-        entriesHtml +=
-          '<div class="tab-entry-row' + (e.is_paid ? ' paid' : '') + '" id="tab-entry-' + e.id + '">' +
-          '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0;">' +
-          '<input type="checkbox" class="tab-entry-cb"' +
-          ' data-entry-id="' + e.id + '" data-amount="' + e.amount + '"' +
-          (e.is_paid ? ' checked disabled' : ' onchange="window.updateTabSelectionUI(' + tab.id + ')"') +
-          ' style="accent-color:#c9a84c; flex-shrink:0;">' +
-          '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">' + safeDesc + '</span>' +
-          '</label>' +
-          '<span class="tab-entry-amt">KES ' + fmt(e.amount) + '</span>' +
-          '</div>';
+        if (tab.is_food_tab) {
+          /* Food tab on the bar board — bar items only, read-only (no checkboxes) */
+          entriesHtml +=
+            '<div style="display:flex;align-items:center;gap:8px;font-size:.82rem;padding:.18rem 0;">' +
+            '<span style="flex:1;color:' + (e.is_paid?'#555':'#b0b0b0') + ';">🍺 ' + safeDesc + '</span>' +
+            '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span>' +
+            '</div>';
+        } else {
+          entriesHtml +=
+            '<div class="tab-entry-row' + (e.is_paid ? ' paid' : '') + '" id="tab-entry-' + e.id + '">' +
+            '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0;">' +
+            '<input type="checkbox" class="tab-entry-cb"' +
+            ' data-entry-id="' + e.id + '" data-amount="' + e.amount + '"' +
+            (e.is_paid ? ' checked disabled' : ' onchange="window.updateTabSelectionUI(' + tab.id + ')"') +
+            ' style="accent-color:#c9a84c; flex-shrink:0;">' +
+            '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">' + safeDesc + '</span>' +
+            '</label>' +
+            '<span class="tab-entry-amt">KES ' + fmt(e.amount) + '</span>' +
+            '</div>';
+        }
       });
 
       var safeCust = tab.customer_name.replace(/'/g, "\\'");
-      html +=
-        '<div class="tab-card" id="tab-card-' + tab.id + '">' +
-        '<div class="tab-card-head">' +
-        '<span class="tab-cust-name">' + tab.customer_name + '</span>' +
-        '<span class="tab-unpaid-amt" id="tab-unpaid-' + tab.id + '">KES ' + fmt(tab.unpaid_total) + '</span>' +
-        '</div>' +
-        (tab.server_name
-          ? '<div class="tab-server-label">via ' + tab.server_name + ' · ' + tab.opened_at + '</div>'
-          : '<div class="tab-server-label">' + tab.opened_at + '</div>') +
-        '<div class="tab-entries-list" id="tab-entries-' + tab.id + '">' + entriesHtml + '</div>' +
-        '<div id="tab-sel-row-' + tab.id + '" style="display:none; background:rgba(201,168,76,0.07); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:.35rem .55rem; margin:.35rem 0; align-items:center; gap:.4rem; flex-wrap:wrap;">' +
-        '<span style="color:#b0b0b0; font-size:.78rem;">Vilivyochaguliwa: <strong id="tab-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
-        '<button id="tab-partial-cash-' + tab.id + '" class="tab-action-btn tab-btn-cash" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
-        '<button id="tab-partial-mpesa-' + tab.id + '" class="tab-action-btn tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
-        '</div>' +
-        '<div class="tab-actions-row">' +
-        '<button class="tab-action-btn tab-btn-cash" onclick="window.settleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
-        '<button class="tab-action-btn tab-btn-mpesa" onclick="window.settleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
-        '<button class="tab-action-btn tab-btn-stk" onclick="window.openTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + safeCust + '\')">📲 STK Push</button>' +
-        '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>' +
-        (QS_IS_OWNER
-          ? '<button class="tab-action-btn tab-btn-void" onclick="window.openVoidModal(' + tab.id + ',\'' + safeCust + '\')">Void</button>'
-          : '') +
-        '</div>' +
-        '</div>';
+
+      if (tab.is_food_tab) {
+        /* Food tab — bar staff sees their alcohol entries only; food items are hidden.
+           Settlement for the full tab stays on the kitchen board. */
+        html +=
+          '<div class="tab-card" id="tab-card-' + tab.id + '" style="border-color:rgba(201,168,76,.3);">' +
+          '<div class="tab-card-head">' +
+          '<span class="tab-cust-name">' + tab.customer_name +
+            '<span style="margin-left:.4rem;font-size:.68rem;background:rgba(201,168,76,.12);color:#c9a84c;border:1px solid rgba(201,168,76,.3);border-radius:4px;padding:1px 5px;">🍽 Food Tab</span>' +
+          '</span>' +
+          '<span class="tab-unpaid-amt">KES ' + fmt(tab.unpaid_total) + '</span>' +
+          '</div>' +
+          '<div class="tab-server-label">' + tab.opened_at + ' · Vileo vinaonyeshwa tu</div>' +
+          '<div class="tab-entries-list">' + entriesHtml + '</div>' +
+          '<div style="border-top:1px solid #2a2a2a;margin-top:.4rem;padding-top:.35rem;font-size:.72rem;color:#555;">Lipa kwenye Kitchen Board</div>' +
+          '</div>';
+      } else {
+        html +=
+          '<div class="tab-card" id="tab-card-' + tab.id + '">' +
+          '<div class="tab-card-head">' +
+          '<span class="tab-cust-name">' + tab.customer_name + '</span>' +
+          '<span class="tab-unpaid-amt" id="tab-unpaid-' + tab.id + '">KES ' + fmt(tab.unpaid_total) + '</span>' +
+          '</div>' +
+          (tab.server_name
+            ? '<div class="tab-server-label">via ' + tab.server_name + ' · ' + tab.opened_at + '</div>'
+            : '<div class="tab-server-label">' + tab.opened_at + '</div>') +
+          '<div class="tab-entries-list" id="tab-entries-' + tab.id + '">' + entriesHtml + '</div>' +
+          '<div id="tab-sel-row-' + tab.id + '" style="display:none; background:rgba(201,168,76,0.07); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:.35rem .55rem; margin:.35rem 0; align-items:center; gap:.4rem; flex-wrap:wrap;">' +
+          '<span style="color:#b0b0b0; font-size:.78rem;">Vilivyochaguliwa: <strong id="tab-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
+          '<button id="tab-partial-cash-' + tab.id + '" class="tab-action-btn tab-btn-cash" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
+          '<button id="tab-partial-mpesa-' + tab.id + '" class="tab-action-btn tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
+          '</div>' +
+          '<div class="tab-actions-row">' +
+          '<button class="tab-action-btn tab-btn-cash" onclick="window.settleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
+          '<button class="tab-action-btn tab-btn-mpesa" onclick="window.settleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
+          '<button class="tab-action-btn tab-btn-stk" onclick="window.openTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + safeCust + '\')">📲 STK Push</button>' +
+          '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>' +
+          (QS_IS_OWNER
+            ? '<button class="tab-action-btn tab-btn-void" onclick="window.openVoidModal(' + tab.id + ',\'' + safeCust + '\')">Void</button>'
+            : '') +
+          '</div>' +
+          '</div>';
+      }
     });
 
     body.innerHTML = html;
