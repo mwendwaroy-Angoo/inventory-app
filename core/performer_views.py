@@ -300,9 +300,9 @@ def session_today_api(request):
 
     result = []
     for s in sessions:
-        checkin_at = s.performer_checkin_at.strftime('%H:%M') if s.performer_checkin_at else None
-        p2_checkin_at = s.second_performer_checkin_at.strftime('%H:%M') if s.second_performer_checkin_at else None
-        staff_conf_at = s.staff_confirmed_at.strftime('%H:%M') if s.staff_confirmed_at else None
+        checkin_at    = timezone.localtime(s.performer_checkin_at).strftime('%H:%M') if s.performer_checkin_at else None
+        p2_checkin_at = timezone.localtime(s.second_performer_checkin_at).strftime('%H:%M') if s.second_performer_checkin_at else None
+        staff_conf_at = timezone.localtime(s.staff_confirmed_at).strftime('%H:%M') if s.staff_confirmed_at else None
         staff_conf_by = (
             s.staff_confirmed_by.get_full_name() or s.staff_confirmed_by.username
         ) if s.staff_confirmed_by else None
@@ -321,8 +321,8 @@ def session_today_api(request):
             # Status
             'status':           s.status,
             'all_confirmed':    s.all_confirmed,
-            'started_at':       s.started_at.strftime('%H:%M') if s.started_at else None,
-            'ended_at':         s.ended_at.strftime('%H:%M')   if s.ended_at   else None,
+            'started_at':       timezone.localtime(s.started_at).strftime('%H:%M') if s.started_at else None,
+            'ended_at':         timezone.localtime(s.ended_at).strftime('%H:%M')   if s.ended_at   else None,
             # Staff rating (visible to staff + owner — assessing quality, not cost)
             'staff_rating':     s.staff_rating,
             # Primary performer confirmation
@@ -580,8 +580,8 @@ def session_pay(request, session_id):
     second_fee       = session.second_performer_fee or Decimal('0')
     total_fee        = session.agreed_fee + second_fee
     dur_label        = f", {session.duration_hours}h" if session.duration_hours else ''
-    start_lbl        = session.started_at.strftime('%H:%M') if session.started_at else ''
-    end_lbl          = session.ended_at.strftime('%H:%M')   if session.ended_at   else ''
+    start_lbl        = timezone.localtime(session.started_at).strftime('%H:%M') if session.started_at else ''
+    end_lbl          = timezone.localtime(session.ended_at).strftime('%H:%M')   if session.ended_at   else ''
     time_label       = f" ({start_lbl}–{end_lbl}{dur_label})" if start_lbl else ''
 
     if session.second_performer and second_fee > 0:
@@ -624,11 +624,11 @@ def session_checkin_poll(request, session_id):
         'status':                      session.status,
         'all_confirmed':               session.all_confirmed,
         'performer_checked_in':        session.performer_checked_in,
-        'performer_checkin_at':        session.performer_checkin_at.strftime('%H:%M') if session.performer_checkin_at else None,
+        'performer_checkin_at':        timezone.localtime(session.performer_checkin_at).strftime('%H:%M') if session.performer_checkin_at else None,
         'second_performer_checked_in': session.second_performer_checked_in,
-        'second_performer_checkin_at': session.second_performer_checkin_at.strftime('%H:%M') if session.second_performer_checkin_at else None,
+        'second_performer_checkin_at': timezone.localtime(session.second_performer_checkin_at).strftime('%H:%M') if session.second_performer_checkin_at else None,
         'staff_confirmed':             session.staff_confirmed,
-        'staff_confirmed_at':          session.staff_confirmed_at.strftime('%H:%M') if session.staff_confirmed_at else None,
+        'staff_confirmed_at':          timezone.localtime(session.staff_confirmed_at).strftime('%H:%M') if session.staff_confirmed_at else None,
     })
 
 
