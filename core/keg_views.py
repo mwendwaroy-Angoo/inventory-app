@@ -236,18 +236,6 @@ def bar_board(request):
                     linked_customer.phone = tab_phone
                     linked_customer.save(update_fields=['phone'])
 
-                # ── CREDIT DISCIPLINE GATE ────────────────────────────────────
-                from core.credit_policy import evaluate_credit
-                _decision = evaluate_credit(business, linked_customer)
-                if not _decision.allowed:
-                    from django.http import JsonResponse as _JR
-                    return _JR({
-                        'ok': False,
-                        'credit_blocked': True,
-                        'error': f'Tab imezuiwa: {_decision.reason} — Pokea malipo ya cash au M-Pesa.',
-                    }, status=403)
-                # ─────────────────────────────────────────────────────────────
-
                 active_tab = BarTab.objects.filter(
                     business=business,
                     customer_name__iexact=tab_customer,

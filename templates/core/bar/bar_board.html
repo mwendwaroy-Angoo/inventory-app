@@ -2046,6 +2046,12 @@
     });
     document.getElementById('keg-cart-input').value    = JSON.stringify(cartArray);
     document.getElementById('keg-payment-input').value = method;
+    // Refresh the CSRF token from the cookie before submit — the cookie is always
+    // current even when the page was loaded from a stale SW cache.
+    (function () {
+      var m = document.cookie.match(/csrftoken=([^;]+)/);
+      if (m) { var f = document.getElementById('keg-sale-form').querySelector('[name=csrfmiddlewaretoken]'); if (f) f.value = decodeURIComponent(m[1]); }
+    })();
     document.getElementById('keg-sale-form').submit();
   };
 
