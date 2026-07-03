@@ -4013,12 +4013,12 @@ window.barDeclineMerge = function() {
   }
 
   function _updateDot() {
-    var hasActive = _state.sessions.some(function (s) { return s.status === 'ACTIVE'; });
+    var hasActive = _state.sessions.some(function (s) { return s.status === 'ACTIVE' || s.status === 'PENDING_CONFIRMATION'; });
     activeBtn.style.display = hasActive ? 'block' : 'none';
   }
 
   function _statusLabel(s) {
-    return {ACTIVE:'● Inaendelea', COMPLETED:'✓ Imekwisha', PENDING_APPROVAL:'⏳ Inangojea', CANCELLED:'✗ Imefutwa'}[s] || s;
+    return {ACTIVE:'● Inaendelea', COMPLETED:'✓ Imekwisha', PENDING_APPROVAL:'⏳ Inangojea', PENDING_CONFIRMATION:'⌛ Inasubiri uthibitisho', CANCELLED:'✗ Imefutwa'}[s] || s;
   }
 
   function _showStatus(el, msg, color) {
@@ -4095,8 +4095,8 @@ window.barDeclineMerge = function() {
 
       html += '<div style="background:#1e1e1e;border:1px solid #333;border-radius:10px;padding:.85rem;margin-bottom:.75rem;">';
       html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.5rem;">';
-      html += '<div><strong style="color:#f0ece4;">' + s.performer_name + '</strong>';
-      html += '<span style="color:#b0b0b0;font-size:.75rem;margin-left:.5rem;">' + s.performer_type + '</span></div>';
+      html += '<div><strong style="color:#f0ece4;">' + s.performer_name + (s.is_duo ? ' &amp; ' + s.second_performer_name : '') + '</strong>';
+      html += '<span style="color:#b0b0b0;font-size:.75rem;margin-left:.5rem;">' + s.performer_type + (s.is_duo && s.second_performer_type ? ' + ' + s.second_performer_type : '') + '</span></div>';
       html += '<span style="color:' + statusColor + ';font-size:.75rem;font-weight:600;">' + _statusLabel(s.status) + '</span>';
       html += '</div>';
       html += '<div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.4rem;">' +
@@ -4154,6 +4154,43 @@ window.barDeclineMerge = function() {
         }
       }
 
+      if (s.status === 'PENDING_CONFIRMATION') {
+        /* Confirmation checklist */
+        html += '<div style="margin:.5rem 0;padding:.65rem;background:rgba(255,152,0,.07);border:1px solid rgba(255,152,0,.18);border-radius:8px;">';
+        html += '<div style="font-size:.8rem;color:#ffb74d;font-weight:700;margin-bottom:.5rem;">&#9888; Inasubiri Uthibitisho wa Pande Zote</div>';
+        var p1c = s.performer_checked_in ? '#4caf50' : '#b0b0b0';
+        html += '<div style="font-size:.8rem;color:' + p1c + ';margin-bottom:.22rem;">' + (s.performer_checked_in ? '&#10003;' : '&#9711;') + ' ' + s.performer_name + ' &mdash; ' + (s.performer_checked_in ? 'Amethibitisha ' + (s.performer_checkin_at || '') : 'Hajajibu bado') + '</div>';
+        if (s.is_duo) {
+          var p2c = s.second_performer_checked_in ? '#4caf50' : '#b0b0b0';
+          html += '<div style="font-size:.8rem;color:' + p2c + ';margin-bottom:.22rem;">' + (s.second_performer_checked_in ? '&#10003;' : '&#9711;') + ' ' + s.second_performer_name + ' &mdash; ' + (s.second_performer_checked_in ? 'Amethibitisha ' + (s.second_performer_checkin_at || '') : 'Hajajibu bado') + '</div>';
+        }
+        var sfc = s.staff_confirmed ? '#4caf50' : '#b0b0b0';
+        html += '<div style="font-size:.8rem;color:' + sfc + ';">' + (s.staff_confirmed ? '&#10003;' : '&#9711;') + ' Staff' + (s.staff_confirmed ? ' (' + (s.staff_confirmed_by || '') + ') &mdash; Amethibitisha ' + (s.staff_confirmed_at || '') : ' &mdash; Hajajibu bado') + '</div>';
+        html += '</div>';
+        /* QR for primary performer */
+        if (!s.performer_checked_in) {
+          html += '<div style="margin:.5rem 0;padding:.55rem;background:#111;border-radius:8px;text-align:center;">';
+          html += '<div style="color:#c9a84c;font-size:.75rem;margin-bottom:.35rem;font-weight:600;">' + s.performer_name + ' — Scan kuthibitisha uwepo</div>';
+          html += '<div id="checkin-qr-' + s.id + '" style="display:inline-block;background:#fff;padding:6px;border-radius:6px;margin-bottom:.25rem;"></div>';
+          html += '<div style="font-family:monospace;font-size:1rem;color:#c9a84c;letter-spacing:2px;font-weight:700;">' + s.checkin_short_code + '</div>';
+          html += '</div>';
+        }
+        /* QR for second performer (duo only) */
+        if (s.is_duo && !s.second_performer_checked_in) {
+          html += '<div style="margin:.4rem 0;padding:.55rem;background:#111;border-radius:8px;text-align:center;">';
+          html += '<div style="color:#c9a84c;font-size:.75rem;margin-bottom:.35rem;font-weight:600;">' + s.second_performer_name + ' — Scan kuthibitisha uwepo</div>';
+          html += '<div id="checkin-qr2-' + s.id + '" style="display:inline-block;background:#fff;padding:6px;border-radius:6px;margin-bottom:.25rem;"></div>';
+          html += '<div style="font-family:monospace;font-size:1rem;color:#c9a84c;letter-spacing:2px;font-weight:700;">' + s.second_performer_checkin_short_code + '</div>';
+          html += '</div>';
+        }
+        /* Staff confirm button */
+        if (!s.staff_confirmed) {
+          html += '<button id="staff-confirm-btn-' + s.id + '" onclick="window._djStaffConfirm(' + s.id + ')" style="width:100%;padding:.5rem;margin-top:.4rem;background:rgba(33,150,243,.15);border:1px solid rgba(33,150,243,.3);border-radius:8px;color:#64b5f6;font-weight:700;font-size:.85rem;cursor:pointer;">&#128101; Thibitisha Ufika (Wewe ni Staff)</button>';
+          html += '<div id="staff-confirm-status-' + s.id + '" style="display:none;font-size:.78rem;margin-top:.3rem;text-align:center;"></div>';
+        }
+        window._startCheckinPoll(s.id, s.checkin_token);
+      }
+
       if (s.status === 'PENDING_APPROVAL' && IS_OWNER) {
         html += '<div style="font-size:.8rem;color:#ffb74d;margin:.4rem 0;">&#8987; Inasubiri idhini yako</div>';
         html += '<div style="display:flex;gap:.5rem;">';
@@ -4181,6 +4218,17 @@ window.barDeclineMerge = function() {
         html += '<option value="' + p.id + '" data-rate="' + p.standard_rate + '">' + p.name + ' (' + p.performer_type + ')</option>';
       });
       html += '</select>';
+      html += '<div style="margin-bottom:.45rem;">';
+      html += '<label style="font-size:.78rem;color:#b0b0b0;cursor:pointer;display:flex;align-items:center;gap:.4rem;">';
+      html += '<input type="checkbox" id="djmc-duo-check" onchange="window._djToggleDuo()">Duo &mdash; DJ na MC wawili</label></div>';
+      html += '<div id="djmc-duo-row" style="display:none;margin-bottom:.45rem;">';
+      html += '<div style="font-size:.73rem;color:#b0b0b0;margin-bottom:.2rem;">Mwanamuziki wa pili</div>';
+      html += '<select id="djmc-second-performer-sel" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.85rem;">';
+      html += '<option value="">-- Chagua --</option>';
+      _state.performers.forEach(function (p) {
+        html += '<option value="' + p.id + '">' + p.name + ' (' + p.performer_type + ')</option>';
+      });
+      html += '</select></div>';
       if (IS_OWNER) {
         html += '<div style="flex:1;margin-bottom:.5rem;"><div style="font-size:.75rem;color:#b0b0b0;margin-bottom:.2rem;">Bei iliyokubalika (KES)</div>';
         html += '<input type="number" id="djmc-fee" min="0" step="100" value="0" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.85rem;"></div>';
@@ -4210,10 +4258,16 @@ window.barDeclineMerge = function() {
 
     /* Generate check-in QRs and feedback share QRs */
     sessions.forEach(function (s) {
-      if (s.status === 'ACTIVE' && !s.performer_checked_in) {
+      if ((s.status === 'ACTIVE' || s.status === 'PENDING_CONFIRMATION') && !s.performer_checked_in) {
         var el = document.getElementById('checkin-qr-' + s.id);
         if (el && window.QRCode) {
           new QRCode(el, {text: location.origin + '/p/' + s.checkin_token + '/checkin/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
+        }
+      }
+      if (s.status === 'PENDING_CONFIRMATION' && s.is_duo && !s.second_performer_checked_in) {
+        var el2 = document.getElementById('checkin-qr2-' + s.id);
+        if (el2 && window.QRCode) {
+          new QRCode(el2, {text: location.origin + '/p/' + s.second_performer_checkin_token + '/checkin/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
         }
       }
       if (s.status === 'COMPLETED') {
@@ -4249,6 +4303,7 @@ window.barDeclineMerge = function() {
 
   /* ─── checkin poll (every 30s while modal open) ─── */
   var _checkinPolls = {};
+  var _lastConfirmState = {};
   window._startCheckinPoll = function (sessionId, token) {
     if (_checkinPolls[sessionId]) return;
     _checkinPolls[sessionId] = setInterval(function () {
@@ -4256,11 +4311,14 @@ window.barDeclineMerge = function() {
       fetch('/bar/session/' + sessionId + '/checkin-status/')
         .then(function (r) { return r.json(); })
         .then(function (d) {
-          if (d.performer_checked_in) {
-            clearInterval(_checkinPolls[sessionId]);
-            delete _checkinPolls[sessionId];
-            _loadState();
-          }
+          var prev = _lastConfirmState[sessionId] || {};
+          var changed = (d.performer_checked_in !== prev.p1) ||
+                        (d.second_performer_checked_in !== prev.p2) ||
+                        (d.staff_confirmed !== prev.staff) ||
+                        (d.status !== prev.status);
+          _lastConfirmState[sessionId] = {p1: d.performer_checked_in, p2: d.second_performer_checked_in, staff: d.staff_confirmed, status: d.status};
+          if (changed) { _loadState(); }
+          if (d.all_confirmed) { clearInterval(_checkinPolls[sessionId]); delete _checkinPolls[sessionId]; }
         })
         .catch(function () {});
     }, 30000);
@@ -4289,7 +4347,9 @@ window.barDeclineMerge = function() {
       var selOpt = sel.options[sel.selectedIndex];
       agreedFee = selOpt ? (selOpt.getAttribute('data-rate') || '0') : '0';
     }
-    _post('/bar/session/start/', {performer_id: sel.value, agreed_fee: agreedFee}, function (d) {
+    var secondSel = document.getElementById('djmc-second-performer-sel');
+    var secondId = secondSel ? (secondSel.value || null) : null;
+    _post('/bar/session/start/', {performer_id: sel.value, agreed_fee: agreedFee, second_performer_id: secondId}, function (d) {
       if (d.ok) { _loadState(); } else { _showStatus(statusEl, d.error || 'Hitilafu.', '#e87090'); }
     });
   };
@@ -4306,6 +4366,26 @@ window.barDeclineMerge = function() {
   window._djApproveSession = function (sessionId) {
     _post('/bar/session/' + sessionId + '/update/', {action: 'approve'}, function (d) {
       if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    });
+  };
+
+  window._djToggleDuo = function () {
+    var check = document.getElementById('djmc-duo-check');
+    var row   = document.getElementById('djmc-duo-row');
+    if (row) row.style.display = (check && check.checked) ? 'block' : 'none';
+  };
+
+  window._djStaffConfirm = function (sessionId) {
+    var btn      = document.getElementById('staff-confirm-btn-' + sessionId);
+    var statusEl = document.getElementById('staff-confirm-status-' + sessionId);
+    if (btn) { btn.disabled = true; btn.textContent = 'Inatuma...'; }
+    _post('/bar/session/' + sessionId + '/update/', {action: 'staff_confirm'}, function (d) {
+      if (d.ok) {
+        _loadState();
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = '&#128101; Thibitisha Ufika (Wewe ni Staff)'; }
+        if (statusEl) _showStatus(statusEl, d.error || 'Hitilafu.', '#e87090');
+      }
     });
   };
 

@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>🎤 {{ session.performer.name|default:"DJ/MC" }} — {{ session.business.name }}</title>
+<title>🎤 {{ session.performer.name|default:"DJ/MC" }}{% if session.second_performer %} &amp; {{ session.second_performer.name }}{% endif %} — {{ session.business.name }}</title>
 <!-- OG tags — WhatsApp / Twitter / Facebook preview -->
-<meta property="og:title" content="🎤 {{ session.performer.name|default:'DJ/MC' }} LIVE @ {{ session.business.name }}">
+<meta property="og:title" content="🎤 {{ session.performer.name|default:'DJ/MC' }}{% if session.second_performer %} &amp; {{ session.second_performer.name }}{% endif %} LIVE @ {{ session.business.name }}">
 <meta property="og:description" content="{% if session.scheduled_start_time %}Saa {{ session.scheduled_start_time|time:'H:i' }} — {% endif %}{{ session.date|date:'l, j F Y' }}. Jiandae kwa usiku mkubwa!">
 <meta property="og:type" content="website">
 <meta property="og:url" content="{{ promo_url }}">
@@ -242,9 +242,10 @@ body {
   <div class="mic-icon">&#127908;</div>
   <div class="venue">{{ session.business.name }}</div>
 
-  <div class="performer-name">{{ session.performer.name|default:"DJ / MC" }}</div>
+  <div class="performer-name">{{ session.performer.name|default:"DJ / MC" }}{% if session.second_performer %}<br><span style="font-size:1.6rem;color:#c9a84c;font-weight:700;">&amp;</span><br>{{ session.second_performer.name }}{% endif %}</div>
   <div class="performer-type">
     {% if session.performer %}{{ session.performer.get_performer_type_display }}{% endif %}
+    {% if session.second_performer %} + {{ session.second_performer.get_performer_type_display }}{% endif %}
     {% if session.performer.genre %}&nbsp;&middot;&nbsp; {{ session.performer.genre }}{% endif %}
   </div>
 
@@ -303,7 +304,7 @@ body {
 <script>
 (function () {
   var promoUrl = "{{ promo_url|escapejs }}";
-  var performer = "{{ session.performer.name|default:'DJ/MC'|escapejs }}";
+  var performer = "{{ session.performer.name|default:'DJ/MC'|escapejs }}"{% if session.second_performer %} + " & {{ session.second_performer.name|escapejs }}"{% endif %};
   var venue     = "{{ session.business.name|escapejs }}";
   var dateStr   = "{{ session.date|date:'l, j F Y'|escapejs }}";
   var timeStr   = "{% if session.scheduled_start_time %}{{ session.scheduled_start_time|time:'H:i' }}{% endif %}";

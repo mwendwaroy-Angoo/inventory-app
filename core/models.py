@@ -2658,17 +2658,19 @@ class Performer(models.Model):
 
 
 class PerformerSession(models.Model):
-    STATUS_SCHEDULED        = 'SCHEDULED'
-    STATUS_PENDING_APPROVAL = 'PENDING_APPROVAL'
-    STATUS_ACTIVE           = 'ACTIVE'
-    STATUS_COMPLETED        = 'COMPLETED'
-    STATUS_CANCELLED        = 'CANCELLED'
+    STATUS_SCHEDULED            = 'SCHEDULED'
+    STATUS_PENDING_APPROVAL     = 'PENDING_APPROVAL'
+    STATUS_PENDING_CONFIRMATION = 'PENDING_CONFIRMATION'
+    STATUS_ACTIVE               = 'ACTIVE'
+    STATUS_COMPLETED            = 'COMPLETED'
+    STATUS_CANCELLED            = 'CANCELLED'
     STATUS_CHOICES = [
-        (STATUS_SCHEDULED,        _('Scheduled / upcoming')),
-        (STATUS_PENDING_APPROVAL, _('Pending owner approval')),
-        (STATUS_ACTIVE,           _('Active / in progress')),
-        (STATUS_COMPLETED,        _('Completed')),
-        (STATUS_CANCELLED,        _('Cancelled / no-show')),
+        (STATUS_SCHEDULED,            _('Scheduled / upcoming')),
+        (STATUS_PENDING_APPROVAL,     _('Pending owner approval')),
+        (STATUS_PENDING_CONFIRMATION, _('Awaiting confirmation')),
+        (STATUS_ACTIVE,               _('Active / in progress')),
+        (STATUS_COMPLETED,            _('Completed')),
+        (STATUS_CANCELLED,            _('Cancelled / no-show')),
     ]
 
     PAYMENT_PENDING = 'PENDING'
@@ -2680,9 +2682,14 @@ class PerformerSession(models.Model):
 
     business       = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='performer_sessions')
     performer      = models.ForeignKey(Performer, on_delete=models.SET_NULL, null=True, related_name='sessions')
+    # Duo support: optional second performer (e.g. DJ + MC booked together)
+    second_performer = models.ForeignKey(
+        Performer, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='second_performer_sessions',
+    )
     shift          = models.ForeignKey('Shift', on_delete=models.SET_NULL, null=True, blank=True, related_name='performer_sessions')
     date           = models.DateField()
-    status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    status         = models.CharField(max_length=22, choices=STATUS_CHOICES, default=STATUS_PENDING_CONFIRMATION)
     started_at     = models.DateTimeField(null=True, blank=True)
     ended_at       = models.DateTimeField(null=True, blank=True)
     agreed_fee     = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -2695,10 +2702,25 @@ class PerformerSession(models.Model):
     staff_rating   = models.IntegerField(null=True, blank=True,
                                          choices=[(i, i) for i in range(1, 6)])
     staff_notes    = models.TextField(blank=True)
-    # Performer self-check-in (no account needed — browser tap on checkin_token URL)
+
+    # Primary performer self-check-in (public URL, no login)
     performer_checked_in = models.BooleanField(default=False)
     performer_checkin_at = models.DateTimeField(null=True, blank=True)
-    checkin_token  = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    checkin_token        = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+
+    # Second performer self-check-in (duo sessions)
+    second_performer_checked_in  = models.BooleanField(default=False)
+    second_performer_checkin_at  = models.DateTimeField(null=True, blank=True)
+    second_performer_checkin_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+
+    # Staff duty confirmation (on-ground staff corroborates session has started)
+    staff_confirmed    = models.BooleanField(default=False)
+    staff_confirmed_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='dj_confirmations',
+    )
+    staff_confirmed_at = models.DateTimeField(null=True, blank=True)
+
     feedback_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     scheduled_start_time = models.TimeField(null=True, blank=True)
     notes          = models.TextField(blank=True)
@@ -2712,6 +2734,14 @@ class PerformerSession(models.Model):
     def __str__(self):
         name = self.performer.name if self.performer else 'Unknown'
         return f"{name} — {self.date}"
+
+    @property
+    def all_confirmed(self):
+        """True when all required parties have confirmed the session has started."""
+        p1_ok    = self.performer_checked_in
+        p2_ok    = (not self.second_performer_id) or self.second_performer_checked_in
+        staff_ok = self.staff_confirmed
+        return p1_ok and p2_ok and staff_ok
 
     @property
     def duration_hours(self):
@@ -2732,6 +2762,10 @@ class PerformerSession(models.Model):
     @property
     def checkin_short_code(self):
         return str(self.checkin_token).replace('-', '')[:6].upper()
+
+    @property
+    def second_performer_checkin_short_code(self):
+        return str(self.second_performer_checkin_token).replace('-', '')[:6].upper()
 
 
 class PerformerFeedback(models.Model):

@@ -54,10 +54,11 @@
   <div class="sess-row">
     <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:.35rem; margin-bottom:.35rem;">
       <div>
-        <strong style="color:#f0ece4;">{{ s.performer.name|default:"—" }}</strong>
-        <span style="color:#b0b0b0; font-size:.75rem; margin-left:.4rem;">{{ s.performer.get_performer_type_display|default:"" }}</span>
+        <strong style="color:#f0ece4;">{{ s.performer.name|default:"—" }}{% if s.second_performer %} &amp; {{ s.second_performer.name }}{% endif %}</strong>
+        <span style="color:#b0b0b0; font-size:.75rem; margin-left:.4rem;">{{ s.performer.get_performer_type_display|default:"" }}{% if s.second_performer %} + {{ s.second_performer.get_performer_type_display }}{% endif %}</span>
         &nbsp;
         {% if s.status == 'ACTIVE' %}<span class="badge badge-active">Inaendelea</span>
+        {% elif s.status == 'PENDING_CONFIRMATION' %}<span class="badge badge-pending">Inasubiri uthibitisho</span>
         {% elif s.status == 'COMPLETED' %}<span class="badge badge-done">Imekwisha</span>
         {% elif s.status == 'PENDING_APPROVAL' %}<span class="badge badge-pending">Inangojea</span>
         {% elif s.status == 'CANCELLED' %}<span class="badge badge-cancel">Imefutwa</span>{% endif %}

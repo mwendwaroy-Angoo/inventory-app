@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Thibitisha Uwepo — {{ session.performer.name|default:"DJ/MC" }}</title>
+<title>Thibitisha Uwepo — {{ performer.name|default:"DJ/MC" }}</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #1a1a1a; color: #f0ece4; font-family: 'DM Sans', sans-serif; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
@@ -17,6 +17,10 @@ body { background: #1a1a1a; color: #f0ece4; font-family: 'DM Sans', sans-serif; 
 .btn-confirm { display: block; width: 100%; padding: .85rem; background: linear-gradient(135deg,#c9a84c,#e2c36e); color: #1a1a1a; border: none; border-radius: 12px; font-weight: 800; font-size: 1rem; cursor: pointer; letter-spacing: .3px; }
 .btn-confirm:disabled { opacity: .5; cursor: not-allowed; }
 .done-box { display: none; background: rgba(76,175,80,.1); border: 1px solid rgba(76,175,80,.3); border-radius: 12px; padding: 1.25rem; color: #81c784; }
+.pay-box { margin-top: .85rem; padding: .7rem 1rem; border-radius: 10px; text-align: center; }
+.pay-box .pay-label { font-size: .72rem; color: #b0b0b0; margin-bottom: .15rem; text-transform: uppercase; letter-spacing: .04em; }
+.pay-box .pay-status { font-weight: 700; font-size: .9rem; }
+.pay-box .pay-hint   { font-size: .72rem; color: #b0b0b0; margin-top: .15rem; }
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;700&display=swap" rel="stylesheet">
@@ -29,8 +33,24 @@ body { background: #1a1a1a; color: #f0ece4; font-family: 'DM Sans', sans-serif; 
   <div class="done-box" style="display:block;">
     <div style="font-size:2rem; margin-bottom:.5rem;">&#10003;</div>
     <div style="font-weight:700; margin-bottom:.25rem;">Tayari umethibitisha!</div>
-    <div style="font-size:.83rem; color:#b0b0b0;">Uwepo wako umehifadhiwa saa {{ session.performer_checkin_at|date:"H:i" }}.</div>
+    <div style="font-size:.83rem; color:#b0b0b0;">
+      Uwepo wako umehifadhiwa saa
+      {% if is_second %}{{ session.second_performer_checkin_at|date:"H:i" }}{% else %}{{ session.performer_checkin_at|date:"H:i" }}{% endif %}.
+    </div>
   </div>
+  {% if session.payment_status == 'PAID' %}
+  <div class="pay-box" style="background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.25);">
+    <div class="pay-label">Malipo</div>
+    <div class="pay-status" style="color:#81c784;">&#10003; Yamethibitishwa</div>
+  </div>
+  {% else %}
+  <div class="pay-box" style="background:rgba(255,152,0,.07);border:1px solid rgba(255,152,0,.18);">
+    <div class="pay-label">Malipo</div>
+    <div class="pay-status" style="color:#ffb74d;">&#8987; Yanasubiri</div>
+    <div class="pay-hint">Bookmark ukurasa huu ukague baadaye</div>
+  </div>
+  {% endif %}
+
   {% else %}
   <div id="confirm-view">
     <div class="icon">&#127908;</div>
@@ -38,7 +58,7 @@ body { background: #1a1a1a; color: #f0ece4; font-family: 'DM Sans', sans-serif; 
     <div class="subline">Bonyeza kitufe hapa chini kuthibitisha kwamba uko kwenye sehemu na uko tayari kuanza.</div>
     <div class="meta-row">
       <div><strong>Mahali:</strong> {{ session.business.name }}</div>
-      <div><strong>Mwanamuziki:</strong> {{ session.performer.name|default:"—" }}</div>
+      <div><strong>Mwanamuziki:</strong> {{ performer.name|default:"—" }}</div>
       <div><strong>Tarehe:</strong> {{ session.date }}</div>
     </div>
     <button class="btn-confirm" id="confirm-btn" onclick="doConfirm()">Ndio, niko hapa &#10003;</button>
@@ -48,6 +68,11 @@ body { background: #1a1a1a; color: #f0ece4; font-family: 'DM Sans', sans-serif; 
     <div style="font-size:2rem; margin-bottom:.5rem;">&#10003;</div>
     <div style="font-weight:700; margin-bottom:.25rem;">Asante! Umethibitishwa.</div>
     <div style="font-size:.83rem; color:#b0b0b0;">Mmiliki amejulishwa. Furahia sehemu! &#127928;</div>
+  </div>
+  <div id="payment-status-box" class="pay-box" style="display:none;background:rgba(255,152,0,.07);border:1px solid rgba(255,152,0,.18);">
+    <div class="pay-label">Malipo</div>
+    <div class="pay-status" style="color:#ffb74d;">&#8987; Yanasubiri</div>
+    <div class="pay-hint">Bookmark ukurasa huu ukague baadaye</div>
   </div>
   {% endif %}
 </div>
@@ -70,6 +95,7 @@ function doConfirm() {
     if (d.ok) {
       document.getElementById('confirm-view').style.display = 'none';
       document.getElementById('done-view').style.display = 'block';
+      document.getElementById('payment-status-box').style.display = 'block';
     } else {
       btn.disabled = false;
       btn.textContent = 'Ndio, niko hapa ✓';

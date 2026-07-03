@@ -59,15 +59,26 @@ def _staff_or_owner(request):
     return up, None
 
 
+def _maybe_activate(session):
+    """Auto-flip PENDING_CONFIRMATION → ACTIVE once all required parties have confirmed."""
+    if session.status == PerformerSession.STATUS_PENDING_CONFIRMATION and session.all_confirmed:
+        session.status     = PerformerSession.STATUS_ACTIVE
+        session.started_at = timezone.now()
+        session.save(update_fields=['status', 'started_at'])
+        return True
+    return False
+
+
 def _fire_session_started_notification(session, started_by):
-    """In-app + optional SMS to owner when a session starts."""
+    """In-app + optional SMS to owner when a session goes ACTIVE."""
     business = session.business
-    performer_name = session.performer.name if session.performer else 'Unknown'
-    fee = session.agreed_fee
+    names = [session.performer.name] if session.performer else ['Unknown']
+    if session.second_performer:
+        names.append(session.second_performer.name)
+    performers_label = ' & '.join(names)
     staff_label = started_by.get_full_name() or started_by.username
     msg = (
-        f"\U0001f3a4 DJ/MC session started — {performer_name}, "
-        f"KES {fee:,.0f}. Staff: {staff_label}."
+        f"🎤 DJ/MC session started — {performers_label}. Staff: {staff_label}."
     )
     for up in business.users.filter(role='owner').select_related('user'):
         create_in_app_notification(up.user, '🎤 DJ/MC Sesheni Imeanza', msg)
@@ -79,13 +90,13 @@ def _fire_session_started_notification(session, started_by):
             logger.exception("DJ session start SMS failed (business=%s)", business.id)
 
 
-def _fire_unverified_alert(session):
-    """Alert owner when a session ends without performer check-in."""
+def _fire_unverified_alert(session, unconfirmed_names):
+    """Alert owner when a session ends without all performers confirming."""
     business = session.business
-    performer_name = session.performer.name if session.performer else 'Unknown'
+    names_label = ' na '.join(unconfirmed_names)
     msg = (
-        f"⚠️ DJ/MC session ended but {performer_name} never confirmed presence. "
-        f"Session date: {session.date}, KES {session.agreed_fee:,.0f}."
+        f"⚠️ DJ/MC session iliisha lakini {names_label} hajakuthibitisha ufika. "
+        f"Tarehe: {session.date}."
     )
     for up in business.users.filter(role='owner').select_related('user'):
         create_in_app_notification(up.user, '⚠️ DJ/MC Hajakuthibitishwa', msg)
@@ -95,6 +106,24 @@ def _fire_unverified_alert(session):
             send_sms_notification(msg, business.phone)
         except Exception:
             logger.exception("DJ unverified alert SMS failed (business=%s)", business.id)
+
+
+def _send_payment_sms(session):
+    """SMS to each performer confirming payment was made. No amount — privacy."""
+    date_label = session.date.strftime('%d %b %Y')
+    for performer in [session.performer, session.second_performer]:
+        if performer and performer.phone:
+            try:
+                msg = (
+                    f"Habari {performer.name}, malipo yako ya onyesho "
+                    f"la {date_label} @ {session.business.name} "
+                    f"yamethibitishwa. Asante kwa kazi nzuri! \U0001f3a4"
+                )
+                send_sms_notification(msg, normalize_ke_phone(performer.phone))
+            except Exception:
+                logger.exception(
+                    "Payment SMS to performer %s failed", performer.id
+                )
 
 
 # ── Performer CRUD (owner only) ───────────────────────────────────────────────
@@ -203,11 +232,13 @@ def session_today_api(request):
     today     = timezone.localdate()
     next_week = today + timedelta(days=7)
 
+    is_owner = getattr(up, 'is_owner', False)
+
     sessions = (
         PerformerSession.objects
         .filter(business=business, date=today)
         .exclude(status=PerformerSession.STATUS_CANCELLED)
-        .select_related('performer')
+        .select_related('performer', 'second_performer', 'staff_confirmed_by')
         .order_by('started_at')
     )
     upcoming_qs = (
@@ -236,31 +267,51 @@ def session_today_api(request):
 
     result = []
     for s in sessions:
-        checkin_at = (
-            s.performer_checkin_at.strftime('%H:%M')
-            if s.performer_checkin_at else None
-        )
-        result.append({
+        checkin_at = s.performer_checkin_at.strftime('%H:%M') if s.performer_checkin_at else None
+        p2_checkin_at = s.second_performer_checkin_at.strftime('%H:%M') if s.second_performer_checkin_at else None
+        staff_conf_at = s.staff_confirmed_at.strftime('%H:%M') if s.staff_confirmed_at else None
+        staff_conf_by = (
+            s.staff_confirmed_by.get_full_name() or s.staff_confirmed_by.username
+        ) if s.staff_confirmed_by else None
+        row = {
             'id':               s.id,
             'performer_name':   s.performer.name if s.performer else 'Unknown',
-            'performer_type':   (
-                s.performer.get_performer_type_display() if s.performer else ''
-            ),
+            'performer_type':   s.performer.get_performer_type_display() if s.performer else '',
+            # Duo fields
+            'is_duo':                    s.second_performer_id is not None,
+            'second_performer_name':     s.second_performer.name if s.second_performer else None,
+            'second_performer_type':     s.second_performer.get_performer_type_display() if s.second_performer else None,
+            'second_performer_checked_in':      s.second_performer_checked_in,
+            'second_performer_checkin_at':      p2_checkin_at,
+            'second_performer_checkin_token':   str(s.second_performer_checkin_token),
+            'second_performer_checkin_short_code': s.second_performer_checkin_short_code,
+            # Status
             'status':           s.status,
+            'all_confirmed':    s.all_confirmed,
             'started_at':       s.started_at.strftime('%H:%M') if s.started_at else None,
             'ended_at':         s.ended_at.strftime('%H:%M')   if s.ended_at   else None,
-            'agreed_fee':       float(s.agreed_fee),
-            'payment_status':   s.payment_status,
+            # Staff rating (visible to staff + owner — assessing quality, not cost)
             'staff_rating':     s.staff_rating,
+            # Primary performer confirmation
             'performer_checked_in':  s.performer_checked_in,
             'performer_checkin_at':  checkin_at,
             'checkin_short_code':    s.checkin_short_code,
             'checkin_token':         str(s.checkin_token),
+            # Staff on-ground confirmation
+            'staff_confirmed':       s.staff_confirmed,
+            'staff_confirmed_at':    staff_conf_at,
+            'staff_confirmed_by':    staff_conf_by,
+            # Public feedback
             'feedback_token':        str(s.feedback_token),
             'avg_customer_rating':   s.avg_customer_rating,
             'total_customer_ratings': s.total_customer_ratings,
             'duration_hours':        s.duration_hours,
-        })
+        }
+        # Fee and payment status — owner only; performers see via their checkin URL
+        if is_owner:
+            row['agreed_fee']     = float(s.agreed_fee)
+            row['payment_status'] = s.payment_status
+        result.append(row)
 
     customer_sms_count = (
         Customer.objects
@@ -274,7 +325,7 @@ def session_today_api(request):
         'sessions':          result,
         'upcoming':          upcoming_result,
         'performers':        performers,
-        'is_owner':          getattr(up, 'is_owner', False),
+        'is_owner':          is_owner,
         'customer_sms_count': customer_sms_count,
     })
 
@@ -301,7 +352,8 @@ def session_start(request):
     except Exception:
         data = request.POST
 
-    performer_id = data.get('performer_id')
+    performer_id        = data.get('performer_id')
+    second_performer_id = data.get('second_performer_id')
     try:
         agreed_fee = Decimal(str(data.get('agreed_fee') or '0'))
     except Exception:
@@ -314,14 +366,20 @@ def session_start(request):
             id=performer_id, business=business, is_active=True
         ).first()
 
-    now   = timezone.now()
+    second_performer = None
+    if second_performer_id and str(second_performer_id) != str(performer_id):
+        second_performer = Performer.objects.filter(
+            id=second_performer_id, business=business, is_active=True
+        ).first()
+
     today = timezone.localdate()
 
     threshold = business.performer_approval_threshold or 0
     if 0 < threshold <= agreed_fee and not is_owner:
         status = PerformerSession.STATUS_PENDING_APPROVAL
     else:
-        status = PerformerSession.STATUS_ACTIVE
+        # Always starts awaiting confirmation — ACTIVE only once all parties confirm
+        status = PerformerSession.STATUS_PENDING_CONFIRMATION
 
     open_shift = Shift.objects.filter(
         business=business, status='OPEN', staff=request.user
@@ -332,26 +390,26 @@ def session_start(request):
     session = PerformerSession.objects.create(
         business=business,
         performer=performer,
+        second_performer=second_performer,
         shift=open_shift,
         date=today,
         status=status,
-        started_at=now if status == PerformerSession.STATUS_ACTIVE else None,
         agreed_fee=agreed_fee,
         notes=notes,
         created_by=request.user,
     )
 
-    if status == PerformerSession.STATUS_ACTIVE:
-        _fire_session_started_notification(session, request.user)
-
     return JsonResponse({
         'ok':               True,
         'session_id':       session.id,
         'status':           status,
-        'checkin_short_code': session.checkin_short_code,
-        'checkin_token':    str(session.checkin_token),
-        'feedback_token':   str(session.feedback_token),
-        'pending_approval': status == PerformerSession.STATUS_PENDING_APPROVAL,
+        'checkin_short_code':        session.checkin_short_code,
+        'checkin_token':             str(session.checkin_token),
+        'second_performer_checkin_short_code': session.second_performer_checkin_short_code,
+        'second_performer_checkin_token':      str(session.second_performer_checkin_token),
+        'feedback_token':            str(session.feedback_token),
+        'pending_approval':          status == PerformerSession.STATUS_PENDING_APPROVAL,
+        'is_duo':                    second_performer is not None,
     })
 
 
@@ -375,21 +433,43 @@ def session_update(request, session_id):
     if action == 'approve':
         if not getattr(up, 'is_owner', False):
             return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
-        session.status     = PerformerSession.STATUS_ACTIVE
-        session.started_at = timezone.now()
-        session.save(update_fields=['status', 'started_at'])
-        _fire_session_started_notification(session, request.user)
+        # High-fee approval clears that gate; confirmation still required
+        session.status = PerformerSession.STATUS_PENDING_CONFIRMATION
+        session.save(update_fields=['status'])
+        if _maybe_activate(session):
+            _fire_session_started_notification(session, request.user)
         return JsonResponse({'ok': True, 'status': session.status})
 
     if action == 'activate':
         if session.status != PerformerSession.STATUS_SCHEDULED:
             return JsonResponse({'ok': False, 'error': 'Sesheni hii si ya ratiba.'})
-        session.status     = PerformerSession.STATUS_ACTIVE
-        session.started_at = timezone.now()
-        session.date       = timezone.localdate()
-        session.save(update_fields=['status', 'started_at', 'date'])
-        _fire_session_started_notification(session, request.user)
+        session.status = PerformerSession.STATUS_PENDING_CONFIRMATION
+        session.date   = timezone.localdate()
+        session.save(update_fields=['status', 'date'])
+        if _maybe_activate(session):
+            _fire_session_started_notification(session, request.user)
         return JsonResponse({'ok': True, 'status': session.status})
+
+    if action == 'staff_confirm':
+        # Staff on duty corroborates that the performer(s) have physically arrived
+        if session.status not in (
+            PerformerSession.STATUS_PENDING_CONFIRMATION,
+            PerformerSession.STATUS_PENDING_APPROVAL,
+        ):
+            return JsonResponse({'ok': False, 'error': 'Sesheni haipo katika hali inayohitaji uthibitisho.'})
+        session.staff_confirmed    = True
+        session.staff_confirmed_by = request.user
+        session.staff_confirmed_at = timezone.now()
+        session.save(update_fields=['staff_confirmed', 'staff_confirmed_by', 'staff_confirmed_at'])
+        activated = _maybe_activate(session)
+        if activated:
+            _fire_session_started_notification(session, request.user)
+        return JsonResponse({
+            'ok':          True,
+            'activated':   activated,
+            'all_confirmed': session.all_confirmed,
+            'status':      session.status,
+        })
 
     if action == 'cancel':
         session.status = PerformerSession.STATUS_CANCELLED
@@ -413,8 +493,13 @@ def session_update(request, session_id):
     session.staff_notes  = staff_notes
     session.save(update_fields=['status', 'ended_at', 'staff_rating', 'staff_notes'])
 
-    if not session.performer_checked_in:
-        _fire_unverified_alert(session)
+    unconfirmed = []
+    if not session.performer_checked_in and session.performer:
+        unconfirmed.append(session.performer.name)
+    if session.second_performer and not session.second_performer_checked_in:
+        unconfirmed.append(session.second_performer.name)
+    if unconfirmed:
+        _fire_unverified_alert(session, unconfirmed)
 
     return JsonResponse({
         'ok':                   True,
@@ -435,6 +520,12 @@ def session_pay(request, session_id):
 
     if session.payment_status == PerformerSession.PAYMENT_PAID:
         return JsonResponse({'ok': False, 'error': 'Already paid'}, status=400)
+
+    if not session.all_confirmed:
+        return JsonResponse(
+            {'ok': False, 'error': 'Sesheni bado haijathibitishwa na pande zote. Malipo hayawezi kufanywa.'},
+            status=400,
+        )
 
     try:
         data = json.loads(request.body)
@@ -467,6 +558,8 @@ def session_pay(request, session_id):
     session.expense        = expense
     session.save(update_fields=['payment_status', 'payment_method', 'paid_at', 'expense'])
 
+    _send_payment_sms(session)
+
     return JsonResponse({'ok': True, 'expense_id': expense.id})
 
 
@@ -477,14 +570,16 @@ def session_checkin_poll(request, session_id):
     if err:
         return err
     session = get_object_or_404(PerformerSession, id=session_id, business=up.business)
-    checkin_at = (
-        session.performer_checkin_at.strftime('%H:%M')
-        if session.performer_checkin_at else None
-    )
     return JsonResponse({
-        'ok':                   True,
-        'performer_checked_in': session.performer_checked_in,
-        'performer_checkin_at': checkin_at,
+        'ok':                          True,
+        'status':                      session.status,
+        'all_confirmed':               session.all_confirmed,
+        'performer_checked_in':        session.performer_checked_in,
+        'performer_checkin_at':        session.performer_checkin_at.strftime('%H:%M') if session.performer_checkin_at else None,
+        'second_performer_checked_in': session.second_performer_checked_in,
+        'second_performer_checkin_at': session.second_performer_checkin_at.strftime('%H:%M') if session.second_performer_checkin_at else None,
+        'staff_confirmed':             session.staff_confirmed,
+        'staff_confirmed_at':          session.staff_confirmed_at.strftime('%H:%M') if session.staff_confirmed_at else None,
     })
 
 
@@ -504,7 +599,7 @@ def session_list(request):
     qs = (
         PerformerSession.objects
         .filter(business=business)
-        .select_related('performer')
+        .select_related('performer', 'second_performer')
         .order_by('-date', '-started_at')
     )
     if filter_performer:
@@ -531,20 +626,54 @@ def session_list(request):
 def session_checkin_public(request, token):
     """
     Public — no login. DJ/MC taps confirm on their phone.
-    Server-timestamped; staff cannot fake it.
+    Handles both primary and second-performer tokens via the same URL.
+    After confirming, shows payment status (not amount) so performer
+    can bookmark the page to check if they've been paid.
     """
-    session = get_object_or_404(PerformerSession, checkin_token=token)
+    # Determine which performer this token belongs to
+    session     = None
+    is_second   = False
+    try:
+        session = PerformerSession.objects.select_related(
+            'performer', 'second_performer', 'business'
+        ).get(checkin_token=token)
+    except PerformerSession.DoesNotExist:
+        try:
+            session = PerformerSession.objects.select_related(
+                'performer', 'second_performer', 'business'
+            ).get(second_performer_checkin_token=token)
+            is_second = True
+        except PerformerSession.DoesNotExist:
+            from django.http import Http404
+            raise Http404
 
     if request.method == 'POST':
-        if not session.performer_checked_in:
-            session.performer_checked_in = True
-            session.performer_checkin_at = timezone.now()
-            session.save(update_fields=['performer_checked_in', 'performer_checkin_at'])
-        return JsonResponse({'ok': True})
+        if is_second:
+            if not session.second_performer_checked_in:
+                session.second_performer_checked_in = True
+                session.second_performer_checkin_at = timezone.now()
+                session.save(update_fields=['second_performer_checked_in', 'second_performer_checkin_at'])
+        else:
+            if not session.performer_checked_in:
+                session.performer_checked_in = True
+                session.performer_checkin_at = timezone.now()
+                session.save(update_fields=['performer_checked_in', 'performer_checkin_at'])
+
+        # Auto-activate if all parties have now confirmed
+        if _maybe_activate(session):
+            # Notify owner — use system as the trigger since it's performer-initiated
+            _fire_session_started_notification(session, session.created_by or session.business.users.filter(role='owner').first().user)
+
+        return JsonResponse({'ok': True, 'all_confirmed': session.all_confirmed})
+
+    performer = session.second_performer if is_second else session.performer
+    already_checked_in = session.second_performer_checked_in if is_second else session.performer_checked_in
 
     return render(request, 'core/performer_checkin_public.html', {
-        'session':           session,
-        'already_checked_in': session.performer_checked_in,
+        'session':            session,
+        'performer':          performer,
+        'is_second':          is_second,
+        'already_checked_in': already_checked_in,
     })
 
 
