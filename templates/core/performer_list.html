@@ -29,6 +29,21 @@
     </div>
   </div>
 
+  {% if top_performer %}
+  <div style="background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.2);border-radius:12px;padding:.9rem 1.1rem;margin-bottom:1.25rem;">
+    <div style="font-size:.75rem;font-weight:700;color:#c9a84c;margin-bottom:.55rem;">&#128161; Mapendekezo ya Ubukuzi</div>
+    {% for p in performers %}{% if p.stat_count >= 2 %}
+    <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.3rem;flex-wrap:wrap;">
+      <span style="font-size:.8rem;color:#f0ece4;font-weight:600;">{{ p.name }}</span>
+      <span style="font-size:.72rem;padding:1px 7px;border-radius:4px;background:rgba(255,255,255,.05);color:{{ p.insight_color }};">{{ p.insight_label }}</span>
+      {% if p.stat_customer %}<span style="font-size:.72rem;color:#b0b0b0;">&#11088; {{ p.stat_customer|floatformat:1 }} wateja</span>{% endif %}
+      {% if p.stat_staff %}<span style="font-size:.72rem;color:#b0b0b0;">&#11088; {{ p.stat_staff|floatformat:1 }} staff</span>{% endif %}
+    </div>
+    {% endif %}{% endfor %}
+    <div style="font-size:.7rem;color:#555;margin-top:.4rem;">Imehesabiwa kutoka kwa tathmini za staff na wateja. Book Again = avg wateja &#8805; 4.0 (min sesheni 2).</div>
+  </div>
+  {% endif %}
+
   {% if not performers %}
   <div style="text-align:center; padding:3rem 1rem; color:#b0b0b0;">
     <div style="font-size:2.5rem; margin-bottom:.75rem;">&#127908;</div>
@@ -39,12 +54,24 @@
   {% for p in performers %}
   <div class="perf-card">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:.5rem;">
-      <div>
-        <span class="perf-name">{{ p.name }}</span>
-        <span class="perf-type">{{ p.get_performer_type_display }}</span>
-        {% if not p.is_active %}<span style="color:#b0b0b0; font-size:.72rem; margin-left:.5rem;">(Haifanyi kazi)</span>{% endif %}
+      <div style="display:flex; align-items:center; gap:.75rem;">
+        {% if p.photo_url %}
+        <img src="{{ p.photo_url }}" alt="{{ p.name }}"
+             style="width:46px;height:46px;border-radius:50%;object-fit:cover;border:2px solid rgba(201,168,76,.4);flex-shrink:0;"
+             onerror="this.style.display='none'">
+        {% else %}
+        <div style="width:46px;height:46px;border-radius:50%;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;">&#127908;</div>
+        {% endif %}
+        <div>
+          <span class="perf-name">{{ p.name }}</span>
+          <span class="perf-type">{{ p.get_performer_type_display }}</span>
+          {% if not p.is_active %}<span style="color:#b0b0b0; font-size:.72rem; margin-left:.5rem;">(Haifanyi kazi)</span>{% endif %}
+        </div>
       </div>
-      <div style="display:flex; gap:.4rem;">
+      <div style="display:flex; gap:.4rem; align-items:center;">
+        {% if p.stat_count >= 2 %}
+        <span style="font-size:.7rem;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.04);color:{{ p.insight_color }};">{{ p.insight_label }}</span>
+        {% endif %}
         <a href="{% url 'performer_edit' p.id %}" class="btn-ghost" style="font-size:.75rem; padding:.3rem .75rem;">Hariri</a>
       </div>
     </div>
@@ -62,6 +89,9 @@
       {% endif %}
       {% if p.stat_customer %}
       <span class="perf-stat">&#11088; {{ p.stat_customer|floatformat:1 }} (wateja)</span>
+      {% endif %}
+      {% if p.stat_total_paid %}
+      <span class="perf-stat">&#128181; KES {{ p.stat_total_paid|floatformat:0 }} lililolipwa</span>
       {% endif %}
     </div>
     {% if p.notes %}

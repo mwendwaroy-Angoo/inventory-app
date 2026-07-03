@@ -73,6 +73,17 @@
           <label class="form-label">Maelezo</label>
           <textarea name="notes" class="form-ctrl" rows="2" placeholder="Contact info, style notes...">{{ performer.notes|default:'' }}</textarea>
         </div>
+        <div>
+          <label class="form-label">Picha URL (optional)</label>
+          <input name="photo_url" type="url" class="form-ctrl" maxlength="500"
+                 value="{{ performer.photo_url|default:'' }}"
+                 placeholder="https://... (picha ya umma, kwa promo page)"
+                 id="photo-url-input">
+          <div id="photo-preview" style="margin-top:.5rem;display:none;">
+            <img id="photo-preview-img" src="" alt="Preview"
+                 style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:2px solid rgba(201,168,76,.4);">
+          </div>
+        </div>
         {% if performer %}
         <div>
           <label style="display:flex; align-items:center; gap:.4rem; font-size:.82rem; color:#b0b0b0; cursor:pointer;">
@@ -106,6 +117,26 @@
   sel.addEventListener('change', _toggle);
   if (rate) rate.addEventListener('input', function () { if (rateDisplay) rateDisplay.textContent = Number(rate.value).toLocaleString(); });
   _toggle();
+
+  /* Photo URL live preview */
+  var photoInput   = document.getElementById('photo-url-input');
+  var photoPreview = document.getElementById('photo-preview');
+  var photoImg     = document.getElementById('photo-preview-img');
+  function _updatePhotoPreview() {
+    var url = photoInput.value.trim();
+    if (url) {
+      photoImg.src = url;
+      photoPreview.style.display = 'block';
+      photoImg.onerror = function () { photoPreview.style.display = 'none'; };
+      photoImg.onload  = function () { photoPreview.style.display = 'block'; };
+    } else {
+      photoPreview.style.display = 'none';
+    }
+  }
+  if (photoInput) {
+    photoInput.addEventListener('input', _updatePhotoPreview);
+    _updatePhotoPreview();
+  }
 }());
 </script>
 {% endblock %}

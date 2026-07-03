@@ -2631,6 +2631,10 @@ class Performer(models.Model):
                                          help_text='Per-session fee (ONE_OFF) or monthly rate (RETAINER)')
     is_active      = models.BooleanField(default=True)
     notes          = models.TextField(blank=True)
+    photo_url      = models.CharField(
+        max_length=500, blank=True, default='',
+        help_text='Public image URL — shown on promo page and roster',
+    )
     created_at     = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -2692,7 +2696,11 @@ class PerformerSession(models.Model):
     status         = models.CharField(max_length=22, choices=STATUS_CHOICES, default=STATUS_PENDING_CONFIRMATION)
     started_at     = models.DateTimeField(null=True, blank=True)
     ended_at       = models.DateTimeField(null=True, blank=True)
-    agreed_fee     = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    agreed_fee           = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    second_performer_fee = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text='Agreed fee for the second performer (duo sessions only)',
+    )
     payment_status = models.CharField(max_length=10, choices=PAYMENT_CHOICES, default=PAYMENT_PENDING)
     payment_method = models.CharField(max_length=10,
                                       choices=[('cash', _('Cash')), ('mpesa', _('M-Pesa'))],
@@ -2737,11 +2745,10 @@ class PerformerSession(models.Model):
 
     @property
     def all_confirmed(self):
-        """True when all required parties have confirmed the session has started."""
-        p1_ok    = self.performer_checked_in
-        p2_ok    = (not self.second_performer_id) or self.second_performer_checked_in
-        staff_ok = self.staff_confirmed
-        return p1_ok and p2_ok and staff_ok
+        """True when P1 has confirmed presence AND staff has corroborated.
+        P2 check-in is tracked for accountability timestamps but does not gate
+        session activation or payment — the DJ may be playing before MC arrives."""
+        return self.performer_checked_in and self.staff_confirmed
 
     @property
     def duration_hours(self):

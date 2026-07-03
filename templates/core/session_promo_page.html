@@ -239,7 +239,16 @@ body {
     <div class="badge badge-soon">&#127926; INAKUJA HIVI KARIBUNI</div>
   {% endif %}
 
+  {% if session.performer.photo_url %}
+  <div style="margin:.4rem auto 1rem;width:96px;height:96px;border-radius:50%;overflow:hidden;border:2px solid rgba(201,168,76,.5);display:inline-block;">
+    <img src="{{ session.performer.photo_url }}" alt="{{ session.performer.name }}"
+         style="width:100%;height:100%;object-fit:cover;"
+         referrerpolicy="no-referrer"
+         onerror="this.parentNode.innerHTML='<div style=font-size:3rem>🎤</div>'">
+  </div>
+  {% else %}
   <div class="mic-icon">&#127908;</div>
+  {% endif %}
   <div class="venue">{{ session.business.name }}</div>
 
   <div class="performer-name">{{ session.performer.name|default:"DJ / MC" }}{% if session.second_performer %}<br><span style="font-size:1.6rem;color:#c9a84c;font-weight:700;">&amp;</span><br>{{ session.second_performer.name }}{% endif %}</div>

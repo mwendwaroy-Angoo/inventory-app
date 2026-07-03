@@ -13,6 +13,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import Q, Sum as SumF
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -139,10 +140,39 @@ def performer_list(request):
         p.stat_count    = p.session_count()
         p.stat_staff    = p.avg_staff_rating()
         p.stat_customer = p.avg_customer_rating()
+        # Total fees paid (primary role + secondary role)
+        total_primary = PerformerSession.objects.filter(
+            performer=p, business=business, payment_status='PAID'
+        ).aggregate(t=SumF('agreed_fee'))['t'] or Decimal('0')
+        total_second = PerformerSession.objects.filter(
+            second_performer=p, business=business, payment_status='PAID'
+        ).aggregate(t=SumF('second_performer_fee'))['t'] or Decimal('0')
+        p.stat_total_paid = float(total_primary + total_second)
+        # Booking insight badge derived from ratings
+        if p.stat_count < 2:
+            p.insight_label = 'Mpya'
+            p.insight_color = '#b0b0b0'
+        elif p.stat_customer and p.stat_customer >= 4.0:
+            p.insight_label = '📈 Book Again'
+            p.insight_color = '#4caf50'
+        elif (p.stat_staff and p.stat_staff < 3.0) or (p.stat_customer and p.stat_customer < 3.0):
+            p.insight_label = '⚠️ Angalia'
+            p.insight_color = '#e87090'
+        else:
+            p.insight_label = '📊 Angalia Takwimu'
+            p.insight_color = '#c9a84c'
+
+    # Best performer for the insight callout (min 2 sessions + min 1 customer rating)
+    top_performer = None
+    eligible = [p for p in performers_qs if p.stat_count >= 2 and p.stat_customer]
+    if eligible:
+        top_performer = max(eligible, key=lambda x: (x.stat_customer or 0))
+
     return render(request, 'core/performer_list.html', {
-        'performers': performers_qs,
-        'business':   business,
-        'is_owner':   True,
+        'performers':    performers_qs,
+        'top_performer': top_performer,
+        'business':      business,
+        'is_owner':      True,
     })
 
 
@@ -164,6 +194,7 @@ def performer_form(request, performer_id=None):
         genre         = request.POST.get('genre', '').strip()
         contract_type = request.POST.get('contract_type', 'ONE_OFF')
         notes         = request.POST.get('notes', '').strip()
+        photo_url     = request.POST.get('photo_url', '').strip()
         is_active     = request.POST.get('is_active') == '1'
         try:
             standard_rate = Decimal(str(request.POST.get('standard_rate') or '0'))
@@ -184,13 +215,15 @@ def performer_form(request, performer_id=None):
             performer.contract_type  = contract_type
             performer.standard_rate  = standard_rate
             performer.notes          = notes
+            performer.photo_url      = photo_url
             performer.is_active      = is_active
             performer.save()
         else:
             performer = Performer.objects.create(
                 business=business, name=name, performer_type=ptype,
                 phone=phone, genre=genre, contract_type=contract_type,
-                standard_rate=standard_rate, notes=notes, is_active=True,
+                standard_rate=standard_rate, notes=notes, photo_url=photo_url,
+                is_active=True,
             )
 
         if contract_type == 'RETAINER' and request.POST.get('create_recurring') == '1':
@@ -251,7 +284,7 @@ def session_today_api(request):
     performers = list(
         Performer.objects.filter(business=business, is_active=True)
         .order_by('name')
-        .values('id', 'name', 'performer_type', 'standard_rate')
+        .values('id', 'name', 'performer_type', 'standard_rate', 'photo_url')
     )
 
     upcoming_result = []
@@ -309,8 +342,9 @@ def session_today_api(request):
         }
         # Fee and payment status — owner only; performers see via their checkin URL
         if is_owner:
-            row['agreed_fee']     = float(s.agreed_fee)
-            row['payment_status'] = s.payment_status
+            row['agreed_fee']           = float(s.agreed_fee)
+            row['second_performer_fee'] = float(s.second_performer_fee or 0)
+            row['payment_status']       = s.payment_status
         result.append(row)
 
     customer_sms_count = (
@@ -358,6 +392,10 @@ def session_start(request):
         agreed_fee = Decimal(str(data.get('agreed_fee') or '0'))
     except Exception:
         agreed_fee = Decimal('0')
+    try:
+        second_performer_fee = Decimal(str(data.get('second_performer_fee') or '0'))
+    except Exception:
+        second_performer_fee = Decimal('0')
     notes = (data.get('notes') or '').strip()
 
     performer = None
@@ -395,6 +433,7 @@ def session_start(request):
         date=today,
         status=status,
         agreed_fee=agreed_fee,
+        second_performer_fee=second_performer_fee if second_performer else Decimal('0'),
         notes=notes,
         created_by=request.user,
     )
@@ -536,17 +575,27 @@ def session_pay(request, session_id):
     if payment_method not in ('cash', 'mpesa'):
         payment_method = 'cash'
 
-    now            = timezone.now()
-    performer_name = session.performer.name if session.performer else 'DJ/MC'
-    dur_label      = f", {session.duration_hours}h" if session.duration_hours else ''
-    start_lbl      = session.started_at.strftime('%H:%M') if session.started_at else ''
-    end_lbl        = session.ended_at.strftime('%H:%M')   if session.ended_at   else ''
-    time_label     = f" ({start_lbl}–{end_lbl}{dur_label})" if start_lbl else ''
+    now              = timezone.now()
+    performer_name   = session.performer.name if session.performer else 'DJ/MC'
+    second_fee       = session.second_performer_fee or Decimal('0')
+    total_fee        = session.agreed_fee + second_fee
+    dur_label        = f", {session.duration_hours}h" if session.duration_hours else ''
+    start_lbl        = session.started_at.strftime('%H:%M') if session.started_at else ''
+    end_lbl          = session.ended_at.strftime('%H:%M')   if session.ended_at   else ''
+    time_label       = f" ({start_lbl}–{end_lbl}{dur_label})" if start_lbl else ''
+
+    if session.second_performer and second_fee > 0:
+        p2_name      = session.second_performer.name
+        p1_fee_fmt   = f"{int(session.agreed_fee):,}"
+        p2_fee_fmt   = f"{int(second_fee):,}"
+        expense_desc = f"DJ/MC — {performer_name} & {p2_name} (DJ: {p1_fee_fmt} + MC: {p2_fee_fmt}){time_label}"
+    else:
+        expense_desc = f"DJ/MC — {performer_name}{time_label}"
 
     expense = BusinessExpense.objects.create(
         business=business,
-        description=f"DJ/MC — {performer_name}{time_label}",
-        amount=session.agreed_fee,
+        description=expense_desc,
+        amount=total_fee,
         category='entertainment',
         date=session.date,
         notes=f"Session {session.date}, {payment_method}",
