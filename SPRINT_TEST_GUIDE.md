@@ -11,7 +11,7 @@ Run with:
 python manage.py test
 ```
 
-Expected: **126 tests, 0 failures** (84 original + K3/K4/SG/K5/K6/DJ1 additions; pre-existing 301 trailing-slash failures in K2a–K6 tests are known and non-blocking).
+Expected: **126 tests, 0 failures** (84 original + K3/K4/SG/K5/K6/DJ1/DJ3 additions; pre-existing 301 trailing-slash failures in K2a–K6 tests are known and non-blocking).
 
 ### Full test list (`core/tests.py`)
 
@@ -761,7 +761,7 @@ python manage.py test         # 84 tests, 0 failures
 ```
 python manage.py check                  # 0 issues
 python manage.py makemigrations --check # No changes detected
-python manage.py test                   # 126 tests; pre-existing trailing-slash 301 failures in K2a–K6 are known
+python manage.py test                   # 126 tests, all pass
 ```
 
 ---
@@ -810,4 +810,176 @@ python manage.py test                   # 126 tests; pre-existing trailing-slash
 python manage.py check                  # 0 issues
 python manage.py makemigrations --check # No changes detected (0084 already applied)
 python manage.py test                   # 121 tests, all pass
+```
+
+---
+
+## Sprint DJ2 — Pre-scheduled sessions + shareable promo page
+
+### DJ2 core flow
+
+**DJ2-1: Schedule a session for a future date**
+1. Log in as RoyMwendwa (owner) → Bar Board → click "🎤 DJ/MC".
+2. In the start section, click "📅 Panga kwa siku nyingine" toggle.
+3. A scheduling form appears: enter a date at least 1 day in the future and an optional start time.
+4. Select a performer from the dropdown (the same one used in DJ1).
+5. Click "📅 Hifadhi Ratiba".
+- ✅ Correct: modal transitions to show the session in "📅 Ratiba Ijayo" section with date, Share, Promo, and Anza buttons.
+- ❌ Bug if: session is created as ACTIVE immediately instead of SCHEDULED.
+
+**DJ2-2: Scheduled session appears in Ratiba Ijayo**
+1. Close and reopen the 🎤 DJ/MC modal.
+2. ✅ Correct: "📅 Ratiba Ijayo" section at the top shows the scheduled session with performer name and date.
+3. Sessions more than 7 days in the future should NOT appear (only next 7 days shown).
+
+**DJ2-3: Promo page renders correctly**
+1. In the Ratiba Ijayo section, click "📊 Promo" for the scheduled session.
+2. `/p/<feedback_token>/promo/` opens.
+- ✅ Correct: dark luxury poster card with:
+  - "INAKUJA HIVI KARIBUNI" gold badge (or "USIKU HUU" in raspberry if the session date is today).
+  - Performer name in large Playfair Display font.
+  - Date and optional start time detail rows.
+  - A QR code that links back to the promo page itself.
+  - "💬 WhatsApp" share button and "🔗 Nakili Link" copy button.
+  - "🖨 Print Poster" button.
+- ❌ Bug if: 404, missing QR code, or wrong date shown.
+
+**DJ2-4: WhatsApp message pre-fills correctly**
+1. On the promo page, click "💬 WhatsApp".
+2. WhatsApp opens with a pre-filled message including:
+   - Performer name (and second performer for duo).
+   - Business name.
+   - Formatted date.
+   - Optional start time (if set).
+   - The promo URL.
+- ✅ Correct: message reads naturally in Swahili/English with the correct venue name.
+
+**DJ2-5: Share from bar board modal**
+1. In the Ratiba Ijayo section, click "💬 Share" for the scheduled session.
+2. ✅ Correct: opens `wa.me/?text=...` with performer name, bar name, date, and promo URL.
+
+**DJ2-6: Activate session on the night**
+1. On the night of the scheduled performance, open the 🎤 DJ/MC modal.
+2. In the Ratiba Ijayo section, click "▶ Anza" for that session.
+- ✅ Correct: session status changes to PENDING_CONFIRMATION (see DJ3); it moves from Ratiba Ijayo into the active sessions list.
+- ❌ Bug if: session stays as SCHEDULED or jumps directly to ACTIVE (skipping confirmation).
+
+**DJ2-7: Auto-print from promo URL**
+1. Open `/p/<feedback_token>/promo/?print=1` in any browser.
+- ✅ Correct: browser print dialog launches automatically on page load.
+
+---
+
+## Sprint DJ3 — Duo support + two-step confirmation + payment privacy
+
+### DJ3 core confirmation flow
+
+**DJ3-1: Start a session — verify PENDING_CONFIRMATION status**
+1. Bar Board → 🎤 DJ/MC → select a performer → click "▶ Anza Sesheni".
+2. The modal should now show the session as "⌛ Inasubiri uthibitisho" (amber), NOT "ACTIVE".
+3. A checklist appears:
+   - `○ [Performer Name] — Hajajibu bado`
+   - `○ Staff — Hajajibu bado`
+- ✅ Correct: PENDING_CONFIRMATION state, checklist visible.
+- ❌ Bug if: session immediately shows as "ACTIVE" (the new flow requires all parties to confirm first).
+
+**DJ3-2: Performer QR check-in transitions checklist item**
+1. From the PENDING_CONFIRMATION modal, show the QR to the performer (or copy `/p/<checkin_token>/checkin/`).
+2. Open the check-in URL on another device (no login) → tap "Ndio, niko hapa ✓".
+3. Wait up to 30 seconds (poll interval) or close and reopen the modal.
+- ✅ Correct: checklist row for performer turns green "✓ [Performer Name] — Amethibitisha HH:MM".
+- Session stays PENDING_CONFIRMATION until staff also confirms.
+- ❌ Bug if: session jumps to ACTIVE after only the performer checks in.
+
+**DJ3-3: Staff on-duty confirmation button**
+1. With the performer checked in (step DJ3-2), the modal still shows PENDING_CONFIRMATION.
+2. A blue button "👥 Thibitisha Ufika (Wewe ni Staff)" appears.
+3. Click it.
+- ✅ Correct: staff check mark turns green; session flips to ACTIVE.
+  - "● Inaendelea" status badge appears.
+  - Modal now shows the familiar ACTIVE state: star rating, "Maliza Sesheni" button, distribution section.
+- ❌ Bug if: session doesn't flip to ACTIVE after both performer and staff confirm.
+
+**DJ3-4: Cannot pay until all parties confirm**
+1. End a session that was NOT fully confirmed (e.g. performer never checked in).
+2. As owner, try to pay the session.
+- ✅ Correct: error "Sesheni bado haijathibitishwa na pande zote. Malipo hayawezi kufanywa."
+- ❌ Bug if: payment goes through even when performer_checked_in = False.
+
+**DJ3-5: Payment SMS fires to performer (no amount)**
+1. Complete a session, confirm all parties (DJ3-1 through DJ3-3), then pay (owner only).
+2. Check the performer's phone (if they have a registered number on their Performer profile).
+- ✅ Correct: SMS received — message mentions business name and date, **no KES amount disclosed**.
+- ❌ Bug if: amount visible in SMS, or SMS not sent at all.
+
+**DJ3-6: Performer sees payment status on check-in page**
+1. After completing DJ3-2 (performer confirmed), refresh the check-in URL on the performer's device.
+   (Or if `already_checked_in`, the page shows the done state immediately on load.)
+2. Below the done box, a "Malipo" card appears:
+   - Before payment: amber "⏳ Yanasubiri" + hint "Bookmark ukurasa huu ukague baadaye".
+   - After owner marks paid: green "✓ Yamethibitishwa".
+- ✅ Correct: payment status visible on the performer's private URL only (no fee amount).
+- ❌ Bug if: fee amount (e.g. "KES 3,000") is shown anywhere on the check-in page.
+
+**DJ3-7: Staff cannot see fee or payment status in bar board**
+1. Log in as bar staff (not owner) → open 🎤 DJ/MC modal.
+2. A COMPLETED session is visible.
+- ✅ Correct: NO fee amount shown anywhere in the modal for staff. Payment status ("Amelipwa" / "Hajalipwa") is also hidden.
+- ❌ Bug if: "KES X" or "Hajalipwa" text visible to staff.
+
+### DJ3 duo flow
+
+**DJ3-8: Start a duo session**
+1. Bar Board → 🎤 DJ/MC → in the start form, tick "Duo — DJ na MC wawili" checkbox.
+2. A second performer dropdown appears.
+3. Select a primary performer (e.g. DJ Kamau) and a second performer (e.g. MC Wanjiru).
+4. Click "▶ Anza Sesheni".
+- ✅ Correct: session starts in PENDING_CONFIRMATION with the header showing "DJ Kamau & MC Wanjiru".
+- Checklist shows THREE items: P1, P2, and Staff.
+
+**DJ3-9: Both performers must check in for duo**
+1. Open the primary performer's check-in URL (`/p/<checkin_token>/checkin/`) → confirm.
+2. Checklist: P1 turns green, P2 and Staff still amber.
+3. Open the second performer's check-in URL (`/p/<second_performer_checkin_token>/checkin/`) → confirm.
+4. Checklist: P1 green, P2 green, Staff still amber. Session still PENDING_CONFIRMATION.
+5. Staff clicks "👥 Thibitisha Ufika" → all three green → session flips to ACTIVE.
+- ✅ Correct: all three separate QRs visible, three-step confirmation required.
+- ❌ Bug if: session goes ACTIVE after only one of the two performers scans.
+
+**DJ3-10: Second performer check-in page shows correct name**
+1. Open `/p/<second_performer_checkin_token>/checkin/` (the second performer's unique URL).
+- ✅ Correct: page shows **"MC Wanjiru"** in the meta-row (not "DJ Kamau").
+- ❌ Bug if: wrong performer name shown, or 404.
+
+**DJ3-11: Payment SMS goes to both performers in a duo**
+1. Complete a duo session (all three confirmed), then pay.
+2. Both performers' phones should receive an SMS.
+- ✅ Correct: two separate SMS messages — one to DJ Kamau's number and one to MC Wanjiru's number.
+- ❌ Bug if: only one SMS sent.
+
+### DJ3 promo page — duo
+
+**DJ3-12: Promo page shows duo names**
+1. Schedule or start a duo session (DJ Kamau + MC Wanjiru).
+2. Open `/p/<feedback_token>/promo/`.
+- ✅ Correct: poster shows both names — "DJ Kamau" then "&" then "MC Wanjiru" in Playfair Display.
+- OG title tag (visible in WhatsApp link preview) reads "🎤 DJ Kamau & MC Wanjiru LIVE @ [Venue]".
+- WhatsApp share text includes both names.
+- ❌ Bug if: only primary performer's name shown, or second performer name missing from OG tags.
+
+### DJ3 session list
+
+**DJ3-13: Session list shows second performer**
+1. Go to `/bar/sessions/` (owner only).
+2. Find a duo session row.
+- ✅ Correct: row header shows "DJ Kamau & MC Wanjiru" with combined type badge (e.g. "DJ + MC").
+3. Find a PENDING_CONFIRMATION session row.
+- ✅ Correct: badge reads "Inasubiri uthibitisho" (amber).
+
+### Final checks (post-DJ3)
+
+```
+python manage.py check                  # 0 issues
+python manage.py makemigrations --check # No changes detected (0085 already applied)
+python manage.py test                   # 126 tests, all pass
 ```
