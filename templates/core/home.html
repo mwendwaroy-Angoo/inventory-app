@@ -353,6 +353,49 @@
     </div>
     {% endif %}
 
+    <!-- DJ/MC Live Session widget (bar businesses only) -->
+    {% if active_dj_sessions %}
+    <div class="card mb-3 border-0" style="background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.25) !important; border-radius:12px;">
+        <div class="card-body py-3 px-4">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <h6 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0; font-size:.9rem;">🎤 Live Performance</h6>
+                <a href="{% url 'session_list' %}" style="color:#888; font-size:.75rem;">History →</a>
+            </div>
+            {% for sess in active_dj_sessions %}
+            <div class="d-flex align-items-center gap-3 {% if not forloop.last %}mb-3{% endif %}">
+                <div style="flex:1; min-width:0;">
+                    <div style="font-weight:700; font-size:.92rem; color:var(--pearl); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                        {% if sess.performer %}{{ sess.performer.name }}{% else %}Unknown{% endif %}{% if sess.second_performer %} &amp; {{ sess.second_performer.name }}{% endif %}
+                    </div>
+                    <div style="font-size:.76rem; color:#b0b0b0; margin-top:.1rem;">
+                        {% if sess.performer %}{{ sess.performer.get_performer_type_display }}{% endif %}
+                        {% if sess.status == 'PENDING_CONFIRMATION' %}
+                            · <span style="color:#f39c12;">⏳ Inasubiri uthibitisho</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div style="text-align:right; flex-shrink:0;">
+                    {% if sess.status == 'ACTIVE' %}
+                    <div class="dj-home-timer"
+                         data-started="{{ sess.started_at_epoch }}"
+                         data-expected="{% if sess.expected_hours %}{{ sess.expected_hours }}{% endif %}"
+                         style="font-family:'Playfair Display',serif; font-size:1.4rem; font-weight:700; color:var(--biz-accent,#c9a84c);">
+                        0:00
+                    </div>
+                    {% if sess.expected_hours %}
+                    <div style="font-size:.7rem; color:#b0b0b0;">/ {{ sess.expected_hours }}h agreed</div>
+                    {% endif %}
+                    {% else %}
+                    <div style="font-size:.76rem; color:#f39c12; padding:.2rem .55rem; background:rgba(243,156,18,.1); border-radius:6px; border:1px solid rgba(243,156,18,.3);">Pending</div>
+                    {% endif %}
+                </div>
+            </div>
+            {% if not forloop.last %}<hr style="border-color:rgba(201,168,76,.15); margin:.65rem 0;">{% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Stats -->
 <div class="row g-3 mb-4" id="dash-stats">
     <div class="col-4">
@@ -454,8 +497,10 @@
                     onclick="window.location='{% url 'item_detail' item.id %}'">
                     <td><strong>{{ item.material_no }}</strong></td>
                     <td>{{ item.description }}</td>
-                    <td>{{ item.unit }}</td>
-                    <td>{{ item.current_balance }}</td>
+                    <td>{{ item.unit_display }}</td>
+                    <td style="{% if item.current_balance < 0 %}color:#c0395a;font-weight:600;{% elif item.current_balance == 0 %}color:#b0b0b0;{% endif %}">
+                        {{ item.balance_display }}
+                    </td>
                     <td>{{ item.reorder_level }}</td>
                     <td>
                         {% if item.current_balance <= 0 %}
@@ -719,6 +764,33 @@
 {% endblock %}
 
 {% block extra_js %}
+<script>
+/* ── DJ / MC live session timer ── */
+(function () {
+    function _updateDjTimers() {
+        document.querySelectorAll('.dj-home-timer').forEach(function (el) {
+            var epoch = parseInt(el.dataset.started, 10);
+            if (!epoch) return;
+            var elapsed = Math.floor(Date.now() / 1000 - epoch);
+            if (elapsed < 0) elapsed = 0;
+            var h = Math.floor(elapsed / 3600);
+            var m = Math.floor((elapsed % 3600) / 60);
+            el.textContent = h + ':' + String(m).padStart(2, '0');
+            var expected = parseFloat(el.dataset.expected);
+            if (expected > 0) {
+                var elapsedH = elapsed / 3600;
+                if (elapsedH > expected) {
+                    el.style.color = '#c0395a';
+                } else if (elapsedH > expected * 0.85) {
+                    el.style.color = '#f39c12';
+                }
+            }
+        });
+    }
+    _updateDjTimers();
+    setInterval(_updateDjTimers, 30000);
+})();
+</script>
 <script>
 (function () {
     var meter = document.getElementById('shift-meter');

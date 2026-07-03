@@ -134,14 +134,27 @@ def home(request):
             )
             reorder_count = len(reorder_items)
 
+            _reorder_sorted = sorted(reorder_items, key=lambda x: x.current_balance())[:20]
+            for _ri in _reorder_sorted:
+                _bal = _ri.current_balance()
+                _unit_raw = (_ri.unit or '').strip().upper()
+                if _unit_raw == 'ML' and abs(float(_bal)) >= 1000:
+                    _litres = float(_bal) / 1000
+                    _ri.balance_display = f"{_litres:.2f}".rstrip('0').rstrip('.')
+                    _ri.unit_display = 'L'
+                else:
+                    _bf = float(_bal)
+                    if _bf == int(_bf):
+                        _ri.balance_display = f"{int(_bf):,}"
+                    else:
+                        _ri.balance_display = f"{_bf:.2f}".rstrip('0').rstrip('.')
+                    _ri.unit_display = _ri.unit or ''
             context.update(
                 {
                     "total_items": all_items.count(),
                     "low_stock_count": low_stock_count,
                     "reorder_count": reorder_count,
-                    "reorder_items": sorted(
-                        reorder_items, key=lambda x: x.current_balance()
-                    )[:20],
+                    "reorder_items": _reorder_sorted,
                 }
             )
 
@@ -217,10 +230,31 @@ def home(request):
                                 if k.remaining_envelope() < float(k.target_revenue or 1) * 0.15]
                     context['kegs_tapped'] = len(_tapped)
                     context['kegs_at_risk_count'] = len(_at_risk)
+                    # Active DJ/MC sessions for home dashboard timer widget
+                    try:
+                        from .models import PerformerSession as _PS
+                        _dj_today = timezone.localdate()
+                        _active_dj = list(
+                            _PS.objects.filter(
+                                business=business,
+                                status__in=[_PS.STATUS_ACTIVE, _PS.STATUS_PENDING_CONFIRMATION],
+                                date=_dj_today,
+                            ).select_related('performer', 'second_performer')
+                            .order_by('started_at', 'created_at')
+                        )
+                        for _sess in _active_dj:
+                            if _sess.started_at:
+                                _sess.started_at_epoch = int(_sess.started_at.timestamp())
+                            else:
+                                _sess.started_at_epoch = int(_sess.created_at.timestamp())
+                        context['active_dj_sessions'] = _active_dj
+                    except Exception:
+                        context['active_dj_sessions'] = []
             except Exception:
                 context['bar_today_revenue'] = 0
                 context['kegs_tapped'] = 0
                 context['kegs_at_risk_count'] = 0
+                context['active_dj_sessions'] = []
 
             # Kitchen-specific today revenue (separate from bar)
             try:

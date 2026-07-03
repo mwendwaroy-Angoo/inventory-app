@@ -339,6 +339,7 @@ def session_today_api(request):
             'avg_customer_rating':   s.avg_customer_rating,
             'total_customer_ratings': s.total_customer_ratings,
             'duration_hours':        s.duration_hours,
+            'expected_hours':        float(s.expected_hours) if s.expected_hours else None,
         }
         # Fee and payment status — owner only; performers see via their checkin URL
         if is_owner:
@@ -396,6 +397,11 @@ def session_start(request):
         second_performer_fee = Decimal(str(data.get('second_performer_fee') or '0'))
     except Exception:
         second_performer_fee = Decimal('0')
+    try:
+        _eh_str = data.get('expected_hours')
+        expected_hours = Decimal(str(_eh_str)) if _eh_str else None
+    except Exception:
+        expected_hours = None
     notes = (data.get('notes') or '').strip()
 
     performer = None
@@ -434,6 +440,7 @@ def session_start(request):
         status=status,
         agreed_fee=agreed_fee,
         second_performer_fee=second_performer_fee if second_performer else Decimal('0'),
+        expected_hours=expected_hours,
         notes=notes,
         created_by=request.user,
     )

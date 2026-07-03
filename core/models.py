@@ -2701,6 +2701,10 @@ class PerformerSession(models.Model):
         max_digits=10, decimal_places=2, default=0,
         help_text='Agreed fee for the second performer (duo sessions only)',
     )
+    expected_hours = models.DecimalField(
+        max_digits=4, decimal_places=1, null=True, blank=True,
+        help_text='Agreed session duration in hours — shown as accountability timer on home dashboard',
+    )
     payment_status = models.CharField(max_length=10, choices=PAYMENT_CHOICES, default=PAYMENT_PENDING)
     payment_method = models.CharField(max_length=10,
                                       choices=[('cash', _('Cash')), ('mpesa', _('M-Pesa'))],
