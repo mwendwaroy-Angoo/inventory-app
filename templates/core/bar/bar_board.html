@@ -4291,34 +4291,8 @@ window.barDeclineMerge = function() {
 
     body.innerHTML = html;
 
+    /* Wire up event listeners immediately after DOM is ready */
     setTimeout(function () {
-      /* Generate QRs after browser has laid out the injected HTML */
-      sessions.forEach(function (s) {
-        if ((s.status === 'ACTIVE' || s.status === 'PENDING_CONFIRMATION') && !s.performer_checked_in) {
-          var el = document.getElementById('checkin-qr-' + s.id);
-          if (el && window.QRCode) {
-            new QRCode(el, {text: location.origin + '/p/' + s.checkin_token + '/checkin/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
-          }
-        }
-        /* P2 QR: PENDING_CONFIRMATION or ACTIVE (duo, P2 not yet checked in) */
-        if ((s.status === 'PENDING_CONFIRMATION' || s.status === 'ACTIVE') && s.is_duo && !s.second_performer_checked_in) {
-          var el2 = document.getElementById('checkin-qr2-' + s.id);
-          if (el2 && window.QRCode) {
-            new QRCode(el2, {text: location.origin + '/p/' + s.second_performer_checkin_token + '/checkin/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
-          }
-        }
-        if (s.status === 'COMPLETED') {
-          var fel = document.getElementById('feedback-qr-' + s.id);
-          if (fel && window.QRCode) {
-            new QRCode(fel, {text: location.origin + '/p/' + s.feedback_token + '/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
-          }
-        }
-        var shareEl = document.getElementById('feedback-qr-share-' + s.id);
-        if (shareEl && window.QRCode) {
-          new QRCode(shareEl, {text: location.origin + '/p/' + s.feedback_token + '/', width: 80, height: 80, colorDark: '#000', colorLight: '#fff'});
-        }
-      });
-
       var sel = document.getElementById('djmc-performer-sel');
       if (sel) {
         sel.addEventListener('change', function () {
@@ -4326,7 +4300,6 @@ window.barDeclineMerge = function() {
           var rate = opt.getAttribute('data-rate') || '0';
           document.getElementById('djmc-fee').value = rate;
         });
-        /* Wire P2 selector to auto-fill its fee field */
         var secondSel = document.getElementById('djmc-second-performer-sel');
         if (secondSel) {
           secondSel.addEventListener('change', function () {
@@ -4338,6 +4311,46 @@ window.barDeclineMerge = function() {
         }
       }
     }, 50);
+
+    /* Generate QR codes — ensure qrcodejs is loaded first then render.
+       Cannot use a simple if(window.QRCode) check because on the first modal
+       open the library hasn't been loaded yet (it's lazy-loaded elsewhere on the
+       page) and the check silently skips generation. */
+    function _genDjQrs() {
+      sessions.forEach(function (s) {
+        if ((s.status === 'ACTIVE' || s.status === 'PENDING_CONFIRMATION') && !s.performer_checked_in) {
+          var el = document.getElementById('checkin-qr-' + s.id);
+          if (el) new window.QRCode(el, {text: location.origin + '/p/' + s.checkin_token + '/checkin/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
+        }
+        /* P2 QR: PENDING_CONFIRMATION or ACTIVE (duo, P2 not yet checked in) */
+        if ((s.status === 'PENDING_CONFIRMATION' || s.status === 'ACTIVE') && s.is_duo && !s.second_performer_checked_in) {
+          var el2 = document.getElementById('checkin-qr2-' + s.id);
+          if (el2) new window.QRCode(el2, {text: location.origin + '/p/' + s.second_performer_checkin_token + '/checkin/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
+        }
+        if (s.status === 'COMPLETED') {
+          var fel = document.getElementById('feedback-qr-' + s.id);
+          if (fel) new window.QRCode(fel, {text: location.origin + '/p/' + s.feedback_token + '/', width: 96, height: 96, colorDark: '#000', colorLight: '#fff'});
+        }
+        var shareEl = document.getElementById('feedback-qr-share-' + s.id);
+        if (shareEl) new window.QRCode(shareEl, {text: location.origin + '/p/' + s.feedback_token + '/', width: 80, height: 80, colorDark: '#000', colorLight: '#fff'});
+      });
+    }
+
+    if (window.QRCode) {
+      setTimeout(_genDjQrs, 50);
+    } else {
+      /* Library not yet loaded — inject script tag once and run on load */
+      var _existingQrScript = document.getElementById('_djmc_qrlib');
+      if (!_existingQrScript) {
+        var _qs = document.createElement('script');
+        _qs.id  = '_djmc_qrlib';
+        _qs.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+        document.head.appendChild(_qs);
+        _existingQrScript = _qs;
+      }
+      /* Use a one-shot load listener — setTimeout 50 gives the DOM extra settle time */
+      _existingQrScript.addEventListener('load', function () { setTimeout(_genDjQrs, 50); });
+    }
   }
 
   /* ─── star rating ─── */
