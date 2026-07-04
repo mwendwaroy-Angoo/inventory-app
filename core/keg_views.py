@@ -231,6 +231,7 @@ def bar_board(request):
                 if linked_customer is None:
                     linked_customer = Customer.objects.create(
                         business=business, name=tab_customer, phone=tab_phone,
+                        credit_approved=True,
                     )
                 elif tab_phone and not (linked_customer.phone or '').strip():
                     linked_customer.phone = tab_phone
@@ -1053,6 +1054,18 @@ def settle_tab(request, tab_id):
     except Exception:
         pass
 
+    # Notify staff if same customer has other open tabs (bar or kitchen)
+    other_open_tabs = []
+    if tab.customer_name and tab_fully_settled:
+        other_qs = BarTab.objects.filter(
+            business=tab.business,
+            customer_name__iexact=tab.customer_name,
+            status='OPEN',
+        ).exclude(id=tab.id).values('id', 'source', 'customer_name')
+        for ot in other_qs:
+            label = '🍗 Food Tab' if ot['source'] == 'kitchen' else '🍺 Bar Tab'
+            other_open_tabs.append({'id': ot['id'], 'label': label})
+
     return JsonResponse({
         'ok': True,
         'tab_settled': tab_fully_settled,
@@ -1061,6 +1074,7 @@ def settle_tab(request, tab_id):
         'total': float(tab.total()),
         'receipt_url': receipt_url,
         'receipt_id': receipt_id,
+        'other_open_tabs': other_open_tabs,
     })
 
 

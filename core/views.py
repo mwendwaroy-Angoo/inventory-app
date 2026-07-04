@@ -617,6 +617,7 @@ def add_transaction(request):
             if _cust_gate is None:
                 _cust_gate = Customer.objects.create(
                     business=user_profile.business, name=recipient,
+                    credit_approved=True,
                 )
             _decision = evaluate_credit(user_profile.business, _cust_gate)
             if not _decision.allowed:
@@ -2238,19 +2239,23 @@ def quick_sell(request):
         is_tab_sale = (payment_method_raw == "tab")
         payment_method_qs = "credit" if is_tab_sale else payment_method_raw
 
-        # ── CREDIT DISCIPLINE GATE ────────────────────────────────────────────
-        if payment_method_raw in ('credit', 'tab') and credit_recipient:
+        # ── CREDIT DISCIPLINE GATE (credit sales only — not bar tabs; tab
+        #    creation doesn't use the debt ledger credit_approved path) ────────
+        if payment_method_raw == 'credit' and credit_recipient:
             from core.models import Customer as _CustomerModel
             from core.credit_policy import evaluate_credit
             _cust_gate = _CustomerModel.objects.filter(
                 business=user_profile.business, name=credit_recipient
             ).first()
             if _cust_gate is None:
-                # Auto-create with credit_approved=False so gate can evaluate
+                # Auto-create approved — owner is initiating this credit sale
+                # right now, which implies approval. credit_approved=False is for
+                # when the owner explicitly revokes from the customer profile.
                 _cust_gate = _CustomerModel.objects.create(
                     business=user_profile.business,
                     name=credit_recipient,
                     phone=credit_phone,
+                    credit_approved=True,
                 )
             _decision = evaluate_credit(user_profile.business, _cust_gate)
             if not _decision.allowed:
@@ -2404,7 +2409,8 @@ def quick_sell(request):
                 ).first()
                 if _cust is None:
                     _cust = _Customer.objects.create(
-                        business=user_profile.business, name=credit_recipient
+                        business=user_profile.business, name=credit_recipient,
+                        credit_approved=True,
                     )
                 if credit_phone and not _cust.phone:
                     _cust.phone = credit_phone
@@ -2435,7 +2441,8 @@ def quick_sell(request):
                     ).first()
                     if cust_obj is None:
                         cust_obj = _Customer.objects.create(
-                            business=user_profile.business, name=credit_recipient
+                            business=user_profile.business, name=credit_recipient,
+                            credit_approved=True,
                         )
                     if credit_phone and not cust_obj.phone:
                         cust_obj.phone = credit_phone

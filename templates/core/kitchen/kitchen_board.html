@@ -1892,8 +1892,15 @@
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (d.ok) {
-          if (d.tab_settled) showToast('✓ Tab imelipwa kabisa.');
-          else showToast('✓ KES ' + fmt(d.settled_amount) + ' imelipwa. Tab bado iko wazi.');
+          if (d.tab_settled) {
+            showToast('✓ Tab imelipwa kabisa.');
+            if (d.other_open_tabs && d.other_open_tabs.length) {
+              var otKLabels = d.other_open_tabs.map(function(t){ return t.label; }).join(', ');
+              setTimeout(function(){ showToast('⚠️ Mteja huyu bado ana: ' + otKLabels + ' wazi.'); }, 900);
+            }
+          } else {
+            showToast('✓ KES ' + fmt(d.settled_amount) + ' imelipwa. Tab bado iko wazi.');
+          }
           if (d.receipt_url) {
             document.getElementById('kb-settle-receipt-link').href = d.receipt_url;
             document.getElementById('kb-settle-receipt-banner').style.display = 'block';

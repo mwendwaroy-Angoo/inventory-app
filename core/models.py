@@ -2718,11 +2718,13 @@ class PerformerSession(models.Model):
     # Primary performer self-check-in (public URL, no login)
     performer_checked_in = models.BooleanField(default=False)
     performer_checkin_at = models.DateTimeField(null=True, blank=True)
+    performer_ended_at   = models.DateTimeField(null=True, blank=True)
     checkin_token        = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
 
     # Second performer self-check-in (duo sessions)
     second_performer_checked_in  = models.BooleanField(default=False)
     second_performer_checkin_at  = models.DateTimeField(null=True, blank=True)
+    second_performer_ended_at    = models.DateTimeField(null=True, blank=True)
     second_performer_checkin_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
 
     # Staff duty confirmation (on-ground staff corroborates session has started)
@@ -2755,10 +2757,36 @@ class PerformerSession(models.Model):
         return self.performer_checked_in and self.staff_confirmed
 
     @property
+    def performer_is_active(self):
+        return self.status == self.STATUS_ACTIVE and self.performer_ended_at is None
+
+    @property
+    def second_performer_is_active(self):
+        return (
+            self.second_performer_id is not None
+            and self.status == self.STATUS_ACTIVE
+            and self.second_performer_ended_at is None
+        )
+
+    @property
     def duration_hours(self):
         if self.started_at and self.ended_at:
             return round((self.ended_at - self.started_at).total_seconds() / 3600, 1)
         return None
+
+    @property
+    def duration_hours_p1(self):
+        if not self.started_at:
+            return None
+        end = self.performer_ended_at or self.ended_at or timezone.now()
+        return round((end - self.started_at).total_seconds() / 3600, 1)
+
+    @property
+    def duration_hours_p2(self):
+        if not self.second_performer_id or not self.started_at:
+            return None
+        end = self.second_performer_ended_at or self.ended_at or timezone.now()
+        return round((end - self.started_at).total_seconds() / 3600, 1)
 
     @property
     def avg_customer_rating(self):

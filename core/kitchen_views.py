@@ -396,9 +396,10 @@ def _kitchen_checkout(request, up, business, is_owner):
     if payment_method == 'credit' and not credit_name:
         return JsonResponse({'ok': False, 'error': 'Jina la mteja linahitajika kwa deni'}, status=400)
 
-    # ── CREDIT DISCIPLINE GATE (kitchen credit + food_tab) ────────────────────
-    if payment_method in ('credit', 'food_tab'):
-        recipient_name = credit_name if payment_method == 'credit' else tab_customer
+    # ── CREDIT DISCIPLINE GATE (kitchen credit only — not food_tab; tab creation
+    #    does not yet have a recipient with credit history to evaluate) ─────────
+    if payment_method == 'credit':
+        recipient_name = credit_name
         if recipient_name:
             from core.models import Customer as _CustomerModel
             from core.credit_policy import evaluate_credit
@@ -409,7 +410,8 @@ def _kitchen_checkout(request, up, business, is_owner):
                 _cust_gate = _CustomerModel.objects.create(
                     business=business,
                     name=recipient_name,
-                    phone=credit_phone if payment_method == 'credit' else tab_phone,
+                    phone=credit_phone,
+                    credit_approved=True,
                 )
             _decision = evaluate_credit(business, _cust_gate, scope='kitchen')
             if not _decision.allowed:
@@ -547,7 +549,7 @@ def _kitchen_checkout(request, up, business, is_owner):
         from .notifications import normalize_ke_phone, send_sms_notification
         cust = _Customer.objects.filter(business=business, name__iexact=credit_name).first()
         if not cust:
-            cust = _Customer.objects.create(business=business, name=credit_name, phone=credit_phone)
+            cust = _Customer.objects.create(business=business, name=credit_name, phone=credit_phone, credit_approved=True)
         elif credit_phone and not cust.phone:
             cust.phone = credit_phone
             cust.save(update_fields=['phone'])

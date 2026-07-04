@@ -144,6 +144,14 @@ def _get_customer_debt_data(customer, business, scope='all'):
             score_label = _('Moderate')
             score_color = '#fbbf24'
             score_pct   = int(40 + completion_rate * 0.3)
+        elif not payments:
+            # Credit transactions exist (e.g. open tab entries) but no debt payments
+            # recorded yet — treat as new rather than high_risk; the customer has no
+            # established payment behaviour in our system yet.
+            score = 'new'
+            score_label = _('New — No History')
+            score_color = '#888'
+            score_pct   = 0
         else:
             score = 'high_risk'
             score_label = _('High Risk')

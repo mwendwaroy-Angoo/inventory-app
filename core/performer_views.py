@@ -300,9 +300,11 @@ def session_today_api(request):
 
     result = []
     for s in sessions:
-        checkin_at    = timezone.localtime(s.performer_checkin_at).strftime('%H:%M') if s.performer_checkin_at else None
-        p2_checkin_at = timezone.localtime(s.second_performer_checkin_at).strftime('%H:%M') if s.second_performer_checkin_at else None
-        staff_conf_at = timezone.localtime(s.staff_confirmed_at).strftime('%H:%M') if s.staff_confirmed_at else None
+        checkin_at       = timezone.localtime(s.performer_checkin_at).strftime('%H:%M') if s.performer_checkin_at else None
+        p1_ended_at      = timezone.localtime(s.performer_ended_at).strftime('%H:%M') if s.performer_ended_at else None
+        p2_checkin_at    = timezone.localtime(s.second_performer_checkin_at).strftime('%H:%M') if s.second_performer_checkin_at else None
+        p2_ended_at      = timezone.localtime(s.second_performer_ended_at).strftime('%H:%M') if s.second_performer_ended_at else None
+        staff_conf_at    = timezone.localtime(s.staff_confirmed_at).strftime('%H:%M') if s.staff_confirmed_at else None
         staff_conf_by = (
             s.staff_confirmed_by.get_full_name() or s.staff_confirmed_by.username
         ) if s.staff_confirmed_by else None
@@ -314,9 +316,11 @@ def session_today_api(request):
             'is_duo':                    s.second_performer_id is not None,
             'second_performer_name':     s.second_performer.name if s.second_performer else None,
             'second_performer_type':     s.second_performer.get_performer_type_display() if s.second_performer else None,
-            'second_performer_checked_in':      s.second_performer_checked_in,
-            'second_performer_checkin_at':      p2_checkin_at,
-            'second_performer_checkin_token':   str(s.second_performer_checkin_token),
+            'second_performer_checked_in':         s.second_performer_checked_in,
+            'second_performer_checkin_at':         p2_checkin_at,
+            'second_performer_ended_at':           p2_ended_at,
+            'second_performer_is_active':          s.second_performer_is_active,
+            'second_performer_checkin_token':      str(s.second_performer_checkin_token),
             'second_performer_checkin_short_code': s.second_performer_checkin_short_code,
             # Status
             'status':           s.status,
@@ -325,9 +329,11 @@ def session_today_api(request):
             'ended_at':         timezone.localtime(s.ended_at).strftime('%H:%M')   if s.ended_at   else None,
             # Staff rating (visible to staff + owner — assessing quality, not cost)
             'staff_rating':     s.staff_rating,
-            # Primary performer confirmation
+            # Primary performer confirmation + individual end
             'performer_checked_in':  s.performer_checked_in,
             'performer_checkin_at':  checkin_at,
+            'performer_ended_at':    p1_ended_at,
+            'performer_is_active':   s.performer_is_active,
             'checkin_short_code':    s.checkin_short_code,
             'checkin_token':         str(s.checkin_token),
             # Staff on-ground confirmation
@@ -522,7 +528,36 @@ def session_update(request, session_id):
         session.save(update_fields=['status'])
         return JsonResponse({'ok': True})
 
-    # Default: end session
+    if action == 'end_performer':
+        slot    = str(data.get('performer_slot', ''))
+        now_dt  = timezone.now()
+        if slot == '1':
+            if session.performer_ended_at is not None:
+                return JsonResponse({'ok': False, 'error': 'Tayari ameshafika mwisho.'}, status=400)
+            session.performer_ended_at = now_dt
+            session.save(update_fields=['performer_ended_at'])
+            # Complete the session when P2 is also done (or there is no P2)
+            if not session.second_performer_id or session.second_performer_ended_at:
+                session.ended_at = now_dt
+                session.status   = PerformerSession.STATUS_COMPLETED
+                session.save(update_fields=['ended_at', 'status'])
+        elif slot == '2':
+            if not session.second_performer_id:
+                return JsonResponse({'ok': False, 'error': 'Sesheni hii haina mwanamuziki wa pili.'}, status=400)
+            if session.second_performer_ended_at is not None:
+                return JsonResponse({'ok': False, 'error': 'Tayari ameshafika mwisho.'}, status=400)
+            session.second_performer_ended_at = now_dt
+            session.save(update_fields=['second_performer_ended_at'])
+            # Complete the session when P1 is also done
+            if session.performer_ended_at:
+                session.ended_at = now_dt
+                session.status   = PerformerSession.STATUS_COMPLETED
+                session.save(update_fields=['ended_at', 'status'])
+        else:
+            return JsonResponse({'ok': False, 'error': 'performer_slot lazima iwe 1 au 2.'}, status=400)
+        return JsonResponse({'ok': True, 'status': session.status})
+
+    # Default: end entire session (all performers at once)
     staff_notes = (data.get('staff_notes') or '').strip()
     staff_rating = None
     try:
@@ -533,11 +568,20 @@ def session_update(request, session_id):
     except (ValueError, TypeError):
         pass
 
+    now_dt = timezone.now()
+    # Stamp individual end times for any performer not yet individually ended
+    update_fields = ['status', 'ended_at', 'staff_rating', 'staff_notes']
+    if not session.performer_ended_at:
+        session.performer_ended_at = now_dt
+        update_fields.append('performer_ended_at')
+    if session.second_performer_id and not session.second_performer_ended_at:
+        session.second_performer_ended_at = now_dt
+        update_fields.append('second_performer_ended_at')
     session.status       = PerformerSession.STATUS_COMPLETED
-    session.ended_at     = timezone.now()
+    session.ended_at     = now_dt
     session.staff_rating = staff_rating
     session.staff_notes  = staff_notes
-    session.save(update_fields=['status', 'ended_at', 'staff_rating', 'staff_notes'])
+    session.save(update_fields=update_fields)
 
     unconfirmed = []
     if not session.performer_checked_in and session.performer:

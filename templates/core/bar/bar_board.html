@@ -2407,6 +2407,10 @@
               banner.style.display = 'flex';
             }
           }
+          if (d.tab_settled && d.other_open_tabs && d.other_open_tabs.length) {
+            var otLabels = d.other_open_tabs.map(function (t) { return t.label; }).join(', ');
+            setTimeout(function () { showToast('⚠️ Mteja huyu bado ana: ' + otLabels + ' wazi.'); }, 900);
+          }
           window.loadTabs();
           if (!d.partial) loadBarBoard();
         } else {
@@ -2453,6 +2457,10 @@
             showToast('✓ Tab imelipwa kabisa! KES ' + fmt(d.total));
             _tabsJustSettled = true;
             loadBarBoard();
+            if (d.other_open_tabs && d.other_open_tabs.length) {
+              var otLabels2 = d.other_open_tabs.map(function (t) { return t.label; }).join(', ');
+              setTimeout(function () { showToast('⚠️ Mteja huyu bado ana: ' + otLabels2 + ' wazi.'); }, 900);
+            }
           } else {
             showToast('✓ KES ' + fmt(d.settled_amount) + ' imelipwa. Bado kuna balance.');
           }
@@ -4171,6 +4179,35 @@ window.barDeclineMerge = function() {
             html += '<span style="background:rgba(76,175,80,.15);color:#4caf50;border-radius:4px;padding:1px 6px;font-size:.73rem;display:inline-block;margin:.3rem 0;">&#10003; ' + s.second_performer_name + ' Amethibitisha ' + (s.second_performer_checkin_at || '') + '</span>';
           }
         }
+        /* Per-performer individual end for duo sessions */
+        if (s.is_duo) {
+          html += '<div style="margin-top:.6rem;display:flex;flex-direction:column;gap:.35rem;">';
+          /* P1 row */
+          if (s.performer_is_active) {
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;background:#111;border-radius:7px;padding:.35rem .6rem;">';
+            html += '<span style="color:#f0ece4;font-size:.82rem;">&#127908; ' + s.performer_name + '</span>';
+            html += '<button onclick="window._djEndPerformer(' + s.id + ',1)" style="padding:.2rem .55rem;background:rgba(192,57,90,.15);border:1px solid rgba(192,57,90,.4);border-radius:6px;color:#e87090;font-size:.75rem;cursor:pointer;">Maliza</button>';
+            html += '</div>';
+          } else {
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;background:#111;border-radius:7px;padding:.35rem .6rem;">';
+            html += '<span style="color:#f0ece4;font-size:.82rem;">&#127908; ' + s.performer_name + '</span>';
+            html += '<span style="color:#4caf50;font-size:.75rem;">&#10003; Alishamaliza ' + (s.performer_ended_at || '') + '</span>';
+            html += '</div>';
+          }
+          /* P2 row */
+          if (s.second_performer_is_active) {
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;background:#111;border-radius:7px;padding:.35rem .6rem;">';
+            html += '<span style="color:#f0ece4;font-size:.82rem;">&#127897; ' + s.second_performer_name + '</span>';
+            html += '<button onclick="window._djEndPerformer(' + s.id + ',2)" style="padding:.2rem .55rem;background:rgba(192,57,90,.15);border:1px solid rgba(192,57,90,.4);border-radius:6px;color:#e87090;font-size:.75rem;cursor:pointer;">Maliza</button>';
+            html += '</div>';
+          } else {
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;background:#111;border-radius:7px;padding:.35rem .6rem;">';
+            html += '<span style="color:#f0ece4;font-size:.82rem;">&#127897; ' + s.second_performer_name + '</span>';
+            html += '<span style="color:#4caf50;font-size:.75rem;">&#10003; Alishamaliza ' + (s.second_performer_ended_at || '') + '</span>';
+            html += '</div>';
+          }
+          html += '</div>';
+        }
         html += '<div style="margin-top:.75rem;">';
         html += '<div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.3rem;">Tathmini ya kazi (optional)</div>';
         html += '<div id="stars-' + s.id + '" style="display:flex;gap:.25rem;margin-bottom:.5rem;">';
@@ -4179,7 +4216,8 @@ window.barDeclineMerge = function() {
         }
         html += '</div>';
         html += '<input type="text" id="notes-' + s.id + '" placeholder="Maelezo (optional)" style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.35rem .6rem;font-size:.82rem;margin-bottom:.5rem;">';
-        html += '<button onclick="window._djEndSession(' + s.id + ')" style="width:100%;padding:.5rem;background:#c0395a;border:none;border-radius:8px;color:#fff;font-weight:700;font-size:.88rem;cursor:pointer;">Maliza Sesheni</button>';
+        var _endBtnLabel = s.is_duo ? 'Maliza Sesheni Yote' : 'Maliza Sesheni';
+        html += '<button onclick="window._djEndSession(' + s.id + ')" style="width:100%;padding:.5rem;background:#c0395a;border:none;border-radius:8px;color:#fff;font-weight:700;font-size:.88rem;cursor:pointer;">' + _endBtnLabel + '</button>';
         html += '</div>';
         html += _distribSection(s);
         if (IS_OWNER) {
@@ -4453,6 +4491,12 @@ window.barDeclineMerge = function() {
     var rating = container ? (container.dataset.rating || null) : null;
     var notes  = (document.getElementById('notes-' + sessionId) || {}).value || '';
     _post('/bar/session/' + sessionId + '/update/', {action: 'end', staff_rating: rating, staff_notes: notes}, function (d) {
+      if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    });
+  };
+
+  window._djEndPerformer = function (sessionId, slot) {
+    _post('/bar/session/' + sessionId + '/update/', {action: 'end_performer', performer_slot: slot}, function (d) {
       if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
     });
   };
