@@ -1230,11 +1230,13 @@ def convert_tab_to_debt(request, tab_id):
 
     unpaid_total = float(tab.unpaid_total())
 
-    # Link the transactions to this customer so the debt tracker sees them
+    # Link the transactions to this customer so the debt tracker sees them.
+    # Must set payment_method='credit' — debt tracker queries by that value.
     for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
         txn = entry.transaction
         txn.recipient = customer.name
-        txn.save(update_fields=['recipient'])
+        txn.payment_method = 'credit'
+        txn.save(update_fields=['recipient', 'payment_method'])
 
     tab.customer = customer
     tab.status = 'SETTLED'

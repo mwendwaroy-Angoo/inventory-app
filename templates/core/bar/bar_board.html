@@ -3543,7 +3543,7 @@
               '<div style="color:#ff9800;font-size:.82rem;font-weight:600;margin-bottom:.4rem;">⚠ Tab ' + d.open_tabs.length + ' za wateja bado ziko wazi</div>' +
               tabRows +
               '<div style="margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;">' +
-              '<button onclick="window.bulkConvertTabsToDebt([' + d.open_tabs.map(function(t){return t.id;}).join(',') + '])" ' +
+              '<button onclick="window.bulkConvertTabsToDebt([' + d.open_tabs.map(function(t){return t.id;}).join(',') + '], this)" ' +
               'style="padding:.35rem .8rem;background:rgba(192,57,90,0.15);border:1px solid rgba(192,57,90,0.4);border-radius:6px;color:#c0395a;font-size:.77rem;cursor:pointer;">💳 Geuza Zote Deni</button>' +
               '<span style="color:#666;font-size:.72rem;align-self:center;">au funga mwenyewe kila tab kwenye orodha ya tab</span>' +
               '</div></div>';
@@ -4723,10 +4723,10 @@ window.barDeclineMerge = function() {
     });
   };
   // Bulk convert open tabs to debt after shift close
-  window.bulkConvertTabsToDebt = function (tabIds) {
+  window.bulkConvertTabsToDebt = function (tabIds, triggerEl) {
     if (!tabIds || !tabIds.length) return;
     if (!confirm('Geuza tab zote ' + tabIds.length + ' kuwa deni? Wateja wataoneshwa katika orodha ya madeni.')) return;
-    var btn = event && event.target ? event.target : null;
+    var btn = triggerEl || null;
     if (btn) { btn.disabled = true; btn.textContent = 'Inabadilisha...'; }
     var fd = new FormData();
     fd.append('tab_ids', JSON.stringify(tabIds));

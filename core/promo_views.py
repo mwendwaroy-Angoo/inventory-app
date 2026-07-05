@@ -9,7 +9,7 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .models import BarTab, Customer, Notification, PromoMessage, Transaction
+from .models import BarTab, Customer, PromoMessage, Transaction
 from .notifications import normalize_ke_phone, send_sms_notification
 
 
@@ -18,11 +18,6 @@ def _get_up(request):
         return request.user.userprofile
     except Exception:
         return None
-
-
-def _owner_required(request):
-    up = _get_up(request)
-    return up and getattr(up, 'is_owner', False)
 
 
 # ── Customer database list ────────────────────────────────────────────────────
@@ -35,34 +30,36 @@ def promo_customer_db(request):
 
     business = up.business
     search = (request.GET.get('q') or '').strip()
+    today = timezone.localdate()
 
     customers = Customer.objects.filter(business=business)
     if search:
         customers = customers.filter(
             Q(name__icontains=search) | Q(phone__icontains=search)
         )
+    customers = list(customers.order_by('name'))
 
-    # Annotate with last transaction date and transaction count
-    customers = customers.annotate(
-        txn_count=Count('transactions', distinct=True),
-        last_txn_date=Max('transactions__date'),
-    ).order_by('name')
+    # Compute transaction stats per customer in two bulk queries (no N+1)
+    # Transaction.recipient is a CharField matching Customer.name — no FK
+    cust_names = [c.name for c in customers]
+    txn_stats_qs = (
+        Transaction.objects.filter(
+            business=business, type='Issue', recipient__in=cust_names,
+        )
+        .values('recipient')
+        .annotate(cnt=Count('id'), last_date=Max('date'))
+    )
+    stats_by_name = {row['recipient']: row for row in txn_stats_qs}
 
-    # Build outstanding balance per customer (lightweight — just check credit txns)
-    today = timezone.localdate()
     customer_rows = []
     for c in customers:
-        credit_total = Transaction.objects.filter(
-            business=business,
-            recipient=c.name,
-            payment_method='credit',
-            type='Issue',
-        ).aggregate(total=Count('id'))
+        stats = stats_by_name.get(c.name, {})
+        last_date = stats.get('last_date')
         customer_rows.append({
             'customer': c,
-            'txn_count': c.txn_count or 0,
-            'last_seen': c.last_txn_date,
-            'days_since': (today - c.last_txn_date).days if c.last_txn_date else None,
+            'txn_count': stats.get('cnt', 0),
+            'last_seen': last_date,
+            'days_since': (today - last_date).days if last_date else None,
             'is_birthday_week': _is_birthday_this_week(c.dob, today),
         })
 
@@ -77,7 +74,11 @@ def promo_customer_db(request):
 def _is_birthday_this_week(dob, today):
     if not dob:
         return False
-    this_year_bday = dob.replace(year=today.year)
+    try:
+        this_year_bday = dob.replace(year=today.year)
+    except ValueError:
+        # Feb 29 in non-leap year — treat as Mar 1
+        this_year_bday = datetime.date(today.year, 3, 1)
     diff = (this_year_bday - today).days
     return 0 <= diff <= 7
 
@@ -98,12 +99,14 @@ def customer_update(request, customer_id):
     phone = request.POST.get('phone', c.phone).strip()
     notes = request.POST.get('notes', c.notes).strip()
     dob_raw = (request.POST.get('dob') or '').strip()
-    dob = None
+    dob = c.dob
     if dob_raw:
         try:
             dob = datetime.date.fromisoformat(dob_raw)
         except ValueError:
             pass
+    elif 'dob' in request.POST:
+        dob = None  # explicitly cleared
 
     c.phone = phone
     c.notes = notes
@@ -124,10 +127,10 @@ def promo_compose(request):
     today = timezone.localdate()
 
     if request.method == 'POST':
-        segment  = (request.POST.get('segment') or PromoMessage.SEGMENT_ALL).strip()
-        channel  = (request.POST.get('channel') or PromoMessage.CHANNEL_SMS).strip()
-        message  = (request.POST.get('message') or '').strip()
-        subject  = (request.POST.get('subject') or '').strip()
+        segment          = (request.POST.get('segment') or PromoMessage.SEGMENT_ALL).strip()
+        channel          = (request.POST.get('channel') or PromoMessage.CHANNEL_SMS).strip()
+        message          = (request.POST.get('message') or '').strip()
+        subject          = (request.POST.get('subject') or '').strip()
         custom_phones_raw = (request.POST.get('custom_phones') or '').strip()
 
         if not message:
@@ -136,8 +139,10 @@ def promo_compose(request):
         recipients = _build_recipient_list(business, segment, custom_phones_raw, today)
 
         sent = 0
-        for phone, name, customer_id in recipients:
+        for phone, name, _cust_id in recipients:
             personalised = message.replace('{name}', name or 'Mteja')
+            # SMS delivery — the only channel with an external delivery mechanism
+            # In-App is not supported for customer promos (customers have no user accounts)
             if channel in (PromoMessage.CHANNEL_SMS, PromoMessage.CHANNEL_BOTH):
                 normalized = normalize_ke_phone(phone) if phone else None
                 if normalized:
@@ -146,18 +151,6 @@ def promo_compose(request):
                         sent += 1
                     except Exception:
                         pass
-            if channel in (PromoMessage.CHANNEL_INAPP, PromoMessage.CHANNEL_BOTH):
-                if customer_id:
-                    try:
-                        cust_obj = Customer.objects.get(id=customer_id)
-                        Notification.objects.create(
-                            business=business,
-                            user=None,
-                            message=f"📢 {personalised}",
-                        )
-                    except Customer.DoesNotExist:
-                        pass
-                    sent += 1
 
         PromoMessage.objects.create(
             business=business,
@@ -209,7 +202,7 @@ def _build_recipient_list(business, segment, custom_phones_raw, today):
     if segment == PromoMessage.SEGMENT_ALL:
         qs = Customer.objects.filter(business=business).exclude(phone='')
     elif segment == PromoMessage.SEGMENT_DEBTORS:
-        debtor_names = set(
+        debtor_names = list(
             Transaction.objects.filter(
                 business=business, type='Issue', payment_method='credit',
             ).values_list('recipient', flat=True).distinct()
@@ -218,14 +211,14 @@ def _build_recipient_list(business, segment, custom_phones_raw, today):
             business=business, name__in=debtor_names,
         ).exclude(phone='')
     elif segment == PromoMessage.SEGMENT_TAB:
-        tab_names = set(
+        tab_names = list(
             BarTab.objects.filter(business=business).values_list('customer_name', flat=True).distinct()
         )
         qs = Customer.objects.filter(
             business=business, name__in=tab_names,
         ).exclude(phone='')
     elif segment == PromoMessage.SEGMENT_REGULARS:
-        regular_ids = (
+        regular_names = list(
             Transaction.objects.filter(business=business, type='Issue')
             .values('recipient')
             .annotate(cnt=Count('id'))
@@ -233,14 +226,17 @@ def _build_recipient_list(business, segment, custom_phones_raw, today):
             .values_list('recipient', flat=True)
         )
         qs = Customer.objects.filter(
-            business=business, name__in=regular_ids,
+            business=business, name__in=regular_names,
         ).exclude(phone='')
     elif segment == PromoMessage.SEGMENT_BIRTHDAY:
-        qs = Customer.objects.filter(
+        all_custs = Customer.objects.filter(
             business=business,
         ).exclude(phone='').exclude(dob__isnull=True)
-        qs = [c for c in qs if _is_birthday_this_week(c.dob, today)]
-        return [(c.phone, c.name, c.id) for c in qs]
+        return [
+            (c.phone, c.name, c.id)
+            for c in all_custs
+            if _is_birthday_this_week(c.dob, today)
+        ]
     else:
         qs = Customer.objects.none()
 
@@ -248,7 +244,7 @@ def _build_recipient_list(business, segment, custom_phones_raw, today):
 
 
 def _count_debtors(business):
-    debtor_names = set(
+    debtor_names = list(
         Transaction.objects.filter(
             business=business, type='Issue', payment_method='credit',
         ).values_list('recipient', flat=True).distinct()
@@ -259,7 +255,7 @@ def _count_debtors(business):
 
 
 def _count_tab_customers(business):
-    tab_names = set(
+    tab_names = list(
         BarTab.objects.filter(business=business).values_list('customer_name', flat=True).distinct()
     )
     return Customer.objects.filter(
@@ -268,7 +264,7 @@ def _count_tab_customers(business):
 
 
 def _count_regulars(business):
-    regular_ids = (
+    regular_names = list(
         Transaction.objects.filter(business=business, type='Issue')
         .values('recipient')
         .annotate(cnt=Count('id'))
@@ -276,12 +272,12 @@ def _count_regulars(business):
         .values_list('recipient', flat=True)
     )
     return Customer.objects.filter(
-        business=business, name__in=regular_ids,
+        business=business, name__in=regular_names,
     ).exclude(phone='').count()
 
 
 def _count_birthday_week(business, today):
-    qs = Customer.objects.filter(
+    all_custs = Customer.objects.filter(
         business=business,
     ).exclude(phone='').exclude(dob__isnull=True)
-    return sum(1 for c in qs if _is_birthday_this_week(c.dob, today))
+    return sum(1 for c in all_custs if _is_birthday_this_week(c.dob, today))

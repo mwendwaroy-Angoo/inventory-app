@@ -1357,7 +1357,7 @@
     var mergeInput = document.getElementById('kb-merge-tab-id');
     var hint       = document.getElementById('kb-merge-hint');
     if (!nameInput) return;
-    var _kbTabBlocked = false;
+    window._kbTabBlocked = false;
     nameInput.addEventListener('blur', function() {
       var name = this.value.trim();
       hint.style.display = 'none';
@@ -1365,7 +1365,7 @@
       hint.style.borderColor = '';
       hint.style.color = '';
       mergeInput.value = '';
-      _kbTabBlocked = false;
+      window._kbTabBlocked = false;
       if (!name || name.length < 2 || _pm !== 'food_tab') return;
       fetch('/kitchen/tab/check/?customer=' + encodeURIComponent(name))
         .then(function(r){ return r.json(); })
@@ -1396,10 +1396,10 @@
               '<strong style="color:#c0395a;">KES ' + Math.round(priorDebt.outstanding) + '</strong>.';
             if (priorDebt.is_defaulter) {
               debtMsg += ' <span style="color:#c0395a;font-weight:600;">⛔ Amesimamishwa — ulipa kwanza.</span>';
-              _kbTabBlocked = true;
+              window._kbTabBlocked = true;
             } else if (!CAN_AUTH) {
               debtMsg += ' <span style="color:#ff9800;">Unahitaji idhini ya mmiliki kuendelea.</span>';
-              _kbTabBlocked = true;
+              window._kbTabBlocked = true;
             } else {
               debtMsg += ' <a href="/debt/' + priorDebt.customer_id + '/" target="_blank" style="color:#c9a84c;">Angalia Deni ↗</a>';
             }
@@ -1417,7 +1417,7 @@
           if (hintParts.length) {
             hint.innerHTML = hintParts.join('<hr style="border-color:#2a2a2a;margin:.4rem 0;">');
             hint.style.display = 'block';
-            if (_kbTabBlocked) {
+            if (window._kbTabBlocked) {
               hint.style.background = 'rgba(192,57,90,0.08)';
               hint.style.borderColor = 'rgba(192,57,90,0.3)';
             }
@@ -1678,7 +1678,7 @@
       showToast('Ingiza jina la mteja.');
       return;
     }
-    if (_kbTabBlocked && (_pm==='food_tab'||_pm==='bar_tab')) {
+    if (window._kbTabBlocked && (_pm==='food_tab'||_pm==='bar_tab')) {
       showToast('Siwezi kuendelea — angalia onyo la deni.');
       return;
     }
