@@ -826,6 +826,23 @@ def tabs_list(request):
         .order_by('-opened_at')
     )
 
+    def _entry_dict(e):
+        """Serialise one BarTabEntry, including whether its item is a kitchen (food) item."""
+        _is_kitchen_item = bool(
+            e.transaction_id
+            and e.transaction.item_id
+            and e.transaction.item.store_id
+            and e.transaction.item.store.is_kitchen
+        )
+        return {
+            'id': e.id,
+            'description': e.description,
+            'amount': float(e.amount),
+            'is_paid': e.is_paid,
+            'payment_method': e.payment_method,
+            'is_kitchen_item': _is_kitchen_item,
+        }
+
     result = []
     for tab in tabs:
         all_entries = list(tab.entries.all())
@@ -833,13 +850,9 @@ def tabs_list(request):
 
         if _see_all:
             # Owner / cross-access: full visibility on all entries
-            entries = [
-                {'id': e.id, 'description': e.description, 'amount': float(e.amount),
-                 'is_paid': e.is_paid, 'payment_method': e.payment_method}
-                for e in all_entries
-            ]
-            bar_entries_count    = sum(1 for e in all_entries if e.transaction_id and e.transaction.item_id and e.transaction.item.store_id and not e.transaction.item.store.is_kitchen)
-            kitchen_entry_count  = sum(1 for e in all_entries if e.transaction_id and e.transaction.item_id and e.transaction.item.store_id and e.transaction.item.store.is_kitchen)
+            entries = [_entry_dict(e) for e in all_entries]
+            bar_entries_count   = sum(1 for e in entries if not e['is_kitchen_item'])
+            kitchen_entry_count = sum(1 for e in entries if e['is_kitchen_item'])
             cross_notice = None
             if tab.source == 'kitchen' and bar_entries_count:
                 cross_notice = f'+ {bar_entries_count} bar item(s)'
@@ -872,11 +885,7 @@ def tabs_list(request):
             if tab.source == 'kitchen' and not bar_entries:
                 continue
 
-            entries = [
-                {'id': e.id, 'description': e.description, 'amount': float(e.amount),
-                 'is_paid': e.is_paid, 'payment_method': e.payment_method}
-                for e in bar_entries
-            ]
+            entries = [_entry_dict(e) for e in bar_entries]
             unpaid = sum(float(e['amount']) for e in entries if not e['is_paid'])
             cross_notice = f'+ {kitchen_entry_count} food item(s) on this tab' if kitchen_entry_count else None
             result.append({
@@ -892,7 +901,7 @@ def tabs_list(request):
                 'cross_notice': cross_notice,
             })
 
-    return JsonResponse({'tabs': result})
+    return JsonResponse({'tabs': result, 'bar_only_view': not _see_all})
 
 
 @login_required

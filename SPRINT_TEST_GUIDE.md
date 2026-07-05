@@ -983,3 +983,99 @@ python manage.py check                  # 0 issues
 python manage.py makemigrations --check # No changes detected (0085 already applied)
 python manage.py test                   # 126 tests, all pass
 ```
+
+---
+
+## Sprint T1 — Tab integrity, station scoping, prior-debt gate, promo module
+
+### T1-1: Kitchen "Convert to Deni" works
+
+1. Kitchen Board → open a food tab for a customer.
+2. Close the offcanvas, reopen Tabs drawer → find the tab.
+3. Click "→ Deni".
+- ✅ Correct: tab is converted to debt; Debt Tracker shows the balance for that customer.
+- ❌ Bug if: "Hitilafu ya mtandao" error (URL was `/convert-to-debt/` instead of `/debt/`).
+
+### T1-2: Open tabs warning after shift close
+
+1. Create at least one open tab (bar or kitchen).
+2. Close the active shift.
+- ✅ Correct: shift-close response shows an amber warning listing open tabs by name + "Geuza Zote Deni" button.
+- ❌ Bug if: shift closes silently with no tab warning.
+
+### T1-3: Bulk convert open tabs to debt after shift close
+
+1. With open tabs present, close shift → amber warning appears.
+2. Click "Geuza Zote Deni".
+- ✅ Correct: all listed tabs converted to debt in one action; toast confirms count.
+- ❌ Bug if: 400/500 error, or tabs remain OPEN after the action.
+
+### T1-4: Prior-debt gate blocks tab creation for defaulters (bar)
+
+1. Set a customer as a defaulter (`is_defaulter=True` in admin, or via void_tab).
+2. Bar Board → type that customer's name in the tab customer field.
+- ✅ Correct: amber warning appears immediately on blur showing outstanding balance + defaulter flag; sell button is blocked.
+- ❌ Bug if: tab creation proceeds with no warning.
+
+### T1-5: can_authorize_tab_accumulation toggle
+
+1. Django admin → Staff UserProfile → enable `can_authorize_tab_accumulation`.
+2. Log in as that staff member.
+3. Type a debtor customer name in the tab field.
+- ✅ Correct: warning shown but sell button remains enabled (staff can override).
+- ❌ Bug if: button still blocked even with the permission toggled on.
+
+### T1-6: Stock list station scoping
+
+1. Log in as kitchen-only staff (role=kitchen, can_access_bar=False).
+2. Go to /stock/.
+- ✅ Correct: only kitchen store items are visible; bar items are absent.
+3. Log in as bar staff (role=staff, can_access_kitchen=False).
+4. Go to /stock/.
+- ✅ Correct: only bar/main store items are visible; kitchen items are absent.
+
+### T1-7: Home page tile scoping
+
+1. Log in as kitchen-only staff.
+2. Home dashboard → should NOT see "Kegs Running Low" tile or DJ/MC widget.
+- ✅ Correct: bar-specific tiles hidden; kitchen revenue tile shown.
+- ❌ Bug if: Kegs Running Low or DJ/MC widget visible to kitchen staff.
+
+---
+
+## Tab Drawer Visual Fixes (post-T1 audit)
+
+### TAB-V1: Correct item icon per entry type
+
+1. Open a tab that has both food (e.g. Smokies) and bar items (e.g. Pint).
+2. Open the Tabs drawer.
+- ✅ Correct: food items show 🍽 icon; bar/drink items show 🍺 icon.
+- ❌ Bug if: Smokies shows 🍺 icon (was the original bug — all entries used 🍺 regardless).
+
+### TAB-V2: Paid entries hidden from drawer
+
+1. Partially settle a tab (K6 partial settlement — settle some but not all entries).
+2. Close and reopen the Tabs drawer.
+- ✅ Correct: only unpaid entries shown; the settled items are no longer listed. Total matches sum of visible items.
+- ❌ Bug if: settled items still appear greyed-out, making the total confusing (KES 290 with KES 490 visible).
+
+### TAB-V3: Mixed Tab badge on cross-counter merged tabs
+
+1. Merge a food tab entry into a bar tab (or bar entries into a food tab) via cross-counter merge.
+2. Open the Tabs drawer.
+- ✅ Correct: tab shows "🔀 Mixed Tab" amber badge (not "🍽 Food Tab" or no badge).
+- ❌ Bug if: badge still shows "Food Tab" on a tab containing both bar and kitchen items.
+
+### TAB-V4: "Vileo tu" note only shown to bar-only staff
+
+1. Log in as bar-only staff (no kitchen access).
+2. Open a food/mixed tab in the Tabs drawer.
+- ✅ Correct: sub-label shows "HH:MM · Vileo tu vinaonyeshwa hapa".
+3. Log in as owner or cross-access staff.
+4. Open the same tab.
+- ✅ Correct: sub-label shows only "HH:MM" — no "Vileo tu" note (owner sees all items).
+- ❌ Bug if: "Vileo tu vinaonyeshwa hapa" shows to the owner who sees food items too.
+
+```
+python manage.py test   # 126 tests, all pass
+```
