@@ -301,6 +301,9 @@
         <div class="receipt-header">
             <div class="receipt-number">
                 {% if receipt.meta.is_statement %}Taarifa ya Deni{% else %}Risiti #{{ receipt.receipt_number }}{% endif %}
+                {% if is_live_tab %}
+                <span style="display:inline-block;margin-left:0.4rem;padding:0.1rem 0.45rem;border-radius:8px;background:rgba(110,231,183,0.15);color:#6ee7b7;font-size:0.65rem;font-weight:600;vertical-align:middle;letter-spacing:0.03em;">🔴 LIVE</span>
+                {% endif %}
             </div>
             <div class="receipt-date">
                 {{ receipt.created_at|date:"d M Y" }}<br>

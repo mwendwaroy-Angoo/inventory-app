@@ -154,6 +154,7 @@ def _settle_tab_from_payment(payment):
                 lines=lines,
                 payment_method='mpesa',
                 customer_name=tab.customer_name,
+                meta={'tab_id': tab.id},
             )
             _sms_receipt_to_payer(payment, tab_rcpt)
             logger.info("Tab #%s settled via STK receipt=%s", tab.id, payment.mpesa_receipt)

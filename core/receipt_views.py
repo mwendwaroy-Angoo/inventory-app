@@ -66,9 +66,33 @@ def receipts_list(request):
 def public_receipt(request, token):
     receipt = get_object_or_404(Receipt, token=token)
     receipt_url = request.build_absolute_uri(request.path)
+
+    # ── Live tab receipt: if this receipt has a tab_id in meta, dynamically
+    #    recompute lines from the BarTab's entries so the customer always sees
+    #    the latest items when they refresh the link. ─────────────────────────
+    tab_id = receipt.meta.get('tab_id') if receipt.meta else None
+    is_live_tab = False
+    if tab_id:
+        try:
+            from .models import BarTab as _BarTab
+            tab = _BarTab.objects.get(id=tab_id, business=receipt.business)
+            if tab.status == 'OPEN':
+                is_live_tab = True
+                entries = list(tab.entries.all().order_by('id'))
+                if entries:
+                    live_lines = [
+                        {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
+                        for e in entries
+                    ]
+                    receipt.lines = live_lines
+                    receipt.total = sum(float(e.amount) for e in entries)
+        except _BarTab.DoesNotExist:
+            pass
+
     return render(request, 'core/receipt_public.html', {
         'receipt': receipt,
         'receipt_url': receipt_url,
+        'is_live_tab': is_live_tab,
     })
 
 

@@ -447,12 +447,14 @@ def _kitchen_checkout(request, up, business, is_owner):
             status='OPEN',
         ).first()
         if not active_tab and payment_method == 'food_tab':
+            import secrets as _secrets
             active_tab = BarTab.objects.create(
                 business=business,
                 store=kitchen_store,
                 customer_name=tab_customer,
                 source='kitchen',
                 served_by=request.user,
+                tab_receipt_token=_secrets.token_urlsafe(20),
             )
         elif not active_tab and payment_method == 'bar_tab':
             return JsonResponse({'ok': False, 'error': f'Hakuna tab wazi kwa "{tab_customer}"'}, status=400)

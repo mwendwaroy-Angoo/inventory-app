@@ -243,6 +243,7 @@ def bar_board(request):
                     status='OPEN',
                 ).first()
                 if not active_tab:
+                    import secrets as _secrets
                     first_barrel = None
                     for entry in cart:
                         try:
@@ -259,6 +260,7 @@ def bar_board(request):
                         customer=linked_customer,
                         server_name=tab_server,
                         served_by=request.user if not tab_server else None,
+                        tab_receipt_token=_secrets.token_urlsafe(20),
                     )
 
         receipt_lines = []
@@ -992,6 +994,7 @@ def tick_entry(request, entry_id):
                 payment_method=pay,
                 user=request.user,
                 customer_name=tab.customer_name,
+                meta={'tab_id': tab.id},
             )
             receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
             receipt_id = rcpt.id
@@ -1105,11 +1108,17 @@ def settle_tab(request, tab_id):
             for e in entries_to_settle
         ]
         settle_meta = {}
+        # ── Live tab receipt: include tab_id so the public_receipt view can
+        #    dynamically recompute lines from the BarTab when it's still OPEN ──
+        if not tab_fully_settled:
+            settle_meta['tab_id'] = tab.id
         if pay == 'credit' and tab.customer:
             try:
                 from core.debt_views import _build_credit_receipt_meta
                 source_scope = 'kitchen' if (tab.source == 'kitchen') else 'bar'
                 settle_meta = _build_credit_receipt_meta(tab.business, tab.customer, source_scope)
+                if not tab_fully_settled:
+                    settle_meta['tab_id'] = tab.id
             except Exception:
                 pass
         rcpt = _Receipt.issue(

@@ -2179,6 +2179,7 @@ class BarTab(models.Model):
     status        = models.CharField(max_length=8, choices=STATUS_CHOICES, default='OPEN')
     opened_at     = models.DateTimeField(auto_now_add=True)
     settled_at    = models.DateTimeField(null=True, blank=True)
+    tab_receipt_token = models.CharField(max_length=32, blank=True, default='')
 
     class Meta:
         ordering = ['-opened_at']
