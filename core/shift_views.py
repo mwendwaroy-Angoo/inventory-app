@@ -710,12 +710,27 @@ def shift_history(request):
         from django.shortcuts import redirect
         return redirect('login')
 
-    shifts_qs = (
-        Shift.objects
-        .filter(business=up.business)
-        .select_related('staff', 'confirmed_by')
-        .order_by('-started_at')[:60]
-    )
+    # Station scoping: bar-only staff see bar shifts; kitchen-only staff see kitchen shifts
+    from django.db.models import Q as _Q
+    _is_owner = getattr(up, 'is_owner', False)
+    _is_kitchen = getattr(up, 'is_kitchen_staff', False)
+    _can_bar = getattr(up, 'can_access_bar', False)
+    _can_kitchen = getattr(up, 'can_access_kitchen', False)
+
+    if _is_owner:
+        _show_bar, _show_kitchen = True, True
+    elif _is_kitchen:
+        _show_bar, _show_kitchen = _can_bar, True
+    else:
+        _show_bar, _show_kitchen = True, _can_kitchen
+
+    _base_qs = Shift.objects.filter(business=up.business)
+    if _show_kitchen and not _show_bar:
+        _base_qs = _base_qs.filter(store__is_kitchen=True)
+    elif _show_bar and not _show_kitchen:
+        _base_qs = _base_qs.filter(_Q(store__is_kitchen=False) | _Q(store__isnull=True))
+
+    shifts_qs = _base_qs.select_related('staff', 'confirmed_by').order_by('-started_at')[:60]
 
     rows = []
     for shift in shifts_qs:

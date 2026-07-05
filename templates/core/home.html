@@ -316,13 +316,15 @@
             </svg>
         </h1>
         <div style="margin-top:1.4rem; display:flex; gap:2.5rem; justify-content:center; flex-wrap:wrap;">
+            {% if show_bar %}
             <div style="text-align:center;">
                 <div style="font-family:'Playfair Display',serif; font-size:2rem; color:var(--biz-accent); font-weight:700;">
                     KES {{ bar_today_revenue|default:0|floatformat:0 }}
                 </div>
                 <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Bar Revenue</div>
             </div>
-            {% if kitchen_today_revenue %}
+            {% endif %}
+            {% if show_kitchen and kitchen_today_revenue %}
             <div style="text-align:center;">
                 <div style="font-family:'Playfair Display',serif; font-size:2rem; color:#ff9800; font-weight:700;">
                     KES {{ kitchen_today_revenue|floatformat:0 }}
@@ -792,6 +794,8 @@
 })();
 </script>
 <script>
+var HOME_SHOW_BAR     = {{ show_bar|yesno:"true,false" }};
+var HOME_SHOW_KITCHEN = {{ show_kitchen|yesno:"true,false" }};
 (function () {
     var meter = document.getElementById('shift-meter');
     var heroShift = document.getElementById('bar-hero-shift');
@@ -800,7 +804,13 @@
         .then(function (r) { return r.json(); })
         .then(function (d) {
             var allShifts  = d.all_shifts || [];
-            var openShifts = allShifts.filter(function (s) { return s.status === 'OPEN'; });
+            // Filter to shifts visible to this staff member's station
+            var visibleShifts = allShifts.filter(function (s) {
+                if (HOME_SHOW_BAR && HOME_SHOW_KITCHEN) return true;
+                if (HOME_SHOW_KITCHEN && !HOME_SHOW_BAR) return s.section === 'kitchen';
+                return s.section !== 'kitchen';
+            });
+            var openShifts = visibleShifts.filter(function (s) { return s.status === 'OPEN'; });
 
             /* ── Bar hero: active-shifts count badge ── */
             if (heroShift) {

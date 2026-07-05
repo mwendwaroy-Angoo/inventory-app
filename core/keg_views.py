@@ -839,9 +839,11 @@ def tabs_list(request):
                 for e in bar_entries
             ]
             unpaid = sum(float(e['amount']) for e in entries if not e['is_paid'])
+            _tab_phone = (tab.customer.phone if tab.customer else '') or ''
             result.append({
                 'id': tab.id,
                 'customer_name': tab.customer_name,
+                'customer_phone': _tab_phone,
                 'server_name': tab.server_name,
                 'total': sum(float(e['amount']) for e in entries),
                 'unpaid_total': unpaid,
@@ -856,9 +858,11 @@ def tabs_list(request):
                  'is_paid': e.is_paid, 'payment_method': e.payment_method}
                 for e in all_entries
             ]
+            _tab_phone = (tab.customer.phone if tab.customer else '') or ''
             result.append({
                 'id': tab.id,
                 'customer_name': tab.customer_name,
+                'customer_phone': _tab_phone,
                 'server_name': tab.server_name,
                 'total': float(tab.total()),
                 'unpaid_total': float(tab.unpaid_total()),
@@ -868,6 +872,37 @@ def tabs_list(request):
             })
 
     return JsonResponse({'tabs': result})
+
+
+@login_required
+@require_POST
+def update_tab_phone(request, tab_id):
+    """Allow staff to add/update the customer phone number on an open tab."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
+    phone = (request.POST.get('phone') or '').strip()
+
+    if tab.customer_id:
+        tab.customer.phone = phone
+        tab.customer.save(update_fields=['phone'])
+    elif tab.customer_name:
+        _cust = Customer.objects.filter(
+            business=up.business, name__iexact=tab.customer_name
+        ).first()
+        if _cust:
+            _cust.phone = phone
+            _cust.save(update_fields=['phone'])
+        else:
+            Customer.objects.create(
+                business=up.business,
+                name=tab.customer_name,
+                phone=phone,
+                credit_approved=True,
+            )
+    return JsonResponse({'ok': True})
 
 
 @login_required

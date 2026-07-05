@@ -253,6 +253,47 @@ def performer_form(request, performer_id=None):
     })
 
 
+# ── Stale session auto-cleanup ────────────────────────────────────────────────
+
+def _auto_complete_stale_sessions(business):
+    """Auto-complete sessions from past dates that were never formally ended.
+
+    ACTIVE sessions from yesterday or earlier get COMPLETED with end time set to
+    23:59 on their session date. PENDING_CONFIRMATION / PENDING_APPROVAL sessions
+    from past dates are cancelled — they never actually happened.
+    """
+    today = timezone.localdate()
+    nairobi_tz = timezone.get_current_timezone()
+
+    stale_active = PerformerSession.objects.filter(
+        business=business,
+        date__lt=today,
+        status=PerformerSession.STATUS_ACTIVE,
+    )
+    for s in stale_active:
+        end_dt = timezone.make_aware(
+            datetime.datetime.combine(s.date, datetime.time(23, 59)),
+            nairobi_tz,
+        )
+        s.ended_at = s.ended_at or end_dt
+        if not s.performer_ended_at:
+            s.performer_ended_at = s.ended_at
+        if s.second_performer_id and not s.second_performer_ended_at:
+            s.second_performer_ended_at = s.ended_at
+        s.status = PerformerSession.STATUS_COMPLETED
+        s.save(update_fields=['status', 'ended_at', 'performer_ended_at', 'second_performer_ended_at'])
+
+    PerformerSession.objects.filter(
+        business=business,
+        date__lt=today,
+        status__in=[
+            PerformerSession.STATUS_SCHEDULED,
+            PerformerSession.STATUS_PENDING_CONFIRMATION,
+            PerformerSession.STATUS_PENDING_APPROVAL,
+        ],
+    ).update(status=PerformerSession.STATUS_CANCELLED)
+
+
 # ── Session API (AJAX — bar board) ────────────────────────────────────────────
 
 @login_required
@@ -262,6 +303,7 @@ def session_today_api(request):
     if err:
         return err
     business = up.business
+    _auto_complete_stale_sessions(business)
     today     = timezone.localdate()
     next_week = today + timedelta(days=7)
 
@@ -691,6 +733,7 @@ def session_list(request):
     if err:
         return redirect('home')
     business = up.business
+    _auto_complete_stale_sessions(business)
 
     filter_performer = request.GET.get('performer', '')
     filter_from      = request.GET.get('from', '')

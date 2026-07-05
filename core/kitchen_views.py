@@ -843,9 +843,11 @@ def kitchen_tabs_list(request):
             {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
             for e in tab.entries.all()
         ]
+        _tab_phone = (tab.customer.phone if tab.customer else '') or ''
         result.append({
             'id': tab.id,
             'customer_name': tab.customer_name,
+            'customer_phone': _tab_phone,
             'total': float(tab.total()),
             'unpaid_total': float(tab.unpaid_total()),
             'entries': entries,

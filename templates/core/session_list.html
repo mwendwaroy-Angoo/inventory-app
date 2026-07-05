@@ -59,7 +59,7 @@
         &nbsp;
         {% if s.status == 'ACTIVE' %}<span class="badge badge-active">Inaendelea</span>
         {% elif s.status == 'PENDING_CONFIRMATION' %}<span class="badge badge-pending">Inasubiri uthibitisho</span>
-        {% elif s.status == 'COMPLETED' %}<span class="badge badge-done">Imekwisha</span>
+        {% elif s.status == 'COMPLETED' %}<span class="badge badge-done">Imekwisha</span>{% if s.ended_at and s.ended_at.date != s.date %}<span style="color:#f39c12; font-size:.7rem; margin-left:.3rem;">&#9888; Auto-ended</span>{% endif %}
         {% elif s.status == 'PENDING_APPROVAL' %}<span class="badge badge-pending">Inangojea</span>
         {% elif s.status == 'CANCELLED' %}<span class="badge badge-cancel">Imefutwa</span>{% endif %}
       </div>

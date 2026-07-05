@@ -947,6 +947,10 @@
            style="background:#111; border:1px solid #444; color:#f0ece4; border-radius:8px;
                   padding:5px 10px; font-size:0.83rem; width:100%; margin-bottom:5px;">
     <datalist id="open-tab-names"></datalist>
+    <input type="tel" id="tab-phone-input"
+           placeholder="📞 Simu ya mteja (hiari — kwa SMS risiti)"
+           style="background:#111; border:1px solid #444; color:#f0ece4; border-radius:8px;
+                  padding:5px 10px; font-size:0.83rem; width:100%; margin-bottom:5px;">
     <input type="text" id="tab-server-input"
            placeholder="Waitress / server (optional)"
            style="background:#111; border:1px solid #444; color:#f0ece4; border-radius:8px;
@@ -968,6 +972,7 @@
   <input type="hidden" name="payment_method" id="keg-payment-input">
   <input type="hidden" name="tab_customer"   id="keg-tab-customer-input">
   <input type="hidden" name="tab_server"     id="keg-tab-server-input">
+  <input type="hidden" name="tab_phone"      id="keg-tab-phone-input">
   <input type="hidden" name="merge_tab_id"   id="keg-merge-tab-id" value="">
 </form>
 
@@ -2033,11 +2038,14 @@
       document.getElementById('keg-tab-customer-input').value = custName;
       document.getElementById('keg-tab-server-input').value   =
         (document.getElementById('tab-server-input').value || '').trim();
+      document.getElementById('keg-tab-phone-input').value =
+        (document.getElementById('tab-phone-input').value || '').trim();
       document.getElementById('keg-merge-tab-id').value =
         (window._barMergeTabId || '');
     } else {
       document.getElementById('keg-tab-customer-input').value = '';
       document.getElementById('keg-tab-server-input').value   = '';
+      document.getElementById('keg-tab-phone-input').value    = '';
       document.getElementById('keg-merge-tab-id').value       = '';
     }
 
@@ -2335,6 +2343,15 @@
           (tab.server_name
             ? '<div class="tab-server-label">via ' + tab.server_name + ' · ' + tab.opened_at + '</div>'
             : '<div class="tab-server-label">' + tab.opened_at + '</div>') +
+          '<div style="display:flex;gap:.3rem;align-items:center;margin:.3rem 0;">' +
+          '<input type="tel" id="tab-phone-edit-' + tab.id + '" value="' + (tab.customer_phone || '') + '" ' +
+          'placeholder="📞 Simu (kwa SMS risiti)" ' +
+          'style="flex:1;background:#111;border:1px solid #3a3a3a;border-radius:6px;' +
+          'color:#f0ece4;padding:.2rem .5rem;font-size:.75rem;">' +
+          '<button onclick="window.saveTabPhone(' + tab.id + ')" ' +
+          'style="padding:.2rem .5rem;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);' +
+          'border-radius:6px;color:#c9a84c;font-size:.72rem;cursor:pointer;white-space:nowrap;">Hifadhi</button>' +
+          '</div>' +
           '<div class="tab-entries-list" id="tab-entries-' + tab.id + '">' + entriesHtml + '</div>' +
           '<div id="tab-sel-row-' + tab.id + '" style="display:none; background:rgba(201,168,76,0.07); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:.35rem .55rem; margin:.35rem 0; align-items:center; gap:.4rem; flex-wrap:wrap;">' +
           '<span style="color:#b0b0b0; font-size:.78rem;">Vilivyochaguliwa: <strong id="tab-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
@@ -2355,6 +2372,19 @@
     });
 
     body.innerHTML = html;
+  };
+
+  window.saveTabPhone = function (tabId) {
+    var input = document.getElementById('tab-phone-edit-' + tabId);
+    if (!input) return;
+    var phone = input.value.trim();
+    post('/bar/tabs/' + tabId + '/phone/', {phone: phone})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) showToast('✓ Namba ya simu imehifadhiwa.');
+        else showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao.'); });
   };
 
   window.tickEntry = function (entryId, desc, amtStr) {
@@ -3641,11 +3671,18 @@
     if (!document.hidden) { loadBarBoard(); loadShift(); }
   });
 
-  // Show/hide tab fields when Tab payment is selected
+  // Show/hide tab fields when Tab payment is selected; also trigger cross-tab check
   document.querySelectorAll('input[name="keg_payment"]').forEach(function (radio) {
     radio.addEventListener('change', function () {
       var tf = document.getElementById('tab-fields');
       if (tf) tf.style.display = this.value === 'tab' ? 'block' : 'none';
+      // If Tab selected and customer name already typed, run cross-tab check immediately
+      if (this.value === 'tab') {
+        var tabInput = document.getElementById('tab-customer-input');
+        if (tabInput && tabInput.value.trim().length >= 2) {
+          tabInput.dispatchEvent(new Event('blur'));
+        }
+      }
     });
   });
 

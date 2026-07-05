@@ -1415,6 +1415,13 @@
     creditRow.style.display = (pm === 'credit') ? 'block' : 'none';
     stkRow.style.display    = (pm === 'stk') ? 'block' : 'none';
     document.getElementById('kb-receipt-banner').style.display = 'none';
+    // Trigger cross-tab check immediately if name already typed when food_tab selected
+    if (pm === 'food_tab') {
+      var _nameNow = document.getElementById('kb-tab-name');
+      if (_nameNow && _nameNow.value.trim().length >= 2) {
+        _nameNow.dispatchEvent(new Event('blur'));
+      }
+    }
     if (pm === 'bar_tab') {
       var dl = document.getElementById('kb-bar-tab-list');
       dl.innerHTML = _barTabNames.map(function(n){ return '<option value="' + n + '">'; }).join('');
@@ -1818,6 +1825,15 @@
              '<div style="display:flex;justify-content:space-between;margin-bottom:.35rem;">' +
              '<strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +
              '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
+             '<div style="display:flex;gap:.3rem;align-items:center;margin-bottom:.35rem;">' +
+             '<input type="tel" id="kb-tab-phone-edit-' + tab.id + '" value="' + (tab.customer_phone || '') + '" ' +
+             'placeholder="📞 Simu (hiari)" ' +
+             'style="flex:1;background:#111;border:1px solid #3a3a3a;border-radius:6px;' +
+             'color:#f0ece4;padding:.2rem .5rem;font-size:.75rem;">' +
+             '<button onclick="window.saveKbTabPhone(' + tab.id + ')" ' +
+             'style="padding:.2rem .5rem;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);' +
+             'border-radius:6px;color:#c9a84c;font-size:.72rem;cursor:pointer;white-space:nowrap;">Hifadhi</button>' +
+             '</div>' +
              entriesHtml +
              '<div id="kb-sel-row-' + tab.id + '" style="display:none;font-size:.75rem;color:#b0b0b0;margin:.25rem 0 0;">Vilivyochaguliwa: <strong id="kb-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></div>' +
              '<div style="border-top:1px solid #333;margin-top:.4rem;padding-top:.4rem;display:flex;justify-content:space-between;font-size:.85rem;">' +
@@ -1829,6 +1845,21 @@
              '</div></div>';
     }).join('');
   }
+
+  window.saveKbTabPhone = function(tabId) {
+    var input = document.getElementById('kb-tab-phone-edit-' + tabId);
+    if (!input) return;
+    var fd = new URLSearchParams();
+    fd.append('phone', input.value.trim());
+    fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+    fetch('/bar/tabs/' + tabId + '/phone/', {method:'POST', credentials:'same-origin', body: fd})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) showToast('✓ Namba imehifadhiwa.');
+        else showToast('Hitilafu: ' + (d.error||'Jaribu tena.'));
+      })
+      .catch(function(){ showToast('Hitilafu ya mtandao.'); });
+  };
 
   function updateTabBadge(count) {
     var badge = document.getElementById('kb-tabs-badge');

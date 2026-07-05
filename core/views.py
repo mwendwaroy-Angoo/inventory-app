@@ -110,6 +110,22 @@ def owner_required(view_func):
 # ── HOME ─────────────────────────────────────────────────────────────────────
 
 
+def _station_scope(up):
+    """Return (show_bar, show_kitchen) for a UserProfile.
+
+    Owner sees both. Kitchen staff default to kitchen only unless can_access_bar.
+    Bar / general / waitress staff default to bar only unless can_access_kitchen.
+    Used throughout home(), shift_history(), and any view that must respect the
+    Station Scoping Principle (see CLAUDE.md).
+    """
+    if up.is_owner:
+        return True, True
+    if up.is_kitchen_staff:
+        return bool(getattr(up, 'can_access_bar', False)), True
+    # bar / general / waitress
+    return True, bool(getattr(up, 'can_access_kitchen', False))
+
+
 def home(request):
     context = {"today": timezone.now().strftime("%B %d, %Y")}
 
@@ -123,7 +139,20 @@ def home(request):
         try:
             user_profile = request.user.userprofile
             business = user_profile.business
-            all_items = Item.objects.filter(business=business)
+
+            # Station scoping — determine what this staff member can see
+            show_bar, show_kitchen = _station_scope(user_profile)
+            context['show_bar']     = show_bar
+            context['show_kitchen'] = show_kitchen
+
+            # Scope item list to relevant station(s)
+            _item_qs = Item.objects.filter(business=business)
+            if show_bar and not show_kitchen:
+                _item_qs = _item_qs.filter(store__is_kitchen=False)
+            elif show_kitchen and not show_bar:
+                _item_qs = _item_qs.filter(store__is_kitchen=True)
+            all_items = _item_qs
+
             reorder_items = [item for item in all_items if item.needs_reorder()]
             low_stock_count = len(
                 [
@@ -213,17 +242,15 @@ def home(request):
                 if _get_profile(business).get('modules', {}).get('keg'):
                     from .models import KegBarrel as _KB
                     # Only PAID transactions count as revenue (cash + mpesa).
-                    # Credit (open tabs, deni) stays as 'credit' until settle_tab
-                    # updates the transaction's payment_method to cash/mpesa.
-                    # Use timezone.localdate() so the filter matches the Nairobi
-                    # date stored in Transaction.date (Django converts UTC→local).
-                    _bar_txns = Transaction.objects.filter(
-                        business=business, type='Issue',
-                        date=timezone.localdate(),
-                        payment_method__in=['cash', 'mpesa'],
-                        item__store__is_kitchen=False,
-                    ).select_related('item')
-                    context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
+                    # Only compute bar revenue for staff who can see bar station.
+                    if show_bar:
+                        _bar_txns = Transaction.objects.filter(
+                            business=business, type='Issue',
+                            date=timezone.localdate(),
+                            payment_method__in=['cash', 'mpesa'],
+                            item__store__is_kitchen=False,
+                        ).select_related('item')
+                        context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
                     # Tapped barrels and kegs near empty (<15% of target remaining)
                     _tapped = list(_KB.objects.filter(business=business, status='TAPPED'))
                     _at_risk = [k for k in _tapped
@@ -258,7 +285,7 @@ def home(request):
 
             # Kitchen-specific today revenue (separate from bar)
             try:
-                if business.has_kitchen:
+                if business.has_kitchen and show_kitchen:
                     _kitchen_txns = Transaction.objects.filter(
                         business=business, type='Issue',
                         date=timezone.localdate(),
@@ -288,7 +315,7 @@ def home(request):
 
             # Revenue targets progress for dashboard widget
             try:
-                from core.models import RevenueTarget
+                from core.models import RevenueTarget, Store as _Store
                 from datetime import date as _date
                 _today = _date.today()
                 _week_start = _today - timedelta(days=_today.weekday())
@@ -299,9 +326,24 @@ def home(request):
                         business=business, type='Issue',
                         date__gte=start, date__lte=end,
                     ).exclude(payment_method='void').select_related('item')
+                    # Scope revenue to the staff member's station
+                    if show_kitchen and not show_bar:
+                        txns = txns.filter(item__store__is_kitchen=True)
+                    elif show_bar and not show_kitchen:
+                        txns = txns.filter(item__store__is_kitchen=False)
                     return sum(t.revenue() for t in txns)
 
                 def _get_target(ttype):
+                    # Kitchen-only staff: prefer per-store kitchen target
+                    if show_kitchen and not show_bar:
+                        _ks = _Store.objects.filter(business=business, is_kitchen=True).first()
+                        if _ks:
+                            _kt = RevenueTarget.objects.filter(
+                                business=business, target_type=ttype, store=_ks
+                            ).first()
+                            if _kt:
+                                return float(_kt.amount)
+                    # Owner, cross-access, or bar staff: use business-wide target
                     t = RevenueTarget.objects.filter(
                         business=business, target_type=ttype, store__isnull=True
                     ).first()

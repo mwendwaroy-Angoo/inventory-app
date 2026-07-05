@@ -339,6 +339,18 @@ Fonts: Playfair Display (headings), DM Sans (body)
   — if the feature has tabs, is there a "Convert to Deni" path? Root cause of the
   Sprint 21 gap: kitchen module launched without a direct Deni option and without a
   "Convert to Deni" button on food tabs — Roy had to point it out.
+- **Station Scoping Principle — enforce on every new feature:**
+  Bar-only staff (`role in ('staff','waitress')` without `can_access_kitchen=True`) must
+  NEVER see kitchen items, kitchen revenue, kitchen shifts, or kitchen tabs. Kitchen-only
+  staff (`role == 'kitchen'` without `can_access_bar=True`) must NEVER see bar items, bar
+  revenue, bar shifts, or bar tabs. The owner (`is_owner`) and any staff granted
+  cross-access (`can_access_kitchen=True` or `can_access_bar=True`) see both/consolidated.
+  Enforce at the VIEW layer (queryset filter) AND the TEMPLATE layer (conditional blocks).
+  When adding any new feature that touches items, revenue, shifts, tabs, reorder, or
+  analytics — ask: "does my queryset and template respect this scoping?" before marking
+  the task done. Use the `_station_scope(up)` helper in `core/views.py` which returns
+  `(show_bar, show_kitchen)` booleans. The discriminator for items/transactions is always
+  `item.store.is_kitchen`; for shifts it is `shift.store.is_kitchen`.
 
 ---
 
