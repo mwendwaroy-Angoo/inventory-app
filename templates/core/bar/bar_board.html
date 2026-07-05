@@ -2297,24 +2297,92 @@
 
     var html = '';
     tabs.forEach(function (tab) {
-      var entriesHtml = '';
-
-      /* Only render UNPAID entries — paid entries are settled and no longer actionable.
-         Showing paid entries alongside unpaid ones makes the total confusing. */
       var unpaidEntries = tab.entries.filter(function(e) { return !e.is_paid; });
+      var safeCust = tab.customer_name.replace(/'/g, "\\'");
 
-      unpaidEntries.forEach(function (e) {
-        var safeDesc = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-        /* Use food icon for kitchen items, drink icon for bar items */
-        var entryIcon = e.is_kitchen_item ? '🍽' : '🍺';
-        if (tab.is_food_tab) {
-          /* Food tab on the bar board — read-only (no checkboxes); owner sees all items */
-          entriesHtml +=
-            '<div style="display:flex;align-items:center;gap:8px;font-size:.82rem;padding:.18rem 0;">' +
-            '<span style="flex:1;color:#b0b0b0;">' + entryIcon + ' ' + safeDesc + '</span>' +
-            '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span>' +
+      /* Tab badge: "Mixed Tab" when cross_notice is set, otherwise source label. */
+      var hasMix = !!tab.cross_notice;
+      var tabBadge = hasMix
+        ? '<span style="margin-left:.4rem;font-size:.68rem;background:rgba(243,156,18,.12);color:#f39c12;border:1px solid rgba(243,156,18,.3);border-radius:4px;padding:1px 5px;">🔀 Mixed Tab</span>'
+        : (tab.is_food_tab
+            ? '<span style="margin-left:.4rem;font-size:.68rem;background:rgba(201,168,76,.12);color:#c9a84c;border:1px solid rgba(201,168,76,.3);border-radius:4px;padding:1px 5px;">🍽 Food Tab</span>'
+            : '');
+
+      if (tab.is_food_tab) {
+        /* FOOD TAB (kitchen-sourced) — shown on bar board for mixed tabs.
+           Kitchen entries are read-only (settle at Kitchen Board).
+           Bar entries that were cross-merged can be settled here with partial checkboxes. */
+        var kitchenUnpaid = unpaidEntries.filter(function(e) { return e.is_kitchen_item; });
+        var barUnpaid     = unpaidEntries.filter(function(e) { return !e.is_kitchen_item; });
+
+        var kitchenHtml = kitchenUnpaid.map(function(e) {
+          var sd = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+          return '<div style="display:flex;align-items:center;gap:8px;font-size:.82rem;padding:.18rem 0;">' +
+                 '<span style="flex:1;color:#b0b0b0;">🍽 ' + sd + '</span>' +
+                 '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span>' +
+                 '</div>';
+        }).join('');
+
+        /* Bar entries inside #tab-entries-{id} so updateTabSelectionUI can find checkboxes */
+        var barHtml = barUnpaid.map(function(e) {
+          var sd = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+          return '<div class="tab-entry-row" id="tab-entry-' + e.id + '">' +
+                 '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0;">' +
+                 '<input type="checkbox" class="tab-entry-cb"' +
+                 ' data-entry-id="' + e.id + '" data-amount="' + e.amount + '"' +
+                 ' onchange="window.updateTabSelectionUI(' + tab.id + ')"' +
+                 ' style="accent-color:#c9a84c;flex-shrink:0;">' +
+                 '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">🍺 ' + sd + '</span>' +
+                 '</label>' +
+                 '<span class="tab-entry-amt">KES ' + fmt(e.amount) + '</span>' +
+                 '</div>';
+        }).join('');
+
+        var subLabel = tab.opened_at;
+        if (window._barOnlyView) { subLabel += ' · Vileo tu vinaonyeshwa hapa'; }
+
+        html +=
+          '<div class="tab-card" id="tab-card-' + tab.id + '" style="border-color:rgba(201,168,76,.3);">' +
+          '<div class="tab-card-head">' +
+          '<span class="tab-cust-name">' + tab.customer_name + tabBadge + '</span>' +
+          '<span class="tab-unpaid-amt" id="tab-unpaid-' + tab.id + '">KES ' + fmt(tab.unpaid_total) + '</span>' +
+          '</div>' +
+          '<div class="tab-server-label">' + subLabel + '</div>' +
+          (tab.cross_notice ? '<div style="font-size:.72rem;color:#f39c12;background:rgba(243,156,18,.07);border:1px solid rgba(243,156,18,.2);border-radius:5px;padding:.15rem .5rem;margin-bottom:.3rem;">🔀 ' + tab.cross_notice + '</div>' : '');
+
+        if (kitchenHtml) {
+          html +=
+            '<div style="font-size:.72rem;color:#888;margin:.2rem 0 .1rem;font-weight:600;">🍽 Chakula</div>' +
+            kitchenHtml;
+        }
+
+        if (barHtml) {
+          html +=
+            '<div style="font-size:.72rem;color:#888;margin:.35rem 0 .1rem;font-weight:600;">🍺 Vileo</div>' +
+            '<div class="tab-entries-list" id="tab-entries-' + tab.id + '">' + barHtml + '</div>' +
+            '<div id="tab-sel-row-' + tab.id + '" style="display:none;background:rgba(201,168,76,0.07);border:1px solid rgba(201,168,76,0.2);border-radius:8px;padding:.35rem .55rem;margin:.35rem 0;align-items:center;gap:.4rem;flex-wrap:wrap;">' +
+            '<span style="color:#b0b0b0;font-size:.78rem;">Vilivyochaguliwa: <strong id="tab-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
+            '<button id="tab-partial-cash-' + tab.id + '" class="tab-action-btn tab-btn-cash" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
+            '<button id="tab-partial-mpesa-' + tab.id + '" class="tab-action-btn tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
             '</div>';
-        } else {
+        }
+
+        if (!kitchenHtml && !barHtml) {
+          html += '<div style="font-size:.78rem;color:#555;padding:.3rem 0;">Vitu vyote vimelipwa ✓</div>';
+        } else if (kitchenHtml && !barHtml) {
+          html += '<div style="border-top:1px solid #2a2a2a;margin-top:.4rem;padding-top:.35rem;font-size:.72rem;color:#555;">Lipa kwenye Kitchen Board</div>';
+        } else if (kitchenHtml) {
+          html += '<div style="font-size:.72rem;color:#555;margin-top:.3rem;">🍽 Chakula → Lipa kwenye Kitchen Board</div>';
+        }
+
+        html += '</div>';
+
+      } else {
+        /* Regular bar tab — full settlement UI */
+        var entriesHtml = '';
+        unpaidEntries.forEach(function (e) {
+          var safeDesc = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+          var entryIcon = e.is_kitchen_item ? '🍽' : '🍺';
           entriesHtml +=
             '<div class="tab-entry-row" id="tab-entry-' + e.id + '">' +
             '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0;">' +
@@ -2326,43 +2394,12 @@
             '</label>' +
             '<span class="tab-entry-amt">KES ' + fmt(e.amount) + '</span>' +
             '</div>';
+        });
+
+        if (!entriesHtml) {
+          entriesHtml = '<div style="font-size:.78rem;color:#555;padding:.3rem 0;">Vitu vyote vimelipwa ✓</div>';
         }
-      });
 
-      if (!entriesHtml) {
-        entriesHtml = '<div style="font-size:.78rem;color:#555;padding:.3rem 0;">Vitu vyote vimelipwa ✓</div>';
-      }
-
-      var safeCust = tab.customer_name.replace(/'/g, "\\'");
-
-      /* Tab badge: "Mixed Tab" when a food-sourced tab has had bar items merged in,
-         or a bar tab has had food items merged in. Otherwise show the source label. */
-      var hasMix = !!tab.cross_notice;
-      var tabBadge = hasMix
-        ? '<span style="margin-left:.4rem;font-size:.68rem;background:rgba(243,156,18,.12);color:#f39c12;border:1px solid rgba(243,156,18,.3);border-radius:4px;padding:1px 5px;">🔀 Mixed Tab</span>'
-        : (tab.is_food_tab
-            ? '<span style="margin-left:.4rem;font-size:.68rem;background:rgba(201,168,76,.12);color:#c9a84c;border:1px solid rgba(201,168,76,.3);border-radius:4px;padding:1px 5px;">🍽 Food Tab</span>'
-            : '');
-
-      if (tab.is_food_tab) {
-        /* Food tab (or mixed tab with kitchen source) — settlement for kitchen items
-           stays on the kitchen board; bar items here are read-only. */
-        var subLabel = tab.opened_at;
-        if (window._barOnlyView) {
-          subLabel += ' · Vileo tu vinaonyeshwa hapa';
-        }
-        html +=
-          '<div class="tab-card" id="tab-card-' + tab.id + '" style="border-color:rgba(201,168,76,.3);">' +
-          '<div class="tab-card-head">' +
-          '<span class="tab-cust-name">' + tab.customer_name + tabBadge + '</span>' +
-          '<span class="tab-unpaid-amt">KES ' + fmt(tab.unpaid_total) + '</span>' +
-          '</div>' +
-          '<div class="tab-server-label">' + subLabel + '</div>' +
-          (tab.cross_notice ? '<div style="font-size:.72rem;color:#f39c12;background:rgba(243,156,18,.07);border:1px solid rgba(243,156,18,.2);border-radius:5px;padding:.15rem .5rem;margin-bottom:.3rem;">🔀 ' + tab.cross_notice + '</div>' : '') +
-          '<div class="tab-entries-list">' + entriesHtml + '</div>' +
-          '<div style="border-top:1px solid #2a2a2a;margin-top:.4rem;padding-top:.35rem;font-size:.72rem;color:#555;">Lipa kwenye Kitchen Board</div>' +
-          '</div>';
-      } else {
         html +=
           '<div class="tab-card" id="tab-card-' + tab.id + '">' +
           '<div class="tab-card-head">' +

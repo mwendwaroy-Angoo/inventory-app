@@ -896,28 +896,28 @@ def kitchen_tabs_list(request):
         all_entries = list(tab.entries.all())
         _tab_phone = (tab.customer.phone if tab.customer else '') or ''
 
-        if _see_all:
-            entries = [
-                {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
-                for e in all_entries
-            ]
-            bar_count = sum(1 for e in all_entries if e.transaction_id and e.transaction.item_id and e.transaction.item.store_id and not e.transaction.item.store.is_kitchen)
-            cross_notice = f'+ {bar_count} bar item(s)' if bar_count else None
+        # Always show only kitchen entries for settlement — bar items settle at Bar Board.
+        # This applies to both owner/cross-access and kitchen-only staff.
+        kitchen_entries = [
+            e for e in all_entries
+            if not e.transaction_id
+            or not e.transaction.item_id
+            or not e.transaction.item.store_id
+            or e.transaction.item.store.is_kitchen
+        ]
+        bar_count = len(all_entries) - len(kitchen_entries)
+        entries = [
+            {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
+            for e in kitchen_entries
+        ]
+        if bar_count:
+            cross_notice = (
+                f'+ {bar_count} bar item(s) — settle at Bar Board'
+                if _see_all
+                else f'+ {bar_count} bar item(s) on this tab'
+            )
         else:
-            # Kitchen-only staff: show only food items
-            kitchen_entries = [
-                e for e in all_entries
-                if not e.transaction_id
-                or not e.transaction.item_id
-                or not e.transaction.item.store_id
-                or e.transaction.item.store.is_kitchen
-            ]
-            bar_count = len(all_entries) - len(kitchen_entries)
-            entries = [
-                {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
-                for e in kitchen_entries
-            ]
-            cross_notice = f'+ {bar_count} bar item(s) on this tab' if bar_count else None
+            cross_notice = None
 
         result.append({
             'id': tab.id,

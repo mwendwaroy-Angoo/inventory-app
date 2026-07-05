@@ -1076,6 +1076,49 @@ python manage.py test                   # 126 tests, all pass
 - ✅ Correct: sub-label shows only "HH:MM" — no "Vileo tu" note (owner sees all items).
 - ❌ Bug if: "Vileo tu vinaonyeshwa hapa" shows to the owner who sees food items too.
 
+---
+
+## Mixed Tab Counter Settlement Fix (2026-07-05)
+
+### TAB-M1: Kitchen Board does NOT show bar items in food tab settlement
+
+**Setup:** Mercy has a food tab with Smokies (kitchen item) + Kikombe/Jug (bar items merged via cross-counter).
+
+1. Log in as owner, open Kitchen Board → Tabs drawer.
+2. Find Mercy's tab.
+- ✅ Correct: Only "Smokies KES 50" visible with checkbox. No Kikombe, no Jug.
+- ✅ Correct: cross_notice shows "+ 2 bar item(s) — settle at Bar Board".
+- ✅ Correct: "Deni: KES 50" total reflects only kitchen items.
+- ❌ Bug if: Kikombe (KES 60) and/or Jug (KES 180) appear as settleable items in kitchen.
+
+### TAB-M2: Bar Board shows bar items on a food tab as settleable
+
+1. Log in as owner, open Bar Board → Tabs drawer.
+2. Find Mercy's tab (shows 🔀 Mixed Tab badge).
+- ✅ Correct: "🍽 Chakula" section shows Smokies as read-only (no checkbox).
+- ✅ Correct: "🍺 Vileo" section shows Kikombe + Jug each with a checkbox.
+- ✅ Correct: Checking Kikombe reveals selection row with "💰 Cash" + "📱 M-Pesa" partial settle buttons.
+- ✅ Correct: Footer note "🍽 Chakula → Lipa kwenye Kitchen Board" appears below.
+- ❌ Bug if: All entries show as read-only with "Lipa kwenye Kitchen Board" footer.
+
+### TAB-M3: Partial settle of bar items on a mixed food tab
+
+1. On bar board, check Kikombe (KES 60) on Mercy's mixed food tab.
+2. Tap "💰 Cash" in the selection row.
+- ✅ Correct: Toast "✓ KES 60 imelipwa. Tab bado iko wazi." (partial, tab stays open).
+- ✅ Correct: Tabs drawer reloads; Kikombe disappears (now paid), Jug still shown.
+- ✅ Correct: Kitchen board still shows Smokies (unpaid kitchen item) unaffected.
+- ❌ Bug if: Full tab closed, or Smokies disappear from kitchen board.
+
+### TAB-M4: Pure food tab (no cross-merge) renders correctly on bar board
+
+1. Create a fresh food tab (kitchen only — no bar items).
+2. Open bar board Tabs drawer.
+- ✅ Correct: Tab shows "🍽 Food Tab" badge (no 🔀 Mixed Tab).
+- ✅ Correct: All entries show in "🍽 Chakula" section as read-only (no checkboxes).
+- ✅ Correct: Footer shows "Lipa kwenye Kitchen Board" (full footer, no "🍺 Vileo" section).
+- ❌ Bug if: Bar section with partial settle buttons appears on a pure food tab.
+
 ```
 python manage.py test   # 126 tests, all pass
 ```
