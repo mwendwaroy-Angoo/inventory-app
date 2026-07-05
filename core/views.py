@@ -2562,6 +2562,11 @@ def quick_sell(request):
                     % {"item_count": len(recorded), "total": f"{total:,.0f}"},
                 )
 
+    # Station scoping: kitchen-only staff belong on the Kitchen Board, not Quick Sell.
+    _qs_show_bar, _qs_show_kitchen = _station_scope(user_profile)
+    if _qs_show_kitchen and not _qs_show_bar:
+        return redirect('kitchen_board')
+
     items_qs = list(
         Item.objects.filter(store__business=user_profile.business)
         .exclude(is_produce=True, produce_mode="BUNCH")  # greens render in their own board
@@ -2603,10 +2608,12 @@ def quick_sell(request):
             }
         )
 
-    stores = Store.objects.filter(business=user_profile.business)
+    # Exclude kitchen stores — no kitchen items appear in QS so the pill would show 0 items
+    stores = Store.objects.filter(business=user_profile.business, is_kitchen=False)
 
+    # Tab autocomplete: only bar tab customer names (food tab names don't belong here)
     open_tab_names = list(
-        BarTab.objects.filter(business=user_profile.business, status='OPEN')
+        BarTab.objects.filter(business=user_profile.business, status='OPEN', source='bar')
         .values_list('customer_name', flat=True)
         .distinct()
     )
