@@ -1769,7 +1769,12 @@
         var lvlClass = pct >= 35 ? 'lvl-high' : (pct >= 15 ? 'lvl-med' : 'lvl-low');
         var typeClass = { DARK: 'keg-liq-dark', GOLD: 'keg-liq-gold', REGULAR: 'keg-liq-regular' }[kg.keg_type] || '';
         var bottomWarn = pct < 20
-          ? '<div class="keg-bottom-warn">⚠ Karibu mwisho — tahadhari na mwisho wa barrel</div>'
+          ? '<div class="keg-bottom-warn">⚠ Karibu mwisho — tahadhari na mwisho wa barrel</div>' +
+            (!QS_IS_OWNER
+              ? '<button class="keg-owner-btn mt-1" style="background:rgba(192,57,90,.12); color:#c0395a; border-color:rgba(192,57,90,.3); font-size:.72rem;" ' +
+                'onclick="event.stopPropagation(); notifyOwnerRestock(' + kg.item_id + ',\'' + (kg.name || '').replace(/'/g, "\\'") + '\')">' +
+                '🔔 Notify</button>'
+              : '')
           : '';
         var barrelViz =
           '<div class="keg-barrel-wrap" title="' + pct + '% iliyobaki"' +
@@ -1814,6 +1819,11 @@
           actionHtml +
           '</div></div>';
       } else {
+        var noTapRestockBtn = (!QS_IS_OWNER && kg.sealed_barrels === 0)
+          ? '<button class="keg-owner-btn mt-2" style="background:rgba(192,57,90,.12); color:#c0395a; border-color:rgba(192,57,90,.3);" ' +
+            'onclick="event.stopPropagation(); notifyOwnerRestock(' + kg.item_id + ',\'' + (kg.name || '').replace(/'/g, "\\'") + '\')">' +
+            '🔔 Notify Owner</button>'
+          : '';
         html +=
           '<div class="col-6 col-md-4 col-lg-3">' +
           '<div class="keg-tile keg-no-tap">' +
@@ -1824,13 +1834,25 @@
             : 'Hakuna barrel') +
           '</div>' +
           '<div class="mt-2">' + presetChips + '</div>' +
-          actionHtml +
+          actionHtml + noTapRestockBtn +
           '</div></div>';
       }
     });
 
     board.innerHTML = html;
     _updateBoardShiftState();
+  }
+
+  function notifyOwnerRestock(itemId, itemName) {
+    var fd = new FormData();
+    fd.append('item_id', itemId);
+    fd.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+    fetch('/stock/restock/request/', { method: 'POST', body: fd })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        showToast(d.ok ? '📦 Owner amearifu — ' + itemName : (d.error || 'Hitilafu. Jaribu tena.'));
+      })
+      .catch(function() { showToast('Hitilafu ya mtandao.'); });
   }
 
   function _populateReceiveItems(kegs) {

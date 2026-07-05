@@ -604,6 +604,11 @@
             <button type="button"
                     style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);color:#ff9800;border-radius:8px;padding:4px 12px;font-size:0.82rem;cursor:pointer;"
                     onclick="window.openPettyCashModal()">🪙 Counter Cash</button>
+            {% if QS_IS_OWNER %}
+            <button type="button"
+                    style="background:rgba(110,231,183,.08);border:1px solid rgba(110,231,183,.3);color:#6ee7b7;border-radius:8px;padding:4px 12px;font-size:0.82rem;cursor:pointer;"
+                    onclick="openPataStokModal()">📦 Pata Stok</button>
+            {% endif %}
             <a href="{% url 'add_transaction' %}" class="btn btn-sm btn-secondary">{% trans 'Full Form' %} →</a>
         </div>
     </div>
@@ -1085,6 +1090,57 @@
 
 <!-- Petty Cash modal -->
 {% include "core/petty_cash_modal.html" %}
+
+<!-- ── Pata Stok Modal (owner-only quick receive) ──────────────────── -->
+{% if QS_IS_OWNER %}
+<div id="pata-stok-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:1060; align-items:center; justify-content:center;">
+  <div style="background:var(--onyx-card); border:1px solid #333; border-radius:14px; padding:1.5rem; width:min(440px,95vw); max-height:90vh; overflow-y:auto;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h5 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0;">📦 Pokea Stock</h5>
+      <button onclick="closePataStokModal()" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; cursor:pointer;">✕</button>
+    </div>
+    <form id="pata-stok-form">
+      {% csrf_token %}
+      <input type="hidden" name="type" value="Receipt">
+      <div class="mb-3">
+        <label style="color:#b0b0b0; font-size:.85rem;">Item</label>
+        <select name="item" id="ps-item-select" class="form-select mt-1" style="background:#1f1f1f; color:var(--pearl); border:1px solid #444;" required>
+          <option value="">— Chagua bidhaa —</option>
+          {% for it in qs_items %}
+          <option value="{{ it.id }}">{{ it.description }} ({{ it.current_balance }} {{ it.unit }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label style="color:#b0b0b0; font-size:.85rem;">Qty Received</label>
+        <input type="number" name="quantity" id="ps-qty" class="form-control mt-1" min="0.001" step="any" required
+               style="background:#1f1f1f; color:var(--pearl); border:1px solid #444;">
+      </div>
+      <div class="mb-3">
+        <label style="color:#b0b0b0; font-size:.85rem;">Cost per unit (KES)</label>
+        <input type="number" name="new_cost_price" id="ps-cost" class="form-control mt-1" min="0" step="any"
+               style="background:#1f1f1f; color:var(--pearl); border:1px solid #444;" placeholder="Optional">
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" name="update_cost_price" id="ps-update-cost" value="on" checked>
+          <label class="form-check-label" for="ps-update-cost" style="color:#b0b0b0; font-size:.82rem;">Update stored cost price</label>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label style="color:#b0b0b0; font-size:.85rem;">Expiry Date (optional)</label>
+        <input type="date" name="expiry_date" id="ps-expiry" class="form-control mt-1"
+               style="background:#1f1f1f; color:var(--pearl); border:1px solid #444;">
+      </div>
+      <div id="ps-error" style="color:#c0395a; font-size:.85rem; margin-bottom:.75rem; display:none;"></div>
+      <button type="submit" class="btn btn-gold w-100" id="ps-submit-btn">📦 Pokea</button>
+    </form>
+    <div id="ps-success" style="display:none; text-align:center; padding:1.5rem;">
+      <div style="font-size:2.5rem;">✅</div>
+      <div id="ps-success-msg" style="color:#6ee7b7; margin-top:.5rem; font-weight:600;"></div>
+      <button onclick="closePataStokModal()" class="btn btn-sm mt-3" style="background:#2a2a2a; color:var(--pearl); border:1px solid #444;">Funga</button>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% endblock %}
 
@@ -2387,5 +2443,63 @@
 
 /* ── Petty Cash ── */
 {% include "core/petty_cash_js.html" %}
+
+/* ── Pata Stok ── */
+{% if QS_IS_OWNER %}
+window.openPataStokModal = function () {
+  var overlay = document.getElementById('pata-stok-overlay');
+  if (!overlay) return;
+  document.getElementById('pata-stok-form').style.display = 'block';
+  document.getElementById('ps-success').style.display = 'none';
+  document.getElementById('ps-error').style.display = 'none';
+  overlay.style.display = 'flex';
+};
+
+window.closePataStokModal = function () {
+  var overlay = document.getElementById('pata-stok-overlay');
+  if (overlay) overlay.style.display = 'none';
+  document.getElementById('pata-stok-form').reset();
+  document.getElementById('ps-error').style.display = 'none';
+  document.getElementById('ps-success').style.display = 'none';
+  document.getElementById('pata-stok-form').style.display = 'block';
+};
+
+document.getElementById('pata-stok-overlay').addEventListener('click', function (e) {
+  if (e.target === this) closePataStokModal();
+});
+
+document.getElementById('pata-stok-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var btn = document.getElementById('ps-submit-btn');
+  var errEl = document.getElementById('ps-error');
+  btn.disabled = true;
+  btn.textContent = '…';
+  errEl.style.display = 'none';
+
+  var fd = new FormData(this);
+  fetch('{% url "add_transaction" %}?quick=1', {method: 'POST', body: fd})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        document.getElementById('pata-stok-form').style.display = 'none';
+        var msg = '✅ ' + d.item + ' imepokelewa. Akiba sasa: ' + d.new_balance + '.';
+        if (d.restock_resolved) msg += ' Owner amearifu.';
+        document.getElementById('ps-success-msg').textContent = msg;
+        document.getElementById('ps-success').style.display = 'block';
+      } else {
+        errEl.textContent = d.error || 'Hitilafu. Jaribu tena.';
+        errEl.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = '📦 Pokea';
+      }
+    })
+    .catch(function () {
+      errEl.textContent = 'Hitilafu ya mtandao.';
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = '📦 Pokea';
+    });
+});
+{% endif %}
 </script>
 {% endblock %}

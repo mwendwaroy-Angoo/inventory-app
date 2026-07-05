@@ -1206,6 +1206,18 @@
     return fetch(url, {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}});
   }
 
+  function kbNotifyRestock(itemId, itemName) {
+    var fd = new FormData();
+    fd.append('item_id', itemId);
+    fd.append('csrfmiddlewaretoken', CSRF);
+    fetch('/stock/restock/request/', {method:'POST', body:fd})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        showToast(d.ok ? '📦 Owner amearifu — ' + itemName : (d.error || 'Hitilafu. Jaribu tena.'));
+      })
+      .catch(function(){ showToast('Hitilafu ya mtandao.'); });
+  }
+
   /* ── Build boards ── */
   function buildPortionGrid() {
     var grid = document.getElementById('kb-portion-grid');
@@ -1220,11 +1232,17 @@
       var priceStr = item.presets.length
         ? 'KES ' + fmt(item.presets[0].price) + (item.presets.length>1 ? ' – '+fmt(item.presets[item.presets.length-1].price) : '')
         : 'KES ' + fmt(item.selling_price);
+      var restockBtn = (oos && !IS_OWNER)
+        ? '<button class="btn btn-sm mt-1" style="width:100%; font-size:.7rem; padding:.15rem .3rem; background:rgba(192,57,90,.12); color:#c0395a; border:1px solid rgba(192,57,90,.3); border-radius:5px;" ' +
+          'onclick="event.stopPropagation(); kbNotifyRestock(' + item.id + ',\'' + (item.name || '').replace(/'/g, "\\'") + '\')">' +
+          '🔔 Notify Owner</button>'
+        : '';
       html += '<div class="kb-tile' + (oos?' out-of-stock':'') + '" onclick="tileClick(' + item.id + ')"' +
               ' data-item-id="' + item.id + '">' +
               '<div class="kb-tile-name">' + item.name + '</div>' +
               '<div class="kb-tile-price">' + priceStr + '</div>' +
               '<div class="kb-tile-stock ' + stockCls + '">' + stockLbl + '</div>' +
+              restockBtn +
               '</div>';
     });
     grid.innerHTML = html;
@@ -1239,6 +1257,11 @@
       pct = tot > 0 ? Math.min(100, Math.round(col/tot*100)) : 0;
     }
     var noStock = !item.has_stock;
+    var batchRestockBtn = (noStock && !IS_OWNER)
+      ? '<button class="btn btn-sm mt-1" style="width:100%; font-size:.7rem; padding:.15rem .3rem; background:rgba(192,57,90,.12); color:#c0395a; border:1px solid rgba(192,57,90,.3); border-radius:5px;" ' +
+        'onclick="event.stopPropagation(); kbNotifyRestock(' + item.id + ',\'' + (item.name || '').replace(/'/g, "\\'") + '\')">' +
+        '🔔 Notify Owner</button>'
+      : '';
     return '<div class="kb-tile kb-tile-batch' + (noStock?' out-of-stock':'') + '" onclick="batchTileClick(' + item.id + ')"' +
             ' data-item-id="' + item.id + '">' +
             '<div class="kb-tile-name">' + item.name + '</div>' +
@@ -1247,6 +1270,7 @@
                        : 'Imebaki: KES ' + fmt(remaining)) +
               '<div class="env-bar"><div class="env-fill" style="width:' + pct + '%"></div></div>' +
             '</div>' +
+            batchRestockBtn +
             '</div>';
   }
 

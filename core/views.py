@@ -21,6 +21,8 @@ from .models import (
     Category,
     BarTab,
     BarTabEntry,
+    Notification,
+    StockRequest,
 )
 from .forms import (
     ItemForm,
@@ -235,6 +237,18 @@ def home(request):
             except Exception:
                 context['expired_count']  = 0
                 context['expiring_count'] = 0
+
+            # Pending restock requests badge (owner only)
+            if user_profile.is_owner:
+                try:
+                    context['pending_restocks'] = StockRequest.objects.filter(
+                        business=business,
+                        status__in=[StockRequest.STATUS_PENDING, StockRequest.STATUS_ORDERED],
+                    ).count()
+                except Exception:
+                    context['pending_restocks'] = 0
+            else:
+                context['pending_restocks'] = 0
 
             # Bar-specific context: today's revenue, tapped kegs and kegs running low
             try:
@@ -545,6 +559,17 @@ def stock_list(request):
             item.expiry_date   = exp
             item.expiry_status = 'OK'
 
+    # Annotate items with pending restock request flag
+    _pending_restock_ids = set(
+        StockRequest.objects.filter(
+            business=user_profile.business,
+            status__in=[StockRequest.STATUS_PENDING, StockRequest.STATUS_ORDERED],
+            item__in=all_items,
+        ).values_list('item_id', flat=True)
+    )
+    for item in all_items:
+        item.has_pending_restock = item.id in _pending_restock_ids
+
     if status_filter == "expiring":
         all_items = [i for i in all_items if i.expiry_status in ('EXPIRED', 'EXPIRING')]
 
@@ -554,6 +579,7 @@ def stock_list(request):
         "selected_store": selected_store_id if selected_store_id else None,
         "status_filter": status_filter,
         "today": timezone.now().strftime("%B %d, %Y"),
+        "is_owner": user_profile.is_owner,
     }
     return render(request, "core/stock_list.html", context)
 
@@ -633,6 +659,8 @@ def add_transaction(request):
     customers = Customer.objects.filter(business=user_profile.business)
 
     if request.method == "POST":
+        is_quick = request.GET.get('quick') == '1'
+        restock_resolved = False
         # Shift gate: staff must have an open shift to write any transaction
         if not user_profile.is_owner:
             from core.shift_views import get_active_staff_shift
@@ -781,6 +809,48 @@ def add_transaction(request):
             **({"created_at": backdated_at} if backdated_at else {}),
         )
 
+        # ── RESTOCK REQUEST AUTO-RESOLVE ─────────────────────────────────
+        if trans_type == 'Receipt':
+            _pending_srs = list(
+                StockRequest.objects.filter(
+                    business=user_profile.business,
+                    item=item,
+                    status__in=[StockRequest.STATUS_PENDING, StockRequest.STATUS_ORDERED],
+                ).order_by('requested_at')
+            )
+            for _sr in _pending_srs:
+                _sr.status = StockRequest.STATUS_RECEIVED
+                _sr.received_at = timezone.now()
+                _sr.received_by = request.user
+                _sr.received_qty = abs(quantity)
+                _sr.resolved_txn = transaction
+                _sr.save(update_fields=['status', 'received_at', 'received_by', 'received_qty', 'resolved_txn'])
+            if _pending_srs:
+                restock_resolved = True
+                _staff_name_r = request.user.get_full_name() or request.user.username
+                _sms_r = (
+                    f"✅ {_staff_name_r} amepokea: {abs(quantity)} {item.unit} ya "
+                    f"{item.description}. Akiba sasa: {item.current_balance()}."
+                )
+                for _op in user_profile.business.users.filter(role='owner'):
+                    try:
+                        Notification.objects.create(
+                            user=_op.user,
+                            title=f"Stock Received: {item.description}",
+                            message=_sms_r,
+                            notification_type='info',
+                        )
+                    except Exception:
+                        pass
+                    _owner_phone_r = getattr(_op, 'phone', '') or user_profile.business.phone or ''
+                    if _owner_phone_r:
+                        try:
+                            from core.notifications import send_sms_notification, normalize_ke_phone
+                            send_sms_notification(_sms_r, normalize_ke_phone(_owner_phone_r))
+                        except Exception as _exc_r:
+                            logging.getLogger(__name__).error('Restock received SMS failed: %s', _exc_r)
+        # ─────────────────────────────────────────────────────────────────
+
         # ── COST PRICE UPDATE (Receipt only) ──────────────────────────────
         # When receiving stock, the delivered price may differ from the stored
         # cost price. A delivery fee can also be entered — in that case we
@@ -881,7 +951,7 @@ def add_transaction(request):
     </div>
     """
 
-            owner_profiles = business.users.filter(role='owner')
+            owner_profiles = user_profile.business.users.filter(role='owner')
             for op in owner_profiles:
                 # In-app notification
                 try:
@@ -894,17 +964,18 @@ def add_transaction(request):
                 except Exception:
                     pass
 
-                # SMS
-                try:
-                    from core.notifications import send_sms_notification, normalize_ke_phone
-                    owner_phone = getattr(op, 'phone', '') or business.phone or ''
-                    if owner_phone:
-                        phone = normalize_ke_phone(owner_phone)
-                        if phone:
-                            send_sms_notification(sms_msg, phone)
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).error('Cost price SMS failed: %s', e)
+                # SMS — suppressed when a restock request was resolved (owner already got stock-received SMS)
+                if not restock_resolved:
+                    try:
+                        from core.notifications import send_sms_notification, normalize_ke_phone
+                        owner_phone = getattr(op, 'phone', '') or user_profile.business.phone or ''
+                        if owner_phone:
+                            phone = normalize_ke_phone(owner_phone)
+                            if phone:
+                                send_sms_notification(sms_msg, phone)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Cost price SMS failed: %s', e)
 
                 # Email
                 try:
@@ -976,6 +1047,13 @@ def add_transaction(request):
                 "transaction_type": trans_type.lower(),
             },
         )
+        if is_quick:
+            return JsonResponse({
+                'ok': True,
+                'item': item.description,
+                'new_balance': float(item.current_balance()),
+                'restock_resolved': restock_resolved,
+            })
         return redirect("add_transaction")
 
     items = Item.objects.filter(store__business=user_profile.business).exclude(
@@ -2644,6 +2722,7 @@ def quick_sell(request):
             "success_data": success_data,
             "is_owner": user_profile.is_owner if user_profile else False,
             "open_tab_names": open_tab_names,
+            "qs_items": items_qs,
         },
     )
 

@@ -2873,3 +2873,39 @@ class PromoMessage(models.Model):
 
     def __str__(self):
         return f"{self.subject or self.segment} — {self.sent_at.date()} ({self.recipient_count} wateja)"
+
+
+# ── Restock Request Module ─────────────────────────────────────────────────────
+
+class StockRequest(models.Model):
+    """
+    Staff raises a StockRequest when they notice an item is empty.
+    The request notifies the owner via SMS + in-app. When any Receipt transaction
+    is later recorded for the same item, the request is auto-resolved and the owner
+    receives a "stock received" confirmation.
+    """
+    STATUS_PENDING  = 'pending'
+    STATUS_ORDERED  = 'ordered'
+    STATUS_RECEIVED = 'received'
+    STATUS_CHOICES  = [
+        ('pending',  'Inasubiri'),
+        ('ordered',  'Imeagizwa'),
+        ('received', 'Imepokelewa'),
+    ]
+
+    business     = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stock_requests')
+    item         = models.ForeignKey('Item', on_delete=models.CASCADE, related_name='stock_requests')
+    requested_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, related_name='restock_requests')
+    note         = models.CharField(max_length=200, blank=True)
+    status       = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    received_at  = models.DateTimeField(null=True, blank=True)
+    received_by  = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='restock_received')
+    received_qty = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    resolved_txn = models.ForeignKey('Transaction', on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        ordering = ['-requested_at']
+
+    def __str__(self):
+        return f"{self.item.description} — {self.get_status_display()} ({self.requested_at.date()})"

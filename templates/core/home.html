@@ -244,6 +244,20 @@
     </a>
     {% endif %}
 
+    <!-- Pending restock requests badge (owner only) -->
+    {% if user.userprofile.is_owner and pending_restocks > 0 %}
+    <a href="{% url 'restock_list' %}" style="text-decoration:none; display:block; margin-bottom:0.75rem;">
+      <div style="background:rgba(201,168,76,.08); border:1px solid rgba(201,168,76,.3);
+                  border-left:3px solid var(--gold); border-radius:8px; padding:0.65rem 1rem;
+                  display:flex; align-items:center; gap:.6rem;">
+        <span style="font-size:1.1rem;">📦</span>
+        <span style="color:var(--gold); font-size:.88rem;">
+          <strong>{{ pending_restocks }} restock request{{ pending_restocks|pluralize }}</strong> from staff — View →
+        </span>
+      </div>
+    </a>
+    {% endif %}
+
     <!-- Petty cash pending review alert (owner only) -->
     {% if user.userprofile.is_owner and pending_petty_cash_count > 0 %}
     <a href="{% url 'petty_cash_list' %}?status=pending" style="text-decoration:none; display:block; margin-bottom:0.75rem;">

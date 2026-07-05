@@ -215,6 +215,11 @@ from core.haki_views import (
     my_work_and_pay,
     haki_recognition_statement,
 )
+from core.restock_views import (
+    request_restock,
+    restock_list,
+    restock_mark_ordered,
+)
 from core.performer_views import (
     performer_list,
     performer_form,
@@ -252,6 +257,9 @@ urlpatterns = [
     path("sw.js", service_worker, name="service_worker"),
     path("stock/", stock_list, name="stock_list"),
     path("stock/expiring/", expiring_items, name="expiring_items"),
+    path("stock/restock/", restock_list, name="restock_list"),
+    path("stock/restock/request/", request_restock, name="request_restock"),
+    path("stock/restock/<int:request_id>/ordered/", restock_mark_ordered, name="restock_mark_ordered"),
     path("stock/manage/", manage_items, name="manage_items"),
     path("stock/add/", add_item, name="add_item"),
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),

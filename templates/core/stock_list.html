@@ -199,13 +199,26 @@
                 {% if user.userprofile.is_owner %}
                 <td>{{ item.selling_price|default:"—" }}</td>
                 {% endif %}
-                <td>
+                <td onclick="event.stopPropagation()">
                     {% if item.current_balance <= 0 %}
                         <span class="badge bg-danger">{% trans 'Out of Stock' %}</span>
                     {% elif item.needs_reorder %}
                         <span class="badge bg-warning">{% trans 'Reorder' %}</span>
                     {% else %}
                         <span class="badge bg-success">{% trans 'Available' %}</span>
+                    {% endif %}
+                    {% if item.has_pending_restock %}
+                        <span class="badge mt-1 d-block" style="background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3); font-weight:500; font-size:.72rem;">
+                            📦 Requested
+                        </span>
+                    {% elif not is_owner %}
+                        {% if item.current_balance <= 0 or item.needs_reorder %}
+                        <button
+                            class="btn btn-sm mt-1 d-block w-100"
+                            style="background:rgba(192,57,90,.1); color:#c0395a; border:1px solid rgba(192,57,90,.3); font-size:.72rem; padding:.15rem .4rem;"
+                            onclick="notifyOwnerRestock({{ item.id }}, '{{ item.description|escapejs }}', this)"
+                        >🔔 Notify</button>
+                        {% endif %}
                     {% endif %}
                 </td>
                 <td>
@@ -311,6 +324,32 @@
             });
         }, 200);
     });
+
+    // ── Restock notification ─────────────────────────────────────────────────
+    function notifyOwnerRestock(itemId, itemName, btn) {
+        btn.disabled = true;
+        btn.textContent = '…';
+        var fd = new FormData();
+        fd.append('item_id', itemId);
+        fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        fetch('/stock/restock/request/', { method: 'POST', body: fd })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.ok) {
+                    btn.textContent = '📦 Sent';
+                    btn.style.color = '#6ee7b7';
+                    btn.style.borderColor = '#6ee7b7';
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = '🔔 Notify';
+                    alert(d.error || 'Hitilafu. Jaribu tena.');
+                }
+            })
+            .catch(function() {
+                btn.disabled = false;
+                btn.textContent = '🔔 Notify';
+            });
+    }
 
     // ── Shift running meter ──────────────────────────────────────────────────
     (function () {

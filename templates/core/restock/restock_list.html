@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Restock Requests{% endblock %}
+
+{% block extra_css %}
+<style>
+  .restock-section { margin-bottom: 2rem; }
+  .restock-card {
+    background: var(--onyx-card);
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin-bottom: .75rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .restock-card .item-name { font-weight: 600; color: var(--pearl); font-size: 1rem; flex: 1; min-width: 160px; }
+  .restock-card .meta { color: #b0b0b0; font-size: .85rem; }
+  .status-badge {
+    display: inline-block;
+    padding: .2rem .65rem;
+    border-radius: 20px;
+    font-size: .78rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-pending  { background: rgba(201,168,76,.15); color: var(--gold); border: 1px solid rgba(201,168,76,.3); }
+  .badge-ordered  { background: rgba(59,130,246,.15); color: #60a5fa; border: 1px solid rgba(59,130,246,.3); }
+  .badge-received { background: rgba(110,231,183,.15); color: #6ee7b7; border: 1px solid rgba(110,231,183,.3); }
+  .empty-state { text-align: center; padding: 2.5rem 1rem; color: #b0b0b0; }
+  .note-chip {
+    background: #1f1f1f;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: .2rem .55rem;
+    font-size: .8rem;
+    color: #b0b0b0;
+    max-width: 260px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3" style="max-width: 900px;">
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h4 style="color: var(--gold); font-family: 'Playfair Display', serif; margin: 0;">
+      📦 Restock Requests
+    </h4>
+    <a href="{% url 'stock_list' %}" class="btn btn-sm" style="background: #2a2a2a; color: var(--pearl); border: 1px solid #444;">
+      ← Back to Stock
+    </a>
+  </div>
+
+  <!-- PENDING -->
+  <div class="restock-section">
+    <h6 style="color: var(--gold); letter-spacing: .05em; margin-bottom: .75rem;">
+      🔴 Pending <span style="color: #b0b0b0; font-weight: 400;">({{ pending|length }})</span>
+    </h6>
+    {% if pending %}
+      {% for sr in pending %}
+      <div class="restock-card">
+        <div>
+          <div class="item-name">{{ sr.item.description }}</div>
+          <div class="meta">
+            {% if sr.item.store %}{{ sr.item.store.name }} · {% endif %}
+            Requested by <strong>{{ sr.requested_by.get_full_name|default:sr.requested_by.username }}</strong>
+            · {{ sr.requested_at|timesince }} ago
+          </div>
+          {% if sr.note %}
+          <div class="note-chip mt-1" title="{{ sr.note }}">📝 {{ sr.note }}</div>
+          {% endif %}
+        </div>
+        <div class="ms-auto d-flex align-items-center gap-2">
+          <span class="status-badge badge-pending">Inasubiri</span>
+          <button
+            class="btn btn-sm btn-gold"
+            onclick="markOrdered({{ sr.id }}, this)"
+            style="font-size: .8rem; padding: .25rem .7rem;"
+          >Mark Ordered</button>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state" style="background: var(--onyx-card); border-radius: 10px; border: 1px solid #333;">
+        <div style="font-size: 2rem; margin-bottom: .5rem;">✅</div>
+        <div>Hakuna maombi yanayosubiri.</div>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- ORDERED -->
+  <div class="restock-section">
+    <h6 style="color: #60a5fa; letter-spacing: .05em; margin-bottom: .75rem;">
+      📋 Ordered / In Transit <span style="color: #b0b0b0; font-weight: 400;">({{ ordered|length }})</span>
+    </h6>
+    {% if ordered %}
+      {% for sr in ordered %}
+      <div class="restock-card">
+        <div>
+          <div class="item-name">{{ sr.item.description }}</div>
+          <div class="meta">
+            {% if sr.item.store %}{{ sr.item.store.name }} · {% endif %}
+            Requested by <strong>{{ sr.requested_by.get_full_name|default:sr.requested_by.username }}</strong>
+            · {{ sr.requested_at|timesince }} ago
+          </div>
+          {% if sr.note %}
+          <div class="note-chip mt-1" title="{{ sr.note }}">📝 {{ sr.note }}</div>
+          {% endif %}
+        </div>
+        <div class="ms-auto">
+          <span class="status-badge badge-ordered">Imeagizwa</span>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state" style="background: var(--onyx-card); border-radius: 10px; border: 1px solid #333;">
+        <div style="color: #b0b0b0;">Hakuna stock imeagizwa kwa sasa.</div>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- RECEIVED (last 14 days) -->
+  <div class="restock-section">
+    <h6 style="color: #6ee7b7; letter-spacing: .05em; margin-bottom: .75rem;">
+      ✅ Received <span style="color: #b0b0b0; font-weight: 400;">(last 14 days · {{ received|length }})</span>
+    </h6>
+    {% if received %}
+      {% for sr in received %}
+      <div class="restock-card">
+        <div>
+          <div class="item-name">{{ sr.item.description }}</div>
+          <div class="meta">
+            {% if sr.item.store %}{{ sr.item.store.name }} · {% endif %}
+            Requested by <strong>{{ sr.requested_by.get_full_name|default:sr.requested_by.username }}</strong>
+            · Received
+            {% if sr.received_by %} by <strong>{{ sr.received_by.get_full_name|default:sr.received_by.username }}</strong>{% endif %}
+            {% if sr.received_at %} · {{ sr.received_at|timesince }} ago{% endif %}
+            {% if sr.received_qty %} · <strong>{{ sr.received_qty }} {{ sr.item.unit }}</strong>{% endif %}
+          </div>
+          {% if sr.resolved_txn %}
+          <div class="meta mt-1">
+            <a href="{% url 'transaction_history' %}" style="color: var(--gold); font-size: .8rem;">View transaction →</a>
+          </div>
+          {% endif %}
+        </div>
+        <div class="ms-auto">
+          <span class="status-badge badge-received">Imepokelewa ✓</span>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state" style="background: var(--onyx-card); border-radius: 10px; border: 1px solid #333;">
+        <div style="color: #b0b0b0;">Hakuna stock iliyopokelewa wiki mbili zilizopita.</div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function markOrdered(requestId, btn) {
+  btn.disabled = true;
+  btn.textContent = '…';
+  fetch('/stock/restock/' + requestId + '/ordered/', {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': '{{ csrf_token }}',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      location.reload();
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Mark Ordered';
+      alert(d.error || 'Error. Try again.');
+    }
+  })
+  .catch(function() {
+    btn.disabled = false;
+    btn.textContent = 'Mark Ordered';
+  });
+}
+</script>
+{% endblock %}
