@@ -336,10 +336,12 @@
                 <div id="bar-hero-shift" style="font-family:'Playfair Display',serif; font-size:1.5rem; font-weight:700; color:#888;">—</div>
                 <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Active Shifts</div>
             </div>
+            {% if show_bar %}
             <div style="text-align:center;">
                 <div style="font-family:'Playfair Display',serif; font-size:2rem; font-weight:700; color:{% if kegs_at_risk_count > 0 %}var(--raspberry){% else %}var(--success){% endif %};">{{ kegs_at_risk_count|default:0 }}</div>
                 <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Kegs Running Low</div>
             </div>
+            {% endif %}
         </div>
         <div class="hero-date" style="margin-top:1.2rem;">{{ today }}</div>
     </div>
@@ -355,8 +357,8 @@
     </div>
     {% endif %}
 
-    <!-- DJ/MC Live Session widget (bar businesses only) -->
-    {% if active_dj_sessions %}
+    <!-- DJ/MC Live Session widget (bar businesses only, bar-access staff only) -->
+    {% if active_dj_sessions and show_bar %}
     <div class="card mb-3 border-0" style="background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.25) !important; border-radius:12px;">
         <div class="card-body py-3 px-4">
             <div class="d-flex align-items-center justify-content-between mb-2">
@@ -399,6 +401,35 @@
     {% endif %}
 
     <!-- Stats -->
+{% if show_kitchen and not show_bar %}
+{# Kitchen-only staff: scope stock list links to kitchen items #}
+<div class="row g-3 mb-4" id="dash-stats">
+    <div class="col-4">
+        <a href="{% url 'stock_list' %}?station=kitchen" style="text-decoration:none">
+            <div class="stat-card stat-total">
+                <div class="stat-label">{% trans 'Total Items' %}</div>
+                <div class="stat-value">{{ total_items|default:"0" }}</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-4">
+        <a href="{% url 'stock_list' %}?station=kitchen&status=low_stock" style="text-decoration:none">
+            <div class="stat-card stat-low">
+                <div class="stat-label">{% trans 'Low Stock' %}</div>
+                <div class="stat-value">{{ low_stock_count|default:"0" }}</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-4">
+        <a href="{% url 'stock_list' %}?station=kitchen&status=reorder" style="text-decoration:none">
+            <div class="stat-card stat-reorder">
+                <div class="stat-label">{% trans 'Needs Reorder' %}</div>
+                <div class="stat-value">{{ reorder_count|default:"0" }}</div>
+            </div>
+        </a>
+    </div>
+</div>
+{% else %}
 <div class="row g-3 mb-4" id="dash-stats">
     <div class="col-4">
         <a href="{% url 'stock_list' %}" style="text-decoration:none">
@@ -425,6 +456,7 @@
         </a>
     </div>
 </div>
+{% endif %}
 
 {% if revenue_targets %}
 <div class="card mb-4 border-0" id="dash-targets" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important;">

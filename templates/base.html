@@ -546,6 +546,10 @@
                                 <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'promo_customer_db' %}">👥 {% trans 'Wateja Database' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'promo_compose' %}">📢 {% trans 'Tuma Promo / SMS' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
                                 {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
                                 <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
                             </ul>
@@ -743,6 +747,10 @@
                                 <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'promo_customer_db' %}">👥 {% trans 'Wateja Database' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'promo_compose' %}">📢 {% trans 'Tuma Promo / SMS' %}</a></li>
+                                <li><hr class="dropdown-divider"></li>
                                 {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
                                 <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
                             </ul>

@@ -165,6 +165,14 @@ class Customer(models.Model):
         null=True, blank=True,
         help_text='Timestamp when this customer last had their outstanding balance reach zero.',
     )
+    dob = models.DateField(
+        null=True, blank=True,
+        help_text='Date of birth — used for birthday promotions.',
+    )
+    notes = models.TextField(
+        blank=True,
+        help_text='Internal notes about this customer (e.g. preferences, contact details).',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -2819,3 +2827,49 @@ class PerformerFeedback(models.Model):
 
     def __str__(self):
         return f"⭐{self.rating} — {self.session}"
+
+
+# ── Promo / Broadcast Module ───────────────────────────────────────────────────
+
+class PromoMessage(models.Model):
+    """A promotional broadcast sent to a segment of the business's customer database."""
+
+    SEGMENT_ALL      = 'all'
+    SEGMENT_DEBTORS  = 'debtors'
+    SEGMENT_TAB      = 'tab_customers'
+    SEGMENT_REGULARS = 'regulars'
+    SEGMENT_BIRTHDAY = 'birthday'
+    SEGMENT_CUSTOM   = 'custom'
+    SEGMENT_CHOICES = [
+        (SEGMENT_ALL,      'Wateja Wote'),
+        (SEGMENT_DEBTORS,  'Wadeni Tu'),
+        (SEGMENT_TAB,      'Wateja wa Tab'),
+        (SEGMENT_REGULARS, 'Wateja wa Kawaida (waliokuja ≥3×)'),
+        (SEGMENT_BIRTHDAY, 'Siku ya Kuzaliwa (wiki hii)'),
+        (SEGMENT_CUSTOM,   'Nambari Maalum'),
+    ]
+
+    CHANNEL_SMS    = 'sms'
+    CHANNEL_INAPP  = 'in_app'
+    CHANNEL_BOTH   = 'both'
+    CHANNEL_CHOICES = [
+        (CHANNEL_SMS,   'SMS tu'),
+        (CHANNEL_INAPP, 'In-App tu'),
+        (CHANNEL_BOTH,  'SMS + In-App'),
+    ]
+
+    business        = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='promo_messages')
+    sent_by         = models.ForeignKey('auth.User', null=True, on_delete=models.SET_NULL)
+    subject         = models.CharField(max_length=120, blank=True, help_text='Short internal label for this promo (not sent to customer).')
+    message         = models.TextField(help_text='The text sent to customers.')
+    segment         = models.CharField(max_length=20, choices=SEGMENT_CHOICES, default=SEGMENT_ALL)
+    custom_phones   = models.TextField(blank=True, help_text='Comma-separated phone numbers for SEGMENT_CUSTOM.')
+    channel         = models.CharField(max_length=10, choices=CHANNEL_CHOICES, default=CHANNEL_SMS)
+    recipient_count = models.PositiveIntegerField(default=0)
+    sent_at         = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-sent_at']
+
+    def __str__(self):
+        return f"{self.subject or self.segment} — {self.sent_at.date()} ({self.recipient_count} wateja)"

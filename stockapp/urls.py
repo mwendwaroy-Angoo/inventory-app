@@ -59,6 +59,7 @@ from core.keg_views import (
     add_cups,
     tabs_list,
     update_tab_phone,
+    bulk_convert_tabs_to_debt,
     tick_entry,
     settle_tab,
     void_tab,
@@ -121,6 +122,12 @@ from core.mpesa_views import (
     register_business_c2b,
     business_payment_page,
     mpesa_qr_view,
+)
+from core.promo_views import (
+    promo_customer_db,
+    customer_update,
+    promo_compose,
+    promo_history,
 )
 from core.marketplace_views import (
     shop_home,
@@ -277,6 +284,7 @@ urlpatterns = [
     # ── Bar Tabs (Sprint 3) ───────────────────────────────────────────────────
     path("bar/tabs/", tabs_list, name="tabs_list"),
     path("bar/tabs/<int:tab_id>/phone/", update_tab_phone, name="update_tab_phone"),
+    path("bar/tabs/bulk-convert-to-debt/", bulk_convert_tabs_to_debt, name="bulk_convert_tabs_to_debt"),
     path("bar/tabs/<int:tab_id>/settle/", settle_tab, name="settle_tab"),
     path("bar/tabs/<int:tab_id>/void/", void_tab, name="void_tab"),
     path("bar/tabs/<int:tab_id>/debt/", convert_tab_to_debt, name="convert_tab_to_debt"),
@@ -377,6 +385,11 @@ urlpatterns = [
         "customers/delete/<int:customer_id>/", delete_customer, name="delete_customer"
     ),
     path("ajax/customers/", ajax_customers, name="ajax_customers"),
+    path("customers/<int:customer_id>/update/", customer_update, name="customer_update"),
+    # ── Promo / Broadcast ─────────────────────────────────────────────────────
+    path("promo/customers/", promo_customer_db, name="promo_customer_db"),
+    path("promo/compose/", promo_compose, name="promo_compose"),
+    path("promo/history/", promo_history, name="promo_history"),
     # ── Debt Tracker ──────────────────────────────────────────────────────────
     path("onboarding/seen/", mark_section_seen, name="mark_section_seen"),
     path("debt/", debt_dashboard, name="debt_dashboard"),

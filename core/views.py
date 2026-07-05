@@ -472,13 +472,30 @@ def stock_list(request):
         messages.error(request, _("No business profile found."))
         return redirect("home")
 
+    _sl_show_bar, _sl_show_kitchen = _station_scope(user_profile)
+    # ?station=kitchen param forces kitchen view (e.g. from home dashboard card links)
+    _station_param = request.GET.get("station", "")
+    if _station_param == "kitchen":
+        _sl_show_bar, _sl_show_kitchen = False, True
+
     stores = Store.objects.filter(business=user_profile.business)
+    if _sl_show_kitchen and not _sl_show_bar:
+        stores = stores.filter(is_kitchen=True)
+    elif _sl_show_bar and not _sl_show_kitchen:
+        stores = stores.filter(is_kitchen=False)
+
     selected_store_id = request.GET.get("store")
     status_filter = request.GET.get("status")
 
-    items = Item.objects.filter(store__business=user_profile.business).exclude(
-        is_keg=True
-    ).exclude(store__is_kitchen=True).order_by("material_no")
+    items = Item.objects.filter(store__business=user_profile.business).exclude(is_keg=True)
+    if _sl_show_kitchen and not _sl_show_bar:
+        items = items.filter(store__is_kitchen=True)
+    elif _sl_show_bar and not _sl_show_kitchen:
+        items = items.exclude(store__is_kitchen=True)
+    else:
+        # Owner / cross-access: show all (bar + kitchen, no keg)
+        items = items
+    items = items.order_by("material_no")
 
     if selected_store_id:
         try:

@@ -801,10 +801,20 @@ def deplete_barrel(request, barrel_id):
 
 @login_required
 def tabs_list(request):
-    """AJAX GET — returns all OPEN tabs for this business with their entries."""
+    """AJAX GET — returns all OPEN tabs for this business with their entries.
+
+    Station scoping:
+      - bar-only staff: see bar entries on any tab; food entries replaced by a cross-notice
+      - kitchen-only staff: redirected away (they use kitchen_tabs_list)
+      - cross-access staff / owner: see ALL entries on ALL tabs
+    """
     up = _get_up(request)
     if not up:
         return JsonResponse({'tabs': []})
+
+    from .views import _station_scope
+    _show_bar, _show_kitchen = _station_scope(up)
+    _see_all = _show_bar and _show_kitchen  # owner or cross-access
 
     tabs = (
         BarTab.objects
@@ -819,11 +829,36 @@ def tabs_list(request):
     result = []
     for tab in tabs:
         all_entries = list(tab.entries.all())
+        _tab_phone = (tab.customer.phone if tab.customer else '') or ''
 
-        if tab.source == 'kitchen':
-            # Food tab on the bar board — show ONLY bar (non-kitchen) items.
-            # Only include this tab if at least one bar entry exists (bar staff
-            # added alcohol to the customer's food tab via cross-counter merge).
+        if _see_all:
+            # Owner / cross-access: full visibility on all entries
+            entries = [
+                {'id': e.id, 'description': e.description, 'amount': float(e.amount),
+                 'is_paid': e.is_paid, 'payment_method': e.payment_method}
+                for e in all_entries
+            ]
+            bar_entries_count    = sum(1 for e in all_entries if e.transaction_id and e.transaction.item_id and e.transaction.item.store_id and not e.transaction.item.store.is_kitchen)
+            kitchen_entry_count  = sum(1 for e in all_entries if e.transaction_id and e.transaction.item_id and e.transaction.item.store_id and e.transaction.item.store.is_kitchen)
+            cross_notice = None
+            if tab.source == 'kitchen' and bar_entries_count:
+                cross_notice = f'+ {bar_entries_count} bar item(s)'
+            elif tab.source == 'bar' and kitchen_entry_count:
+                cross_notice = f'+ {kitchen_entry_count} food item(s)'
+            result.append({
+                'id': tab.id,
+                'customer_name': tab.customer_name,
+                'customer_phone': _tab_phone,
+                'server_name': tab.server_name,
+                'total': sum(float(e['amount']) for e in entries),
+                'unpaid_total': sum(float(e['amount']) for e in entries if not e['is_paid']),
+                'entries': entries,
+                'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+                'is_food_tab': tab.source == 'kitchen',
+                'cross_notice': cross_notice,
+            })
+        else:
+            # Bar-only staff: see only bar (non-kitchen) entries
             bar_entries = [
                 e for e in all_entries
                 if e.transaction_id
@@ -831,15 +866,19 @@ def tabs_list(request):
                 and e.transaction.item.store_id
                 and not e.transaction.item.store.is_kitchen
             ]
-            if not bar_entries:
-                continue  # no bar items on this food tab yet — skip
+            kitchen_entry_count = len(all_entries) - len(bar_entries)
+
+            # For food tabs: only show if bar items were added via cross-counter merge
+            if tab.source == 'kitchen' and not bar_entries:
+                continue
+
             entries = [
                 {'id': e.id, 'description': e.description, 'amount': float(e.amount),
                  'is_paid': e.is_paid, 'payment_method': e.payment_method}
                 for e in bar_entries
             ]
             unpaid = sum(float(e['amount']) for e in entries if not e['is_paid'])
-            _tab_phone = (tab.customer.phone if tab.customer else '') or ''
+            cross_notice = f'+ {kitchen_entry_count} food item(s) on this tab' if kitchen_entry_count else None
             result.append({
                 'id': tab.id,
                 'customer_name': tab.customer_name,
@@ -849,26 +888,8 @@ def tabs_list(request):
                 'unpaid_total': unpaid,
                 'entries': entries,
                 'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
-                'is_food_tab': True,
-            })
-        else:
-            # Bar tab — show all entries as normal
-            entries = [
-                {'id': e.id, 'description': e.description, 'amount': float(e.amount),
-                 'is_paid': e.is_paid, 'payment_method': e.payment_method}
-                for e in all_entries
-            ]
-            _tab_phone = (tab.customer.phone if tab.customer else '') or ''
-            result.append({
-                'id': tab.id,
-                'customer_name': tab.customer_name,
-                'customer_phone': _tab_phone,
-                'server_name': tab.server_name,
-                'total': float(tab.total()),
-                'unpaid_total': float(tab.unpaid_total()),
-                'entries': entries,
-                'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
-                'is_food_tab': False,
+                'is_food_tab': tab.source == 'kitchen',
+                'cross_notice': cross_notice,
             })
 
     return JsonResponse({'tabs': result})
@@ -1047,6 +1068,24 @@ def settle_tab(request, tab_id):
     settled_amount = sum(float(e.amount) for e in entries_to_settle)
     customer_phone = (request.POST.get('customer_phone') or '').strip()
 
+    # Auto-create or update Customer record on any settlement (not just credit)
+    if tab_fully_settled and tab.customer_name and not tab.customer_id:
+        _cust = Customer.objects.filter(
+            business=tab.business, name__iexact=tab.customer_name,
+        ).first()
+        if _cust is None:
+            _cust = Customer.objects.create(
+                business=tab.business,
+                name=tab.customer_name,
+                phone=customer_phone,
+                credit_approved=True,
+            )
+        elif customer_phone and not (_cust.phone or '').strip():
+            _cust.phone = customer_phone
+            _cust.save(update_fields=['phone'])
+        tab.customer = _cust
+        tab.save(update_fields=['customer'])
+
     # Issue a receipt covering only the entries just settled
     receipt_url = None
     receipt_id = None
@@ -1208,6 +1247,59 @@ def convert_tab_to_debt(request, tab_id):
         'unpaid_total': unpaid_total,
         'debt_url': f'/debt/{customer.id}/',
     })
+
+
+@login_required
+@require_POST
+def bulk_convert_tabs_to_debt(request):
+    """Convert multiple open tabs to debt in one action — typically called at shift close."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    import json as _json
+    try:
+        tab_ids = _json.loads(request.POST.get('tab_ids', '[]'))
+    except (ValueError, TypeError):
+        return JsonResponse({'ok': False, 'error': 'Orodha ya tab si sahihi.'}, status=400)
+
+    converted = 0
+    for tab_id in tab_ids:
+        try:
+            tab = BarTab.objects.get(id=int(tab_id), business=up.business, status='OPEN')
+        except (BarTab.DoesNotExist, ValueError):
+            continue
+
+        customer_name = (tab.customer_name or '').strip() or f'Tab #{tab.id}'
+        phone = ''
+        if tab.customer_id and tab.customer.phone:
+            phone = tab.customer.phone
+
+        customer = None
+        if phone:
+            customer = Customer.objects.filter(business=up.business, phone=phone).first()
+        if customer is None and customer_name:
+            customer = Customer.objects.filter(
+                business=up.business, name__iexact=customer_name,
+            ).first()
+        if customer is None:
+            customer = Customer.objects.create(
+                business=up.business, name=customer_name, phone=phone,
+                credit_approved=True,
+            )
+
+        for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
+            txn = entry.transaction
+            txn.recipient = customer.name
+            txn.payment_method = 'credit'
+            txn.save(update_fields=['recipient', 'payment_method'])
+
+        tab.customer = customer
+        tab.status = 'SETTLED'
+        tab.settled_at = timezone.now()
+        tab.save(update_fields=['customer', 'status', 'settled_at'])
+        converted += 1
+
+    return JsonResponse({'ok': True, 'converted': converted})
 
 
 # ── Cup tracking ──────────────────────────────────────────────────────────────

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Historia ya Promo — {{ request.user.userprofile.business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.promo-card {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    padding: .75rem 1rem;
+    margin-bottom: .5rem;
+}
+.promo-subject { font-weight:600; color:var(--pearl); font-size:.9rem; }
+.promo-meta { font-size:.76rem; color:#888; margin-top:.2rem; }
+.promo-msg { font-size:.82rem; color:#b0b0b0; margin-top:.4rem; white-space:pre-wrap; }
+.seg-chip {
+    display:inline-block; padding:.1rem .4rem; border-radius:4px;
+    font-size:.7rem; font-weight:600;
+    background:rgba(201,168,76,.1); color:#c9a84c;
+}
+.chan-chip {
+    display:inline-block; padding:.1rem .4rem; border-radius:4px;
+    font-size:.7rem;
+    background:rgba(76,175,80,.08); color:#4caf50;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3" style="max-width:760px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem; margin-bottom:1rem;">
+    <h5 style="color:var(--gold); margin:0;">📬 Historia ya Promo</h5>
+    <div style="display:flex; gap:.5rem;">
+      <a href="{% url 'promo_customer_db' %}" class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">👥 Wateja</a>
+      <a href="{% url 'promo_compose' %}" class="btn btn-gold btn-sm">+ Promo Mpya</a>
+    </div>
+  </div>
+
+  {% for p in promos %}
+  <div class="promo-card">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:.4rem;">
+      <div>
+        <div class="promo-subject">{{ p.subject|default:"(Bila kichwa)" }}</div>
+        <div class="promo-meta">
+          <span class="seg-chip">{{ p.get_segment_display }}</span>
+          <span class="chan-chip">{{ p.get_channel_display }}</span>
+          &nbsp;·&nbsp; {{ p.recipient_count }} wateja
+          &nbsp;·&nbsp; {{ p.sent_at|date:"d M Y H:i" }}
+          {% if p.sent_by %}&nbsp;·&nbsp; na {{ p.sent_by.get_full_name|default:p.sent_by.username }}{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="promo-msg">{{ p.message|truncatewords:40 }}</div>
+  </div>
+  {% empty %}
+  <div style="text-align:center; padding:3rem 0; color:#555;">
+    <div style="font-size:2.5rem; margin-bottom:.5rem;">📭</div>
+    <div>Bado haujatuma promo yoyote.</div>
+    <div style="margin-top:.75rem;">
+      <a href="{% url 'promo_compose' %}" class="btn btn-gold btn-sm">📢 Anza Sasa</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

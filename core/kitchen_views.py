@@ -15,13 +15,14 @@ import logging
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import Prefetch
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .models import (
-    BarTab, BarTabEntry, Item, ItemPortionPreset, KitchenBatch,
+    BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KitchenBatch,
     KitchenConsumableLog, ProduceBunch, Receipt, Store, Transaction,
 )
 from . import keg_metrics
@@ -797,13 +798,18 @@ def kitchen_receive(request):
 
 @login_required
 def tab_check_api(request):
-    """Return any open BarTab rows matching a customer name — used for cross-counter merge prompt."""
+    """Return open tabs, prior debt, and duplicate-name warnings for a customer name.
+
+    Used for cross-counter merge prompt, prior-debt gate, and name dedup.
+    """
     up = _get_up(request)
     if not up:
-        return JsonResponse({'tabs': []})
+        return JsonResponse({'tabs': [], 'prior_debt': None, 'similar_names': []})
     name = (request.GET.get('customer') or '').strip()
     if not name or len(name) < 2:
-        return JsonResponse({'tabs': []})
+        return JsonResponse({'tabs': [], 'prior_debt': None, 'similar_names': []})
+
+    # Open tabs for this customer (exact match, case-insensitive)
     tabs = BarTab.objects.filter(
         business=up.business,
         customer_name__iexact=name,
@@ -819,40 +825,110 @@ def tab_check_api(request):
             'total':         float(tab.total()),
             'opened_at':     tab.opened_at.strftime('%H:%M'),
         })
-    return JsonResponse({'tabs': result})
+
+    # Check for outstanding debt under this customer name
+    prior_debt = None
+    from .debt_views import _get_customer_debt_data
+    customer = Customer.objects.filter(
+        business=up.business, name__iexact=name,
+    ).first()
+    if customer:
+        debt_data = _get_customer_debt_data(customer, up.business, scope='all')
+        if debt_data['outstanding'] > 0:
+            prior_debt = {
+                'outstanding': debt_data['outstanding'],
+                'has_overdue': debt_data.get('has_overdue', False),
+                'customer_id': customer.id,
+                'is_defaulter': getattr(customer, 'is_defaulter', False),
+            }
+
+    # Detect other open tabs with similar (but not identical) names — possible duplicates
+    all_open_tabs = BarTab.objects.filter(
+        business=up.business, status='OPEN',
+    ).exclude(customer_name__iexact=name).values_list('customer_name', flat=True).distinct()
+    name_lower = name.lower()
+    similar_names = []
+    for other_name in all_open_tabs:
+        if not other_name:
+            continue
+        other_lower = other_name.lower()
+        # Flag if one name is a prefix of the other, or they share ≥4 chars from the start
+        if (other_lower.startswith(name_lower[:4]) or name_lower.startswith(other_lower[:4])):
+            if other_lower != name_lower:
+                similar_names.append(other_name)
+
+    return JsonResponse({
+        'tabs': result,
+        'prior_debt': prior_debt,
+        'similar_names': similar_names[:5],  # cap at 5
+    })
 
 
 # ── Food tabs API (reuses same settle/void/debt endpoints as bar tabs) ─────────
 
 @login_required
 def kitchen_tabs_list(request):
-    """AJAX GET — open food tabs for this business."""
+    """AJAX GET — open food tabs for this business.
+
+    Station scoping:
+      - kitchen-only staff: see only food (kitchen) entries; bar entries replaced by cross-notice
+      - cross-access staff / owner: see ALL entries
+    """
     up = _get_up(request)
     if not up:
         return JsonResponse({'tabs': []})
 
+    from .views import _station_scope
+    _show_bar, _show_kitchen = _station_scope(up)
+    _see_all = _show_bar and _show_kitchen
+
     food_tabs = (
         BarTab.objects
         .filter(business=up.business, source='kitchen', status='OPEN')
-        .prefetch_related('entries')
+        .prefetch_related(
+            Prefetch('entries',
+                     queryset=BarTabEntry.objects.select_related('transaction__item__store'))
+        )
         .order_by('-opened_at')
     )
     result = []
     for tab in food_tabs:
-        entries = [
-            {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
-            for e in tab.entries.all()
-        ]
+        all_entries = list(tab.entries.all())
         _tab_phone = (tab.customer.phone if tab.customer else '') or ''
+
+        if _see_all:
+            entries = [
+                {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
+                for e in all_entries
+            ]
+            bar_count = sum(1 for e in all_entries if e.transaction_id and e.transaction.item_id and e.transaction.item.store_id and not e.transaction.item.store.is_kitchen)
+            cross_notice = f'+ {bar_count} bar item(s)' if bar_count else None
+        else:
+            # Kitchen-only staff: show only food items
+            kitchen_entries = [
+                e for e in all_entries
+                if not e.transaction_id
+                or not e.transaction.item_id
+                or not e.transaction.item.store_id
+                or e.transaction.item.store.is_kitchen
+            ]
+            bar_count = len(all_entries) - len(kitchen_entries)
+            entries = [
+                {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
+                for e in kitchen_entries
+            ]
+            cross_notice = f'+ {bar_count} bar item(s) on this tab' if bar_count else None
+
         result.append({
             'id': tab.id,
             'customer_name': tab.customer_name,
             'customer_phone': _tab_phone,
-            'total': float(tab.total()),
-            'unpaid_total': float(tab.unpaid_total()),
+            'total': sum(float(e['amount']) for e in entries),
+            'unpaid_total': sum(float(e['amount']) for e in entries if not e['is_paid']),
             'entries': entries,
             'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
             'is_bar_tab': False,
+            'cross_notice': cross_notice,
         })
 
     # Bar tabs that have kitchen entries — show read-only (kitchen items only).

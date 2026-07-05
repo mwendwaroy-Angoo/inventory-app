@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Wateja — {{ request.user.userprofile.business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.cust-card {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    padding: .75rem 1rem;
+    margin-bottom: .5rem;
+    transition: border-color .15s;
+}
+.cust-card:hover { border-color: rgba(201,168,76,.3); }
+.cust-name { font-weight: 600; color: var(--pearl); font-size: .95rem; }
+.cust-meta { font-size: .78rem; color: #b0b0b0; margin-top: .15rem; }
+.cust-badge { display: inline-block; padding: .15rem .45rem; border-radius: 4px; font-size: .7rem; font-weight: 600; }
+.badge-birthday { background: rgba(201,168,76,.15); color: #c9a84c; }
+.badge-defaulter { background: rgba(192,57,90,.15); color: #c0395a; }
+.badge-new { background: rgba(76,175,80,.1); color: #4caf50; }
+.edit-row { display: none; background: #1a1a1a; border-top: 1px solid #2a2a2a; margin: .5rem -1rem -.75rem; padding: .6rem 1rem; border-radius: 0 0 10px 10px; }
+.edit-row input, .edit-row textarea { background: #111; border: 1px solid #3a3a3a; color: #f0ece4; border-radius: 6px; padding: .3rem .5rem; font-size: .8rem; width: 100%; margin-bottom: .35rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3" style="max-width:860px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem; margin-bottom:1rem;">
+    <div>
+      <h5 style="color:var(--gold); margin:0;">👥 Wateja</h5>
+      <div style="color:#b0b0b0; font-size:.8rem;">{{ total }} waliopatikana</div>
+    </div>
+    <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+      {% if is_owner %}
+      <a href="{% url 'promo_compose' %}" class="btn btn-gold btn-sm">📢 Tuma Promo</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Search -->
+  <form method="get" style="margin-bottom:1rem;">
+    <div style="display:flex; gap:.5rem;">
+      <input name="q" value="{{ search }}" placeholder="Tafuta jina au nambari..."
+             style="flex:1; background:#2a2a2a; border:1px solid #3a3a3a; color:#f0ece4;
+                    border-radius:8px; padding:.4rem .75rem; font-size:.85rem;">
+      <button type="submit" class="btn btn-sm" style="background:#3a3a3a; border:1px solid #444; color:#b0b0b0;">🔍</button>
+      {% if search %}<a href="{% url 'promo_customer_db' %}" class="btn btn-sm" style="background:#3a3a3a; border:1px solid #444; color:#b0b0b0;">✕</a>{% endif %}
+    </div>
+  </form>
+
+  {% for row in customer_rows %}
+  {% with c=row.customer %}
+  <div class="cust-card" id="cust-{{ c.id }}">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:.5rem; flex-wrap:wrap;">
+      <div style="flex:1; min-width:0;">
+        <div class="cust-name">
+          {{ c.name }}
+          {% if row.is_birthday_week %}<span class="cust-badge badge-birthday">🎂 Birthday</span>{% endif %}
+          {% if c.is_defaulter %}<span class="cust-badge badge-defaulter">⚠ Defaulter</span>{% endif %}
+          {% if row.txn_count == 0 %}<span class="cust-badge badge-new">✦ Mpya</span>{% endif %}
+        </div>
+        <div class="cust-meta">
+          {% if c.phone %}📞 {{ c.phone }}{% else %}<span style="color:#555;">Simu haijawekwa</span>{% endif %}
+          {% if row.last_seen %}&nbsp;·&nbsp; Mwisho: {{ row.last_seen }}
+            {% if row.days_since is not None %}(siku {{ row.days_since }}){% endif %}
+          {% endif %}
+          &nbsp;·&nbsp; Manunuzi: {{ row.txn_count }}
+        </div>
+        {% if c.notes %}
+        <div style="font-size:.76rem; color:#888; margin-top:.2rem; font-style:italic;">{{ c.notes }}</div>
+        {% endif %}
+      </div>
+      <div style="display:flex; gap:.4rem; flex-shrink:0;">
+        <a href="{% url 'customer_debt_profile' c.id %}" class="btn btn-sm"
+           style="background:rgba(201,168,76,.08); border:1px solid rgba(201,168,76,.2); color:#c9a84c; font-size:.72rem; padding:.2rem .55rem;">Deni ↗</a>
+        {% if is_owner %}
+        <button onclick="toggleEdit({{ c.id }})" class="btn btn-sm"
+                style="background:rgba(255,255,255,.04); border:1px solid #3a3a3a; color:#b0b0b0; font-size:.72rem; padding:.2rem .55rem;">✏ Hariri</button>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if is_owner %}
+    <div class="edit-row" id="edit-{{ c.id }}">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:.4rem;">
+        <div>
+          <label style="font-size:.72rem; color:#888;">Simu</label>
+          <input type="tel" id="ep-{{ c.id }}" value="{{ c.phone }}">
+        </div>
+        <div>
+          <label style="font-size:.72rem; color:#888;">Siku ya Kuzaliwa</label>
+          <input type="date" id="ed-{{ c.id }}" value="{{ c.dob|default:'' }}">
+        </div>
+      </div>
+      <label style="font-size:.72rem; color:#888; display:block; margin-top:.3rem;">Maelezo (ya ndani)</label>
+      <textarea id="en-{{ c.id }}" rows="2" placeholder="Maelezo kuhusu mteja huu...">{{ c.notes }}</textarea>
+      <div style="display:flex; gap:.4rem; margin-top:.3rem;">
+        <button onclick="saveCustomer({{ c.id }})" class="btn btn-gold btn-sm" style="font-size:.75rem;">Hifadhi</button>
+        <button onclick="toggleEdit({{ c.id }})" class="btn btn-sm" style="background:#3a3a3a; border:1px solid #444; color:#b0b0b0; font-size:.75rem;">Ghairi</button>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endwith %}
+  {% empty %}
+  <div style="text-align:center; padding:3rem 0; color:#666;">
+    <div style="font-size:2rem; margin-bottom:.5rem;">👥</div>
+    <div>Hakuna wateja waliopatikana{% if search %} kwa "{{ search }}"{% endif %}.</div>
+    <div style="font-size:.8rem; margin-top:.5rem; color:#555;">Wateja wanaundwa moja kwa moja wakati wa mauzo ya tab au deni.</div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var CSRF = "{{ csrf_token }}";
+
+function toggleEdit(id) {
+  var el = document.getElementById('edit-' + id);
+  el.style.display = el.style.display === 'block' ? 'none' : 'block';
+}
+
+function saveCustomer(id) {
+  var phone = document.getElementById('ep-' + id).value.trim();
+  var dob   = document.getElementById('ed-' + id).value.trim();
+  var notes = document.getElementById('en-' + id).value.trim();
+  var body  = new URLSearchParams({phone:phone, dob:dob, notes:notes, csrfmiddlewaretoken:CSRF});
+  fetch('/customers/' + id + '/update/', {method:'POST', body:body})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) {
+        document.getElementById('edit-' + id).style.display = 'none';
+      } else {
+        alert(d.error || 'Hitilafu.');
+      }
+    })
+    .catch(function(){ alert('Hitilafu ya mtandao.'); });
+}
+</script>
+{% endblock %}

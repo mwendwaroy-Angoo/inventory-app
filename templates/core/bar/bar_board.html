@@ -1568,6 +1568,7 @@
   /* ── Constants from template context ───────────────────── */
   var KegRevMult  = {{ business.keg_revenue_multiplier }};
   var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
+  var CAN_AUTH_TAB = {% if is_owner or user.userprofile.can_authorize_tab_accumulation %}true{% else %}false{% endif %};
   var CSRF        = "{{ csrf_token }}";
   /* Seeded from server — updated dynamically once shift API responds */
   var _myShiftOpen = {% if has_my_shift %}true{% else %}false{% endif %};
@@ -2034,6 +2035,10 @@
         document.getElementById('tab-customer-input').style.borderColor = '#c0395a';
         return;
       }
+      if (window._barTabBlocked) {
+        showToast('Siwezi kuendelea — angalia onyo la deni.', true);
+        return;
+      }
       document.getElementById('tab-customer-input').style.borderColor = '#444';
       document.getElementById('keg-tab-customer-input').value = custName;
       document.getElementById('keg-tab-server-input').value   =
@@ -2343,6 +2348,7 @@
           (tab.server_name
             ? '<div class="tab-server-label">via ' + tab.server_name + ' · ' + tab.opened_at + '</div>'
             : '<div class="tab-server-label">' + tab.opened_at + '</div>') +
+          (tab.cross_notice ? '<div style="font-size:.72rem;color:#f39c12;background:rgba(243,156,18,.07);border:1px solid rgba(243,156,18,.2);border-radius:5px;padding:.15rem .5rem;margin-bottom:.3rem;">🔀 ' + tab.cross_notice + '</div>' : '') +
           '<div style="display:flex;gap:.3rem;align-items:center;margin:.3rem 0;">' +
           '<input type="tel" id="tab-phone-edit-' + tab.id + '" value="' + (tab.customer_phone || '') + '" ' +
           'placeholder="📞 Simu (kwa SMS risiti)" ' +
@@ -3518,6 +3524,31 @@
               barrelHtml +
               '</div>';
           }
+          // Show open tabs warning — staff must convert or note them before leaving
+          if (d.open_tabs && d.open_tabs.length > 0) {
+            var tabsWarnEl = document.getElementById('close-shift-tabs-warn');
+            if (!tabsWarnEl) {
+              tabsWarnEl = document.createElement('div');
+              tabsWarnEl.id = 'close-shift-tabs-warn';
+              resEl.parentNode.insertBefore(tabsWarnEl, resEl.nextSibling);
+            }
+            var tabRows = d.open_tabs.map(function(t) {
+              return '<div style="display:flex;justify-content:space-between;align-items:center;padding:.3rem 0;border-bottom:1px solid #2a2a2a;">' +
+                '<span style="color:#f0ece4;font-size:.8rem;">👤 ' + t.customer_name + '</span>' +
+                '<span style="color:#b0b0b0;font-size:.75rem;">Ilianza ' + t.opened_at + '</span>' +
+                '</div>';
+            }).join('');
+            tabsWarnEl.innerHTML =
+              '<div style="margin-top:.75rem;padding:.6rem .8rem;background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.3);border-radius:8px;">' +
+              '<div style="color:#ff9800;font-size:.82rem;font-weight:600;margin-bottom:.4rem;">⚠ Tab ' + d.open_tabs.length + ' za wateja bado ziko wazi</div>' +
+              tabRows +
+              '<div style="margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;">' +
+              '<button onclick="window.bulkConvertTabsToDebt([' + d.open_tabs.map(function(t){return t.id;}).join(',') + '])" ' +
+              'style="padding:.35rem .8rem;background:rgba(192,57,90,0.15);border:1px solid rgba(192,57,90,0.4);border-radius:6px;color:#c0395a;font-size:.77rem;cursor:pointer;">💳 Geuza Zote Deni</button>' +
+              '<span style="color:#666;font-size:.72rem;align-self:center;">au funga mwenyewe kila tab kwenye orodha ya tab</span>' +
+              '</div></div>';
+          }
+
           // Hide close button; show Done + Stock Take
           btn.style.display = 'none';
           var doneBtn = document.createElement('button');
@@ -3676,6 +3707,14 @@
     radio.addEventListener('change', function () {
       var tf = document.getElementById('tab-fields');
       if (tf) tf.style.display = this.value === 'tab' ? 'block' : 'none';
+      if (this.value !== 'tab') {
+        // Reset any tab block when switching to non-tab payment
+        window._barTabBlocked = false;
+        var sellBtn = document.getElementById('keg-sell-btn');
+        if (sellBtn) sellBtn.disabled = false;
+        var hint = document.getElementById('bar-merge-hint');
+        if (hint) { hint.style.display = 'none'; hint.style.background = ''; hint.style.borderColor = ''; }
+      }
       // If Tab selected and customer name already typed, run cross-tab check immediately
       if (this.value === 'tab') {
         var tabInput = document.getElementById('tab-customer-input');
@@ -4006,26 +4045,73 @@ window._barMergeTabId = '';
   tabInput.addEventListener('blur', function() {
     var name = this.value.trim();
     hint.style.display = 'none';
+    hint.style.background = '';
+    hint.style.borderColor = '';
+    hint.style.color = '';
     window._barMergeTabId = '';
+    window._barTabBlocked = false;
+    var sellBtn = document.getElementById('keg-sell-btn');
+    if (sellBtn) sellBtn.disabled = false;
     if (!name || name.length < 2) return;
     var method = document.querySelector('input[name="keg_payment"]:checked');
     if (!method || method.value !== 'tab') return;
     fetch('/kitchen/tab/check/?customer=' + encodeURIComponent(name))
       .then(function(r){ return r.json(); })
       .then(function(data){
-        // Only prompt for cross-counter kitchen tabs
         var kitchenTabs = (data.tabs || []).filter(function(t){ return t.source === 'kitchen'; });
-        if (!kitchenTabs.length) return;
-        var t = kitchenTabs[0];
-        hint.innerHTML =
-          '⚠️ <strong>' + t.customer_name + '</strong> ana Kitchen tab iliyo wazi' +
-          ' (KES ' + t.total.toLocaleString() + ', tangu ' + t.opened_at + ').<br>' +
-          '<a href="#" style="color:#c9a84c;" onclick="barAcceptMerge(' + t.id + ',\'' +
-            t.customer_name.replace(/'/g,'') + '\'); return false;">' +
-            '✓ Ongeza kwa Kitchen tab hiyo</a>' +
-          ' &nbsp;·&nbsp; <a href="#" style="color:#888;" ' +
-          'onclick="barDeclineMerge(); return false;">Fungua Bar tab mpya</a>';
-        hint.style.display = 'block';
+        var priorDebt   = data.prior_debt || null;
+        var similarNames = data.similar_names || [];
+        var hintParts = [];
+
+        // Cross-counter kitchen tab merge prompt
+        if (kitchenTabs.length) {
+          var t = kitchenTabs[0];
+          hintParts.push(
+            '🍗 <strong>' + t.customer_name + '</strong> ana Kitchen tab iliyo wazi' +
+            ' (KES ' + t.total.toLocaleString() + ', tangu ' + t.opened_at + ').<br>' +
+            '<a href="#" style="color:#c9a84c;" onclick="barAcceptMerge(' + t.id + ',\'' +
+              t.customer_name.replace(/'/g,'') + '\'); return false;">' +
+              '✓ Ongeza kwa Kitchen tab hiyo</a>' +
+            ' &nbsp;·&nbsp; <a href="#" style="color:#888;" ' +
+            'onclick="barDeclineMerge(); return false;">Fungua Bar tab mpya</a>'
+          );
+        }
+
+        // Prior outstanding debt gate
+        if (priorDebt && priorDebt.outstanding > 0) {
+          var debtMsg = '💳 <strong>' + name + '</strong> ana deni ya zamani ya ' +
+            '<strong style="color:#c0395a;">KES ' + Math.round(priorDebt.outstanding) + '</strong>.';
+          if (priorDebt.is_defaulter) {
+            debtMsg += ' <span style="color:#c0395a;font-weight:600;">⛔ Amesimamishwa — ulipa kwanza.</span>';
+            window._barTabBlocked = true;
+            if (sellBtn) sellBtn.disabled = true;
+          } else if (!CAN_AUTH_TAB) {
+            debtMsg += ' <span style="color:#ff9800;">Unahitaji idhini ya mmiliki kuendelea.</span>';
+            window._barTabBlocked = true;
+            if (sellBtn) sellBtn.disabled = true;
+          } else {
+            debtMsg += ' <a href="/debt/' + priorDebt.customer_id + '/" target="_blank" ' +
+              'style="color:#c9a84c;">Angalia Deni ↗</a>';
+          }
+          hintParts.push(debtMsg);
+        }
+
+        // Duplicate name warning
+        if (similarNames.length) {
+          hintParts.push(
+            '🔍 Majina yanayofanana kwenye tab zilizo wazi: <strong>' +
+            similarNames.join(', ') + '</strong> — hakikisha ni mteja sahihi.'
+          );
+        }
+
+        if (hintParts.length) {
+          hint.innerHTML = hintParts.join('<hr style="border-color:#2a2a2a;margin:.4rem 0;">');
+          hint.style.display = 'block';
+          if (window._barTabBlocked) {
+            hint.style.background = 'rgba(192,57,90,0.08)';
+            hint.style.borderColor = 'rgba(192,57,90,0.3)';
+          }
+        }
       })
       .catch(function(){});
   });
@@ -4636,6 +4722,34 @@ window.barDeclineMerge = function() {
       if (btn) { btn.disabled = false; btn.textContent = 'SMS Wateja'; }
     });
   };
+  // Bulk convert open tabs to debt after shift close
+  window.bulkConvertTabsToDebt = function (tabIds) {
+    if (!tabIds || !tabIds.length) return;
+    if (!confirm('Geuza tab zote ' + tabIds.length + ' kuwa deni? Wateja wataoneshwa katika orodha ya madeni.')) return;
+    var btn = event && event.target ? event.target : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Inabadilisha...'; }
+    var fd = new FormData();
+    fd.append('tab_ids', JSON.stringify(tabIds));
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('/bar/tabs/bulk-convert-to-debt/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var warnEl = document.getElementById('close-shift-tabs-warn');
+        if (d.ok) {
+          if (warnEl) {
+            warnEl.innerHTML = '<div style="padding:.5rem .8rem;background:rgba(76,175,80,0.08);border:1px solid rgba(76,175,80,0.3);border-radius:8px;color:#4caf50;font-size:.8rem;">' +
+              '✓ Tab ' + d.converted + ' zimebadilishwa kuwa deni. Madeni yanapatikana kwenye orodha ya Wadeni.</div>';
+          }
+        } else {
+          if (btn) { btn.disabled = false; btn.textContent = '💳 Geuza Zote Deni'; }
+          alert(d.error || 'Hitilafu.');
+        }
+      })
+      .catch(function () {
+        if (btn) { btn.disabled = false; btn.textContent = '💳 Geuza Zote Deni'; }
+      });
+  };
+
 }());
 </script>
 {% endblock %}

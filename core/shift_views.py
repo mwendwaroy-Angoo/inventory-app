@@ -559,6 +559,23 @@ def close_shift(request, shift_id):
             continue
 
     rec = _reconcile(shift)
+
+    # Detect open tabs for this station so the UI can warn staff before they leave
+    from .models import BarTab
+    _is_kitchen_shift = bool(shift.store and shift.store.is_kitchen)
+    _tab_source = 'kitchen' if _is_kitchen_shift else 'bar'
+    open_tabs_qs = BarTab.objects.filter(
+        business=up.business, status='OPEN', source=_tab_source
+    ).values('id', 'customer_name', 'opened_at')
+    open_tabs_list = [
+        {
+            'id': t['id'],
+            'customer_name': t['customer_name'] or '—',
+            'opened_at': timezone.localtime(t['opened_at']).strftime('%H:%M'),
+        }
+        for t in open_tabs_qs
+    ]
+
     return JsonResponse({
         'ok': True,
         'expected_cash':        rec['expected_cash'],
@@ -569,6 +586,8 @@ def close_shift(request, shift_id):
         'offline_sales_amount': float(offline_amt),
         'offline_sales_note':   offline_note,
         'weight_readings':      weight_readings,
+        'open_tabs':            open_tabs_list,
+        'open_tabs_count':      len(open_tabs_list),
     })
 
 

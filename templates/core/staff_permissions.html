@@ -172,6 +172,27 @@
 
         {% endif %}
 
+        <!-- Tab Accumulation Authorization — visible for all keg/kitchen businesses -->
+        {% if biz_profile.modules.keg or biz_profile.modules.kitchen %}
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-3" style="margin-top:1rem;padding-top:1rem;border-top:1px solid #2a2a2a;">
+            <div>
+                <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                    💳 {% trans 'Authorize Tab for Customers with Debt' %}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                    {% trans "Allow this staff member to open a new tab for a customer who already has outstanding debt. By default, only the owner can approve this." %}
+                </div>
+            </div>
+            <div class="form-check form-switch" style="padding-top:.25rem;">
+                <input type="checkbox" name="can_authorize_tab_accumulation"
+                       id="can_authorize_tab_accumulation"
+                       class="form-check-input" role="switch"
+                       style="width:3rem; height:1.5rem; cursor:pointer;"
+                       {% if staff_profile.can_authorize_tab_accumulation %}checked{% endif %}>
+            </div>
+        </div>
+        {% endif %}
+
         {% if not biz_profile.modules.kitchen and not biz_profile.modules.keg %}
         <!-- Fallback row when neither module is active (no cross-module toggles needed) -->
         {% endif %}

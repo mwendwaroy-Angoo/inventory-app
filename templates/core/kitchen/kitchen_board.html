@@ -1357,27 +1357,71 @@
     var mergeInput = document.getElementById('kb-merge-tab-id');
     var hint       = document.getElementById('kb-merge-hint');
     if (!nameInput) return;
+    var _kbTabBlocked = false;
     nameInput.addEventListener('blur', function() {
       var name = this.value.trim();
       hint.style.display = 'none';
+      hint.style.background = '';
+      hint.style.borderColor = '';
+      hint.style.color = '';
       mergeInput.value = '';
+      _kbTabBlocked = false;
       if (!name || name.length < 2 || _pm !== 'food_tab') return;
       fetch('/kitchen/tab/check/?customer=' + encodeURIComponent(name))
         .then(function(r){ return r.json(); })
         .then(function(data){
-          // Only prompt for cross-counter tabs (bar tab when adding food tab)
           var barTabs = (data.tabs || []).filter(function(t){ return t.source === 'bar'; });
-          if (!barTabs.length) return;
-          var t = barTabs[0];
-          var tabDetail = {% if can_access_bar %}' (KES ' + t.total.toLocaleString() + ', tangu ' + t.opened_at + ')'{% else %}' (tangu ' + t.opened_at + ')'{% endif %};
-          hint.innerHTML =
-            '⚠️ <strong>' + t.customer_name + '</strong> ana Bar tab iliyo wazi' + tabDetail + '.<br>' +
-            '<a href="#" style="color:#c9a84c;" onclick="kbAcceptMerge(' + t.id + ',\'' +
-              t.customer_name.replace(/'/g,'') + '\'); return false;">' +
-              '✓ Ongeza kwa Bar tab hiyo</a>' +
-            ' &nbsp;·&nbsp; <a href="#" style="color:#888;" ' +
-            'onclick="kbDeclineMerge(); return false;">Fungua Food tab mpya</a>';
-          hint.style.display = 'block';
+          var priorDebt   = data.prior_debt || null;
+          var similarNames = data.similar_names || [];
+          var hintParts = [];
+
+          // Cross-counter bar tab merge prompt
+          if (barTabs.length) {
+            var t = barTabs[0];
+            var tabDetail = {% if can_access_bar %}' (KES ' + t.total.toLocaleString() + ', tangu ' + t.opened_at + ')'{% else %}' (tangu ' + t.opened_at + ')'{% endif %};
+            hintParts.push(
+              '🍺 <strong>' + t.customer_name + '</strong> ana Bar tab iliyo wazi' + tabDetail + '.<br>' +
+              '<a href="#" style="color:#c9a84c;" onclick="kbAcceptMerge(' + t.id + ',\'' +
+                t.customer_name.replace(/'/g,'') + '\'); return false;">' +
+                '✓ Ongeza kwa Bar tab hiyo</a>' +
+              ' &nbsp;·&nbsp; <a href="#" style="color:#888;" ' +
+              'onclick="kbDeclineMerge(); return false;">Fungua Food tab mpya</a>'
+            );
+          }
+
+          // Prior outstanding debt gate
+          if (priorDebt && priorDebt.outstanding > 0) {
+            var CAN_AUTH = {% if is_owner or user.userprofile.can_authorize_tab_accumulation %}true{% else %}false{% endif %};
+            var debtMsg = '💳 <strong>' + name + '</strong> ana deni ya zamani ya ' +
+              '<strong style="color:#c0395a;">KES ' + Math.round(priorDebt.outstanding) + '</strong>.';
+            if (priorDebt.is_defaulter) {
+              debtMsg += ' <span style="color:#c0395a;font-weight:600;">⛔ Amesimamishwa — ulipa kwanza.</span>';
+              _kbTabBlocked = true;
+            } else if (!CAN_AUTH) {
+              debtMsg += ' <span style="color:#ff9800;">Unahitaji idhini ya mmiliki kuendelea.</span>';
+              _kbTabBlocked = true;
+            } else {
+              debtMsg += ' <a href="/debt/' + priorDebt.customer_id + '/" target="_blank" style="color:#c9a84c;">Angalia Deni ↗</a>';
+            }
+            hintParts.push(debtMsg);
+          }
+
+          // Duplicate name warning
+          if (similarNames.length) {
+            hintParts.push(
+              '🔍 Majina yanayofanana kwenye tab zilizo wazi: <strong>' +
+              similarNames.join(', ') + '</strong> — hakikisha ni mteja sahihi.'
+            );
+          }
+
+          if (hintParts.length) {
+            hint.innerHTML = hintParts.join('<hr style="border-color:#2a2a2a;margin:.4rem 0;">');
+            hint.style.display = 'block';
+            if (_kbTabBlocked) {
+              hint.style.background = 'rgba(192,57,90,0.08)';
+              hint.style.borderColor = 'rgba(192,57,90,0.3)';
+            }
+          }
         })
         .catch(function(){});
     });
@@ -1634,6 +1678,10 @@
       showToast('Ingiza jina la mteja.');
       return;
     }
+    if (_kbTabBlocked && (_pm==='food_tab'||_pm==='bar_tab')) {
+      showToast('Siwezi kuendelea — angalia onyo la deni.');
+      return;
+    }
     if (_pm === 'credit' && !creditName) {
       document.getElementById('kb-credit-name').focus();
       showToast('Ingiza jina la mteja kwa deni.');
@@ -1825,6 +1873,7 @@
              '<div style="display:flex;justify-content:space-between;margin-bottom:.35rem;">' +
              '<strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +
              '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
+             (tab.cross_notice ? '<div style="font-size:.72rem;color:#f39c12;background:rgba(243,156,18,.07);border:1px solid rgba(243,156,18,.2);border-radius:5px;padding:.15rem .5rem;margin-bottom:.3rem;">🔀 ' + tab.cross_notice + '</div>' : '') +
              '<div style="display:flex;gap:.3rem;align-items:center;margin-bottom:.35rem;">' +
              '<input type="tel" id="kb-tab-phone-edit-' + tab.id + '" value="' + (tab.customer_phone || '') + '" ' +
              'placeholder="📞 Simu (hiari)" ' +
@@ -2042,7 +2091,7 @@
     var errEl = document.getElementById('kb-deni-error');
     if (!name) { errEl.textContent = 'Ingiza jina la mteja.'; errEl.style.display='block'; return; }
     var body = new URLSearchParams({customer_name:name, phone:phone, csrfmiddlewaretoken:CSRF});
-    fetch('/bar/tabs/' + _deniTabId + '/convert-to-debt/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+    fetch('/bar/tabs/' + _deniTabId + '/debt/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
       .then(function(r){ return r.json(); })
       .then(function(d){
         bootstrap.Modal.getInstance(document.getElementById('kbDeniModal')).hide();

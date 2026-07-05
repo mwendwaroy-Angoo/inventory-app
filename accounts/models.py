@@ -371,6 +371,11 @@ class UserProfile(models.Model):
         help_text='Kitchen staff may receive stock (Pata Stok) on the kitchen board. Off by default — grant explicitly when owner trusts staff with stock intake.'
     )
 
+    can_authorize_tab_accumulation = models.BooleanField(
+        default=False,
+        help_text='Staff may approve tab orders for customers who already have outstanding debt. Owner-only by default.'
+    )
+
     # ── Session Control ────────────────────────────────────────────────
     current_session_key = models.CharField(
         max_length=40, blank=True,

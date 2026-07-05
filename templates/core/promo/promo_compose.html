@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}Tuma Promo — {{ request.user.userprofile.business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.seg-tile {
+    background: #2a2a2a;
+    border: 2px solid #3a3a3a;
+    border-radius: 10px;
+    padding: .65rem .9rem;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+}
+.seg-tile.selected {
+    border-color: var(--gold);
+    background: rgba(201,168,76,.07);
+}
+.seg-tile .seg-name { font-weight: 600; color: var(--pearl); font-size: .85rem; }
+.seg-tile .seg-count { color: #c9a84c; font-size: .78rem; margin-top: .15rem; }
+.seg-tile .seg-desc { color: #888; font-size: .73rem; margin-top: .15rem; }
+.chan-btn {
+    padding: .4rem 1rem;
+    background: #2a2a2a;
+    border: 2px solid #3a3a3a;
+    border-radius: 8px;
+    color: #b0b0b0;
+    cursor: pointer;
+    font-size: .82rem;
+    transition: border-color .15s, color .15s;
+}
+.chan-btn.selected { border-color: var(--gold); color: var(--gold); }
+.compose-box {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+label.field-label { font-size: .8rem; color: #888; display:block; margin-bottom:.3rem; }
+.form-inp {
+    background: #111;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    color: #f0ece4;
+    padding: .5rem .75rem;
+    font-size: .85rem;
+    width: 100%;
+}
+.form-inp:focus { outline: none; border-color: rgba(201,168,76,.4); }
+.char-counter { font-size: .72rem; color: #555; text-align:right; margin-top: .2rem; }
+.tag-btn {
+    padding: .2rem .5rem;
+    background: rgba(201,168,76,.08);
+    border: 1px solid rgba(201,168,76,.2);
+    border-radius: 4px;
+    color: #c9a84c;
+    font-size: .73rem;
+    cursor: pointer;
+}
+.preview-box {
+    background: #111;
+    border: 1px solid rgba(201,168,76,.15);
+    border-radius: 8px;
+    padding: .6rem .75rem;
+    font-size: .82rem;
+    color: #f0ece4;
+    min-height: 2.5rem;
+    white-space: pre-wrap;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3" style="max-width:760px;">
+
+  <div style="display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; flex-wrap:wrap;">
+    <a href="{% url 'promo_history' %}" style="color:#888; text-decoration:none; font-size:.85rem;">← Historia</a>
+    <a href="{% url 'promo_customer_db' %}" style="color:#888; text-decoration:none; font-size:.85rem;">👥 Wateja</a>
+    <h5 style="color:var(--gold); margin:0; flex:1;">📢 Tuma Promo</h5>
+  </div>
+
+  <form method="post" id="promoForm">
+    {% csrf_token %}
+
+    <!-- Segment selection -->
+    <div class="compose-box">
+      <div style="font-weight:600; color:var(--pearl); margin-bottom:.7rem;">1️⃣ Wapi Wateja?</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:.5rem;">
+
+        <label class="seg-tile selected" onclick="selectSeg('all')">
+          <input type="radio" name="segment" value="all" checked style="display:none;">
+          <div class="seg-name">🌍 Wateja Wote</div>
+          <div class="seg-count">{{ segment_counts.all }} wenye simu</div>
+          <div class="seg-desc">Tuma kwa kila mtu kwenye database yako</div>
+        </label>
+
+        <label class="seg-tile" onclick="selectSeg('debtors')">
+          <input type="radio" name="segment" value="debtors" style="display:none;">
+          <div class="seg-name">💳 Wadeni</div>
+          <div class="seg-count">{{ segment_counts.debtors }} wenye simu</div>
+          <div class="seg-desc">Wateja wenye deni isiyolipwa</div>
+        </label>
+
+        <label class="seg-tile" onclick="selectSeg('tab_customers')">
+          <input type="radio" name="segment" value="tab_customers" style="display:none;">
+          <div class="seg-name">🧾 Wateja wa Tab</div>
+          <div class="seg-count">{{ segment_counts.tab_customers }} wenye simu</div>
+          <div class="seg-desc">Waliowahi kula/kunywa kwa tab</div>
+        </label>
+
+        <label class="seg-tile" onclick="selectSeg('regulars')">
+          <input type="radio" name="segment" value="regulars" style="display:none;">
+          <div class="seg-name">⭐ Wateja wa Kawaida</div>
+          <div class="seg-count">{{ segment_counts.regulars }} wenye simu</div>
+          <div class="seg-desc">Wamekuja mara 3 au zaidi</div>
+        </label>
+
+        {% if segment_counts.birthday > 0 %}
+        <label class="seg-tile" onclick="selectSeg('birthday')">
+          <input type="radio" name="segment" value="birthday" style="display:none;">
+          <div class="seg-name">🎂 Siku ya Kuzaliwa</div>
+          <div class="seg-count">{{ segment_counts.birthday }} wiki hii</div>
+          <div class="seg-desc">Wateja wanaokaribia kuzaliwa</div>
+        </label>
+        {% endif %}
+
+        <label class="seg-tile" onclick="selectSeg('custom')">
+          <input type="radio" name="segment" value="custom" style="display:none;">
+          <div class="seg-name">✏ Nambari Maalum</div>
+          <div class="seg-count">Weka mwenyewe</div>
+          <div class="seg-desc">Nambari zako (comma-separated)</div>
+        </label>
+
+      </div>
+
+      <!-- Custom phones row -->
+      <div id="customPhonesRow" style="display:none; margin-top:.6rem;">
+        <label class="field-label">Nambari za simu (comma-separated, e.g. 0712345678, 0798765432)</label>
+        <input type="text" name="custom_phones" id="customPhones" class="form-inp" placeholder="0712345678, 0798765432, ...">
+      </div>
+    </div>
+
+    <!-- Channel selection -->
+    <div class="compose-box">
+      <div style="font-weight:600; color:var(--pearl); margin-bottom:.7rem;">2️⃣ Njia ya Kutuma?</div>
+      <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+        <button type="button" class="chan-btn selected" onclick="selectChan('sms', this)">📱 SMS</button>
+        <button type="button" class="chan-btn" onclick="selectChan('in_app', this)">🔔 In-App</button>
+        <button type="button" class="chan-btn" onclick="selectChan('both', this)">📱+🔔 Zote Mbili</button>
+      </div>
+      <input type="hidden" name="channel" id="channelInput" value="sms">
+      <div style="font-size:.73rem; color:#555; margin-top:.4rem;">SMS inatumia akaunti ya Africa's Talking yako. In-App inaonekana kwenye app tu.</div>
+    </div>
+
+    <!-- Message compose -->
+    <div class="compose-box">
+      <div style="font-weight:600; color:var(--pearl); margin-bottom:.7rem;">3️⃣ Andika Ujumbe</div>
+
+      <label class="field-label">Kichwa (ya ndani tu — haitumwi)</label>
+      <input type="text" name="subject" class="form-inp" placeholder="e.g. Promo ya Jumanne, Tangazo la DJ..."
+             style="margin-bottom:.75rem;">
+
+      <label class="field-label">Ujumbe</label>
+      <div style="margin-bottom:.35rem; display:flex; gap:.35rem; flex-wrap:wrap;">
+        <button type="button" class="tag-btn" onclick="insertTag('{name}')">✦ Jina la Mteja</button>
+        <button type="button" class="tag-btn" onclick="insertTag('{{ request.user.userprofile.business.name }}')">✦ Jina la Biashara</button>
+        <button type="button" class="tag-btn" onclick="insertQuickMsg('happy_hour')">🍺 Happy Hour</button>
+        <button type="button" class="tag-btn" onclick="insertQuickMsg('dj')">🎤 DJ Night</button>
+        <button type="button" class="tag-btn" onclick="insertQuickMsg('debt_reminder')">💳 Kumbusho la Deni</button>
+        <button type="button" class="tag-btn" onclick="insertQuickMsg('birthday')">🎂 Hongera Siku ya Kuzaliwa</button>
+      </div>
+      <textarea name="message" id="msgText" class="form-inp" rows="5"
+                placeholder="Andika ujumbe hapa... Tumia {name} kwa jina la mteja."
+                oninput="updatePreview(); updateCounter();"
+                style="resize:vertical;"></textarea>
+      <div class="char-counter" id="charCount">0 / 160 herufi (SMS 1)</div>
+
+      <div style="margin-top:.75rem;">
+        <div style="font-size:.76rem; color:#888; margin-bottom:.25rem;">👁 Mfano (na jina halisi):</div>
+        <div class="preview-box" id="msgPreview">Andika ujumbe hapo juu...</div>
+      </div>
+    </div>
+
+    <!-- Submit -->
+    <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap;">
+      <button type="submit" class="btn btn-gold" id="sendBtn" onclick="return confirmSend();">
+        📤 Tuma Sasa
+      </button>
+      <a href="{% url 'promo_history' %}" class="btn btn-sm"
+         style="background:#333; border:1px solid #444; color:#b0b0b0;">Ghairi</a>
+      <span id="segSummary" style="font-size:.8rem; color:#b0b0b0;"></span>
+    </div>
+
+  </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var _selectedSeg = 'all';
+var _segCounts = {
+  all: {{ segment_counts.all }},
+  debtors: {{ segment_counts.debtors }},
+  tab_customers: {{ segment_counts.tab_customers }},
+  regulars: {{ segment_counts.regulars }},
+  birthday: {{ segment_counts.birthday }},
+  custom: 0,
+};
+var _quickMsgs = {
+  happy_hour: "Karibu {{ request.user.userprofile.business.name }}! 🍺 Leo kuna Happy Hour kuanzia saa 10 jioni. Bei maalum kwa wateja wote. Tukutane!",
+  dj: "🎤 Usiku huu {{ request.user.userprofile.business.name }} ina show ya DJ. Karibuni nyote! Mlango unafungua saa 2 usiku.",
+  debt_reminder: "Habari {name}! Ukumbusho mdogo — bado una deni la {{ request.user.userprofile.business.name }}. Karibu uje ulipe unapoweza. Asante!",
+  birthday: "🎂 Hongera siku ya kuzaliwa, {name}! Karibu {{ request.user.userprofile.business.name }} — tunakusubiri ukisherehekee!",
+};
+
+function selectSeg(seg) {
+  _selectedSeg = seg;
+  document.querySelectorAll('.seg-tile').forEach(function(t) { t.classList.remove('selected'); });
+  var clicked = event.currentTarget || event.target.closest('.seg-tile');
+  if (clicked) clicked.classList.add('selected');
+  document.getElementById('customPhonesRow').style.display = seg === 'custom' ? 'block' : 'none';
+  updateSegSummary();
+}
+
+function selectChan(val, btn) {
+  document.querySelectorAll('.chan-btn').forEach(function(b){ b.classList.remove('selected'); });
+  btn.classList.add('selected');
+  document.getElementById('channelInput').value = val;
+}
+
+function updateSegSummary() {
+  var cnt = _segCounts[_selectedSeg] || 0;
+  var el = document.getElementById('segSummary');
+  if (_selectedSeg === 'custom') {
+    el.textContent = 'Nambari maalum zitahesabiwa wakati wa kutuma.';
+  } else {
+    el.textContent = 'Wateja watakaopata ujumbe: ~' + cnt;
+  }
+}
+
+function insertTag(tag) {
+  var ta = document.getElementById('msgText');
+  var start = ta.selectionStart, end = ta.selectionEnd;
+  ta.value = ta.value.slice(0, start) + tag + ta.value.slice(end);
+  ta.selectionStart = ta.selectionEnd = start + tag.length;
+  ta.focus();
+  updatePreview(); updateCounter();
+}
+
+function insertQuickMsg(key) {
+  document.getElementById('msgText').value = _quickMsgs[key] || '';
+  updatePreview(); updateCounter();
+}
+
+function updatePreview() {
+  var msg = document.getElementById('msgText').value;
+  var preview = msg.replace(/\{name\}/g, 'Wanjiru');
+  document.getElementById('msgPreview').textContent = preview || 'Andika ujumbe hapo juu...';
+}
+
+function updateCounter() {
+  var len = document.getElementById('msgText').value.length;
+  var sms = Math.ceil(len / 160) || 1;
+  document.getElementById('charCount').textContent = len + ' / 160 herufi (SMS ' + sms + ')';
+}
+
+function confirmSend() {
+  var msg = (document.getElementById('msgText').value || '').trim();
+  if (!msg) { alert('Tafadhali andika ujumbe.'); return false; }
+  var cnt = _segCounts[_selectedSeg] || 0;
+  var segLabel = _selectedSeg === 'custom' ? 'nambari maalum' : ('~' + cnt + ' wateja');
+  return confirm('Tuma ujumbe huu kwa ' + segLabel + '?\n\n' + msg.slice(0, 120) + (msg.length > 120 ? '...' : ''));
+}
+
+// Init
+updateSegSummary();
+</script>
+{% endblock %}
