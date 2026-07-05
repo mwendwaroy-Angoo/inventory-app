@@ -268,7 +268,7 @@
 </div>
 
 <!-- Owner: dual sub-ledger breakdown -->
-{% if scope == 'all' and (has_kitchen or (bar_data.outstanding > 0 and kitchen_data.outstanding > 0)) %}
+{% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
 <div class="row g-3 mb-4">
     <div class="col-md-6">
         <div class="section-card" style="border-left:3px solid #C8752A;">
@@ -476,7 +476,7 @@
                 {% csrf_token %}
                 <div class="modal-body pt-1">
 
-                    {% if scope == 'all' and (has_kitchen or (bar_data.outstanding > 0 and kitchen_data.outstanding > 0)) %}
+                    {% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
                     <!-- Ledger selector radio — visible, lets owner pick bar vs kitchen -->
                     <div class="mb-3 pb-2" style="border-bottom:1px solid #333;">
                         <div style="color:#b0b0b0; font-size:0.78rem; margin-bottom:.45rem;">{% trans 'Settling ledger' %}:</div>
@@ -557,7 +557,7 @@
 {% endblock %}
 
 {% block extra_js %}
-{% if scope == 'all' and (has_kitchen or (bar_data.outstanding > 0 and kitchen_data.outstanding > 0)) %}
+{% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
 <script>
 window._debtLedgerChange = function() {
     var dsBar = document.getElementById('ds_bar');
