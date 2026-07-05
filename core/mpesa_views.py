@@ -61,8 +61,8 @@ def _bridge_stk_to_prompt(payment):
     """Create a PendingTransactionPrompt for a completed STK Push that has no
     linked order or bar tab — i.e. a manual 'Request Payment' from the dashboard.
     Idempotent: skips if a prompt for this payment already exists."""
-    if payment.order_id or payment.bar_tab_id or payment.kitchen_cart:
-        return  # Tab/order/kitchen each have their own completion logic
+    if payment.order_id or payment.bar_tab_id or payment.kitchen_cart or payment.qs_cart:
+        return  # Tab/order/kitchen/qs each have their own completion logic
     receipt = payment.mpesa_receipt
     # When the active-poll path confirms success before the callback arrives,
     # mpesa_receipt is empty. Use a synthetic key so the prompt still appears.
@@ -97,30 +97,46 @@ def _bridge_stk_to_prompt(payment):
 
 
 def _settle_tab_from_payment(payment):
-    """FIFO-settle unpaid BarTabEntry rows up to the paid amount, then close
-    the tab and issue a receipt if all entries are now paid."""
+    """Settle BarTabEntry rows for a completed STK Push.
+
+    If payment.tab_entry_ids is set, settle exactly those entries (partial
+    settlement path). Otherwise FIFO-settle unpaid entries up to the paid
+    amount (full-tab path). Issues a receipt only when the whole tab is
+    settled."""
     try:
         tab = payment.bar_tab
         if not tab or tab.status != 'OPEN':
             return
 
-        paid_amount = float(payment.amount)
-        unpaid_entries = list(tab.entries.filter(is_paid=False).order_by('id').select_related('transaction'))
         now = timezone.now()
+        entry_ids = payment.tab_entry_ids  # list of int IDs, or None
+
+        if entry_ids:
+            # Partial settlement: settle only the specified entries
+            unpaid_entries = list(
+                tab.entries.filter(id__in=entry_ids, is_paid=False)
+                .select_related('transaction')
+            )
+        else:
+            # Full-tab FIFO settlement
+            paid_amount = float(payment.amount)
+            unpaid_entries = list(tab.entries.filter(is_paid=False).order_by('id').select_related('transaction'))
+
         for entry in unpaid_entries:
-            if paid_amount <= 0:
-                break
-            entry_amt = float(entry.amount)
-            if entry_amt <= paid_amount:
-                entry.is_paid = True
-                entry.payment_method = 'mpesa'
-                entry.paid_at = now
-                entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
-                # Flip the underlying transaction so it drops out of the debt tracker
-                if entry.transaction_id:
-                    entry.transaction.payment_method = 'mpesa'
-                    entry.transaction.save(update_fields=['payment_method'])
+            if not entry_ids:
+                if paid_amount <= 0:
+                    break
+                entry_amt = float(entry.amount)
+                if entry_amt > paid_amount:
+                    continue
                 paid_amount -= entry_amt
+            entry.is_paid = True
+            entry.payment_method = 'mpesa'
+            entry.paid_at = now
+            entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
+            if entry.transaction_id:
+                entry.transaction.payment_method = 'mpesa'
+                entry.transaction.save(update_fields=['payment_method'])
 
         if not tab.entries.filter(is_paid=False).exists():
             tab.status = 'SETTLED'
@@ -238,6 +254,92 @@ def _settle_kitchen_order_from_payment(payment):
         logger.warning("Kitchen STK settlement failed: payment_id=%s %s", payment.id, exc)
 
 
+def _settle_qs_from_payment(payment):
+    """Process a Quick Sell cart after STK Push success — server-side settlement.
+
+    Called from mpesa_callback and payment_status when payment.qs_cart is set.
+    Idempotent: select_for_update + qs_settled flag so only one path processes it."""
+    from django.db import transaction as db_txn
+
+    try:
+        with db_txn.atomic():
+            pmt = Payment.objects.select_for_update().get(id=payment.id)
+            if pmt.qs_settled:
+                logger.info("QS STK already settled: payment_id=%s", payment.id)
+                return
+            pmt.qs_settled = True
+            pmt.save(update_fields=['qs_settled'])
+
+        cart = payment.qs_cart or []
+        business = payment.business
+        today = timezone.localdate()
+
+        receipt_lines = []
+        total = Decimal('0')
+
+        for entry in cart:
+            item_id   = entry.get('item_id')
+            qty       = Decimal(str(entry.get('qty', 1)))
+            amount    = Decimal(str(entry.get('amount', 0)))
+            desc      = entry.get('description', '')
+            preset_id = entry.get('preset_id')
+            bunch_id  = entry.get('bunch_id')
+
+            if not amount:
+                continue
+
+            if bunch_id:
+                try:
+                    from .models import ProduceBunch
+                    bunch = ProduceBunch.objects.get(id=bunch_id, business=business, status='OPEN')
+                    bunch.record_sale(amount=amount, payment_method='mpesa', recipient='')
+                    receipt_lines.append({'name': desc, 'subtotal': float(amount)})
+                    total += amount
+                except Exception:
+                    logger.warning("QS STK: bunch %s not found or not OPEN", bunch_id)
+                continue
+
+            if not item_id:
+                continue
+
+            try:
+                item = Item.objects.get(id=item_id, business=business)
+            except Item.DoesNotExist:
+                logger.warning("QS STK: item %s not found for business %s", item_id, business.id)
+                continue
+
+            preset = ItemPortionPreset.objects.filter(id=preset_id, item=item).first() if preset_id else None
+            sale_amount = amount if (preset or amount != qty * item.selling_price) else None
+
+            Transaction.objects.create(
+                business=business,
+                item=item,
+                type='Issue',
+                qty=-qty,
+                sale_amount=sale_amount,
+                payment_method='mpesa',
+                recipient='',
+                date=today,
+            )
+            receipt_lines.append({'name': desc, 'qty': float(qty), 'subtotal': float(amount)})
+            total += amount
+
+        if receipt_lines:
+            qs_rcpt = Receipt.issue(
+                business=business,
+                lines=receipt_lines,
+                payment_method='mpesa',
+                user=None,
+                customer_name='',
+                customer_phone=payment.phone or '',
+            )
+            _sms_receipt_to_payer(payment, qs_rcpt)
+            logger.info("QS STK settled: payment_id=%s lines=%d total=%s", payment.id, len(receipt_lines), total)
+
+    except Exception as exc:
+        logger.warning("QS STK settlement failed: payment_id=%s %s", payment.id, exc)
+
+
 # ── STK PUSH CALLBACK (from Safaricom) ──────────────────────────────────────
 
 @csrf_exempt
@@ -303,7 +405,7 @@ def mpesa_callback(request):
                 order.save(update_fields=['status'])
                 _fulfill_order(order)
 
-        # Settle bar tab via FIFO if linked
+        # Settle bar tab (full or partial) if linked
         if payment.bar_tab_id:
             _settle_tab_from_payment(payment)
 
@@ -311,7 +413,11 @@ def mpesa_callback(request):
         if payment.kitchen_cart:
             _settle_kitchen_order_from_payment(payment)
 
-        # Create reconciliation prompt for manual STK pushes (no order, no tab, no kitchen)
+        # Settle Quick Sell cart if this was a QS checkout STK push
+        if payment.qs_cart:
+            _settle_qs_from_payment(payment)
+
+        # Create reconciliation prompt for manual STK pushes (no order, no tab, no kitchen, no qs)
         _bridge_stk_to_prompt(payment)
 
         logger.info("Payment completed: %s receipt=%s", payment.id, receipt)
@@ -370,7 +476,9 @@ def stk_push_view(request):
     amount = data.get('amount', 0)
     order_id = data.get('order_id')
     tab_id = data.get('tab_id')
-    kitchen_cart = data.get('kitchen_cart')  # list or None — set by kitchen board STK push
+    kitchen_cart = data.get('kitchen_cart')   # list or None — kitchen board STK push
+    entry_ids = data.get('entry_ids')         # list of int IDs — partial tab STK push
+    qs_cart = data.get('qs_cart')             # list or None — QS checkout STK push
 
     if not phone or not amount:
         return JsonResponse({'error': 'Phone and amount required'}, status=400)
@@ -446,6 +554,8 @@ def stk_push_view(request):
         order=order,
         bar_tab=bar_tab,
         kitchen_cart=kitchen_cart if isinstance(kitchen_cart, list) else None,
+        tab_entry_ids=entry_ids if isinstance(entry_ids, list) else None,
+        qs_cart=qs_cart if isinstance(qs_cart, list) else None,
         business=business,
         store=cfg['store'],
         source=cfg['source'],
@@ -533,6 +643,8 @@ def payment_status(request, payment_id):
                     _settle_tab_from_payment(payment)
                 if payment.kitchen_cart:
                     _settle_kitchen_order_from_payment(payment)
+                if payment.qs_cart:
+                    _settle_qs_from_payment(payment)
                 _bridge_stk_to_prompt(payment)
 
     return JsonResponse({
@@ -541,6 +653,7 @@ def payment_status(request, payment_id):
         'mpesa_receipt': payment.mpesa_receipt,
         'amount': float(payment.amount),
         'kitchen_settled': payment.kitchen_settled,
+        'qs_settled': payment.qs_settled,
     })
 
 

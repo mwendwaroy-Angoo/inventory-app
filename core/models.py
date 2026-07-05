@@ -978,6 +978,18 @@ class Payment(models.Model):
         default=False,
         help_text='True once kitchen_cart has been processed (by callback or JS poll).',
     )
+    tab_entry_ids = models.JSONField(
+        null=True, blank=True,
+        help_text='List of BarTabEntry IDs for partial tab STK settlement. Null = FIFO full-tab.',
+    )
+    qs_cart = models.JSONField(
+        null=True, blank=True,
+        help_text='Serialised Quick Sell cart for checkout STK push server-side settlement.',
+    )
+    qs_settled = models.BooleanField(
+        default=False,
+        help_text='True once qs_cart has been processed (by callback or JS poll).',
+    )
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='payments')
     store = models.ForeignKey(
         'Store', on_delete=models.SET_NULL, null=True, blank=True, related_name='payments',

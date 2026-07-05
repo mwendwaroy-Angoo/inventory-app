@@ -2386,6 +2386,7 @@
             '<span style="color:#b0b0b0;font-size:.78rem;">Vilivyochaguliwa: <strong id="tab-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
             '<button id="tab-partial-cash-' + tab.id + '" class="tab-action-btn tab-btn-cash" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
             '<button id="tab-partial-mpesa-' + tab.id + '" class="tab-action-btn tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
+            '<button id="tab-partial-stk-' + tab.id + '" class="tab-action-btn tab-btn-stk" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartialStk(' + tab.id + ',\'' + safeCust + '\')">📲 STK</button>' +
             '</div>';
         }
 
@@ -2446,6 +2447,7 @@
           '<span style="color:#b0b0b0; font-size:.78rem;">Vilivyochaguliwa: <strong id="tab-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
           '<button id="tab-partial-cash-' + tab.id + '" class="tab-action-btn tab-btn-cash" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
           '<button id="tab-partial-mpesa-' + tab.id + '" class="tab-action-btn tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
+          '<button id="tab-partial-stk-' + tab.id + '" class="tab-action-btn tab-btn-stk" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartialStk(' + tab.id + ',\'' + safeCust + '\')">📲 STK</button>' +
           '</div>' +
           '<div class="tab-actions-row">' +
           '<button class="tab-action-btn tab-btn-cash" onclick="window.settleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
@@ -2552,10 +2554,28 @@
     var selTotal = document.getElementById('tab-sel-total-' + tabId);
     var btnCash  = document.getElementById('tab-partial-cash-' + tabId);
     var btnMpesa = document.getElementById('tab-partial-mpesa-' + tabId);
+    var btnStk   = document.getElementById('tab-partial-stk-' + tabId);
     if (selRow)   selRow.style.display   = checked.length > 0 ? 'flex' : 'none';
     if (selTotal) selTotal.textContent   = 'KES ' + fmt(total);
     if (btnCash)  btnCash.disabled       = checked.length === 0;
     if (btnMpesa) btnMpesa.disabled      = checked.length === 0;
+    if (btnStk)   btnStk.disabled        = checked.length === 0;
+  };
+
+  window.settleTabPartialStk = function (tabId, custName) {
+    var container = document.getElementById('tab-entries-' + tabId);
+    if (!container) return;
+    var checked = container.querySelectorAll('.tab-entry-cb:not(:disabled):checked');
+    if (!checked.length) return;
+    var total = 0;
+    var ids = [];
+    checked.forEach(function (cb) {
+      total += parseFloat(cb.dataset.amount || 0);
+      if (cb.dataset.entryId) ids.push(parseInt(cb.dataset.entryId, 10));
+    });
+    // Store selected entry IDs for sendTabStk to include in the body
+    window._pendingStkEntryIds = ids;
+    window.openTabStk(tabId, Math.round(total), custName, true);
   };
 
   window.settleTabPartial = function (tabId, payMethod) {
@@ -2667,9 +2687,17 @@
   /* ── Tab STK Push ──────────────────────────────────────── */
   var _pendingStkTabId = null;
 
-  window.openTabStk = function (tabId, amount, custName) {
+  // _pendingStkEntryIds: set by settleTabPartialStk (partial), null for full-tab STK
+  window._pendingStkEntryIds = null;
+
+  window.openTabStk = function (tabId, amount, custName, skipClearEntryIds) {
     _pendingStkTabId = tabId;
-    document.getElementById('tab-stk-cust').textContent = 'Tab ya ' + custName + ' — KES ' + fmt(amount);
+    // Clear entry IDs unless called from settleTabPartialStk (which sets them first)
+    if (!skipClearEntryIds) window._pendingStkEntryIds = null;
+    var label = window._pendingStkEntryIds
+      ? 'Vilivyochaguliwa — KES ' + fmt(amount)
+      : 'Tab ya ' + custName + ' — KES ' + fmt(amount);
+    document.getElementById('tab-stk-cust').textContent = label;
     document.getElementById('tab-stk-phone').value = '';
     document.getElementById('tab-stk-amount').value = amount;
     document.getElementById('tab-stk-result').style.display = 'none';
@@ -2698,10 +2726,14 @@
     btn.disabled = true; btn.textContent = '⏳ Inatuma...';
     resultEl.style.display = 'none';
 
+    var stkBody = {phone: phone, amount: amount, tab_id: _pendingStkTabId};
+    if (window._pendingStkEntryIds && window._pendingStkEntryIds.length) {
+      stkBody.entry_ids = window._pendingStkEntryIds;
+    }
     fetch('/mpesa/stk-push/', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({phone: phone, amount: amount, tab_id: _pendingStkTabId}),
+      body: JSON.stringify(stkBody),
     })
     .then(function (r) { return r.json(); })
     .then(function (d) {
@@ -2734,9 +2766,10 @@
         .then(function (data) {
           if (data.status === 'completed') {
             clearInterval(interval);
+            window._pendingStkEntryIds = null;
             resultEl.style.background = 'rgba(46,204,113,0.15)';
             resultEl.style.color = '#2ecc71';
-            resultEl.textContent = '✅ Malipo yamepokelewa! Tab imefungwa.';
+            resultEl.textContent = '✅ Malipo yamepokelewa!';
             btn.disabled = true; btn.textContent = '✓ Imelipwa';
             setTimeout(function () {
               hideModal('tabStkModal');
