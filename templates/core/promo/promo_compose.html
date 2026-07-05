@@ -18,17 +18,6 @@
 .seg-tile .seg-name { font-weight: 600; color: var(--pearl); font-size: .85rem; }
 .seg-tile .seg-count { color: #c9a84c; font-size: .78rem; margin-top: .15rem; }
 .seg-tile .seg-desc { color: #888; font-size: .73rem; margin-top: .15rem; }
-.chan-btn {
-    padding: .4rem 1rem;
-    background: #2a2a2a;
-    border: 2px solid #3a3a3a;
-    border-radius: 8px;
-    color: #b0b0b0;
-    cursor: pointer;
-    font-size: .82rem;
-    transition: border-color .15s, color .15s;
-}
-.chan-btn.selected { border-color: var(--gold); color: var(--gold); }
 .compose-box {
     background: #2a2a2a;
     border: 1px solid #3a3a3a;
@@ -87,28 +76,28 @@ label.field-label { font-size: .8rem; color: #888; display:block; margin-bottom:
       <div style="font-weight:600; color:var(--pearl); margin-bottom:.7rem;">1️⃣ Wapi Wateja?</div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:.5rem;">
 
-        <label class="seg-tile selected" onclick="selectSeg('all')">
+        <label class="seg-tile selected" onclick="selectSeg('all', this)">
           <input type="radio" name="segment" value="all" checked style="display:none;">
           <div class="seg-name">🌍 Wateja Wote</div>
           <div class="seg-count">{{ segment_counts.all }} wenye simu</div>
           <div class="seg-desc">Tuma kwa kila mtu kwenye database yako</div>
         </label>
 
-        <label class="seg-tile" onclick="selectSeg('debtors')">
+        <label class="seg-tile" onclick="selectSeg('debtors', this)">
           <input type="radio" name="segment" value="debtors" style="display:none;">
           <div class="seg-name">💳 Wadeni</div>
           <div class="seg-count">{{ segment_counts.debtors }} wenye simu</div>
           <div class="seg-desc">Wateja wenye deni isiyolipwa</div>
         </label>
 
-        <label class="seg-tile" onclick="selectSeg('tab_customers')">
+        <label class="seg-tile" onclick="selectSeg('tab_customers', this)">
           <input type="radio" name="segment" value="tab_customers" style="display:none;">
           <div class="seg-name">🧾 Wateja wa Tab</div>
           <div class="seg-count">{{ segment_counts.tab_customers }} wenye simu</div>
           <div class="seg-desc">Waliowahi kula/kunywa kwa tab</div>
         </label>
 
-        <label class="seg-tile" onclick="selectSeg('regulars')">
+        <label class="seg-tile" onclick="selectSeg('regulars', this)">
           <input type="radio" name="segment" value="regulars" style="display:none;">
           <div class="seg-name">⭐ Wateja wa Kawaida</div>
           <div class="seg-count">{{ segment_counts.regulars }} wenye simu</div>
@@ -116,7 +105,7 @@ label.field-label { font-size: .8rem; color: #888; display:block; margin-bottom:
         </label>
 
         {% if segment_counts.birthday > 0 %}
-        <label class="seg-tile" onclick="selectSeg('birthday')">
+        <label class="seg-tile" onclick="selectSeg('birthday', this)">
           <input type="radio" name="segment" value="birthday" style="display:none;">
           <div class="seg-name">🎂 Siku ya Kuzaliwa</div>
           <div class="seg-count">{{ segment_counts.birthday }} wiki hii</div>
@@ -124,7 +113,7 @@ label.field-label { font-size: .8rem; color: #888; display:block; margin-bottom:
         </label>
         {% endif %}
 
-        <label class="seg-tile" onclick="selectSeg('custom')">
+        <label class="seg-tile" onclick="selectSeg('custom', this)">
           <input type="radio" name="segment" value="custom" style="display:none;">
           <div class="seg-name">✏ Nambari Maalum</div>
           <div class="seg-count">Weka mwenyewe</div>
@@ -140,21 +129,12 @@ label.field-label { font-size: .8rem; color: #888; display:block; margin-bottom:
       </div>
     </div>
 
-    <!-- Channel selection -->
-    <div class="compose-box">
-      <div style="font-weight:600; color:var(--pearl); margin-bottom:.7rem;">2️⃣ Njia ya Kutuma?</div>
-      <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
-        <button type="button" class="chan-btn selected" onclick="selectChan('sms', this)">📱 SMS</button>
-        <button type="button" class="chan-btn" onclick="selectChan('in_app', this)">🔔 In-App</button>
-        <button type="button" class="chan-btn" onclick="selectChan('both', this)">📱+🔔 Zote Mbili</button>
-      </div>
-      <input type="hidden" name="channel" id="channelInput" value="sms">
-      <div style="font-size:.73rem; color:#555; margin-top:.4rem;">SMS inatumia akaunti ya Africa's Talking yako. In-App inaonekana kwenye app tu.</div>
-    </div>
+    <!-- Hidden channel — SMS only for customer promos -->
+    <input type="hidden" name="channel" value="sms">
 
     <!-- Message compose -->
     <div class="compose-box">
-      <div style="font-weight:600; color:var(--pearl); margin-bottom:.7rem;">3️⃣ Andika Ujumbe</div>
+      <div style="font-weight:600; color:var(--pearl); margin-bottom:.7rem;">2️⃣ Andika Ujumbe (SMS)</div>
 
       <label class="field-label">Kichwa (ya ndani tu — haitumwi)</label>
       <input type="text" name="subject" class="form-inp" placeholder="e.g. Promo ya Jumanne, Tangazo la DJ..."
@@ -163,7 +143,7 @@ label.field-label { font-size: .8rem; color: #888; display:block; margin-bottom:
       <label class="field-label">Ujumbe</label>
       <div style="margin-bottom:.35rem; display:flex; gap:.35rem; flex-wrap:wrap;">
         <button type="button" class="tag-btn" onclick="insertTag('{name}')">✦ Jina la Mteja</button>
-        <button type="button" class="tag-btn" onclick="insertTag('{{ request.user.userprofile.business.name }}')">✦ Jina la Biashara</button>
+        <button type="button" class="tag-btn" onclick="insertTag('{{ request.user.userprofile.business.name|escapejs }}')">✦ Jina la Biashara</button>
         <button type="button" class="tag-btn" onclick="insertQuickMsg('happy_hour')">🍺 Happy Hour</button>
         <button type="button" class="tag-btn" onclick="insertQuickMsg('dj')">🎤 DJ Night</button>
         <button type="button" class="tag-btn" onclick="insertQuickMsg('debt_reminder')">💳 Kumbusho la Deni</button>
@@ -184,7 +164,7 @@ label.field-label { font-size: .8rem; color: #888; display:block; margin-bottom:
     <!-- Submit -->
     <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap;">
       <button type="submit" class="btn btn-gold" id="sendBtn" onclick="return confirmSend();">
-        📤 Tuma Sasa
+        📤 Tuma Sasa (SMS)
       </button>
       <a href="{% url 'promo_history' %}" class="btn btn-sm"
          style="background:#333; border:1px solid #444; color:#b0b0b0;">Ghairi</a>
@@ -206,26 +186,20 @@ var _segCounts = {
   birthday: {{ segment_counts.birthday }},
   custom: 0,
 };
+var _bizName = "{{ request.user.userprofile.business.name|escapejs }}";
 var _quickMsgs = {
-  happy_hour: "Karibu {{ request.user.userprofile.business.name }}! 🍺 Leo kuna Happy Hour kuanzia saa 10 jioni. Bei maalum kwa wateja wote. Tukutane!",
-  dj: "🎤 Usiku huu {{ request.user.userprofile.business.name }} ina show ya DJ. Karibuni nyote! Mlango unafungua saa 2 usiku.",
-  debt_reminder: "Habari {name}! Ukumbusho mdogo — bado una deni la {{ request.user.userprofile.business.name }}. Karibu uje ulipe unapoweza. Asante!",
-  birthday: "🎂 Hongera siku ya kuzaliwa, {name}! Karibu {{ request.user.userprofile.business.name }} — tunakusubiri ukisherehekee!",
+  happy_hour: "Karibu " + _bizName + "! 🍺 Leo kuna Happy Hour kuanzia saa 10 jioni. Bei maalum kwa wateja wote. Tukutane!",
+  dj: "🍤 Usiku huu " + _bizName + " ina show ya DJ. Karibuni nyote! Mlango unafungua saa 2 usiku.",
+  debt_reminder: "Habari {name}! Ukumbusho mdogo — bado una deni la " + _bizName + ". Karibu uje ulipe unapoweza. Asante!",
+  birthday: "🎂 Hongera siku ya kuzaliwa, {name}! Karibu " + _bizName + " — tunakusubiri ukisherehekee!",
 };
 
-function selectSeg(seg) {
+function selectSeg(seg, el) {
   _selectedSeg = seg;
   document.querySelectorAll('.seg-tile').forEach(function(t) { t.classList.remove('selected'); });
-  var clicked = event.currentTarget || event.target.closest('.seg-tile');
-  if (clicked) clicked.classList.add('selected');
+  if (el) el.classList.add('selected');
   document.getElementById('customPhonesRow').style.display = seg === 'custom' ? 'block' : 'none';
   updateSegSummary();
-}
-
-function selectChan(val, btn) {
-  document.querySelectorAll('.chan-btn').forEach(function(b){ b.classList.remove('selected'); });
-  btn.classList.add('selected');
-  document.getElementById('channelInput').value = val;
 }
 
 function updateSegSummary() {
