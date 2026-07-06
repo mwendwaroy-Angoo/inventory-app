@@ -592,7 +592,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 rcpt = Receipt.issue(
                     business=business,
                     lines=receipt_lines,
-                    payment_method=txn_pm,
+                    payment_method='tab' if payment_method == 'food_tab' else txn_pm,
                     user=request.user,
                     customer_name=credit_name if payment_method == 'credit' else tab_customer,
                     customer_phone=credit_phone if payment_method == 'credit' else tab_phone,

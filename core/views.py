@@ -2578,7 +2578,7 @@ def quick_sell(request):
                         _new_rcpt = _Rcpt.issue(
                             business=user_profile.business,
                             lines=recorded,
-                            payment_method='credit',
+                            payment_method='tab',
                             user=request.user,
                             customer_name=credit_recipient,
                             customer_phone=credit_phone,
