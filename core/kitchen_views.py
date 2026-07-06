@@ -560,6 +560,7 @@ def _kitchen_checkout(request, up, business, is_owner):
     receipt_url = None
     receipt_number = None
     rcpt = None
+    master_rcpt = None  # tracked outside try so food_tab SMS guard can read it
     if payment_method in ('cash', 'mpesa', 'credit', 'food_tab'):
         try:
             kitchen_meta = {}
@@ -579,7 +580,6 @@ def _kitchen_checkout(request, up, business, is_owner):
                 kitchen_meta['tab_id'] = active_tab.id
 
             # For food_tab: reuse the master receipt if one already exists for this tab
-            master_rcpt = None
             if payment_method == 'food_tab' and active_tab:
                 master_rcpt = Receipt.objects.filter(
                     business=business,
@@ -603,6 +603,25 @@ def _kitchen_checkout(request, up, business, is_owner):
             receipt_number = rcpt.receipt_number
         except Exception:
             logger.exception('Kitchen Receipt.issue failed business=%s', business.id)
+
+    # SMS to customer when a NEW food tab receipt is created for the first time.
+    # Subsequent rounds reuse the same master receipt — no repeat SMS.
+    if payment_method == 'food_tab' and master_rcpt is None and receipt_url and active_tab:
+        try:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            _sms_phone_raw = tab_phone or (active_tab.customer.phone if active_tab.customer else '')
+            _sms_phone_k = normalize_ke_phone(_sms_phone_raw) if _sms_phone_raw else ''
+            if _sms_phone_k:
+                _tab_total_k = float(active_tab.total()) if active_tab else float(total)
+                _sms_k = (
+                    f"Habari {tab_customer},\n"
+                    f"{business.name}: Food tab imefunguliwa — "
+                    f"KES {_tab_total_k:,.0f}.\n"
+                    f"Angalia risiti yako: {receipt_url}"
+                )
+                send_sms_notification(_sms_k, _sms_phone_k)
+        except Exception:
+            logger.exception('Food tab open SMS failed business=%s', business.id)
 
     # SMS receipt to the customer who initiated a kitchen STK push
     if payment_method == 'mpesa' and stk_payment_id_raw.isdigit() and rcpt:

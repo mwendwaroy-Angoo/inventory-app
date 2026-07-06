@@ -2553,14 +2553,71 @@ def quick_sell(request):
                     _cust.phone = credit_phone
                     _cust.save(update_fields=["phone"])
 
+                # Link customer FK on the tab so the drawer can retrieve their phone
+                if bar_tab.customer_id != _cust.pk:
+                    bar_tab.customer = _cust
+                    bar_tab.save(update_fields=["customer"])
+
+                # Issue or reuse master receipt for this tab so the customer has a live QR
+                _tab_rcpt_token = None
+                _tab_rcpt_number = None
+                _tab_rcpt_id = None
+                _tab_receipt_url = None
+                _tab_master_rcpt = None
+                try:
+                    from .models import Receipt as _Rcpt
+                    _tab_master_rcpt = _Rcpt.objects.filter(
+                        business=user_profile.business,
+                        meta__tab_id=bar_tab.id,
+                    ).first()
+                    if _tab_master_rcpt:
+                        _tab_rcpt_token  = _tab_master_rcpt.token
+                        _tab_rcpt_number = _tab_master_rcpt.receipt_number
+                        _tab_rcpt_id     = _tab_master_rcpt.id
+                    else:
+                        _new_rcpt = _Rcpt.issue(
+                            business=user_profile.business,
+                            lines=recorded,
+                            payment_method='credit',
+                            user=request.user,
+                            customer_name=credit_recipient,
+                            customer_phone=credit_phone,
+                            meta={'tab_id': bar_tab.id},
+                        )
+                        _tab_rcpt_token  = _new_rcpt.token
+                        _tab_rcpt_number = _new_rcpt.receipt_number
+                        _tab_rcpt_id     = _new_rcpt.id
+                    if _tab_rcpt_token:
+                        _tab_receipt_url = request.build_absolute_uri(f'/r/{_tab_rcpt_token}/')
+                except Exception:
+                    pass
+
+                # SMS to customer on first tab round (new receipt only)
+                if _tab_master_rcpt is None and _tab_receipt_url:
+                    _sms_phone_raw = credit_phone or (_cust.phone if _cust else '')
+                    if _sms_phone_raw:
+                        try:
+                            from .notifications import normalize_ke_phone, send_sms_notification
+                            _sms_phone_qs = normalize_ke_phone(_sms_phone_raw)
+                            if _sms_phone_qs:
+                                _sms_qs = (
+                                    f"Habari {credit_recipient},\n"
+                                    f"{user_profile.business.name}: Tab imefunguliwa — "
+                                    f"KES {total:,.0f}.\n"
+                                    f"Angalia risiti yako: {_tab_receipt_url}"
+                                )
+                                send_sms_notification(_sms_qs, _sms_phone_qs)
+                        except Exception:
+                            pass
+
                 success_data = json.dumps({
                     "items": recorded,
                     "total": total,
                     "payment_method": "tab",
                     "tab_customer": credit_recipient,
-                    "receipt_token": None,
-                    "receipt_url": None,
-                    "receipt_id": None,
+                    "receipt_token": _tab_rcpt_token,
+                    "receipt_url": _tab_receipt_url,
+                    "receipt_id": _tab_rcpt_id,
                 })
                 messages.success(
                     request,
