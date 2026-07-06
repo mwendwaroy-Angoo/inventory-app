@@ -63,36 +63,62 @@ def receipts_list(request):
     })
 
 
+def _get_live_tab_state(receipt):
+    """Return (is_live, tab_status, lines, total) for a tab-linked receipt.
+
+    Always recomputes lines from ALL BarTabEntry rows so the customer sees the
+    running total regardless of how many ordering rounds have happened.
+    Returns is_live=False when no tab_id in meta or tab not found.
+    """
+    tab_id = receipt.meta.get('tab_id') if receipt.meta else None
+    if not tab_id:
+        return False, None, None, None
+    try:
+        from .models import BarTab as _BarTab
+        tab = _BarTab.objects.get(id=tab_id, business=receipt.business)
+        entries = list(tab.entries.all().order_by('id'))
+        lines = [{'name': e.description, 'qty': 1, 'subtotal': float(e.amount)} for e in entries]
+        total = sum(float(e.amount) for e in entries)
+        return tab.status == 'OPEN', tab.status, lines, total
+    except Exception:
+        return False, None, None, None
+
+
 def public_receipt(request, token):
     receipt = get_object_or_404(Receipt, token=token)
     receipt_url = request.build_absolute_uri(request.path)
 
-    # ── Live tab receipt: if this receipt has a tab_id in meta, dynamically
-    #    recompute lines from the BarTab's entries so the customer always sees
-    #    the latest items when they refresh the link. ─────────────────────────
-    tab_id = receipt.meta.get('tab_id') if receipt.meta else None
-    is_live_tab = False
-    if tab_id:
-        try:
-            from .models import BarTab as _BarTab
-            tab = _BarTab.objects.get(id=tab_id, business=receipt.business)
-            if tab.status == 'OPEN':
-                is_live_tab = True
-                entries = list(tab.entries.all().order_by('id'))
-                if entries:
-                    live_lines = [
-                        {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
-                        for e in entries
-                    ]
-                    receipt.lines = live_lines
-                    receipt.total = sum(float(e.amount) for e in entries)
-        except _BarTab.DoesNotExist:
-            pass
+    # ── Live tab receipt: recompute lines from the BarTab for every request
+    #    so the customer's QR-scanned page always shows the latest items,
+    #    payments, and status without needing a new receipt link. ────────────
+    is_live_tab, tab_status, live_lines, live_total = _get_live_tab_state(receipt)
+    if live_lines is not None:
+        receipt.lines = live_lines
+        receipt.total = live_total
 
     return render(request, 'core/receipt_public.html', {
-        'receipt': receipt,
+        'receipt':     receipt,
         'receipt_url': receipt_url,
         'is_live_tab': is_live_tab,
+        'tab_status':  tab_status,
+    })
+
+
+def receipt_live_status(request, token):
+    """AJAX polling endpoint for the live receipt page.
+
+    Returns the current tab state as JSON so the client can update the DOM
+    without a full page reload. No auth required — token is the secret.
+    """
+    receipt = get_object_or_404(Receipt, token=token)
+    is_live, tab_status, lines, total = _get_live_tab_state(receipt)
+    if lines is None:
+        return JsonResponse({'is_live': False, 'tab_status': tab_status})
+    return JsonResponse({
+        'is_live':    is_live,
+        'tab_status': tab_status,
+        'lines':      lines,
+        'total':      total,
     })
 
 

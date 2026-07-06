@@ -560,7 +560,7 @@ def _kitchen_checkout(request, up, business, is_owner):
     receipt_url = None
     receipt_number = None
     rcpt = None
-    if payment_method in ('cash', 'mpesa', 'credit'):
+    if payment_method in ('cash', 'mpesa', 'credit', 'food_tab'):
         try:
             kitchen_meta = {}
             if payment_method == 'credit' and credit_name:
@@ -574,16 +574,31 @@ def _kitchen_checkout(request, up, business, is_owner):
                         kitchen_meta = _build_credit_receipt_meta(business, _cust_m, 'kitchen')
                 except Exception:
                     pass
-            rcpt = Receipt.issue(
-                business=business,
-                lines=receipt_lines,
-                payment_method=txn_pm,
-                user=request.user,
-                customer_name=credit_name if payment_method == 'credit' else tab_customer,
-                customer_phone=credit_phone if payment_method == 'credit' else tab_phone,
-                source='kitchen',
-                meta=kitchen_meta,
-            )
+            if payment_method == 'food_tab' and active_tab:
+                # Embed tab_id so the public receipt page serves live updates
+                kitchen_meta['tab_id'] = active_tab.id
+
+            # For food_tab: reuse the master receipt if one already exists for this tab
+            master_rcpt = None
+            if payment_method == 'food_tab' and active_tab:
+                master_rcpt = Receipt.objects.filter(
+                    business=business,
+                    meta__tab_id=active_tab.id,
+                ).first()
+
+            if master_rcpt:
+                rcpt = master_rcpt
+            else:
+                rcpt = Receipt.issue(
+                    business=business,
+                    lines=receipt_lines,
+                    payment_method=txn_pm,
+                    user=request.user,
+                    customer_name=credit_name if payment_method == 'credit' else tab_customer,
+                    customer_phone=credit_phone if payment_method == 'credit' else tab_phone,
+                    source='kitchen',
+                    meta=kitchen_meta,
+                )
             receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
             receipt_number = rcpt.receipt_number
         except Exception:

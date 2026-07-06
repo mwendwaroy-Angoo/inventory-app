@@ -428,6 +428,29 @@
         </div>
         {% endif %}
 
+        {% if tab_status == 'OPEN' %}
+        <div id="tab-live-status" style="margin:0.6rem 1.2rem 0.2rem; padding:0.55rem 0.8rem;
+             background:rgba(110,231,183,0.09); border:1px solid rgba(110,231,183,0.25);
+             border-radius:8px; font-size:0.8rem; color:#6ee7b7; display:flex;
+             align-items:center; gap:0.5rem;">
+            <span>🔴</span>
+            <span id="live-status-text">Tab inaendelea — orodha inasasishwa kiotomatiki</span>
+            <span id="live-countdown" style="margin-left:auto; font-size:0.72rem; color:#4ade80; opacity:0.75;"></span>
+        </div>
+        {% elif tab_status == 'SETTLED' %}
+        <div style="margin:0.6rem 1.2rem 0.2rem; padding:0.55rem 0.8rem;
+             background:rgba(46,204,113,0.09); border:1px solid rgba(46,204,113,0.25);
+             border-radius:8px; font-size:0.8rem; color:#2ecc71;">
+            ✅ Tab imelipwa
+        </div>
+        {% elif tab_status == 'VOID' %}
+        <div style="margin:0.6rem 1.2rem 0.2rem; padding:0.55rem 0.8rem;
+             background:rgba(192,57,90,0.09); border:1px solid rgba(192,57,90,0.25);
+             border-radius:8px; font-size:0.8rem; color:#c0395a;">
+            ❌ Tab imetupwa
+        </div>
+        {% endif %}
+
         <div class="qr-section no-print">
             <div id="qrCanvas"></div>
             <p>Scan to view this receipt</p>
@@ -520,6 +543,82 @@
             });
     });
 })();
+
+{% if is_live_tab %}
+/* ── Live tab receipt: poll /r/<token>/live/ every 20 s ── */
+(function () {
+    var TOKEN      = "{{ receipt.token|escapejs }}";
+    var pollSecs   = 20;
+    var countdown  = pollSecs;
+    var countEl    = document.getElementById('live-countdown');
+    var statusEl   = document.getElementById('live-status-text');
+    var linesWrap  = document.querySelector('.receipt-lines');
+    var totalEl    = document.querySelector('.total-amount');
+
+    function fmt(n) { return 'KES ' + Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0}); }
+
+    function renderLines(lines) {
+        if (!linesWrap || !lines) return;
+        var html = '';
+        lines.forEach(function (l) {
+            html += '<div class="receipt-line">' +
+                '<span class="line-name">' + (l.name || '') + '</span>' +
+                (l.qty && l.qty > 1 ? '<span class="line-qty">×' + l.qty + '</span>' : '') +
+                '<span class="line-amount">' + fmt(l.subtotal || 0) + '</span>' +
+                '</div>';
+        });
+        linesWrap.innerHTML = html;
+    }
+
+    function updateCountdown() {
+        if (countEl) countEl.textContent = countdown + 's';
+    }
+
+    function poll() {
+        fetch('/r/' + TOKEN + '/live/')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.lines) renderLines(d.lines);
+                if (d.total !== undefined && totalEl) {
+                    totalEl.textContent = fmt(d.total);
+                }
+                if (!d.is_live) {
+                    // Tab settled or voided — update status and stop polling
+                    clearInterval(tickIv);
+                    clearInterval(pollIv);
+                    var statusDiv = document.getElementById('tab-live-status');
+                    if (statusDiv) {
+                        if (d.tab_status === 'SETTLED') {
+                            statusDiv.style.background = 'rgba(46,204,113,0.09)';
+                            statusDiv.style.border = '1px solid rgba(46,204,113,0.25)';
+                            statusDiv.style.color = '#2ecc71';
+                            statusDiv.innerHTML = '✅ Tab imelipwa';
+                        } else if (d.tab_status === 'VOID') {
+                            statusDiv.style.background = 'rgba(192,57,90,0.09)';
+                            statusDiv.style.border = '1px solid rgba(192,57,90,0.25)';
+                            statusDiv.style.color = '#c0395a';
+                            statusDiv.innerHTML = '❌ Tab imetupwa';
+                        } else {
+                            statusDiv.style.display = 'none';
+                        }
+                    }
+                } else {
+                    countdown = pollSecs;
+                    updateCountdown();
+                }
+            })
+            .catch(function () { /* silent — network hiccup, retry next interval */ });
+    }
+
+    updateCountdown();
+    var tickIv = setInterval(function () {
+        countdown--;
+        if (countdown <= 0) countdown = pollSecs;
+        updateCountdown();
+    }, 1000);
+    var pollIv = setInterval(poll, pollSecs * 1000);
+}());
+{% endif %}
 </script>
 </body>
 </html>

@@ -10,8 +10,11 @@ Reconciliation:
   variance = closing_cash_counted − expected_closing_cash
 """
 import json
+import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Case, DecimalField, F, Sum, Value, When
@@ -560,9 +563,15 @@ def close_shift(request, shift_id):
 
     rec = _reconcile(shift)
 
-    # Auto-convert all open tabs for this station to debt at shift close.
-    # Staff should not need to manually click "Geuza Zote Deni" — tabs are
-    # resolved automatically so they don't reappear on the next shift.
+    # Auto-convert open tabs to debt at shift close — but ONLY when the business
+    # is past its closing time (or operates 24/7 with no closing_time set).
+    # A staff member who closes shift early (e.g. for a break) while the bar is
+    # still within operating hours should NOT have their customers' tabs wiped.
+    # 24/7 bars (no closing_time): always convert — shift changes ARE the end-of-service.
+    _biz = up.business
+    _has_closing_time = bool(getattr(_biz, 'closing_time', None))
+    _should_convert = not _has_closing_time or not _biz.is_open()
+
     from .models import BarTab
     from core.models import Customer
     _is_kitchen_shift = bool(shift.store and shift.store.is_kitchen)
@@ -575,41 +584,49 @@ def close_shift(request, shift_id):
     )
     auto_converted = 0
     auto_converted_names = []
-    for tab in open_tabs:
-        customer_name = (tab.customer_name or '').strip() or f'Tab #{tab.id}'
-        phone = ''
-        if tab.customer_id and tab.customer.phone:
-            phone = tab.customer.phone
+    try:
+        for tab in open_tabs:
+            if not _should_convert:
+                continue
+            customer_name = (tab.customer_name or '').strip() or f'Tab #{tab.id}'
+            phone = ''
+            if tab.customer_id and tab.customer.phone:
+                phone = tab.customer.phone
 
-        cust = None
-        if phone:
-            cust = Customer.objects.filter(business=up.business, phone=phone).first()
-        if cust is None:
-            cust = Customer.objects.filter(
-                business=up.business, name__iexact=customer_name,
-            ).first()
-        if cust is None:
-            cust = Customer.objects.create(
-                business=up.business, name=customer_name, phone=phone,
-                credit_approved=True,
-            )
+            cust = None
+            if phone:
+                cust = Customer.objects.filter(business=up.business, phone=phone).first()
+            if cust is None:
+                cust = Customer.objects.filter(
+                    business=up.business, name__iexact=customer_name,
+                ).first()
+            if cust is None:
+                cust = Customer.objects.create(
+                    business=up.business, name=customer_name, phone=phone,
+                    credit_approved=True,
+                )
 
-        for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
-            txn = entry.transaction
-            txn.recipient = cust.name
-            txn.payment_method = 'credit'
-            txn.save(update_fields=['recipient', 'payment_method'])
+            for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
+                txn = entry.transaction
+                txn.recipient = cust.name
+                txn.payment_method = 'credit'
+                txn.save(update_fields=['recipient', 'payment_method'])
 
-        tab.customer = cust
-        tab.status = 'SETTLED'
-        tab.settled_at = timezone.now()
-        tab.save(update_fields=['customer', 'status', 'settled_at'])
-        auto_converted += 1
-        auto_converted_names.append(customer_name)
+            tab.customer = cust
+            tab.status = 'SETTLED'
+            tab.settled_at = timezone.now()
+            tab.save(update_fields=['customer', 'status', 'settled_at'])
+            auto_converted += 1
+            auto_converted_names.append(customer_name)
+    except Exception:
+        logger.exception('close_shift: auto-convert failed for shift %s', shift.id)
 
+    # For uncoverted tabs (shift closed early) include them so the bar board
+    # can show the "Geuza Zote Deni" button as a manual fallback.
     open_tabs_list = [
         {'id': tab.id, 'customer_name': tab.customer_name or '—'}
         for tab in open_tabs
+        if tab.status == 'OPEN'
     ]
 
     return JsonResponse({

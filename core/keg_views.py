@@ -311,7 +311,7 @@ def bar_board(request):
             try:
                 receipt_pm = payment_method
                 rcpt_meta = {}
-                if payment_method == 'tab' and tab_customer and linked_customer:
+                if payment_method == 'tab' and tab_customer and linked_customer and active_tab:
                     try:
                         from core.debt_views import _build_credit_receipt_meta
                         rcpt_meta = _build_credit_receipt_meta(business, linked_customer, 'bar')
@@ -319,17 +319,36 @@ def bar_board(request):
                         rcpt_meta['outstanding'] = 0.0
                     except Exception:
                         pass
-                rcpt = Receipt.issue(
-                    business=business,
-                    lines=receipt_lines,
-                    payment_method=receipt_pm,
-                    user=request.user,
-                    customer_name=tab_customer if payment_method == 'tab' else '',
-                    meta=rcpt_meta,
-                )
-                receipt_token = rcpt.token
-                receipt_number = rcpt.receipt_number
-                receipt_id = rcpt.id
+                    # Always embed tab_id so /r/<token>/ serves live tab updates to the
+                    # customer — they scan once and see all subsequent rounds in real-time.
+                    rcpt_meta['tab_id'] = active_tab.id
+
+                # For tab sales: reuse the master receipt if one already exists for this tab
+                # so the customer keeps the same QR code across multiple rounds of ordering.
+                master_rcpt = None
+                if payment_method == 'tab' and active_tab:
+                    master_rcpt = Receipt.objects.filter(
+                        business=business,
+                        meta__tab_id=active_tab.id,
+                    ).first()
+
+                if master_rcpt:
+                    # Reuse existing master receipt — customer's QR stays the same
+                    receipt_token = master_rcpt.token
+                    receipt_number = master_rcpt.receipt_number
+                    receipt_id = master_rcpt.id
+                else:
+                    rcpt = Receipt.issue(
+                        business=business,
+                        lines=receipt_lines,
+                        payment_method=receipt_pm,
+                        user=request.user,
+                        customer_name=tab_customer if payment_method == 'tab' else '',
+                        meta=rcpt_meta,
+                    )
+                    receipt_token = rcpt.token
+                    receipt_number = rcpt.receipt_number
+                    receipt_id = rcpt.id
             except Exception:
                 logger.exception(
                     "Receipt.issue failed in bar_board (user=%s business=%s payment=%s)",
@@ -848,6 +867,17 @@ def tabs_list(request):
     result = []
     for tab in tabs:
         all_entries = list(tab.entries.all())
+
+        # Zombie-tab cleanup: if ALL unpaid entries are already payment_method='credit'
+        # (debt-converted but tab status never flipped due to a previous crash), auto-settle
+        # the tab now so it disappears from the drawer.
+        unpaid_entries = [e for e in all_entries if not e.is_paid]
+        if unpaid_entries and all(e.payment_method == 'credit' for e in unpaid_entries):
+            tab.status = 'SETTLED'
+            tab.settled_at = timezone.now()
+            tab.save(update_fields=['status', 'settled_at'])
+            continue
+
         _tab_phone = (tab.customer.phone if tab.customer else '') or ''
 
         if _see_all:
