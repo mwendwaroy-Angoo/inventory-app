@@ -868,11 +868,17 @@ def tabs_list(request):
     for tab in tabs:
         all_entries = list(tab.entries.all())
 
-        # Zombie-tab cleanup: if ALL unpaid entries are already payment_method='credit'
-        # (debt-converted but tab status never flipped due to a previous crash), auto-settle
+        # Zombie-tab cleanup: if ALL unpaid entries already have their underlying
+        # Transaction.payment_method='credit' (debt-converted but tab status was never
+        # flipped, typically due to a crash in close_shift before tab.save()), auto-settle
         # the tab now so it disappears from the drawer.
+        # NOTE: BarTabEntry.payment_method stays 'tab' for unpaid entries — the auto-convert
+        # only updates Transaction.payment_method. Must check the transaction field.
         unpaid_entries = [e for e in all_entries if not e.is_paid]
-        if unpaid_entries and all(e.payment_method == 'credit' for e in unpaid_entries):
+        if unpaid_entries and all(
+            e.transaction_id and e.transaction.payment_method == 'credit'
+            for e in unpaid_entries
+        ):
             tab.status = 'SETTLED'
             tab.settled_at = timezone.now()
             tab.save(update_fields=['status', 'settled_at'])
