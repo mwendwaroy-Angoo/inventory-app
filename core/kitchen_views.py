@@ -573,6 +573,13 @@ def _kitchen_checkout(request, up, business, is_owner):
             business=business,
             meta__tab_id=active_tab.id,
         ).first()
+        if master_rcpt is None:
+            # Also check if this food tab's ID appears in another receipt's linked_tab_ids
+            # (e.g. bar board already linked this tab into its bar receipt on a previous order)
+            master_rcpt = Receipt.objects.filter(
+                business=business,
+                meta__linked_tab_ids__contains=[active_tab.id],
+            ).first()
 
         if master_rcpt is None:
             try:

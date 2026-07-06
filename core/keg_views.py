@@ -241,6 +241,7 @@ def bar_board(request):
                     business=business,
                     customer_name__iexact=tab_customer,
                     status='OPEN',
+                    source='bar',  # bar board only manages bar tabs; cross-counter uses merge_tab_id
                 ).first()
                 if not active_tab:
                     import secrets as _secrets
@@ -324,14 +325,56 @@ def bar_board(request):
                     # customer — they scan once and see all subsequent rounds in real-time.
                     rcpt_meta['tab_id'] = active_tab.id
 
-                # For tab sales: reuse the master receipt if one already exists for this tab
-                # so the customer keeps the same QR code across multiple rounds of ordering.
+                # For tab sales: resolve the master receipt so the customer keeps one URL.
+                # Priority 1: bar tab already has its own receipt (subsequent rounds).
+                # Priority 2: bar tab appears in another receipt's linked_tab_ids (linked earlier).
+                # Priority 3: customer has an open kitchen food tab with a receipt — link this
+                #             bar tab into it so all items appear under one URL.
                 master_rcpt = None
+                _is_linked_to_food_rcpt = False
                 if payment_method == 'tab' and active_tab:
                     master_rcpt = Receipt.objects.filter(
                         business=business,
                         meta__tab_id=active_tab.id,
                     ).first()
+                    if master_rcpt is None:
+                        master_rcpt = Receipt.objects.filter(
+                            business=business,
+                            meta__linked_tab_ids__contains=[active_tab.id],
+                        ).first()
+                    if master_rcpt is None:
+                        try:
+                            _kf_qs = BarTab.objects.filter(
+                                business=business, status='OPEN', source='kitchen',
+                            )
+                            _kf_tab = (
+                                _kf_qs.filter(customer=linked_customer).first()
+                                if linked_customer
+                                else _kf_qs.filter(customer_name__iexact=tab_customer).first()
+                            )
+                            if _kf_tab:
+                                _kf_rcpt = Receipt.objects.filter(
+                                    business=business,
+                                    meta__tab_id=_kf_tab.id,
+                                ).first()
+                                if _kf_rcpt is None:
+                                    _kf_rcpt = Receipt.objects.filter(
+                                        business=business,
+                                        meta__linked_tab_ids__contains=[_kf_tab.id],
+                                    ).first()
+                                if _kf_rcpt:
+                                    _kf_linked = list(_kf_rcpt.meta.get('linked_tab_ids') or [])
+                                    if active_tab.id not in _kf_linked:
+                                        _kf_linked.append(active_tab.id)
+                                        _kf_rcpt.meta['linked_tab_ids'] = _kf_linked
+                                        _kf_rcpt.save(update_fields=['meta'])
+                                    master_rcpt = _kf_rcpt
+                                    _is_linked_to_food_rcpt = True
+                        except Exception:
+                            logger.exception(
+                                'bar_board: kitchen-receipt link lookup failed business=%s',
+                                business.id,
+                            )
 
                 if master_rcpt:
                     # Reuse existing master receipt — customer's QR stays the same
@@ -372,8 +415,7 @@ def bar_board(request):
                 'receipt_id': receipt_id,
             }
 
-            # SMS to customer when a NEW bar tab receipt is created for the first time.
-            # Subsequent rounds reuse the same master receipt (customer already has the QR).
+            # SMS: brand-new bar tab receipt (customer has no receipt yet)
             if payment_method == 'tab' and master_rcpt is None and receipt_url and active_tab:
                 try:
                     from .notifications import normalize_ke_phone, send_sms_notification
@@ -391,6 +433,25 @@ def bar_board(request):
                 except Exception:
                     logger.exception(
                         "Tab open SMS failed in bar_board (business=%s)", business.id
+                    )
+
+            # SMS: bar item linked to existing kitchen food tab receipt — update customer
+            if payment_method == 'tab' and _is_linked_to_food_rcpt and receipt_url and active_tab:
+                try:
+                    from .notifications import normalize_ke_phone, send_sms_notification
+                    _sms_phone_kf = normalize_ke_phone(
+                        tab_phone or (linked_customer.phone if linked_customer else '') or ''
+                    ) if (tab_phone or linked_customer) else ''
+                    if _sms_phone_kf:
+                        _sms_kf = (
+                            f"Habari {tab_customer},\n"
+                            f"{business.name}: Kinywaji kimeongezwa kwenye tab yako.\n"
+                            f"Angalia risiti iliyosasishwa: {receipt_url}"
+                        )
+                        send_sms_notification(_sms_kf, _sms_phone_kf)
+                except Exception:
+                    logger.exception(
+                        "Tab food-link SMS failed in bar_board (business=%s)", business.id
                     )
 
             # SMS notification when bar items are merged into an existing kitchen food tab
