@@ -59,6 +59,10 @@ def _get_customer_debt_data(customer, business, scope='all'):
         recipient=customer.name,
         payment_method='credit',
         type='Issue',
+    ).exclude(
+        # Transactions linked to an OPEN tab are tab charges, not standalone debt.
+        # They enter the debt ledger only after the tab is settled as credit / converted.
+        tab_entry__tab__status='OPEN',
     ).order_by('date').select_related('item__store')
 
     payment_qs = CustomerDebtPayment.objects.filter(
