@@ -1405,11 +1405,13 @@
             var tabDetail = {% if can_access_bar %}' (KES ' + t.total.toLocaleString() + ', tangu ' + t.opened_at + ')'{% else %}' (tangu ' + t.opened_at + ')'{% endif %};
             hintParts.push(
               '🍺 <strong>' + t.customer_name + '</strong> ana Bar tab iliyo wazi' + tabDetail + '.<br>' +
-              '<a href="#" style="color:#c9a84c;" onclick="kbAcceptMerge(' + t.id + ',\'' +
-                t.customer_name.replace(/'/g,'') + '\'); return false;">' +
-                '✓ Ongeza kwa Bar tab hiyo</a>' +
-              ' &nbsp;·&nbsp; <a href="#" style="color:#888;" ' +
-              'onclick="kbDeclineMerge(); return false;">Fungua Food tab mpya</a>'
+              '<button onclick="kbAcceptMerge(' + t.id + ',\'' +
+                t.customer_name.replace(/'/g,'') + '\')" ' +
+                'style="margin-top:0.35rem;background:rgba(201,168,76,0.15);border:1px solid #c9a84c;' +
+                'color:#c9a84c;border-radius:6px;padding:0.25rem 0.75rem;font-size:0.8rem;cursor:pointer;">' +
+                '✓ Ongeza kwa Bar tab hiyo</button>' +
+              ' &nbsp;<a href="#" style="color:#666;font-size:0.75rem;" ' +
+              'onclick="kbDeclineMerge(); return false;">au fungua food tab mpya</a>'
             );
           }
 

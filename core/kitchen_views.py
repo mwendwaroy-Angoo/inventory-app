@@ -560,7 +560,48 @@ def _kitchen_checkout(request, up, business, is_owner):
     receipt_url = None
     receipt_number = None
     rcpt = None
-    master_rcpt = None  # tracked outside try so food_tab SMS guard can read it
+    master_rcpt = None    # tracked outside try so SMS guard can read it
+    _is_new_bar_link = False  # True when food tab is freshly linked to an existing bar tab receipt
+
+    # ── food_tab: resolve master receipt ─────────────────────────────────────
+    # Priority 1: food tab already has its own master receipt (subsequent rounds)
+    # Priority 2: same customer has an open bar tab with a master receipt —
+    #             link the food tab to it so the customer keeps one URL for both.
+    # Priority 3: neither found — a new receipt will be created below.
+    if payment_method == 'food_tab' and active_tab:
+        master_rcpt = Receipt.objects.filter(
+            business=business,
+            meta__tab_id=active_tab.id,
+        ).first()
+
+        if master_rcpt is None:
+            try:
+                _bar_qs = BarTab.objects.filter(
+                    business=business, status='OPEN', source='bar'
+                )
+                _btab = (
+                    _bar_qs.filter(customer=active_tab.customer).first()
+                    if active_tab.customer
+                    else _bar_qs.filter(customer_name__iexact=tab_customer).first()
+                )
+                if _btab:
+                    _bar_rcpt = Receipt.objects.filter(
+                        business=business,
+                        meta__tab_id=_btab.id,
+                    ).first()
+                    if _bar_rcpt:
+                        _linked = list(_bar_rcpt.meta.get('linked_tab_ids') or [])
+                        if active_tab.id not in _linked:
+                            _linked.append(active_tab.id)
+                            _bar_rcpt.meta['linked_tab_ids'] = _linked
+                            _bar_rcpt.save(update_fields=['meta'])
+                            _is_new_bar_link = True
+                        master_rcpt = _bar_rcpt
+            except Exception:
+                logger.exception(
+                    'food_tab: bar-tab receipt lookup failed business=%s', business.id
+                )
+
     if payment_method in ('cash', 'mpesa', 'credit', 'food_tab'):
         try:
             kitchen_meta = {}
@@ -576,15 +617,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 except Exception:
                     pass
             if payment_method == 'food_tab' and active_tab:
-                # Embed tab_id so the public receipt page serves live updates
                 kitchen_meta['tab_id'] = active_tab.id
-
-            # For food_tab: reuse the master receipt if one already exists for this tab
-            if payment_method == 'food_tab' and active_tab:
-                master_rcpt = Receipt.objects.filter(
-                    business=business,
-                    meta__tab_id=active_tab.id,
-                ).first()
 
             if master_rcpt:
                 rcpt = master_rcpt
@@ -604,22 +637,32 @@ def _kitchen_checkout(request, up, business, is_owner):
         except Exception:
             logger.exception('Kitchen Receipt.issue failed business=%s', business.id)
 
-    # SMS to customer when a NEW food tab receipt is created for the first time.
-    # Subsequent rounds reuse the same master receipt — no repeat SMS.
-    if payment_method == 'food_tab' and master_rcpt is None and receipt_url and active_tab:
+    # SMS to customer:
+    #  _is_new_bar_link → food just linked to bar tab receipt, send "chakula kimeongezwa"
+    #  master_rcpt None → brand new standalone food tab receipt, send first-time SMS
+    #  Otherwise        → subsequent round on existing receipt, no SMS
+    if payment_method == 'food_tab' and active_tab and receipt_url:
         try:
             from .notifications import normalize_ke_phone, send_sms_notification
             _sms_phone_raw = tab_phone or (active_tab.customer.phone if active_tab.customer else '')
             _sms_phone_k = normalize_ke_phone(_sms_phone_raw) if _sms_phone_raw else ''
             if _sms_phone_k:
-                _tab_total_k = float(active_tab.total()) if active_tab else float(total)
-                _sms_k = (
-                    f"Habari {tab_customer},\n"
-                    f"{business.name}: Food tab imefunguliwa — "
-                    f"KES {_tab_total_k:,.0f}.\n"
-                    f"Angalia risiti yako: {receipt_url}"
-                )
-                send_sms_notification(_sms_k, _sms_phone_k)
+                if _is_new_bar_link:
+                    _sms_k = (
+                        f"Habari {tab_customer},\n"
+                        f"{business.name}: Chakula kimeongezwa kwenye tab yako.\n"
+                        f"Angalia risiti iliyosasishwa: {receipt_url}"
+                    )
+                    send_sms_notification(_sms_k, _sms_phone_k)
+                elif master_rcpt is None:
+                    _tab_total_k = float(active_tab.total()) if active_tab else float(total)
+                    _sms_k = (
+                        f"Habari {tab_customer},\n"
+                        f"{business.name}: Food tab imefunguliwa — "
+                        f"KES {_tab_total_k:,.0f}.\n"
+                        f"Angalia risiti yako: {receipt_url}"
+                    )
+                    send_sms_notification(_sms_k, _sms_phone_k)
         except Exception:
             logger.exception('Food tab open SMS failed business=%s', business.id)
 

@@ -66,8 +66,9 @@ def receipts_list(request):
 def _get_live_tab_state(receipt):
     """Return (is_live, tab_status, lines, total) for a tab-linked receipt.
 
-    Always recomputes lines from ALL BarTabEntry rows so the customer sees the
-    running total regardless of how many ordering rounds have happened.
+    Reads UNPAID entries from the primary tab plus any linked tabs stored in
+    meta.linked_tab_ids (e.g. a kitchen food tab linked to a bar tab receipt).
+    Adds 🍺/🍽 icons so the customer sees which counter each item came from.
     Returns is_live=False when no tab_id in meta or tab not found.
     """
     tab_id = receipt.meta.get('tab_id') if receipt.meta else None
@@ -76,9 +77,26 @@ def _get_live_tab_state(receipt):
     try:
         from .models import BarTab as _BarTab
         tab = _BarTab.objects.get(id=tab_id, business=receipt.business)
-        entries = list(tab.entries.all().order_by('id'))
-        lines = [{'name': e.description, 'qty': 1, 'subtotal': float(e.amount)} for e in entries]
-        total = sum(float(e.amount) for e in entries)
+        all_tab_ids = [tab_id] + list(receipt.meta.get('linked_tab_ids') or [])
+        lines = []
+        total = 0.0
+        for btab_id in all_tab_ids:
+            try:
+                btab = _BarTab.objects.get(id=btab_id, business=receipt.business)
+                for e in btab.entries.filter(is_paid=False).select_related(
+                    'transaction__item__store'
+                ).order_by('id'):
+                    is_kitchen = False
+                    try:
+                        is_kitchen = e.transaction.item.store.is_kitchen
+                    except Exception:
+                        pass
+                    icon = '🍽 ' if is_kitchen else '🍺 '
+                    amt = float(e.amount)
+                    lines.append({'name': icon + e.description, 'qty': 1, 'subtotal': amt})
+                    total += amt
+            except _BarTab.DoesNotExist:
+                pass
         return tab.status == 'OPEN', tab.status, lines, total
     except Exception:
         return False, None, None, None
