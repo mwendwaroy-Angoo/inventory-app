@@ -2102,6 +2102,104 @@
         document.getElementById('qsSuccessModal').classList.add('active');
     })();
     {% endif %}
+
+    /* ── QS Checkout — STK Push ─────────────────────────────────────── */
+    var _qsCheckoutStkBtn = document.getElementById('qsStkCheckoutBtn');
+    if (_qsCheckoutStkBtn) {
+        _qsCheckoutStkBtn.addEventListener('click', function () {
+            var total = Math.round(cart.reduce(function (s, c) { return s + c.qty * c.price; }, 0));
+            var el = document.getElementById('qs-stk-co-total');
+            if (el) el.textContent = 'Jumla: KES ' + total.toLocaleString();
+            var pEl = document.getElementById('qs-stk-co-phone'); if (pEl) pEl.value = '';
+            var rEl = document.getElementById('qs-stk-co-result'); if (rEl) rEl.style.display = 'none';
+            var btn = document.getElementById('qs-stk-co-btn');
+            if (btn) { btn.disabled = false; btn.textContent = '📲 Tuma Ombi'; }
+            var m = document.getElementById('qsStkCheckoutModal');
+            if (m) new bootstrap.Modal(m).show();
+        });
+    }
+
+    window.qsSendCheckoutStk = function () {
+        var phone = (document.getElementById('qs-stk-co-phone').value || '').trim();
+        var total = Math.round(cart.reduce(function (s, c) { return s + c.qty * c.price; }, 0));
+        var rEl = document.getElementById('qs-stk-co-result');
+        var btn = document.getElementById('qs-stk-co-btn');
+        function stkErr(msg) {
+            rEl.style.background = 'rgba(192,57,90,0.15)'; rEl.style.color = '#c0395a';
+            rEl.textContent = msg; rEl.style.display = 'block';
+        }
+        if (!phone) { stkErr('Ingiza nambari ya simu ya mteja.'); return; }
+        if (!total || total < 1) { stkErr('Cart ni tupu.'); return; }
+        btn.disabled = true; btn.textContent = '⏳ Inatuma...'; rEl.style.display = 'none';
+        var qsCartPayload = cart.map(function (c) {
+            return {
+                item_id:   c.id,
+                qty:       c.qty,
+                amount:    c.qty * c.price,
+                description: c.name,
+                preset_id: c.presetId  || null,
+                bunch_id:  c.bunchId   || null,
+            };
+        });
+        fetch('/mpesa/stk-push/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+            body: JSON.stringify({phone: phone, amount: total, qs_cart: qsCartPayload}),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.success) {
+                rEl.style.background = 'rgba(46,204,113,0.15)'; rEl.style.color = '#2ecc71';
+                rEl.textContent = '✅ Imetumwa! Mteja aidhinishe kwenye simu yake.';
+                rEl.style.display = 'block'; btn.textContent = '⏳ Inasubiri...';
+                _qsPollCheckoutStk(d.payment_id);
+            } else {
+                btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+                stkErr('❌ ' + (d.error || 'Imeshindwa. Jaribu tena.'));
+            }
+        })
+        .catch(function () {
+            btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+            stkErr('❌ Hitilafu ya mtandao. Jaribu tena.');
+        });
+    };
+
+    function _qsPollCheckoutStk(paymentId) {
+        var tries = 0;
+        var rEl = document.getElementById('qs-stk-co-result');
+        var btn = document.getElementById('qs-stk-co-btn');
+        var iv = setInterval(function () {
+            tries++;
+            fetch('/mpesa/status/' + paymentId + '/')
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (d.status === 'completed') {
+                        clearInterval(iv);
+                        rEl.style.background = 'rgba(46,204,113,0.15)'; rEl.style.color = '#2ecc71';
+                        rEl.textContent = '✅ Malipo yamepokelewa!';
+                        btn.disabled = true; btn.textContent = '✓ Imelipwa';
+                        cart.splice(0);
+                        updateCart();
+                        setTimeout(function () {
+                            var m = document.getElementById('qsStkCheckoutModal');
+                            if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
+                        }, 2000);
+                    } else if (d.status === 'failed') {
+                        clearInterval(iv);
+                        btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+                        rEl.style.background = 'rgba(192,57,90,0.15)'; rEl.style.color = '#c0395a';
+                        rEl.textContent = '❌ Mteja alikataa au malipo yalishindwa.';
+                    } else if (tries >= 24) {
+                        clearInterval(iv);
+                        btn.disabled = false; btn.textContent = '📲 Tuma Ombi';
+                        rEl.style.background = 'rgba(255,152,0,0.15)'; rEl.style.color = '#ff9800';
+                        rEl.textContent = '⏳ Bado tunasubiri — angalia tena baadaye ikiwa mteja alipitisha.';
+                    }
+                })
+                .catch(function () { if (tries >= 24) clearInterval(iv); });
+        }, 5000);
+    }
+
 })();
 
 {% if biz_profile.type == 'bar' %}
@@ -2224,7 +2322,7 @@
                 '<div class="qs-tab-actions">' +
                 '<button class="qs-tab-btn qs-tab-btn-cash" onclick="qsSettleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
                 '<button class="qs-tab-btn qs-tab-btn-mpesa" onclick="qsSettleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
-                '<button class="qs-tab-btn" style="background:rgba(76,175,80,0.08);color:#4caf50;border:1px solid rgba(76,175,80,0.3);" onclick="qsOpenTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">📲 STK Push</button>' +
+                '<button class="qs-tab-btn" style="background:rgba(76,175,80,0.08);color:#4caf50;border:1px solid rgba(76,175,80,0.3);" onclick="qsOpenTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + tab.customer_name.replace(/'/g,"\\'") + '\',\'' + (tab.customer_phone||'').replace(/'/g,"\\'") + '\')">📲 STK Push</button>' +
                 '<button class="qs-tab-btn" style="background:rgba(201,168,76,0.08);color:#c9a84c;border:1px solid rgba(201,168,76,0.25);" onclick="qsOpenTabDebt(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">→ Deni</button>' +
                 (QS_IS_OWNER ? '<button class="qs-tab-btn" style="background:rgba(192,57,90,0.1);color:#c0395a;border:1px solid rgba(192,57,90,0.3);" onclick="qsOpenTabVoid(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">Void</button>' : '') +
                 '</div>' +
@@ -2339,14 +2437,14 @@
     /* ── STK Push for QS tab ───────────────────────────────── */
     var _qsPendingStkTabId = null;
 
-    window.qsOpenTabStk = function (tabId, amount, custName) {
+    window.qsOpenTabStk = function (tabId, amount, custName, phone) {
         _qsPendingStkTabId = tabId;
         // Clear entry-mode flags — this is a full-tab call
         window._qsStkEntryId = null;
         window._qsStkTabId   = null;
         var cEl = document.getElementById('qs-tab-stk-cust');
         if (cEl) cEl.textContent = 'Tab ya ' + custName + ' — KES ' + qsFmt(amount);
-        var pEl = document.getElementById('qs-tab-stk-phone'); if (pEl) pEl.value = '';
+        var pEl = document.getElementById('qs-tab-stk-phone'); if (pEl) pEl.value = phone || '';
         var aEl = document.getElementById('qs-tab-stk-amount'); if (aEl) aEl.value = amount;
         var rEl = document.getElementById('qs-tab-stk-result'); if (rEl) rEl.style.display = 'none';
         var btn = document.getElementById('qs-tab-stk-btn');

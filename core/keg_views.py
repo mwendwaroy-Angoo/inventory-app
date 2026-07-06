@@ -928,12 +928,15 @@ def update_tab_phone(request, tab_id):
             _cust.phone = phone
             _cust.save(update_fields=['phone'])
         else:
-            Customer.objects.create(
+            _cust = Customer.objects.create(
                 business=up.business,
                 name=tab.customer_name,
                 phone=phone,
                 credit_approved=True,
             )
+        # Link customer FK so phone is returned by tabs_list and pre-fills STK modal
+        tab.customer = _cust
+        tab.save(update_fields=['customer'])
     return JsonResponse({'ok': True})
 
 

@@ -2452,7 +2452,7 @@
           '<div class="tab-actions-row">' +
           '<button class="tab-action-btn tab-btn-cash" onclick="window.settleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
           '<button class="tab-action-btn tab-btn-mpesa" onclick="window.settleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
-          '<button class="tab-action-btn tab-btn-stk" onclick="window.openTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + safeCust + '\')">📲 STK Push</button>' +
+          '<button class="tab-action-btn tab-btn-stk" onclick="window.openTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + safeCust + '\',false,\'' + (tab.customer_phone||'').replace(/'/g,"\\'") + '\')">📲 STK Push</button>' +
           '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>' +
           (QS_IS_OWNER
             ? '<button class="tab-action-btn tab-btn-void" onclick="window.openVoidModal(' + tab.id + ',\'' + safeCust + '\')">Void</button>'
@@ -2690,7 +2690,7 @@
   // _pendingStkEntryIds: set by settleTabPartialStk (partial), null for full-tab STK
   window._pendingStkEntryIds = null;
 
-  window.openTabStk = function (tabId, amount, custName, skipClearEntryIds) {
+  window.openTabStk = function (tabId, amount, custName, skipClearEntryIds, phone) {
     _pendingStkTabId = tabId;
     // Clear entry IDs unless called from settleTabPartialStk (which sets them first)
     if (!skipClearEntryIds) window._pendingStkEntryIds = null;
@@ -2698,7 +2698,7 @@
       ? 'Vilivyochaguliwa — KES ' + fmt(amount)
       : 'Tab ya ' + custName + ' — KES ' + fmt(amount);
     document.getElementById('tab-stk-cust').textContent = label;
-    document.getElementById('tab-stk-phone').value = '';
+    document.getElementById('tab-stk-phone').value = phone || '';
     document.getElementById('tab-stk-amount').value = amount;
     document.getElementById('tab-stk-result').style.display = 'none';
     var btn = document.getElementById('tab-stk-btn');

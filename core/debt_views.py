@@ -153,10 +153,14 @@ def _get_customer_debt_data(customer, business, scope='all'):
             score_color = '#888'
             score_pct   = 0
         else:
-            score = 'high_risk'
-            score_label = _('High Risk')
-            score_color = '#f87171'
-            score_pct   = max(5, int(completion_rate * 0.4))
+            # completion_rate < 50% but no overdue items yet — new/partial payer.
+            # high_risk fires only when there are OVERDUE items (line 132 above).
+            # A partial first payment on a fresh tab should not brand the customer
+            # as high_risk before their window has even elapsed.
+            score = 'moderate'
+            score_label = _('Moderate')
+            score_color = '#fbbf24'
+            score_pct   = max(5, int(completion_rate * 0.3))
 
     effective_window = min(
         customer.expected_payment_days or window,

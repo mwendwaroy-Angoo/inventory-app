@@ -560,20 +560,56 @@ def close_shift(request, shift_id):
 
     rec = _reconcile(shift)
 
-    # Detect open tabs for this station so the UI can warn staff before they leave
+    # Auto-convert all open tabs for this station to debt at shift close.
+    # Staff should not need to manually click "Geuza Zote Deni" — tabs are
+    # resolved automatically so they don't reappear on the next shift.
     from .models import BarTab
+    from core.models import Customer
     _is_kitchen_shift = bool(shift.store and shift.store.is_kitchen)
     _tab_source = 'kitchen' if _is_kitchen_shift else 'bar'
-    open_tabs_qs = BarTab.objects.filter(
-        business=up.business, status='OPEN', source=_tab_source
-    ).values('id', 'customer_name', 'opened_at')
+
+    open_tabs = list(
+        BarTab.objects.filter(business=up.business, status='OPEN', source=_tab_source)
+        .prefetch_related('entries')
+        .select_related('customer')
+    )
+    auto_converted = 0
+    auto_converted_names = []
+    for tab in open_tabs:
+        customer_name = (tab.customer_name or '').strip() or f'Tab #{tab.id}'
+        phone = ''
+        if tab.customer_id and tab.customer.phone:
+            phone = tab.customer.phone
+
+        cust = None
+        if phone:
+            cust = Customer.objects.filter(business=up.business, phone=phone).first()
+        if cust is None:
+            cust = Customer.objects.filter(
+                business=up.business, name__iexact=customer_name,
+            ).first()
+        if cust is None:
+            cust = Customer.objects.create(
+                business=up.business, name=customer_name, phone=phone,
+                credit_approved=True,
+            )
+
+        for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
+            txn = entry.transaction
+            txn.recipient = cust.name
+            txn.payment_method = 'credit'
+            txn.save(update_fields=['recipient', 'payment_method'])
+
+        tab.customer = cust
+        tab.status = 'SETTLED'
+        tab.settled_at = timezone.now()
+        tab.save(update_fields=['customer', 'status', 'settled_at'])
+        auto_converted += 1
+        auto_converted_names.append(customer_name)
+
     open_tabs_list = [
-        {
-            'id': t['id'],
-            'customer_name': t['customer_name'] or '—',
-            'opened_at': timezone.localtime(t['opened_at']).strftime('%H:%M'),
-        }
-        for t in open_tabs_qs
+        {'id': tab.id, 'customer_name': tab.customer_name or '—'}
+        for tab in open_tabs
     ]
 
     return JsonResponse({
@@ -588,6 +624,8 @@ def close_shift(request, shift_id):
         'weight_readings':      weight_readings,
         'open_tabs':            open_tabs_list,
         'open_tabs_count':      len(open_tabs_list),
+        'auto_converted':       auto_converted,
+        'auto_converted_names': auto_converted_names,
     })
 
 

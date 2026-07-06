@@ -828,14 +828,17 @@ def tab_check_api(request):
             'opened_at':     tab.opened_at.strftime('%H:%M'),
         })
 
-    # Check for outstanding debt under this customer name
+    # Check for outstanding debt under this customer name, scoped to the
+    # requesting user's station — kitchen staff only see kitchen debt, bar
+    # staff only see bar debt, so a bar debt cannot block a kitchen order.
     prior_debt = None
-    from .debt_views import _get_customer_debt_data
+    from .debt_views import _get_customer_debt_data, _debt_scope
+    _scope = _debt_scope(up, up.business)
     customer = Customer.objects.filter(
         business=up.business, name__iexact=name,
     ).first()
     if customer:
-        debt_data = _get_customer_debt_data(customer, up.business, scope='all')
+        debt_data = _get_customer_debt_data(customer, up.business, scope=_scope)
         if debt_data['outstanding'] > 0:
             prior_debt = {
                 'outstanding': debt_data['outstanding'],
