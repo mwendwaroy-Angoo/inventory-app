@@ -267,11 +267,16 @@
     </div>
 </div>
 
-<!-- Owner: dual sub-ledger breakdown -->
+<!-- Owner: dual sub-ledger breakdown — each card is a one-click pay tile -->
 {% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
 <div class="row g-3 mb-4">
     <div class="col-md-6">
-        <div class="section-card" style="border-left:3px solid #C8752A;">
+        <div class="section-card {% if bar_data.outstanding > 0 %}debt-ledger-tile{% endif %}"
+             style="border-left:3px solid #C8752A; {% if bar_data.outstanding > 0 %}cursor:pointer;{% endif %}"
+             {% if bar_data.outstanding > 0 %}
+             data-bs-toggle="modal" data-bs-target="#paymentModal"
+             onclick="window._quickPayLedger('bar', {{ bar_data.outstanding }})"
+             {% endif %}>
             <div class="section-card-header">
                 <h6>🍺 {% trans 'Bar Ledger' %}</h6>
                 <span style="color:#fbbf24; font-weight:700;">KES {{ bar_data.outstanding|floatformat:0 }}</span>
@@ -282,17 +287,22 @@
                     {% trans 'Paid' %}: KES {{ bar_data.total_paid|floatformat:0 }}
                 </div>
                 {% if bar_data.outstanding > 0 %}
-                <button type="button" class="btn btn-sm btn-outline-warning mt-2"
-                        data-bs-toggle="modal" data-bs-target="#paymentModal"
-                        onclick="var r=document.getElementById('ds_bar'); if(r){r.checked=true; window._debtLedgerChange();}">
-                    💰 {% trans 'Record Bar Payment' %}
-                </button>
+                <div style="margin-top:0.6rem; color:#C8752A; font-size:0.82rem; font-weight:600;">
+                    💰 {% trans 'Tap to pay' %} KES {{ bar_data.outstanding|floatformat:0 }} →
+                </div>
+                {% else %}
+                <div style="margin-top:0.6rem; color:#6ee7b7; font-size:0.8rem;">✅ {% trans 'All paid' %}</div>
                 {% endif %}
             </div>
         </div>
     </div>
     <div class="col-md-6">
-        <div class="section-card" style="border-left:3px solid #4ade80;">
+        <div class="section-card {% if kitchen_data.outstanding > 0 %}debt-ledger-tile{% endif %}"
+             style="border-left:3px solid #4ade80; {% if kitchen_data.outstanding > 0 %}cursor:pointer;{% endif %}"
+             {% if kitchen_data.outstanding > 0 %}
+             data-bs-toggle="modal" data-bs-target="#paymentModal"
+             onclick="window._quickPayLedger('kitchen', {{ kitchen_data.outstanding }})"
+             {% endif %}>
             <div class="section-card-header">
                 <h6>🍗 {% trans 'Kitchen Ledger' %}</h6>
                 <span style="color:#fbbf24; font-weight:700;">KES {{ kitchen_data.outstanding|floatformat:0 }}</span>
@@ -303,11 +313,11 @@
                     {% trans 'Paid' %}: KES {{ kitchen_data.total_paid|floatformat:0 }}
                 </div>
                 {% if kitchen_data.outstanding > 0 %}
-                <button type="button" class="btn btn-sm btn-outline-success mt-2"
-                        data-bs-toggle="modal" data-bs-target="#paymentModal"
-                        onclick="var r=document.getElementById('ds_kitchen'); if(r){r.checked=true; window._debtLedgerChange();}">
-                    💰 {% trans 'Record Kitchen Payment' %}
-                </button>
+                <div style="margin-top:0.6rem; color:#4ade80; font-size:0.82rem; font-weight:600;">
+                    💰 {% trans 'Tap to pay' %} KES {{ kitchen_data.outstanding|floatformat:0 }} →
+                </div>
+                {% else %}
+                <div style="margin-top:0.6rem; color:#6ee7b7; font-size:0.8rem;">✅ {% trans 'All paid' %}</div>
                 {% endif %}
             </div>
         </div>
@@ -558,6 +568,13 @@
 
 {% block extra_js %}
 {% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
+<style>
+.debt-ledger-tile:hover {
+    background: rgba(255,255,255,0.03);
+    box-shadow: 0 0 0 1px rgba(201,168,76,0.3);
+    transition: box-shadow 0.15s, background 0.15s;
+}
+</style>
 <script>
 window._debtLedgerChange = function() {
     var dsBar = document.getElementById('ds_bar');
@@ -568,6 +585,30 @@ window._debtLedgerChange = function() {
     if (amtInput) { amtInput.max = out; amtInput.value = out.toFixed(2); }
     if (dispEl)   dispEl.textContent = out.toFixed(2);
 };
+
+/* Pre-select ledger AND pre-fill the exact outstanding amount in one tap */
+window._quickPayLedger = function(ledger, amount) {
+    var radio = document.getElementById(ledger === 'bar' ? 'ds_bar' : 'ds_kitchen');
+    if (radio) { radio.checked = true; }
+    var amtInput = document.getElementById('amountInput');
+    var dispEl   = document.getElementById('modalOutstandingDisplay');
+    if (amtInput) { amtInput.max = amount; amtInput.value = amount.toFixed(2); }
+    if (dispEl)   dispEl.textContent = amount.toFixed(2);
+};
+
+/* On modal open via generic "Record Payment" button: sync display to default radio */
+document.addEventListener('DOMContentLoaded', function() {
+    var modal = document.getElementById('paymentModal');
+    if (modal) {
+        modal.addEventListener('show.bs.modal', function() {
+            /* Only sync if _quickPayLedger was NOT the trigger (it already set values) */
+            setTimeout(function() {
+                var dsBar = document.getElementById('ds_bar');
+                if (dsBar) window._debtLedgerChange();
+            }, 30);
+        });
+    }
+});
 </script>
 {% endif %}
 {% endblock %}

@@ -618,10 +618,10 @@ def close_shift(request, shift_id):
     )
     auto_converted = 0
     auto_converted_names = []
-    try:
-        for tab in open_tabs:
-            if not _should_convert:
-                continue
+    for tab in open_tabs:
+        if not _should_convert:
+            continue
+        try:
             customer_name = (tab.customer_name or '').strip() or f'Tab #{tab.id}'
             phone = ''
             if tab.customer_id and tab.customer.phone:
@@ -652,8 +652,8 @@ def close_shift(request, shift_id):
             tab.save(update_fields=['customer', 'status', 'settled_at'])
             auto_converted += 1
             auto_converted_names.append(customer_name)
-    except Exception:
-        logger.exception('close_shift: auto-convert failed for shift %s', shift.id)
+        except Exception:
+            logger.exception('close_shift: auto-convert failed for tab %s in shift %s', tab.id, shift.id)
 
     # For uncoverted tabs (shift closed early) include them so the bar board
     # can show the "Geuza Zote Deni" button as a manual fallback.

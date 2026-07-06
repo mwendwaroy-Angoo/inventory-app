@@ -308,6 +308,7 @@ def bar_board(request):
             receipt_token = None
             receipt_number = None
             receipt_id = None
+            master_rcpt = None  # tracked outside try so SMS logic can read it
             try:
                 receipt_pm = payment_method
                 rcpt_meta = {}
@@ -370,6 +371,27 @@ def bar_board(request):
                 'receipt_url': receipt_url,
                 'receipt_id': receipt_id,
             }
+
+            # SMS to customer when a NEW bar tab receipt is created for the first time.
+            # Subsequent rounds reuse the same master receipt (customer already has the QR).
+            if payment_method == 'tab' and master_rcpt is None and receipt_url and active_tab:
+                try:
+                    from .notifications import normalize_ke_phone, send_sms_notification
+                    _sms_phone_raw = tab_phone or (linked_customer.phone if linked_customer else '')
+                    _sms_phone = normalize_ke_phone(_sms_phone_raw) if _sms_phone_raw else ''
+                    if _sms_phone:
+                        _tab_total = float(active_tab.total()) if active_tab else float(total_revenue)
+                        _sms = (
+                            f"Habari {tab_customer},\n"
+                            f"{business.name}: Tab imefunguliwa — "
+                            f"KES {_tab_total:,.0f}.\n"
+                            f"Angalia risiti yako: {receipt_url}"
+                        )
+                        send_sms_notification(_sms, _sms_phone)
+                except Exception:
+                    logger.exception(
+                        "Tab open SMS failed in bar_board (business=%s)", business.id
+                    )
 
             # SMS notification when bar items are merged into an existing kitchen food tab
             if merge_tab_id and active_tab:
@@ -867,22 +889,6 @@ def tabs_list(request):
     result = []
     for tab in tabs:
         all_entries = list(tab.entries.all())
-
-        # Zombie-tab cleanup: if ALL unpaid entries already have their underlying
-        # Transaction.payment_method='credit' (debt-converted but tab status was never
-        # flipped, typically due to a crash in close_shift before tab.save()), auto-settle
-        # the tab now so it disappears from the drawer.
-        # NOTE: BarTabEntry.payment_method stays 'tab' for unpaid entries — the auto-convert
-        # only updates Transaction.payment_method. Must check the transaction field.
-        unpaid_entries = [e for e in all_entries if not e.is_paid]
-        if unpaid_entries and all(
-            e.transaction_id and e.transaction.payment_method == 'credit'
-            for e in unpaid_entries
-        ):
-            tab.status = 'SETTLED'
-            tab.settled_at = timezone.now()
-            tab.save(update_fields=['status', 'settled_at'])
-            continue
 
         _tab_phone = (tab.customer.phone if tab.customer else '') or ''
 

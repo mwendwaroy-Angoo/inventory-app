@@ -51,7 +51,7 @@ def _get_customer_debt_data(customer, business, scope='all'):
     scope='kitchen' → only kitchen-origin txns + kitchen-tagged payments
     scope='all'     → entire ledger (owner view / businesses without kitchen)
     """
-    today = timezone.now().date()
+    today = timezone.localdate()
     window = business.credit_window_days or 30
 
     credit_qs = Transaction.objects.filter(
@@ -225,7 +225,7 @@ def _calc_avg_payment_days(customer, business, scope='all'):
 def debt_dashboard(request):
     user_profile = get_user_profile(request)
     business = user_profile.business
-    today = timezone.now().date()
+    today = timezone.localdate()
     window = business.credit_window_days or 30
     scope = _debt_scope(user_profile, business)
 
