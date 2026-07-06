@@ -320,6 +320,40 @@ def active_shift_api(request):
     ).order_by('-started_at').first()
 
     if not my_shift:
+        # Owner with no own shift: surface the most recently started OPEN staff shift
+        # for the relevant counter so the bar/kitchen board panel shows live shift info
+        # instead of "Hakuna shift iliyofunguliwa". is_mine=False keeps the Close button
+        # hidden — the owner is not the one closing another staff's shift from here.
+        if up.role == 'owner':
+            _target_section = 'kitchen' if request.path.startswith('/kitchen/') else 'bar'
+            # all_open is oldest-first; reversed() gives most-recently-started first.
+            proxy = next(
+                (s for s in reversed(all_open) if s.status == 'OPEN' and _section(s) == _target_section),
+                None,
+            )
+            if proxy:
+                proxy_rec = _reconcile(proxy)
+                return JsonResponse({
+                    'shift': {
+                        'id':            proxy.id,
+                        'status':        proxy.status,
+                        'staff_name':    proxy.staff.get_full_name() or proxy.staff.username,
+                        'started_at':    timezone.localtime(proxy.started_at).strftime('%H:%M'),
+                        'opening_float': float(proxy.opening_float),
+                        'cash_sales':    proxy_rec['cash_sales'],
+                        'mpesa_sales':   proxy_rec['mpesa_sales'],
+                        'credit_sales':  proxy_rec['credit_sales'],
+                        'total_sales':   proxy_rec['total_sales'],
+                        'expected_cash': proxy_rec['expected_cash'],
+                        'variance':      proxy_rec['variance'],
+                        'elapsed':       proxy_rec['elapsed'],
+                        'is_mine':       False,
+                    },
+                    'can_open': True,
+                    'all_shifts': all_shifts_data,
+                    'auto_closed': len(auto_closed),
+                })
+
         # Float suggestion: the previous CONFIRMED shift opened by this same staff member
         last = Shift.objects.filter(
             business=up.business,
