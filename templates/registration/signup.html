@@ -95,6 +95,9 @@
             {% bootstrap_field form.phone %}
             {% bootstrap_field form.email_business %}
             {% bootstrap_field form.address %}
+            <p style="font-size:0.78rem; color:#b0b0b0; margin-top:-0.75rem; margin-bottom:1rem;">
+                Just the street, building or plot — county / sub-county below covers the broader area.
+            </p>
 
             <!-- Location -->
             <div class="section-divider"><span>📍 {% trans 'Location' %}</span></div>
@@ -107,7 +110,7 @@
             {% bootstrap_field form.preferred_language %}
 
             <div class="d-grid mt-4">
-                <button type="submit" class="btn btn-primary btn-lg py-2">
+                <button type="submit" class="btn btn-gold btn-lg py-2">
                     {% trans 'Create Account & Business' %}
                 </button>
             </div>

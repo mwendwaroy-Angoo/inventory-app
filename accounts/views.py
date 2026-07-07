@@ -205,7 +205,7 @@ def staff_list(request):
 
     staff = UserProfile.objects.filter(
         business=user_profile.business,
-        role__in=['staff', 'waitress', 'kitchen']
+        role__in=['staff', 'waitress', 'kitchen', 'manager']
     ).select_related('user')
 
     return render(request, 'accounts/staff_list.html', {'staff': staff})
@@ -227,7 +227,7 @@ def staff_permissions(request, staff_id):
         UserProfile,
         id=staff_id,
         business=user_profile.business,
-        role__in=['staff', 'waitress', 'kitchen'],
+        role__in=['staff', 'waitress', 'kitchen', 'manager'],
     )
 
     if request.method == 'POST':
@@ -296,16 +296,36 @@ def edit_staff(request, user_id):
         UserProfile,
         user__id=user_id,
         business=user_profile.business,
-        role='staff'
+        role__in=['staff', 'waitress', 'kitchen', 'manager'],
     )
 
+    _role_choices = [
+        ('staff',    'Staff (bartender / general)'),
+        ('waitress', 'Waitress / Waiter'),
+        ('kitchen',  'Kitchen / Grill Staff'),
+        ('manager',  'Manager (Acting Owner — no settings access)'),
+    ]
+
     if request.method == 'POST':
-        staff_profile.user.first_name = request.POST.get('first_name', '')
-        staff_profile.user.last_name = request.POST.get('last_name', '')
-        staff_profile.user.email = request.POST.get('email', '')
+        staff_profile.user.first_name = request.POST.get('first_name', '').strip()
+        staff_profile.user.last_name = request.POST.get('last_name', '').strip()
+        staff_profile.user.email = request.POST.get('email', '').strip()
         staff_profile.user.save()
-        staff_profile.phone = request.POST.get('phone', '')
+
+        new_role = request.POST.get('role', staff_profile.role)
+        if new_role not in [r for r, _unused_label in _role_choices]:
+            new_role = staff_profile.role  # reject invalid values
+
+        staff_profile.phone = request.POST.get('phone', '').strip()
+        staff_profile.role = new_role
+        # Promote to manager → auto-grant full operational access
+        if new_role == 'manager':
+            staff_profile.can_access_bar = True
+            staff_profile.can_access_kitchen = True
+            staff_profile.can_override_restrictions = True
+            staff_profile.can_authorize_tab_accumulation = True
         staff_profile.save()
+
         messages.success(
             request,
             _("'%(username)s' updated successfully.")
@@ -313,7 +333,10 @@ def edit_staff(request, user_id):
         )
         return redirect('staff_list')
 
-    return render(request, 'accounts/edit_staff.html', {'profile': staff_profile})
+    return render(request, 'accounts/edit_staff.html', {
+        'profile': staff_profile,
+        'role_choices': _role_choices,
+    })
 
 
 @login_required
@@ -331,7 +354,7 @@ def delete_staff(request, user_id):
         UserProfile,
         user__id=user_id,
         business=user_profile.business,
-        role='staff'
+        role__in=['staff', 'waitress', 'kitchen', 'manager'],
     )
 
     if request.method == 'POST':
@@ -441,7 +464,7 @@ def reset_staff_password(request, user_id):
         UserProfile,
         user__id=user_id,
         business=user_profile.business,
-        role='staff'
+        role__in=['staff', 'waitress', 'kitchen', 'manager'],
     )
 
     if request.method == 'POST':

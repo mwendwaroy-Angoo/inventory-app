@@ -53,7 +53,7 @@
 
 {% block content %}
 
-<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
     <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
     <span class="mx-1">›</span>
     <a href="{% url 'staff_list' %}" style="color:var(--gold)">{% trans 'Staff' %}</a>
@@ -92,8 +92,22 @@
                        value="{{ profile.user.email }}">
             </div>
 
+            <div class="section-divider"><span>🏷️ {% trans 'Role' %}</span></div>
+
+            <div class="mb-3">
+                <label class="form-label">{% trans 'Staff Role' %}</label>
+                <select name="role" class="form-select">
+                    {% for value, label in role_choices %}
+                    <option value="{{ value }}" {% if profile.role == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <div style="font-size:0.78rem; color:#b0b0b0; margin-top:0.35rem;">
+                    Changing to Manager grants full operational access automatically.
+                </div>
+            </div>
+
             <div class="d-flex gap-2 mt-4">
-                <button type="submit" class="btn btn-primary">{% trans 'Save Changes' %}</button>
+                <button type="submit" class="btn btn-gold">{% trans 'Save Changes' %}</button>
                 <a href="{% url 'staff_list' %}" class="btn btn-secondary">{% trans 'Cancel' %}</a>
             </div>
         </form>

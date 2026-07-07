@@ -28,7 +28,8 @@ class BusinessSignupForm(forms.Form):
         widget=forms.TextInput(attrs={'placeholder': _('Choose a username')})
     )
     email = forms.EmailField(
-        label=_("Email"),
+        required=False,
+        label=_("Email (optional)"),
         widget=forms.EmailInput(attrs={'placeholder': _('your@email.com')})
     )
     password1 = forms.CharField(
@@ -64,13 +65,16 @@ class BusinessSignupForm(forms.Form):
     )
     email_business = forms.EmailField(
         required=False,
-        label=_("Business Email"),
+        label=_("Business Email (optional)"),
         widget=forms.EmailInput(attrs={'placeholder': _('business@email.com')})
     )
     address = forms.CharField(
         required=False,
-        label=_("Address"),
-        widget=forms.Textarea(attrs={'rows': 2, 'placeholder': _('Physical address')})
+        label=_("Street / Plot Address (optional)"),
+        widget=forms.Textarea(attrs={
+            'rows': 2,
+            'placeholder': _('e.g. Shop 4, Moi Avenue — or building / plot name'),
+        })
     )
 
     # Location fields
@@ -254,8 +258,8 @@ class BusinessEditForm(forms.ModelForm):
         widgets = {
             'name': forms.TextInput(attrs={'placeholder': 'Business name'}),
             'phone': forms.TextInput(attrs={'placeholder': 'e.g. 0712345678'}),
-            'email': forms.EmailInput(attrs={'placeholder': 'business@email.com'}),
-            'address': forms.Textarea(attrs={'rows': 2, 'placeholder': 'Physical address'}),
+            'email': forms.EmailInput(attrs={'placeholder': 'business@email.com (optional)'}),
+            'address': forms.Textarea(attrs={'rows': 2, 'placeholder': 'e.g. Shop 4, Moi Avenue — or building / plot name'}),
             'opening_time': forms.TimeInput(attrs={'type': 'time'}),
             'closing_time': forms.TimeInput(attrs={'type': 'time'}),
             'is_open_override': forms.Select(choices=[(None, 'Use operating hours'), (True, 'Force Open'), (False, 'Force Closed')]),
@@ -276,6 +280,7 @@ class BusinessEditForm(forms.ModelForm):
         self.fields['county'].queryset = County.objects.all()
         self.fields['county'].empty_label = '-- Select County --'
         self.fields['ward'].required = False
+        self.fields['email'].required = False
 
         if self.instance and self.instance.pk:
             if self.instance.county_id:
