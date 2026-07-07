@@ -254,8 +254,8 @@ def home(request):
                 context['expired_count']  = 0
                 context['expiring_count'] = 0
 
-            # Pending restock requests badge (owner only)
-            if user_profile.is_owner:
+            # Pending restock requests badge (owner + manager)
+            if user_profile.is_owner_or_manager:
                 try:
                     context['pending_restocks'] = StockRequest.objects.filter(
                         business=business,
@@ -326,8 +326,8 @@ def home(request):
             except Exception:
                 context['kitchen_today_revenue'] = 0
 
-            # Recurring expense review nudge (owner only, once per period)
-            if user_profile.is_owner:
+            # Recurring expense review nudge (owner + manager, once per period)
+            if user_profile.is_owner_or_manager:
                 try:
                     from .models import RecurringExpense as _RE
                     today_d = timezone.localdate()
@@ -2795,7 +2795,7 @@ def quick_sell(request):
             "items": items,
             "stores": stores,
             "success_data": success_data,
-            "is_owner": user_profile.is_owner if user_profile else False,
+            "is_owner": (user_profile.is_owner_or_manager if user_profile else False),
             "open_tab_names": open_tab_names,
             "qs_items": items_qs,
         },

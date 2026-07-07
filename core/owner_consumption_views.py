@@ -68,7 +68,7 @@ def record_owner_consumption(request):
         date=timezone.localdate(),
         recorded_by=request.user,
         recipient=note or 'Mmiliki',
-        payment_method=None,
+        payment_method='',
     )
 
     new_balance = item.current_balance()

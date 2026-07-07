@@ -1884,10 +1884,26 @@
     // K5.A — envelope gate (non-weighing bars only; weighing bars use weight-based depletion)
     if (!_weighsKegs && kg.envelope_reached) {
       if (_blockSalesPastTarget) {
-        showToast('⛔ ' + kg.name + ' imefika lengo — mauzo yamezuiwa. Funga barrel kwanza.');
+        // Hard block mode — owner gets a confirm-to-deplete dialog; staff get a blocking toast
+        if (QS_IS_OWNER) {
+          if (window.confirm(
+            '⛔ ' + kg.name + ' imefika lengo — mauzo yamezuiwa.\n\n' +
+            'Bonyeza OK = Funga Pipa hii na tap mpya\n' +
+            'Bonyeza Cancel = Rudi'
+          )) {
+            post('/stock/bar/deplete/' + kg.tapped_barrel_id + '/', {})
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                if (d.ok) { loadBarBoard(); showToast('✓ Barrel imefungwa. Unaweza tap barrel mpya.'); }
+                else { alert(d.error || 'Hitilafu.'); }
+              });
+          }
+        } else {
+          showToast('⛔ ' + kg.name + ' imefika lengo — mauzo yamezuiwa. Mwambie mwenye biashara aifunge barrel.');
+        }
         return;
       }
-      // Soft prompt: Funga Pipa or continue
+      // Soft prompt: Funga Pipa or continue (no hard block)
       if (QS_IS_OWNER) {
         if (window.confirm(
           '⚠️ ' + kg.name + ' imefika lengo lake la mapato!\n\n' +

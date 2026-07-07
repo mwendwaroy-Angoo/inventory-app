@@ -1122,3 +1122,117 @@ python manage.py test                   # 126 tests, all pass
 ```
 python manage.py test   # 126 tests, all pass
 ```
+
+---
+
+## Sprint M1 — Manager Role + Owner Consumption Tracking (2026-07-07)
+
+### M1-A: Manager role creation and auto-permissions
+
+**M1A-1: Create a manager account**
+1. Log in as RoyMwendwa (owner) → Manage → Add Staff.
+2. Fill: name, phone, password. **Role = Manager (Acting Owner — no settings access)**.
+3. Save.
+- ✅ Correct: manager account created; appears in staff list with purple "Manager" badge in navbar when logged in.
+- ✅ Correct: in Django admin → UserProfile → `can_access_bar`, `can_access_kitchen`, `can_override_restrictions`, `can_authorize_tab_accumulation` all `True` automatically.
+- ❌ Bug if: permissions are all False (manager can't see bar/kitchen items).
+
+**M1A-2: Manager navbar — operational access, no config links**
+1. Log in as the manager account created in M1A-1.
+- ✅ Correct: navbar shows the full owner menu (Dashboard, Stock, Quick Sell, Bar Board, Kitchen, Analytics, etc.)
+- ✅ Correct: "Manage" dropdown does NOT contain "Add Staff", "Payment Settings", or "Business Settings" — these are owner-only.
+- ✅ Correct: purple **Manager** badge appears next to the username in the navbar.
+- ❌ Bug if: config links are visible, or the manager sees the generic staff navbar (Quick Sell + Receipts only).
+
+**M1A-3: Manager sees revenue but NOT cost prices**
+1. Log in as manager.
+2. Go to Stock list → Add Transaction.
+3. Select any item → Receipt type.
+- ✅ Correct: cost price input is hidden (not shown, same as regular staff without the `can_input_cost_price` flag).
+- ✅ Correct: selling price and revenue figures are visible on the dashboard and analytics.
+- ❌ Bug if: cost price input appears (manager should not see per-item margins).
+
+**M1A-4: Manager bypasses shift gate for owner-consumption logging**
+1. Log in as manager (no open shift).
+2. Go to Quick Sell → click "🥃 Mmiliki Alichukua".
+3. Select an item (e.g. Whiskey), enter qty 1, click Rekodi.
+- ✅ Correct: transaction recorded; stock balance reduced by 1. No shift required.
+- ❌ Bug if: "Hakuna shift iliyofunguliwa" error returned.
+
+---
+
+### M1-B: Owner Consumption recording
+
+**M1B-1: Staff records owner consumption during shift**
+1. Log in as Morrine (regular bar staff) with an open shift.
+2. Go to Quick Sell → click "🥃 Mmiliki Alichukua" button in the header.
+3. Select an item (e.g. "Konyagi 250ml"), qty = 2, note = "Personal use".
+4. Click ✓ Rekodi.
+- ✅ Correct: success toast "✓ Konyagi 250ml (2 Bottles) imerekodiwa."
+- ✅ Correct: stock balance for Konyagi reduced by 2.
+- ❌ Bug if: 403 error (staff should be able to record this during a shift).
+
+**M1B-2: Owner consumption does NOT count as revenue**
+1. After M1B-1, check today's revenue on the home dashboard.
+- ✅ Correct: revenue total is UNCHANGED — OwnerConsumption transactions are excluded from all revenue calculations.
+- ❌ Bug if: revenue increases by the selling price of the consumed items.
+
+**M1B-3: Owner consumption appears on Z-report**
+1. Log in as RoyMwendwa (or manager). Go to `/bar/z-report/`.
+- ✅ Correct: if any OwnerConsumption transactions exist for today, a raspberry "🥃 Mmiliki Alichukua" tile shows the count.
+- ✅ Correct: Below the tiles, an itemised list shows each item + quantity (without the leading minus sign — e.g. "2.00" not "-2.00").
+- ❌ Bug if: tile is absent despite OwnerConsumption transactions existing for the day.
+
+**M1B-4: Stock balance reduces correctly**
+1. Note the balance of any item before logging consumption.
+2. Log consumption of 3 units.
+3. Go to Stock list → check that item's balance.
+- ✅ Correct: balance reduced by exactly 3 (OwnerConsumption stores qty = -3, which the `current_balance()` sum includes).
+- ❌ Bug if: balance unchanged after consumption.
+
+**M1B-5: Staff without shift cannot log consumption**
+1. Log in as staff (Morrine) with NO open shift.
+2. Go to Quick Sell → "🥃 Mmiliki Alichukua" → select item, qty 1 → Rekodi.
+- ✅ Correct: error toast "Hakuna shift iliyofunguliwa. Fungua shift kwanza."
+- ❌ Bug if: consumption recorded despite no shift.
+
+**M1B-6: Item dropdown filters correctly**
+1. Open the "🥃 Mmiliki Alichukua" modal.
+2. The item dropdown should contain only regular (non-keg, non-produce) items.
+- ✅ Correct: wines, spirits, sodas appear. Keg items (tracked by barrel) and produce items are absent.
+- ❌ Bug if: keg items or produce items appear in the dropdown.
+
+---
+
+### M1-C: Barrel envelope block + deplete fix (2026-07-07 bugfix)
+
+**M1C-1: Hard-block mode — owner sees deplete confirm, not just a toast**
+1. In Django admin → Business → enable `block_sales_past_target = True`.
+2. On a non-weighing bar, sell until the barrel's revenue envelope is exactly reached (remaining = 0).
+3. Log in as owner. Tap the barrel tile to open the sell modal.
+- ✅ Correct: `window.confirm()` appears: "⛔ [Barrel] imefika lengo — mauzo yamezuiwa. Bonyeza OK = Funga Pipa hii na tap mpya"
+- Click **OK** → barrel moves to DEPLETED; toast "✓ Barrel imefungwa. Unaweza tap barrel mpya."; board reloads.
+- Click **Cancel** → dialog dismissed; no sale; barrel remains blocked.
+- ❌ Bug if: only a dead-end toast appears with no way to close the barrel.
+
+**M1C-2: Hard-block mode — staff see blocking toast only**
+1. Same setup (block_sales_past_target on, envelope reached).
+2. Log in as bar staff (not owner). Tap the barrel tile.
+- ✅ Correct: toast "⛔ [Barrel] imefika lengo — mauzo yamezuiwa. Mwambie mwenye biashara aifunge barrel."
+- No confirm dialog. No sale.
+
+**M1C-3: Soft-block mode unaffected**
+1. Set `block_sales_past_target = False`.
+2. Sell until envelope reached, then tap the barrel tile as owner.
+- ✅ Correct: existing confirm dialog "⚠️ Barrel imefika lengo... OK = Funga Pipa / Cancel = Endelea kuuza".
+- Behaviour unchanged from before M1.
+
+---
+
+### Final checks (post-M1)
+
+```
+python manage.py check                  # 0 issues
+python manage.py makemigrations --check # No changes detected (0047 + 0094 already applied)
+python manage.py test                   # 126 tests, all pass
+```
