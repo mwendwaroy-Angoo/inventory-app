@@ -1349,7 +1349,18 @@
     var tile = document.getElementById('kb-khaki-pool-tile');
     var ksb = pool.khaki_small_bought || 0;
     var klb = pool.khaki_large_bought || 0;
+    {% if can_receive_stock %}
+    // Always show the area for users who can log purchases, even before first purchase
+    area.style.display = 'block';
+    if (!ksb && !klb) {
+      tile.innerHTML =
+        '🛍 Khaki: <span style="color:#666;font-size:.78rem;">Bado haujaweka</span>' +
+        ' &nbsp;<button onclick="openKhakiModal()" style="font-size:.75rem;padding:.15rem .5rem;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.3);border-radius:5px;color:#c9a84c;cursor:pointer;">+ Nunua</button>';
+      return;
+    }
+    {% else %}
     if (!ksb && !klb) { area.style.display = 'none'; return; }
+    {% endif %}
     area.style.display = 'block';
     var ksRem = pool.khaki_small_remaining || 0;
     var klRem = pool.khaki_large_remaining || 0;

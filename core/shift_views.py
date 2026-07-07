@@ -883,6 +883,10 @@ def stock_take_api(request, shift_id):
             .order_by('description')
             .prefetch_related('portion_presets')
         )
+        # Station scoping: only show items from the same counter as this shift
+        _shift_store = shift.store
+        if _shift_store is not None:
+            items = items.filter(store__is_kitchen=_shift_store.is_kitchen)
         data = []
         for item in items:
             data.append({
@@ -902,14 +906,21 @@ def stock_take_api(request, shift_id):
         except Exception:
             return JsonResponse({'ok': False, 'error': 'Invalid data'}, status=400)
 
+        _shift_store = shift.store
         results = []
         for entry in counts:
             try:
                 item_id      = int(entry.get('item_id', 0))
                 actual       = Decimal(str(entry.get('actual_count', '0') or '0'))
-                item = Item.objects.filter(id=item_id, business=up.business).first()
+                item = Item.objects.select_related('store').filter(
+                    id=item_id, business=up.business
+                ).first()
                 if not item:
                     continue
+                # Skip items that belong to the other counter
+                if _shift_store is not None and item.store_id:
+                    if item.store.is_kitchen != _shift_store.is_kitchen:
+                        continue
                 book = item.current_balance()
                 ShiftStockCount.objects.update_or_create(
                     shift=shift, item=item,
