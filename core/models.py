@@ -2524,13 +2524,14 @@ class KitchenBatch(models.Model):
 class KitchenConsumableLog(models.Model):
     """
     Tracks purchases of kitchen consumables that are pooled business-wide:
-    khaki bags (1/4 and 1/2 sizes) and other consumables like tomato sauce.
-    Oil and gas/electricity are excluded — shared overhead, not per-sale cost.
+    khaki bags (1/4 and 1/2 sizes), tomato sauce, and cooking oil.
+    Electricity/gas are excluded — infrastructure overhead, not logged here.
     """
     CONSUMABLE_CHOICES = [
         ('KHAKI_SMALL', '1/4 Khaki bags'),
         ('KHAKI_LARGE', '1/2 Khaki bags'),
         ('SAUCE_TOMATO', 'Tomato sauce (jerrican)'),
+        ('OIL_COOKING', 'Cooking Oil (litres)'),
         ('OTHER', 'Other'),
     ]
     business         = models.ForeignKey(
@@ -2539,7 +2540,7 @@ class KitchenConsumableLog(models.Model):
     consumable_type  = models.CharField(max_length=16, choices=CONSUMABLE_CHOICES)
     qty              = models.DecimalField(
         max_digits=8, decimal_places=1,
-        help_text='Units bought: pieces for khaki, jerricans for sauce.',
+        help_text='Units bought: pieces for khaki, jerricans for sauce, litres for oil.',
     )
     unit_cost        = models.DecimalField(max_digits=8, decimal_places=2)
     total_cost       = models.DecimalField(max_digits=10, decimal_places=2)

@@ -840,21 +840,22 @@
       <div class="modal-body" style="padding:.85rem;">
         <div style="margin-bottom:.5rem;">
           <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Aina</label>
-          <select id="khakiConsumeType" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+          <select id="khakiConsumeType" onchange="updateConsumableLabels(this.value)" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
             <option value="KHAKI_SMALL">¼ Khaki (ndogo)</option>
             <option value="KHAKI_LARGE">½ Khaki (kubwa)</option>
             <option value="SAUCE_TOMATO">Tomato Sauce (jerrican)</option>
+            <option value="OIL_COOKING">Mafuta ya Kupikia (litres)</option>
             <option value="OTHER">Nyingine</option>
           </select>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem;">
           <div>
-            <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Idadi</label>
-            <input type="number" id="khakiConsumeQty" min="1" placeholder="e.g. 200"
+            <label id="khakiQtyLabel" style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Idadi</label>
+            <input type="number" id="khakiConsumeQty" min="0.1" step="0.1" placeholder="e.g. 200"
                    style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
           </div>
           <div>
-            <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Bei ya Kimoja (KES)</label>
+            <label id="khakiUCostLabel" style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Bei (KES)</label>
             <input type="number" id="khakiConsumeUCost" min="0" step="0.5" placeholder="e.g. 2"
                    style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
           </div>
@@ -1343,23 +1344,42 @@
     grid.innerHTML = html;
   }
 
-  /* ── Khaki pool tile ── */
+  /* ── Consumable purchase: update labels when type changes ── */
+  window.updateConsumableLabels = function(ctype) {
+    var qtyLbl  = document.getElementById('khakiQtyLabel');
+    var ucostLbl = document.getElementById('khakiUCostLabel');
+    if (ctype === 'OIL_COOKING') {
+      qtyLbl.textContent  = 'Litres';
+      ucostLbl.textContent = 'Bei kwa litre (KES)';
+    } else if (ctype === 'SAUCE_TOMATO') {
+      qtyLbl.textContent  = 'Jerrican';
+      ucostLbl.textContent = 'Bei kwa jerrican (KES)';
+    } else {
+      qtyLbl.textContent  = 'Idadi';
+      ucostLbl.textContent = 'Bei (KES)';
+    }
+  };
+
+  /* ── Khaki / consumables pool tile ── */
   function _renderKhakiPoolTile(pool) {
     var area = document.getElementById('kb-khaki-pool-area');
     var tile = document.getElementById('kb-khaki-pool-tile');
     var ksb = pool.khaki_small_bought || 0;
     var klb = pool.khaki_large_bought || 0;
+    var oilL = pool.oil_litres_bought || 0;
+    var oilKes = pool.oil_total_cost || 0;
+    var hasAny = ksb || klb || oilL;
     {% if can_receive_stock %}
-    // Always show the area for users who can log purchases, even before first purchase
+    // Always show for users who can log purchases
     area.style.display = 'block';
-    if (!ksb && !klb) {
+    if (!hasAny) {
       tile.innerHTML =
-        '🛍 Khaki: <span style="color:#666;font-size:.78rem;">Bado haujaweka</span>' +
-        ' &nbsp;<button onclick="openKhakiModal()" style="font-size:.75rem;padding:.15rem .5rem;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.3);border-radius:5px;color:#c9a84c;cursor:pointer;">+ Nunua</button>';
+        '🛍 Vifaa: <span style="color:#666;font-size:.78rem;">Bado haujaweka</span>' +
+        ' &nbsp;<button onclick="openKhakiModal()" style="font-size:.75rem;padding:.15rem .5rem;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.3);border-radius:5px;color:#c9a84c;cursor:pointer;">+ Rekodi</button>';
       return;
     }
     {% else %}
-    if (!ksb && !klb) { area.style.display = 'none'; return; }
+    if (!hasAny) { area.style.display = 'none'; return; }
     {% endif %}
     area.style.display = 'block';
     var ksRem = pool.khaki_small_remaining || 0;
@@ -1367,12 +1387,13 @@
     var ksLow = pool.khaki_small_low;
     var klLow = pool.khaki_large_low;
     tile.innerHTML =
-      '🛍 Khaki: ' +
-      (ksb ? '<span style="color:' + (ksLow ? '#c0395a' : '#4caf50') + ';">' + ksRem + ' ¼ </span>' : '') +
-      (klb ? '<span style="color:' + (klLow ? '#c0395a' : '#4caf50') + ';">  ' + klRem + ' ½ </span>' : '') +
+      '🛍 Vifaa: ' +
+      (ksb ? '<span style="color:' + (ksLow ? '#c0395a' : '#4caf50') + ';">' + ksRem + ' ¼ khaki</span> ' : '') +
+      (klb ? '<span style="color:' + (klLow ? '#c0395a' : '#4caf50') + ';">' + klRem + ' ½ khaki</span> ' : '') +
+      (oilL ? '<span style="color:#b0b0b0;">🛢 ' + oilL.toFixed(1) + 'L mafuta (KES ' + oilKes.toFixed(0) + ')</span> ' : '') +
       ' &nbsp;' +
       {% if can_receive_stock %}
-      '<button onclick="openKhakiModal()" style="font-size:.75rem;padding:.15rem .5rem;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.3);border-radius:5px;color:#c9a84c;cursor:pointer;">+ Nunua</button>' +
+      '<button onclick="openKhakiModal()" style="font-size:.75rem;padding:.15rem .5rem;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.3);border-radius:5px;color:#c9a84c;cursor:pointer;">+ Rekodi</button>' +
       {% endif %}
       (ksLow || klLow ? ' <span style="color:#c0395a;font-size:.75rem;">⚠ Khaki zinakwisha!</span>' : '');
   }
@@ -2903,8 +2924,10 @@
 
   {% if can_receive_stock %}
   /* ── Khaki purchase modal ── */
-  window.openKhakiModal = function() {
-    document.getElementById('khakiConsumeType').value  = 'KHAKI_SMALL';
+  window.openKhakiModal = function(defaultType) {
+    var sel = document.getElementById('khakiConsumeType');
+    sel.value = defaultType || 'KHAKI_SMALL';
+    updateConsumableLabels(sel.value);
     document.getElementById('khakiConsumeQty').value   = '';
     document.getElementById('khakiConsumeUCost').value = '';
     document.getElementById('khakiConsumeNote').value  = '';

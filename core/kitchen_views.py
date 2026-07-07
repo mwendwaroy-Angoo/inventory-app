@@ -1180,13 +1180,13 @@ def discard_kitchen_batch(request, batch_id):
 @login_required
 @require_POST
 def kitchen_consumable_add(request):
-    """Log a kitchen consumable purchase (khaki bags, tomato sauce)."""
+    """Log a kitchen consumable purchase (khaki bags, tomato sauce, cooking oil)."""
     up, business, err = _kb_gate(request)
     if err:
         return err
 
     consumable_type = (request.POST.get('consumable_type') or '').strip().upper()
-    valid_types = ('KHAKI_SMALL', 'KHAKI_LARGE', 'SAUCE_TOMATO', 'OTHER')
+    valid_types = ('KHAKI_SMALL', 'KHAKI_LARGE', 'SAUCE_TOMATO', 'OIL_COOKING', 'OTHER')
     if consumable_type not in valid_types:
         return JsonResponse({'ok': False, 'error': 'Aina ya bidhaa batili'}, status=400)
 

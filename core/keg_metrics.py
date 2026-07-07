@@ -524,11 +524,12 @@ def business_cup_pool(business) -> dict:
 def kitchen_consumable_pool(business) -> dict:
     """Return the business-wide kitchen consumable stock balances.
 
-    Tracks: 1/4 khaki bags, 1/2 khaki bags, tomato sauce.
-    Oil and electricity are shared overheads — excluded from per-batch tracking.
+    Tracks: 1/4 khaki bags, 1/2 khaki bags, tomato sauce, cooking oil.
+    Electricity/gas are excluded — infrastructure overhead.
 
     Bought:   SUM(KitchenConsumableLog.qty) by consumable_type
     Used:     SUM(KitchenBatch.khaki_small_used + khaki_large_used) across all batches
+    Oil:      purchase log only — no per-sale deduction (consumption not countable per sale)
 
     Returns a dict:
         khaki_small_bought    int
@@ -538,6 +539,8 @@ def kitchen_consumable_pool(business) -> dict:
         khaki_small_remaining int
         khaki_large_remaining int
         sauce_jerricans_bought float
+        oil_litres_bought     float
+        oil_total_cost        float
         khaki_small_low       bool  remaining < 20 and bought > 0
         khaki_large_low       bool  remaining < 20 and bought > 0
     """
@@ -557,6 +560,8 @@ def kitchen_consumable_pool(business) -> dict:
     ks_bought = _bought('KHAKI_SMALL')
     kl_bought = _bought('KHAKI_LARGE')
     sauce_bought = _bought('SAUCE_TOMATO')
+    oil_litres = _bought('OIL_COOKING')
+    oil_cost = _cost('OIL_COOKING')
 
     batch_agg = KitchenBatch.objects.filter(business=business).aggregate(
         ks=Sum('khaki_small_used'),
@@ -578,6 +583,8 @@ def kitchen_consumable_pool(business) -> dict:
         'khaki_small_remaining': ks_rem,
         'khaki_large_remaining': kl_rem,
         'sauce_jerricans_bought': float(sauce_bought),
+        'oil_litres_bought':     oil_litres,
+        'oil_total_cost':        oil_cost,
         'khaki_small_cost':      _cost('KHAKI_SMALL'),
         'khaki_large_cost':      _cost('KHAKI_LARGE'),
         'sauce_cost':            _cost('SAUCE_TOMATO'),
