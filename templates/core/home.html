@@ -175,6 +175,27 @@
 
 {% if user.is_authenticated %}
 
+    <!-- Manager on Duty strip (owner dashboard only) -->
+    {% if user.userprofile.is_owner and active_managers %}
+    <div style="background:#1a1a1a; border:1px solid rgba(155,89,182,0.35);
+                border-left:3px solid #9b59b6; border-radius:10px;
+                padding:.6rem 1rem; margin-bottom:1rem;">
+        {% for mgr in active_managers %}
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.4rem;
+                    {% if not forloop.last %}border-bottom:1px solid #222; padding-bottom:.4rem; margin-bottom:.4rem;{% endif %}">
+            <div style="display:flex; align-items:center; gap:.5rem;">
+                <span style="width:8px; height:8px; border-radius:50%; background:#9b59b6; display:inline-block; flex-shrink:0;"></span>
+                <span style="color:#9b59b6; font-size:.75rem; font-weight:700;">👔 MANAGER</span>
+                <span style="color:#f0ece4; font-size:.82rem; font-weight:600;">{{ mgr.user.get_full_name|default:mgr.user.username }}</span>
+            </div>
+            <span style="font-size:.75rem; color:#b0b0b0;">
+                Aliingia {{ mgr.user.last_login|date:"H:i" }}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <!-- Shift running meter -->
     <div id="shift-meter" style="display:none; background:#1a1a1a; border:1px solid #333;
          border-radius:10px; padding:.6rem 1rem; margin-bottom:1rem;">

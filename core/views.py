@@ -326,6 +326,25 @@ def home(request):
             except Exception:
                 context['kitchen_today_revenue'] = 0
 
+            # Active managers logged in today (shown to owner on dashboard)
+            if user_profile.is_owner:
+                try:
+                    from accounts.models import UserProfile as _ManagerUP
+                    _today_start = timezone.localtime(timezone.now()).replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                    context['active_managers'] = list(
+                        _ManagerUP.objects.filter(
+                            business=business,
+                            role='manager',
+                            user__last_login__gte=_today_start,
+                        ).select_related('user').order_by('user__last_login')
+                    )
+                except Exception:
+                    context['active_managers'] = []
+            else:
+                context['active_managers'] = []
+
             # Recurring expense review nudge (owner + manager, once per period)
             if user_profile.is_owner_or_manager:
                 try:
