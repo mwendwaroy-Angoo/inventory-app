@@ -31,8 +31,8 @@ def request_restock(request):
 
     business = up.business
 
-    # Shift gate — staff must have an open shift; owners are always exempt
-    if not up.is_owner:
+    # Shift gate — staff must have an open shift; owners and managers are always exempt
+    if not up.is_owner_or_manager:
         from core.shift_views import get_active_staff_shift
         if get_active_staff_shift(up, business) is False:
             return JsonResponse({'ok': False, 'error': 'Fungua shift yako kwanza.'}, status=403)

@@ -136,7 +136,7 @@ def _station_scope(up):
     Used throughout home(), shift_history(), and any view that must respect the
     Station Scoping Principle (see CLAUDE.md).
     """
-    if up.is_owner:
+    if up.is_owner_or_manager:
         return True, True
     if up.is_kitchen_staff:
         return bool(getattr(up, 'can_access_bar', False)), True
@@ -595,7 +595,7 @@ def stock_list(request):
         "selected_store": selected_store_id if selected_store_id else None,
         "status_filter": status_filter,
         "today": timezone.now().strftime("%B %d, %Y"),
-        "is_owner": user_profile.is_owner,
+        "is_owner": user_profile.is_owner_or_manager,
     }
     return render(request, "core/stock_list.html", context)
 
@@ -678,7 +678,7 @@ def add_transaction(request):
         is_quick = request.GET.get('quick') == '1'
         restock_resolved = False
         # Shift gate: staff must have an open shift to write any transaction
-        if not user_profile.is_owner:
+        if not user_profile.is_owner_or_manager:
             from core.shift_views import get_active_staff_shift
             if get_active_staff_shift(user_profile, user_profile.business) is False:
                 messages.error(
@@ -746,7 +746,7 @@ def add_transaction(request):
 
         # ── RESTRICTED ITEM CHECK ─────────────────────────────────────────────
         can_override = getattr(user_profile, 'can_override_restrictions', False)
-        if trans_type == 'Issue' and item.is_restricted and not user_profile.is_owner and not can_override:
+        if trans_type == 'Issue' and item.is_restricted and not user_profile.is_owner_or_manager and not can_override:
             reserved = item.restricted_quantity or 0
             balance_after = item.current_balance() - quantity
             needs_approval = reserved == 0 or balance_after < reserved
@@ -938,7 +938,7 @@ def add_transaction(request):
         # ─────────────────────────────────────────────────────────────────
 
         # Notify owner when staff records a receipt (cost price may need updating)
-        if trans_type == 'Receipt' and not user_profile.is_owner:
+        if trans_type == 'Receipt' and not user_profile.is_owner_or_manager:
             staff_name = request.user.get_full_name() or request.user.username
             cost_str = f'KES {item.cost_price}' if item.cost_price else 'not set'
             notif_msg = (
@@ -1076,7 +1076,7 @@ def add_transaction(request):
         is_keg=True
     ).exclude(store__is_kitchen=True).order_by("material_no")
     restricted_items_data = {}
-    if not user_profile.is_owner:
+    if not user_profile.is_owner_or_manager:
         restricted_qs = Item.objects.filter(
             store__business=user_profile.business,
             is_restricted=True,
@@ -1084,7 +1084,7 @@ def add_transaction(request):
         for r in restricted_qs:
             restricted_items_data[r['id']] = r['restricted_quantity']
 
-    is_owner = user_profile.is_owner
+    is_owner = user_profile.is_owner_or_manager
     can_input_cost = is_owner or getattr(user_profile, 'can_input_cost_price', False)
     context = {
         "items": items,
@@ -1713,8 +1713,8 @@ def add_item(request):
             if cat_obj:
                 item.category = cat_obj
             item.save()
-            # Handle owner-only fields (restrictions + produce)
-            if user_profile.is_owner:
+            # Handle owner/manager fields (restrictions + produce)
+            if user_profile.is_owner_or_manager:
                 item.is_restricted = request.POST.get('is_restricted') == 'on'
                 item.restriction_notes = request.POST.get('restriction_notes', '').strip()
                 try:
@@ -1859,8 +1859,8 @@ def edit_item(request, item_id):
                 item.is_yield_item = False
                 item.yield_factor = None
             item.save(update_fields=['is_yield_item', 'yield_factor'])
-            # Handle owner-only fields (restrictions + produce)
-            if user_profile.is_owner:
+            # Handle owner/manager fields (restrictions + produce)
+            if user_profile.is_owner_or_manager:
                 item.is_restricted = request.POST.get('is_restricted') == 'on'
                 item.restriction_notes = request.POST.get('restriction_notes', '').strip()
                 try:
@@ -2369,7 +2369,7 @@ def quick_sell(request):
 
     if request.method == "POST":
         # Shift gate: ALL staff (any business type) must have their own open shift
-        if not user_profile.is_owner:
+        if not user_profile.is_owner_or_manager:
             from core.shift_views import get_active_staff_shift
             if get_active_staff_shift(user_profile, user_profile.business) is False:
                 messages.error(
@@ -2460,7 +2460,7 @@ def quick_sell(request):
 
             # ── RESTRICTED ITEM CHECK ─────────────────────────────────────
             can_override = getattr(user_profile, 'can_override_restrictions', False)
-            if item.is_restricted and not user_profile.is_owner and not can_override:
+            if item.is_restricted and not user_profile.is_owner_or_manager and not can_override:
                 reserved = item.restricted_quantity or 0
                 balance_after = item.current_balance() - stock_qty
                 if reserved == 0 or balance_after < reserved:

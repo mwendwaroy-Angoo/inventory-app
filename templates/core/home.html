@@ -195,7 +195,7 @@
     {% endif %}
 
     <!-- Owner Quick Actions -->
-    {% if user.userprofile.is_owner %}
+    {% if user.userprofile.is_owner_or_manager %}
     <div class="owner-actions">
         <div class="section-title">⚙️ {% trans 'Owner Quick Actions' %}</div>
         <div class="d-flex flex-wrap gap-2">
@@ -208,7 +208,7 @@
     {% endif %}
 
     <!-- Recurring expense review prompt (owner only, first login each period) -->
-    {% if user.userprofile.is_owner and expense_review_due %}
+    {% if user.userprofile.is_owner_or_manager and expense_review_due %}
     <div style="background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3);
                 border-left:3px solid var(--gold); border-radius:8px;
                 padding:0.85rem 1.1rem; margin-bottom:1rem;
@@ -245,7 +245,7 @@
     {% endif %}
 
     <!-- Pending restock requests badge (owner only) -->
-    {% if user.userprofile.is_owner and pending_restocks > 0 %}
+    {% if user.userprofile.is_owner_or_manager and pending_restocks > 0 %}
     <a href="{% url 'restock_list' %}" style="text-decoration:none; display:block; margin-bottom:0.75rem;">
       <div style="background:rgba(201,168,76,.08); border:1px solid rgba(201,168,76,.3);
                   border-left:3px solid var(--gold); border-radius:8px; padding:0.65rem 1rem;
@@ -259,7 +259,7 @@
     {% endif %}
 
     <!-- Petty cash pending review alert (owner only) -->
-    {% if user.userprofile.is_owner and pending_petty_cash_count > 0 %}
+    {% if user.userprofile.is_owner_or_manager and pending_petty_cash_count > 0 %}
     <a href="{% url 'petty_cash_list' %}?status=pending" style="text-decoration:none; display:block; margin-bottom:0.75rem;">
       <div style="background:rgba(255,152,0,.1); border:1px solid rgba(255,152,0,.3);
                   border-left:3px solid #ff9800; border-radius:8px; padding:.65rem 1rem;
@@ -274,7 +274,7 @@
     {% endif %}
 
     <!-- Cost price missing alert (owner only) -->
-    {% if user.userprofile.is_owner and missing_cost_price_count > 0 %}
+    {% if user.userprofile.is_owner_or_manager and missing_cost_price_count > 0 %}
     <div class="alert alert-warning alert-dismissible fade show mb-3" role="alert"
          style="background:rgba(243,156,18,0.12); border:1px solid rgba(243,156,18,0.3);
                 color:#f39c12; border-left:3px solid #f39c12;">

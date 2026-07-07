@@ -199,8 +199,8 @@ def staff_list(request):
     except Exception:
         return redirect('home')
 
-    if not user_profile.is_owner:
-        messages.error(request, _("Only business owners can view staff."))
+    if not user_profile.is_owner_or_manager:
+        messages.error(request, _("Only business owners and managers can view staff."))
         return redirect('home')
 
     staff = UserProfile.objects.filter(

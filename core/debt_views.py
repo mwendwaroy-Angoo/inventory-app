@@ -19,7 +19,7 @@ from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 from core.models import Customer, CustomerDebtPayment, Transaction
-from core.views import get_user_profile, owner_required
+from core.views import get_user_profile, owner_required, owner_or_manager_required
 
 
 # ── Scope helper ─────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ def _debt_scope(profile, business):
     """
     if not getattr(business, 'has_kitchen', False):
         return 'all'
-    if profile.is_owner:
+    if profile.is_owner_or_manager:
         return 'all'
     if profile.can_access_bar and profile.can_access_kitchen:
         return 'all'
@@ -269,7 +269,7 @@ def debt_dashboard(request):
 def customer_debt_profile(request, customer_id):
     user_profile = get_user_profile(request)
     business = user_profile.business
-    is_owner = user_profile.is_owner
+    is_owner = user_profile.is_owner_or_manager
     scope = _debt_scope(user_profile, business)
 
     customer = get_object_or_404(Customer, id=customer_id, business=business)
@@ -310,7 +310,7 @@ def record_debt_payment(request, customer_id):
     customer = get_object_or_404(Customer, id=customer_id, business=business)
 
     # K5.E — shift gate: staff must have an open shift to record debt payments
-    if not user_profile.is_owner:
+    if not user_profile.is_owner_or_manager:
         from .shift_views import get_active_staff_shift
         if get_active_staff_shift(user_profile, business) is False:
             messages.error(request, _('Fungua shift yako kwanza kabla ya kurekodi malipo ya deni.'))
@@ -476,7 +476,7 @@ def send_debt_reminder(request, customer_id):
     customer = get_object_or_404(Customer, id=customer_id, business=business)
 
     # K5.E — shift gate: staff must have an open shift to send debt reminders
-    if not user_profile.is_owner:
+    if not user_profile.is_owner_or_manager:
         from .shift_views import get_active_staff_shift
         if get_active_staff_shift(user_profile, business) is False:
             messages.error(request, _('Fungua shift yako kwanza kabla ya kutuma kikumbusha.'))
@@ -648,7 +648,7 @@ def customer_debt_statement(request, customer_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 @require_POST
 def toggle_credit_approval(request, customer_id):
     user_profile = get_user_profile(request)

@@ -233,7 +233,7 @@ def staff_contribution_report(request):
 # ── H2: Record salary payment ─────────────────────────────────────────────────
 
 @login_required
-@owner_required
+@owner_or_manager_required
 @require_POST
 def record_salary_payment(request, profile_id):
     user_profile = get_user_profile(request)
@@ -383,8 +383,8 @@ def haki_recognition_statement(request, profile_id):
     business = user_profile.business
     staff_profile = get_object_or_404(UserProfile, id=profile_id, business=business)
 
-    # Privacy gate: staff can only see their own statement
-    if not user_profile.is_owner and staff_profile.id != user_profile.id:
+    # Privacy gate: staff can only see their own statement; managers can see any
+    if not user_profile.is_owner_or_manager and staff_profile.id != user_profile.id:
         from django.http import HttpResponseForbidden
         return HttpResponseForbidden('Huwezi kuona taarifa ya mwenzio.')
 

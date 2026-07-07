@@ -166,10 +166,10 @@ def pending_approvals(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 @require_POST
 def decide_approval(request, approval_id):
-    """Owner approves or denies a sale approval request."""
+    """Owner or manager approves or denies a sale approval request."""
     user_profile = get_user_profile(request)
     approval = get_object_or_404(
         ItemSaleApproval, id=approval_id,

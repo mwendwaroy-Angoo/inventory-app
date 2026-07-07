@@ -57,8 +57,8 @@ def _ensure_kitchen_store(business):
 @require_POST
 def toggle_kitchen(request):
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     business = up.business
     enable = request.POST.get('enable') == '1'
@@ -82,7 +82,7 @@ def kitchen_wastage(request):
         return JsonResponse({"ok": False, "error": "Auth required"}, status=403)
 
     business = up.business
-    is_owner = bool(getattr(up, 'is_owner', False))
+    is_owner = bool(getattr(up, 'is_owner_or_manager', False))
 
     if not is_owner:
         from core.shift_views import get_active_staff_shift
@@ -132,7 +132,7 @@ def kitchen_board(request):
         return redirect('home')
 
     business = up.business
-    is_owner = bool(getattr(up, 'is_owner', False))
+    is_owner = bool(getattr(up, 'is_owner_or_manager', False))
     role = getattr(up, 'role', 'staff')
 
     # Restrict access — riders and suppliers have no business here
@@ -781,12 +781,12 @@ def kitchen_receive(request):
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
-    can_receive = getattr(up, 'is_owner', False) or getattr(up, 'can_receive_kitchen_stock', False)
+    can_receive = getattr(up, 'is_owner_or_manager', False) or getattr(up, 'can_receive_kitchen_stock', False)
     if not can_receive:
         return JsonResponse({'ok': False, 'error': 'Ruhusa ya kupokea stok inahitajika'}, status=403)
 
     # Shift gate: staff must have an open shift even to receive stock
-    if not getattr(up, 'is_owner', False):
+    if not getattr(up, 'is_owner_or_manager', False):
         from core.shift_views import get_active_staff_shift
         if get_active_staff_shift(up, up.business) is False:
             return JsonResponse(
@@ -1095,7 +1095,7 @@ def _kb_gate(request):
     if not up:
         return None, None, JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
     business = up.business
-    is_owner = getattr(up, 'is_owner', False)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
     if not is_owner:
         from core.shift_views import get_active_staff_shift
         if get_active_staff_shift(up, business) is False:
@@ -1114,7 +1114,7 @@ def kitchen_batch_receive(request):
     if err:
         return err
 
-    is_owner = getattr(up, 'is_owner', False)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
     can_receive = is_owner or getattr(up, 'can_receive_kitchen_stock', False)
     if not can_receive:
         return JsonResponse({'ok': False, 'error': 'Ruhusa ya kupokea stok inahitajika'}, status=403)

@@ -129,7 +129,7 @@ def bar_board_api(request):
 
     return JsonResponse({
         'kegs': kegs,
-        'can_receive': bool(getattr(up, 'is_owner', False)),
+        'can_receive': bool(getattr(up, 'is_owner_or_manager', False)),
         'open_tabs': open_tabs_qs.count(),
         'open_tab_names': list(open_tabs_qs.values_list('customer_name', flat=True).distinct()),
         'active_waitresses': active_w,
@@ -149,7 +149,7 @@ def bar_board(request):
         return redirect('home')
 
     business = up.business
-    is_owner = bool(getattr(up, 'is_owner', False))
+    is_owner = bool(getattr(up, 'is_owner_or_manager', False))
 
     # Kitchen staff are bar-board-blocked unless the owner has granted access
     if not is_owner and getattr(up, 'is_kitchen_staff', False):
@@ -529,10 +529,10 @@ def bar_board(request):
 @login_required
 @require_POST
 def receive_barrel(request):
-    """Owner receives N sealed barrels from the distributor."""
+    """Owner/manager receives N sealed barrels from the distributor."""
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     business = up.business
     item = Item.objects.filter(
@@ -625,10 +625,10 @@ def receive_barrel(request):
 @login_required
 @require_POST
 def tap_barrel(request, barrel_id):
-    """Owner opens (taps) a sealed barrel. Enforces one TAPPED barrel per item."""
+    """Owner/manager opens (taps) a sealed barrel. Enforces one TAPPED barrel per item."""
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
 
@@ -828,10 +828,10 @@ def weigh_barrel(request, barrel_id):
 @login_required
 @require_POST
 def edit_barrel(request, barrel_id):
-    """Owner corrects a barrel's financial parameters (cost, target, weight)."""
+    """Owner/manager corrects a barrel's financial parameters (cost, target, weight)."""
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
 
@@ -883,10 +883,10 @@ def edit_barrel(request, barrel_id):
 @login_required
 @require_POST
 def discard_barrel(request, barrel_id):
-    """Owner writes off a barrel (returned, spoiled, wrong delivery)."""
+    """Owner/manager writes off a barrel (returned, spoiled, wrong delivery)."""
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
 
@@ -907,8 +907,8 @@ def deplete_barrel(request, barrel_id):
     Only applies when the barrel is still TAPPED — if already DEPLETED/DISCARDED, no-op.
     """
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
 
@@ -1075,7 +1075,7 @@ def tick_entry(request, entry_id):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
-    if not getattr(up, 'is_owner', False):
+    if not getattr(up, 'is_owner_or_manager', False):
         from core.shift_views import get_active_staff_shift
         if get_active_staff_shift(up, up.business) is False:
             return JsonResponse(
@@ -1152,7 +1152,7 @@ def settle_tab(request, tab_id):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
-    if not getattr(up, 'is_owner', False):
+    if not getattr(up, 'is_owner_or_manager', False):
         from core.shift_views import get_active_staff_shift
         if get_active_staff_shift(up, up.business) is False:
             return JsonResponse(
@@ -1303,10 +1303,10 @@ def settle_tab(request, tab_id):
 @login_required
 @require_POST
 def void_tab(request, tab_id):
-    """Void a tab — owner only. Marks all unpaid entries as written off."""
+    """Void a tab — owner/manager only. Marks all unpaid entries as written off."""
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
     reason = (request.POST.get('reason') or 'Imetupwa').strip()
@@ -1352,7 +1352,7 @@ def convert_tab_to_debt(request, tab_id):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
-    if not getattr(up, 'is_owner', False):
+    if not getattr(up, 'is_owner_or_manager', False):
         from core.shift_views import get_active_staff_shift
         if get_active_staff_shift(up, up.business) is False:
             return JsonResponse(
@@ -1471,16 +1471,16 @@ def add_cups(request):
         return JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
 
     business = up.business
-    is_owner = getattr(up, 'is_owner', False)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
 
-    # Bar staff need an active shift; owner is always exempt
+    # Bar staff need an active shift; owner/manager is always exempt
     if not is_owner:
         from .shift_views import get_active_staff_shift
         shift = get_active_staff_shift(up, business)
         if shift is False:
             return JsonResponse({'ok': False, 'error': 'Fungua shift kwanza'}, status=403)
         # Also gate to bar staff (role == staff/waitress on bar counter, not kitchen-only)
-        if up.role not in ('owner', 'staff', 'waitress'):
+        if up.role not in ('owner', 'manager', 'staff', 'waitress'):
             return JsonResponse({'ok': False, 'error': 'Hakuna ruhusa'}, status=403)
 
     try:
@@ -1978,7 +1978,7 @@ def record_breakage(request):
     if not up:
         return JsonResponse({"ok": False, "error": "Auth required"}, status=403)
 
-    if not getattr(up, 'is_owner', False):
+    if not getattr(up, 'is_owner_or_manager', False):
         from core.shift_views import get_active_staff_shift
         if get_active_staff_shift(up, up.business) is False:
             return JsonResponse(
