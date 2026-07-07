@@ -590,12 +590,22 @@
         var paySection = document.getElementById('pay-section');
         if (!wrap || !paySection) return;
         if (!_lines.length) { paySection.style.display = 'none'; return; }
+
+        // Preserve any items the user explicitly unchecked before re-render.
+        // New items (not yet rendered) default to checked.
+        var uncheckedIds = new Set();
+        document.querySelectorAll('.pay-entry-cb').forEach(function(cb) {
+            if (!cb.checked) uncheckedIds.add(parseInt(cb.dataset.id));
+        });
+
         paySection.style.display = 'block';
         var html = '';
         _lines.forEach(function(l) {
+            var isChecked = !uncheckedIds.has(l.entry_id);
             html += '<label style="display:flex; align-items:center; gap:0.55rem; padding:0.3rem 0; font-size:0.83rem; color:#f0ece4; cursor:pointer;">' +
-                '<input type="checkbox" class="pay-entry-cb" data-id="' + l.entry_id + '" data-amt="' + l.subtotal + '" checked ' +
-                'onchange="receiptPayUpdateTotal()" style="accent-color:#c9a84c; width:16px; height:16px;">' +
+                '<input type="checkbox" class="pay-entry-cb" data-id="' + l.entry_id + '" data-amt="' + l.subtotal + '"' +
+                (isChecked ? ' checked' : '') +
+                ' onchange="receiptPayUpdateTotal()" style="accent-color:#c9a84c; width:16px; height:16px;">' +
                 '<span style="flex:1;">' + (l.name || '') + '</span>' +
                 '<span style="color:#c9a84c; font-weight:600;">' + fmtKes(l.subtotal) + '</span>' +
                 '</label>';
