@@ -2525,12 +2525,14 @@ def quick_sell(request):
                     business=user_profile.business,
                     customer_name=credit_recipient,
                     status='OPEN',
+                    source='bar',  # never merge into a kitchen food tab
                 ).first()
                 if not bar_tab:
                     bar_tab = BarTab.objects.create(
                         business=user_profile.business,
                         customer_name=credit_recipient,
                         served_by=request.user,
+                        source='bar',
                     )
                 for txn, desc, amt in tab_transactions:
                     BarTabEntry.objects.create(

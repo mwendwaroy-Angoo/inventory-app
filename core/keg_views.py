@@ -313,16 +313,18 @@ def bar_board(request):
             try:
                 receipt_pm = payment_method
                 rcpt_meta = {}
-                if payment_method == 'tab' and tab_customer and linked_customer and active_tab:
-                    try:
-                        from core.debt_views import _build_credit_receipt_meta
-                        rcpt_meta = _build_credit_receipt_meta(business, linked_customer, 'bar')
-                        # Tab entries aren't debt yet — suppress the outstanding block
-                        rcpt_meta['outstanding'] = 0.0
-                    except Exception:
-                        pass
-                    # Always embed tab_id so /r/<token>/ serves live tab updates to the
-                    # customer — they scan once and see all subsequent rounds in real-time.
+                if payment_method == 'tab' and active_tab:
+                    if tab_customer and linked_customer:
+                        try:
+                            from core.debt_views import _build_credit_receipt_meta
+                            rcpt_meta = _build_credit_receipt_meta(business, linked_customer, 'bar')
+                            # Tab entries aren't debt yet — suppress the outstanding block
+                            rcpt_meta['outstanding'] = 0.0
+                        except Exception:
+                            pass
+                    # Always embed tab_id regardless of whether a Customer record exists.
+                    # /r/<token>/ uses this to serve live tab updates to the customer —
+                    # they scan once and see all subsequent rounds in real-time.
                     rcpt_meta['tab_id'] = active_tab.id
 
                 # For tab sales: resolve the master receipt so the customer keeps one URL.
@@ -1287,6 +1289,12 @@ def void_tab(request, tab_id):
     tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
     reason = (request.POST.get('reason') or 'Imetupwa').strip()
 
+    # Check BEFORE the loop: did any unpaid transactions carry credit (converted debt)?
+    # After the loop all entries have payment_method='void' so checking then is always True.
+    had_credit = tab.entries.filter(
+        is_paid=False, transaction__payment_method='credit'
+    ).exists()
+
     now = timezone.now()
     for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
         entry.is_paid = True
@@ -1303,15 +1311,13 @@ def void_tab(request, tab_id):
     tab.settled_at = now
     tab.save(update_fields=['status', 'settled_at'])
 
-    # Mark customer as defaulter when tab with credit transactions is voided
-    if tab.customer_name:
-        had_credit = tab.entries.filter(payment_method='void').exists()
-        if had_credit:
-            cust_obj = Customer.objects.filter(
-                business=up.business, name=tab.customer_name
-            ).first()
-            if cust_obj:
-                Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
+    # Only mark defaulter when the voided tab actually carried converted credit transactions
+    if had_credit and tab.customer_name:
+        cust_obj = Customer.objects.filter(
+            business=up.business, name=tab.customer_name
+        ).first()
+        if cust_obj:
+            Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
 
     return JsonResponse({'ok': True, 'reason': reason})
 
