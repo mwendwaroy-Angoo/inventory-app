@@ -220,6 +220,7 @@ from core.restock_views import (
     restock_list,
     restock_mark_ordered,
 )
+from core.owner_consumption_views import record_owner_consumption
 from core.performer_views import (
     performer_list,
     performer_form,
@@ -260,6 +261,7 @@ urlpatterns = [
     path("stock/restock/", restock_list, name="restock_list"),
     path("stock/restock/request/", request_restock, name="request_restock"),
     path("stock/restock/<int:request_id>/ordered/", restock_mark_ordered, name="restock_mark_ordered"),
+    path("stock/owner-consumption/", record_owner_consumption, name="record_owner_consumption"),
     path("stock/manage/", manage_items, name="manage_items"),
     path("stock/add/", add_item, name="add_item"),
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),

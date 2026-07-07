@@ -307,6 +307,7 @@ class DeliveryTier(models.Model):
 class UserProfile(models.Model):
     ROLE_CHOICES = [
         ('owner',    _('Owner')),
+        ('manager',  _('Manager')),
         ('staff',    _('Staff')),
         ('waitress', _('Waitress / Waiter')),
         ('kitchen',  _('Kitchen / Grill Staff')),
@@ -392,6 +393,14 @@ class UserProfile(models.Model):
     @property
     def is_owner(self):
         return self.role == 'owner'
+
+    @property
+    def is_manager(self):
+        return self.role == 'manager'
+
+    @property
+    def is_owner_or_manager(self):
+        return self.role in ('owner', 'manager')
 
     @property
     def is_staff_member(self):

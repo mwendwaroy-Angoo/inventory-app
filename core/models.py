@@ -545,6 +545,7 @@ class Transaction(models.Model):
         ('Receipt', _('Receipt')),
         ('Issue', _('Issue')),
         ('Wastage', _('Wastage')),
+        ('OwnerConsumption', _('Owner Consumption')),
     ]
 
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='transactions')

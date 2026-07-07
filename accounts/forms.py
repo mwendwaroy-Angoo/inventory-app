@@ -419,6 +419,7 @@ class AddStaffForm(forms.Form):
     )
     role = forms.ChoiceField(
         choices=[
+            ('manager',  'Manager (Acting Owner — no settings access)'),
             ('staff',    'Staff (bartender / general)'),
             ('waitress', 'Waitress / Waiter'),
             ('kitchen',  'Kitchen / Grill Staff'),

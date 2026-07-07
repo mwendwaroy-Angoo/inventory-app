@@ -97,8 +97,8 @@ def request_restock(request):
 def restock_mark_ordered(request, request_id):
     """Owner marks a pending request as ordered (middle state)."""
     up = _get_up(request)
-    if not up or not up.is_owner:
-        return JsonResponse({'ok': False, 'error': 'Owner only.'}, status=403)
+    if not up or not up.is_owner_or_manager:
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only.'}, status=403)
 
     sr = get_object_or_404(StockRequest, id=request_id, business=up.business, status=StockRequest.STATUS_PENDING)
     sr.status = StockRequest.STATUS_ORDERED
@@ -108,9 +108,9 @@ def restock_mark_ordered(request, request_id):
 
 @login_required
 def restock_list(request):
-    """Owner-only page: pending, ordered, and recently received StockRequests."""
+    """Owner/manager page: pending, ordered, and recently received StockRequests."""
     up = _get_up(request)
-    if not up or not up.is_owner:
+    if not up or not up.is_owner_or_manager:
         return redirect('home')
 
     business = up.business

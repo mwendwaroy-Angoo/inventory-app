@@ -820,7 +820,7 @@ def shift_history(request):
 
     # Station scoping: bar-only staff see bar shifts; kitchen-only staff see kitchen shifts
     from django.db.models import Q as _Q
-    _is_owner = getattr(up, 'is_owner', False)
+    _is_owner = getattr(up, 'is_owner_or_manager', False)
     _is_kitchen = getattr(up, 'is_kitchen_staff', False)
     _can_bar = getattr(up, 'can_access_bar', False)
     _can_kitchen = getattr(up, 'can_access_kitchen', False)

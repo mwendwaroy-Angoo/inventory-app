@@ -201,6 +201,7 @@
             font-weight: 500;
         }
         .badge-owner   { background: linear-gradient(135deg, var(--gold), var(--gold-light)); color: var(--onyx); }
+        .badge-manager { background: linear-gradient(135deg, #9b59b6, #8e44ad); color: white; }
         .badge-staff   { background: #333; color: var(--muted); }
         .badge-rider   { background: linear-gradient(135deg, #2ecc71, #27ae60); color: white; }
         .badge-supplier { background: linear-gradient(135deg, #3498db, #2980b9); color: white; }
@@ -534,7 +535,7 @@
                                 <li><a class="dropdown-item" href="{% url 'pending_approvals' %}">🔒 {% trans 'Pending Approvals' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
-                                <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>
+                                {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 {% trans 'Fulfillment' %}</a></li>
@@ -545,13 +546,13 @@
                                 <li><a class="dropdown-item" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
-                                <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
+                                {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'payment_settings' %}">⚙️ {% trans 'Payment Settings' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'promo_customer_db' %}">👥 {% trans 'Wateja Database' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'promo_compose' %}">📢 {% trans 'Tuma Promo / SMS' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
-                                <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
+                                {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
                             </ul>
                         </li>
                     </ul>
@@ -577,6 +578,8 @@
                                 {{ user.username }}
                                 {% if user.userprofile.is_owner %}
                                     <span class="badge-role badge-owner ms-1">{% trans 'Owner' %}</span>
+                                {% elif user.userprofile.is_manager %}
+                                    <span class="badge-role badge-manager ms-1">{% trans 'Manager' %}</span>
                                 {% elif user.userprofile.is_rider %}
                                     <span class="badge-role badge-rider ms-1">{% trans 'Rider' %}</span>
                                 {% elif user.userprofile.is_supplier %}
@@ -735,7 +738,7 @@
                                 <li><a class="dropdown-item" href="{% url 'pending_approvals' %}">🔒 {% trans 'Pending Approvals' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
-                                <li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>
+                                {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 {% trans 'Fulfillment' %}</a></li>
@@ -746,13 +749,13 @@
                                 <li><a class="dropdown-item" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
-                                <li><a class="dropdown-item" href="{% url 'payment_settings' %}">💳 {% trans 'Payment Settings' %}</a></li>
+                                {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'payment_settings' %}">⚙️ {% trans 'Payment Settings' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'promo_customer_db' %}">👥 {% trans 'Wateja Database' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'promo_compose' %}">📢 {% trans 'Tuma Promo / SMS' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
-                                <li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>
+                                {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
                             </ul>
                         </li>
                     </ul>

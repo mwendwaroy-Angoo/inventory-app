@@ -155,7 +155,26 @@
         <div class="metric-lbl">&#127908; DJ/MC Unpaid (KES)</div>
       </div>
       {% endif %}
+      {% if day_owner_consumption_count > 0 %}
+      <div class="metric-box" style="border:1px solid rgba(232,124,150,.3);">
+        <div class="metric-num" style="color:#e87c96;">{{ day_owner_consumption_count }}</div>
+        <div class="metric-lbl">🥃 Owner Took (items)</div>
+      </div>
+      {% endif %}
     </div>
+
+    <!-- Owner consumption detail -->
+    {% if owner_consumption_txns %}
+    <div class="zr-body" style="border-top:1px solid rgba(232,124,150,.15); margin-bottom:0.5rem;">
+      <h6 style="color:#e87c96; font-size:0.85rem; margin-bottom:0.5rem;">🥃 Mmiliki Alichukua</h6>
+      {% for txn in owner_consumption_txns %}
+      <div class="info-row">
+        <span class="info-label">{{ txn.item.description }}</span>
+        <span class="info-val" style="color:#e87c96;">{{ txn.qty|floatformat:2|slice:"1:" }} {{ txn.item.unit }}{% if txn.recipient and txn.recipient != 'Mmiliki' %} — {{ txn.recipient }}{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <!-- Drawer summary -->
     <div class="zr-body" style="border-top:1px solid rgba(201,168,76,.1);">

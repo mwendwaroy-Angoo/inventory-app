@@ -729,7 +729,7 @@ def weigh_barrel(request, barrel_id):
 
     # Staff must have their own OPEN shift to do spot checks
     from .models import Shift as _Shift
-    if not up.is_owner:
+    if not up.is_owner_or_manager:
         my_shift = _Shift.objects.filter(
             business=up.business, status='OPEN', staff=request.user
         ).first()
@@ -1526,9 +1526,9 @@ def add_cups(request):
 
 @login_required
 def bar_daily_report(request):
-    """Owner-only daily summary: barrels opened, cups/pints/jugs sold, revenue."""
+    """Owner/manager daily summary: barrels opened, cups/pints/jugs sold, revenue."""
     up = _get_up(request)
-    if not up or not up.is_owner:
+    if not up or not up.is_owner_or_manager:
         return redirect('bar_board')
 
     date_str = request.GET.get('date', timezone.localdate().isoformat())
@@ -1675,7 +1675,7 @@ def keg_target_recommendation(request, item_id):
 @login_required
 def keg_reconciliation(request):
     up = _get_up(request)
-    if not up or not up.is_owner:
+    if not up or not up.is_owner_or_manager:
         return redirect('bar_board')
 
     business = up.business
@@ -1783,7 +1783,7 @@ def keg_reconciliation(request):
 @login_required
 def keg_barrel_detail(request, barrel_id):
     up = _get_up(request)
-    if not up or not up.is_owner:
+    if not up or not up.is_owner_or_manager:
         return redirect('bar_board')
 
     business = up.business
@@ -1999,9 +1999,9 @@ def record_breakage(request):
 
 @login_required
 def bar_shrinkage_report(request):
-    """Owner-only: per-staff keg loss leaderboard for a date range."""
+    """Owner/manager: per-staff keg loss leaderboard for a date range."""
     up = _get_up(request)
-    if not up or not up.is_owner:
+    if not up or not up.is_owner_or_manager:
         return redirect('bar_board')
 
     business = up.business
@@ -2059,7 +2059,7 @@ def bar_z_report(request):
         return redirect('login')
 
     business = up.business
-    is_owner = getattr(up, 'is_owner', False)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
 
     # Date filter — default today
     date_str = request.GET.get('date', '')
@@ -2196,6 +2196,14 @@ def bar_z_report(request):
     day_entertainment_paid   = float(_ent_aggs['paid']   or 0)
     day_entertainment_unpaid = float(_ent_aggs['unpaid'] or 0)
 
+    # Owner consumption for the day
+    owner_consumption_txns = Transaction.objects.filter(
+        business=business,
+        type='OwnerConsumption',
+        date=report_date,
+    ).select_related('item', 'recorded_by').order_by('item__description')
+    day_owner_consumption_count = owner_consumption_txns.count()
+
     # Yesterday for navigation
     yesterday = report_date - timedelta(days=1)
     tomorrow  = report_date + timedelta(days=1)
@@ -2224,8 +2232,10 @@ def bar_z_report(request):
         'kra_pin':                   business.kra_pin or '',
         'counted_shifts':            counted_shifts,
         'business':                  business,
-        'day_entertainment_paid':    round(day_entertainment_paid, 2),
-        'day_entertainment_unpaid':  round(day_entertainment_unpaid, 2),
+        'day_entertainment_paid':          round(day_entertainment_paid, 2),
+        'day_entertainment_unpaid':        round(day_entertainment_unpaid, 2),
+        'owner_consumption_txns':          owner_consumption_txns,
+        'day_owner_consumption_count':     day_owner_consumption_count,
     })
 
 
@@ -2238,8 +2248,8 @@ def bar_z_report_share(request):
     from accounts.models import UserProfile
 
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     business = up.business
 

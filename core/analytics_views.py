@@ -28,7 +28,7 @@ from django.utils.translation import gettext as _
 
 from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County, RevenueTarget, Store, ProduceBunch, KegBarrel, BarCupLog, BarTab
 from core.forms import BusinessExpenseForm, CapitalInvestmentForm
-from core.views import get_user_profile, owner_required
+from core.views import get_user_profile, owner_required, owner_or_manager_required
 
 
 def _units(t):
@@ -46,7 +46,7 @@ def _units(t):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def analytics_dashboard(request):
     """Rich analytics dashboard with trends, comparisons, and insights."""
     user_profile = request.user.userprofile
@@ -945,7 +945,7 @@ def analytics_api(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def expense_list(request):
     """List all business expenses for the current period."""
     user_profile = request.user.userprofile
@@ -991,7 +991,7 @@ def expense_list(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def expense_add(request):
     """Add a new business expense."""
     user_profile = request.user.userprofile
@@ -1015,7 +1015,7 @@ def expense_add(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def expense_edit(request, expense_id):
     """Edit an existing business expense."""
     user_profile = request.user.userprofile
@@ -1038,7 +1038,7 @@ def expense_edit(request, expense_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def expense_delete(request, expense_id):
     """Delete a business expense."""
     user_profile = request.user.userprofile
@@ -1059,7 +1059,7 @@ def expense_delete(request, expense_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def capital_investment_list(request):
     """List and add capital investments (one-time startup/asset costs)."""
     user_profile = request.user.userprofile
@@ -1103,7 +1103,7 @@ def capital_investment_list(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def capital_investment_edit(request, investment_id):
     user_profile = request.user.userprofile
     investment   = get_object_or_404(
@@ -1127,7 +1127,7 @@ def capital_investment_edit(request, investment_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def capital_investment_delete(request, investment_id):
     user_profile = request.user.userprofile
     investment   = get_object_or_404(
@@ -1147,7 +1147,7 @@ def capital_investment_delete(request, investment_id):
 # ── COMPLIANCE & LICENSING ────────────────────────────────────────────────────
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def compliance_checklist(request):
     """Display and update the business compliance/licensing checklist."""
     user_profile = request.user.userprofile
@@ -1235,7 +1235,7 @@ def compliance_checklist(request):
 # ── COUNTY SALES HEATMAP ──────────────────────────────────────────────────────
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def county_heatmap(request):
     """
     Choropleth map of sales revenue by Kenya county.
@@ -1303,7 +1303,7 @@ def county_heatmap(request):
 # ── REVENUE TARGETS ───────────────────────────────────────────────────────────
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def revenue_target_settings(request):
     """
     Set revenue targets per period (daily / weekly / monthly).
@@ -1393,7 +1393,7 @@ def revenue_target_settings(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def revenue_target_progress(request):
     """
     JSON endpoint — returns today's / this week's / this month's revenue
@@ -1481,7 +1481,7 @@ def revenue_target_progress(request):
 # ── Expense Intelligence (12-month trend + impact) ─────────────────────────
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def expense_report(request):
     """12-month expense intelligence — trends, per-line history, revenue impact, flags."""
     business = get_user_profile(request).business

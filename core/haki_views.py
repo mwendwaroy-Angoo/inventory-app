@@ -33,7 +33,7 @@ from core.models import (
     CustomerDebtPayment, SalaryPayment, Shift, Transaction,
     RecurringExpense, Notification,
 )
-from core.views import get_user_profile, owner_required
+from core.views import get_user_profile, owner_required, owner_or_manager_required
 
 
 # ── Contribution helper ───────────────────────────────────────────────────────
@@ -187,7 +187,7 @@ def _salary_status(staff_profile, business):
 # ── H1: Owner — Staff Contribution Ledger ────────────────────────────────────
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def staff_contribution_report(request):
     user_profile = get_user_profile(request)
     business = user_profile.business

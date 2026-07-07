@@ -609,6 +609,9 @@
                     style="background:rgba(110,231,183,.08);border:1px solid rgba(110,231,183,.3);color:#6ee7b7;border-radius:8px;padding:4px 12px;font-size:0.82rem;cursor:pointer;"
                     onclick="openPataStokModal()">📦 Pata Stok</button>
             {% endif %}
+            <button type="button" id="btn-owner-took"
+                    style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.3);color:#e87c96;border-radius:8px;padding:4px 12px;font-size:0.82rem;cursor:pointer;"
+                    onclick="openOwnerTookModal()">🥃 Mmiliki Alichukua</button>
             <a href="{% url 'add_transaction' %}" class="btn btn-sm btn-secondary">{% trans 'Full Form' %} →</a>
         </div>
     </div>
@@ -1126,6 +1129,43 @@
 
 <!-- Petty Cash modal -->
 {% include "core/petty_cash_modal.html" %}
+
+<!-- ── Mmiliki Alichukua Modal — owner consumption logging ──────────── -->
+<div id="owner-took-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:1060; align-items:center; justify-content:center;">
+  <div style="background:var(--onyx-card); border:1px solid #444; border-radius:14px; padding:1.5rem; width:min(420px,95vw); max-height:90vh; overflow-y:auto;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h5 style="color:#e87c96; font-family:'Playfair Display',serif; margin:0;">🥃 Mmiliki Alichukua</h5>
+      <button type="button" onclick="closeOwnerTookModal()" style="background:none;border:none;color:#888;font-size:1.3rem;cursor:pointer;">✕</button>
+    </div>
+    <p style="color:#b0b0b0; font-size:0.82rem; margin-bottom:1rem;">Rekodi item aliyochukua mmiliki bila malipo. Hii itapunguza stock na kuonekana kwenye Z-report.</p>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:4px;">Item</label>
+      <select id="ot-item-select" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px; font-size:0.9rem;">
+        <option value="">— Chagua item —</option>
+        {% for item in items %}
+        {% if not item.is_keg and not item.is_produce %}
+        <option value="{{ item.id }}" data-unit="{{ item.unit }}">{{ item.description }} ({{ item.unit }})</option>
+        {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+    <div class="row g-2 mb-3">
+      <div class="col-6">
+        <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:4px;">Idadi <span id="ot-unit-label" style="color:#888;"></span></label>
+        <input type="number" id="ot-qty" min="0.01" step="0.01" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px;">
+      </div>
+      <div class="col-6">
+        <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:4px;">Maelezo (optional)</label>
+        <input type="text" id="ot-note" placeholder="e.g. personal use" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px;">
+      </div>
+    </div>
+    <div id="ot-error" style="color:#e87c96; font-size:0.82rem; margin-bottom:0.5rem; display:none;"></div>
+    <button type="button" onclick="submitOwnerTook()"
+            style="width:100%; background:rgba(192,57,90,.15); border:1px solid rgba(192,57,90,.4); color:#e87c96; border-radius:8px; padding:10px; font-size:0.9rem; cursor:pointer; font-weight:600;">
+      ✓ Rekodi
+    </button>
+  </div>
+</div>
 
 <!-- ── Pata Stok Modal (owner-only quick receive) ──────────────────── -->
 {% if QS_IS_OWNER %}
@@ -2679,5 +2719,77 @@ document.getElementById('pata-stok-form').addEventListener('submit', function (e
     });
 });
 {% endif %}
+
+/* ── Mmiliki Alichukua ── */
+window.openOwnerTookModal = function () {
+  var overlay = document.getElementById('owner-took-overlay');
+  if (!overlay) return;
+  document.getElementById('ot-error').style.display = 'none';
+  document.getElementById('ot-qty').value = '';
+  document.getElementById('ot-note').value = '';
+  document.getElementById('ot-item-select').value = '';
+  document.getElementById('ot-unit-label').textContent = '';
+  overlay.style.display = 'flex';
+};
+
+window.closeOwnerTookModal = function () {
+  var overlay = document.getElementById('owner-took-overlay');
+  if (overlay) overlay.style.display = 'none';
+};
+
+document.getElementById('owner-took-overlay').addEventListener('click', function (e) {
+  if (e.target === this) closeOwnerTookModal();
+});
+
+document.getElementById('ot-item-select').addEventListener('change', function () {
+  var opt = this.options[this.selectedIndex];
+  var unit = opt ? (opt.getAttribute('data-unit') || '') : '';
+  document.getElementById('ot-unit-label').textContent = unit ? '(' + unit + ')' : '';
+});
+
+window.submitOwnerTook = function () {
+  var itemId = document.getElementById('ot-item-select').value;
+  var qty    = document.getElementById('ot-qty').value;
+  var note   = document.getElementById('ot-note').value;
+  var errEl  = document.getElementById('ot-error');
+  errEl.style.display = 'none';
+
+  if (!itemId || !qty || parseFloat(qty) <= 0) {
+    errEl.textContent = 'Taja item na idadi sahihi.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]');
+  var csrf = csrfToken ? csrfToken.value : '{{ csrf_token }}';
+
+  var body = new URLSearchParams();
+  body.append('csrfmiddlewaretoken', csrf);
+  body.append('item_id', itemId);
+  body.append('qty', qty);
+  body.append('note', note);
+
+  fetch('{% url "record_owner_consumption" %}', {
+    method: 'POST',
+    headers: { 'X-CSRFToken': csrf },
+    body: body,
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (d) {
+    if (d.ok) {
+      closeOwnerTookModal();
+      if (window.showToast) {
+        showToast('✓ Imerekodiwa — mmiliki alichukua ' + d.qty + ' ' + d.unit + ' ya ' + d.item);
+      }
+    } else {
+      errEl.textContent = d.error || 'Hitilafu. Jaribu tena.';
+      errEl.style.display = 'block';
+    }
+  })
+  .catch(function () {
+    errEl.textContent = 'Hitilafu ya mtandao.';
+    errEl.style.display = 'block';
+  });
+};
 </script>
 {% endblock %}

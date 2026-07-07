@@ -167,11 +167,18 @@ def add_staff(request):
                 last_name=form.cleaned_data.get('last_name', ''),
             )
 
+            role = form.cleaned_data.get('role', 'staff')
+            is_manager = (role == 'manager')
             UserProfile.objects.create(
                 user=staff_user,
                 business=user_profile.business,
-                role=form.cleaned_data.get('role', 'staff'),
+                role=role,
                 phone=form.cleaned_data.get('phone', ''),
+                # Managers automatically get full operational access
+                can_access_bar=is_manager,
+                can_access_kitchen=is_manager,
+                can_override_restrictions=is_manager,
+                can_authorize_tab_accumulation=is_manager,
             )
 
             messages.success(

@@ -10,7 +10,7 @@ from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 from core.models import Item, ItemSaleApproval, Transaction, Notification
-from core.views import get_user_profile, owner_required
+from core.views import get_user_profile, owner_required, owner_or_manager_required
 
 
 # ── Shared helper ─────────────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ def request_sale_approval(request, item_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def pending_approvals(request):
     """Owner's view of all pending sale approval requests."""
     user_profile = get_user_profile(request)

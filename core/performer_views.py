@@ -48,8 +48,8 @@ def _get_up(request):
 
 def _owner_required(request):
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return None, JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return None, JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
     return up, None
 
 
@@ -307,7 +307,7 @@ def session_today_api(request):
     today     = timezone.localdate()
     next_week = today + timedelta(days=7)
 
-    is_owner = getattr(up, 'is_owner', False)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
 
     sessions = (
         PerformerSession.objects
@@ -421,7 +421,7 @@ def session_start(request):
     if err:
         return err
     business = up.business
-    is_owner = getattr(up, 'is_owner', False)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
 
     if not is_owner:
         from .shift_views import get_active_staff_shift
@@ -525,8 +525,8 @@ def session_update(request, session_id):
     action = data.get('action', 'end')
 
     if action == 'approve':
-        if not getattr(up, 'is_owner', False):
-            return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+        if not getattr(up, 'is_owner_or_manager', False):
+            return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
         # High-fee approval clears that gate; confirmation still required
         session.status = PerformerSession.STATUS_PENDING_CONFIRMATION
         session.save(update_fields=['status'])

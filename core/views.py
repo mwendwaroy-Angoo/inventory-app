@@ -109,6 +109,22 @@ def owner_required(view_func):
     return wrapper
 
 
+def owner_or_manager_required(view_func):
+    from functools import wraps
+
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        try:
+            if not request.user.userprofile.is_owner_or_manager:
+                messages.error(request, _("Only business owners and managers can access this page."))
+                return redirect("stock_list")
+        except Exception:
+            return redirect("home")
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
+
+
 # ── HOME ─────────────────────────────────────────────────────────────────────
 
 
@@ -1175,7 +1191,7 @@ def item_detail(request, item_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def create_po_from_item(request, item_id):
     """Quick action: create a draft Purchase Order for the item using recommended qty."""
     user_profile = get_user_profile(request)
@@ -1212,7 +1228,7 @@ def create_po_from_item(request, item_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def purchase_orders_list(request):
     user_profile = get_user_profile(request)
     if not user_profile:
@@ -1230,7 +1246,7 @@ def purchase_orders_list(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def purchase_order_detail(request, po_id):
     user_profile = get_user_profile(request)
     if not user_profile:
@@ -1244,7 +1260,7 @@ def purchase_order_detail(request, po_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def purchase_order_create(request):
     user_profile = get_user_profile(request)
     if not user_profile:
@@ -1373,7 +1389,7 @@ def item_cost_price(request, item_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def purchase_order_edit(request, po_id):
     user_profile = get_user_profile(request)
     if not user_profile:
@@ -1411,7 +1427,7 @@ def purchase_order_edit(request, po_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def receive_goods(request, po_id):
     """
     Record a delivery against a PurchaseOrder.
@@ -1541,7 +1557,7 @@ def receive_goods(request, po_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def goods_receipt_detail(request, receipt_id):
     """View a single goods receipt with line-by-line variance analysis."""
     user_profile = get_user_profile(request)
@@ -1624,7 +1640,7 @@ def export_stock_excel(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def manage_items(request):
     user_profile = request.user.userprofile
     items = (
@@ -1662,7 +1678,7 @@ def _resolve_category(cat_text):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def add_item(request):
     user_profile = request.user.userprofile
 
@@ -1812,7 +1828,7 @@ def add_item(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def edit_item(request, item_id):
     user_profile = request.user.userprofile
     item = get_object_or_404(Item, id=item_id, business=user_profile.business)
@@ -1961,7 +1977,7 @@ def edit_item(request, item_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def delete_item(request, item_id):
     user_profile = request.user.userprofile
     item = get_object_or_404(Item, id=item_id, business=user_profile.business)
@@ -1986,7 +2002,7 @@ def delete_item(request, item_id):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def manage_stores(request):
     user_profile = request.user.userprofile
     stores = Store.objects.filter(business=user_profile.business)
@@ -2076,7 +2092,7 @@ def add_customer(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def delete_customer(request, customer_id):
     user_profile = request.user.userprofile
     customer = get_object_or_404(
@@ -2134,7 +2150,7 @@ def get_date_range(period, date_from=None, date_to=None):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def sales_dashboard(request):
     user_profile = request.user.userprofile
     business = user_profile.business
@@ -2225,7 +2241,7 @@ def sales_dashboard(request):
 
 
 @login_required
-@owner_required
+@owner_or_manager_required
 def export_sales_excel(request):
     user_profile = request.user.userprofile
     business = user_profile.business
