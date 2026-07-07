@@ -1645,7 +1645,7 @@ def bar_daily_report(request):
             'cups':    st.filter(keg_serving='cup').aggregate(n=Sum('keg_qty'))['n'] or 0,
             'pints':   st.filter(keg_serving='pint').aggregate(n=Sum('keg_qty'))['n'] or 0,
             'jugs':    st.filter(keg_serving='jug').aggregate(n=Sum('keg_qty'))['n'] or 0,
-            'revenue': float(st.aggregate(r=Sum('sale_amount'))['r'] or 0),
+            'revenue': float(st.exclude(payment_method='void').aggregate(r=Sum('sale_amount'))['r'] or 0),
         })
 
     return render(request, 'core/bar/bar_daily_report.html', {
@@ -2171,9 +2171,14 @@ def bar_z_report(request):
         float(e.amount) for tab in open_tabs for e in tab.entries.filter(is_paid=False)
     )
 
-    # Keg variance KES for the day — sum from all active/depleted barrels
+    # Keg variance KES for the day — currently tapped barrels + barrels closed today.
+    # Intentionally excludes historical barrels closed before report_date so the
+    # number shown is tonight's active wastage, not a lifetime accumulation.
     barrels = KegBarrel.objects.filter(
         business=business,
+    ).filter(
+        Q(status='TAPPED') |
+        Q(status__in=['DEPLETED', 'RETURNED'], closed_at__date=report_date)
     ).prefetch_related('weight_readings').select_related('item')
     day_keg_variance_kes = 0.0
     for b in barrels:
