@@ -983,6 +983,10 @@ class Payment(models.Model):
         null=True, blank=True,
         help_text='List of BarTabEntry IDs for partial tab STK settlement. Null = FIFO full-tab.',
     )
+    receipt_token = models.CharField(
+        max_length=100, blank=True, db_index=True,
+        help_text='Receipt token for customer-initiated STK push from public receipt page.',
+    )
     qs_cart = models.JSONField(
         null=True, blank=True,
         help_text='Serialised Quick Sell cart for checkout STK push server-side settlement.',

@@ -451,6 +451,37 @@
         </div>
         {% endif %}
 
+        {% if is_live_tab %}
+        <!-- ── Customer Pay Now section ───────────────────────────── -->
+        <div id="pay-section" style="margin:0.5rem 1.2rem 0.75rem; display:none;">
+            <div style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.6rem; font-weight:600; letter-spacing:0.03em;">
+                💳 LIPA SASA
+            </div>
+            <div id="pay-lines-list" style="margin-bottom:0.6rem;"></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; gap:0.5rem;">
+                <button id="btnSelectAll" onclick="receiptPaySelectAll()" style="font-size:0.75rem; background:none; border:none; color:#c9a84c; cursor:pointer; padding:0; text-decoration:underline;">Chagua Yote</button>
+                <span id="pay-selected-total" style="font-size:0.9rem; font-weight:700; color:#c9a84c;"></span>
+            </div>
+            <div id="pay-phone-row" style="display:flex; gap:0.5rem; margin-bottom:0.5rem;">
+                <input id="payPhone" type="tel" placeholder="07XX XXX XXX"
+                       value="{{ receipt.customer_phone }}"
+                       style="flex:1; background:#111; border:1px solid #333; border-radius:6px; color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.82rem;">
+                <button id="btnPayStk" onclick="receiptPayStk()"
+                        style="padding:0.45rem 1rem; border-radius:6px; border:none; background:#c9a84c; color:#111; font-weight:700; font-size:0.82rem; cursor:pointer; white-space:nowrap;">
+                    📲 Lipa M-Pesa
+                </button>
+            </div>
+            <div style="text-align:center;">
+                <button onclick="receiptPayQr()" style="font-size:0.75rem; background:none; border:none; color:#b0b0b0; cursor:pointer; text-decoration:underline;">au tumia QR Code</button>
+            </div>
+            <div id="pay-stk-status" style="display:none; margin-top:0.5rem;"></div>
+            <div id="pay-qr-wrap" style="display:none; text-align:center; margin-top:0.75rem;">
+                <div id="payQrCanvas" style="display:inline-block;"></div>
+                <div style="font-size:0.72rem; color:#b0b0b0; margin-top:0.35rem;">Scan with M-Pesa to pay KES <span id="payQrAmount"></span></div>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="qr-section no-print">
             <div id="qrCanvas"></div>
             <p>Scan to view this receipt</p>
@@ -545,6 +576,169 @@
 })();
 
 {% if is_live_tab %}
+/* ── Customer Pay Now ── */
+(function () {
+    var TOKEN = "{{ receipt.token|escapejs }}";
+    var _lines = [];   // {name, subtotal, entry_id} — populated by live poll
+    var _stkPollIv = null;
+
+    function fmtKes(n) { return 'KES ' + Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0}); }
+
+    function renderPayLines(lines) {
+        _lines = lines.filter(function(l) { return l.entry_id; });
+        var wrap = document.getElementById('pay-lines-list');
+        var paySection = document.getElementById('pay-section');
+        if (!wrap || !paySection) return;
+        if (!_lines.length) { paySection.style.display = 'none'; return; }
+        paySection.style.display = 'block';
+        var html = '';
+        _lines.forEach(function(l) {
+            html += '<label style="display:flex; align-items:center; gap:0.55rem; padding:0.3rem 0; font-size:0.83rem; color:#f0ece4; cursor:pointer;">' +
+                '<input type="checkbox" class="pay-entry-cb" data-id="' + l.entry_id + '" data-amt="' + l.subtotal + '" checked ' +
+                'onchange="receiptPayUpdateTotal()" style="accent-color:#c9a84c; width:16px; height:16px;">' +
+                '<span style="flex:1;">' + (l.name || '') + '</span>' +
+                '<span style="color:#c9a84c; font-weight:600;">' + fmtKes(l.subtotal) + '</span>' +
+                '</label>';
+        });
+        wrap.innerHTML = html;
+        receiptPayUpdateTotal();
+    }
+
+    window.receiptPayUpdateTotal = function() {
+        var total = 0;
+        document.querySelectorAll('.pay-entry-cb:checked').forEach(function(cb) {
+            total += parseFloat(cb.dataset.amt) || 0;
+        });
+        var el = document.getElementById('pay-selected-total');
+        if (el) el.textContent = total > 0 ? fmtKes(total) : '';
+    };
+
+    window.receiptPaySelectAll = function() {
+        document.querySelectorAll('.pay-entry-cb').forEach(function(cb) { cb.checked = true; });
+        receiptPayUpdateTotal();
+    };
+
+    function selectedEntryIds() {
+        var ids = [];
+        document.querySelectorAll('.pay-entry-cb:checked').forEach(function(cb) {
+            ids.push(parseInt(cb.dataset.id));
+        });
+        return ids;
+    }
+
+    function selectedAmount() {
+        var total = 0;
+        document.querySelectorAll('.pay-entry-cb:checked').forEach(function(cb) {
+            total += parseFloat(cb.dataset.amt) || 0;
+        });
+        return Math.round(total);
+    }
+
+    function stkStatus(msg, color) {
+        var el = document.getElementById('pay-stk-status');
+        if (!el) return;
+        el.style.display = 'block';
+        el.style.color = color || '#b0b0b0';
+        el.style.fontSize = '0.8rem';
+        el.style.textAlign = 'center';
+        el.style.padding = '0.35rem 0';
+        el.textContent = msg;
+    }
+
+    window.receiptPayStk = function() {
+        var ids = selectedEntryIds();
+        var amt = selectedAmount();
+        if (!amt) { stkStatus('Chagua bidhaa ulizotaka kulipa.', '#fbbf24'); return; }
+        var phone = (document.getElementById('payPhone') || {}).value || '';
+        if (!phone) { stkStatus('Weka nambari ya simu yako ya M-Pesa.', '#fbbf24'); return; }
+        var btn = document.getElementById('btnPayStk');
+        if (btn) { btn.disabled = true; btn.textContent = '...'; }
+        stkStatus('Inasubiri — angalia simu yako...', '#6ee7b7');
+        fetch('/r/' + TOKEN + '/pay/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({type: 'stk', entry_ids: ids, phone: phone}),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) {
+                stkStatus('Hitilafu: ' + (d.error || 'Jaribu tena.'), '#f87171');
+                if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
+                return;
+            }
+            stkStatus('📱 Angalia simu yako — ingiza PIN yako ya M-Pesa.', '#6ee7b7');
+            pollStkResult(d.payment_id, 0);
+        })
+        .catch(function() {
+            stkStatus('Hitilafu ya mtandao. Jaribu tena.', '#f87171');
+            if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
+        });
+    };
+
+    function pollStkResult(paymentId, attempt) {
+        if (attempt >= 24) {
+            stkStatus('Muda umekwisha — angalia kama M-Pesa imefanikiwa au jaribu tena.', '#fbbf24');
+            var btn = document.getElementById('btnPayStk');
+            if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
+            return;
+        }
+        _stkPollIv = setTimeout(function() {
+            fetch('/mpesa/status/?payment_id=' + paymentId)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.status === 'completed') {
+                    stkStatus('✅ Malipo yamekamilika! Asante.', '#6ee7b7');
+                    document.getElementById('pay-section').style.display = 'none';
+                    // live poll will refresh lines automatically
+                } else if (d.status === 'failed') {
+                    stkStatus('❌ Malipo hayakufanikiwa. Jaribu tena.', '#f87171');
+                    var btn = document.getElementById('btnPayStk');
+                    if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
+                } else {
+                    pollStkResult(paymentId, attempt + 1);
+                }
+            })
+            .catch(function() { pollStkResult(paymentId, attempt + 1); });
+        }, 5000);
+    }
+
+    window.receiptPayQr = function() {
+        var ids = selectedEntryIds();
+        var amt = selectedAmount();
+        if (!amt) { stkStatus('Chagua bidhaa ulizotaka kulipa.', '#fbbf24'); return; }
+        var qrWrap = document.getElementById('pay-qr-wrap');
+        var canvas = document.getElementById('payQrCanvas');
+        if (!qrWrap || !canvas) return;
+        fetch('/r/' + TOKEN + '/pay/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({type: 'qr', entry_ids: ids}),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) { stkStatus('QR haikuweza kutengenezwa. Lipa kwa STK.', '#fbbf24'); return; }
+            canvas.innerHTML = '';
+            new QRCode(canvas, {
+                text: d.qr_data,
+                width: 160,
+                height: 160,
+                colorDark: '#1a1a1a',
+                colorLight: '#f0ece4',
+                correctLevel: QRCode.CorrectLevel.M,
+            });
+            var amtEl = document.getElementById('payQrAmount');
+            if (amtEl) amtEl.textContent = d.amount;
+            qrWrap.style.display = 'block';
+        })
+        .catch(function() { stkStatus('Hitilafu ya mtandao.', '#f87171'); });
+    };
+
+    // Expose so the live-poll renderLines can also feed the pay section
+    window._receiptPayRenderLines = renderPayLines;
+}());
+
+{% endif %}
+{% if is_live_tab %}
 /* ── Live tab receipt: poll /r/<token>/live/ every 20 s ── */
 (function () {
     var TOKEN      = "{{ receipt.token|escapejs }}";
@@ -568,6 +762,10 @@
                 '</div>';
         });
         linesWrap.innerHTML = html;
+        // Feed the pay-section checkboxes too
+        if (typeof window._receiptPayRenderLines === 'function') {
+            window._receiptPayRenderLines(lines);
+        }
     }
 
     function updateCountdown() {
@@ -583,9 +781,11 @@
                     totalEl.textContent = fmt(d.total);
                 }
                 if (!d.is_live) {
-                    // Tab settled or voided — update status and stop polling
+                    // Tab settled or voided — update status, stop polling, hide pay section
                     clearInterval(tickIv);
                     clearInterval(pollIv);
+                    var paySection = document.getElementById('pay-section');
+                    if (paySection) paySection.style.display = 'none';
                     var statusDiv = document.getElementById('tab-live-status');
                     if (statusDiv) {
                         if (d.tab_status === 'SETTLED') {
@@ -611,6 +811,7 @@
     }
 
     updateCountdown();
+    poll(); // populate pay section immediately without waiting 20 s
     var tickIv = setInterval(function () {
         countdown--;
         if (countdown <= 0) countdown = pollSecs;

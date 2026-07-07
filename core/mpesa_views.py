@@ -162,6 +162,68 @@ def _settle_tab_from_payment(payment):
         logger.warning("Tab STK settlement failed for tab_id=%s: %s", getattr(payment, 'bar_tab_id', '?'), exc)
 
 
+def _settle_receipt_entries_from_payment(payment):
+    """Settle BarTabEntry rows across all tabs linked to a receipt.
+
+    Used for customer-initiated STK push from the public receipt page
+    (/r/<token>/pay/). Handles entries from multiple tabs (bar + kitchen)
+    in one payment. Closes any tab whose remaining unpaid balance reaches 0.
+    """
+    try:
+        from .models import BarTabEntry, BarTab, Receipt as _Receipt
+        entry_ids = payment.tab_entry_ids
+        if not entry_ids:
+            return
+
+        now = timezone.now()
+        entries = list(
+            BarTabEntry.objects.filter(
+                id__in=entry_ids,
+                tab__business=payment.business,
+                is_paid=False,
+            ).select_related('tab', 'transaction')
+        )
+
+        tabs_affected = set()
+        for entry in entries:
+            entry.is_paid = True
+            entry.payment_method = 'mpesa'
+            entry.paid_at = now
+            entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
+            if entry.transaction_id:
+                entry.transaction.payment_method = 'mpesa'
+                entry.transaction.save(update_fields=['payment_method'])
+            tabs_affected.add(entry.tab_id)
+
+        # Close fully-paid tabs
+        for tab_id in tabs_affected:
+            tab = BarTab.objects.filter(id=tab_id).first()
+            if tab and not tab.entries.filter(is_paid=False).exists():
+                tab.status = 'SETTLED'
+                tab.settled_at = now
+                tab.save(update_fields=['status', 'settled_at'])
+
+        # SMS the customer and update the receipt payment_method
+        if payment.receipt_token:
+            rcpt = _Receipt.objects.filter(token=payment.receipt_token).first()
+            if rcpt:
+                all_tab_ids = [rcpt.meta.get('tab_id')] + list(rcpt.meta.get('linked_tab_ids') or [])
+                still_unpaid = BarTabEntry.objects.filter(
+                    tab__id__in=all_tab_ids, is_paid=False
+                ).exists()
+                if not still_unpaid:
+                    rcpt.payment_method = 'mpesa'
+                    rcpt.save(update_fields=['payment_method'])
+                _sms_receipt_to_payer(payment, rcpt)
+
+        logger.info(
+            "Receipt STK settled entries=%s business=%s mpesa_receipt=%s",
+            entry_ids, payment.business_id, payment.mpesa_receipt,
+        )
+    except Exception as exc:
+        logger.warning("Receipt STK settlement failed payment=%s: %s", payment.id, exc)
+
+
 def _settle_kitchen_order_from_payment(payment):
     """Process a kitchen cart after STK Push success — server-side fallback.
 
@@ -406,8 +468,11 @@ def mpesa_callback(request):
                 order.save(update_fields=['status'])
                 _fulfill_order(order)
 
-        # Settle bar tab (full or partial) if linked
-        if payment.bar_tab_id:
+        # Customer-initiated from public receipt page — cross-tab entry settlement
+        if payment.receipt_token and payment.tab_entry_ids:
+            _settle_receipt_entries_from_payment(payment)
+        # Settle bar tab (full or partial) if linked (staff-side STK push)
+        elif payment.bar_tab_id:
             _settle_tab_from_payment(payment)
 
         # Settle kitchen cart if this was a kitchen STK push
@@ -640,7 +705,9 @@ def payment_status(request, payment_id):
                 # Re-read: if mpesa_callback already landed and set mpesa_receipt,
                 # use the real receipt as dedup key instead of the synthetic one.
                 payment.refresh_from_db()
-                if payment.bar_tab_id:
+                if payment.receipt_token and payment.tab_entry_ids:
+                    _settle_receipt_entries_from_payment(payment)
+                elif payment.bar_tab_id:
                     _settle_tab_from_payment(payment)
                 if payment.kitchen_cart:
                     _settle_kitchen_order_from_payment(payment)

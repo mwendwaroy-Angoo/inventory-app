@@ -5,6 +5,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
 
 from .models import Receipt
 from .notifications import normalize_ke_phone, send_email_notification, send_sms_notification
@@ -93,7 +94,7 @@ def _get_live_tab_state(receipt):
                         pass
                     icon = '🍽 ' if is_kitchen else '🍺 '
                     amt = float(e.amount)
-                    lines.append({'name': icon + e.description, 'qty': 1, 'subtotal': amt})
+                    lines.append({'name': icon + e.description, 'qty': 1, 'subtotal': amt, 'entry_id': e.id, 'tab_id': btab_id})
                     total += amt
             except _BarTab.DoesNotExist:
                 pass
@@ -213,3 +214,130 @@ def send_receipt(request, receipt_id):
         return JsonResponse({'ok': bool(ok)})
 
     return JsonResponse({'ok': False, 'error': 'unknown_channel'})
+
+
+@csrf_exempt
+def receipt_pay(request, token):
+    """Customer-initiated payment from the public receipt page.
+
+    No auth required — token is the secret. Supports:
+      - type=stk : initiate M-Pesa STK Push (requires phone)
+      - type=qr  : return EMVCo QR string for the amount (no phone needed)
+
+    POST JSON:
+      { "type": "stk"|"qr", "entry_ids": [1,2,3], "phone": "0712345678" }
+      entry_ids empty = pay all unpaid entries on the receipt.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    receipt = get_object_or_404(Receipt, token=token)
+    tab_id = receipt.meta.get('tab_id') if receipt.meta else None
+    if not tab_id:
+        return JsonResponse({'error': 'not_a_tab'}, status=400)
+
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    pay_type = data.get('type', 'stk')
+    entry_ids = data.get('entry_ids') or []
+    phone = (data.get('phone') or receipt.customer_phone or '').strip()
+
+    business = receipt.business
+    all_tab_ids = [tab_id] + list(receipt.meta.get('linked_tab_ids') or [])
+
+    from .models import BarTabEntry
+    if entry_ids:
+        entries_qs = BarTabEntry.objects.filter(
+            id__in=entry_ids,
+            tab__id__in=all_tab_ids,
+            is_paid=False,
+        )
+    else:
+        entries_qs = BarTabEntry.objects.filter(tab__id__in=all_tab_ids, is_paid=False)
+
+    amount = int(sum(float(e.amount) for e in entries_qs))
+    selected_ids = list(entries_qs.values_list('id', flat=True))
+
+    if amount < 1:
+        return JsonResponse({'error': 'nothing_to_pay'}, status=400)
+
+    if pay_type == 'qr':
+        try:
+            from .mpesa import resolve_mpesa_config, generate_emv_qr_string
+            cfg = resolve_mpesa_config(business, None)
+            use_till = bool(cfg.get('till'))
+            shortcode = (cfg.get('till') if use_till else cfg.get('paybill') or '').strip()
+            if not shortcode:
+                return JsonResponse({'error': 'no_mpesa_config'}, status=400)
+            trx_code = 'BG' if use_till else 'PB'
+            qr_string = generate_emv_qr_string(
+                merchant_name=business.name,
+                shortcode=shortcode,
+                trx_code=trx_code,
+                amount=amount,
+            )
+            return JsonResponse({'ok': True, 'type': 'qr', 'qr_data': qr_string, 'amount': amount})
+        except Exception:
+            logger.exception('receipt_pay QR failed token=%s', token)
+            return JsonResponse({'error': 'qr_failed'}, status=500)
+
+    # STK Push
+    if not phone:
+        return JsonResponse({'error': 'phone_required'}, status=400)
+
+    try:
+        from .mpesa import initiate_stk_push, resolve_mpesa_config, format_phone_ke
+        from .models import Payment
+
+        phone_fmt = format_phone_ke(phone)
+        cfg = resolve_mpesa_config(business, None)
+        use_till = bool(cfg.get('till'))
+        shortcode = (cfg.get('till') if use_till else cfg.get('paybill') or '').strip()
+        if not shortcode:
+            return JsonResponse({'error': 'no_mpesa_config'}, status=400)
+
+        callback_url = request.build_absolute_uri('/mpesa/callback/')
+        result = initiate_stk_push(
+            phone_number=phone_fmt,
+            amount=amount,
+            account_reference=f"RCPT-{receipt.receipt_number}",
+            description="Duka Mwecheche",
+            callback_url=callback_url,
+            consumer_key=cfg.get('consumer_key') or None,
+            consumer_secret=cfg.get('consumer_secret') or None,
+            shortcode=shortcode,
+            passkey=cfg.get('passkey') or None,
+            use_till=use_till,
+            env=cfg.get('environment', 'sandbox'),
+        )
+
+        if not result or result.get('ResponseCode') != '0':
+            err = result.get('ResponseDescription', 'STK failed') if result else 'No response from Daraja'
+            return JsonResponse({'error': err}, status=400)
+
+        payment = Payment.objects.create(
+            business=business,
+            store=cfg.get('store'),
+            source=cfg.get('source', 'bar'),
+            amount=amount,
+            method='mpesa',
+            status='pending',
+            phone=phone_fmt,
+            checkout_request_id=result.get('CheckoutRequestID', ''),
+            merchant_request_id=result.get('MerchantRequestID', ''),
+            tab_entry_ids=selected_ids,
+            receipt_token=token,
+        )
+        return JsonResponse({
+            'ok': True,
+            'type': 'stk',
+            'payment_id': payment.id,
+            'checkout_request_id': payment.checkout_request_id,
+            'amount': amount,
+        })
+    except Exception:
+        logger.exception('receipt_pay STK failed token=%s', token)
+        return JsonResponse({'error': 'stk_failed'}, status=500)
