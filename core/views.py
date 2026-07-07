@@ -2663,37 +2663,69 @@ def quick_sell(request):
                 receipt_token = None
                 receipt_number = None
                 rcpt = None
+                _qs_rcpt_reused = False  # True when lines appended to existing receipt
                 try:
                     from .models import Receipt
+                    from decimal import Decimal as _DecQS
                     rcpt_meta = {}
                     if payment_method_qs == "credit" and credit_recipient:
-                        try:
-                            from core.debt_views import _build_credit_receipt_meta
-                            _cust_for_meta = _Customer.objects.filter(
-                                business=user_profile.business, name=credit_recipient
-                            ).first()
-                            if _cust_for_meta:
-                                rcpt_meta = _build_credit_receipt_meta(
-                                    user_profile.business, _cust_for_meta, 'bar'
-                                )
-                        except Exception:
-                            pass
-                    rcpt = Receipt.issue(
-                        business=user_profile.business,
-                        lines=recorded,
-                        payment_method=payment_method_qs,
-                        user=request.user,
-                        customer_name=credit_recipient if payment_method_qs == "credit" else "",
-                        customer_phone=credit_phone if payment_method_qs == "credit" else "",
-                        meta=rcpt_meta,
-                    )
-                    receipt_token = rcpt.token
-                    receipt_number = rcpt.receipt_number
+                        # Dedup: reuse today's receipt for this customer instead of
+                        # issuing a new one (prevents duplicate SMS + multiple receipt links).
+                        _existing_rcpt = Receipt.objects.filter(
+                            business=user_profile.business,
+                            customer_name__iexact=credit_recipient,
+                            created_at__date=timezone.localdate(),
+                        ).exclude(payment_method='statement').order_by('-created_at').first()
+                        if _existing_rcpt:
+                            _updated_lines = list(_existing_rcpt.lines) + recorded
+                            _updated_total = sum(float(l.get('subtotal', 0)) for l in _updated_lines)
+                            _existing_rcpt.lines = _updated_lines
+                            _existing_rcpt.total = _DecQS(str(round(_updated_total, 2)))
+                            _existing_rcpt.save(update_fields=['lines', 'total'])
+                            rcpt = _existing_rcpt
+                            receipt_token = _existing_rcpt.token
+                            receipt_number = _existing_rcpt.receipt_number
+                            _qs_rcpt_reused = True
+                        else:
+                            try:
+                                from core.debt_views import _build_credit_receipt_meta
+                                _cust_for_meta = _Customer.objects.filter(
+                                    business=user_profile.business, name=credit_recipient
+                                ).first()
+                                if _cust_for_meta:
+                                    rcpt_meta = _build_credit_receipt_meta(
+                                        user_profile.business, _cust_for_meta, 'bar'
+                                    )
+                            except Exception:
+                                pass
+                            rcpt = Receipt.issue(
+                                business=user_profile.business,
+                                lines=recorded,
+                                payment_method=payment_method_qs,
+                                user=request.user,
+                                customer_name=credit_recipient,
+                                customer_phone=credit_phone,
+                                meta=rcpt_meta,
+                            )
+                            receipt_token = rcpt.token
+                            receipt_number = rcpt.receipt_number
+                    else:
+                        rcpt = Receipt.issue(
+                            business=user_profile.business,
+                            lines=recorded,
+                            payment_method=payment_method_qs,
+                            user=request.user,
+                            customer_name="",
+                            customer_phone="",
+                            meta=rcpt_meta,
+                        )
+                        receipt_token = rcpt.token
+                        receipt_number = rcpt.receipt_number
                 except Exception:
                     pass
 
-                # SMS confirmation to customer when sold on credit (deni)
-                if payment_method_qs == "credit" and credit_phone and receipt_token:
+                # SMS confirmation: only for brand-new receipts (not when appended to existing)
+                if payment_method_qs == "credit" and credit_phone and receipt_token and not _qs_rcpt_reused:
                     try:
                         from .notifications import normalize_ke_phone, send_sms_notification
                         from django.utils import timezone as _tz

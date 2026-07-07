@@ -378,6 +378,28 @@ def bar_board(request):
                                 business.id,
                             )
 
+                    if master_rcpt is None and tab_customer:
+                        # Priority 4: any receipt issued today for this customer from Quick Sell
+                        # or another module (handles QS-deni-first → bar-tab-second scenario).
+                        try:
+                            _any_today = Receipt.objects.filter(
+                                business=business,
+                                customer_name__iexact=tab_customer,
+                                created_at__date=timezone.localdate(),
+                            ).exclude(payment_method='statement').order_by('-created_at').first()
+                            if _any_today:
+                                _linked_ids = list(_any_today.meta.get('linked_tab_ids') or [])
+                                if active_tab.id not in _linked_ids:
+                                    _linked_ids.append(active_tab.id)
+                                    _any_today.meta['linked_tab_ids'] = _linked_ids
+                                    _any_today.save(update_fields=['meta'])
+                                master_rcpt = _any_today
+                        except Exception:
+                            logger.exception(
+                                'bar_board: cross-module receipt link lookup failed business=%s',
+                                business.id,
+                            )
+
                 if master_rcpt:
                     # Reuse existing master receipt — customer's QR stays the same
                     receipt_token = master_rcpt.token

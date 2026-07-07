@@ -1236,3 +1236,58 @@ python manage.py check                  # 0 issues
 python manage.py makemigrations --check # No changes detected (0047 + 0094 already applied)
 python manage.py test                   # 126 tests, all pass
 ```
+
+---
+
+## Sprint RD1 — Cross-module Receipt Deduplication
+
+**Goal:** A customer always receives ONE receipt URL per day regardless of how many counters they buy from (bar tab, kitchen tab, Quick Sell deni, or any mix).
+
+### RD1-A: Quick Sell credit → bar tab (QS first, then bar)
+
+**Setup:** Customer name = "TestDedup", open the Quick Sell board.
+
+1. In Quick Sell, sell a soda to TestDedup on Deni → complete checkout.
+   - ✅ Correct: receipt issued, SMS sent with receipt URL (call this URL-1).
+2. Go to Bar Board, open a keg tab for TestDedup.
+   - ✅ Correct: NO second SMS. The bar board detects the QS receipt (Priority 4) and links the bar tab into it via `meta.linked_tab_ids`.
+3. Sell a pint to the bar tab → settle via cash.
+   - ✅ Correct: `/r/<token>/` for URL-1 now shows BOTH the soda (QS) and the pint (bar tab) lines. One URL, two counters.
+
+### RD1-B: Bar tab first → QS deni same customer (bar first, then QS)
+
+1. Open a bar tab for "TestDedup2" → sell a pint.
+   - ✅ Correct: receipt URL-2 issued, SMS sent.
+2. In Quick Sell, sell a soda to TestDedup2 on Deni.
+   - ✅ Correct: no new receipt created. QS finds today's receipt for TestDedup2 and appends the soda line. No SMS (reused receipt).
+3. Open URL-2 — it now shows pint + soda lines. Total updated.
+
+### RD1-C: Kitchen deni → bar tab (kitchen first, then bar)
+
+1. Kitchen Board → sell a chips to "TestDedup3" on Deni.
+   - ✅ Correct: kitchen receipt URL-3 issued, SMS sent.
+2. Bar Board → open keg tab for TestDedup3, sell a pint.
+   - ✅ Correct: bar board Priority 4 links bar tab into URL-3. No second SMS.
+3. URL-3 shows both chips and pint.
+
+### RD1-D: Multiple Quick Sell deni items, same customer, same day
+
+1. Sell item A to "TestDedup4" on Deni in Quick Sell → SMS sent.
+2. Sell item B to "TestDedup4" on Deni in Quick Sell.
+   - ✅ Correct: no second receipt, no second SMS. Item B appended to first receipt.
+3. First receipt now shows both items with updated total.
+
+### RD1-E: Different customers — no cross-contamination
+
+1. Sell to "Alice" on Deni, then sell to "Bob" on Deni.
+   - ✅ Correct: Alice and Bob each get their own separate receipt. No merging.
+
+---
+
+### Final checks (post-RD1)
+
+```
+python manage.py check                  # 0 issues
+python manage.py makemigrations --check # No changes detected (no new migrations)
+python manage.py test                   # 126 tests, all pass
+```

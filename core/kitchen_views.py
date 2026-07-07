@@ -609,6 +609,29 @@ def _kitchen_checkout(request, up, business, is_owner):
                     'food_tab: bar-tab receipt lookup failed business=%s', business.id
                 )
 
+    _kitchen_rcpt_reused = False  # True when credit lines appended to existing receipt
+
+    # For credit sales, check if a receipt already exists today for this customer
+    # (e.g. they had a bar tab or QS deni earlier). Append rather than create new.
+    if payment_method == 'credit' and credit_name and master_rcpt is None:
+        try:
+            from decimal import Decimal as _DecKB
+            _existing_k = Receipt.objects.filter(
+                business=business,
+                customer_name__iexact=credit_name,
+                created_at__date=timezone.localdate(),
+            ).exclude(payment_method='statement').order_by('-created_at').first()
+            if _existing_k:
+                _updated_lines_k = list(_existing_k.lines) + receipt_lines
+                _updated_total_k = sum(float(ll.get('subtotal', 0)) for ll in _updated_lines_k)
+                _existing_k.lines = _updated_lines_k
+                _existing_k.total = _DecKB(str(round(_updated_total_k, 2)))
+                _existing_k.save(update_fields=['lines', 'total'])
+                master_rcpt = _existing_k
+                _kitchen_rcpt_reused = True
+        except Exception:
+            logger.exception('Kitchen credit receipt dedup failed business=%s', business.id)
+
     if payment_method in ('cash', 'mpesa', 'credit', 'food_tab'):
         try:
             kitchen_meta = {}
@@ -693,8 +716,8 @@ def _kitchen_checkout(request, up, business, is_owner):
         except Exception:
             logger.exception('Kitchen STK receipt SMS failed business=%s', business.id)
 
-    # SMS to customer on direct credit sale (same pattern as Quick Sell)
-    if payment_method == 'credit' and credit_phone and receipt_url:
+    # SMS to customer on direct credit sale (suppress when appending to existing receipt)
+    if payment_method == 'credit' and credit_phone and receipt_url and not _kitchen_rcpt_reused:
         try:
             from .notifications import normalize_ke_phone, send_sms_notification
             import datetime as _dt
