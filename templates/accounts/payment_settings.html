@@ -661,6 +661,81 @@
 </div>
 {% endif %}
 
+{% if biz_profile.modules.bar %}
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- BARREL SETTINGS — non-weighing depletion gate (K5.A)                   -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="row">
+  <div class="col-12">
+    <div class="card mb-4">
+      <div class="card-body">
+        <h5 style="color:var(--gold); font-family:'Playfair Display',serif; margin-bottom:0.5rem;">
+          🛢️ {% trans 'Bar Barrel Settings' %}
+        </h5>
+        <p style="color:#b0b0b0; font-size:0.83rem; margin-bottom:1.25rem;">
+          {% trans 'Controls how the Bar Board handles barrel depletion — whether by physical scale reading or revenue target.' %}
+        </p>
+        <form method="post" action="{% url 'payment_settings' %}">
+          {% csrf_token %}
+          <input type="hidden" name="_section" value="barrel_settings">
+
+          <!-- weighs_kegs toggle -->
+          <div style="display:flex; align-items:flex-start; gap:0.9rem; margin-bottom:1.4rem;
+                      padding:0.9rem 1rem; background:#1e1e1e; border-radius:10px;
+                      border:1px solid #333;">
+            <div style="padding-top:0.15rem;">
+              <input class="form-check-input" type="checkbox" name="weighs_kegs"
+                     id="id_weighs_kegs" role="switch"
+                     {% if business.weighs_kegs %}checked{% endif %}
+                     style="width:2.4rem; height:1.25rem; cursor:pointer;">
+            </div>
+            <div>
+              <label for="id_weighs_kegs"
+                     style="font-weight:600; color:#f0ece4; font-size:0.9rem; cursor:pointer;">
+                ⚖️ {% trans 'Bar ina mizani (Bar has a scale)' %}
+              </label>
+              <p style="color:#b0b0b0; font-size:0.78rem; margin:0.25rem 0 0;">
+                {% trans 'Enable this when staff weigh barrels at shift change. The app will auto-deplete a barrel when the scale reading drops to within 0.5 kg of the empty weight, and use the scale as the primary source of truth for shrinkage calculations. Without a scale the app tracks recorded sales and the revenue envelope only.' %}
+              </p>
+            </div>
+          </div>
+
+          <!-- block_sales_past_target toggle -->
+          <div style="display:flex; align-items:flex-start; gap:0.9rem; margin-bottom:1.4rem;
+                      padding:0.9rem 1rem; background:#1e1e1e; border-radius:10px;
+                      border:1px solid #333;">
+            <div style="padding-top:0.15rem;">
+              <input class="form-check-input" type="checkbox" name="block_sales_past_target"
+                     id="id_block_sales_past_target" role="switch"
+                     {% if business.block_sales_past_target %}checked{% endif %}
+                     style="width:2.4rem; height:1.25rem; cursor:pointer;">
+            </div>
+            <div>
+              <label for="id_block_sales_past_target"
+                     style="font-weight:600; color:#f0ece4; font-size:0.9rem; cursor:pointer;">
+                🚧 {% trans 'Zuia mauzo baada ya target (Block sales at target)' %}
+              </label>
+              <p style="color:#b0b0b0; font-size:0.78rem; margin:0.25rem 0 0;">
+                {% trans 'When the revenue collected on a barrel reaches its target, the sell button is blocked and staff must confirm whether the barrel is physically empty before continuing. Recommended for bars that do not weigh kegs — it forces staff to check the barrel rather than recording phantom sales on an empty keg.' %}
+              </p>
+              {% if not business.weighs_kegs %}
+              <p style="color:#c9a84c; font-size:0.75rem; margin:0.4rem 0 0; font-weight:500;">
+                ⚠️ {% trans 'You are not using a scale. Enabling this gives staff a checkpoint to verify the barrel is empty before continuing past target.' %}
+              </p>
+              {% endif %}
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-gold">
+            💾 {% trans 'Hifadhi Mipangilio ya Mapipa' %}
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block extra_js %}

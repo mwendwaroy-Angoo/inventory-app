@@ -778,6 +778,14 @@ def payment_settings(request):
                 messages.error(request, _("Tafadhali ingiza nambari sahihi."))
             return redirect('payment_settings')
 
+        if section == 'barrel_settings':
+            Business.objects.filter(pk=business.pk).update(
+                weighs_kegs=('weighs_kegs' in request.POST),
+                block_sales_past_target=('block_sales_past_target' in request.POST),
+            )
+            messages.success(request, _("Mipangilio ya mapipa imehifadhiwa."))
+            return redirect('payment_settings')
+
         form = PaymentSettingsForm(request.POST, instance=business)
         if form.is_valid():
             form.save()
