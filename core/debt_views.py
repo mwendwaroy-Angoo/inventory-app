@@ -366,6 +366,45 @@ def record_debt_payment(request, customer_id):
         recorded_by=request.user,
     )
 
+    # ── Reconcile BarTab entries so the customer's live receipt shows paid ──
+    # When a debt payment is recorded, the corresponding BarTabEntry rows
+    # (which were converted to debt via Geuza Deni) should be marked as paid
+    # so the live receipt page no longer shows them as unpaid/checkable.
+    try:
+        from .models import BarTabEntry, BarTab
+        now = timezone.now()
+        # Find all SETTLED tabs for this customer that have unpaid entries
+        # whose linked transactions are credit transactions for this customer.
+        # These are the tabs that were converted to debt via Geuza Deni.
+        settled_tabs = BarTab.objects.filter(
+            business=business,
+            customer=customer,
+            status='SETTLED',
+        ).values_list('id', flat=True)
+
+        if settled_tabs:
+            # Get the credit transactions that this payment covers (FIFO order)
+            paid_remaining = float(amount)
+            for entry in unpaid_before:
+                if paid_remaining <= 0:
+                    break
+                txn = entry['txn']
+                covered = round(min(entry['amount'], paid_remaining), 2)
+                paid_remaining = round(paid_remaining - covered, 2)
+
+                # Find the BarTabEntry linked to this transaction and mark it paid
+                BarTabEntry.objects.filter(
+                    tab__id__in=list(settled_tabs),
+                    transaction=txn,
+                    is_paid=False,
+                ).update(
+                    is_paid=True,
+                    paid_at=now,
+                    payment_method=method,
+                )
+    except Exception:
+        pass
+
     # Recompute score AFTER payment
     post_data       = _get_customer_debt_data(customer, business, payment_scope)
     score_label     = post_data.get('score_label', '')
