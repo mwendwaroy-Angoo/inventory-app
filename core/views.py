@@ -266,22 +266,25 @@ def home(request):
             else:
                 context['pending_restocks'] = 0
 
-            # Bar-specific context: today's revenue, tapped kegs and kegs running low
+            # Bar revenue — computed for any user who can see the bar station,
+            # independent of the keg module (bar revenue = all non-kitchen Issue txns).
+            try:
+                if show_bar:
+                    _bar_txns = Transaction.objects.filter(
+                        business=business, type='Issue',
+                        date=timezone.localdate(),
+                        payment_method__in=['cash', 'mpesa'],
+                        item__store__is_kitchen=False,
+                    ).exclude(payment_method='void').select_related('item')
+                    context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
+            except Exception:
+                context['bar_today_revenue'] = 0
+
+            # Keg-specific context: tapped kegs, low-fill alerts, DJ/MC sessions
             try:
                 from .business_profiles import get_profile as _get_profile
                 if _get_profile(business).get('modules', {}).get('keg'):
                     from .models import KegBarrel as _KB
-                    # Only PAID transactions count as revenue (cash + mpesa).
-                    # Only compute bar revenue for staff who can see bar station.
-                    if show_bar:
-                        _bar_txns = Transaction.objects.filter(
-                            business=business, type='Issue',
-                            date=timezone.localdate(),
-                            payment_method__in=['cash', 'mpesa'],
-                            item__store__is_kitchen=False,
-                        ).select_related('item')
-                        context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
-                    # Tapped barrels and kegs near empty (<15% of target remaining)
                     _tapped = list(_KB.objects.filter(business=business, status='TAPPED'))
                     _at_risk = [k for k in _tapped
                                 if k.remaining_envelope() < float(k.target_revenue or 1) * 0.15]
@@ -308,21 +311,24 @@ def home(request):
                     except Exception:
                         context['active_dj_sessions'] = []
             except Exception:
-                context['bar_today_revenue'] = 0
                 context['kegs_tapped'] = 0
                 context['kegs_at_risk_count'] = 0
                 context['active_dj_sessions'] = []
 
             # Kitchen-specific today revenue (separate from bar)
+            _has_kitchen = getattr(business, 'has_kitchen', False)
+            context['has_kitchen'] = _has_kitchen
             try:
-                if business.has_kitchen and show_kitchen:
+                if _has_kitchen and show_kitchen:
                     _kitchen_txns = Transaction.objects.filter(
                         business=business, type='Issue',
                         date=timezone.localdate(),
                         payment_method__in=['cash', 'mpesa'],
                         item__store__is_kitchen=True,
-                    ).select_related('item')
+                    ).exclude(payment_method='void').select_related('item')
                     context['kitchen_today_revenue'] = sum(t.revenue() for t in _kitchen_txns)
+                else:
+                    context['kitchen_today_revenue'] = 0
             except Exception:
                 context['kitchen_today_revenue'] = 0
 

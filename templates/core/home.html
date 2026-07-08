@@ -359,10 +359,10 @@
                 <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Bar Revenue</div>
             </div>
             {% endif %}
-            {% if show_kitchen and kitchen_today_revenue %}
+            {% if show_kitchen and has_kitchen %}
             <div style="text-align:center;">
                 <div style="font-family:'Playfair Display',serif; font-size:2rem; color:#ff9800; font-weight:700;">
-                    KES {{ kitchen_today_revenue|floatformat:0 }}
+                    KES {{ kitchen_today_revenue|default:0|floatformat:0 }}
                 </div>
                 <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">🍗 Kitchen</div>
             </div>
