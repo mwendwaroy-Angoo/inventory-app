@@ -597,6 +597,37 @@ def close_shift(request, shift_id):
 
     rec = _reconcile(shift)
 
+    # Cash variance alert — fire to owner when discrepancy > KES 500
+    _variance = rec.get('variance')
+    if _variance is not None and abs(_variance) > 500:
+        try:
+            from .notifications import normalize_ke_phone as _nkp, send_sms_notification as _ssms
+            from .models import Notification as _Notif
+            from accounts.models import UserProfile as _UP
+            _staff_name = shift.staff.get_full_name() or shift.staff.username
+            _direction  = 'upungufu' if _variance < 0 else 'ziada'
+            _alert_msg  = (
+                f"⚠️ Tofauti ya fedha mwisho wa shift — {_staff_name}: "
+                f"KES {abs(_variance):,.0f} ({_direction}). "
+                f"Angalia Z-Report kwa maelezo zaidi."
+            )
+            for _op in _UP.objects.filter(
+                business=up.business, role='owner'
+            ).select_related('user'):
+                _Notif.objects.create(
+                    user=_op.user,
+                    title='⚠️ Tofauti ya Fedha',
+                    message=_alert_msg,
+                    notification_type='warning',
+                )
+                if _op.phone:
+                    try:
+                        _ssms(_alert_msg, _nkp(_op.phone))
+                    except Exception:
+                        pass
+        except Exception:
+            logger.exception('close_shift: cash variance alert failed for shift %s', shift.id)
+
     # Auto-convert open tabs to debt at shift close — but ONLY when the business
     # is past its closing time (or operates 24/7 with no closing_time set).
     # A staff member who closes shift early (e.g. for a break) while the bar is

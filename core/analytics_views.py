@@ -698,42 +698,65 @@ def analytics_dashboard(request):
         })
     barrel_rows.sort(key=lambda x: x['received_on'], reverse=True)
 
-    # ── Staff keg league — revenue attributed via bar tabs (served_by) ──────────
-    from .models import BarTabEntry
-    tab_entry_qs = (
-        BarTabEntry.objects
-        .filter(
-            tab__business=business,
-            tab__opened_at__date__gte=start_date,
-            tab__opened_at__date__lte=today,
-            transaction__keg_barrel__isnull=False,
-            tab__served_by__isnull=False,
-        )
-        .values(
-            'tab__served_by__id',
-            'tab__served_by__first_name',
-            'tab__served_by__last_name',
-            'tab__served_by__username',
-        )
-        .annotate(
-            keg_revenue=Sum('amount'),
-            keg_servings=Count('id'),
-        )
-        .order_by('-keg_revenue')
+    # ── Staff keg pouring league — shift-window attribution ──────────────────────
+    # Attributes ALL bar Issue transactions during each staff shift (tab + walk-up),
+    # so bartenders who serve mostly cash/mpesa walk-ups are no longer invisible.
+    from django.db.models import Case, DecimalField as _DecF, Value, When
+    from django.db.models.functions import Abs as _Abs, Coalesce as _Coal
+    from .models import Shift as _Shift
+
+    _rev_expr = Case(
+        When(sale_amount__isnull=False, then=F('sale_amount')),
+        default=_Abs(F('qty')) * _Coal(F('item__selling_price'), Value(0)),
+        output_field=_DecF(max_digits=12, decimal_places=2),
     )
-    staff_keg_rows = []
-    for row in tab_entry_qs:
-        first = row['tab__served_by__first_name'] or ''
-        last  = row['tab__served_by__last_name'] or ''
-        name  = f"{first} {last}".strip() or row['tab__served_by__username'] or 'Unknown'
-        rev = round(float(row['keg_revenue'] or 0), 2)
-        srv = row['keg_servings'] or 0
-        staff_keg_rows.append({
-            'name':             name,
-            'servings':         srv,
-            'revenue':          rev,
-            'avg_per_serving':  round(rev / srv, 2) if srv > 0 else 0,
-        })
+
+    bar_shifts = list(
+        _Shift.objects.filter(
+            business=business,
+            started_at__date__gte=start_date,
+            started_at__date__lte=today,
+            status__in=['OPEN', 'CLOSED', 'CONFIRMED'],
+        ).exclude(store__is_kitchen=True).select_related('staff')
+    )
+
+    _staff_acc = {}
+    for _shift in bar_shifts:
+        _shift_end = _shift.ended_at or timezone.now()
+        _agg = Transaction.objects.filter(
+            business=business,
+            type='Issue',
+            keg_barrel__isnull=False,
+            created_at__gte=_shift.started_at,
+            created_at__lte=_shift_end,
+            item__store__is_kitchen=False,
+        ).exclude(payment_method='void').aggregate(
+            rev=Sum(_rev_expr),
+            cnt=Count('id'),
+        )
+        _rev = float(_agg['rev'] or 0)
+        _cnt = _agg['cnt'] or 0
+        if _cnt == 0:
+            continue
+        _sid = _shift.staff_id
+        _sname = _shift.staff.get_full_name() or _shift.staff.username
+        if _sid not in _staff_acc:
+            _staff_acc[_sid] = {'name': _sname, 'revenue': 0.0, 'servings': 0}
+        _staff_acc[_sid]['revenue'] += _rev
+        _staff_acc[_sid]['servings'] += _cnt
+
+    staff_keg_rows = sorted(
+        [
+            {
+                'name':            v['name'],
+                'revenue':         round(v['revenue'], 2),
+                'servings':        v['servings'],
+                'avg_per_serving': round(v['revenue'] / v['servings'], 2) if v['servings'] > 0 else 0,
+            }
+            for v in _staff_acc.values()
+        ],
+        key=lambda x: -x['revenue'],
+    )
 
     # ── Tabs aging buckets (open tabs only) ───────────────────────────────────
     open_tabs = (

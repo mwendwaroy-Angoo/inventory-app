@@ -1523,17 +1523,24 @@ def add_cups(request):
         business.refresh_from_db(fields=['cup_low_notified_at'])
         if business.cup_low_notified_at is None:
             from .models import Notification
+            from .notifications import normalize_ke_phone as _norm_phone, send_sms_notification as _send_sms
             from accounts.models import UserProfile as _UP
+            _cup_msg = (
+                f"⚠️ Vikombe vimekwisha! Bado {pool['remaining']} vikombe — "
+                "nunua vikombe zaidi mapema."
+            )
             for op in _UP.objects.filter(business=business, role='owner').select_related('user'):
                 Notification.objects.create(
                     user=op.user,
                     title='Vikombe vimekwisha',
-                    message=(
-                        f"⚠️ Vikombe vimekwisha! Bado {pool['remaining']} vikombe — "
-                        "nunua vikombe zaidi mapema."
-                    ),
+                    message=_cup_msg,
                     notification_type='warning',
                 )
+                if op.phone:
+                    try:
+                        _send_sms(_cup_msg, _norm_phone(op.phone))
+                    except Exception:
+                        pass
             from accounts.models import Business as _Biz
             _Biz.objects.filter(pk=business.pk).update(cup_low_notified_at=_tz.now())
     elif not pool['low_stock'] and business.cup_low_notified_at is not None:

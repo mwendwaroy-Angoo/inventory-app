@@ -1291,3 +1291,105 @@ python manage.py check                  # 0 issues
 python manage.py makemigrations --check # No changes detected (no new migrations)
 python manage.py test                   # 126 tests, all pass
 ```
+
+---
+
+## Owner Reporting Audit + Gap Fixes (2026-07-08)
+
+Two bugs fixed, four design gaps closed. No model changes or migrations.
+
+### Bug fixes
+
+**BUG-ZR1: Z-report keg variance now scoped to tonight's barrels**
+
+Previously: `KegBarrel.objects.filter(business=business)` — all barrels ever, showing lifetime accumulated wastage on the nightly Z-report tile.
+
+Fixed to: TAPPED barrels + barrels closed (DEPLETED/RETURNED) on the report date only.
+
+Verify:
+1. Log in as owner → `/bar/z-report/` → today's date.
+2. "Keg Variance KES" tile should reflect tonight's active barrels only — NOT a cumulative figure across all historical barrels.
+- ✅ Correct: figure matches the sum of wastage on currently TAPPED barrels + any barrels depleted/returned today.
+- ❌ Bug if: figure is very large (suspiciously high relative to tonight's trade) — still pulling all-time history.
+
+**BUG-DR1: Daily report staff revenue excludes voided pours**
+
+Previously: staff revenue sum had no void exclusion — voided keg pours inflated each bartender's reported figure.
+
+Verify:
+1. On the bar board, ring up a sale for a customer, then void that tab.
+2. Go to `/bar/daily-report/` → today's date.
+3. Find the staff member who served the voided sale in the Staff Performance table.
+- ✅ Correct: their revenue does NOT include the voided sale amount.
+- ❌ Bug if: revenue is higher than actual paid sales (void amount included).
+
+---
+
+### Gap 2 — DJ/MC SMS now goes to owner's personal phone
+
+Previously: `send_sms_notification(msg, business.phone)` — SMS went to the venue's registered number.
+
+Fixed to: loop through `business.users.filter(role='owner')` and send to each `up.phone` (personal number), same pattern as keg alerts.
+
+Verify:
+1. In Django admin → UserProfile → RoyMwendwa → confirm `phone` is set to your personal number.
+2. Bar Board → 🎤 DJ/MC → start a new session (any performer).
+- ✅ Correct: SMS arrives on the owner's **personal phone** (the `UserProfile.phone`), not on `business.phone` if they differ.
+- Gate: `Business.event_sms_enabled` must be True (check in Business Settings).
+
+---
+
+### Gap 4 — Cup low-stock now sends SMS to owner
+
+Previously: only an in-app notification fired when cup pool dropped below 30.
+
+Fixed to: in-app notification + SMS to each owner's personal phone, gated by the same `cup_low_notified_at` cooldown.
+
+Verify:
+1. In Django admin → Business → set `cup_low_notified_at = null` (reset cooldown).
+2. Bar Board → (owner or staff) → "Log Cup Purchase" — deliberately enter a small quantity so pool stays below 30.
+3. Check owner's phone for SMS.
+- ✅ Correct: SMS "⚠️ Vikombe vimekwisha! Bado N vikombe — nunua vikombe zaidi mapema." received.
+- ✅ Correct: a second cup log immediately after does NOT fire another SMS (cooldown is active).
+- ✅ Correct: logging a large purchase (pool now > 30) resets `cup_low_notified_at` to null — next time it drops below 30 the SMS will fire again.
+
+---
+
+### Gap 1 — Cash variance alert at shift close
+
+When staff closes a shift with `|variance| > KES 500`, the owner now receives:
+- An in-app notification: "⚠️ Tofauti ya Fedha"
+- An SMS to their personal phone with the direction (upungufu = shortfall / ziada = overage) and the KES amount
+
+Verify:
+1. Open a shift as bar staff. Ring up KES 500 cash. Close the shift but enter counted cash as KES 0 (deliberate shortfall of KES 500+).
+2. Check owner's in-app notifications → bell icon.
+- ✅ Correct: notification "⚠️ Tofauti ya Fedha — [Staff Name]: KES 500 (upungufu). Angalia Z-Report..."
+- ✅ Correct: SMS on owner's phone with same message.
+- ✅ Correct: a shift closed with variance ≤ KES 500 does NOT fire any alert (within tolerance).
+- ✅ Correct: owner closing their own shift — no alert fires (alert is only for staff shifts; owner has full visibility via Z-report).
+
+---
+
+### Gap 3 — Pouring league now includes walk-up cash/M-Pesa sales
+
+Previously: the Bar Performance analytics pouring league used `BarTabEntry.served_by` — only tab sales counted. A bartender who serves mostly cash walk-ups was invisible.
+
+Fixed to: shift-window attribution — for each bar shift in the date range, sum ALL `Issue` transactions (keg, non-kitchen, non-void) during that shift's time window and attribute them to the shift's staff member. Both tab and walk-up sales are captured.
+
+Verify:
+1. Open a bar shift as staff → ring up 3 pint sales as **cash** (no tab opened) → close shift.
+2. Go to `/analytics/` → Bar Performance → Staff Keg Pouring League.
+- ✅ Correct: that staff member appears in the league with revenue reflecting the walk-up cash pints.
+- ✅ Correct: total revenue in the league roughly matches total bar revenue for the period (tab + walk-up combined).
+- ❌ Bug if: bartender who served cash-only customers shows KES 0 in the league.
+
+---
+
+### Final checks (post-audit fixes)
+
+```
+python manage.py check                  # 0 issues
+python manage.py makemigrations --check # No changes detected (no new migrations)
+python manage.py test                   # 126 tests, all pass
+```

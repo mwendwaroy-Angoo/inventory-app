@@ -84,11 +84,13 @@ def _fire_session_started_notification(session, started_by):
     for up in business.users.filter(role='owner').select_related('user'):
         create_in_app_notification(up.user, '🎤 DJ/MC Sesheni Imeanza', msg)
 
-    if business.event_sms_enabled and business.phone:
-        try:
-            send_sms_notification(msg, business.phone)
-        except Exception:
-            logger.exception("DJ session start SMS failed (business=%s)", business.id)
+    if business.event_sms_enabled:
+        for up in business.users.filter(role='owner').select_related('user'):
+            if up.phone:
+                try:
+                    send_sms_notification(msg, normalize_ke_phone(up.phone))
+                except Exception:
+                    logger.exception("DJ session start SMS failed (business=%s, user=%s)", business.id, up.user_id)
 
 
 def _fire_unverified_alert(session, unconfirmed_names):
@@ -102,11 +104,13 @@ def _fire_unverified_alert(session, unconfirmed_names):
     for up in business.users.filter(role='owner').select_related('user'):
         create_in_app_notification(up.user, '⚠️ DJ/MC Hajakuthibitishwa', msg)
 
-    if business.event_sms_enabled and business.phone:
-        try:
-            send_sms_notification(msg, business.phone)
-        except Exception:
-            logger.exception("DJ unverified alert SMS failed (business=%s)", business.id)
+    if business.event_sms_enabled:
+        for up in business.users.filter(role='owner').select_related('user'):
+            if up.phone:
+                try:
+                    send_sms_notification(msg, normalize_ke_phone(up.phone))
+                except Exception:
+                    logger.exception("DJ unverified alert SMS failed (business=%s, user=%s)", business.id, up.user_id)
 
 
 def _send_payment_sms(session):
