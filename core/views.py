@@ -2190,12 +2190,20 @@ def sales_dashboard(request):
         type="Issue",
         date__gte=start_date,
         date__lte=end_date,
-    ).select_related("item")
+    ).exclude(payment_method='void').select_related("item", "keg_barrel", "produce_bunch")
+
+    def _sd_units(t):
+        """Count servings: keg pours and bunch sales count as 1; others use abs(qty)."""
+        if getattr(t, 'produce_bunch_id', None) is not None:
+            return 1.0
+        if getattr(t, 'keg_barrel_id', None) is not None:
+            return 1.0
+        return float(abs(t.qty or 0))
 
     total_revenue = sum(t.revenue() for t in sales)
     total_cost = sum(t.cost() for t in sales)
     total_profit = total_revenue - total_cost
-    total_units_sold = sum(abs(t.qty) for t in sales)
+    total_units_sold = sum(_sd_units(t) for t in sales)
 
     all_items = Item.objects.filter(business=business)
     stock_value = sum(item.stock_value() for item in all_items)
@@ -2227,7 +2235,7 @@ def sales_dashboard(request):
         key = t.item.id
         item_sales[key]["description"] = t.item.description
         item_sales[key]["material_no"] = t.item.material_no
-        item_sales[key]["units_sold"] += abs(t.qty)
+        item_sales[key]["units_sold"] += _sd_units(t)
         item_sales[key]["revenue"] += t.revenue()
         item_sales[key]["cost"] += t.cost()
         item_sales[key]["profit"] += t.profit()
@@ -2283,6 +2291,7 @@ def export_sales_excel(request):
             date__gte=start_date,
             date__lte=end_date,
         )
+        .exclude(payment_method='void')
         .select_related("item")
         .order_by("date")
     )
