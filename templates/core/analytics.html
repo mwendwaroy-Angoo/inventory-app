@@ -235,7 +235,7 @@
         {{ net_profit|floatformat:0 }}
       </div>
       <div class="stat-change" style="color: var(--muted)">
-        {% trans 'Gross:' %} {{ cur_profit|floatformat:0 }}
+        {% trans 'Gross:' %} {{ cur_profit|floatformat:0 }}{% if owner_drawings_cost > 0 %} · Drawings: {{ owner_drawings_cost|floatformat:0 }}{% endif %}
       </div>
     </div>
   </div>
@@ -246,27 +246,43 @@
         {{ total_expenses|floatformat:0 }}
       </div>
       <div class="stat-change">
-        <a
-          href="{% url 'expense_list' %}"
-          style="color: var(--gold); font-size: 0.8rem"
-          >{% trans 'Manage Expenses →' %}</a
-        >
+        <a href="{% url 'expense_list' %}" style="color: var(--gold); font-size: 0.8rem">{% trans 'Manage Expenses →' %}</a>
       </div>
       <div class="stat-change">
-        <a
-          href="{% url 'capital_investment_list' %}"
-          style="color: var(--gold); font-size: 0.8rem"
-          >{% trans 'Manage Investments →' %}</a
-        >
+        <a href="{% url 'capital_investment_list' %}" style="color: var(--gold); font-size: 0.8rem">{% trans 'Manage Investments →' %}</a>
       </div>
     </div>
   </div>
+  {% if owner_drawings_cost > 0 %}
+  <div class="col-md-3 col-6">
+    <div class="stat-card" style="border-top: 3px solid #ff9800;">
+      <div class="stat-label">Owner Drawings</div>
+      <div class="stat-value" style="color: #ff9800;">
+        {{ owner_drawings_cost|floatformat:0 }}
+      </div>
+      <div class="stat-change" style="color: var(--muted);">
+        KES — stock taken at cost
+      </div>
+    </div>
+  </div>
+  {% endif %}
   <div class="col-md-3 col-6">
     <div class="insight-card">
       <div class="insight-label">{% trans 'Avg Daily Revenue' %}</div>
       <div class="insight-value">KES {{ avg_daily_revenue|floatformat:0 }}</div>
     </div>
   </div>
+  {% if not owner_drawings_cost or owner_drawings_cost == 0 %}
+  <div class="col-md-3 col-6">
+    <div class="insight-card">
+      <div class="insight-label">{% trans 'Active Selling Days' %}</div>
+      <div class="insight-value">{{ active_days }} / {{ period }}</div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% if owner_drawings_cost > 0 %}
+<div class="row g-3 mb-2">
   <div class="col-md-3 col-6">
     <div class="insight-card">
       <div class="insight-label">{% trans 'Active Selling Days' %}</div>
@@ -274,6 +290,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 <!-- ═══ INSIGHTS ROW ═══ -->
 <div class="row g-3 mb-4">

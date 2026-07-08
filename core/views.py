@@ -2252,6 +2252,19 @@ def sales_dashboard(request):
         round((total_profit / total_revenue * 100), 1) if total_revenue > 0 else 0
     )
 
+    # Owner Drawings — stock consumed by the owner at cost, shown below gross profit
+    owner_txns = Transaction.objects.filter(
+        business=business,
+        type='OwnerConsumption',
+        date__gte=start_date,
+        date__lte=end_date,
+    ).select_related('item')
+    owner_drawings_cost = round(sum(
+        abs(float(t.qty or 0)) * float(t.item.cost_price or 0)
+        for t in owner_txns
+    ), 2)
+    net_profit_after_drawings = round(total_profit - owner_drawings_cost, 2)
+
     context = {
         "period": period,
         "date_from": start_date,
@@ -2262,6 +2275,8 @@ def sales_dashboard(request):
         "profit_margin": profit_margin,
         "total_units_sold": total_units_sold,
         "stock_value": round(stock_value, 2),
+        "owner_drawings_cost": owner_drawings_cost,
+        "net_profit_after_drawings": net_profit_after_drawings,
         "item_sales_list": item_sales_list,
         "top_items": top_items,
         "slow_items": slow_items,

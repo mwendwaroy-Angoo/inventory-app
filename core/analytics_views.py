@@ -382,13 +382,25 @@ def analytics_dashboard(request):
 
     profit_margin = round(cur_profit / cur_revenue * 100, 1) if cur_revenue > 0 else 0
 
-    # ── Net Profit (gross profit - expenses) ──
+    # ── Net Profit (gross profit - expenses - owner drawings) ──
     total_expenses = BusinessExpense.objects.filter(
         business=business,
         date__gte=start_date,
         date__lte=today,
     ).aggregate(total=Sum('amount'))['total'] or 0
-    net_profit = cur_profit - float(total_expenses)
+
+    owner_drawing_txns = Transaction.objects.filter(
+        business=business,
+        type='OwnerConsumption',
+        date__gte=start_date,
+        date__lte=today,
+    ).select_related('item')
+    owner_drawings_cost = round(sum(
+        abs(float(t.qty or 0)) * float(t.item.cost_price or 0)
+        for t in owner_drawing_txns
+    ), 2)
+
+    net_profit = cur_profit - float(total_expenses) - owner_drawings_cost
 
     # ── Break-Even Analysis (all-time, not period-filtered) ──────────────────────
     total_capital = float(
@@ -882,8 +894,9 @@ def analytics_dashboard(request):
         'avg_daily_revenue': avg_daily_revenue,
         'active_days': active_days,
 
-        # Expenses & Net Profit
+        # Expenses, Drawings & Net Profit
         'total_expenses': round(float(total_expenses), 2),
+        'owner_drawings_cost': owner_drawings_cost,
         'net_profit': round(net_profit, 2),
         # Market Day Intelligence
         'market_day_labels': json.dumps(day_names),

@@ -218,6 +218,46 @@
     </div>
 </div>
 
+{% if owner_drawings_cost > 0 %}
+<!-- Owner Drawings → Net Profit waterfall -->
+<div class="row g-3 mb-4" id="net-profit-row">
+    <div class="col-12">
+        <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.1em;
+                    color:#b0b0b0; margin-bottom:0.6rem;">
+            📋 Profit after Owner Drawings
+        </div>
+    </div>
+    <div class="col-4">
+        <div class="summary-card" style="border-top: 3px solid var(--success); opacity:0.85;">
+            <div class="summary-label">Gross Profit</div>
+            <div class="summary-value {% if total_profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                {{ total_profit|floatformat:0 }}
+            </div>
+            <div class="summary-sub">KES — from operations</div>
+        </div>
+    </div>
+    <div class="col-4">
+        <div class="summary-card" style="border-top: 3px solid #ff9800;">
+            <div class="summary-label">Owner Drawings</div>
+            <div class="summary-value" style="color:#ff9800;">
+                −{{ owner_drawings_cost|floatformat:0 }}
+            </div>
+            <div class="summary-sub">KES — stock taken at cost</div>
+        </div>
+    </div>
+    <div class="col-4">
+        <div class="summary-card"
+             style="border-top: 3px solid {% if net_profit_after_drawings >= 0 %}var(--success){% else %}var(--danger){% endif %};">
+            <div class="summary-label">Net Profit</div>
+            <div class="summary-value {% if net_profit_after_drawings >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                {{ net_profit_after_drawings|floatformat:0 }}
+            </div>
+            <div class="summary-sub">KES — after drawings</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <hr class="gold-divider">
 
 <!-- Charts -->
