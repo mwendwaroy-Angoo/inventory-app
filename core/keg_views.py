@@ -954,6 +954,18 @@ def tabs_list(request):
         .order_by('-opened_at')
     )
 
+    # Batch-fetch receipt tokens for all open tabs so we can return receipt URLs
+    _tab_ids = list(tabs.values_list('id', flat=True))
+    _receipt_token_map = {}  # tab_id → receipt token
+    if _tab_ids:
+        for _r in Receipt.objects.filter(
+            business=up.business, meta__tab_id__in=_tab_ids
+        ).values('meta', 'token'):
+            _rmeta = _r.get('meta') or {}
+            _tid = _rmeta.get('tab_id')
+            if _tid and _tid not in _receipt_token_map:
+                _receipt_token_map[_tid] = _r['token']
+
     def _entry_dict(e):
         """Serialise one BarTabEntry, including whether its item is a kitchen (food) item."""
         _is_kitchen_item = bool(
@@ -987,6 +999,9 @@ def tabs_list(request):
                 cross_notice = f'+ {bar_entries_count} bar item(s)'
             elif tab.source == 'bar' and kitchen_entry_count:
                 cross_notice = f'+ {kitchen_entry_count} food item(s)'
+            _rcpt_token = _receipt_token_map.get(tab.id)
+            _rcpt_url = request.build_absolute_uri(f'/r/{_rcpt_token}/') if _rcpt_token else None
+            _opened_local = timezone.localtime(tab.opened_at)
             result.append({
                 'id': tab.id,
                 'customer_name': tab.customer_name,
@@ -995,9 +1010,11 @@ def tabs_list(request):
                 'total': sum(float(e['amount']) for e in entries),
                 'unpaid_total': sum(float(e['amount']) for e in entries if not e['is_paid']),
                 'entries': entries,
-                'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+                'opened_at': _opened_local.strftime('%H:%M'),
+                'opened_date': _opened_local.strftime('%Y-%m-%d'),
                 'is_food_tab': tab.source == 'kitchen',
                 'cross_notice': cross_notice,
+                'receipt_url': _rcpt_url,
             })
         else:
             # Bar-only staff: see only bar (non-kitchen) entries
@@ -1017,6 +1034,9 @@ def tabs_list(request):
             entries = [_entry_dict(e) for e in bar_entries]
             unpaid = sum(float(e['amount']) for e in entries if not e['is_paid'])
             cross_notice = f'+ {kitchen_entry_count} food item(s) on this tab' if kitchen_entry_count else None
+            _rcpt_token = _receipt_token_map.get(tab.id)
+            _rcpt_url = request.build_absolute_uri(f'/r/{_rcpt_token}/') if _rcpt_token else None
+            _opened_local = timezone.localtime(tab.opened_at)
             result.append({
                 'id': tab.id,
                 'customer_name': tab.customer_name,
@@ -1025,9 +1045,11 @@ def tabs_list(request):
                 'total': sum(float(e['amount']) for e in entries),
                 'unpaid_total': unpaid,
                 'entries': entries,
-                'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+                'opened_at': _opened_local.strftime('%H:%M'),
+                'opened_date': _opened_local.strftime('%Y-%m-%d'),
                 'is_food_tab': tab.source == 'kitchen',
                 'cross_notice': cross_notice,
+                'receipt_url': _rcpt_url,
             })
 
     return JsonResponse({'tabs': result, 'bar_only_view': not _see_all})

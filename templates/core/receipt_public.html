@@ -581,6 +581,8 @@
     var TOKEN = "{{ receipt.token|escapejs }}";
     var _lines = [];   // {name, subtotal, entry_id} — populated by live poll
     var _stkPollIv = null;
+    var _firstRender = true;   // on first render all items start unchecked
+    var _checkedIds  = new Set(); // tracks what the customer has explicitly ticked
 
     function fmtKes(n) { return 'KES ' + Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0}); }
 
@@ -591,17 +593,20 @@
         if (!wrap || !paySection) return;
         if (!_lines.length) { paySection.style.display = 'none'; return; }
 
-        // Preserve any items the user explicitly unchecked before re-render.
-        // New items (not yet rendered) default to checked.
-        var uncheckedIds = new Set();
-        document.querySelectorAll('.pay-entry-cb').forEach(function(cb) {
-            if (!cb.checked) uncheckedIds.add(parseInt(cb.dataset.id));
-        });
+        if (!_firstRender) {
+            // Re-render from live poll: snapshot what the customer has ticked so far.
+            // New items (not yet rendered) default to unchecked.
+            _checkedIds = new Set();
+            document.querySelectorAll('.pay-entry-cb:checked').forEach(function(cb) {
+                _checkedIds.add(parseInt(cb.dataset.id));
+            });
+        }
+        _firstRender = false;
 
         paySection.style.display = 'block';
         var html = '';
         _lines.forEach(function(l) {
-            var isChecked = !uncheckedIds.has(l.entry_id);
+            var isChecked = _checkedIds.has(l.entry_id);
             html += '<label style="display:flex; align-items:center; gap:0.55rem; padding:0.3rem 0; font-size:0.83rem; color:#f0ece4; cursor:pointer;">' +
                 '<input type="checkbox" class="pay-entry-cb" data-id="' + l.entry_id + '" data-amt="' + l.subtotal + '"' +
                 (isChecked ? ' checked' : '') +
@@ -624,7 +629,11 @@
     };
 
     window.receiptPaySelectAll = function() {
-        document.querySelectorAll('.pay-entry-cb').forEach(function(cb) { cb.checked = true; });
+        _checkedIds = new Set();
+        document.querySelectorAll('.pay-entry-cb').forEach(function(cb) {
+            cb.checked = true;
+            _checkedIds.add(parseInt(cb.dataset.id));
+        });
         receiptPayUpdateTotal();
     };
 
