@@ -2325,11 +2325,17 @@
         var grand = tabs.reduce(function (s, t) { return s + t.unpaid_total; }, 0);
         if (hdr) hdr.textContent = '— KES ' + qsFmt(grand) + ' bila malipo';
 
+        var _today = new Date().toISOString().slice(0, 10);
         var html = '';
         tabs.forEach(function (tab) {
             var entries = '';
             tab.entries.forEach(function (e) {
                 var sd = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+                var removeBtn = (!e.is_paid && QS_IS_OWNER)
+                    ? '<button onclick="qsRemoveEntry(' + e.id + ',' + tab.id + ',\'' + sd.replace(/'/g, "\\'") + '\')" ' +
+                      'style="background:none;border:none;color:#c0395a;cursor:pointer;font-size:0.78rem;padding:0 2px;flex-shrink:0;" ' +
+                      'title="Futa kiingilio hiki">✕</button>'
+                    : '';
                 entries +=
                     '<div class="qs-tab-entry' + (e.is_paid ? ' paid' : '') + '">' +
                     '<input type="checkbox"' + (e.is_paid ? ' checked disabled' : '') +
@@ -2337,9 +2343,26 @@
                     ' style="accent-color:#c9a84c; flex-shrink:0;">' +
                     '<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;">' + sd + '</span>' +
                     '<span class="qs-tab-entry-amt">KES ' + qsFmt(e.amount) + '</span>' +
+                    removeBtn +
                     '</div>';
             });
             var sc = tab.customer_name.replace(/'/g, "\\'");
+            var isStale = tab.opened_date && tab.opened_date < _today;
+            var staleHtml = isStale
+                ? '<div style="background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.3);border-radius:6px;' +
+                  'padding:.25rem .6rem;margin-bottom:.35rem;font-size:.75rem;color:#ff9800;' +
+                  'display:flex;align-items:center;justify-content:space-between;">' +
+                  '<span>Tab ya ' + tab.opened_date + ' — bado haijafungwa</span>' +
+                  '<button onclick="qsOpenTabDebt(' + tab.id + ',\'' + sc + '\')" ' +
+                  'style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;' +
+                  'color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>' +
+                  '</div>'
+                : '';
+            var receiptLinkHtml = tab.receipt_url
+                ? '<a href="' + tab.receipt_url + '" target="_blank" rel="noopener" ' +
+                  'style="display:inline-flex;align-items:center;gap:.25rem;font-size:.72rem;color:#c9a84c;' +
+                  'text-decoration:none;margin-bottom:.3rem;">📋 Angalia / Tuma Risiti</a>'
+                : '';
             html +=
                 '<div class="qs-tab-card" id="qs-tab-card-' + tab.id + '">' +
                 '<div class="qs-tab-head">' +
@@ -2349,6 +2372,8 @@
                 '<div class="qs-tab-server">' +
                 (tab.server_name ? 'via ' + tab.server_name + ' · ' : '') + tab.opened_at +
                 '</div>' +
+                staleHtml +
+                receiptLinkHtml +
                 '<div style="display:flex;gap:.3rem;align-items:center;margin:.3rem 0;">' +
                 '<input type="tel" id="qs-tab-phone-' + tab.id + '" value="' + (tab.customer_phone || '') + '" ' +
                 'placeholder="📞 Simu ya mteja (hiari)" ' +
@@ -2370,6 +2395,21 @@
         });
         body.innerHTML = html;
     }
+
+    window.qsRemoveEntry = function (entryId, tabId, desc) {
+        if (!confirm('Futa "' + desc + '" kutoka kwa tab hii?\nKiingilio hiki kitafutwa kabisa.')) return;
+        qsPost('/bar/tabs/' + tabId + '/entries/' + entryId + '/remove/', {})
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.ok) {
+                    qsShowToast('✓ Kiingilio kimefutwa');
+                    qsLoadTabs();
+                } else {
+                    qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena'), true);
+                }
+            })
+            .catch(function () { qsShowToast('Hitilafu ya mtandao', true); });
+    };
 
     window.qsSettleTab = function (tabId, payMethod) {
         document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = true; });

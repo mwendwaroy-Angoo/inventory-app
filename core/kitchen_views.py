@@ -1003,10 +1003,25 @@ def kitchen_tabs_list(request):
         )
         .order_by('-opened_at')
     )
+
+    # Batch-fetch receipt tokens for all food tabs so we can return receipt URLs
+    from .models import Receipt as _KbReceipt
+    _food_tab_ids_all = list(food_tabs.values_list('id', flat=True))
+    _kb_receipt_map = {}
+    if _food_tab_ids_all:
+        for _r in _KbReceipt.objects.filter(
+            business=up.business, meta__tab_id__in=_food_tab_ids_all
+        ).values('meta', 'token'):
+            _rmeta = _r.get('meta') or {}
+            _tid = _rmeta.get('tab_id')
+            if _tid and _tid not in _kb_receipt_map:
+                _kb_receipt_map[_tid] = _r['token']
+
     result = []
     for tab in food_tabs:
         all_entries = list(tab.entries.all())
         _tab_phone = (tab.customer.phone if tab.customer else '') or ''
+        _opened_local = timezone.localtime(tab.opened_at)
 
         # Always show only kitchen entries for settlement — bar items settle at Bar Board.
         # This applies to both owner/cross-access and kitchen-only staff.
@@ -1031,6 +1046,9 @@ def kitchen_tabs_list(request):
         else:
             cross_notice = None
 
+        _rcpt_token = _kb_receipt_map.get(tab.id)
+        _rcpt_url = request.build_absolute_uri(f'/r/{_rcpt_token}/') if _rcpt_token else None
+
         result.append({
             'id': tab.id,
             'customer_name': tab.customer_name,
@@ -1038,9 +1056,11 @@ def kitchen_tabs_list(request):
             'total': sum(float(e['amount']) for e in entries),
             'unpaid_total': sum(float(e['amount']) for e in entries if not e['is_paid']),
             'entries': entries,
-            'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+            'opened_at': _opened_local.strftime('%H:%M'),
+            'opened_date': _opened_local.strftime('%Y-%m-%d'),
             'is_bar_tab': False,
             'cross_notice': cross_notice,
+            'receipt_url': _rcpt_url,
         })
 
     # Bar tabs that have kitchen entries — show read-only (kitchen items only).

@@ -1164,6 +1164,45 @@ def tick_entry(request, entry_id):
 
 @login_required
 @require_POST
+def remove_tab_entry(request, tab_id, entry_id):
+    """Owner/manager only: void a single BarTabEntry (correction for mis-added entries).
+
+    Marks the entry and its underlying Transaction as 'void' so revenue and
+    analytics exclude it. Only works on OPEN tabs with unpaid entries.
+    Returns the updated unpaid total for the tab.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    if not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+
+    try:
+        entry = BarTabEntry.objects.select_related('tab', 'transaction').get(
+            id=entry_id,
+            tab__id=tab_id,
+            tab__business=up.business,
+            tab__status='OPEN',
+            is_paid=False,
+        )
+    except BarTabEntry.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'not_found'}, status=404)
+
+    now = timezone.now()
+    entry.is_paid = True
+    entry.paid_at = now
+    entry.payment_method = 'void'
+    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+
+    entry.transaction.payment_method = 'void'
+    entry.transaction.save(update_fields=['payment_method'])
+
+    new_total = float(entry.tab.entries.filter(is_paid=False).aggregate(t=Sum('amount'))['t'] or 0)
+    return JsonResponse({'ok': True, 'new_total': new_total})
+
+
+@login_required
+@require_POST
 def settle_tab(request, tab_id):
     """Settle unpaid entries on a tab and issue a receipt.
 

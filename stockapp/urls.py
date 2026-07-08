@@ -61,6 +61,7 @@ from core.keg_views import (
     update_tab_phone,
     bulk_convert_tabs_to_debt,
     tick_entry,
+    remove_tab_entry,
     settle_tab,
     void_tab,
     convert_tab_to_debt,
@@ -300,6 +301,7 @@ urlpatterns = [
     path("bar/tabs/<int:tab_id>/void/", void_tab, name="void_tab"),
     path("bar/tabs/<int:tab_id>/debt/", convert_tab_to_debt, name="convert_tab_to_debt"),
     path("bar/tabs/entry/<int:entry_id>/tick/", tick_entry, name="tick_entry"),
+    path("bar/tabs/<int:tab_id>/entries/<int:entry_id>/remove/", remove_tab_entry, name="remove_tab_entry"),
     # ── Shift Handover Module (Sprint 4) ─────────────────────────────────────
     path("bar/shift/open/",                   open_shift,             name="open_shift"),
     path("bar/shift/<int:shift_id>/close/",   close_shift,            name="close_shift"),

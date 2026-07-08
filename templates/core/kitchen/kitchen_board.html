@@ -1896,7 +1896,9 @@
       updateTabBadge(0); return;
     }
     updateTabBadge(tabs.length);
+    var _today = new Date().toISOString().slice(0, 10);
     body.innerHTML = tabs.map(function(tab){
+      var safeCust = (tab.customer_name || '').replace(/'/g, "\\'");
       var entriesHtml = tab.entries.map(function(e){
         if (tab.is_bar_tab) {
           /* Bar tab — kitchen items shown read-only (no checkboxes, no actions) */
@@ -1904,6 +1906,11 @@
                  '<span style="flex:1;color:#b0b0b0;">🍽 ' + e.description + '</span>' +
                  '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span></div>';
         }
+        var removeBtn = (IS_OWNER && !e.is_paid)
+          ? '<button onclick="window.kbRemoveEntry(' + e.id + ',' + tab.id + ',\'' + e.description.replace(/'/g,"\\'") + '\')" ' +
+            'style="background:none;border:none;color:#c0395a;cursor:pointer;font-size:0.75rem;padding:0 2px;flex-shrink:0;" ' +
+            'title="Futa kiingilio hiki">✕</button>'
+          : '';
         return '<div style="display:flex;align-items:center;gap:.4rem;font-size:.8rem;padding:.2rem 0;">' +
                (e.is_paid
                  ? '<input type="checkbox" checked disabled style="accent-color:#c9a84c;flex-shrink:0;">'
@@ -1912,7 +1919,8 @@
                    '" style="accent-color:#c9a84c;flex-shrink:0;" onchange="window.updateKbSelection(' + tab.id + ')">') +
                '<span style="flex:1;color:' + (e.is_paid?'#555':'#b0b0b0') + ';">' +
                (e.is_paid?'<s>':'') + e.description + (e.is_paid?'</s>':'') + '</span>' +
-               '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span></div>';
+               '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span>' +
+               removeBtn + '</div>';
       }).join('');
 
       if (tab.is_bar_tab) {
@@ -1928,10 +1936,29 @@
                '<span style="color:#555;font-size:.72rem;">Lipa kwenye Bar Board</span></div></div>';
       }
 
+      var isStale = tab.opened_date && tab.opened_date < _today;
+      var staleHtml = isStale
+        ? '<div style="background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.3);border-radius:6px;' +
+          'padding:.25rem .6rem;margin-bottom:.35rem;font-size:.75rem;color:#ff9800;' +
+          'display:flex;align-items:center;justify-content:space-between;">' +
+          '<span>Tab ya ' + tab.opened_date + ' — bado haijafungwa</span>' +
+          '<button onclick="openKitchenTabDeni(' + tab.id + ',\'' + safeCust + '\')" ' +
+          'style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;' +
+          'color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>' +
+          '</div>'
+        : '';
+      var receiptLink = tab.receipt_url
+        ? '<a href="' + tab.receipt_url + '" target="_blank" rel="noopener" ' +
+          'style="display:inline-flex;align-items:center;gap:.25rem;font-size:.72rem;color:#c9a84c;' +
+          'text-decoration:none;margin-bottom:.3rem;">📋 Angalia / Tuma Risiti</a>'
+        : '';
+
       return '<div style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:10px;padding:.65rem .75rem;margin-bottom:.6rem;">' +
              '<div style="display:flex;justify-content:space-between;margin-bottom:.35rem;">' +
              '<strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +
              '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
+             staleHtml +
+             receiptLink +
              (tab.cross_notice ? '<div style="font-size:.72rem;color:#f39c12;background:rgba(243,156,18,.07);border:1px solid rgba(243,156,18,.2);border-radius:5px;padding:.15rem .5rem;margin-bottom:.3rem;">🔀 ' + tab.cross_notice + '</div>' : '') +
              '<div style="display:flex;gap:.3rem;align-items:center;margin-bottom:.35rem;">' +
              '<input type="tel" id="kb-tab-phone-edit-' + tab.id + '" value="' + (tab.customer_phone || '') + '" ' +
@@ -1948,11 +1975,26 @@
              '<strong style="color:#c9a84c;">Deni: KES ' + fmt(tab.unpaid_total) + '</strong></div>' +
              '<div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap;">' +
              '<button class="btn btn-sm btn-gold" data-tab-id="' + tab.id + '" data-customer="' + (tab.customer_name||'').replace(/"/g,'&quot;') + '" data-unpaid="' + tab.unpaid_total + '" onclick="openKitchenTabSettle(this)">💰 Lipa</button>' +
-             '<button class="btn btn-sm" style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.35);color:#c0395a;" onclick="openKitchenTabDeni(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'") + '\')">🤝 Deni</button>' +
+             '<button class="btn btn-sm" style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.35);color:#c0395a;" onclick="openKitchenTabDeni(' + tab.id + ',\'' + safeCust + '\')">🤝 Deni</button>' +
              '<button class="btn btn-sm" style="background:rgba(80,80,80,.1);border:1px solid #444;color:#888;" onclick="voidKitchenTab(' + tab.id + ')">Void</button>' +
              '</div></div>';
     }).join('');
   }
+
+  window.kbRemoveEntry = function (entryId, tabId, desc) {
+    if (!confirm('Futa "' + desc + '" kutoka kwa tab hii?\nKiingilio hiki kitafutwa kabisa.')) return;
+    var fd = new URLSearchParams();
+    fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+    fetch('/bar/tabs/' + tabId + '/entries/' + entryId + '/remove/', {
+      method: 'POST', credentials: 'same-origin', body: fd
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) { showToast('✓ Kiingilio kimefutwa'); loadFoodTabs(); }
+        else showToast('Hitilafu: ' + (d.error || 'Jaribu tena'));
+      })
+      .catch(function(){ showToast('Hitilafu ya mtandao'); });
+  };
 
   window.saveKbTabPhone = function(tabId) {
     var input = document.getElementById('kb-tab-phone-edit-' + tabId);

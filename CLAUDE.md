@@ -324,6 +324,14 @@ Fonts: Playfair Display (headings), DM Sans (body)
   changed files, commit with a descriptive message following the repo style
   (`feat:`/`fix:` prefix), then `git push origin main`. This is the final step of
   every task — treat it the same as running tests.
+- **Tabs drawer parity — all three drawers must always be in sync.** The bar board
+  tabs drawer (`renderTabs` in bar_board.html), the Quick Sell tabs drawer
+  (`qsRenderTabs` in quick_sell.html), and the kitchen tabs section
+  (kitchen_board.html) share the same `/bar/tabs/` data source and the same UX
+  contract. When you fix or enhance ANY ONE of them (stale-tab banner, receipt link,
+  per-entry remove, partial settle, cross-notice, etc.) you MUST apply the same fix
+  to ALL THREE in the same commit. Never fix one and leave the others with the same
+  gap — Roy will notice every time.
 - **When adding any new module or feature, proactively audit ALL connected app surfaces
   before marking it done — do not wait for Roy to notice gaps.** The surfaces to check
   for every new selling/payment feature are: (1) Debt tracker — does credit flow

@@ -2366,6 +2366,11 @@
         /* Bar entries inside #tab-entries-{id} so updateTabSelectionUI can find checkboxes */
         var barHtml = barUnpaid.map(function(e) {
           var sd = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+          var rb = QS_IS_OWNER
+            ? '<button onclick="window.removeTabEntry(' + e.id + ',' + tab.id + ',\'' + sd.replace(/'/g, "\\'") + '\')" ' +
+              'style="background:none;border:none;color:#c0395a;cursor:pointer;font-size:0.78rem;padding:0 2px;flex-shrink:0;" ' +
+              'title="Futa kiingilio hiki">✕</button>'
+            : '';
           return '<div class="tab-entry-row" id="tab-entry-' + e.id + '">' +
                  '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0;">' +
                  '<input type="checkbox" class="tab-entry-cb"' +
@@ -2375,6 +2380,7 @@
                  '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">🍺 ' + sd + '</span>' +
                  '</label>' +
                  '<span class="tab-entry-amt">KES ' + fmt(e.amount) + '</span>' +
+                 rb +
                  '</div>';
         }).join('');
 
@@ -2438,6 +2444,11 @@
         unpaidEntries.forEach(function (e) {
           var safeDesc = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
           var entryIcon = e.is_kitchen_item ? '🍽' : '🍺';
+          var removeBtn = QS_IS_OWNER
+            ? '<button onclick="window.removeTabEntry(' + e.id + ',' + tab.id + ',\'' + safeDesc.replace(/'/g, "\\'") + '\')" ' +
+              'style="background:none;border:none;color:#c0395a;cursor:pointer;font-size:0.78rem;padding:0 2px;flex-shrink:0;" ' +
+              'title="Futa kiingilio hiki">✕</button>'
+            : '';
           entriesHtml +=
             '<div class="tab-entry-row" id="tab-entry-' + e.id + '">' +
             '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0;">' +
@@ -2448,6 +2459,7 @@
             '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">' + entryIcon + ' ' + safeDesc + '</span>' +
             '</label>' +
             '<span class="tab-entry-amt">KES ' + fmt(e.amount) + '</span>' +
+            removeBtn +
             '</div>';
         });
 
@@ -2550,6 +2562,21 @@
   };
 
   var _tabsJustSettled = false;
+
+  window.removeTabEntry = function (entryId, tabId, desc) {
+    if (!confirm('Futa "' + desc + '" kutoka kwa tab hii?\nKiingilio hiki kitafutwa kabisa.')) return;
+    post('/bar/tabs/' + tabId + '/entries/' + entryId + '/remove/', {})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          showToast('✓ Kiingilio kimefutwa');
+          window.loadTabs();
+        } else {
+          showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+        }
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao. Jaribu tena.'); });
+  };
 
   window.settleTab = function (tabId, payMethod) {
     // Disable all action buttons to prevent double-submit
