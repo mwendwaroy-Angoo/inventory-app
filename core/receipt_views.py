@@ -98,7 +98,14 @@ def _get_live_tab_state(receipt):
                     total += amt
             except _BarTab.DoesNotExist:
                 pass
-        return tab.status == 'OPEN', tab.status, lines, total
+        # DEBT detection: tab is SETTLED but unpaid entries still exist.
+        # This happens when "Geuza Deni" converts a tab to debt without marking
+        # entries as paid. Distinguish from a genuinely settled tab (no unpaid lines).
+        effective_status = tab.status
+        if tab.status == 'SETTLED' and lines:
+            effective_status = 'DEBT'
+        is_live = effective_status in ('OPEN', 'DEBT')
+        return is_live, effective_status, lines, total
     except Exception:
         return False, None, None, None
 

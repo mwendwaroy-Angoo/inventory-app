@@ -437,6 +437,15 @@
             <span id="live-status-text">Tab inaendelea — orodha inasasishwa kiotomatiki</span>
             <span id="live-countdown" style="margin-left:auto; font-size:0.72rem; color:#4ade80; opacity:0.75;"></span>
         </div>
+        {% elif tab_status == 'DEBT' %}
+        <div id="tab-live-status" style="margin:0.6rem 1.2rem 0.2rem; padding:0.55rem 0.8rem;
+             background:rgba(255,152,0,0.09); border:1px solid rgba(255,152,0,0.3);
+             border-radius:8px; font-size:0.8rem; color:#ff9800; display:flex;
+             align-items:center; gap:0.5rem;">
+            <span>⚠️</span>
+            <span id="live-status-text">Tab imekuwa Deni — KES {{ receipt.total|floatformat:"0" }} bado haijafunguliwa</span>
+            <span id="live-countdown" style="margin-left:auto; font-size:0.72rem; color:#fbbf24; opacity:0.75;"></span>
+        </div>
         {% elif tab_status == 'SETTLED' %}
         <div style="margin:0.6rem 1.2rem 0.2rem; padding:0.55rem 0.8rem;
              background:rgba(46,204,113,0.09); border:1px solid rgba(46,204,113,0.25);
@@ -455,7 +464,7 @@
         <!-- ── Customer Pay Now section ───────────────────────────── -->
         <div id="pay-section" style="margin:0.5rem 1.2rem 0.75rem; display:none;">
             <div style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.6rem; font-weight:600; letter-spacing:0.03em;">
-                💳 LIPA SASA
+                {% if tab_status == 'DEBT' %}⚠️ LIPA DENI{% else %}💳 LIPA SASA{% endif %}
             </div>
             <div id="pay-lines-list" style="margin-bottom:0.6rem;"></div>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; gap:0.5rem;">
@@ -811,11 +820,13 @@
                             statusDiv.style.background = 'rgba(46,204,113,0.09)';
                             statusDiv.style.border = '1px solid rgba(46,204,113,0.25)';
                             statusDiv.style.color = '#2ecc71';
-                            statusDiv.innerHTML = '✅ Tab imelipwa';
+                            statusDiv.style.display = 'block';
+                            statusDiv.innerHTML = '✅ Deni limeliwa — asante!';
                         } else if (d.tab_status === 'VOID') {
                             statusDiv.style.background = 'rgba(192,57,90,0.09)';
                             statusDiv.style.border = '1px solid rgba(192,57,90,0.25)';
                             statusDiv.style.color = '#c0395a';
+                            statusDiv.style.display = 'block';
                             statusDiv.innerHTML = '❌ Tab imetupwa';
                         } else {
                             statusDiv.style.display = 'none';
