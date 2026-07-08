@@ -31,7 +31,7 @@ from django.views.decorators.http import require_POST
 from accounts.models import UserProfile
 from core.models import (
     CustomerDebtPayment, SalaryPayment, Shift, Transaction,
-    RecurringExpense, Notification,
+    RecurringExpense, Notification, BarTab, Receipt,
 )
 from core.views import get_user_profile, owner_required, owner_or_manager_required
 
@@ -439,4 +439,123 @@ def haki_recognition_statement(request, profile_id):
         'period_label': date_from.strftime('%B %Y'),
         'sms_sent': sms_sent,
         'business': business,
+    })
+
+
+# ── Duty Log — Staff / Manager Footprint ─────────────────────────────────────
+
+@login_required
+@owner_or_manager_required
+def staff_duty_log(request, profile_id):
+    """Daily supervisory footprint for any staff or manager.
+
+    Shows: shifts worked, transactions they recorded, receipts they issued,
+    and tabs they opened or settled — all scoped to one calendar date.
+    Owner/manager only; accessible for past dates (next-morning review).
+    """
+    up = get_user_profile(request)
+    if not up:
+        from django.shortcuts import redirect
+        return redirect('home')
+    business = up.business
+
+    staff_profile = get_object_or_404(UserProfile, id=profile_id, business=business)
+    staff_user = staff_profile.user
+
+    # Date param — defaults to today
+    date_str = request.GET.get('date', '')
+    try:
+        report_date = date.fromisoformat(date_str)
+    except ValueError:
+        report_date = timezone.localdate()
+
+    prev_date = report_date - timedelta(days=1)
+    next_date = report_date + timedelta(days=1)
+    today = timezone.localdate()
+
+    # ── Shifts ────────────────────────────────────────────────────────────────
+    shifts = list(Shift.objects.filter(
+        business=business,
+        staff=staff_user,
+        started_at__date=report_date,
+    ).select_related('store').order_by('started_at'))
+
+    shift_summaries = []
+    for sh in shifts:
+        duration_mins = None
+        if sh.ended_at:
+            delta = sh.ended_at - sh.started_at
+            duration_mins = int(delta.total_seconds() / 60)
+        # Cash variance
+        variance = None
+        if sh.closing_cash_counted is not None:
+            # Replicate _reconcile logic inline (no import needed)
+            cash_sales = Transaction.objects.filter(
+                business=business,
+                type='Issue',
+                payment_method='cash',
+                created_at__gte=sh.started_at,
+                created_at__lte=sh.ended_at or timezone.now(),
+            ).aggregate(total=Sum('sale_amount'))['total'] or Decimal('0')
+            expected = sh.opening_float + cash_sales
+            variance = float(sh.closing_cash_counted) - float(expected)
+        shift_summaries.append({
+            'shift': sh,
+            'duration_mins': duration_mins,
+            'variance': variance,
+            'store_name': sh.store.name if sh.store else '—',
+        })
+
+    # ── Transactions recorded ─────────────────────────────────────────────────
+    transactions = list(Transaction.objects.filter(
+        business=business,
+        recorded_by=staff_user,
+        date=report_date,
+    ).select_related('item__store').order_by('created_at'))
+
+    txn_revenue = sum(
+        float(t.sale_amount or 0) if t.type == 'Issue' else 0
+        for t in transactions
+    )
+    txn_by_method = {}
+    for t in transactions:
+        if t.type == 'Issue' and t.payment_method not in ('void', 'tab', ''):
+            txn_by_method[t.payment_method] = (
+                txn_by_method.get(t.payment_method, 0) + float(t.sale_amount or 0)
+            )
+
+    # ── Receipts issued ───────────────────────────────────────────────────────
+    receipts = list(Receipt.objects.filter(
+        business=business,
+        created_by=staff_user,
+        created_at__date=report_date,
+    ).order_by('created_at'))
+
+    # ── Tabs opened or settled by this staff member ───────────────────────────
+    tabs_opened = list(BarTab.objects.filter(
+        business=business,
+        served_by=staff_user,
+        opened_at__date=report_date,
+    ).order_by('opened_at'))
+
+    tabs_settled = list(BarTab.objects.filter(
+        business=business,
+        served_by=staff_user,
+        settled_at__date=report_date,
+    ).exclude(status='OPEN').order_by('settled_at'))
+
+    return render(request, 'core/staff_duty_log.html', {
+        'staff_profile': staff_profile,
+        'report_date': report_date,
+        'prev_date': prev_date,
+        'next_date': next_date,
+        'today': today,
+        'shift_summaries': shift_summaries,
+        'transactions': transactions,
+        'txn_revenue': txn_revenue,
+        'txn_by_method': txn_by_method,
+        'receipts': receipts,
+        'tabs_opened': tabs_opened,
+        'tabs_settled': tabs_settled,
+        'is_manager': staff_profile.role == 'manager',
     })

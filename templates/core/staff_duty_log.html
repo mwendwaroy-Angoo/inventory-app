@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+{% block title %}Duty Log — {{ staff_profile.user.get_full_name|default:staff_profile.user.username }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .dl-section { margin-bottom: 1.5rem; }
+  .dl-section-title {
+    font-family: 'Playfair Display', serif;
+    color: var(--gold);
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: .6rem;
+    padding-bottom: .3rem;
+    border-bottom: 1px solid rgba(201,168,76,.2);
+  }
+  .dl-card {
+    background: var(--onyx-card);
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: .7rem 1rem;
+    margin-bottom: .5rem;
+    font-size: .85rem;
+  }
+  .dl-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: .5rem;
+    font-weight: 600;
+    color: #f0ece4;
+    margin-bottom: .2rem;
+  }
+  .dl-meta { color: #b0b0b0; font-size: .78rem; }
+  .dl-amount { color: var(--gold); font-weight: 700; white-space: nowrap; }
+  .dl-badge {
+    display: inline-block;
+    font-size: .68rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  .badge-cash   { background: rgba(46,204,113,.12); color: #2ecc71; border: 1px solid rgba(46,204,113,.25); }
+  .badge-mpesa  { background: rgba(46,125,50,.15);  color: #4caf50; border: 1px solid rgba(46,125,50,.3); }
+  .badge-credit { background: rgba(192,57,90,.12);  color: #c0395a; border: 1px solid rgba(192,57,90,.25); }
+  .badge-tab    { background: rgba(201,168,76,.12);  color: #c9a84c; border: 1px solid rgba(201,168,76,.25); }
+  .badge-void   { background: rgba(100,100,100,.15); color: #888;    border: 1px solid rgba(100,100,100,.3); }
+  .badge-receipt{ background: rgba(201,168,76,.1);   color: #c9a84c; border: 1px solid rgba(201,168,76,.2); }
+  .badge-issue  { background: rgba(46,204,113,.1);   color: #2ecc71; border: 1px solid rgba(46,204,113,.2); }
+  .badge-receipt-type { background: rgba(120,120,200,.12); color: #9b8fd8; border: 1px solid rgba(120,120,200,.25); }
+  .badge-wastage{ background: rgba(192,57,90,.1);    color: #c0395a; border: 1px solid rgba(192,57,90,.2); }
+  .badge-mgr    { background: rgba(155,89,182,.12); color: #9b59b6; border: 1px solid rgba(155,89,182,.3); }
+  .badge-open   { background: rgba(255,152,0,.1); color: #ff9800; border: 1px solid rgba(255,152,0,.25); }
+  .badge-settled{ background: rgba(46,204,113,.1); color: #2ecc71; border: 1px solid rgba(46,204,113,.2); }
+  .badge-void-tab{ background: rgba(192,57,90,.1); color: #c0395a; border: 1px solid rgba(192,57,90,.2); }
+  .dl-variance-pos { color: #2ecc71; }
+  .dl-variance-neg { color: #c0395a; }
+  .dl-summary-row {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+    margin-top: .35rem;
+  }
+  .dl-empty { color: #b0b0b0; font-size: .83rem; padding: .4rem 0; font-style: italic; }
+  .nav-date-row {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.2rem;
+  }
+  .nav-date-btn {
+    padding: .3rem .7rem;
+    border: 1px solid #333;
+    border-radius: 6px;
+    background: #222;
+    color: #b0b0b0;
+    font-size: .8rem;
+    text-decoration: none;
+  }
+  .nav-date-btn:hover { border-color: #c9a84c; color: #c9a84c; }
+  .nav-date-today {
+    padding: .3rem .7rem;
+    border: 1px solid rgba(201,168,76,.4);
+    border-radius: 6px;
+    background: rgba(201,168,76,.08);
+    color: #c9a84c;
+    font-size: .8rem;
+    text-decoration: none;
+  }
+  .total-strip {
+    background: rgba(201,168,76,.07);
+    border: 1px solid rgba(201,168,76,.2);
+    border-radius: 8px;
+    padding: .5rem .9rem;
+    margin-bottom: 1.2rem;
+    display: flex;
+    gap: 1.2rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .total-strip-item { font-size: .82rem; color: #b0b0b0; }
+  .total-strip-item strong { color: #f0ece4; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+
+  <!-- Header -->
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:.5rem; margin-bottom:1rem;">
+    <div>
+      <h4 style="font-family:'Playfair Display',serif; color:var(--gold); margin-bottom:.15rem;">
+        {% if is_manager %}
+          <span class="dl-badge badge-mgr" style="font-size:.75rem; margin-right:.4rem;">MANAGER</span>
+        {% endif %}
+        {{ staff_profile.user.get_full_name|default:staff_profile.user.username }}
+      </h4>
+      <div style="color:#b0b0b0; font-size:.82rem;">Duty Log — Shughuli za Siku</div>
+    </div>
+    <a href="{% url 'staff_contribution_report' %}" style="color:#b0b0b0; font-size:.82rem; text-decoration:none;">← Ripoti ya Wafanyakazi</a>
+  </div>
+
+  <!-- Date navigation -->
+  <div class="nav-date-row">
+    <a class="nav-date-btn" href="?date={{ prev_date|date:'Y-m-d' }}">← {{ prev_date|date:"d M" }}</a>
+    {% if report_date != today %}
+    <a class="nav-date-today" href="?date={{ today|date:'Y-m-d' }}">Leo</a>
+    {% endif %}
+    <span style="font-weight:600; color:#f0ece4; font-size:.95rem;">{{ report_date|date:"l, d F Y" }}</span>
+    {% if report_date < today %}
+    <a class="nav-date-btn" href="?date={{ next_date|date:'Y-m-d' }}">{{ next_date|date:"d M" }} →</a>
+    {% endif %}
+  </div>
+
+  <!-- Day summary strip -->
+  <div class="total-strip">
+    <div class="total-strip-item">Mauzo aliyorekodiwa: <strong>KES {{ txn_revenue|floatformat:0 }}</strong></div>
+    <div class="total-strip-item">Risiti: <strong>{{ receipts|length }}</strong></div>
+    <div class="total-strip-item">Shifts: <strong>{{ shift_summaries|length }}</strong></div>
+    <div class="total-strip-item">Tabs wazi: <strong>{{ tabs_opened|length }}</strong></div>
+    {% for method, amt in txn_by_method.items %}
+    <div class="total-strip-item">
+      {% if method == 'cash' %}💵{% elif method == 'mpesa' %}📱{% endif %}
+      {{ method|capfirst }}: <strong>KES {{ amt|floatformat:0 }}</strong>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- ── Shifts ─────────────────────────────────────────────────────────── -->
+  <div class="dl-section">
+    <div class="dl-section-title">⏱ Shifts</div>
+    {% if shift_summaries %}
+      {% for s in shift_summaries %}
+      <div class="dl-card">
+        <div class="dl-card-head">
+          <span>
+            {{ s.store_name }}
+            {% if s.shift.status == 'OPEN' %}
+              <span class="dl-badge badge-open" style="margin-left:.4rem;">Inaendelea</span>
+            {% elif s.shift.status == 'CLOSED' %}
+              <span class="dl-badge" style="background:rgba(100,100,200,.12);color:#8888dd;border:1px solid rgba(100,100,200,.3);margin-left:.4rem;">Imefungwa</span>
+            {% elif s.shift.status == 'CONFIRMED' %}
+              <span class="dl-badge badge-settled" style="margin-left:.4rem;">Imethibitishwa</span>
+            {% endif %}
+          </span>
+          {% if s.duration_mins is not None %}
+          <span style="color:#b0b0b0; font-size:.78rem;">{{ s.duration_mins }} min</span>
+          {% endif %}
+        </div>
+        <div class="dl-meta">
+          Ilianza: {{ s.shift.started_at|date:"H:i" }}
+          {% if s.shift.ended_at %} · Iliisha: {{ s.shift.ended_at|date:"H:i" }}{% endif %}
+          {% if s.shift.opening_float %} · Float: KES {{ s.shift.opening_float|floatformat:0 }}{% endif %}
+        </div>
+        {% if s.variance is not None %}
+        <div class="dl-meta" style="margin-top:.2rem;">
+          Tofauti ya fedha:
+          {% if s.variance > 0 %}
+            <span class="dl-variance-pos">+KES {{ s.variance|floatformat:0 }}</span>
+          {% elif s.variance < 0 %}
+            <span class="dl-variance-neg">−KES {{ s.variance|floatformat:0|cut:"-" }}</span>
+          {% else %}
+            <span style="color:#2ecc71;">✓ Sawa</span>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="dl-empty">Hakuna shift iliyofunguliwa siku hii.</div>
+    {% endif %}
+  </div>
+
+  <!-- ── Transactions ───────────────────────────────────────────────────── -->
+  <div class="dl-section">
+    <div class="dl-section-title">📦 Miamala Aliyorekodiwa ({{ transactions|length }})</div>
+    {% if transactions %}
+      {% for t in transactions %}
+      <div class="dl-card">
+        <div class="dl-card-head">
+          <span>
+            <span class="dl-badge
+              {% if t.type == 'Issue' %}badge-issue
+              {% elif t.type == 'Receipt' %}badge-receipt-type
+              {% else %}badge-wastage{% endif %}">
+              {% if t.type == 'Issue' %}Mauzo{% elif t.type == 'Receipt' %}Pokea{% else %}Hasara{% endif %}
+            </span>
+            {{ t.item.description }}
+          </span>
+          <span class="dl-amount">
+            {% if t.type == 'Issue' %}KES {{ t.sale_amount|default:0|floatformat:0 }}{% else %}{{ t.qty|floatformat:0 }} {{ t.item.unit }}{% endif %}
+          </span>
+        </div>
+        <div class="dl-meta">
+          {{ t.created_at|date:"H:i" }}
+          · {{ t.item.store.name|default:"—" }}
+          {% if t.payment_method %}
+            · <span class="dl-badge
+                {% if t.payment_method == 'cash' %}badge-cash
+                {% elif t.payment_method == 'mpesa' %}badge-mpesa
+                {% elif t.payment_method == 'credit' %}badge-credit
+                {% elif t.payment_method == 'tab' %}badge-tab
+                {% elif t.payment_method == 'void' %}badge-void
+                {% else %}badge-cash{% endif %}">{{ t.payment_method }}</span>
+          {% endif %}
+          {% if t.recipient %} · 👤 {{ t.recipient }}{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="dl-empty">Hakuna miamala iliyorekodiwa siku hii.</div>
+    {% endif %}
+  </div>
+
+  <!-- ── Receipts ───────────────────────────────────────────────────────── -->
+  <div class="dl-section">
+    <div class="dl-section-title">🧾 Risiti Zilizotengenezwa ({{ receipts|length }})</div>
+    {% if receipts %}
+      {% for r in receipts %}
+      <div class="dl-card">
+        <div class="dl-card-head">
+          <span>
+            #{{ r.receipt_number }}
+            {% if r.customer_name %} — {{ r.customer_name }}{% endif %}
+          </span>
+          <span class="dl-amount">KES {{ r.total|floatformat:0 }}</span>
+        </div>
+        <div class="dl-meta">
+          {{ r.created_at|date:"H:i" }}
+          <span class="dl-badge
+            {% if r.payment_method == 'cash' %}badge-cash
+            {% elif r.payment_method == 'mpesa' %}badge-mpesa
+            {% elif r.payment_method == 'credit' %}badge-credit
+            {% elif r.payment_method == 'tab' %}badge-tab
+            {% else %}badge-cash{% endif %}
+            " style="margin-left:.3rem;">{{ r.payment_method }}</span>
+          {% if r.source == 'kitchen' %}<span class="dl-badge" style="margin-left:.3rem;background:rgba(201,168,76,.08);color:#c9a84c;border:1px solid rgba(201,168,76,.2);">Kitchen</span>{% endif %}
+          <a href="{% url 'receipt_public' r.token %}" target="_blank" style="margin-left:.4rem; color:#c9a84c; font-size:.75rem;">Angalia →</a>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="dl-empty">Hakuna risiti zilizotengenezwa siku hii.</div>
+    {% endif %}
+  </div>
+
+  <!-- ── Tabs opened ────────────────────────────────────────────────────── -->
+  <div class="dl-section">
+    <div class="dl-section-title">📋 Tabs Zilizofunguliwa ({{ tabs_opened|length }})</div>
+    {% if tabs_opened %}
+      {% for tab in tabs_opened %}
+      <div class="dl-card">
+        <div class="dl-card-head">
+          <span>{{ tab.customer_name }}</span>
+          <span>
+            {% if tab.status == 'OPEN' %}<span class="dl-badge badge-open">Wazi</span>
+            {% elif tab.status == 'SETTLED' %}<span class="dl-badge badge-settled">Imelipwa</span>
+            {% elif tab.status == 'VOID' %}<span class="dl-badge badge-void-tab">Void</span>
+            {% endif %}
+          </span>
+        </div>
+        <div class="dl-meta">
+          Ilianza: {{ tab.opened_at|date:"H:i" }}
+          {% if tab.settled_at %} · Ilifungwa: {{ tab.settled_at|date:"H:i" }}{% endif %}
+          · KES {{ tab.total|floatformat:0 }}
+          {% if tab.source == 'kitchen' %} · 🍽 Food Tab{% else %} · 🍺 Bar Tab{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="dl-empty">Hakuna tabs zilizofunguliwa siku hii.</div>
+    {% endif %}
+  </div>
+
+  <!-- ── Tabs settled (incl. auto-converted) ───────────────────────────── -->
+  {% if tabs_settled %}
+  <div class="dl-section">
+    <div class="dl-section-title">✅ Tabs Zilizolipwa / Kufungwa ({{ tabs_settled|length }})</div>
+    {% for tab in tabs_settled %}
+    <div class="dl-card">
+      <div class="dl-card-head">
+        <span>{{ tab.customer_name }}</span>
+        <span>
+          {% if tab.status == 'SETTLED' %}<span class="dl-badge badge-settled">Imelipwa</span>
+          {% elif tab.status == 'VOID' %}<span class="dl-badge badge-void-tab">Void</span>
+          {% endif %}
+        </span>
+      </div>
+      <div class="dl-meta">
+        Ilifungwa: {{ tab.settled_at|date:"H:i" }}
+        · KES {{ tab.total|floatformat:0 }}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
