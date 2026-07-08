@@ -65,11 +65,14 @@ def receipts_list(request):
 
 
 def _get_live_tab_state(receipt):
-    """Return (is_live, tab_status, lines, total) for a tab-linked receipt.
+    """Return (is_live, tab_status, lines, outstanding) for a tab-linked receipt.
 
-    Reads UNPAID entries from the primary tab plus any linked tabs stored in
-    meta.linked_tab_ids (e.g. a kitchen food tab linked to a bar tab receipt).
-    Adds 🍺/🍽 icons so the customer sees which counter each item came from.
+    Returns ALL entries (paid and unpaid) so the customer can see what they've
+    already paid (✓) and what is still pending (checkbox). Each line carries:
+        entry_id  — set for unpaid entries, None for paid (pay section filters by this)
+        is_paid   — bool flag
+        is_kitchen — bool, for station icon rendering
+    The returned ``outstanding`` total is the sum of UNPAID entries only.
     Returns is_live=False when no tab_id in meta or tab not found.
     """
     tab_id = receipt.meta.get('tab_id') if receipt.meta else None
@@ -80,11 +83,11 @@ def _get_live_tab_state(receipt):
         tab = _BarTab.objects.get(id=tab_id, business=receipt.business)
         all_tab_ids = [tab_id] + list(receipt.meta.get('linked_tab_ids') or [])
         lines = []
-        total = 0.0
+        outstanding = 0.0
         for btab_id in all_tab_ids:
             try:
                 btab = _BarTab.objects.get(id=btab_id, business=receipt.business)
-                for e in btab.entries.filter(is_paid=False).select_related(
+                for e in btab.entries.all().select_related(
                     'transaction__item__store'
                 ).order_by('id'):
                     is_kitchen = False
@@ -94,18 +97,25 @@ def _get_live_tab_state(receipt):
                         pass
                     icon = '🍽 ' if is_kitchen else '🍺 '
                     amt = float(e.amount)
-                    lines.append({'name': icon + e.description, 'qty': 1, 'subtotal': amt, 'entry_id': e.id, 'tab_id': btab_id})
-                    total += amt
+                    if not e.is_paid:
+                        outstanding += amt
+                    lines.append({
+                        'name': icon + e.description,
+                        'qty': 1,
+                        'subtotal': amt,
+                        'entry_id': e.id if not e.is_paid else None,
+                        'tab_id': btab_id,
+                        'is_paid': e.is_paid,
+                        'is_kitchen': is_kitchen,
+                    })
             except _BarTab.DoesNotExist:
                 pass
-        # DEBT detection: tab is SETTLED but unpaid entries still exist.
-        # This happens when "Geuza Deni" converts a tab to debt without marking
-        # entries as paid. Distinguish from a genuinely settled tab (no unpaid lines).
+        # DEBT detection: SETTLED tab with unpaid balance means Geuza Deni was used.
         effective_status = tab.status
-        if tab.status == 'SETTLED' and lines:
+        if tab.status == 'SETTLED' and outstanding > 0:
             effective_status = 'DEBT'
         is_live = effective_status in ('OPEN', 'DEBT')
-        return is_live, effective_status, lines, total
+        return is_live, effective_status, lines, outstanding
     except Exception:
         return False, None, None, None
 
@@ -265,16 +275,35 @@ def receipt_pay(request, token):
     else:
         entries_qs = BarTabEntry.objects.filter(tab__id__in=all_tab_ids, is_paid=False)
 
-    amount = int(sum(float(e.amount) for e in entries_qs))
-    selected_ids = list(entries_qs.values_list('id', flat=True))
+    entries_list = list(entries_qs.select_related('transaction__item__store'))
+    amount = int(sum(float(e.amount) for e in entries_list))
+    selected_ids = [e.id for e in entries_list]
 
     if amount < 1:
         return JsonResponse({'error': 'nothing_to_pay'}, status=400)
 
+    # Station-aware M-Pesa routing: if all selected items are from one store
+    # with its own till/paybill, route to that store's config instead of business level.
+    from .mpesa import resolve_mpesa_config
+    target_store = None
+    store_ids = set()
+    for e in entries_list:
+        try:
+            store_ids.add(e.transaction.item.store_id)
+        except Exception:
+            pass
+    if len(store_ids) == 1:
+        sid = next(iter(store_ids))
+        if sid:
+            from .models import Store as _Store
+            s = _Store.objects.filter(id=sid).first()
+            if s and getattr(s, 'has_own_mpesa', False):
+                target_store = s
+
     if pay_type == 'qr':
         try:
-            from .mpesa import resolve_mpesa_config, generate_emv_qr_string
-            cfg = resolve_mpesa_config(business, None)
+            from .mpesa import generate_emv_qr_string
+            cfg = resolve_mpesa_config(business, target_store)
             use_till = bool(cfg.get('till'))
             shortcode = (cfg.get('till') if use_till else cfg.get('paybill') or '').strip()
             if not shortcode:
@@ -296,11 +325,11 @@ def receipt_pay(request, token):
         return JsonResponse({'error': 'phone_required'}, status=400)
 
     try:
-        from .mpesa import initiate_stk_push, resolve_mpesa_config, format_phone_ke
+        from .mpesa import initiate_stk_push, format_phone_ke
         from .models import Payment
 
         phone_fmt = format_phone_ke(phone)
-        cfg = resolve_mpesa_config(business, None)
+        cfg = resolve_mpesa_config(business, target_store)
         use_till = bool(cfg.get('till'))
         shortcode = (cfg.get('till') if use_till else cfg.get('paybill') or '').strip()
         if not shortcode:

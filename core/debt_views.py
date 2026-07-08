@@ -500,9 +500,26 @@ def send_debt_reminder(request, customer_id):
 
     outstanding_str = f"KES {data['outstanding']:,.0f}"
     window = business.credit_window_days or 30
+
+    # Find the most recent live-receipt (tab receipt) for this customer so they
+    # can pay directly from the SMS link without visiting the business in person.
+    from .models import Receipt as _Rcpt
+    pay_link_suffix = ''
+    all_cust_receipts = _Rcpt.objects.filter(
+        business=business, customer_name=customer.name,
+    ).exclude(payment_method='statement').order_by('-created_at')
+    latest_tab_rcpt = None
+    for _r in all_cust_receipts[:10]:
+        if _r.meta and _r.meta.get('tab_id'):
+            latest_tab_rcpt = _r
+            break
+    if latest_tab_rcpt:
+        pay_url = request.build_absolute_uri(f'/r/{latest_tab_rcpt.token}/')
+        pay_link_suffix = f" Lipa hapa: {pay_url}"
+
     msg = (
         f"{business.name}: {customer.name}, bado una deni la {outstanding_str}. "
-        f"Tafadhali lipa ndani ya siku {window}. Asante."
+        f"Tafadhali lipa ndani ya siku {window}. Asante.{pay_link_suffix}"
     )
 
     ok, _detail = send_sms_notification(msg, normalized_phone)

@@ -204,17 +204,85 @@ def _settle_receipt_entries_from_payment(payment):
                 tab.save(update_fields=['status', 'settled_at'])
 
         # SMS the customer and update the receipt payment_method
+        rcpt_for_notif = None
         if payment.receipt_token:
-            rcpt = _Receipt.objects.filter(token=payment.receipt_token).first()
-            if rcpt:
-                all_tab_ids = [rcpt.meta.get('tab_id')] + list(rcpt.meta.get('linked_tab_ids') or [])
+            rcpt_for_notif = _Receipt.objects.filter(token=payment.receipt_token).first()
+            if rcpt_for_notif:
+                all_tab_ids = [rcpt_for_notif.meta.get('tab_id')] + list(rcpt_for_notif.meta.get('linked_tab_ids') or [])
                 still_unpaid = BarTabEntry.objects.filter(
                     tab__id__in=all_tab_ids, is_paid=False
                 ).exists()
                 if not still_unpaid:
-                    rcpt.payment_method = 'mpesa'
-                    rcpt.save(update_fields=['payment_method'])
-                _sms_receipt_to_payer(payment, rcpt)
+                    rcpt_for_notif.payment_method = 'mpesa'
+                    rcpt_for_notif.save(update_fields=['payment_method'])
+                _sms_receipt_to_payer(payment, rcpt_for_notif)
+
+        # Notify original serving staff, current on-shift staff, owners, managers
+        try:
+            from .models import Shift as _Shift, Notification as _Notif
+            from .notifications import normalize_ke_phone, send_sms_notification
+            from accounts.models import UserProfile as _UP
+
+            customer_name = (rcpt_for_notif.customer_name if rcpt_for_notif else '') or 'Mteja'
+            receipt_num = rcpt_for_notif.receipt_number if rcpt_for_notif else ''
+            paid_amt = float(payment.amount)
+
+            # Remaining outstanding across all linked tabs
+            notif_tab_ids = []
+            if rcpt_for_notif and rcpt_for_notif.meta:
+                notif_tab_ids = ([rcpt_for_notif.meta.get('tab_id')]
+                                 + list(rcpt_for_notif.meta.get('linked_tab_ids') or []))
+            remaining_amt = float(sum(
+                e.amount for e in BarTabEntry.objects.filter(
+                    tab__id__in=notif_tab_ids, is_paid=False
+                )
+            )) if notif_tab_ids else 0.0
+
+            if remaining_amt > 0:
+                notif_msg = (
+                    f"💰 {customer_name} amelipa KES {paid_amt:,.0f} kwa deni. "
+                    f"Baki: KES {remaining_amt:,.0f}. Risiti #{receipt_num}"
+                )
+            else:
+                notif_msg = (
+                    f"✅ {customer_name} amelipa deni lote (KES {paid_amt:,.0f}). "
+                    f"Risiti #{receipt_num}"
+                )
+
+            notify_targets = {}  # user_pk → UserProfile
+            business = payment.business
+
+            # Original servers (tab served_by)
+            for tab_id in tabs_affected:
+                tab_obj = BarTab.objects.filter(id=tab_id).select_related('served_by').first()
+                if tab_obj and tab_obj.served_by_id:
+                    up = _UP.objects.filter(user_id=tab_obj.served_by_id, business=business).first()
+                    if up:
+                        notify_targets[tab_obj.served_by_id] = up
+
+            # Currently on-shift staff
+            for sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
+                up = _UP.objects.filter(user_id=sh.staff_id, business=business).first()
+                if up:
+                    notify_targets[sh.staff_id] = up
+
+            # Owners and managers
+            for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
+                notify_targets[up.user_id] = up
+
+            for up in notify_targets.values():
+                _Notif.objects.create(
+                    business=business,
+                    user=up.user,
+                    message=notif_msg,
+                )
+                phone = (up.phone or '').strip()
+                if phone:
+                    phone_n = normalize_ke_phone(phone)
+                    if phone_n:
+                        send_sms_notification(notif_msg, phone_n)
+        except Exception as _notif_err:
+            logger.warning("Receipt payment notifications failed payment=%s: %s", payment.id, _notif_err)
 
         logger.info(
             "Receipt STK settled entries=%s business=%s mpesa_receipt=%s",

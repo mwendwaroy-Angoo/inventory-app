@@ -345,7 +345,13 @@
 
         <div class="receipt-lines">
             {% for line in receipt.lines %}
-            {% if line.qty == 0 %}
+            {% if line.is_paid %}
+            <div class="receipt-line" style="opacity:0.6;">
+                <span class="line-name" style="text-decoration:line-through; color:#888;">{{ line.name }}</span>
+                <span style="color:#6ee7b7; font-size:0.72rem; white-space:nowrap; margin:0 0.5rem;">✓ Imelipwa</span>
+                <span class="line-amount" style="text-decoration:line-through; color:#888;">KES {{ line.subtotal|floatformat:"0" }}</span>
+            </div>
+            {% elif line.qty == 0 %}
             <div class="receipt-line" style="border-bottom:none; padding-top:0.3rem;">
                 <span class="line-name" style="color:#b0b0b0; font-size:0.78rem; font-style:italic;">{{ line.name }}</span>
             </div>
@@ -365,7 +371,7 @@
         </div>
 
         <div class="receipt-total">
-            <span class="total-label">Jumla</span>
+            <span class="total-label">{% if tab_status == 'DEBT' %}Bado Kulipa{% else %}Jumla{% endif %}</span>
             <span class="total-amount">KES {{ receipt.total|floatformat:"0" }}</span>
         </div>
 
@@ -783,17 +789,32 @@
         if (!linesWrap || !lines) return;
         var html = '';
         lines.forEach(function (l) {
-            html += '<div class="receipt-line">' +
-                '<span class="line-name">' + (l.name || '') + '</span>' +
-                (l.qty && l.qty > 1 ? '<span class="line-qty">×' + l.qty + '</span>' : '') +
-                '<span class="line-amount">' + fmt(l.subtotal || 0) + '</span>' +
-                '</div>';
+            if (l.is_paid) {
+                // Paid item — strikethrough, muted, green tick
+                html += '<div class="receipt-line" style="opacity:0.6;">' +
+                    '<span class="line-name" style="text-decoration:line-through;color:#888;">' + (l.name || '') + '</span>' +
+                    '<span style="color:#6ee7b7;font-size:0.72rem;white-space:nowrap;margin:0 0.5rem;">✓ Imelipwa</span>' +
+                    '<span class="line-amount" style="text-decoration:line-through;color:#888;">KES ' +
+                    Number(l.subtotal || 0).toLocaleString('en-KE', {maximumFractionDigits: 0}) + '</span>' +
+                    '</div>';
+            } else {
+                html += '<div class="receipt-line">' +
+                    '<span class="line-name">' + (l.name || '') + '</span>' +
+                    (l.qty && l.qty > 1 ? '<span class="line-qty">×' + l.qty + '</span>' : '') +
+                    '<span class="line-amount">' + fmt(l.subtotal || 0) + '</span>' +
+                    '</div>';
+            }
         });
         linesWrap.innerHTML = html;
-        // Feed the pay-section checkboxes too
+        // Feed only unpaid items to the pay-section checkboxes
         if (typeof window._receiptPayRenderLines === 'function') {
             window._receiptPayRenderLines(lines);
         }
+        // Update the outstanding total label
+        var outstanding = lines.filter(function(l) { return !l.is_paid; })
+            .reduce(function(s, l) { return s + (parseFloat(l.subtotal) || 0); }, 0);
+        var totalEl = document.querySelector('.total-amount');
+        if (totalEl) totalEl.textContent = fmt(outstanding);
     }
 
     function updateCountdown() {
