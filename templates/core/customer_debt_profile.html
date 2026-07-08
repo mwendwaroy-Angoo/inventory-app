@@ -108,6 +108,28 @@
     </div>
 </div>
 
+<!-- Defaulter alert banner (shown when tab was voided / bad debt written off) -->
+{% if customer.is_defaulter %}
+<div class="mb-3 p-3" style="background:rgba(192,57,90,0.08); border:1px solid rgba(192,57,90,0.35); border-radius:10px;">
+    <div class="d-flex align-items-start gap-3 flex-wrap">
+        <div style="flex:1;">
+            <div style="font-weight:700; color:#c0395a; margin-bottom:0.25rem;">⛔ Mteja Aliyekataa Kulipa</div>
+            <div style="font-size:0.82rem; color:#b0b0b0;">Tab yake ilitupwa hapo awali. Mkopo umezuiwa hadi mmiliki atakaposamehe na kumruhusu tena.</div>
+        </div>
+        {% if is_owner %}
+        <form method="post" action="{% url 'clear_defaulter' customer.id %}" class="flex-shrink-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm"
+                    style="background:rgba(201,168,76,0.15); color:#c9a84c; border:1px solid rgba(201,168,76,0.35);"
+                    onclick="return confirm('Msamehe {{ customer.name }} na umruhusu kukopa tena?')">
+                🔓 Rudisha Haki — Samehe
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Credit Standing (K3.C) -->
 {% if credit_standing.decision %}
 <div class="mb-3 p-3" style="background:rgba(255,255,255,0.03); border-left:3px solid {{ credit_standing.standing_color }}; border-radius:0 8px 8px 0;">

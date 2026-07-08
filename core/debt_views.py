@@ -667,6 +667,32 @@ def customer_debt_statement(request, customer_id):
 @login_required
 @owner_or_manager_required
 @require_POST
+def clear_defaulter(request, customer_id):
+    """Owner/manager: reinstate a written-off customer — clears is_defaulter and re-approves credit."""
+    user_profile = get_user_profile(request)
+    customer = get_object_or_404(Customer, id=customer_id, business=user_profile.business)
+
+    Customer.objects.filter(pk=customer.pk).update(
+        is_defaulter=False,
+        credit_approved=True,
+        last_cleared_at=timezone.now(),
+    )
+
+    from .models import Notification
+    Notification.objects.create(
+        business=user_profile.business,
+        user=request.user,
+        title=f"✅ {customer.name} — Ameruhusiwa Tena",
+        message=f"{customer.name} amesamehewa deni la zamani na anaweza kukopa tena.",
+        notification_type='info',
+    )
+
+    messages.success(request, f"{customer.name} amesafishwa — anaweza kukopa tena.")
+    return redirect('customer_debt_profile', customer_id=customer_id)
+
+
+@owner_or_manager_required
+@require_POST
 def toggle_credit_approval(request, customer_id):
     user_profile = get_user_profile(request)
     customer = get_object_or_404(Customer, id=customer_id, business=user_profile.business)

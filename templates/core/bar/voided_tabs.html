@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}Tabs Zilizotupwa — {{ request.user.userprofile.business.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.voided-card {
+    background: #2a2a2a;
+    border: 1px solid rgba(192,57,90,0.2);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    margin-bottom: 0.75rem;
+}
+.voided-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.35rem;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.voided-cust {
+    font-weight: 700;
+    color: #f0ece4;
+    font-size: 1rem;
+}
+.voided-amount {
+    font-weight: 700;
+    color: #c0395a;
+    font-size: 1rem;
+    white-space: nowrap;
+}
+.voided-meta {
+    font-size: 0.75rem;
+    color: #b0b0b0;
+    margin-bottom: 0.4rem;
+}
+.voided-reason {
+    font-size: 0.8rem;
+    background: rgba(192,57,90,0.07);
+    border: 1px solid rgba(192,57,90,0.2);
+    border-radius: 6px;
+    padding: 0.25rem 0.6rem;
+    color: #c0395a;
+    display: inline-block;
+    margin-bottom: 0.4rem;
+}
+.voided-entries {
+    margin-top: 0.35rem;
+    border-top: 1px solid #333;
+    padding-top: 0.35rem;
+}
+.voided-entry-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    color: #b0b0b0;
+    padding: 0.1rem 0;
+}
+.summary-tile {
+    background: rgba(192,57,90,0.08);
+    border: 1px solid rgba(192,57,90,0.25);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    text-align: center;
+}
+.filter-bar {
+    background: #2a2a2a;
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.25rem;
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+.filter-bar label {
+    font-size: 0.75rem;
+    color: #b0b0b0;
+    display: block;
+    margin-bottom: 0.2rem;
+}
+.filter-bar input[type="date"] {
+    background: #111;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    color: #f0ece4;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.82rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:720px; padding:1rem;">
+
+    <!-- Header -->
+    <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+        <a href="{% url 'bar_board' %}" style="color:#b0b0b0; text-decoration:none; font-size:0.85rem;">← Bar Board</a>
+        <div>
+            <h4 style="color:#c9a84c; margin:0; font-family:'Playfair Display',serif;">Tabs Zilizotupwa</h4>
+            <div style="font-size:0.78rem; color:#b0b0b0;">Rekodi ya tabs zilizoandikwa kama hasara</div>
+        </div>
+    </div>
+
+    <!-- Date filter -->
+    <form method="get" class="filter-bar">
+        <div>
+            <label>Tangu</label>
+            <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}">
+        </div>
+        <div>
+            <label>Hadi</label>
+            <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}">
+        </div>
+        <button type="submit" class="btn btn-sm btn-gold" style="margin-bottom:1px;">Chuja</button>
+        {% if date_to == today %}
+        <a href="{% url 'voided_tabs_list' %}" style="font-size:0.78rem; color:#b0b0b0; align-self:center; text-decoration:none;">Siku 30 za Mwisho</a>
+        {% endif %}
+    </form>
+
+    <!-- Summary -->
+    {% if voided_tabs %}
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-4">
+            <div class="summary-tile">
+                <div style="font-size:0.72rem; color:#b0b0b0; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.3rem;">Tabs Zilizotupwa</div>
+                <div style="font-size:1.5rem; font-weight:700; color:#c0395a;">{{ voided_tabs|length }}</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4">
+            <div class="summary-tile">
+                <div style="font-size:0.72rem; color:#b0b0b0; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.3rem;">Hasara Yote</div>
+                <div style="font-size:1.5rem; font-weight:700; color:#c0395a;">KES {{ total_kes|floatformat:0 }}</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Tab cards -->
+    {% if voided_tabs %}
+        {% for tab in voided_tabs %}
+        <div class="voided-card">
+            <div class="voided-card-head">
+                <span class="voided-cust">
+                    {% if tab.customer %}
+                    <a href="{% url 'customer_debt_profile' tab.customer.id %}" style="color:#f0ece4; text-decoration:none;">{{ tab.customer_name }}</a>
+                    {% else %}
+                    {{ tab.customer_name }}
+                    {% endif %}
+                </span>
+                <span class="voided-amount">KES {{ tab.total|floatformat:0 }}</span>
+            </div>
+
+            <div class="voided-meta">
+                {% if tab.settled_at %}
+                Ilitupwa: {{ tab.settled_at|date:"d M Y" }} saa {{ tab.settled_at|date:"g:i A" }}
+                {% endif %}
+                {% if tab.served_by %}
+                · Mtumishi: <strong style="color:#f0ece4;">{{ tab.served_by.get_full_name|default:tab.served_by.username }}</strong>
+                {% elif tab.server_name %}
+                · Mtumishi: <strong style="color:#f0ece4;">{{ tab.server_name }}</strong>
+                {% endif %}
+                {% if tab.source == 'kitchen' %}
+                · <span style="color:#c9a84c;">🍗 Kitchen</span>
+                {% else %}
+                · <span style="color:#c9a84c;">🍺 Bar</span>
+                {% endif %}
+            </div>
+
+            {% if tab.void_reason %}
+            <div class="voided-reason">⛔ {{ tab.void_reason }}</div>
+            {% endif %}
+
+            {% with entries=tab.entries.all %}
+            {% if entries %}
+            <div class="voided-entries">
+                {% for entry in entries %}
+                {% if entry.payment_method != 'void' or entry.description %}
+                <div class="voided-entry-row">
+                    <span>{% if entry.tab.source == 'kitchen' %}🍽{% else %}🍺{% endif %} {{ entry.description }}</span>
+                    <span style="color:#888;">KES {{ entry.amount|floatformat:0 }}</span>
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% endwith %}
+
+            {% if tab.customer and tab.customer.is_defaulter %}
+            <div style="margin-top:0.5rem; font-size:0.75rem; color:#c0395a;">
+                ⛔ Mteja amekatazwa kukopa — <a href="{% url 'customer_debt_profile' tab.customer.id %}" style="color:#c9a84c;">Angalia Profaili</a>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    {% else %}
+    <div class="text-center py-5" style="color:#b0b0b0;">
+        <div style="font-size:2rem; margin-bottom:0.5rem;">✅</div>
+        Hakuna tabs zilizotupwa katika kipindi hiki.
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

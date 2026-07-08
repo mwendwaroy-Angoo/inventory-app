@@ -259,7 +259,7 @@ def kitchen_board(request):
             'total': float(tab.total()),
             'unpaid_total': float(tab.unpaid_total()),
             'entries': entries,
-            'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+            'opened_at': timezone.localtime(tab.opened_at).strftime('%I:%M %p').lstrip('0'),
         })
 
     # Open bar tabs (source='bar') — for "add to bar tab" payment option
@@ -932,7 +932,7 @@ def tab_check_api(request):
             'source_label':  'Bar' if tab.source == 'bar' else 'Kitchen',
             'customer_name': tab.customer_name,
             'total':         float(tab.total()),
-            'opened_at':     tab.opened_at.strftime('%H:%M'),
+            'opened_at':     timezone.localtime(tab.opened_at).strftime('%I:%M %p').lstrip('0'),
         })
 
     # Check for outstanding debt under this customer name, scoped to the
@@ -1056,7 +1056,7 @@ def kitchen_tabs_list(request):
             'total': sum(float(e['amount']) for e in entries),
             'unpaid_total': sum(float(e['amount']) for e in entries if not e['is_paid']),
             'entries': entries,
-            'opened_at': _opened_local.strftime('%H:%M'),
+            'opened_at': _opened_local.strftime('%I:%M %p').lstrip('0'),
             'opened_date': _opened_local.strftime('%Y-%m-%d'),
             'is_bar_tab': False,
             'cross_notice': cross_notice,
@@ -1095,7 +1095,7 @@ def kitchen_tabs_list(request):
             'total': sum(e['amount'] for e in kitchen_entries),
             'unpaid_total': float(unpaid),
             'entries': kitchen_entries,
-            'opened_at': timezone.localtime(tab.opened_at).strftime('%H:%M'),
+            'opened_at': timezone.localtime(tab.opened_at).strftime('%I:%M %p').lstrip('0'),
             'is_bar_tab': True,  # renders as read-only — actions stay on bar board
         })
 

@@ -73,6 +73,7 @@ from core.keg_views import (
     bar_shrinkage_report,
     bar_z_report,
     bar_z_report_share,
+    voided_tabs_list,
 )
 from core.shift_views import (
     open_shift,
@@ -207,6 +208,7 @@ from core.debt_views import (
     record_debt_payment,
     send_debt_reminder,
     toggle_credit_approval,
+    clear_defaulter,
     update_customer_credit_settings,
     customer_debt_statement,
 )
@@ -280,6 +282,7 @@ urlpatterns = [
     path("bar/shrinkage/", bar_shrinkage_report, name="bar_shrinkage_report"),
     path("bar/z-report/", bar_z_report, name="bar_z_report"),
     path("bar/z-report/share/", bar_z_report_share, name="bar_z_report_share"),
+    path("bar/tabs/voided/", voided_tabs_list, name="voided_tabs_list"),
     path("bar/reconciliation/", keg_reconciliation, name="keg_reconciliation"),
     path("bar/reconciliation/<int:barrel_id>/", keg_barrel_detail, name="keg_barrel_detail"),
     path("stock/bar/item/<int:item_id>/target-recommendation/", keg_target_recommendation, name="keg_target_recommendation"),
@@ -412,6 +415,7 @@ urlpatterns = [
     path("debt/<int:customer_id>/toggle-credit/", toggle_credit_approval, name="toggle_credit_approval"),
     path("debt/<int:customer_id>/settings/", update_customer_credit_settings, name="update_customer_credit_settings"),
     path("debt/<int:customer_id>/statement/", customer_debt_statement, name="customer_debt_statement"),
+    path("debt/<int:customer_id>/clear-defaulter/", clear_defaulter, name="clear_defaulter"),
     # ── Haki (Staff Contribution + Salary) ──
     path("staff/contribution/", staff_contribution_report, name="staff_contribution_report"),
     path("staff/<int:profile_id>/salary/", record_salary_payment, name="record_salary_payment"),

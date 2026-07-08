@@ -1010,7 +1010,7 @@ def tabs_list(request):
                 'total': sum(float(e['amount']) for e in entries),
                 'unpaid_total': sum(float(e['amount']) for e in entries if not e['is_paid']),
                 'entries': entries,
-                'opened_at': _opened_local.strftime('%H:%M'),
+                'opened_at': _opened_local.strftime('%I:%M %p').lstrip('0'),
                 'opened_date': _opened_local.strftime('%Y-%m-%d'),
                 'is_food_tab': tab.source == 'kitchen',
                 'cross_notice': cross_notice,
@@ -1045,7 +1045,7 @@ def tabs_list(request):
                 'total': sum(float(e['amount']) for e in entries),
                 'unpaid_total': unpaid,
                 'entries': entries,
-                'opened_at': _opened_local.strftime('%H:%M'),
+                'opened_at': _opened_local.strftime('%I:%M %p').lstrip('0'),
                 'opened_date': _opened_local.strftime('%Y-%m-%d'),
                 'is_food_tab': tab.source == 'kitchen',
                 'cross_notice': cross_notice,
@@ -1393,7 +1393,8 @@ def void_tab(request, tab_id):
 
     tab.status = 'VOID'
     tab.settled_at = now
-    tab.save(update_fields=['status', 'settled_at'])
+    tab.void_reason = reason[:120]
+    tab.save(update_fields=['status', 'settled_at', 'void_reason'])
 
     # Only mark defaulter when the voided tab actually carried converted credit transactions
     if had_credit and tab.customer_name:
@@ -2396,3 +2397,46 @@ def bar_z_report_share(request):
         return JsonResponse({'ok': True})
     except Exception as exc:
         return JsonResponse({'ok': False, 'error': str(exc)})
+
+
+@login_required
+def voided_tabs_list(request):
+    """Owner/manager: history of all voided (written-off) tabs with reason and items."""
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return redirect('bar_board')
+
+    business = up.business
+    today = timezone.localdate()
+
+    try:
+        date_from = date_type.fromisoformat(request.GET.get('from', ''))
+    except ValueError:
+        date_from = today - timedelta(days=30)
+    try:
+        date_to = date_type.fromisoformat(request.GET.get('to', ''))
+    except ValueError:
+        date_to = today
+
+    voided = (
+        BarTab.objects
+        .filter(
+            business=business,
+            status='VOID',
+            settled_at__date__gte=date_from,
+            settled_at__date__lte=date_to,
+        )
+        .select_related('served_by', 'customer')
+        .prefetch_related('entries')
+        .order_by('-settled_at')
+    )
+
+    total_kes = sum(float(t.total()) for t in voided)
+
+    return render(request, 'core/bar/voided_tabs.html', {
+        'voided_tabs': voided,
+        'total_kes': total_kes,
+        'date_from': date_from,
+        'date_to': date_to,
+        'today': today,
+    })
