@@ -1195,7 +1195,8 @@ def remove_tab_entry(request, tab_id, entry_id):
     entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
 
     entry.transaction.payment_method = 'void'
-    entry.transaction.save(update_fields=['payment_method'])
+    entry.transaction.qty = Decimal('0')  # nullify stock effect — item was never given to customer
+    entry.transaction.save(update_fields=['payment_method', 'qty'])
 
     new_total = float(entry.tab.entries.filter(is_paid=False).aggregate(t=Sum('amount'))['t'] or 0)
     return JsonResponse({'ok': True, 'new_total': new_total})

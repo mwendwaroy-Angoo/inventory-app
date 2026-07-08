@@ -90,6 +90,10 @@ def _get_live_tab_state(receipt):
                 for e in btab.entries.all().select_related(
                     'transaction__item__store'
                 ).order_by('id'):
+                    # Entries removed via ✕ (payment_method='void', is_paid=True) are
+                    # excluded entirely — they were data-entry corrections, not real sales.
+                    if e.payment_method == 'void':
+                        continue
                     is_kitchen = False
                     try:
                         is_kitchen = e.transaction.item.store.is_kitchen
