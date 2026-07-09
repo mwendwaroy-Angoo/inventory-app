@@ -289,11 +289,18 @@ def customer_debt_profile(request, customer_id):
     from core.credit_policy import get_credit_standing
     credit_standing = get_credit_standing(business, customer, scope=scope)
 
+    has_daraja = bool(
+        getattr(business, 'daraja_consumer_key', None)
+        and getattr(business, 'daraja_consumer_secret', None)
+        and (getattr(business, 'mpesa_till', None) or getattr(business, 'mpesa_paybill', None))
+    )
+
     return render(request, 'core/customer_debt_profile.html', {
         **data,
         'is_owner':       is_owner,
         'scope':          scope,
         'has_kitchen':    has_kitchen,
+        'has_daraja':     has_daraja,
         'today':          timezone.now().date().isoformat(),
         'today_label':    timezone.now().date().strftime('%B %d, %Y'),
         'payment_methods': CustomerDebtPayment.PAYMENT_METHOD_CHOICES,

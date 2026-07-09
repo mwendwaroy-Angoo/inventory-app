@@ -564,21 +564,34 @@
                     </div>
 
                     <!-- STK Push section — shown when M-Pesa is selected -->
-                    <div id="stk-push-section" style="display:none; margin-bottom:0.75rem; padding:0.8rem; background:rgba(255,255,255,0.03); border:1px solid #333; border-radius:8px;">
-                        <div style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.5rem; font-weight:600;">
-                            📲 {% trans 'Request payment via STK Push to customer phone' %}
+                    <div id="stk-push-section" style="display:none; margin-bottom:0.75rem;">
+                        {% if has_daraja %}
+                        <div style="padding:0.8rem; background:rgba(255,255,255,0.03); border:1px solid #333; border-radius:8px;">
+                            <div style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.5rem; font-weight:600;">
+                                📲 {% trans 'Request payment via STK Push to customer phone' %}
+                            </div>
+                            <div style="display:flex; gap:0.5rem; margin-bottom:0.45rem; flex-wrap:wrap;">
+                                <input type="tel" id="stkPhone" class="form-control form-control-sm" style="min-width:140px; flex:1;"
+                                       placeholder="07XX XXX XXX" value="{{ customer.phone }}">
+                                <button type="button" class="btn btn-gold btn-sm px-3" onclick="window._sendDebtStk()">
+                                    📲 {% trans 'Send STK' %}
+                                </button>
+                            </div>
+                            <div id="stk-poll-status" style="font-size:0.8rem; text-align:center; padding:0.25rem 0; display:none; color:#b0b0b0;"></div>
+                            <div style="font-size:0.72rem; color:#666; margin-top:0.25rem;">
+                                {% trans 'Customer enters M-Pesa PIN on their phone — payment is confirmed automatically.' %}
+                            </div>
                         </div>
-                        <div style="display:flex; gap:0.5rem; margin-bottom:0.45rem; flex-wrap:wrap;">
-                            <input type="tel" id="stkPhone" class="form-control form-control-sm" style="min-width:140px; flex:1;"
-                                   placeholder="07XX XXX XXX" value="{{ customer.phone }}">
-                            <button type="button" class="btn btn-gold btn-sm px-3" onclick="window._sendDebtStk()">
-                                📲 {% trans 'Send STK' %}
-                            </button>
+                        {% else %}
+                        <div style="padding:0.65rem 0.85rem; background:rgba(201,168,76,0.05); border:1px solid rgba(201,168,76,0.2); border-radius:8px; font-size:0.78rem; color:#b0b0b0;">
+                            💡 {% trans 'STK Push not configured.' %}
+                            {% if is_owner %}
+                            <a href="{% url 'payment_settings' %}" style="color:var(--gold);">{% trans 'Set up Daraja credentials in Payment Settings.' %}</a>
+                            {% else %}
+                            {% trans 'Ask the owner to configure Daraja M-Pesa credentials.' %}
+                            {% endif %}
                         </div>
-                        <div id="stk-poll-status" style="font-size:0.8rem; text-align:center; padding:0.25rem 0; display:none; color:#b0b0b0;"></div>
-                        <div style="font-size:0.72rem; color:#666; margin-top:0.25rem;">
-                            {% trans 'Customer enters M-Pesa PIN on their phone — payment is confirmed automatically.' %}
-                        </div>
+                        {% endif %}
                     </div>
 
                     <div class="mb-1">
