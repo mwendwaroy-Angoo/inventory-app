@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Daily Sales — {{ selected_date|date:"d M Y" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .ds-tile {
+        background: #2a2a2a;
+        border-radius: 10px;
+        padding: 1rem;
+        text-align: center;
+    }
+    .ds-tile .ds-label {
+        color: #b0b0b0;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.3rem;
+    }
+    .ds-tile .ds-value {
+        font-size: 1.35rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .ds-tile .ds-sub {
+        color: #b0b0b0;
+        font-size: 0.72rem;
+        margin-top: 0.3rem;
+    }
+    .ds-card {
+        background: #2a2a2a;
+        border-radius: 10px;
+        margin-bottom: 1.25rem;
+        overflow: hidden;
+    }
+    .ds-card-header {
+        padding: 0.85rem 1.25rem;
+        border-bottom: 1px solid #333;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .ds-card-header h6 {
+        color: var(--gold);
+        font-family: 'Playfair Display', serif;
+        margin: 0;
+        font-size: 0.95rem;
+    }
+    .ds-table td, .ds-table th {
+        border-color: #333 !important;
+        color: var(--pearl) !important;
+        padding: 0.6rem 0.75rem !important;
+        vertical-align: middle;
+        font-size: 0.85rem;
+    }
+    .ds-table th {
+        color: var(--gold) !important;
+        font-size: 0.7rem !important;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: rgba(255,255,255,0.02) !important;
+        font-weight: 500 !important;
+    }
+    .split-bar {
+        background: #2a2a2a;
+        border-left: 3px solid #C8752A;
+        border-radius: 0 10px 10px 0;
+        padding: 0.85rem 1.1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .split-kitchen {
+        border-left-color: #4ade80;
+    }
+    .date-nav-btn {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid #333;
+        color: var(--pearl);
+        border-radius: 6px;
+        padding: 0.3rem 0.75rem;
+        text-decoration: none;
+        font-size: 0.85rem;
+        transition: background 0.15s;
+    }
+    .date-nav-btn:hover { background: rgba(255,255,255,0.09); color: var(--pearl); }
+    .date-nav-btn.disabled { opacity: 0.35; pointer-events: none; }
+    #datePickerInput {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid #444;
+        color: var(--pearl);
+        border-radius: 6px;
+        padding: 0.3rem 0.6rem;
+        font-size: 0.85rem;
+        max-width: 155px;
+        cursor: pointer;
+    }
+    #datePickerInput::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+    .zero-state { padding: 2.5rem 1.25rem; text-align: center; color: #b0b0b0; font-size: 0.9rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Page header + date navigation -->
+<div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+    <h1 class="page-title mb-0">📅 {% trans 'Daily Sales' %}</h1>
+    <div class="d-flex align-items-center gap-2 ms-auto flex-wrap">
+        <a href="?date={{ prev_date|date:'Y-m-d' }}" class="date-nav-btn">&#8592;</a>
+        <input type="date" id="datePickerInput"
+               value="{{ selected_date|date:'Y-m-d' }}"
+               max="{{ today_str }}">
+        <a href="?date={{ next_date|date:'Y-m-d' }}"
+           class="date-nav-btn {% if is_today %}disabled{% endif %}">&#8594;</a>
+        {% if not is_today %}
+        <a href="?" class="btn btn-gold btn-sm ms-1">{% trans 'Today' %}</a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Date headline -->
+<div class="mb-4">
+    <h2 style="color:var(--pearl); font-family:'Playfair Display',serif; font-size:1.4rem; margin:0;">
+        {{ selected_date|date:"l, d F Y" }}
+        {% if is_today %}
+        <span style="background:rgba(201,168,76,0.15); color:var(--gold); font-size:0.72rem;
+                     padding:0.2rem 0.65rem; border-radius:20px; font-family:'DM Sans',sans-serif;
+                     vertical-align:middle; margin-left:0.5rem;">LEO</span>
+        {% endif %}
+    </h2>
+</div>
+
+<!-- Revenue tiles -->
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="ds-tile">
+            <div class="ds-label">{% trans 'Total Revenue' %}</div>
+            <div class="ds-value" style="color:var(--gold);">KES {{ total_rev|floatformat:0 }}</div>
+            <div class="ds-sub">{{ txn_count }} {% trans 'sale' %}{{ txn_count|pluralize }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="ds-tile">
+            <div class="ds-label">💵 {% trans 'Cash' %}</div>
+            <div class="ds-value" style="color:#fbbf24;">KES {{ cash_rev|floatformat:0 }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="ds-tile">
+            <div class="ds-label">📱 M-Pesa</div>
+            <div class="ds-value" style="color:#6ee7b7;">KES {{ mpesa_rev|floatformat:0 }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="ds-tile">
+            <div class="ds-label">💳 {% trans 'Credit / Deni' %}</div>
+            <div class="ds-value" style="color:{% if credit_rev > 0 %}#f87171{% else %}#b0b0b0{% endif %};">
+                KES {{ credit_rev|floatformat:0 }}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if is_owner and has_kitchen %}
+<!-- Bar / Kitchen split -->
+<div class="row g-3 mb-4">
+    <div class="col-6">
+        <div class="split-bar">
+            <span style="color:#b0b0b0; font-size:0.85rem;">🍺 {% trans 'Bar' %}</span>
+            <span style="color:#C8752A; font-weight:700; font-size:1.05rem;">KES {{ bar_rev|floatformat:0 }}</span>
+        </div>
+    </div>
+    <div class="col-6">
+        <div class="split-bar split-kitchen">
+            <span style="color:#b0b0b0; font-size:0.85rem;">🍗 {% trans 'Kitchen' %}</span>
+            <span style="color:#4ade80; font-weight:700; font-size:1.05rem;">KES {{ kitchen_rev|floatformat:0 }}</span>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Items sold -->
+<div class="ds-card">
+    <div class="ds-card-header">
+        <h6>🛒 {% trans 'Items Sold' %}</h6>
+        <span style="color:#b0b0b0; font-size:0.78rem;">{{ item_rows|length }} {% trans 'item' %}{{ item_rows|length|pluralize }}</span>
+    </div>
+    {% if item_rows %}
+    <div class="table-responsive">
+        <table class="table mb-0 ds-table">
+            <thead>
+                <tr>
+                    <th style="padding-left:1.25rem !important;">{% trans 'Item' %}</th>
+                    {% if is_owner and has_kitchen %}<th style="width:30px;"></th>{% endif %}
+                    <th class="text-end">{% trans 'Units' %}</th>
+                    <th class="text-end">{% trans 'Revenue' %}</th>
+                    <th class="text-end">{% trans 'Cash' %}</th>
+                    <th class="text-end">M-Pesa</th>
+                    <th class="text-end" style="padding-right:1.25rem !important;">{% trans 'Credit' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in item_rows %}
+                <tr>
+                    <td style="padding-left:1.25rem !important;">{{ row.name }}</td>
+                    {% if is_owner and has_kitchen %}
+                    <td>
+                        {% if row.is_kitchen %}
+                        <span style="font-size:0.65rem; color:#4ade80;">🍗</span>
+                        {% else %}
+                        <span style="font-size:0.65rem; color:#C8752A;">🍺</span>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                    <td class="text-end" style="color:#b0b0b0;">{{ row.qty|floatformat:1 }} {{ row.unit }}</td>
+                    <td class="text-end" style="color:var(--gold); font-weight:600;">{{ row.revenue|floatformat:0 }}</td>
+                    <td class="text-end" style="color:#fbbf24;">
+                        {% if row.cash > 0 %}{{ row.cash|floatformat:0 }}{% else %}<span style="color:#555;">—</span>{% endif %}
+                    </td>
+                    <td class="text-end" style="color:#6ee7b7;">
+                        {% if row.mpesa > 0 %}{{ row.mpesa|floatformat:0 }}{% else %}<span style="color:#555;">—</span>{% endif %}
+                    </td>
+                    <td class="text-end" style="color:#f87171; padding-right:1.25rem !important;">
+                        {% if row.credit > 0 %}{{ row.credit|floatformat:0 }}{% else %}<span style="color:#555;">—</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="zero-state">
+        {% if txn_count == 0 %}
+        {% trans 'No sales recorded on this day.' %}
+        {% else %}—{% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{% if owner_consumes %}
+<!-- Owner Drawings -->
+<div class="ds-card">
+    <div class="ds-card-header">
+        <h6>🥃 {% trans 'Owner Drawings' %}</h6>
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0 ds-table">
+            <tbody>
+                {% for oc in owner_consumes %}
+                <tr>
+                    <td style="padding-left:1.25rem !important;">{{ oc.item.description }}</td>
+                    <td class="text-end">
+                        {{ oc.qty|floatformat:1|slice:"1:" }} {{ oc.item.unit }}
+                    </td>
+                    <td style="color:#b0b0b0; font-size:0.8rem; padding-right:1.25rem !important;">
+                        {{ oc.recipient|default:'—' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if wastage_list %}
+<!-- Wastage -->
+<div class="ds-card" style="border-left:3px solid #c0395a;">
+    <div class="ds-card-header">
+        <h6 style="color:#c0395a;">⚠️ {% trans 'Wastage' %}</h6>
+        <span style="color:#c0395a; font-size:0.78rem; font-weight:600;">
+            KES {{ wastage_value|floatformat:0 }} {% trans 'cost lost' %}
+        </span>
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0 ds-table">
+            <tbody>
+                {% for w in wastage_list %}
+                <tr>
+                    <td style="padding-left:1.25rem !important;">{{ w.item.description }}</td>
+                    <td class="text-end">{{ w.qty|floatformat:2 }} {{ w.item.unit }}</td>
+                    <td style="color:#b0b0b0; font-size:0.8rem; padding-right:1.25rem !important;">
+                        {{ w.notes|default:'—' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Footer links -->
+<div class="d-flex gap-3 flex-wrap align-items-center mt-2" style="font-size:0.85rem; color:#b0b0b0; padding-bottom:1rem;">
+    <span>
+        🧾
+        {% if receipt_count %}
+            {{ receipt_count }} {% trans 'receipt' %}{{ receipt_count|pluralize }} {% trans 'issued' %}
+        {% else %}
+            {% trans 'No receipts issued' %}
+        {% endif %}
+    </span>
+    <a href="{% url 'receipts_list' %}" style="color:var(--gold);">{% trans 'View receipts' %} →</a>
+    <a href="{% url 'transaction_history' %}" style="color:var(--gold);">{% trans 'Full transaction log' %} →</a>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('datePickerInput').addEventListener('change', function () {
+    if (this.value) {
+        window.location.href = '?date=' + this.value;
+    }
+});
+</script>
+{% endblock %}

@@ -26,9 +26,9 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County, RevenueTarget, Store, ProduceBunch, KegBarrel, BarCupLog, BarTab
+from core.models import Item, Transaction, Order, Payment, BusinessExpense, CapitalInvestment, BusinessTypeRequirement, BusinessCompliance, Customer, County, RevenueTarget, Store, ProduceBunch, KegBarrel, BarCupLog, BarTab, Receipt
 from core.forms import BusinessExpenseForm, CapitalInvestmentForm
-from core.views import get_user_profile, owner_required, owner_or_manager_required
+from core.views import get_user_profile, owner_required, owner_or_manager_required, _station_scope
 
 
 def _units(t):
@@ -1726,4 +1726,162 @@ def expense_report(request):
         'total_12m_revenue':   round(total_12m_revenue, 0),
         'overall_expense_pct': overall_expense_pct,
         'today':               today,
+    })
+
+
+# ── Daily Sales Summary ────────────────────────────────────────────────────────
+
+@login_required
+def daily_sales(request):
+    """Pick any date and see all sales, revenue by channel, and item breakdown."""
+    user_profile = request.user.userprofile
+    business     = user_profile.business
+    is_owner     = user_profile.is_owner_or_manager
+    today        = timezone.localdate()
+
+    # ── Date selection ──
+    date_str = request.GET.get('date', '')
+    try:
+        selected_date = date.fromisoformat(date_str)
+    except (ValueError, TypeError):
+        selected_date = today
+
+    prev_date = selected_date - timedelta(days=1)
+    next_date = selected_date + timedelta(days=1)
+    is_today  = (selected_date == today)
+
+    # ── Station scoping ──
+    show_bar, show_kitchen = _station_scope(user_profile)
+    has_kitchen = getattr(business, 'has_kitchen', False)
+
+    # ── Issue transactions for the day (voids excluded) ──
+    txns_qs = (
+        Transaction.objects
+        .filter(business=business, type='Issue', date=selected_date)
+        .exclude(payment_method='void')
+        .select_related('item', 'item__store', 'keg_barrel', 'produce_bunch')
+    )
+
+    # Apply station filter for non-owner/manager staff
+    if not (show_bar and show_kitchen):
+        if show_kitchen and not show_bar:
+            txns_qs = txns_qs.filter(item__store__is_kitchen=True)
+        else:
+            txns_qs = txns_qs.filter(item__store__is_kitchen=False)
+
+    txns = list(txns_qs.order_by('id'))
+
+    # ── Revenue rollup ──
+    cash_rev    = 0.0
+    mpesa_rev   = 0.0
+    credit_rev  = 0.0
+    bar_rev     = 0.0
+    kitchen_rev = 0.0
+    item_map    = {}   # item_id → summary dict
+
+    for txn in txns:
+        rev = txn.revenue()
+        pm  = txn.payment_method or 'cash'
+
+        if pm == 'mpesa':
+            mpesa_rev += rev
+        elif pm == 'credit':
+            credit_rev += rev
+        else:
+            cash_rev += rev
+
+        # Bar / kitchen split (owners with kitchen only)
+        if is_owner and has_kitchen:
+            store = txn.item.store
+            if store and store.is_kitchen:
+                kitchen_rev += rev
+            else:
+                bar_rev += rev
+
+        # Per-item rollup
+        iid = txn.item_id
+        if iid not in item_map:
+            item_map[iid] = {
+                'name':       txn.item.description,
+                'unit':       txn.item.unit,
+                'is_kitchen': bool(txn.item.store and txn.item.store.is_kitchen),
+                'qty':        0.0,
+                'revenue':    0.0,
+                'cash':       0.0,
+                'mpesa':      0.0,
+                'credit':     0.0,
+            }
+        row = item_map[iid]
+        # Keg pours (qty in ml) and bunch sales count as 1 serving each
+        if getattr(txn, 'keg_barrel_id', None) or getattr(txn, 'produce_bunch_id', None):
+            row['qty'] += 1.0
+        else:
+            row['qty'] += float(abs(txn.qty or 0))
+        row['revenue'] += rev
+        if pm == 'mpesa':
+            row['mpesa'] += rev
+        elif pm == 'credit':
+            row['credit'] += rev
+        else:
+            row['cash'] += rev
+
+    total_rev = cash_rev + mpesa_rev + credit_rev
+    item_rows = sorted(item_map.values(), key=lambda x: -x['revenue'])
+
+    # ── Wastage (station-scoped) ──
+    wastage_qs = (
+        Transaction.objects
+        .filter(business=business, type='Wastage', date=selected_date)
+        .select_related('item', 'item__store')
+    )
+    if not (show_bar and show_kitchen):
+        if show_kitchen and not show_bar:
+            wastage_qs = wastage_qs.filter(item__store__is_kitchen=True)
+        else:
+            wastage_qs = wastage_qs.filter(item__store__is_kitchen=False)
+    wastage_list  = list(wastage_qs)
+    wastage_value = sum(
+        float(abs(w.qty or 0)) * float(w.item.cost_price or 0)
+        for w in wastage_list
+    )
+
+    # ── Owner consumption (owner/manager only) ──
+    owner_consumes = []
+    if is_owner:
+        owner_consumes = list(
+            Transaction.objects
+            .filter(business=business, type='OwnerConsumption', date=selected_date)
+            .select_related('item')
+        )
+
+    # ── Receipts issued on this day ──
+    receipt_count = (
+        Receipt.objects
+        .filter(business=business, created_at__date=selected_date)
+        .exclude(payment_method='statement')
+        .count()
+    )
+
+    return render(request, 'core/daily_summary.html', {
+        'selected_date':  selected_date,
+        'prev_date':      prev_date,
+        'next_date':      next_date,
+        'is_today':       is_today,
+        'today_str':      today.isoformat(),
+        'is_owner':       is_owner,
+        'has_kitchen':    has_kitchen,
+        'show_bar':       show_bar,
+        'show_kitchen':   show_kitchen,
+        'total_rev':      round(total_rev, 2),
+        'cash_rev':       round(cash_rev, 2),
+        'mpesa_rev':      round(mpesa_rev, 2),
+        'credit_rev':     round(credit_rev, 2),
+        'bar_rev':        round(bar_rev, 2),
+        'kitchen_rev':    round(kitchen_rev, 2),
+        'item_rows':      item_rows,
+        'txn_count':      len(txns),
+        'wastage_list':   wastage_list,
+        'wastage_value':  round(wastage_value, 2),
+        'owner_consumes': owner_consumes,
+        'receipt_count':  receipt_count,
     })

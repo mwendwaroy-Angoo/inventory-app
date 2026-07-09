@@ -187,6 +187,7 @@ from core.analytics_views import (
     county_heatmap,
     revenue_target_settings,
     revenue_target_progress,
+    daily_sales,
 )
 from core.recurring_expense_views import (
     recurring_expense_list,
@@ -444,6 +445,7 @@ urlpatterns = [
     path("analytics/targets/", revenue_target_settings, name="revenue_target_settings"),
     path("analytics/targets/progress/", revenue_target_progress, name="revenue_target_progress"),
     path("sales/", sales_dashboard, name="sales_dashboard"),
+    path("daily/", daily_sales, name="daily_sales"),
     path("export/sales/", export_sales_excel, name="export_sales"),
     path("notifications/", notifications_list, name="notifications"),
     path("notifications/count/", notifications_count, name="notifications_count"),
