@@ -254,6 +254,103 @@
             border-radius: 10px;
         }
 
+        /* ── Debt block UI ─────────────────────────────────── */
+        .debt-blocks { padding: 0.75rem 1.2rem 0.5rem; }
+        .debt-block {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid #2e2e2e;
+            border-radius: 10px;
+            padding: 0.85rem 1rem;
+            margin-bottom: 0.65rem;
+        }
+        .debt-block-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.55rem;
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--pearl);
+        }
+        .debt-remaining { font-size: 0.78rem; color: #f87171; font-weight: 600; }
+        .debt-gauge-wrap {
+            height: 6px;
+            background: #2e2e2e;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.35rem;
+        }
+        .debt-gauge-fill {
+            height: 100%;
+            background: var(--gold);
+            border-radius: 3px;
+            transition: width 0.4s ease;
+        }
+        .debt-gauge-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            color: #b0b0b0;
+            margin-bottom: 0.65rem;
+        }
+        .debt-pay-row {
+            display: flex;
+            gap: 0.4rem;
+            margin-bottom: 0.45rem;
+        }
+        .debt-amount-input {
+            width: 90px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: var(--pearl);
+            padding: 0.42rem 0.6rem;
+            font-size: 0.82rem;
+            font-weight: 700;
+        }
+        .debt-phone-input {
+            flex: 1;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: var(--pearl);
+            padding: 0.42rem 0.6rem;
+            font-size: 0.82rem;
+        }
+        .debt-action-row { display: flex; gap: 0.4rem; }
+        .btn-debt-stk {
+            flex: 1;
+            padding: 0.48rem 0;
+            border: none;
+            border-radius: 6px;
+            background: var(--gold);
+            color: #111;
+            font-weight: 700;
+            font-size: 0.82rem;
+            cursor: pointer;
+        }
+        .btn-debt-qr {
+            padding: 0.48rem 0.75rem;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: transparent;
+            color: #b0b0b0;
+            font-size: 0.78rem;
+            cursor: pointer;
+        }
+        .debt-stk-status {
+            font-size: 0.78rem;
+            text-align: center;
+            padding: 0.3rem 0;
+            min-height: 1.5rem;
+        }
+        .debt-cleared {
+            text-align: center;
+            font-size: 0.82rem;
+            color: #6ee7b7;
+            padding: 0.5rem 0;
+        }
+
         /* ── Thermal print ──────────────────────────────────── */
         @media print {
             * { -webkit-print-color-adjust: exact; color-adjust: exact; }
@@ -466,12 +563,79 @@
         </div>
         {% endif %}
 
-        {% if is_live_tab %}
-        <!-- ── Customer Pay Now section ───────────────────────────── -->
-        <div id="pay-section" style="margin:0.5rem 1.2rem 0.75rem; display:none;">
-            <div style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.6rem; font-weight:600; letter-spacing:0.03em;">
-                {% if tab_status == 'DEBT' %}⚠️ LIPA DENI{% else %}💳 LIPA SASA{% endif %}
+        {% if is_live_tab and tab_status == 'DEBT' and station_debt %}
+        <!-- ── Two-block DEBT payment UI ─────────────────────────── -->
+        <div class="debt-blocks" id="debt-pay-section">
+            <div style="font-size:0.72rem; color:#b0b0b0; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.6rem;">⚠️ Lipa Deni Lako</div>
+
+            {% if station_debt.bar.has_debt %}
+            <div class="debt-block" id="bar-debt-block">
+                <div class="debt-block-header">
+                    <span>🍺 Bar</span>
+                    <span class="debt-remaining" id="bar-remaining">KES {{ station_debt.bar.outstanding|floatformat:"0" }} bado</span>
+                </div>
+                <div class="debt-gauge-wrap">
+                    <div class="debt-gauge-fill" id="bar-gauge" style="width:{{ station_debt.bar.pct_paid }}%;"></div>
+                </div>
+                <div class="debt-gauge-labels">
+                    <span id="bar-paid-label">{% if station_debt.bar.paid > 0 %}Umelipa KES {{ station_debt.bar.paid|floatformat:"0" }}{% else %}Bado kuanza kulipa{% endif %}</span>
+                    <span id="bar-outstanding-label">Bado KES {{ station_debt.bar.outstanding|floatformat:"0" }}</span>
+                </div>
+                <div class="debt-pay-row">
+                    <input type="number" id="barDebtAmount" class="debt-amount-input"
+                           value="{{ station_debt.bar.outstanding|floatformat:"0" }}"
+                           min="1" placeholder="KES">
+                    <input type="tel" id="barDebtPhone" class="debt-phone-input"
+                           value="{{ station_debt.customer_phone }}" placeholder="07XX XXX XXX">
+                </div>
+                <div class="debt-action-row">
+                    <button class="btn-debt-stk" id="barStkBtn" onclick="debtPayStk('bar')">📲 Lipa M-Pesa</button>
+                    <button class="btn-debt-qr" onclick="debtToggleQr('bar')">Onyesha QR ▼</button>
+                </div>
+                <div class="debt-stk-status" id="bar-stk-status"></div>
+                <div id="bar-qr-wrap" style="display:none; text-align:center; margin-top:0.75rem;">
+                    <div id="barQrCanvas" style="display:inline-block;"></div>
+                    <div style="font-size:0.72rem; color:#b0b0b0; margin-top:0.3rem;">Scan with M-Pesa to pay</div>
+                </div>
             </div>
+            {% endif %}
+
+            {% if station_debt.kitchen.has_debt %}
+            <div class="debt-block" id="kitchen-debt-block">
+                <div class="debt-block-header">
+                    <span>🍗 Kitchen</span>
+                    <span class="debt-remaining" id="kitchen-remaining">KES {{ station_debt.kitchen.outstanding|floatformat:"0" }} bado</span>
+                </div>
+                <div class="debt-gauge-wrap">
+                    <div class="debt-gauge-fill" id="kitchen-gauge" style="width:{{ station_debt.kitchen.pct_paid }}%;"></div>
+                </div>
+                <div class="debt-gauge-labels">
+                    <span id="kitchen-paid-label">{% if station_debt.kitchen.paid > 0 %}Umelipa KES {{ station_debt.kitchen.paid|floatformat:"0" }}{% else %}Bado kuanza kulipa{% endif %}</span>
+                    <span id="kitchen-outstanding-label">Bado KES {{ station_debt.kitchen.outstanding|floatformat:"0" }}</span>
+                </div>
+                <div class="debt-pay-row">
+                    <input type="number" id="kitchenDebtAmount" class="debt-amount-input"
+                           value="{{ station_debt.kitchen.outstanding|floatformat:"0" }}"
+                           min="1" placeholder="KES">
+                    <input type="tel" id="kitchenDebtPhone" class="debt-phone-input"
+                           value="{{ station_debt.customer_phone }}" placeholder="07XX XXX XXX">
+                </div>
+                <div class="debt-action-row">
+                    <button class="btn-debt-stk" id="kitchenStkBtn" onclick="debtPayStk('kitchen')">📲 Lipa M-Pesa</button>
+                    <button class="btn-debt-qr" onclick="debtToggleQr('kitchen')">Onyesha QR ▼</button>
+                </div>
+                <div class="debt-stk-status" id="kitchen-stk-status"></div>
+                <div id="kitchen-qr-wrap" style="display:none; text-align:center; margin-top:0.75rem;">
+                    <div id="kitchenQrCanvas" style="display:inline-block;"></div>
+                    <div style="font-size:0.72rem; color:#b0b0b0; margin-top:0.3rem;">Scan with M-Pesa to pay</div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        {% elif is_live_tab %}
+        <!-- ── Entry-selection pay section (OPEN tabs only) ──────── -->
+        <div id="pay-section" style="margin:0.5rem 1.2rem 0.75rem; display:none;">
+            <div style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.6rem; font-weight:600; letter-spacing:0.03em;">💳 LIPA SASA</div>
             <div id="pay-lines-list" style="margin-bottom:0.6rem;"></div>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; gap:0.5rem;">
                 <button id="btnSelectAll" onclick="receiptPaySelectAll()" style="font-size:0.75rem; background:none; border:none; color:#c9a84c; cursor:pointer; padding:0; text-decoration:underline;">Chagua Yote</button>
@@ -590,14 +754,114 @@
     });
 })();
 
-{% if is_live_tab %}
-/* ── Customer Pay Now ── */
+{% if is_live_tab and tab_status == 'DEBT' %}
+/* ── Debt block payment UI ── */
 (function () {
     var TOKEN = "{{ receipt.token|escapejs }}";
-    var _lines = [];   // {name, subtotal, entry_id} — populated by live poll
-    var _stkPollIv = null;
-    var _firstRender = true;   // on first render all items start unchecked
-    var _checkedIds  = new Set(); // tracks what the customer has explicitly ticked
+
+    function fmt(n) { return 'KES ' + Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0}); }
+
+    function stkStatus(source, msg, color) {
+        var el = document.getElementById(source + '-stk-status');
+        if (!el) return;
+        el.textContent = msg;
+        el.style.color = color || '#b0b0b0';
+    }
+
+    function pollDebtStk(paymentId, source, attempt) {
+        if (attempt >= 24) {
+            stkStatus(source, 'Muda umekwisha — angalia kama M-Pesa imefanikiwa au jaribu tena.', '#fbbf24');
+            var btn = document.getElementById(source + 'StkBtn');
+            if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
+            return;
+        }
+        setTimeout(function () {
+            fetch('/mpesa/status/?payment_id=' + paymentId)
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.status === 'completed') {
+                    stkStatus(source, '✅ Malipo yamekamilika! Asante.', '#6ee7b7');
+                    var btn = document.getElementById(source + 'StkBtn');
+                    if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
+                    // Live poll will update the gauge on the next tick
+                } else if (d.status === 'failed') {
+                    stkStatus(source, '❌ Malipo hayakufanikiwa. Jaribu tena.', '#f87171');
+                    var btn = document.getElementById(source + 'StkBtn');
+                    if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
+                } else {
+                    pollDebtStk(paymentId, source, attempt + 1);
+                }
+            })
+            .catch(function () { pollDebtStk(paymentId, source, attempt + 1); });
+        }, 5000);
+    }
+
+    window.debtPayStk = function (source) {
+        var amtEl   = document.getElementById(source + 'DebtAmount');
+        var phoneEl = document.getElementById(source + 'DebtPhone');
+        var btn     = document.getElementById(source + 'StkBtn');
+        var amt     = amtEl ? parseInt(amtEl.value, 10) : 0;
+        var phone   = phoneEl ? phoneEl.value.trim() : '';
+        if (!amt || amt < 1) { stkStatus(source, 'Weka kiasi ulichotaka kulipa.', '#fbbf24'); return; }
+        if (!phone) { stkStatus(source, 'Weka nambari ya simu yako ya M-Pesa.', '#fbbf24'); return; }
+        if (btn) { btn.disabled = true; btn.textContent = '...'; }
+        stkStatus(source, 'Inasubiri — angalia simu yako...', '#6ee7b7');
+        fetch('/r/' + TOKEN + '/pay/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({type: 'stk', source: source, debt_amount: amt, phone: phone}),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d.ok) {
+                stkStatus(source, 'Hitilafu: ' + (d.error || 'Jaribu tena.'), '#f87171');
+                if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
+                return;
+            }
+            stkStatus(source, '📱 Angalia simu yako — ingiza PIN yako ya M-Pesa.', '#6ee7b7');
+            pollDebtStk(d.payment_id, source, 0);
+        })
+        .catch(function () {
+            stkStatus(source, 'Hitilafu ya mtandao. Jaribu tena.', '#f87171');
+            if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
+        });
+    };
+
+    window.debtToggleQr = function (source) {
+        var amtEl  = document.getElementById(source + 'DebtAmount');
+        var wrap   = document.getElementById(source + '-qr-wrap');
+        var canvas = document.getElementById(source + 'QrCanvas');
+        if (!wrap || !canvas) return;
+        if (wrap.style.display !== 'none') { wrap.style.display = 'none'; return; }
+        var amt = amtEl ? parseInt(amtEl.value, 10) : 0;
+        if (!amt || amt < 1) { stkStatus(source, 'Weka kiasi kwanza.', '#fbbf24'); return; }
+        fetch('/r/' + TOKEN + '/pay/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({type: 'qr', source: source, debt_amount: amt}),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d.ok) { stkStatus(source, 'QR haikuweza kutengenezwa.', '#fbbf24'); return; }
+            canvas.innerHTML = '';
+            new QRCode(canvas, {
+                text: d.qr_data,
+                width: 160, height: 160,
+                colorDark: '#1a1a1a', colorLight: '#f0ece4',
+                correctLevel: QRCode.CorrectLevel.M,
+            });
+            wrap.style.display = 'block';
+        })
+        .catch(function () { stkStatus(source, 'Hitilafu ya mtandao.', '#f87171'); });
+    };
+}());
+{% elif is_live_tab %}
+/* ── Entry-selection pay section (OPEN tabs) ── */
+(function () {
+    var TOKEN = "{{ receipt.token|escapejs }}";
+    var _lines = [];
+    var _firstRender = true;
+    var _checkedIds  = new Set();
 
     function fmtKes(n) { return 'KES ' + Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0}); }
 
@@ -607,17 +871,13 @@
         var paySection = document.getElementById('pay-section');
         if (!wrap || !paySection) return;
         if (!_lines.length) { paySection.style.display = 'none'; return; }
-
         if (!_firstRender) {
-            // Re-render from live poll: snapshot what the customer has ticked so far.
-            // New items (not yet rendered) default to unchecked.
             _checkedIds = new Set();
             document.querySelectorAll('.pay-entry-cb:checked').forEach(function(cb) {
                 _checkedIds.add(parseInt(cb.dataset.id));
             });
         }
         _firstRender = false;
-
         paySection.style.display = 'block';
         var html = '';
         _lines.forEach(function(l) {
@@ -654,34 +914,23 @@
 
     function selectedEntryIds() {
         var ids = [];
-        document.querySelectorAll('.pay-entry-cb:checked').forEach(function(cb) {
-            ids.push(parseInt(cb.dataset.id));
-        });
+        document.querySelectorAll('.pay-entry-cb:checked').forEach(function(cb) { ids.push(parseInt(cb.dataset.id)); });
         return ids;
     }
-
     function selectedAmount() {
         var total = 0;
-        document.querySelectorAll('.pay-entry-cb:checked').forEach(function(cb) {
-            total += parseFloat(cb.dataset.amt) || 0;
-        });
+        document.querySelectorAll('.pay-entry-cb:checked').forEach(function(cb) { total += parseFloat(cb.dataset.amt) || 0; });
         return Math.round(total);
     }
-
     function stkStatus(msg, color) {
         var el = document.getElementById('pay-stk-status');
         if (!el) return;
-        el.style.display = 'block';
-        el.style.color = color || '#b0b0b0';
-        el.style.fontSize = '0.8rem';
-        el.style.textAlign = 'center';
-        el.style.padding = '0.35rem 0';
+        el.style.display = 'block'; el.style.color = color || '#b0b0b0';
+        el.style.fontSize = '0.8rem'; el.style.textAlign = 'center'; el.style.padding = '0.35rem 0';
         el.textContent = msg;
     }
-
     window.receiptPayStk = function() {
-        var ids = selectedEntryIds();
-        var amt = selectedAmount();
+        var ids = selectedEntryIds(); var amt = selectedAmount();
         if (!amt) { stkStatus('Chagua bidhaa ulizotaka kulipa.', '#fbbf24'); return; }
         var phone = (document.getElementById('payPhone') || {}).value || '';
         if (!phone) { stkStatus('Weka nambari ya simu yako ya M-Pesa.', '#fbbf24'); return; }
@@ -689,97 +938,58 @@
         if (btn) { btn.disabled = true; btn.textContent = '...'; }
         stkStatus('Inasubiri — angalia simu yako...', '#6ee7b7');
         fetch('/r/' + TOKEN + '/pay/', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({type: 'stk', entry_ids: ids, phone: phone}),
         })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            if (!d.ok) {
-                stkStatus('Hitilafu: ' + (d.error || 'Jaribu tena.'), '#f87171');
-                if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
-                return;
-            }
+            if (!d.ok) { stkStatus('Hitilafu: ' + (d.error || 'Jaribu tena.'), '#f87171'); if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; } return; }
             stkStatus('📱 Angalia simu yako — ingiza PIN yako ya M-Pesa.', '#6ee7b7');
             pollStkResult(d.payment_id, 0);
         })
-        .catch(function() {
-            stkStatus('Hitilafu ya mtandao. Jaribu tena.', '#f87171');
-            if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
-        });
+        .catch(function() { stkStatus('Hitilafu ya mtandao. Jaribu tena.', '#f87171'); if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; } });
     };
-
     function pollStkResult(paymentId, attempt) {
-        if (attempt >= 24) {
-            stkStatus('Muda umekwisha — angalia kama M-Pesa imefanikiwa au jaribu tena.', '#fbbf24');
-            var btn = document.getElementById('btnPayStk');
-            if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
-            return;
-        }
-        _stkPollIv = setTimeout(function() {
+        if (attempt >= 24) { stkStatus('Muda umekwisha — angalia kama M-Pesa imefanikiwa au jaribu tena.', '#fbbf24'); var btn = document.getElementById('btnPayStk'); if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; } return; }
+        setTimeout(function() {
             fetch('/mpesa/status/?payment_id=' + paymentId)
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d.status === 'completed') {
-                    stkStatus('✅ Malipo yamekamilika! Asante.', '#6ee7b7');
-                    document.getElementById('pay-section').style.display = 'none';
-                    // live poll will refresh lines automatically
-                } else if (d.status === 'failed') {
-                    stkStatus('❌ Malipo hayakufanikiwa. Jaribu tena.', '#f87171');
-                    var btn = document.getElementById('btnPayStk');
-                    if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; }
-                } else {
-                    pollStkResult(paymentId, attempt + 1);
-                }
+                if (d.status === 'completed') { stkStatus('✅ Malipo yamekamilika! Asante.', '#6ee7b7'); document.getElementById('pay-section').style.display = 'none'; }
+                else if (d.status === 'failed') { stkStatus('❌ Malipo hayakufanikiwa. Jaribu tena.', '#f87171'); var btn = document.getElementById('btnPayStk'); if (btn) { btn.disabled = false; btn.textContent = '📲 Lipa M-Pesa'; } }
+                else { pollStkResult(paymentId, attempt + 1); }
             })
             .catch(function() { pollStkResult(paymentId, attempt + 1); });
         }, 5000);
     }
-
     window.receiptPayQr = function() {
-        var ids = selectedEntryIds();
-        var amt = selectedAmount();
+        var ids = selectedEntryIds(); var amt = selectedAmount();
         if (!amt) { stkStatus('Chagua bidhaa ulizotaka kulipa.', '#fbbf24'); return; }
-        var qrWrap = document.getElementById('pay-qr-wrap');
-        var canvas = document.getElementById('payQrCanvas');
+        var qrWrap = document.getElementById('pay-qr-wrap'); var canvas = document.getElementById('payQrCanvas');
         if (!qrWrap || !canvas) return;
-        fetch('/r/' + TOKEN + '/pay/', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({type: 'qr', entry_ids: ids}),
-        })
+        fetch('/r/' + TOKEN + '/pay/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({type: 'qr', entry_ids: ids}), })
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) { stkStatus('QR haikuweza kutengenezwa. Lipa kwa STK.', '#fbbf24'); return; }
             canvas.innerHTML = '';
-            new QRCode(canvas, {
-                text: d.qr_data,
-                width: 160,
-                height: 160,
-                colorDark: '#1a1a1a',
-                colorLight: '#f0ece4',
-                correctLevel: QRCode.CorrectLevel.M,
-            });
-            var amtEl = document.getElementById('payQrAmount');
-            if (amtEl) amtEl.textContent = d.amount;
+            new QRCode(canvas, { text: d.qr_data, width: 160, height: 160, colorDark: '#1a1a1a', colorLight: '#f0ece4', correctLevel: QRCode.CorrectLevel.M });
+            var amtEl = document.getElementById('payQrAmount'); if (amtEl) amtEl.textContent = d.amount;
             qrWrap.style.display = 'block';
         })
         .catch(function() { stkStatus('Hitilafu ya mtandao.', '#f87171'); });
     };
-
-    // Expose so the live-poll renderLines can also feed the pay section
     window._receiptPayRenderLines = renderPayLines;
 }());
-
 {% endif %}
+
 {% if is_live_tab %}
 /* ── Live tab receipt: poll /r/<token>/live/ every 20 s ── */
 (function () {
     var TOKEN      = "{{ receipt.token|escapejs }}";
+    var IS_DEBT    = "{{ tab_status|escapejs }}" === 'DEBT';
     var pollSecs   = 20;
     var countdown  = pollSecs;
     var countEl    = document.getElementById('live-countdown');
-    var statusEl   = document.getElementById('live-status-text');
     var linesWrap  = document.querySelector('.receipt-lines');
     var totalEl    = document.querySelector('.total-amount');
 
@@ -790,31 +1000,68 @@
         var html = '';
         lines.forEach(function (l) {
             if (l.is_paid) {
-                // Paid item — strikethrough, muted, green tick
                 html += '<div class="receipt-line" style="opacity:0.6;">' +
                     '<span class="line-name" style="text-decoration:line-through;color:#888;">' + (l.name || '') + '</span>' +
                     '<span style="color:#6ee7b7;font-size:0.72rem;white-space:nowrap;margin:0 0.5rem;">✓ Imelipwa</span>' +
                     '<span class="line-amount" style="text-decoration:line-through;color:#888;">KES ' +
-                    Number(l.subtotal || 0).toLocaleString('en-KE', {maximumFractionDigits: 0}) + '</span>' +
-                    '</div>';
+                    Number(l.subtotal || 0).toLocaleString('en-KE', {maximumFractionDigits: 0}) + '</span></div>';
             } else {
-                html += '<div class="receipt-line">' +
-                    '<span class="line-name">' + (l.name || '') + '</span>' +
+                html += '<div class="receipt-line"><span class="line-name">' + (l.name || '') + '</span>' +
                     (l.qty && l.qty > 1 ? '<span class="line-qty">×' + l.qty + '</span>' : '') +
-                    '<span class="line-amount">' + fmt(l.subtotal || 0) + '</span>' +
-                    '</div>';
+                    '<span class="line-amount">' + fmt(l.subtotal || 0) + '</span></div>';
             }
         });
         linesWrap.innerHTML = html;
-        // Feed only unpaid items to the pay-section checkboxes
-        if (typeof window._receiptPayRenderLines === 'function') {
+        if (!IS_DEBT && typeof window._receiptPayRenderLines === 'function') {
             window._receiptPayRenderLines(lines);
         }
-        // Update the outstanding total label
-        var outstanding = lines.filter(function(l) { return !l.is_paid; })
-            .reduce(function(s, l) { return s + (parseFloat(l.subtotal) || 0); }, 0);
-        var totalEl = document.querySelector('.total-amount');
-        if (totalEl) totalEl.textContent = fmt(outstanding);
+        // Update Jumla / Bado Kulipa total from outstanding sum (entry-based fallback)
+        if (totalEl) {
+            var outstanding = lines.filter(function(l) { return !l.is_paid; })
+                .reduce(function(s, l) { return s + (parseFloat(l.subtotal) || 0); }, 0);
+            totalEl.textContent = fmt(outstanding);
+        }
+    }
+
+    function updateDebtGauges(d) {
+        // Bar block
+        var barGauge   = document.getElementById('bar-gauge');
+        var barRemain  = document.getElementById('bar-remaining');
+        var barPaid    = document.getElementById('bar-paid-label');
+        var barOutEl   = document.getElementById('bar-outstanding-label');
+        var barAmtIn   = document.getElementById('barDebtAmount');
+        var barBlock   = document.getElementById('bar-debt-block');
+        if (typeof d.bar_outstanding !== 'undefined') {
+            if (d.bar_has_debt) {
+                if (barGauge)  barGauge.style.width  = (d.bar_pct_paid || 0) + '%';
+                if (barRemain) barRemain.textContent  = fmt(d.bar_outstanding) + ' bado';
+                if (barOutEl)  barOutEl.textContent   = 'Bado ' + fmt(d.bar_outstanding);
+                if (barAmtIn)  barAmtIn.value         = Math.round(d.bar_outstanding);
+            } else if (barBlock) {
+                barBlock.innerHTML = '<div class="debt-cleared">✅ Bar deni imelipwa — asante!</div>';
+            }
+        }
+        // Kitchen block
+        var ktGauge  = document.getElementById('kitchen-gauge');
+        var ktRemain = document.getElementById('kitchen-remaining');
+        var ktOutEl  = document.getElementById('kitchen-outstanding-label');
+        var ktAmtIn  = document.getElementById('kitchenDebtAmount');
+        var ktBlock  = document.getElementById('kitchen-debt-block');
+        if (typeof d.kitchen_outstanding !== 'undefined') {
+            if (d.kitchen_has_debt) {
+                if (ktGauge)  ktGauge.style.width  = (d.kitchen_pct_paid || 0) + '%';
+                if (ktRemain) ktRemain.textContent  = fmt(d.kitchen_outstanding) + ' bado';
+                if (ktOutEl)  ktOutEl.textContent   = 'Bado ' + fmt(d.kitchen_outstanding);
+                if (ktAmtIn)  ktAmtIn.value         = Math.round(d.kitchen_outstanding);
+            } else if (ktBlock) {
+                ktBlock.innerHTML = '<div class="debt-cleared">✅ Kitchen deni imelipwa — asante!</div>';
+            }
+        }
+        // Update Bado Kulipa total in header
+        if (totalEl) {
+            var remaining = (d.bar_outstanding || 0) + (d.kitchen_outstanding || 0);
+            totalEl.textContent = fmt(remaining);
+        }
     }
 
     function updateCountdown() {
@@ -823,46 +1070,45 @@
 
     function poll() {
         fetch('/r/' + TOKEN + '/live/')
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-                if (d.lines) renderLines(d.lines);
-                if (d.total !== undefined && totalEl) {
-                    totalEl.textContent = fmt(d.total);
-                }
-                if (!d.is_live) {
-                    // Tab settled or voided — update status, stop polling, hide pay section
-                    clearInterval(tickIv);
-                    clearInterval(pollIv);
-                    var paySection = document.getElementById('pay-section');
-                    if (paySection) paySection.style.display = 'none';
-                    var statusDiv = document.getElementById('tab-live-status');
-                    if (statusDiv) {
-                        if (d.tab_status === 'SETTLED') {
-                            statusDiv.style.background = 'rgba(46,204,113,0.09)';
-                            statusDiv.style.border = '1px solid rgba(46,204,113,0.25)';
-                            statusDiv.style.color = '#2ecc71';
-                            statusDiv.style.display = 'block';
-                            statusDiv.innerHTML = '✅ Deni limeliwa — asante!';
-                        } else if (d.tab_status === 'VOID') {
-                            statusDiv.style.background = 'rgba(192,57,90,0.09)';
-                            statusDiv.style.border = '1px solid rgba(192,57,90,0.25)';
-                            statusDiv.style.color = '#c0395a';
-                            statusDiv.style.display = 'block';
-                            statusDiv.innerHTML = '❌ Tab imetupwa';
-                        } else {
-                            statusDiv.style.display = 'none';
-                        }
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.lines) renderLines(d.lines);
+            if (IS_DEBT && d.bar_outstanding !== undefined) updateDebtGauges(d);
+            if (!d.is_live) {
+                clearInterval(tickIv);
+                clearInterval(pollIv);
+                var paySection = document.getElementById('pay-section');
+                if (paySection) paySection.style.display = 'none';
+                var debtSection = document.getElementById('debt-pay-section');
+                if (debtSection) debtSection.style.display = 'none';
+                var statusDiv = document.getElementById('tab-live-status');
+                if (statusDiv) {
+                    if (d.tab_status === 'SETTLED') {
+                        statusDiv.style.background = 'rgba(46,204,113,0.09)';
+                        statusDiv.style.border = '1px solid rgba(46,204,113,0.25)';
+                        statusDiv.style.color = '#2ecc71';
+                        statusDiv.style.display = 'block';
+                        statusDiv.innerHTML = '✅ Deni limeliwa — asante!';
+                    } else if (d.tab_status === 'VOID') {
+                        statusDiv.style.background = 'rgba(192,57,90,0.09)';
+                        statusDiv.style.border = '1px solid rgba(192,57,90,0.25)';
+                        statusDiv.style.color = '#c0395a';
+                        statusDiv.style.display = 'block';
+                        statusDiv.innerHTML = '❌ Tab imetupwa';
+                    } else {
+                        statusDiv.style.display = 'none';
                     }
-                } else {
-                    countdown = pollSecs;
-                    updateCountdown();
                 }
-            })
-            .catch(function () { /* silent — network hiccup, retry next interval */ });
+            } else {
+                countdown = pollSecs;
+                updateCountdown();
+            }
+        })
+        .catch(function () { /* silent — network hiccup */ });
     }
 
     updateCountdown();
-    poll(); // populate pay section immediately without waiting 20 s
+    poll();
     var tickIv = setInterval(function () {
         countdown--;
         if (countdown <= 0) countdown = pollSecs;

@@ -128,7 +128,7 @@ def _get_live_tab_state(receipt):
             try:
                 from .models import Customer as _Customer
                 from .debt_views import _get_customer_debt_data
-                cust = getattr(tab, '_customer_cache', None) or _Customer.objects.filter(
+                cust = _Customer.objects.filter(
                     id=tab.customer_id, business=receipt.business
                 ).first()
                 if cust:
@@ -138,6 +138,10 @@ def _get_live_tab_state(receipt):
                     tab_source = getattr(tab, 'source', 'bar') if not has_linked else 'all'
                     debt_data = _get_customer_debt_data(cust, receipt.business, scope=tab_source)
                     outstanding = float(debt_data.get('outstanding', outstanding))
+                    # Debt fully cleared: receipt stops being live
+                    if outstanding <= 0:
+                        effective_status = 'SETTLED'
+                        outstanding = 0.0
             except Exception:
                 pass
 
@@ -145,6 +149,64 @@ def _get_live_tab_state(receipt):
         return is_live, effective_status, lines, outstanding
     except Exception:
         return False, None, None, None
+
+
+def _get_station_debt_data(receipt, live_lines):
+    """Return per-station debt breakdown for the two-block DEBT payment UI.
+
+    Returns a dict:
+      {
+        'bar':     {outstanding, total, paid, pct_paid, has_debt},
+        'kitchen': {outstanding, total, paid, pct_paid, has_debt},
+        'customer_phone': str,
+      }
+    Totals are computed from live_lines (all entries including paid ones) so
+    the gauge always spans 0→original_total, not 0→current_outstanding.
+    """
+    empty = {'outstanding': 0.0, 'total': 0.0, 'paid': 0.0, 'pct_paid': 0, 'has_debt': False}
+    result = {'bar': dict(empty), 'kitchen': dict(empty), 'customer_phone': ''}
+
+    if not live_lines:
+        return result
+
+    for line in live_lines:
+        key = 'kitchen' if line.get('is_kitchen') else 'bar'
+        result[key]['total'] += float(line.get('subtotal', 0))
+
+    tab_id = receipt.meta.get('tab_id') if receipt.meta else None
+    if not tab_id:
+        return result
+
+    try:
+        from .models import BarTab as _BTab, Customer as _Customer
+        from .debt_views import _get_customer_debt_data
+        tab = _BTab.objects.filter(id=tab_id, business=receipt.business).first()
+        if not tab or not tab.customer_id:
+            return result
+
+        cust = _Customer.objects.filter(id=tab.customer_id, business=receipt.business).first()
+        if not cust:
+            return result
+
+        result['customer_phone'] = cust.phone or ''
+
+        for key, scope in (('bar', 'bar'), ('kitchen', 'kitchen')):
+            if result[key]['total'] <= 0:
+                continue
+            data = _get_customer_debt_data(cust, receipt.business, scope)
+            owed = float(data.get('outstanding', 0))
+            total = result[key]['total']
+            paid = round(max(0.0, total - owed), 2)
+            result[key].update({
+                'outstanding': round(owed, 2),
+                'paid': paid,
+                'pct_paid': round(paid / total * 100) if total > 0 else 0,
+                'has_debt': owed > 0,
+            })
+    except Exception:
+        pass
+
+    return result
 
 
 def public_receipt(request, token):
@@ -159,11 +221,16 @@ def public_receipt(request, token):
         receipt.lines = live_lines
         receipt.total = live_total
 
+    station_debt = None
+    if tab_status == 'DEBT':
+        station_debt = _get_station_debt_data(receipt, live_lines)
+
     return render(request, 'core/receipt_public.html', {
-        'receipt':     receipt,
-        'receipt_url': receipt_url,
-        'is_live_tab': is_live_tab,
-        'tab_status':  tab_status,
+        'receipt':      receipt,
+        'receipt_url':  receipt_url,
+        'is_live_tab':  is_live_tab,
+        'tab_status':   tab_status,
+        'station_debt': station_debt,
     })
 
 
@@ -172,17 +239,31 @@ def receipt_live_status(request, token):
 
     Returns the current tab state as JSON so the client can update the DOM
     without a full page reload. No auth required — token is the secret.
+    Includes station debt breakdown when tab_status=='DEBT' so JS can update
+    the per-station gauges and outstanding labels without a full page reload.
     """
     receipt = get_object_or_404(Receipt, token=token)
     is_live, tab_status, lines, total = _get_live_tab_state(receipt)
     if lines is None:
         return JsonResponse({'is_live': False, 'tab_status': tab_status})
-    return JsonResponse({
+
+    response = {
         'is_live':    is_live,
         'tab_status': tab_status,
         'lines':      lines,
         'total':      total,
-    })
+    }
+
+    if tab_status == 'DEBT' or (not is_live and tab_status == 'SETTLED'):
+        sd = _get_station_debt_data(receipt, lines)
+        response['bar_outstanding']     = sd['bar']['outstanding']
+        response['bar_pct_paid']        = sd['bar']['pct_paid']
+        response['bar_has_debt']        = sd['bar']['has_debt']
+        response['kitchen_outstanding'] = sd['kitchen']['outstanding']
+        response['kitchen_pct_paid']    = sd['kitchen']['pct_paid']
+        response['kitchen_has_debt']    = sd['kitchen']['has_debt']
+
+    return JsonResponse(response)
 
 
 @login_required
@@ -285,47 +366,75 @@ def receipt_pay(request, token):
     except (json.JSONDecodeError, ValueError):
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
-    pay_type = data.get('type', 'stk')
+    pay_type  = data.get('type', 'stk')
     entry_ids = data.get('entry_ids') or []
-    phone = (data.get('phone') or receipt.customer_phone or '').strip()
+    phone     = (data.get('phone') or receipt.customer_phone or '').strip()
 
-    business = receipt.business
+    business    = receipt.business
     all_tab_ids = [tab_id] + list(receipt.meta.get('linked_tab_ids') or [])
 
-    from .models import BarTabEntry
-    if entry_ids:
-        entries_qs = BarTabEntry.objects.filter(
-            id__in=entry_ids,
-            tab__id__in=all_tab_ids,
-            is_paid=False,
-        )
-    else:
-        entries_qs = BarTabEntry.objects.filter(tab__id__in=all_tab_ids, is_paid=False)
-
-    entries_list = list(entries_qs.select_related('transaction__item__store'))
-    amount = int(sum(float(e.amount) for e in entries_list))
-    selected_ids = [e.id for e in entries_list]
-
-    if amount < 1:
-        return JsonResponse({'error': 'nothing_to_pay'}, status=400)
-
-    # Station-aware M-Pesa routing: if all selected items are from one store
-    # with its own till/paybill, route to that store's config instead of business level.
     from .mpesa import resolve_mpesa_config
-    target_store = None
-    store_ids = set()
-    for e in entries_list:
+
+    # ── Debt block mode: customer paying a summary amount per station ──────
+    # Triggered when 'source' is in the request body (no entry_ids needed).
+    # This creates a CustomerDebtPayment on callback instead of marking entries.
+    debt_source = data.get('source')  # 'bar' or 'kitchen'
+    is_debt_mode = bool(debt_source)
+
+    if is_debt_mode:
         try:
-            store_ids.add(e.transaction.item.store_id)
+            amount = int(float(data.get('debt_amount', 0)))
+        except (TypeError, ValueError):
+            amount = 0
+        if amount < 1:
+            return JsonResponse({'error': 'nothing_to_pay'}, status=400)
+        selected_ids = None  # None = debt mode discriminator in callback
+
+        # Route to the station's own M-Pesa if configured
+        target_store = None
+        try:
+            from .models import Store as _Store
+            target_store = _Store.objects.filter(
+                business=business,
+                is_kitchen=(debt_source == 'kitchen'),
+                has_own_mpesa=True,
+            ).first()
         except Exception:
             pass
-    if len(store_ids) == 1:
-        sid = next(iter(store_ids))
-        if sid:
-            from .models import Store as _Store
-            s = _Store.objects.filter(id=sid).first()
-            if s and getattr(s, 'has_own_mpesa', False):
-                target_store = s
+    else:
+        # ── Entry-based mode: customer selects specific items ──────────────
+        from .models import BarTabEntry
+        if entry_ids:
+            entries_qs = BarTabEntry.objects.filter(
+                id__in=entry_ids,
+                tab__id__in=all_tab_ids,
+                is_paid=False,
+            )
+        else:
+            entries_qs = BarTabEntry.objects.filter(tab__id__in=all_tab_ids, is_paid=False)
+
+        entries_list = list(entries_qs.select_related('transaction__item__store'))
+        amount       = int(sum(float(e.amount) for e in entries_list))
+        selected_ids = [e.id for e in entries_list]
+
+        if amount < 1:
+            return JsonResponse({'error': 'nothing_to_pay'}, status=400)
+
+        # Station-aware M-Pesa routing for entry mode
+        target_store = None
+        store_ids = set()
+        for e in entries_list:
+            try:
+                store_ids.add(e.transaction.item.store_id)
+            except Exception:
+                pass
+        if len(store_ids) == 1:
+            sid = next(iter(store_ids))
+            if sid:
+                from .models import Store as _Store
+                s = _Store.objects.filter(id=sid).first()
+                if s and getattr(s, 'has_own_mpesa', False):
+                    target_store = s
 
     if pay_type == 'qr':
         try:
@@ -384,14 +493,14 @@ def receipt_pay(request, token):
         payment = Payment.objects.create(
             business=business,
             store=cfg.get('store'),
-            source=cfg.get('source', 'bar'),
+            source=debt_source or cfg.get('source', 'bar'),
             amount=amount,
             method='mpesa',
             status='pending',
             phone=phone_fmt,
             checkout_request_id=result.get('CheckoutRequestID', ''),
             merchant_request_id=result.get('MerchantRequestID', ''),
-            tab_entry_ids=selected_ids,
+            tab_entry_ids=selected_ids,  # None for debt mode, list for entry mode
             receipt_token=token,
         )
         return JsonResponse({

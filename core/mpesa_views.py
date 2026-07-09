@@ -162,6 +162,97 @@ def _settle_tab_from_payment(payment):
         logger.warning("Tab STK settlement failed for tab_id=%s: %s", getattr(payment, 'bar_tab_id', '?'), exc)
 
 
+def _create_debt_payment_from_receipt(payment):
+    """Handle a customer-initiated STK debt block payment from the public receipt.
+
+    Called when payment.receipt_token is set AND payment.tab_entry_ids is None.
+    The customer paid a summary amount (not specific entries) from the debt block
+    UI. Creates a CustomerDebtPayment and runs FIFO entry reconciliation.
+    """
+    try:
+        from .models import Receipt as _Receipt, BarTab as _BarTab, Customer as _Customer
+        from .models import CustomerDebtPayment as _CDP, BarTabEntry as _BTE
+        from .debt_views import _get_customer_debt_data
+
+        receipt = _Receipt.objects.filter(token=payment.receipt_token).first()
+        if not receipt:
+            return
+
+        tab_id = receipt.meta.get('tab_id') if receipt.meta else None
+        if not tab_id:
+            return
+
+        tab = _BarTab.objects.filter(id=tab_id).first()
+        if not tab or not tab.customer_id:
+            return
+
+        cust = _Customer.objects.filter(id=tab.customer_id, business=payment.business).first()
+        if not cust:
+            return
+
+        source     = payment.source or 'bar'
+        mpesa_ref  = payment.mpesa_receipt or ''
+        token_frag = payment.receipt_token[:12]
+
+        # Idempotency: don't create a duplicate for the same M-Pesa receipt
+        if mpesa_ref and _CDP.objects.filter(
+            business=payment.business,
+            customer=cust,
+            notes__contains=mpesa_ref,
+        ).exists():
+            return
+
+        # Compute unpaid state BEFORE creating the payment (FIFO reconciliation needs this)
+        debt_data    = _get_customer_debt_data(cust, payment.business, source)
+        unpaid_before = debt_data.get('unpaid_transactions', [])
+
+        _CDP.objects.create(
+            customer=cust,
+            business=payment.business,
+            amount_paid=payment.amount,
+            payment_method='mpesa',
+            source=source,
+            notes=f'M-Pesa {mpesa_ref} · risiti {token_frag}',
+        )
+
+        # FIFO entry reconciliation — only mark entries is_paid=True when fully covered
+        settled_tabs = list(_BarTab.objects.filter(
+            business=payment.business,
+            customer=cust,
+            status='SETTLED',
+        ).values_list('id', flat=True))
+
+        if settled_tabs and unpaid_before:
+            now_ts = timezone.now()
+            paid_remaining = float(payment.amount)
+            for entry in unpaid_before:
+                if paid_remaining <= 0:
+                    break
+                txn = entry['txn']
+                entry_amount = float(entry['amount'])
+                covered = round(min(entry_amount, paid_remaining), 2)
+                paid_remaining = round(paid_remaining - covered, 2)
+                if covered >= entry_amount:
+                    _BTE.objects.filter(
+                        tab__id__in=settled_tabs,
+                        transaction=txn,
+                        is_paid=False,
+                    ).update(is_paid=True, paid_at=now_ts, payment_method='mpesa')
+
+        # Notify via the existing receipt SMS helper
+        try:
+            _sms_receipt_to_payer(payment, receipt)
+        except Exception:
+            pass
+
+        logger.info(
+            "Debt payment created from receipt: customer=%s amount=%s source=%s mpesa=%s",
+            cust.id, payment.amount, source, mpesa_ref,
+        )
+    except Exception:
+        logger.exception("_create_debt_payment_from_receipt failed payment_id=%s", payment.id)
+
+
 def _settle_receipt_entries_from_payment(payment):
     """Settle BarTabEntry rows across all tabs linked to a receipt.
 
@@ -536,9 +627,14 @@ def mpesa_callback(request):
                 order.save(update_fields=['status'])
                 _fulfill_order(order)
 
-        # Customer-initiated from public receipt page — cross-tab entry settlement
-        if payment.receipt_token and payment.tab_entry_ids:
-            _settle_receipt_entries_from_payment(payment)
+        # Customer-initiated from public receipt page
+        if payment.receipt_token:
+            if payment.tab_entry_ids is not None:
+                # Entry-selection mode: mark specific BarTabEntry rows paid
+                _settle_receipt_entries_from_payment(payment)
+            else:
+                # Debt block mode: create CustomerDebtPayment + FIFO reconciliation
+                _create_debt_payment_from_receipt(payment)
         # Settle bar tab (full or partial) if linked (staff-side STK push)
         elif payment.bar_tab_id:
             _settle_tab_from_payment(payment)
@@ -773,8 +869,11 @@ def payment_status(request, payment_id):
                 # Re-read: if mpesa_callback already landed and set mpesa_receipt,
                 # use the real receipt as dedup key instead of the synthetic one.
                 payment.refresh_from_db()
-                if payment.receipt_token and payment.tab_entry_ids:
-                    _settle_receipt_entries_from_payment(payment)
+                if payment.receipt_token:
+                    if payment.tab_entry_ids is not None:
+                        _settle_receipt_entries_from_payment(payment)
+                    else:
+                        _create_debt_payment_from_receipt(payment)
                 elif payment.bar_tab_id:
                     _settle_tab_from_payment(payment)
                 if payment.kitchen_cart:
