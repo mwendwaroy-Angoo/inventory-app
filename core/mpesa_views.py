@@ -63,6 +63,8 @@ def _bridge_stk_to_prompt(payment):
     Idempotent: skips if a prompt for this payment already exists."""
     if payment.order_id or payment.bar_tab_id or payment.kitchen_cart or payment.qs_cart:
         return  # Tab/order/kitchen/qs each have their own completion logic
+    if payment.debt_customer_id or payment.receipt_token:
+        return  # Debt and receipt payments are auto-settled; no manual prompt needed
     receipt = payment.mpesa_receipt
     # When the active-poll path confirms success before the callback arrives,
     # mpesa_receipt is empty. Use a synthetic key so the prompt still appears.
@@ -81,7 +83,7 @@ def _bridge_stk_to_prompt(payment):
 
     from accounts.models import UserProfile as _UP
     for up in _UP.objects.filter(
-        business=payment.business, role__in=['owner', 'staff']
+        business=payment.business, role__in=['owner', 'manager', 'staff']
     ).select_related('user'):
         create_in_app_notification(
             user=up.user,
@@ -1020,10 +1022,10 @@ def c2b_confirmation(request):
         completed_at=timezone.now(),
     )
 
-    # Notify staff + owner for this business
+    # Notify staff, managers, and owners for this business
     from accounts.models import UserProfile
     biz_users = UserProfile.objects.filter(
-        business=business, role__in=['owner', 'staff']
+        business=business, role__in=['owner', 'manager', 'staff']
     ).select_related('user')
 
     for profile in biz_users:
@@ -1260,6 +1262,9 @@ def mpesa_qr_view(request):
             trx_code=trx_code,
             amount=amount,
             ref_no='PAYMENT',
+            consumer_key=cfg['consumer_key'] or None,
+            consumer_secret=cfg['consumer_secret'] or None,
+            env=cfg['environment'],
         )
         if qr_b64:
             return JsonResponse({'mode': 'img', 'data': qr_b64})

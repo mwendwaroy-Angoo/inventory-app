@@ -195,7 +195,8 @@ def query_stk_status(checkout_request_id, consumer_key=None, consumer_secret=Non
 
 # ── DYNAMIC QR CODE (Path 1 — Safaricom Daraja API) ─────────────────────────
 
-def generate_mpesa_qr(merchant_name, shortcode, trx_code, amount=None, ref_no='PAYMENT', size=300):
+def generate_mpesa_qr(merchant_name, shortcode, trx_code, amount=None, ref_no='PAYMENT', size=300,
+                      consumer_key=None, consumer_secret=None, env=None):
     """
     Generate an M-Pesa-scannable QR code via Safaricom's Dynamic QR Code API.
 
@@ -206,14 +207,19 @@ def generate_mpesa_qr(merchant_name, shortcode, trx_code, amount=None, ref_no='P
         amount: Amount in KES as int/str (optional — customer enters on phone if omitted)
         ref_no: Reference / invoice number (max 12 chars)
         size: QR image size in pixels (default 300)
+        consumer_key/consumer_secret: Per-business Daraja credentials (falls back to global)
+        env: 'sandbox'|'production' — overrides global MPESA_ENV for this call
 
     Returns:
         base64-encoded PNG string (without data: prefix) on success, or None on failure.
         Use as: <img src="data:image/png;base64,<return_value>">
     """
-    access_token = get_access_token()
+    _key    = consumer_key    or getattr(settings, 'MPESA_CONSUMER_KEY',    '')
+    _secret = consumer_secret or getattr(settings, 'MPESA_CONSUMER_SECRET', '')
+    resolved_env = env or MPESA_ENV
+    access_token = _get_access_token_for(_key, _secret, env=resolved_env)
     if not access_token:
-        logger.warning("QR generate: no access token")
+        logger.warning("QR generate: no access token (env=%s)", resolved_env)
         return None
 
     payload = {
@@ -227,7 +233,7 @@ def generate_mpesa_qr(merchant_name, shortcode, trx_code, amount=None, ref_no='P
 
     try:
         resp = requests.post(
-            _get_urls()['qr_generate'],
+            _get_urls(resolved_env)['qr_generate'],
             json=payload,
             headers={
                 'Authorization': f'Bearer {access_token}',
@@ -239,7 +245,7 @@ def generate_mpesa_qr(merchant_name, shortcode, trx_code, amount=None, ref_no='P
         data = resp.json()
         qr_image = data.get('QRCode')
         if qr_image:
-            logger.info("QR generated via Daraja for shortcode %s", shortcode)
+            logger.info("QR generated via Daraja for shortcode %s env=%s", shortcode, resolved_env)
             return qr_image
         logger.warning("QR API returned no QRCode field: %s", data)
         return None
