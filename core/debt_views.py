@@ -301,6 +301,145 @@ def customer_debt_profile(request, customer_id):
     })
 
 
+def _do_settle_debt_payment(customer, business, amount, payment_method, source,
+                             notes='', recorded_by=None,
+                             site_url='https://www.dukamwecheche.co.ke'):
+    """Create CustomerDebtPayment + FIFO reconciliation + issue receipt + SMS.
+
+    Shared by record_debt_payment (HTTP view) and _settle_debt_customer_from_payment
+    (M-Pesa callback). Returns (receipt, post_data) on success, raises on fatal error.
+    post_data is _get_customer_debt_data recomputed AFTER the payment is recorded.
+    """
+    from .models import BarTabEntry, BarTab, Receipt
+    from .notifications import normalize_ke_phone, send_sms_notification
+
+    amount = Decimal(str(amount))
+    data = _get_customer_debt_data(customer, business, source)
+    unpaid_before = data['unpaid_transactions']
+    method_label = 'M-Pesa' if payment_method == 'mpesa' else 'Cash'
+    recorder = ''
+    if recorded_by:
+        recorder = recorded_by.get_full_name() or recorded_by.username
+
+    CustomerDebtPayment.objects.create(
+        customer=customer,
+        business=business,
+        amount_paid=amount,
+        payment_method=payment_method,
+        source=source,
+        notes=notes,
+        recorded_by=recorded_by,
+    )
+
+    # FIFO BarTabEntry reconciliation — only flip is_paid when fully covered
+    try:
+        now = timezone.now()
+        settled_tab_ids = list(BarTab.objects.filter(
+            business=business, customer=customer, status='SETTLED',
+        ).values_list('id', flat=True))
+        if settled_tab_ids:
+            paid_remaining = float(amount)
+            for entry in unpaid_before:
+                if paid_remaining <= 0:
+                    break
+                txn = entry['txn']
+                entry_amount = float(entry['amount'])
+                covered = round(min(entry_amount, paid_remaining), 2)
+                paid_remaining = round(paid_remaining - covered, 2)
+                if covered >= entry_amount:
+                    BarTabEntry.objects.filter(
+                        tab__id__in=settled_tab_ids,
+                        transaction=txn,
+                        is_paid=False,
+                    ).update(is_paid=True, paid_at=now, payment_method=payment_method)
+    except Exception:
+        pass
+
+    # Recompute score AFTER payment
+    post_data = _get_customer_debt_data(customer, business, source)
+    score_label = post_data.get('score_label', '')
+    effective_window = post_data.get('effective_window', business.credit_window_days or 30)
+
+    # Stamp last_cleared_at when debt hits zero
+    if float(post_data['outstanding']) == 0:
+        Customer.objects.filter(pk=customer.pk).update(last_cleared_at=timezone.now())
+
+    # Build FIFO receipt lines
+    receipt_lines = []
+    paid_remaining = float(amount)
+    max_days = 0
+    for entry in unpaid_before:
+        if paid_remaining <= 0:
+            break
+        txn = entry['txn']
+        covered = round(min(entry['amount'], paid_remaining), 2)
+        paid_remaining = round(paid_remaining - covered, 2)
+        max_days = max(max_days, entry['days_outstanding'])
+        receipt_lines.append({
+            'name': f"{txn.item.description} — deni la {txn.date.strftime('%d %b %Y')}",
+            'qty': 1,
+            'subtotal': covered,
+        })
+    if not receipt_lines:
+        receipt_lines.append({'name': notes or 'Malipo ya deni', 'qty': 1, 'subtotal': float(amount)})
+
+    remaining_balance = round(max(0.0, float(post_data['outstanding'])), 2)
+    if remaining_balance > 0:
+        receipt_lines.append({'name': 'Bado unalipa', 'qty': -1, 'subtotal': remaining_balance})
+
+    if max_days == 0:
+        days_label = 'umelipa leo'
+    elif max_days == 1:
+        days_label = 'umelipa siku 1 baadaye'
+    else:
+        days_label = f'umelipa siku {max_days} baadaye'
+    window_label = f'kiwango siku {effective_window}'
+
+    recorder_suffix = f' · alirekodiwa na {recorder}' if recorder else ''
+    receipt_lines.append({
+        'name': (
+            f"Malipo: {method_label} · {source.capitalize()} · {days_label} ({window_label})"
+            f" · {score_label}{recorder_suffix}"
+        ),
+        'qty': 0,
+        'subtotal': 0,
+    })
+
+    receipt_meta = {
+        'credit_score': post_data.get('score', 'new'),
+        'score_label': str(post_data.get('score_label', '')),
+        'score_color': post_data.get('score_color', '#888'),
+        'outstanding': float(post_data.get('outstanding', 0)),
+        'scope': source,
+    }
+    rcpt = Receipt.issue(
+        business=business,
+        lines=receipt_lines,
+        payment_method=payment_method,
+        user=recorded_by,
+        customer_name=customer.name,
+        customer_phone=customer.phone or '',
+        meta=receipt_meta,
+    )
+
+    try:
+        if customer.phone:
+            normalized = normalize_ke_phone(customer.phone)
+            if normalized:
+                receipt_url = f"{site_url}/r/{rcpt.token}/"
+                sms_msg = (
+                    f"{business.name}: Deni lako limelipiwa!\n"
+                    f"KES {amount:,.0f} ({method_label}) — {days_label} ({window_label})\n"
+                    f"Alama ya mikopo: {score_label}\n"
+                    f"Risiti: {receipt_url}"
+                )
+                send_sms_notification(sms_msg, normalized)
+    except Exception:
+        pass
+
+    return rcpt, post_data
+
+
 @login_required
 @require_POST
 def record_debt_payment(request, customer_id):
@@ -320,7 +459,6 @@ def record_debt_payment(request, customer_id):
     method     = request.POST.get('payment_method', 'cash')
     notes      = request.POST.get('notes', '').strip()
 
-    # Owner must specify which sub-ledger they're settling
     if scope == 'all':
         debt_source = request.POST.get('debt_source', 'bar')
         if debt_source not in ('bar', 'kitchen'):
@@ -338,7 +476,6 @@ def record_debt_payment(request, customer_id):
         messages.error(request, _('Please enter a valid payment amount.'))
         return redirect('customer_debt_profile', customer_id=customer_id)
 
-    # Validate against the SCOPED outstanding balance
     data = _get_customer_debt_data(customer, business, payment_scope)
     if amount > Decimal(str(data['outstanding'])):
         messages.error(
@@ -352,167 +489,119 @@ def record_debt_payment(request, customer_id):
         )
         return redirect('customer_debt_profile', customer_id=customer_id)
 
-    unpaid_before = data['unpaid_transactions']
-    method_label  = 'M-Pesa' if method == 'mpesa' else 'Cash'
-    recorder      = request.user.get_full_name() or request.user.username
-
-    CustomerDebtPayment.objects.create(
-        customer=customer,
-        business=business,
-        amount_paid=amount,
-        payment_method=method,
-        source=payment_scope,
-        notes=notes,
-        recorded_by=request.user,
-    )
-
-    # ── Reconcile BarTab entries so the customer's live receipt shows paid ──
-    # When a debt payment is recorded, the corresponding BarTabEntry rows
-    # (which were converted to debt via Geuza Deni) should be marked as paid
-    # so the live receipt page no longer shows them as unpaid/checkable.
+    site_url = request.build_absolute_uri('/')[:-1]
     try:
-        from .models import BarTabEntry, BarTab
-        now = timezone.now()
-        # Find all SETTLED tabs for this customer that have unpaid entries
-        # whose linked transactions are credit transactions for this customer.
-        # These are the tabs that were converted to debt via Geuza Deni.
-        settled_tabs = BarTab.objects.filter(
-            business=business,
-            customer=customer,
-            status='SETTLED',
-        ).values_list('id', flat=True)
-
-        if settled_tabs:
-            # FIFO: iterate unpaid_before (already accounts for prior payments).
-            # Only mark a BarTabEntry as is_paid=True when this payment FULLY
-            # covers that entry's remaining amount. Partial coverage is tracked
-            # by the CustomerDebtPayment record; the live receipt recomputes
-            # outstanding via the debt tracker (_get_customer_debt_data), not
-            # from is_paid flags alone, so partial amounts show correctly there.
-            paid_remaining = float(amount)
-            settled_tab_ids = list(settled_tabs)
-            for entry in unpaid_before:
-                if paid_remaining <= 0:
-                    break
-                txn = entry['txn']
-                entry_amount = float(entry['amount'])
-                covered = round(min(entry_amount, paid_remaining), 2)
-                paid_remaining = round(paid_remaining - covered, 2)
-
-                # Only flip is_paid when the payment fully covers this entry.
-                # A 50 KES payment against a 300 KES entry leaves it unpaid.
-                if covered >= entry_amount:
-                    BarTabEntry.objects.filter(
-                        tab__id__in=settled_tab_ids,
-                        transaction=txn,
-                        is_paid=False,
-                    ).update(
-                        is_paid=True,
-                        paid_at=now,
-                        payment_method=method,
-                    )
-    except Exception:
-        pass
-
-    # Recompute score AFTER payment
-    post_data       = _get_customer_debt_data(customer, business, payment_scope)
-    score_label     = post_data.get('score_label', '')
-    effective_window = post_data.get('effective_window', business.credit_window_days or 30)
-
-    # Stamp last_cleared_at when outstanding drops to zero
-    if float(post_data['outstanding']) == 0:
-        from django.utils import timezone as _tz
-        Customer.objects.filter(pk=customer.pk).update(last_cleared_at=_tz.now())
-
-    # Build receipt lines: FIFO coverage of unpaid transactions
-    receipt_lines = []
-    paid_remaining = float(amount)
-    max_days = 0
-    for entry in unpaid_before:
-        if paid_remaining <= 0:
-            break
-        txn = entry['txn']
-        covered = round(min(entry['amount'], paid_remaining), 2)
-        paid_remaining = round(paid_remaining - covered, 2)
-        max_days = max(max_days, entry['days_outstanding'])
-        receipt_lines.append({
-            'name': f"{txn.item.description} — deni la {txn.date.strftime('%d %b %Y')}",
-            'qty': 1,
-            'subtotal': covered,
-        })
-    if not receipt_lines:
-        receipt_lines.append({'name': notes or 'Malipo ya deni', 'qty': 1, 'subtotal': float(amount)})
-
-    # Remaining balance — use post_data (recomputed after payment was recorded)
-    remaining_balance = round(max(0.0, float(post_data['outstanding'])), 2)
-    if remaining_balance > 0:
-        receipt_lines.append({
-            'name': 'Bado unalipa',
-            'qty': -1,
-            'subtotal': remaining_balance,
-        })
-
-    # Days label
-    if max_days == 0:
-        days_label = 'umelipa leo'
-    elif max_days == 1:
-        days_label = 'umelipa siku 1 baadaye'
-    else:
-        days_label = f'umelipa siku {max_days} baadaye'
-    window_label = f'kiwango siku {effective_window}'
-
-    receipt_lines.append({
-        'name': (
-            f"Malipo: {method_label} · {payment_scope.capitalize()} · {days_label} ({window_label})"
-            f" · {score_label} · alirekodiwa na {recorder}"
-        ),
-        'qty': 0,
-        'subtotal': 0,
-    })
-
-    receipt_token = None
-    try:
-        from .models import Receipt
-        receipt_meta = {
-            'credit_score': post_data.get('score', 'new'),
-            'score_label': str(post_data.get('score_label', '')),
-            'score_color': post_data.get('score_color', '#888'),
-            'outstanding': float(post_data.get('outstanding', 0)),
-            'scope': payment_scope,
-        }
-        rcpt = Receipt.issue(
-            business=business,
-            lines=receipt_lines,
-            payment_method=method,
-            user=request.user,
-            customer_name=customer.name,
-            customer_phone=customer.phone or '',
-            meta=receipt_meta,
+        rcpt, post_data = _do_settle_debt_payment(
+            customer=customer, business=business,
+            amount=amount, payment_method=method,
+            source=payment_scope, notes=notes,
+            recorded_by=request.user, site_url=site_url,
         )
-        receipt_token = rcpt.token
-        receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
-        if customer.phone:
-            from .notifications import normalize_ke_phone, send_sms_notification
-            normalized = normalize_ke_phone(customer.phone)
-            if normalized:
-                sms_msg = (
-                    f"{business.name}: Deni lako limelipiwa!\n"
-                    f"KES {amount:,.0f} ({method_label}) — {days_label} ({window_label})\n"
-                    f"Alama ya mikopo: {score_label}\n"
-                    f"Risiti: {receipt_url}"
-                )
-                send_sms_notification(sms_msg, normalized)
+        messages.success(
+            request,
+            _('Payment of KES %(amount)s recorded for %(customer)s.')
+            % {'amount': f'{amount:,.2f}', 'customer': customer.name}
+        )
+        return redirect('public_receipt', token=rcpt.token)
     except Exception:
-        pass
+        messages.error(request, _('An error occurred recording the payment. Please try again.'))
+        return redirect('customer_debt_profile', customer_id=customer_id)
 
-    messages.success(
-        request,
-        _('Payment of KES %(amount)s recorded for %(customer)s.')
-        % {'amount': f'{amount:,.2f}', 'customer': customer.name}
+
+@login_required
+@require_POST
+def debt_stk_push(request, customer_id):
+    """Staff initiates STK Push to collect debt payment from the customer's phone.
+
+    POST params: amount, phone, source ('bar'|'kitchen')
+    Returns JSON: {ok, payment_id, amount} or {error}.
+    """
+    user_profile = get_user_profile(request)
+    business = user_profile.business
+    scope = _debt_scope(user_profile, business)
+    customer = get_object_or_404(Customer, id=customer_id, business=business)
+
+    if not user_profile.is_owner_or_manager:
+        from .shift_views import get_active_staff_shift
+        if get_active_staff_shift(user_profile, business) is False:
+            return JsonResponse({'error': 'Fungua shift yako kwanza.'}, status=403)
+
+    amount_raw = request.POST.get('amount', '').strip()
+    phone = (request.POST.get('phone', '').strip() or customer.phone or '').strip()
+
+    if scope == 'all':
+        payment_scope = request.POST.get('source', 'bar')
+        if payment_scope not in ('bar', 'kitchen'):
+            payment_scope = 'bar'
+    else:
+        payment_scope = scope
+
+    try:
+        amount = int(float(amount_raw))
+        if amount < 1:
+            raise ValueError
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'Weka kiasi sahihi cha kulipwa.'}, status=400)
+
+    if not phone:
+        return JsonResponse({'error': 'Weka nambari ya simu ya M-Pesa ya mteja.'}, status=400)
+
+    data = _get_customer_debt_data(customer, business, payment_scope)
+    if amount > float(data['outstanding']):
+        return JsonResponse(
+            {'error': f'Kiasi cha KES {amount:,} kinazidi deni la KES {data["outstanding"]:,.0f}.'},
+            status=400,
+        )
+
+    from .mpesa import resolve_mpesa_config, initiate_stk_push, format_phone_ke
+    from .models import Payment, Store
+
+    target_store = None
+    if payment_scope == 'kitchen':
+        target_store = Store.objects.filter(
+            business=business, is_kitchen=True, has_own_mpesa=True
+        ).first()
+
+    cfg = resolve_mpesa_config(business, target_store)
+    shortcode = (cfg.get('till') or cfg.get('paybill') or '').strip()
+    if not shortcode:
+        return JsonResponse({'error': 'Hakuna M-Pesa iliyosakinishwa. Wasiliana na mmiliki.'}, status=400)
+
+    phone_fmt = format_phone_ke(phone)
+    callback_url = request.build_absolute_uri('/mpesa/callback/')
+
+    result = initiate_stk_push(
+        phone_number=phone_fmt,
+        amount=amount,
+        account_reference=f"DENI-{customer.id}",
+        description="Duka Mwecheche",
+        callback_url=callback_url,
+        consumer_key=cfg.get('consumer_key') or None,
+        consumer_secret=cfg.get('consumer_secret') or None,
+        shortcode=shortcode,
+        passkey=cfg.get('passkey') or None,
+        use_till=bool(cfg.get('till')),
+        env=cfg.get('environment', 'sandbox'),
     )
-    if receipt_token:
-        return redirect('public_receipt', token=receipt_token)
-    return redirect('customer_debt_profile', customer_id=customer_id)
+
+    if not result or result.get('ResponseCode') != '0':
+        err = result.get('ResponseDescription', 'STK Push imeshindwa') if result else 'Hakuna jibu kutoka kwa Safaricom'
+        return JsonResponse({'error': err}, status=400)
+
+    payment = Payment.objects.create(
+        business=business,
+        store=cfg.get('store'),
+        source=payment_scope,
+        debt_customer=customer,
+        amount=amount,
+        method='mpesa',
+        status='pending',
+        phone=phone_fmt,
+        checkout_request_id=result.get('CheckoutRequestID', ''),
+        merchant_request_id=result.get('MerchantRequestID', ''),
+    )
+
+    return JsonResponse({'ok': True, 'payment_id': payment.id, 'amount': amount})
 
 
 @login_required

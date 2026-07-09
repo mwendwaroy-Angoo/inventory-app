@@ -971,6 +971,10 @@ class Payment(models.Model):
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
     bar_tab = models.ForeignKey('BarTab', on_delete=models.SET_NULL, null=True, blank=True, related_name='stk_payments')
+    debt_customer = models.ForeignKey(
+        'Customer', on_delete=models.SET_NULL, null=True, blank=True, related_name='stk_payments',
+        help_text='Customer FK for staff-initiated debt STK Push from the debt tracker page.',
+    )
     kitchen_cart = models.JSONField(
         null=True, blank=True,
         help_text='Serialised cart for kitchen STK push server-side settlement.',

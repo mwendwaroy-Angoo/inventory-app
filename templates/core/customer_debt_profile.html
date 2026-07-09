@@ -555,11 +555,29 @@
                         <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
                             {% trans 'Payment Method' %}
                         </label>
-                        <div class="d-flex gap-2">
-                            <input type="radio" class="btn-check" name="payment_method" id="pm_cash2" value="cash" checked>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <input type="radio" class="btn-check" name="payment_method" id="pm_cash2" value="cash" checked onchange="window._debtPmChange()">
                             <label class="btn btn-sm btn-outline-warning" for="pm_cash2">💵 {% trans 'Cash' %}</label>
-                            <input type="radio" class="btn-check" name="payment_method" id="pm_mpesa2" value="mpesa">
+                            <input type="radio" class="btn-check" name="payment_method" id="pm_mpesa2" value="mpesa" onchange="window._debtPmChange()">
                             <label class="btn btn-sm btn-outline-success" for="pm_mpesa2">📱 M-Pesa</label>
+                        </div>
+                    </div>
+
+                    <!-- STK Push section — shown when M-Pesa is selected -->
+                    <div id="stk-push-section" style="display:none; margin-bottom:0.75rem; padding:0.8rem; background:rgba(255,255,255,0.03); border:1px solid #333; border-radius:8px;">
+                        <div style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.5rem; font-weight:600;">
+                            📲 {% trans 'Request payment via STK Push to customer phone' %}
+                        </div>
+                        <div style="display:flex; gap:0.5rem; margin-bottom:0.45rem; flex-wrap:wrap;">
+                            <input type="tel" id="stkPhone" class="form-control form-control-sm" style="min-width:140px; flex:1;"
+                                   placeholder="07XX XXX XXX" value="{{ customer.phone }}">
+                            <button type="button" class="btn btn-gold btn-sm px-3" onclick="window._sendDebtStk()">
+                                📲 {% trans 'Send STK' %}
+                            </button>
+                        </div>
+                        <div id="stk-poll-status" style="font-size:0.8rem; text-align:center; padding:0.25rem 0; display:none; color:#b0b0b0;"></div>
+                        <div style="font-size:0.72rem; color:#666; margin-top:0.25rem;">
+                            {% trans 'Customer enters M-Pesa PIN on their phone — payment is confirmed automatically.' %}
                         </div>
                     </div>
 
@@ -589,15 +607,17 @@
 {% endblock %}
 
 {% block extra_js %}
-{% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
 <style>
+{% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
 .debt-ledger-tile:hover {
     background: rgba(255,255,255,0.03);
     box-shadow: 0 0 0 1px rgba(201,168,76,0.3);
     transition: box-shadow 0.15s, background 0.15s;
 }
+{% endif %}
 </style>
 <script>
+{% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
 window._debtLedgerChange = function() {
     var dsBar = document.getElementById('ds_bar');
     var isBar = dsBar && dsBar.checked;
@@ -623,7 +643,6 @@ document.addEventListener('DOMContentLoaded', function() {
     var modal = document.getElementById('paymentModal');
     if (modal) {
         modal.addEventListener('show.bs.modal', function() {
-            /* Only sync if _quickPayLedger was NOT the trigger (it already set values) */
             setTimeout(function() {
                 var dsBar = document.getElementById('ds_bar');
                 if (dsBar) window._debtLedgerChange();
@@ -631,8 +650,86 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
-</script>
 {% endif %}
+
+/* ── STK Push in payment modal ── */
+window._debtPmChange = function() {
+    var mpesaRadio = document.getElementById('pm_mpesa2');
+    var stkSection = document.getElementById('stk-push-section');
+    if (stkSection) {
+        stkSection.style.display = (mpesaRadio && mpesaRadio.checked) ? 'block' : 'none';
+    }
+};
+
+window._sendDebtStk = function() {
+    var phone  = (document.getElementById('stkPhone') || {}).value || '';
+    var amount = (document.getElementById('amountInput') || {}).value || '';
+    var source = 'bar';
+    var dsKitchen = document.getElementById('ds_kitchen');
+    if (dsKitchen && dsKitchen.checked) source = 'kitchen';
+
+    var statusEl = document.getElementById('stk-poll-status');
+    function setStatus(msg, color) {
+        if (!statusEl) return;
+        statusEl.style.display = 'block';
+        statusEl.style.color = color || '#b0b0b0';
+        statusEl.textContent = msg;
+    }
+
+    if (!phone.trim()) { setStatus('Weka nambari ya simu ya M-Pesa ya mteja.', '#fbbf24'); return; }
+    if (!amount || parseFloat(amount) < 1) { setStatus('Weka kiasi sahihi.', '#fbbf24'); return; }
+
+    setStatus('Inatuma STK Push...', '#6ee7b7');
+
+    var csrf = document.querySelector('[name=csrfmiddlewaretoken]');
+    var body = 'amount=' + encodeURIComponent(amount)
+             + '&phone=' + encodeURIComponent(phone)
+             + '&source=' + encodeURIComponent(source)
+             + '&csrfmiddlewaretoken=' + encodeURIComponent(csrf ? csrf.value : '');
+
+    fetch('{% url "debt_stk_push" customer.id %}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: body,
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (!d.ok) { setStatus('Hitilafu: ' + (d.error || 'Jaribu tena.'), '#f87171'); return; }
+        setStatus('📱 Angalia simu ya mteja — anaingiza PIN ya M-Pesa...', '#6ee7b7');
+        _pollDebtStkPayment(d.payment_id, 0);
+    })
+    .catch(function() { setStatus('Hitilafu ya mtandao. Jaribu tena.', '#f87171'); });
+};
+
+function _pollDebtStkPayment(paymentId, attempt) {
+    var statusEl = document.getElementById('stk-poll-status');
+    function setStatus(msg, color) {
+        if (!statusEl) return;
+        statusEl.style.display = 'block';
+        statusEl.style.color = color || '#b0b0b0';
+        statusEl.textContent = msg;
+    }
+    if (attempt >= 24) {
+        setStatus('Muda umekwisha — angalia kama M-Pesa imefanikiwa, kisha rekodi malipo mwenyewe.', '#fbbf24');
+        return;
+    }
+    setTimeout(function() {
+        fetch('/mpesa/status/?payment_id=' + paymentId)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.status === 'completed') {
+                setStatus('✅ KES ' + Number(d.amount).toLocaleString('en-KE', {maximumFractionDigits:0}) + ' imepokelewa! Ukurasa unasasishwa...', '#6ee7b7');
+                setTimeout(function() { window.location.reload(); }, 1800);
+            } else if (d.status === 'failed') {
+                setStatus('❌ Malipo hayakufanikiwa. Jaribu tena au rekodi mwenyewe.', '#f87171');
+            } else {
+                _pollDebtStkPayment(paymentId, attempt + 1);
+            }
+        })
+        .catch(function() { _pollDebtStkPayment(paymentId, attempt + 1); });
+    }, 5000);
+}
+</script>
 {% endblock %}
 
 {% block page_tour %}

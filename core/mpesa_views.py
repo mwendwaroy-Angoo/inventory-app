@@ -253,6 +253,54 @@ def _create_debt_payment_from_receipt(payment):
         logger.exception("_create_debt_payment_from_receipt failed payment_id=%s", payment.id)
 
 
+def _settle_debt_customer_from_payment(payment):
+    """Handle STK Push debt settlement initiated by staff from the debt tracker page.
+
+    Called when payment.debt_customer_id is set. Delegates to _do_settle_debt_payment
+    which creates CustomerDebtPayment, runs FIFO reconciliation, issues receipt, SMS.
+    Idempotent: guarded by mpesa_receipt in CustomerDebtPayment.notes.
+    """
+    try:
+        from .models import Customer as _Customer, CustomerDebtPayment as _CDP
+        from .debt_views import _do_settle_debt_payment
+
+        customer = _Customer.objects.filter(
+            id=payment.debt_customer_id, business=payment.business
+        ).first()
+        if not customer:
+            return
+
+        source = payment.source or 'bar'
+        mpesa_ref = payment.mpesa_receipt or ''
+
+        # Idempotency: skip if we already recorded a CDP with this M-Pesa receipt
+        if mpesa_ref and _CDP.objects.filter(
+            business=payment.business,
+            customer=customer,
+            notes__contains=mpesa_ref,
+        ).exists():
+            return
+
+        notes = f'M-Pesa {mpesa_ref} · STK deni' if mpesa_ref else 'STK deni'
+
+        _do_settle_debt_payment(
+            customer=customer,
+            business=payment.business,
+            amount=float(payment.amount),
+            payment_method='mpesa',
+            source=source,
+            notes=notes,
+            recorded_by=None,
+        )
+
+        logger.info(
+            "Debt STK settled: customer=%s amount=%s source=%s mpesa=%s",
+            customer.id, payment.amount, source, mpesa_ref,
+        )
+    except Exception:
+        logger.exception("_settle_debt_customer_from_payment failed payment_id=%s", payment.id)
+
+
 def _settle_receipt_entries_from_payment(payment):
     """Settle BarTabEntry rows across all tabs linked to a receipt.
 
@@ -638,6 +686,9 @@ def mpesa_callback(request):
         # Settle bar tab (full or partial) if linked (staff-side STK push)
         elif payment.bar_tab_id:
             _settle_tab_from_payment(payment)
+        # Staff-initiated debt STK Push from the debt tracker page
+        elif payment.debt_customer_id:
+            _settle_debt_customer_from_payment(payment)
 
         # Settle kitchen cart if this was a kitchen STK push
         if payment.kitchen_cart:
@@ -876,6 +927,8 @@ def payment_status(request, payment_id):
                         _create_debt_payment_from_receipt(payment)
                 elif payment.bar_tab_id:
                     _settle_tab_from_payment(payment)
+                elif payment.debt_customer_id:
+                    _settle_debt_customer_from_payment(payment)
                 if payment.kitchen_cart:
                     _settle_kitchen_order_from_payment(payment)
                 if payment.qs_cart:
