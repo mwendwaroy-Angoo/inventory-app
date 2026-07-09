@@ -2590,14 +2590,14 @@ def quick_sell(request):
                     business=user_profile.business,
                     customer_name=credit_recipient,
                     status='OPEN',
-                    source='bar',  # never merge into a kitchen food tab
+                    source='qs',  # QS tabs are isolated from bar board tabs
                 ).first()
                 if not bar_tab:
                     bar_tab = BarTab.objects.create(
                         business=user_profile.business,
                         customer_name=credit_recipient,
                         served_by=request.user,
-                        source='bar',
+                        source='qs',
                     )
                 for txn, desc, amt in tab_transactions:
                     BarTabEntry.objects.create(
@@ -2862,9 +2862,9 @@ def quick_sell(request):
     # Exclude kitchen stores — no kitchen items appear in QS so the pill would show 0 items
     stores = Store.objects.filter(business=user_profile.business, is_kitchen=False)
 
-    # Tab autocomplete: only bar tab customer names (food tab names don't belong here)
+    # Tab autocomplete: QS tabs only (separate lane from bar board tabs)
     open_tab_names = list(
-        BarTab.objects.filter(business=user_profile.business, status='OPEN', source='bar')
+        BarTab.objects.filter(business=user_profile.business, status='OPEN', source='qs')
         .values_list('customer_name', flat=True)
         .distinct()
     )

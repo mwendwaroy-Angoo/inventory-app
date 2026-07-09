@@ -2183,7 +2183,7 @@ class BarTab(models.Model):
         max_length=80, blank=True,
         help_text='Waitress name when she has no login.'
     )
-    SOURCE_CHOICES = [('bar', 'Bar'), ('kitchen', 'Kitchen')]
+    SOURCE_CHOICES = [('bar', 'Bar'), ('kitchen', 'Kitchen'), ('qs', 'Quick Sell')]
     source        = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='bar')
     status        = models.CharField(max_length=8, choices=STATUS_CHOICES, default='OPEN')
     opened_at     = models.DateTimeField(auto_now_add=True)

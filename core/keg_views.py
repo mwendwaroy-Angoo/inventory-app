@@ -508,7 +508,8 @@ def bar_board(request):
                         phone = normalize_ke_phone(active_tab.customer.phone or '')
                     if phone:
                         new_total = float(active_tab.total())
-                        counter_label = 'Bar' if active_tab.source == 'bar' else 'Kitchen'
+                        _src = active_tab.source
+                        counter_label = 'Kitchen' if _src == 'kitchen' else ('Quick Sell' if _src == 'qs' else 'Bar')
                         sms_msg = (
                             f"Habari {active_tab.customer_name},\n"
                             f"{business.name} imeongeza KES {float(total_revenue):,.0f} "
@@ -952,6 +953,9 @@ def deplete_barrel(request, barrel_id):
 def tabs_list(request):
     """AJAX GET — returns all OPEN tabs for this business with their entries.
 
+    ?ctx=qs  → Quick Sell tabs only (source='qs')
+    default  → Bar board tabs (source='bar' and 'kitchen' for cross-counter)
+
     Station scoping:
       - bar-only staff: see bar entries on any tab; food entries replaced by a cross-notice
       - kitchen-only staff: redirected away (they use kitchen_tabs_list)
@@ -965,9 +969,17 @@ def tabs_list(request):
     _show_bar, _show_kitchen = _station_scope(up)
     _see_all = _show_bar and _show_kitchen  # owner or cross-access
 
+    _ctx = request.GET.get('ctx', 'bar')
+
+    if _ctx == 'qs':
+        _source_filter = {'source': 'qs'}
+    else:
+        # Bar board context: bar + kitchen tabs (cross-counter visible), never QS
+        _source_filter = {'source__in': ['bar', 'kitchen']}
+
     tabs = (
         BarTab.objects
-        .filter(business=up.business, status='OPEN')
+        .filter(business=up.business, status='OPEN', **_source_filter)
         .prefetch_related(
             Prefetch('entries',
                      queryset=BarTabEntry.objects.select_related('transaction__item__store'))
@@ -1382,7 +1394,12 @@ def settle_tab(request, tab_id):
             status='OPEN',
         ).exclude(id=tab.id).values('id', 'source', 'customer_name')
         for ot in other_qs:
-            label = '🍗 Food Tab' if ot['source'] == 'kitchen' else '🍺 Bar Tab'
+            if ot['source'] == 'kitchen':
+                label = '🍗 Food Tab'
+            elif ot['source'] == 'qs':
+                label = '🛒 Quick Sell Tab'
+            else:
+                label = '🍺 Bar Tab'
             other_open_tabs.append({'id': ot['id'], 'label': label})
 
     return JsonResponse({

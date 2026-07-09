@@ -748,7 +748,8 @@ def _kitchen_checkout(request, up, business, is_owner):
                 phone = normalize_ke_phone(tab_phone)
             if phone:
                 new_total = float(active_tab.total())
-                counter_label = 'Bar' if active_tab.source == 'bar' else 'Kitchen'
+                _src = active_tab.source
+                counter_label = 'Kitchen' if _src == 'kitchen' else ('Quick Sell' if _src == 'qs' else 'Bar')
                 sms_msg = (
                     f"Habari {active_tab.customer_name},\n"
                     f"{business.name} imeongeza KES {float(total):,.0f} kwenye tab yako "
