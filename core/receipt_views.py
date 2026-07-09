@@ -118,6 +118,29 @@ def _get_live_tab_state(receipt):
         effective_status = tab.status
         if tab.status == 'SETTLED' and outstanding > 0:
             effective_status = 'DEBT'
+
+        # For DEBT tabs: the is_paid flags only flip when a payment FULLY covers
+        # an entry. Partial cash/mpesa debt payments (recorded by staff in the
+        # debt tracker) reduce the real balance without flipping any flag.
+        # Pull the true outstanding from the debt tracker so partial payments
+        # are reflected on the customer's live receipt immediately.
+        if effective_status == 'DEBT' and tab.customer_id:
+            try:
+                from .models import Customer as _Customer
+                from .debt_views import _get_customer_debt_data
+                cust = getattr(tab, '_customer_cache', None) or _Customer.objects.filter(
+                    id=tab.customer_id, business=receipt.business
+                ).first()
+                if cust:
+                    # Scope to the tab's source ('bar'/'kitchen'); if the receipt
+                    # spans both sources via linked_tab_ids use 'all'.
+                    has_linked = bool(receipt.meta.get('linked_tab_ids'))
+                    tab_source = getattr(tab, 'source', 'bar') if not has_linked else 'all'
+                    debt_data = _get_customer_debt_data(cust, receipt.business, scope=tab_source)
+                    outstanding = float(debt_data.get('outstanding', outstanding))
+            except Exception:
+                pass
+
         is_live = effective_status in ('OPEN', 'DEBT')
         return is_live, effective_status, lines, outstanding
     except Exception:

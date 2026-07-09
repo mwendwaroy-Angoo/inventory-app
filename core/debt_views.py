@@ -383,25 +383,34 @@ def record_debt_payment(request, customer_id):
         ).values_list('id', flat=True)
 
         if settled_tabs:
-            # Get the credit transactions that this payment covers (FIFO order)
+            # FIFO: iterate unpaid_before (already accounts for prior payments).
+            # Only mark a BarTabEntry as is_paid=True when this payment FULLY
+            # covers that entry's remaining amount. Partial coverage is tracked
+            # by the CustomerDebtPayment record; the live receipt recomputes
+            # outstanding via the debt tracker (_get_customer_debt_data), not
+            # from is_paid flags alone, so partial amounts show correctly there.
             paid_remaining = float(amount)
+            settled_tab_ids = list(settled_tabs)
             for entry in unpaid_before:
                 if paid_remaining <= 0:
                     break
                 txn = entry['txn']
-                covered = round(min(entry['amount'], paid_remaining), 2)
+                entry_amount = float(entry['amount'])
+                covered = round(min(entry_amount, paid_remaining), 2)
                 paid_remaining = round(paid_remaining - covered, 2)
 
-                # Find the BarTabEntry linked to this transaction and mark it paid
-                BarTabEntry.objects.filter(
-                    tab__id__in=list(settled_tabs),
-                    transaction=txn,
-                    is_paid=False,
-                ).update(
-                    is_paid=True,
-                    paid_at=now,
-                    payment_method=method,
-                )
+                # Only flip is_paid when the payment fully covers this entry.
+                # A 50 KES payment against a 300 KES entry leaves it unpaid.
+                if covered >= entry_amount:
+                    BarTabEntry.objects.filter(
+                        tab__id__in=settled_tab_ids,
+                        transaction=txn,
+                        is_paid=False,
+                    ).update(
+                        is_paid=True,
+                        paid_at=now,
+                        payment_method=method,
+                    )
     except Exception:
         pass
 
