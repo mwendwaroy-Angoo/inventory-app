@@ -1009,6 +1009,7 @@ def kitchen_tabs_list(request):
     _food_tab_ids_all = list(food_tabs.values_list('id', flat=True))
     _kb_receipt_map = {}
     if _food_tab_ids_all:
+        # Pass 1: receipts that directly own the food tab (meta.tab_id)
         for _r in _KbReceipt.objects.filter(
             business=up.business, meta__tab_id__in=_food_tab_ids_all
         ).values('meta', 'token'):
@@ -1016,6 +1017,19 @@ def kitchen_tabs_list(request):
             _tid = _rmeta.get('tab_id')
             if _tid and _tid not in _kb_receipt_map:
                 _kb_receipt_map[_tid] = _r['token']
+
+        # Pass 2: receipts that reference the food tab via linked_tab_ids
+        _kb_unmapped = [tid for tid in _food_tab_ids_all if tid not in _kb_receipt_map]
+        if _kb_unmapped:
+            from django.db.models import Q as _QK
+            _klq = _QK()
+            for _kut in _kb_unmapped:
+                _klq |= _QK(meta__linked_tab_ids__contains=[_kut])
+            for _r in _KbReceipt.objects.filter(business=up.business).filter(_klq).values('meta', 'token'):
+                _rmeta = _r.get('meta') or {}
+                for _ltid in (_rmeta.get('linked_tab_ids') or []):
+                    if _ltid in _kb_unmapped and _ltid not in _kb_receipt_map:
+                        _kb_receipt_map[_ltid] = _r['token']
 
     result = []
     for tab in food_tabs:

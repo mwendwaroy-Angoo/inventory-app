@@ -334,6 +334,7 @@ def bar_board(request):
                 #             bar tab into it so all items appear under one URL.
                 master_rcpt = None
                 _is_linked_to_food_rcpt = False
+                _is_linked_to_qs_rcpt = False  # Priority 4: linked to a cross-module QS receipt
                 if payment_method == 'tab' and active_tab:
                     master_rcpt = Receipt.objects.filter(
                         business=business,
@@ -394,6 +395,7 @@ def bar_board(request):
                                     _any_today.meta['linked_tab_ids'] = _linked_ids
                                     _any_today.save(update_fields=['meta'])
                                 master_rcpt = _any_today
+                                _is_linked_to_qs_rcpt = True
                         except Exception:
                             logger.exception(
                                 'bar_board: cross-module receipt link lookup failed business=%s',
@@ -476,6 +478,25 @@ def bar_board(request):
                 except Exception:
                     logger.exception(
                         "Tab food-link SMS failed in bar_board (business=%s)", business.id
+                    )
+
+            # SMS: bar tab linked to an existing QS/cross-module receipt (Priority 4)
+            if payment_method == 'tab' and _is_linked_to_qs_rcpt and receipt_url and active_tab:
+                try:
+                    from .notifications import normalize_ke_phone, send_sms_notification
+                    _sms_phone_p4 = normalize_ke_phone(
+                        tab_phone or (linked_customer.phone if linked_customer else '') or ''
+                    ) if (tab_phone or linked_customer) else ''
+                    if _sms_phone_p4:
+                        _sms_p4 = (
+                            f"Habari {tab_customer},\n"
+                            f"{business.name}: Kinywaji kimeongezwa kwenye tab yako.\n"
+                            f"Angalia risiti iliyosasishwa: {receipt_url}"
+                        )
+                        send_sms_notification(_sms_p4, _sms_phone_p4)
+                except Exception:
+                    logger.exception(
+                        "Tab P4-link SMS failed in bar_board (business=%s)", business.id
                     )
 
             # SMS notification when bar items are merged into an existing kitchen food tab
@@ -958,6 +979,7 @@ def tabs_list(request):
     _tab_ids = list(tabs.values_list('id', flat=True))
     _receipt_token_map = {}  # tab_id → receipt token
     if _tab_ids:
+        # Pass 1: receipts that directly own the tab (meta.tab_id)
         for _r in Receipt.objects.filter(
             business=up.business, meta__tab_id__in=_tab_ids
         ).values('meta', 'token'):
@@ -965,6 +987,19 @@ def tabs_list(request):
             _tid = _rmeta.get('tab_id')
             if _tid and _tid not in _receipt_token_map:
                 _receipt_token_map[_tid] = _r['token']
+
+        # Pass 2: receipts that reference the tab via linked_tab_ids (Priority 3/4 links)
+        _unmapped = [tid for tid in _tab_ids if tid not in _receipt_token_map]
+        if _unmapped:
+            from django.db.models import Q as _Q
+            _lq = _Q()
+            for _ut in _unmapped:
+                _lq |= _Q(meta__linked_tab_ids__contains=[_ut])
+            for _r in Receipt.objects.filter(business=up.business).filter(_lq).values('meta', 'token'):
+                _rmeta = _r.get('meta') or {}
+                for _ltid in (_rmeta.get('linked_tab_ids') or []):
+                    if _ltid in _unmapped and _ltid not in _receipt_token_map:
+                        _receipt_token_map[_ltid] = _r['token']
 
     def _entry_dict(e):
         """Serialise one BarTabEntry, including whether its item is a kitchen (food) item."""
