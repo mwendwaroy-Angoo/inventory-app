@@ -2905,9 +2905,8 @@ def next_material_no(request):
     prefix = (request.GET.get('prefix') or '').strip().upper()
     if not prefix or len(prefix) > 4 or not prefix[0].isalpha():
         return JsonResponse({'next': ''})
-    business = up.business
+    # material_no is globally unique (no business scope), so query all items
     existing = Item.objects.filter(
-        store__business=business,
         material_no__istartswith=prefix + '-',
     ).values_list('material_no', flat=True)
 
