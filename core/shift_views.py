@@ -47,7 +47,7 @@ def get_active_staff_shift(user_profile, business):
         Shift — caller has an open shift; proceed
         False — caller is staff with no open shift; block
     """
-    if getattr(user_profile, 'is_owner', False):
+    if getattr(user_profile, 'is_owner_or_manager', False):
         return None
     from .models import Shift
     active = Shift.objects.filter(
@@ -633,9 +633,14 @@ def close_shift(request, shift_id):
     # A staff member who closes shift early (e.g. for a break) while the bar is
     # still within operating hours should NOT have their customers' tabs wiped.
     # 24/7 bars (no closing_time): always convert — shift changes ARE the end-of-service.
+    #
+    # manager_taking_over: staff can tick this when a manager or owner is staying
+    # on to serve remaining customers. Suppresses auto-convert so open tabs stay
+    # alive for the manager to settle directly from the bar board.
     _biz = up.business
     _has_closing_time = bool(getattr(_biz, 'closing_time', None))
-    _should_convert = not _has_closing_time or not _biz.is_open()
+    _manager_taking_over = request.POST.get('manager_taking_over') == '1'
+    _should_convert = (not _has_closing_time or not _biz.is_open()) and not _manager_taking_over
 
     from .models import BarTab
     from core.models import Customer
@@ -686,13 +691,21 @@ def close_shift(request, shift_id):
         except Exception:
             logger.exception('close_shift: auto-convert failed for tab %s in shift %s', tab.id, shift.id)
 
-    # For uncoverted tabs (shift closed early) include them so the bar board
-    # can show the "Geuza Zote Deni" button as a manual fallback.
-    open_tabs_list = [
-        {'id': tab.id, 'customer_name': tab.customer_name or '—'}
-        for tab in open_tabs
-        if tab.status == 'OPEN'
-    ]
+    # For unconverted tabs (shift closed early or manager taking over) include
+    # them so the bar board can show warnings or let the manager handle them.
+    open_tabs_list = []
+    for tab in open_tabs:
+        if tab.status == 'OPEN':
+            opened_at_str = ''
+            if tab.opened_at:
+                from django.utils import timezone as _tz
+                local_dt = _tz.localtime(tab.opened_at)
+                opened_at_str = local_dt.strftime('%H:%M')
+            open_tabs_list.append({
+                'id': tab.id,
+                'customer_name': tab.customer_name or '—',
+                'opened_at': opened_at_str,
+            })
 
     return JsonResponse({
         'ok': True,
@@ -708,6 +721,7 @@ def close_shift(request, shift_id):
         'open_tabs_count':      len(open_tabs_list),
         'auto_converted':       auto_converted,
         'auto_converted_names': auto_converted_names,
+        'manager_taking_over':  _manager_taking_over,
     })
 
 

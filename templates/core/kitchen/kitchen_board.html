@@ -1076,6 +1076,20 @@
           <input type="text" id="close-shift-notes" class="form-control"
                  placeholder="e.g. Kila kitu sawa">
         </div>
+        <!-- Manager handover — suppresses tab auto-convert when supervisor stays on -->
+        <div id="close-shift-manager-wrap" style="display:none; margin-top:.75rem;">
+          <hr style="border-color:#333; margin:.75rem 0;">
+          <label style="display:flex; align-items:flex-start; gap:.6rem; cursor:pointer;">
+            <input type="checkbox" id="close-manager-takeover"
+                   style="margin-top:3px; accent-color:#c9a84c; width:16px; height:16px; flex-shrink:0;">
+            <span style="font-size:.82rem; color:#f0ece4;">
+              <strong style="color:#c9a84c;">Meneja / Mmiliki anabaki</strong><br>
+              <span style="color:#b0b0b0; font-size:.77rem;">Tiki hii inazuia tabs kubadilika kuwa deni automatically.
+              Meneja atasettlesha tabs mwenyewe kutoka kwenye orodha ya tabs.</span>
+            </span>
+          </label>
+        </div>
+
         <!-- Offline sales adjustment -->
         <div>
           <hr style="border-color:#333; margin:.75rem 0;">
@@ -2702,11 +2716,15 @@
     if (!_activeShiftId) return;
     document.getElementById('close-shift-cash').value = '';
     document.getElementById('close-shift-notes').value = '';
-    var summEl      = document.getElementById('close-shift-summary');
-    var resEl       = document.getElementById('close-shift-result');
-    var errEl       = document.getElementById('close-shift-error');
-    if (resEl)      { resEl.style.display = 'none'; resEl.innerHTML = ''; }
-    if (errEl)      errEl.style.display = 'none';
+    var summEl          = document.getElementById('close-shift-summary');
+    var resEl           = document.getElementById('close-shift-result');
+    var errEl           = document.getElementById('close-shift-error');
+    var managerWrap     = document.getElementById('close-shift-manager-wrap');
+    var managerCheckbox = document.getElementById('close-manager-takeover');
+    if (resEl)          { resEl.style.display = 'none'; resEl.innerHTML = ''; }
+    if (errEl)          errEl.style.display = 'none';
+    if (managerWrap)    managerWrap.style.display = 'none';
+    if (managerCheckbox) managerCheckbox.checked = false;
     var offAmtEl = document.getElementById('close-offline-amount');
     var offNoteEl = document.getElementById('close-offline-note');
     if (offAmtEl)  offAmtEl.value  = '0';
@@ -2726,6 +2744,17 @@
           '</div><p style="font-size:.78rem; color:#888;">Hesabu pesa zote zilizopo mkononi sasa hivi, kisha ingiza hapa chini.</p>';
       });
 
+    // Show manager-handover option when kitchen food tabs are open
+    fetch('/bar/tabs/?ctx=kitchen', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var openTabs = (d.tabs || []).filter(function (t) { return t.status === 'OPEN'; });
+        if (openTabs.length > 0 && managerWrap) {
+          managerWrap.style.display = 'block';
+        }
+      })
+      .catch(function () {});
+
     showModal('closeShiftModal');
   };
 
@@ -2742,13 +2771,16 @@
     }
     if (errEl) errEl.style.display = 'none';
     btn.disabled = true; btn.textContent = 'Inafunga...';
-    var offlineAmt  = (document.getElementById('close-offline-amount').value  || '0').trim();
-    var offlineNote = (document.getElementById('close-offline-note').value   || '').trim();
+    var offlineAmt      = (document.getElementById('close-offline-amount').value  || '0').trim();
+    var offlineNote     = (document.getElementById('close-offline-note').value   || '').trim();
+    var managerChk      = document.getElementById('close-manager-takeover');
+    var managerTakeover = managerChk && managerChk.checked ? '1' : '0';
     var fd = new FormData();
     fd.append('closing_cash_counted',  cash);
     fd.append('notes',                 notes);
     fd.append('offline_sales_amount',  offlineAmt);
     fd.append('offline_sales_note',    offlineNote);
+    fd.append('manager_taking_over',   managerTakeover);
     fd.append('csrfmiddlewaretoken',   '{{ csrf_token }}');
     fetch('/kitchen/shift/' + _activeShiftId + '/close/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })

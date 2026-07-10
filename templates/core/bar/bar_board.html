@@ -899,6 +899,20 @@
           </div>
         </div>
 
+        <!-- Manager handover — suppresses tab auto-convert when supervisor stays on -->
+        <div id="close-shift-manager-wrap" style="display:none; margin-top:.75rem;">
+          <hr style="border-color:#333; margin:.75rem 0;">
+          <label style="display:flex; align-items:flex-start; gap:.6rem; cursor:pointer;">
+            <input type="checkbox" id="close-manager-takeover"
+                   style="margin-top:3px; accent-color:#c9a84c; width:16px; height:16px; flex-shrink:0;">
+            <span style="font-size:.82rem; color:#f0ece4;">
+              <strong style="color:#c9a84c;">Meneja / Mmiliki anabaki</strong><br>
+              <span style="color:#b0b0b0; font-size:.77rem;">Tiki hii inazuia tabs kubadilika kuwa deni automatically.
+              Meneja atasettlesha tabs mwenyewe kutoka kwenye orodha ya tabs.</span>
+            </span>
+          </label>
+        </div>
+
         <!-- Barrel weighing — populated by openCloseShiftModal if TAPPED barrels exist -->
         <div id="close-shift-barrels" style="display:none;">
           <hr style="border-color:#333; margin:.75rem 0;">
@@ -3579,19 +3593,34 @@
     if (!_activeShiftId) return;
     document.getElementById('close-shift-cash').value = '';
     document.getElementById('close-shift-notes').value = '';
-    var summEl      = document.getElementById('close-shift-summary');
-    var resEl       = document.getElementById('close-shift-result');
-    var errEl       = document.getElementById('close-shift-error');
-    var barrelSect  = document.getElementById('close-shift-barrels');
-    var barrelList  = document.getElementById('close-shift-barrel-list');
-    if (resEl)      { resEl.style.display = 'none'; resEl.innerHTML = ''; }
-    if (errEl)      errEl.style.display = 'none';
-    if (barrelSect) barrelSect.style.display = 'none';
-    if (barrelList) barrelList.innerHTML = '';
+    var summEl          = document.getElementById('close-shift-summary');
+    var resEl           = document.getElementById('close-shift-result');
+    var errEl           = document.getElementById('close-shift-error');
+    var barrelSect      = document.getElementById('close-shift-barrels');
+    var barrelList      = document.getElementById('close-shift-barrel-list');
+    var managerWrap     = document.getElementById('close-shift-manager-wrap');
+    var managerCheckbox = document.getElementById('close-manager-takeover');
+    if (resEl)          { resEl.style.display = 'none'; resEl.innerHTML = ''; }
+    if (errEl)          errEl.style.display = 'none';
+    if (barrelSect)     barrelSect.style.display = 'none';
+    if (barrelList)     barrelList.innerHTML = '';
+    if (managerWrap)    managerWrap.style.display = 'none';
+    if (managerCheckbox) managerCheckbox.checked = false;
     var offAmtEl = document.getElementById('close-offline-amount');
     var offNoteEl = document.getElementById('close-offline-note');
     if (offAmtEl)  offAmtEl.value  = '0';
     if (offNoteEl) offNoteEl.value = '';
+
+    // Show manager-handover option when there are open tabs
+    fetch('/bar/tabs/', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var openTabs = (d.tabs || []).filter(function (t) { return t.status === 'OPEN'; });
+        if (openTabs.length > 0 && managerWrap) {
+          managerWrap.style.display = 'block';
+        }
+      })
+      .catch(function () {});
     if (summEl)     summEl.innerHTML = '<span style="color:#888; font-size:.82rem;">Inapakia muhtasari...</span>';
 
     // Pull current live numbers
@@ -3668,14 +3697,17 @@
         barrelWeights.push({ barrel_id: parseInt(row.dataset.barrelId), weight_kg: wkg.toFixed(2) });
       }
     });
-    var offlineAmt  = (document.getElementById('close-offline-amount').value  || '0').trim();
-    var offlineNote = (document.getElementById('close-offline-note').value   || '').trim();
+    var offlineAmt      = (document.getElementById('close-offline-amount').value  || '0').trim();
+    var offlineNote     = (document.getElementById('close-offline-note').value   || '').trim();
+    var managerChk      = document.getElementById('close-manager-takeover');
+    var managerTakeover = managerChk && managerChk.checked ? '1' : '0';
     var fd = new FormData();
     fd.append('closing_cash_counted',  cash);
     fd.append('notes',                 notes);
     fd.append('offline_sales_amount',  offlineAmt);
     fd.append('offline_sales_note',    offlineNote);
     fd.append('barrel_weights',        JSON.stringify(barrelWeights));
+    fd.append('manager_taking_over',   managerTakeover);
     fd.append('csrfmiddlewaretoken',   '{{ csrf_token }}');
     fetch('/bar/shift/' + _activeShiftId + '/close/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
@@ -3720,7 +3752,7 @@
               barrelHtml +
               '</div>';
           }
-          // Show open tabs warning — staff must convert or note them before leaving
+          // Show open tabs notice after shift close
           if (d.open_tabs && d.open_tabs.length > 0) {
             var tabsWarnEl = document.getElementById('close-shift-tabs-warn');
             if (!tabsWarnEl) {
@@ -3731,18 +3763,28 @@
             var tabRows = d.open_tabs.map(function(t) {
               return '<div style="display:flex;justify-content:space-between;align-items:center;padding:.3rem 0;border-bottom:1px solid #2a2a2a;">' +
                 '<span style="color:#f0ece4;font-size:.8rem;">👤 ' + t.customer_name + '</span>' +
-                '<span style="color:#b0b0b0;font-size:.75rem;">Ilianza ' + t.opened_at + '</span>' +
+                '<span style="color:#b0b0b0;font-size:.75rem;">Ilianza ' + (t.opened_at || '—') + '</span>' +
                 '</div>';
             }).join('');
-            tabsWarnEl.innerHTML =
-              '<div style="margin-top:.75rem;padding:.6rem .8rem;background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.3);border-radius:8px;">' +
-              '<div style="color:#ff9800;font-size:.82rem;font-weight:600;margin-bottom:.4rem;">⚠ Tab ' + d.open_tabs.length + ' za wateja bado ziko wazi</div>' +
-              tabRows +
-              '<div style="margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;">' +
-              '<button onclick="window.bulkConvertTabsToDebt([' + d.open_tabs.map(function(t){return t.id;}).join(',') + '], this)" ' +
-              'style="padding:.35rem .8rem;background:rgba(192,57,90,0.15);border:1px solid rgba(192,57,90,0.4);border-radius:6px;color:#c0395a;font-size:.77rem;cursor:pointer;">💳 Geuza Zote Deni</button>' +
-              '<span style="color:#666;font-size:.72rem;align-self:center;">au funga mwenyewe kila tab kwenye orodha ya tab</span>' +
-              '</div></div>';
+            if (d.manager_taking_over) {
+              // Manager is staying on — tabs remain open for them to settle
+              tabsWarnEl.innerHTML =
+                '<div style="margin-top:.75rem;padding:.6rem .8rem;background:rgba(93,222,122,0.07);border:1px solid rgba(93,222,122,0.25);border-radius:8px;">' +
+                '<div style="color:#5dde7a;font-size:.82rem;font-weight:600;margin-bottom:.4rem;">✓ Tab ' + d.open_tabs.length + ' — Meneja atashughulikia</div>' +
+                tabRows +
+                '<div style="margin-top:.5rem;font-size:.75rem;color:#b0b0b0;">Tabs zimebaki wazi. Meneja au Mmiliki anaweza kuzifunga moja kwa moja kutoka kwenye orodha ya tabs.</div>' +
+                '</div>';
+            } else {
+              tabsWarnEl.innerHTML =
+                '<div style="margin-top:.75rem;padding:.6rem .8rem;background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.3);border-radius:8px;">' +
+                '<div style="color:#ff9800;font-size:.82rem;font-weight:600;margin-bottom:.4rem;">⚠ Tab ' + d.open_tabs.length + ' za wateja bado ziko wazi</div>' +
+                tabRows +
+                '<div style="margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;">' +
+                '<button onclick="window.bulkConvertTabsToDebt([' + d.open_tabs.map(function(t){return t.id;}).join(',') + '], this)" ' +
+                'style="padding:.35rem .8rem;background:rgba(192,57,90,0.15);border:1px solid rgba(192,57,90,0.4);border-radius:6px;color:#c0395a;font-size:.77rem;cursor:pointer;">💳 Geuza Zote Deni</button>' +
+                '<span style="color:#666;font-size:.72rem;align-self:center;">au funga mwenyewe kila tab kwenye orodha ya tab</span>' +
+                '</div></div>';
+            }
           }
 
           // Hide close button; show Done + Stock Take
