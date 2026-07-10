@@ -1377,11 +1377,14 @@
                         var row = document.createElement('div');
                         row.className = 'preset-row';
                         row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
-                        // For soda ledger items all types share the item's selling price
+                        // Pre-fill price: sodas share one price; Full Bottle/Can = selling_price for spirits
                         var defaultPrice = '';
+                        var _spEl = document.getElementById('id_selling_price');
+                        var _spVal = _spEl ? _spEl.value : '';
                         if (cfg && cfg.isSodaLedger) {
-                            var spEl = document.getElementById('id_selling_price');
-                            if (spEl && spEl.value) defaultPrice = spEl.value;
+                            defaultPrice = _spVal;
+                        } else if (_spVal && (preset.label === 'Full Bottle' || preset.label === 'Full Can')) {
+                            defaultPrice = _spVal;
                         }
                         row.innerHTML =
                             '<input type="hidden" name="preset_id" value="">' +
@@ -1723,15 +1726,24 @@
                         }
                     }
                     _renderBarUnitChips(cfg, catValue);
-                    // Auto-click default size if unit field is already filled to a known size
+                    // Auto-click matching unit OR fall back to default size so button is always visible
                     var unitEl = document.getElementById('id_unit');
+                    var _sizeAutoMatched = false;
                     if (unitEl && unitEl.value) {
-                        var existing = unitEl.value.toLowerCase().replace(/\s/g,'');
+                        var _existingUnit = unitEl.value.toLowerCase().replace(/\s/g,'');
                         cfg.sizes.forEach(function(ml, i) {
-                            if (cfg.sizeLabels[i].toLowerCase().replace(/\s/g,'') === existing) {
+                            if (cfg.sizeLabels[i].toLowerCase().replace(/\s/g,'') === _existingUnit) {
                                 window._onBarUnitChipClick(ml, cfg.sizeLabels[i]);
+                                _sizeAutoMatched = true;
                             }
                         });
+                    }
+                    if (!_sizeAutoMatched && !cfg.isSodaLedger) {
+                        // Auto-select default size so the quick-fill button is visible immediately
+                        var _defIdx = cfg.sizes.indexOf(cfg.defaultSizeMl);
+                        if (_defIdx !== -1) {
+                            window._onBarUnitChipClick(cfg.defaultSizeMl, cfg.sizeLabels[_defIdx]);
+                        }
                     }
                 } else {
                     if (actionsDiv) actionsDiv.style.display = 'none';
