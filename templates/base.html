@@ -912,12 +912,24 @@
             });
         }
 
-        // ── PWA Install ──
+        // ── PWA Install helpers (localStorage with 14-day dismissal window) ──
+        var _PWA_KEY     = 'pwa-dismissed-at';
+        var _IOS_KEY     = 'ios-install-dismissed-at';
+        var _14D         = 14 * 24 * 60 * 60 * 1000;
+        function _pwaDismissed(key) {
+            var t = parseInt(localStorage.getItem(key) || '0', 10);
+            return t && (Date.now() - t < _14D);
+        }
+        function _pwaSetDismissed(key) {
+            localStorage.setItem(key, String(Date.now()));
+        }
+
+        // ── Android / Desktop: beforeinstallprompt banner ──
         let deferredPrompt = null;
         window.addEventListener('beforeinstallprompt', e => {
             e.preventDefault();
             deferredPrompt = e;
-            if (!sessionStorage.getItem('pwa-dismissed')) {
+            if (!_pwaDismissed(_PWA_KEY)) {
                 document.getElementById('pwa-install-banner').style.display = 'block';
             }
         });
@@ -931,19 +943,28 @@
         }
         function dismissInstall() {
             document.getElementById('pwa-install-banner').style.display = 'none';
-            sessionStorage.setItem('pwa-dismissed', '1');
+            _pwaSetDismissed(_PWA_KEY);
         }
 
-        // ── iOS "Add to Home Screen" hint (Safari never fires beforeinstallprompt) ──
+        // ── iOS: ALL iOS browsers (Safari, Chrome, Edge, Firefox) support
+        //    "Add to Home Screen" via the Share button. None of them fire
+        //    beforeinstallprompt — show a manual-steps banner instead.
+        //    navigator.standalone is only true inside the installed PWA shell. ──
         (function() {
-            var isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
-            var isSafari = /safari/i.test(navigator.userAgent) && !/crios|fxios|opios|chrome/i.test(navigator.userAgent);
+            var isIos        = /iphone|ipad|ipod/i.test(navigator.userAgent);
             var isStandalone = window.navigator.standalone === true;
-            if (!isIos || !isSafari || isStandalone) return;
-            if (sessionStorage.getItem('ios-install-dismissed')) return;
+            if (!isIos || isStandalone) return;
+            if (_pwaDismissed(_IOS_KEY)) return;
+
+            // Detect whether we're in a browser where the Share button is
+            // in the bottom toolbar (Safari) vs top-right (Chrome/Edge/Firefox).
+            var isChromeFx = /CriOS|FxiOS|EdgA|OPT\/|OPiOS/i.test(navigator.userAgent);
+            var shareHint  = isChromeFx
+                ? 'Tap the <strong style="color:#f0ece4;">Share</strong> button <span style="font-size:1rem;">⬆️</span> (top-right or bottom of screen)'
+                : 'Tap <strong style="color:#f0ece4;">Share</strong> <span style="font-size:1rem;">⬆️</span> at the bottom of the screen';
 
             var banner = document.createElement('div');
-            banner.id = 'ios-install-banner';
+            banner.id  = 'ios-install-banner';
             banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2001;' +
                 'background:linear-gradient(135deg,#111,#1a1a1a);border-top:2px solid #c9a84c;' +
                 'padding:0.9rem 1.1rem;box-shadow:0 -4px 20px rgba(0,0,0,0.6);';
@@ -953,12 +974,13 @@
                 '<div style="flex:1;">' +
                 '<div style="color:#c9a84c;font-weight:600;font-size:0.88rem;margin-bottom:2px;">Install Duka Mwecheche</div>' +
                 '<div style="color:#b0b0b0;font-size:0.76rem;line-height:1.4;">' +
-                'Tap <strong style="color:#f0ece4;">Share</strong> <span style="font-size:1rem;">⬆️</span> at the bottom of Safari, then choose ' +
-                '<strong style="color:#f0ece4;">"Add to Home Screen"</strong> to install the app.' +
+                shareHint + ', then choose <strong style="color:#f0ece4;">"Add to Home Screen"</strong>.' +
                 '</div>' +
                 '</div>' +
-                '<button onclick="(function(){document.getElementById(\'ios-install-banner\').remove();sessionStorage.setItem(\'ios-install-dismissed\',\'1\');})()"' +
-                ' style="background:none;border:none;color:#888;font-size:1.2rem;cursor:pointer;line-height:1;flex-shrink:0;">✕</button>' +
+                '<button onclick="(function(){' +
+                'document.getElementById(\'ios-install-banner\').remove();' +
+                'localStorage.setItem(\'' + _IOS_KEY + '\',String(Date.now()));' +
+                '})()" style="background:none;border:none;color:#888;font-size:1.2rem;cursor:pointer;line-height:1;flex-shrink:0;">✕</button>' +
                 '</div>';
             document.body.appendChild(banner);
         })();

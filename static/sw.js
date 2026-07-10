@@ -1,4 +1,4 @@
-const CACHE_NAME = 'duka-v9';
+const CACHE_NAME = 'duka-v10';
 const OFFLINE_URL = '/offline/';
 
 const PRECACHE_URLS = [
@@ -93,6 +93,7 @@ self.addEventListener('fetch', event => {
     request.url.includes('/stock/bar/board/') ||
     request.url.includes('/stock/produce/board/') ||
     request.url.includes('/notifications/') ||
+    request.url.includes('/dashboard/revenue/') ||  // live revenue tile poll
     request.url.includes('/r/') ||         // live receipt status endpoint
     request.headers.get('accept')?.includes('application/json')
   ) {
