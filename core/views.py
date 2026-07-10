@@ -517,6 +517,46 @@ def home(request):
     return render(request, "core/home.html", context)
 
 
+def dashboard_revenue_api(request):
+    """Live today's revenue for the home dashboard hero tiles (bar + kitchen).
+
+    No @login_required — unauthenticated polls return zeros so the JS poll
+    never triggers a login redirect loop (same pattern as notifications_count).
+    """
+    if not request.user.is_authenticated:
+        return JsonResponse({'bar_revenue': 0, 'kitchen_revenue': 0, 'has_kitchen': False})
+    try:
+        up = request.user.userprofile
+        business = up.business
+        show_bar, show_kitchen = _station_scope(up)
+        today = timezone.localdate()
+        bar_rev = 0
+        kitchen_rev = 0
+        if show_bar:
+            _bar_txns = Transaction.objects.filter(
+                business=business, type='Issue',
+                date=today,
+                payment_method__in=['cash', 'mpesa'],
+                item__store__is_kitchen=False,
+            ).exclude(payment_method='void').select_related('item')
+            bar_rev = sum(t.revenue() for t in _bar_txns)
+        if show_kitchen and getattr(business, 'has_kitchen', False):
+            _kit_txns = Transaction.objects.filter(
+                business=business, type='Issue',
+                date=today,
+                payment_method__in=['cash', 'mpesa'],
+                item__store__is_kitchen=True,
+            ).exclude(payment_method='void').select_related('item')
+            kitchen_rev = sum(t.revenue() for t in _kit_txns)
+        return JsonResponse({
+            'bar_revenue': round(bar_rev, 0),
+            'kitchen_revenue': round(kitchen_rev, 0),
+            'has_kitchen': getattr(business, 'has_kitchen', False),
+        })
+    except Exception:
+        return JsonResponse({'bar_revenue': 0, 'kitchen_revenue': 0, 'has_kitchen': False})
+
+
 # ── STOCK LIST ────────────────────────────────────────────────────────────────
 
 

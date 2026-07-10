@@ -353,7 +353,7 @@
         <div style="margin-top:1.4rem; display:flex; gap:2.5rem; justify-content:center; flex-wrap:wrap;">
             {% if show_bar %}
             <div style="text-align:center;">
-                <div style="font-family:'Playfair Display',serif; font-size:2rem; color:var(--biz-accent); font-weight:700;">
+                <div id="bar-hero-revenue" style="font-family:'Playfair Display',serif; font-size:2rem; color:var(--biz-accent); font-weight:700;">
                     KES {{ bar_today_revenue|default:0|floatformat:0 }}
                 </div>
                 <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">Bar Revenue</div>
@@ -361,7 +361,7 @@
             {% endif %}
             {% if show_kitchen and has_kitchen %}
             <div style="text-align:center;">
-                <div style="font-family:'Playfair Display',serif; font-size:2rem; color:#ff9800; font-weight:700;">
+                <div id="bar-hero-kitchen-revenue" style="font-family:'Playfair Display',serif; font-size:2rem; color:#ff9800; font-weight:700;">
                     KES {{ kitchen_today_revenue|default:0|floatformat:0 }}
                 </div>
                 <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:#b0b0b0; margin-top:0.2rem;">🍗 Kitchen</div>
@@ -925,6 +925,31 @@ var HOME_SHOW_KITCHEN = {{ show_kitchen|yesno:"true,false" }};
             meter.innerHTML = rows.join('');
         })
         .catch(function () {});
+})();
+</script>
+<script>
+/* Live-refresh bar + kitchen revenue tiles every 30 seconds so settled tabs
+   appear without a manual page reload. */
+(function () {
+    var barEl     = document.getElementById('bar-hero-revenue');
+    var kitchenEl = document.getElementById('bar-hero-kitchen-revenue');
+    if (!barEl && !kitchenEl) return;
+
+    function _fmtKes(n) {
+        return 'KES ' + Math.round(Number(n)).toLocaleString('en-KE');
+    }
+
+    function _pollRevenue() {
+        fetch('/dashboard/revenue/', {credentials: 'same-origin'})
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (barEl)     barEl.textContent     = _fmtKes(d.bar_revenue     || 0);
+                if (kitchenEl) kitchenEl.textContent = _fmtKes(d.kitchen_revenue || 0);
+            })
+            .catch(function () {});
+    }
+
+    setInterval(_pollRevenue, 30000);
 })();
 </script>
 {% endblock %}

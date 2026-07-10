@@ -5,6 +5,7 @@ from accounts.forms import LocalizedAuthenticationForm
 from accounts.views import logout_view
 from core.views import (
     home,
+    dashboard_revenue_api,
     stock_list,
     expiring_items,
     add_transaction,
@@ -257,6 +258,7 @@ urlpatterns = [
     path("accounts/", include("django.contrib.auth.urls")),
     path("business/", include("accounts.urls")),
     path("", home, name="home"),
+    path("dashboard/revenue/", dashboard_revenue_api, name="dashboard_revenue_api"),
     path("health/", health_check, name="health_check"),
     path("offline/", offline, name="offline"),
     # ── PWA ──
