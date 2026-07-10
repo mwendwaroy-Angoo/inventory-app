@@ -2706,7 +2706,7 @@
 {% include "core/petty_cash_js.html" %}
 
 /* ── Pata Stok ── */
-{% if QS_IS_OWNER %}
+{% if is_owner %}
 window.openPataStokModal = function () {
   var overlay = document.getElementById('pata-stok-overlay');
   if (!overlay) return;
