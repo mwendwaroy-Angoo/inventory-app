@@ -770,6 +770,7 @@ class BusinessExpense(models.Model):
         ('supplies', _('Office Supplies')),
         ('tax', _('Taxes & Licenses')),
         ('entertainment', _('Entertainment / DJ / MC Fees')),
+        ('security', _('Security & Facilitation')),
         ('other', _('Other')),
     ]
 

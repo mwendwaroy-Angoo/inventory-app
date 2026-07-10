@@ -83,9 +83,9 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-2">
-                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Staff (salaries only)</label>
-                <select id="add-staff" class="form-select" onchange="toggleAddPayDay(this.value)">
+            <div class="col-md-2" id="add-staff-col">
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Staff member</label>
+                <select id="add-staff" class="form-select">
                     <option value="">— None —</option>
                     {% for sp in staff_profiles %}
                     <option value="{{ sp.id }}">{{ sp.user.get_full_name|default:sp.user.username }}</option>
@@ -93,12 +93,12 @@
                 </select>
             </div>
         </div>
-        <!-- Pay day — only visible when a staff member is selected -->
-        <div id="add-pay-day-row" class="row g-3 mt-0" style="display:none;">
+        <!-- Pay day — visible for ALL categories -->
+        <div id="add-pay-day-row" class="row g-3 mt-0">
             <div class="col-md-3">
-                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Pay by day of month</label>
+                <label style="font-size:0.75rem; color:#b0b0b0; display:block; margin-bottom:3px;">Due / Pay by day of month</label>
                 <input type="number" id="add-pay-day" class="form-control" placeholder="0" min="0" max="28" value="0">
-                <div class="pay-day-hint">0 = end of month &nbsp;·&nbsp; 1–28 = specific day (e.g. 25 = 25th)</div>
+                <div class="pay-day-hint">0 = end of month &nbsp;·&nbsp; 1–28 = specific day (e.g. 5 = 5th of each month)</div>
             </div>
         </div>
         <div class="row g-3 mt-1">
@@ -148,9 +148,7 @@
                     {% else %}<span class="period-badge badge-annual">Annual</span>{% endif %}
                 </td>
                 <td style="text-align:center; font-size:0.8rem; color:#b0b0b0;">
-                    {% if e.staff_profile and e.period == 'MONTHLY' %}
-                        {% if e.pay_day %}{{ e.pay_day }}{% trans "th" %}{% else %}End{% endif %}
-                    {% else %}—{% endif %}
+                    {% if e.pay_day %}{{ e.pay_day }}th{% else %}End of mo.{% endif %}
                 </td>
                 <td style="color:#b0b0b0; font-size:0.8rem;">
                     {% if e.last_confirmed_at %}{{ e.last_confirmed_at|date:"d M Y" }}{% else %}<span style="color:#555;">Never</span>{% endif %}
@@ -209,20 +207,20 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-6">
-                <label style="font-size:0.75rem; color:#b0b0b0;">Staff (salaries only)</label>
-                <select id="edit-staff" class="form-select mt-1" onchange="toggleEditPayDay(this.value)">
+            <div class="col-6" id="edit-staff-col">
+                <label style="font-size:0.75rem; color:#b0b0b0;">Staff member</label>
+                <select id="edit-staff" class="form-select mt-1">
                     <option value="">— None —</option>
                     {% for sp in staff_profiles %}
                     <option value="{{ sp.id }}">{{ sp.user.get_full_name|default:sp.user.username }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <!-- Pay day — visible when a staff member is linked -->
-            <div id="edit-pay-day-row" class="col-12" style="display:none;">
-                <label style="font-size:0.75rem; color:#b0b0b0;">Pay by day of month</label>
+            <!-- Pay day — visible for ALL categories -->
+            <div id="edit-pay-day-row" class="col-12">
+                <label style="font-size:0.75rem; color:#b0b0b0;">Due / Pay by day of month</label>
                 <input type="number" id="edit-pay-day" class="form-control mt-1" min="0" max="28" value="0">
-                <div class="pay-day-hint">0 = end of month &nbsp;·&nbsp; 1–28 = specific day (e.g. 25 = 25th)</div>
+                <div class="pay-day-hint">0 = end of month &nbsp;·&nbsp; 1–28 = specific day (e.g. 5 = 5th of each month)</div>
             </div>
             <div class="col-12">
                 <label style="font-size:0.75rem; color:#b0b0b0;">Notes</label>
@@ -260,23 +258,33 @@ function postJSON(url, data) {
     return fetch(url, { method: 'POST', body: fd });
 }
 
-function toggleAddPayDay(staffVal) {
-    document.getElementById('add-pay-day-row').style.display = staffVal ? 'flex' : 'none';
-    if (!staffVal) document.getElementById('add-pay-day').value = '0';
+// Show Staff column only for 'labor' category, hide for everything else
+function _toggleStaffByCategory(cat, prefix) {
+    var col = document.getElementById(prefix + '-staff-col');
+    var sel = document.getElementById(prefix + '-staff');
+    if (!col) return;
+    var isLabor = cat === 'labor';
+    col.style.display = isLabor ? '' : 'none';
+    if (!isLabor && sel) sel.value = '';
 }
-function toggleEditPayDay(staffVal) {
-    document.getElementById('edit-pay-day-row').style.display = staffVal ? 'block' : 'none';
-    if (!staffVal) document.getElementById('edit-pay-day').value = '0';
-}
+
+document.getElementById('add-category').addEventListener('change', function() {
+    _toggleStaffByCategory(this.value, 'add');
+});
+document.getElementById('edit-category').addEventListener('change', function() {
+    _toggleStaffByCategory(this.value, 'edit');
+});
+// Set initial state on page load
+_toggleStaffByCategory(document.getElementById('add-category').value, 'add');
 
 function submitAdd() {
     var desc    = document.getElementById('add-desc').value.trim();
     var cat     = document.getElementById('add-category').value;
     var amt     = document.getElementById('add-amount').value;
     var period  = document.getElementById('add-period').value;
-    var staff   = document.getElementById('add-staff').value;
+    var staff   = (cat === 'labor') ? document.getElementById('add-staff').value : '';
     var notes   = document.getElementById('add-notes').value.trim();
-    var payDay  = staff ? (parseInt(document.getElementById('add-pay-day').value, 10) || 0) : 0;
+    var payDay  = parseInt(document.getElementById('add-pay-day').value, 10) || 0;
     var errEl   = document.getElementById('add-error');
     errEl.style.display = 'none';
     if (!desc || !amt) { errEl.textContent = 'Description and amount are required.'; errEl.style.display = 'block'; return; }
@@ -295,7 +303,7 @@ function openEdit(id, desc, cat, amount, period, staff, notes, active, payDay) {
     document.getElementById('edit-notes').value    = notes;
     document.getElementById('edit-active').checked = active;
     document.getElementById('edit-pay-day').value  = payDay || 0;
-    document.getElementById('edit-pay-day-row').style.display = staff ? 'block' : 'none';
+    _toggleStaffByCategory(cat, 'edit');
     document.getElementById('edit-error').style.display = 'none';
     document.getElementById('edit-modal').style.display = 'flex';
 }
@@ -307,10 +315,10 @@ function submitEdit() {
     var cat     = document.getElementById('edit-category').value;
     var amt     = document.getElementById('edit-amount').value;
     var period  = document.getElementById('edit-period').value;
-    var staff   = document.getElementById('edit-staff').value;
+    var staff   = (cat === 'labor') ? document.getElementById('edit-staff').value : '';
     var notes   = document.getElementById('edit-notes').value.trim();
     var active  = document.getElementById('edit-active').checked ? '1' : '0';
-    var payDay  = staff ? (parseInt(document.getElementById('edit-pay-day').value, 10) || 0) : 0;
+    var payDay  = parseInt(document.getElementById('edit-pay-day').value, 10) || 0;
     var errEl   = document.getElementById('edit-error');
     errEl.style.display = 'none';
     postJSON("/analytics/recurring/" + id + "/edit/", { description: desc, category: cat, amount: amt, period: period, staff_profile: staff, notes: notes, is_active: active, pay_day: payDay })
