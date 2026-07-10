@@ -642,6 +642,24 @@
                                         <option value="Quarter Bottle">{% trans 'Quarter Bottle (0.25)' %}</option>
                                         <option value="Full Can">{% trans 'Full Can (1.0)' %}</option>
                                     </optgroup>
+                                    <optgroup label="🥤 {% trans 'Soda / NA Brands' %}" class="bar-soda-opts" style="display:none">
+                                        <option value="Coca Cola">Coca Cola</option>
+                                        <option value="Fanta Orange">Fanta Orange</option>
+                                        <option value="Fanta Lemon">Fanta Lemon</option>
+                                        <option value="Sprite">Sprite</option>
+                                        <option value="Stoney">Stoney</option>
+                                        <option value="Krest">Krest</option>
+                                        <option value="Pepsi">Pepsi</option>
+                                        <option value="7UP">7UP</option>
+                                        <option value="Ginger Ale">Ginger Ale</option>
+                                        <option value="Alvaro">Alvaro</option>
+                                        <option value="Malta">Malta</option>
+                                        <option value="Novida">Novida</option>
+                                        <option value="Brees Punch">Brees Punch</option>
+                                        <option value="Supermalt">Supermalt</option>
+                                        <option value="Ribena">Ribena</option>
+                                        <option value="Minute Maid">Minute Maid</option>
+                                    </optgroup>
                                     <optgroup label="🥃 {% trans 'Volume Measures' %}" class="bar-spirit-opts">
                                         <option value="Nip">{% trans 'Nip (25ml)' %}</option>
                                         <option value="Shot">{% trans 'Shot (30ml)' %}</option>
@@ -1229,6 +1247,24 @@
                     '<option value="Quarter Bottle">{% trans "Quarter Bottle (0.25)" %}</option>' +
                     '<option value="Full Can">{% trans "Full Can (1.0)" %}</option>' +
                     '</optgroup>' +
+                    '<optgroup label="🥤 {% trans "Soda / NA Brands" %}" class="bar-soda-opts" style="display:none">' +
+                    '<option value="Coca Cola">Coca Cola</option>' +
+                    '<option value="Fanta Orange">Fanta Orange</option>' +
+                    '<option value="Fanta Lemon">Fanta Lemon</option>' +
+                    '<option value="Sprite">Sprite</option>' +
+                    '<option value="Stoney">Stoney</option>' +
+                    '<option value="Krest">Krest</option>' +
+                    '<option value="Pepsi">Pepsi</option>' +
+                    '<option value="7UP">7UP</option>' +
+                    '<option value="Ginger Ale">Ginger Ale</option>' +
+                    '<option value="Alvaro">Alvaro</option>' +
+                    '<option value="Malta">Malta</option>' +
+                    '<option value="Novida">Novida</option>' +
+                    '<option value="Brees Punch">Brees Punch</option>' +
+                    '<option value="Supermalt">Supermalt</option>' +
+                    '<option value="Ribena">Ribena</option>' +
+                    '<option value="Minute Maid">Minute Maid</option>' +
+                    '</optgroup>' +
                     '<optgroup label="🥃 {% trans "Volume Measures" %}" class="bar-spirit-opts">' +
                     '<option value="Nip">{% trans "Nip (25ml)" %}</option>' +
                     '<option value="Shot">{% trans "Shot (30ml)" %}</option>' +
@@ -1246,13 +1282,18 @@
             // Show/hide bar-specific optgroups based on is_keg state
             // Assigned to window so the keg toggle script (separate block) can call it
             var IS_KEG_BUSINESS = {{ biz_profile.modules.keg|lower }};
+            window._barIsSoda = false;
             window._applyBarPresetFilter = function(isKeg) {
+                var isSoda = window._barIsSoda;
                 document.querySelectorAll('select[name="preset_label"]').forEach(function(sel) {
                     sel.querySelectorAll('.bar-keg-opts').forEach(function(og) {
                         og.style.display = isKeg ? '' : 'none';
                     });
                     sel.querySelectorAll('.bar-spirit-opts').forEach(function(og) {
-                        og.style.display = isKeg ? 'none' : '';
+                        og.style.display = (isKeg || isSoda) ? 'none' : '';
+                    });
+                    sel.querySelectorAll('.bar-soda-opts').forEach(function(og) {
+                        og.style.display = (!isKeg && isSoda) ? '' : 'none';
                     });
                     // Bar businesses never need produce/fractional/count presets
                     if (IS_KEG_BUSINESS) {
@@ -1336,10 +1377,16 @@
                         var row = document.createElement('div');
                         row.className = 'preset-row';
                         row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
+                        // For soda ledger items all types share the item's selling price
+                        var defaultPrice = '';
+                        if (cfg && cfg.isSodaLedger) {
+                            var spEl = document.getElementById('id_selling_price');
+                            if (spEl && spEl.value) defaultPrice = spEl.value;
+                        }
                         row.innerHTML =
                             '<input type="hidden" name="preset_id" value="">' +
                             buildLabelSelectHtml() +
-                            '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="KES">' +
+                            '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="KES" value="' + defaultPrice + '">' +
                             '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" value="' + qty + '" readonly style="opacity:0.55;">' +
                             '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
                         rows.appendChild(row);
@@ -1546,9 +1593,15 @@
                     sizes: [250, 330, 500, 750],
                     sizeLabels: ['250ml','330ml','500ml','750ml'],
                     defaultSizeMl: 330,
+                    isSodaLedger: true,
                     presets: [
-                        { label: 'Full Bottle', type: 'fraction', qty: 1.0 },
-                        { label: 'Full Can',    type: 'fraction', qty: 1.0 }
+                        { label: 'Alvaro',       type: 'fraction', qty: 1.0 },
+                        { label: 'Malta',         type: 'fraction', qty: 1.0 },
+                        { label: 'Novida',        type: 'fraction', qty: 1.0 },
+                        { label: 'Brees Punch',   type: 'fraction', qty: 1.0 },
+                        { label: 'Supermalt',     type: 'fraction', qty: 1.0 },
+                        { label: 'Ribena',        type: 'fraction', qty: 1.0 },
+                        { label: 'Minute Maid',   type: 'fraction', qty: 1.0 }
                     ]
                 },
                 {
@@ -1569,8 +1622,17 @@
                     sizes: [250, 300, 330, 500],
                     sizeLabels: ['250ml','300ml','330ml','500ml'],
                     defaultSizeMl: 300,
+                    isSodaLedger: true,
                     presets: [
-                        { label: 'Full Bottle', type: 'fraction', qty: 1.0 }
+                        { label: 'Coca Cola',    type: 'fraction', qty: 1.0 },
+                        { label: 'Fanta Orange', type: 'fraction', qty: 1.0 },
+                        { label: 'Fanta Lemon',  type: 'fraction', qty: 1.0 },
+                        { label: 'Sprite',       type: 'fraction', qty: 1.0 },
+                        { label: 'Stoney',       type: 'fraction', qty: 1.0 },
+                        { label: 'Krest',        type: 'fraction', qty: 1.0 },
+                        { label: 'Pepsi',        type: 'fraction', qty: 1.0 },
+                        { label: '7UP',          type: 'fraction', qty: 1.0 },
+                        { label: 'Ginger Ale',   type: 'fraction', qty: 1.0 }
                     ]
                 }
             ];
@@ -1637,12 +1699,28 @@
                 window._barCatConfig = cfg;
                 window._barCatName   = catValue;
                 if (cfg) {
-                    cfg._selectedSizeMl = null; // reset size selection
+                    cfg._selectedSizeMl = cfg.defaultSizeMl || null;
+                    window._barIsSoda = !!cfg.isSodaLedger;
                     if (actionsDiv) actionsDiv.style.display = 'block';
-                    if (btn) btn.style.display = 'none'; // hide until size is chosen
-                    if (catHint) {
-                        catHint.innerHTML = '🥃 <strong>' + catValue + '</strong> detected — select the bottle size below, then click Quick-fill to add serving presets.';
-                        catHint.style.display = 'block';
+                    if (cfg.isSodaLedger) {
+                        // Soda/NA ledger: button visible immediately — no size chip needed
+                        var lbl = document.getElementById('quickFillBarLabel');
+                        if (btn && lbl) {
+                            lbl.textContent = '🥤 Quick-fill ' + cfg.label + ' types';
+                            btn.style.display = 'block';
+                        }
+                        if (catHint) {
+                            catHint.innerHTML = '🥤 <strong>' + catValue + '</strong> — receive as total crate count, select type at point of sale.';
+                            catHint.style.display = 'block';
+                        }
+                        if (window._applyBarPresetFilter) window._applyBarPresetFilter(false);
+                    } else {
+                        if (btn) btn.style.display = 'none'; // hide until size is chosen
+                        window._barIsSoda = false;
+                        if (catHint) {
+                            catHint.innerHTML = '🥃 <strong>' + catValue + '</strong> detected — select the bottle size below, then click Quick-fill to add serving presets.';
+                            catHint.style.display = 'block';
+                        }
                     }
                     _renderBarUnitChips(cfg, catValue);
                     // Auto-click default size if unit field is already filled to a known size
