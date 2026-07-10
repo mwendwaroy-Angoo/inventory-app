@@ -1524,7 +1524,14 @@
     });
 
     // ── COMPLETE SALE ──
+    var _qsFormSubmitted = false;
+    document.getElementById('qsForm').addEventListener('submit', function(e) {
+        if (_qsFormSubmitted) { e.preventDefault(); return false; }
+        _qsFormSubmitted = true;
+    });
+
     document.getElementById('qsSell').addEventListener('click', function() {
+        if (_qsFormSubmitted) return;
         if (cart.length === 0) return;
         var selectedMethod = document.querySelector('input[name="payment_method"]:checked');
         var pm = selectedMethod ? selectedMethod.value : 'cash';
@@ -1545,6 +1552,9 @@
         }
         document.getElementById('qsCartData').value = JSON.stringify(cart);
         document.getElementById('qsPaymentMethodData').value = pm;
+        var btn = this;
+        btn.disabled = true;
+        btn.textContent = '⏳ Inawasilisha...';
         document.getElementById('qsForm').submit();
     });
 
