@@ -1404,6 +1404,14 @@
 
                     // Show the spirit optgroups (not keg)
                     if (window._applyBarPresetFilter) window._applyBarPresetFilter(false);
+
+                    // Scroll to the presets section so Roy can see and fill prices
+                    var _presetSection = document.getElementById('portionPresetsSection');
+                    if (_presetSection) {
+                        setTimeout(function() {
+                            _presetSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }, 80);
+                    }
                 });
             }
 
@@ -1538,8 +1546,8 @@
                     type: 'spirit',
                     match: ['gin','vodka','rum','bourbon','whiskey','whisky','tequila','brandy','cognac','schnapps','jenever'],
                     label: 'Spirit',
-                    sizes: [200, 250, 500, 700, 750, 1000],
-                    sizeLabels: ['200ml','250ml','500ml','700ml','750ml','1L'],
+                    sizes: [200, 250, 330, 350, 375, 400, 500, 700, 750, 1000],
+                    sizeLabels: ['200ml','250ml','330ml','350ml','375ml','400ml','500ml','700ml','750ml','1L'],
                     defaultSizeMl: 750,
                     presets: [
                         { label: 'Full Bottle',    type: 'fraction', qty: 1.0  },
@@ -1553,8 +1561,8 @@
                     type: 'liqueur',
                     match: ['liqueur','baileys','amarula','kahlua'],
                     label: 'Liqueur',
-                    sizes: [500, 700, 750, 1000],
-                    sizeLabels: ['500ml','700ml','750ml','1L'],
+                    sizes: [350, 375, 500, 700, 750, 1000],
+                    sizeLabels: ['350ml','375ml','500ml','700ml','750ml','1L'],
                     defaultSizeMl: 750,
                     presets: [
                         { label: 'Full Bottle', type: 'fraction', qty: 1.0  },
@@ -1581,8 +1589,8 @@
                     type: 'beer',
                     match: ['beer'],
                     label: 'Beer',
-                    sizes: [250, 330, 500],
-                    sizeLabels: ['250ml','330ml','500ml'],
+                    sizes: [250, 300, 330, 340, 355, 400, 500, 650],
+                    sizeLabels: ['250ml','300ml','330ml','340ml','355ml','400ml','500ml','650ml'],
                     defaultSizeMl: 500,
                     presets: [
                         { label: 'Full Bottle', type: 'fraction', qty: 1.0 },
@@ -1593,8 +1601,8 @@
                     type: 'non_alcoholic',
                     match: ['non alcoholic','non-alcoholic','punch','brees','alvaro','malta','sting','novida','fruit drink','mocktail','juice drink','ceres','minute maid','delmonte','tropical'],
                     label: 'Non-Alcoholic',
-                    sizes: [250, 330, 500, 750],
-                    sizeLabels: ['250ml','330ml','500ml','750ml'],
+                    sizes: [250, 300, 330, 350, 400, 500, 750],
+                    sizeLabels: ['250ml','300ml','330ml','350ml','400ml','500ml','750ml'],
                     defaultSizeMl: 330,
                     isSodaLedger: true,
                     presets: [
@@ -1611,8 +1619,8 @@
                     type: 'energy_drink',
                     match: ['energy drink','energy','redbull','red bull','monster','power horse','burn','adrenaline','kabisa'],
                     label: 'Energy Drink',
-                    sizes: [250, 500],
-                    sizeLabels: ['250ml','500ml'],
+                    sizes: [250, 330, 355, 400, 500],
+                    sizeLabels: ['250ml','330ml','355ml','400ml','500ml'],
                     defaultSizeMl: 250,
                     presets: [
                         { label: 'Full Can', type: 'fraction', qty: 1.0 }
@@ -1622,8 +1630,8 @@
                     type: 'soft_drink',
                     match: ['soda','soft drink','coke','cola','fanta','sprite','stoney','tonic','ginger beer','lemonade','lemon soda','lemon','ribena','juice','water','squash'],
                     label: 'Soft Drink / Soda',
-                    sizes: [250, 300, 330, 500],
-                    sizeLabels: ['250ml','300ml','330ml','500ml'],
+                    sizes: [250, 300, 330, 350, 400, 500, 600, 1000, 1500, 2000],
+                    sizeLabels: ['250ml','300ml','330ml','350ml','400ml','500ml','600ml','1L','1.5L','2L'],
                     defaultSizeMl: 300,
                     isSodaLedger: true,
                     presets: [
