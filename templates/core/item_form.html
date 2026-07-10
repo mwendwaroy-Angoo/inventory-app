@@ -1716,6 +1716,8 @@
                     cfg._selectedSizeMl = cfg.defaultSizeMl || null;
                     window._barIsSoda = !!cfg.isSodaLedger;
                     if (actionsDiv) actionsDiv.style.display = 'block';
+                    // Show the presets section immediately for ALL bar categories
+                    if (typeof _showBarPresetsSection === 'function') _showBarPresetsSection(cfg);
                     if (cfg.isSodaLedger) {
                         // Soda/NA ledger: button visible immediately — no size chip needed
                         var lbl = document.getElementById('quickFillBarLabel');
@@ -1729,7 +1731,7 @@
                         }
                         if (window._applyBarPresetFilter) window._applyBarPresetFilter(false);
                     } else {
-                        if (btn) btn.style.display = 'none'; // hide until size is chosen
+                        if (btn) btn.style.display = 'none'; // hidden until size auto-selected below
                         window._barIsSoda = false;
                         if (catHint) {
                             catHint.innerHTML = '🥃 <strong>' + catValue + '</strong> detected — select the bottle size below, then click Quick-fill to add serving presets.';
