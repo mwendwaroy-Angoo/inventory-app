@@ -1554,7 +1554,8 @@
                         { label: 'Half Bottle',    type: 'fraction', qty: 0.5  },
                         { label: 'Quarter Bottle', type: 'fraction', qty: 0.25 },
                         { label: 'Double',         type: 'volume',   ml: 60    },
-                        { label: 'Shot',           type: 'volume',   ml: 30    }
+                        { label: 'Shot',           type: 'volume',   ml: 30    },
+                        { label: 'Nip',            type: 'volume',   ml: 25    }
                     ]
                 },
                 {
@@ -1565,24 +1566,26 @@
                     sizeLabels: ['350ml','375ml','500ml','700ml','750ml','1L'],
                     defaultSizeMl: 750,
                     presets: [
-                        { label: 'Full Bottle', type: 'fraction', qty: 1.0  },
-                        { label: 'Half Bottle', type: 'fraction', qty: 0.5  },
-                        { label: 'Double',      type: 'volume',   ml: 60    },
-                        { label: 'Shot',        type: 'volume',   ml: 30    }
+                        { label: 'Full Bottle',    type: 'fraction', qty: 1.0  },
+                        { label: 'Half Bottle',    type: 'fraction', qty: 0.5  },
+                        { label: 'Quarter Bottle', type: 'fraction', qty: 0.25 },
+                        { label: 'Double',         type: 'volume',   ml: 60    },
+                        { label: 'Shot',           type: 'volume',   ml: 30    }
                     ]
                 },
                 {
                     type: 'wine',
                     match: ['wine','champagne','sparkling','prosecco'],
                     label: 'Wine',
-                    sizes: [187, 375, 750, 1500],
-                    sizeLabels: ['187ml','375ml','750ml','1.5L'],
+                    sizes: [187, 200, 375, 750, 1500],
+                    sizeLabels: ['187ml','200ml','375ml','750ml','1.5L'],
                     defaultSizeMl: 750,
                     presets: [
                         { label: 'Full Bottle',    type: 'fraction', qty: 1.0  },
                         { label: 'Half Bottle',    type: 'fraction', qty: 0.5  },
                         { label: 'Quarter Bottle', type: 'fraction', qty: 0.25 },
-                        { label: 'Wine Glass',     type: 'volume',   ml: 150   }
+                        { label: 'Wine Glass',     type: 'volume',   ml: 150   },
+                        { label: 'Small Bottle',   type: 'volume',   ml: 200   }
                     ]
                 },
                 {
