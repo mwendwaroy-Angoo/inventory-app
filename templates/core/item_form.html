@@ -636,10 +636,11 @@
                                         <option value="Pint">{% trans 'Pint (568ml)' %}</option>
                                         <option value="Jug">{% trans 'Jug (1250ml)' %}</option>
                                     </optgroup>
-                                    <optgroup label="🥃 {% trans 'Bottle Portions' %}" class="bar-spirit-opts">
+                                    <optgroup label="🥃 {% trans 'Bottle / Can Portions' %}" class="bar-spirit-opts">
                                         <option value="Full Bottle">{% trans 'Full Bottle (1.0)' %}</option>
                                         <option value="Half Bottle">{% trans 'Half Bottle (0.5)' %}</option>
                                         <option value="Quarter Bottle">{% trans 'Quarter Bottle (0.25)' %}</option>
+                                        <option value="Full Can">{% trans 'Full Can (1.0)' %}</option>
                                     </optgroup>
                                     <optgroup label="🥃 {% trans 'Volume Measures' %}" class="bar-spirit-opts">
                                         <option value="Nip">{% trans 'Nip (25ml)' %}</option>
@@ -1028,10 +1029,11 @@
                 'Nne mbao':               '4',
                 'Tano mbao':              '5',
                 'Sita mbao':              '6',
-                // ── Bottle portions (Portion mode — fraction of 1 bottle/unit) ──
+                // ── Bottle / can portions (fraction of 1 unit) ──
                 'Full Bottle':            '1.0',
                 'Half Bottle':            '0.5',
                 'Quarter Bottle':         '0.25',
+                'Full Can':               '1.0',
                 // ── Kitchen chicken cuts (fraction of 1 whole bird) ──
                 'Wing':                   '0.125',
                 'Drumstick':              '0.125',
@@ -1221,10 +1223,11 @@
                     '<option value="Pint">{% trans "Pint (568ml)" %}</option>' +
                     '<option value="Jug">{% trans "Jug (1250ml)" %}</option>' +
                     '</optgroup>' +
-                    '<optgroup label="🥃 {% trans "Bottle Portions" %}" class="bar-spirit-opts">' +
+                    '<optgroup label="🥃 {% trans "Bottle / Can Portions" %}" class="bar-spirit-opts">' +
                     '<option value="Full Bottle">{% trans "Full Bottle (1.0)" %}</option>' +
                     '<option value="Half Bottle">{% trans "Half Bottle (0.5)" %}</option>' +
                     '<option value="Quarter Bottle">{% trans "Quarter Bottle (0.25)" %}</option>' +
+                    '<option value="Full Can">{% trans "Full Can (1.0)" %}</option>' +
                     '</optgroup>' +
                     '<optgroup label="🥃 {% trans "Volume Measures" %}" class="bar-spirit-opts">' +
                     '<option value="Nip">{% trans "Nip (25ml)" %}</option>' +
@@ -1537,8 +1540,19 @@
                     ]
                 },
                 {
+                    type: 'energy_drink',
+                    match: ['energy drink','energy','redbull','red bull','monster','power horse','burn','adrenaline','kabisa'],
+                    label: 'Energy Drink',
+                    sizes: [250, 500],
+                    sizeLabels: ['250ml','500ml'],
+                    defaultSizeMl: 250,
+                    presets: [
+                        { label: 'Full Can', type: 'fraction', qty: 1.0 }
+                    ]
+                },
+                {
                     type: 'soft_drink',
-                    match: ['soda','soft drink','coke','cola','fanta','sprite','stoney','novida','tonic','ginger beer','energy drink','redbull','red bull','monster','power horse','juice','water','squash'],
+                    match: ['soda','soft drink','coke','cola','fanta','sprite','stoney','novida','tonic','ginger beer','juice','water','squash'],
                     label: 'Soft Drink / Soda',
                     sizes: [250, 300, 330, 500],
                     sizeLabels: ['250ml','300ml','330ml','500ml'],
@@ -1646,12 +1660,44 @@
                 }
             }
 
+            // Smart category → material number prefix map (avoids W/B/S collisions)
+            var _CATEGORY_PREFIXES = [
+                { keys: ['vodka'],                                          prefix: 'V'  },
+                { keys: ['gin'],                                            prefix: 'G'  },
+                { keys: ['rum'],                                            prefix: 'R'  },
+                { keys: ['tequila'],                                        prefix: 'T'  },
+                { keys: ['bourbon'],                                        prefix: 'BO' },
+                { keys: ['whisky','whiskey'],                               prefix: 'WH' },
+                { keys: ['brandy','cognac','schnapps','jenever'],           prefix: 'BR' },
+                { keys: ['liqueur','baileys','amarula','kahlua'],           prefix: 'L'  },
+                { keys: ['wine','champagne','prosecco','sparkling'],        prefix: 'WN' },
+                { keys: ['beer','lager','stout','pilsner','guinness','tusker','senator'], prefix: 'BE' },
+                { keys: ['energy drink','energy','redbull','red bull','monster','power horse','burn'], prefix: 'ED' },
+                { keys: ['water'],                                          prefix: 'WT' },
+                { keys: ['soda','soft drink','cola','fanta','sprite','stoney','juice','tonic'], prefix: 'SD' },
+                { keys: ['keg'],                                            prefix: 'KG' },
+                { keys: ['kitchen','food','chipo','chicken','smokies','nyama','mutura'], prefix: 'KT' },
+            ];
+            function _getCategoryPrefix(catValue) {
+                var lower = catValue.toLowerCase();
+                for (var i = 0; i < _CATEGORY_PREFIXES.length; i++) {
+                    for (var j = 0; j < _CATEGORY_PREFIXES[i].keys.length; j++) {
+                        if (lower.indexOf(_CATEGORY_PREFIXES[i].keys[j]) !== -1) {
+                            return _CATEGORY_PREFIXES[i].prefix;
+                        }
+                    }
+                }
+                // Fallback: first letter
+                var first = catValue.trim().charAt(0).toUpperCase();
+                return first.match(/[A-Z]/) ? first : null;
+            }
+
             // Auto-fill Material No with the next available prefix-NN for this category
             function _autoFillMaterialNo(catValue) {
                 var matEl = document.getElementById('id_material_no');
                 if (!matEl || matEl.value.trim()) return; // don't overwrite existing
-                var prefix = catValue.trim().charAt(0).toUpperCase();
-                if (!prefix.match(/[A-Z]/)) return;
+                var prefix = _getCategoryPrefix(catValue);
+                if (!prefix) return;
                 fetch('/api/next-material-no/?prefix=' + encodeURIComponent(prefix))
                     .then(function(r) {
                         if (!r.ok) throw new Error('HTTP ' + r.status);
