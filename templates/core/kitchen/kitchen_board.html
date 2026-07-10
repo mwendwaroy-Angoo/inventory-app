@@ -1570,6 +1570,9 @@
   }
 
   window.addPreset = function(itemId, presetIdx) {
+    if (window._addingKbPreset) return;
+    window._addingKbPreset = true;
+    setTimeout(function() { window._addingKbPreset = false; }, 700);
     var m = bootstrap.Modal.getInstance(document.getElementById('kbPresetModal'));
     if (m) m.hide();
     var item = _activePresetItem || _portionItems.find(function(i){ return i.id === itemId; });
@@ -1599,6 +1602,9 @@
   }
 
   window.addBatchPreset = function(bunchId, presetIdx) {
+    if (window._addingKbPreset) return;
+    window._addingKbPreset = true;
+    setTimeout(function() { window._addingKbPreset = false; }, 700);
     var m = bootstrap.Modal.getInstance(document.getElementById('kbBatchModal'));
     if (m) m.hide();
     if (!_activeBatchItem) return;

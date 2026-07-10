@@ -460,7 +460,7 @@
             {% else %}
             <div class="receipt-line">
                 <span class="line-name">{{ line.name }}</span>
-                <span class="line-qty">×{{ line.qty|floatformat:"-2" }}</span>
+                {% if line.qty > 1 %}<span class="line-qty">×{{ line.qty|floatformat:"-2" }}</span>{% endif %}
                 <span class="line-amount">KES {{ line.subtotal|floatformat:"0" }}</span>
             </div>
             {% endif %}
@@ -1088,7 +1088,7 @@
                         statusDiv.style.border = '1px solid rgba(46,204,113,0.25)';
                         statusDiv.style.color = '#2ecc71';
                         statusDiv.style.display = 'block';
-                        statusDiv.innerHTML = '✅ Deni limeliwa — asante!';
+                        statusDiv.innerHTML = IS_DEBT ? '✅ Deni limelipwa — asante!' : '✅ Tab imelipwa — asante!';
                     } else if (d.tab_status === 'VOID') {
                         statusDiv.style.background = 'rgba(192,57,90,0.09)';
                         statusDiv.style.border = '1px solid rgba(192,57,90,0.25)';

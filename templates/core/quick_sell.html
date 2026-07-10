@@ -1316,6 +1316,9 @@
     };
 
     window.addPresetToCart = function(itemId, itemName, price, qtyConsumed, label) {
+        if (window._addingPreset) return;
+        window._addingPreset = true;
+        setTimeout(function() { window._addingPreset = false; }, 700);
         var bsModal = bootstrap.Modal.getInstance(document.getElementById('produceModal'));
         if (bsModal) bsModal.hide();
         cart.push({id: String(itemId), name: itemName + ' (' + label + ')', price: price, unit: '', qty: 1, stock_qty: qtyConsumed});
