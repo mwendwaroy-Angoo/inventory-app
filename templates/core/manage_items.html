@@ -27,6 +27,23 @@
         color: var(--gold);
         margin-bottom: 1rem;
     }
+
+    #manage-search {
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 8px;
+        color: var(--pearl);
+        padding: 0.45rem 0.85rem;
+        font-size: 0.9rem;
+        width: 100%;
+        max-width: 320px;
+        outline: none;
+        transition: border-color 0.15s;
+    }
+    #manage-search:focus { border-color: var(--gold); }
+    #manage-search::placeholder { color: #666; }
+    #manage-search-wrap { margin-bottom: 1rem; }
+    #manage-no-results { display:none; padding: 1.5rem; color: #b0b0b0; text-align:center; }
 </style>
 {% endblock %}
 
@@ -58,6 +75,10 @@
 </div>
 
 {% if items %}
+<div id="manage-search-wrap">
+    <input type="text" id="manage-search" placeholder="🔍 Search by name, material no, or category…" autocomplete="off">
+</div>
+<div id="manage-no-results">No items match your search.</div>
 <div class="table-responsive">
     <table class="table table-hover align-middle" id="items-manage-table">
         <thead>
@@ -126,6 +147,34 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block extra_js %}
+{% if items %}
+<script>
+(function() {
+    var searchEl  = document.getElementById('manage-search');
+    var noResults = document.getElementById('manage-no-results');
+    var table     = document.getElementById('items-manage-table');
+    if (!searchEl || !table) return;
+    searchEl.addEventListener('input', function() {
+        var q = this.value.trim().toLowerCase();
+        var rows = table.querySelectorAll('tbody tr');
+        var visible = 0;
+        rows.forEach(function(row) {
+            // cols: Material No, Description, Store, Category
+            var text = [0, 1, 2, 3].map(function(i) {
+                return row.cells[i] ? row.cells[i].textContent : '';
+            }).join(' ').toLowerCase();
+            var show = !q || text.indexOf(q) !== -1;
+            row.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+        noResults.style.display = (q && visible === 0) ? 'block' : 'none';
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}
 
 {% block page_tour %}

@@ -1577,8 +1577,8 @@
                     type: 'wine',
                     match: ['wine','champagne','sparkling','prosecco'],
                     label: 'Wine',
-                    sizes: [187, 200, 375, 750, 1500],
-                    sizeLabels: ['187ml','200ml','375ml','750ml','1.5L'],
+                    sizes: [187, 200, 375, 750, 1000, 1500],
+                    sizeLabels: ['187ml','200ml','375ml','750ml','1L','1.5L'],
                     defaultSizeMl: 750,
                     presets: [
                         { label: 'Full Bottle',    type: 'fraction', qty: 1.0  },
@@ -1752,11 +1752,30 @@
                         });
                     }
                     if (!_sizeAutoMatched && !cfg.isSodaLedger) {
-                        // Auto-select default size so the quick-fill button is visible immediately
-                        var _defIdx = cfg.sizes.indexOf(cfg.defaultSizeMl);
-                        if (_defIdx !== -1) {
-                            window._onBarUnitChipClick(cfg.defaultSizeMl, cfg.sizeLabels[_defIdx]);
+                        // Try to derive size from the unit field value (e.g. "330ml"→330, "1L"→1000)
+                        var _unitFallbackMl = null;
+                        var _unitFallbackLabel = null;
+                        if (unitEl && unitEl.value) {
+                            var _unitRaw = unitEl.value.trim();
+                            var _unitNum = parseFloat(_unitRaw);
+                            if (!isNaN(_unitNum) && _unitNum > 0) {
+                                if (/\d[\s]*l\b/i.test(_unitRaw) && _unitNum < 10) {
+                                    _unitFallbackMl = Math.round(_unitNum * 1000);
+                                } else if (_unitNum >= 50) {
+                                    _unitFallbackMl = Math.round(_unitNum);
+                                }
+                                if (_unitFallbackMl) _unitFallbackLabel = _unitRaw;
+                            }
                         }
+                        var _finalMl = _unitFallbackMl || cfg.defaultSizeMl;
+                        var _finalLabel = _unitFallbackLabel;
+                        var _chipIdx = cfg.sizes.indexOf(_finalMl);
+                        if (_chipIdx !== -1) {
+                            _finalLabel = cfg.sizeLabels[_chipIdx];
+                        } else if (!_finalLabel) {
+                            _finalLabel = _finalMl + 'ml';
+                        }
+                        window._onBarUnitChipClick(_finalMl, _finalLabel);
                     }
                 } else {
                     if (actionsDiv) actionsDiv.style.display = 'none';

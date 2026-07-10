@@ -1311,17 +1311,23 @@
         });
         html += '</div>';
         document.getElementById('produceModalBody').innerHTML = html;
-        var bsModal = new bootstrap.Modal(document.getElementById('produceModal'));
+        var bsModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('produceModal'));
         bsModal.show();
     };
 
     window.addPresetToCart = function(itemId, itemName, price, qtyConsumed, label) {
         if (window._addingPreset) return;
         window._addingPreset = true;
-        setTimeout(function() { window._addingPreset = false; }, 700);
+        setTimeout(function() { window._addingPreset = false; }, 1500);
         var bsModal = bootstrap.Modal.getInstance(document.getElementById('produceModal'));
         if (bsModal) bsModal.hide();
-        cart.push({id: String(itemId), name: itemName + ' (' + label + ')', price: price, unit: '', qty: 1, stock_qty: qtyConsumed});
+        var entryName = itemName + ' (' + label + ')';
+        var existing = cart.find(function(c) { return c.id === String(itemId) && c.name === entryName; });
+        if (existing) {
+            existing.qty += 1;
+        } else {
+            cart.push({id: String(itemId), name: entryName, price: price, unit: '', qty: 1, stock_qty: qtyConsumed});
+        }
         updateCart();
     };
 
