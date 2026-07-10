@@ -1544,7 +1544,7 @@
             var BAR_CAT_CONFIG = [
                 {
                     type: 'spirit',
-                    match: ['gin','vodka','rum','bourbon','whiskey','whisky','tequila','brandy','cognac','schnapps','jenever'],
+                    match: ['spirit','spirits','liquor','alcohol','gin','vodka','rum','bourbon','whiskey','whisky','tequila','brandy','cognac','schnapps','jenever','absinthe','mezcal'],
                     label: 'Spirit',
                     sizes: [200, 250, 330, 350, 375, 400, 500, 700, 750, 1000],
                     sizeLabels: ['200ml','250ml','330ml','350ml','375ml','400ml','500ml','700ml','750ml','1L'],
@@ -1777,6 +1777,7 @@
 
             // Smart category → material number prefix map (avoids W/B/S collisions)
             var _CATEGORY_PREFIXES = [
+                { keys: ['spirit','spirits','liquor','alcohol'],            prefix: 'SP' },
                 { keys: ['vodka'],                                          prefix: 'V'  },
                 { keys: ['gin'],                                            prefix: 'G'  },
                 { keys: ['rum'],                                            prefix: 'R'  },
