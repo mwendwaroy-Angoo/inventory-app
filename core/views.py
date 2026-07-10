@@ -1763,6 +1763,10 @@ def add_item(request):
                 item.is_keg = request.POST.get('is_keg') == 'on'
                 item.bottle_envelope = request.POST.get('bottle_envelope') == 'on'
                 try:
+                    item.volume_ml = int(request.POST.get('volume_ml')) if request.POST.get('volume_ml') else None
+                except (ValueError, TypeError):
+                    item.volume_ml = None
+                try:
                     item.tot_ml = Decimal(request.POST.get('tot_ml')) if request.POST.get('tot_ml') else None
                 except InvalidOperation:
                     item.tot_ml = None
@@ -1773,7 +1777,7 @@ def add_item(request):
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
                                          'is_kitchen_batch', 'is_produce', 'produce_mode', 'mix_group',
                                          'revenue_multiplier', 'is_keg', 'bottle_envelope',
-                                         'tot_ml', 'tots_per_unit'])
+                                         'volume_ml', 'tot_ml', 'tots_per_unit'])
 
                 # ── PRODUCE / KITCHEN BATCH PORTION PRESETS ──────────────────
                 preset_labels   = request.POST.getlist('preset_label')
@@ -1909,6 +1913,10 @@ def edit_item(request, item_id):
                 item.is_keg = request.POST.get('is_keg') == 'on'
                 item.bottle_envelope = request.POST.get('bottle_envelope') == 'on'
                 try:
+                    item.volume_ml = int(request.POST.get('volume_ml')) if request.POST.get('volume_ml') else None
+                except (ValueError, TypeError):
+                    item.volume_ml = None
+                try:
                     item.tot_ml = Decimal(request.POST.get('tot_ml')) if request.POST.get('tot_ml') else None
                 except InvalidOperation:
                     item.tot_ml = None
@@ -1919,7 +1927,7 @@ def edit_item(request, item_id):
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
                                          'is_kitchen_batch', 'is_produce', 'produce_mode', 'mix_group',
                                          'revenue_multiplier', 'is_keg', 'bottle_envelope',
-                                         'tot_ml', 'tots_per_unit'])
+                                         'volume_ml', 'tot_ml', 'tots_per_unit'])
 
                 # ── PRODUCE / KITCHEN BATCH PORTION PRESETS ──────────────────
                 preset_labels   = request.POST.getlist('preset_label')
@@ -2498,8 +2506,12 @@ def quick_sell(request):
 
             # stock_qty = actual stock consumed (may be fractional for produce)
             # display_qty = what to show on receipt (1 for produce portions, integer for normal)
+            # For preset entries, stock_qty is per-serving and must be multiplied by cart qty.
+            # For regular items, stock_qty is absent and entry["qty"] IS the total qty.
             try:
-                stock_qty = Decimal(str(entry.get("stock_qty", entry.get("qty", 0))))
+                raw_stock_qty = Decimal(str(entry.get("stock_qty", entry.get("qty", 0))))
+                cart_qty = Decimal(str(entry.get("qty", 1)))
+                stock_qty = raw_stock_qty * cart_qty if entry.get("stock_qty") is not None else raw_stock_qty
             except Exception:
                 stock_qty = Decimal('0')
             if stock_qty <= 0:
