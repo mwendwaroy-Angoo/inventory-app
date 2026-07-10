@@ -1421,11 +1421,14 @@
                 var rowsContainer = document.getElementById('presetRows');
                 var row = document.createElement('div');
                 row.className = 'preset-row';
-                row.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr 80px auto; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
                 var isKitchen = typeof _kitchenActive !== 'undefined' && _kitchenActive;
+                var _kegCbEl  = document.getElementById('is_keg');
+                var _isKegNow = !!(_kegCbEl && _kegCbEl.checked);
+                var _addCols  = (_isKegNow && !isKitchen) ? '2fr 1fr 1fr 80px auto' : '2fr 1fr 1fr auto';
+                row.style.cssText = 'display:grid; grid-template-columns:' + _addCols + '; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e1e; align-items:center;';
                 var typeSelectHtml = isKitchen
                     ? '<select name="preset_khaki_type" style="background:#1a1a1a;color:#f0ece4;border:1px solid #333;border-radius:4px;font-size:0.75rem;padding:2px 4px;width:100%;"><option value="NONE">— Bila mfuko</option><option value="SMALL">🛍 ¼ Khaki</option><option value="LARGE">🛍 ½ Khaki</option></select>'
-                    : '<select name="preset_serving_type" style="background:#1a1a1a;color:#f0ece4;border:1px solid #333;border-radius:4px;font-size:0.75rem;padding:2px 4px;width:100%;"><option value="cup">☕ Cup</option><option value="pint">🍺 Pint</option><option value="jug">🫙 Jug</option></select>';
+                    : (_isKegNow ? '<select name="preset_serving_type" style="background:#1a1a1a;color:#f0ece4;border:1px solid #333;border-radius:4px;font-size:0.75rem;padding:2px 4px;width:100%;"><option value="cup">☕ Cup</option><option value="pint">🍺 Pint</option><option value="jug">🫙 Jug</option></select>' : '');
                 row.innerHTML = '<input type="hidden" name="preset_id" value="">' +
                     buildLabelSelectHtml() +
                     '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="40">' +
@@ -1481,6 +1484,19 @@
                 }
                 if (kegHint) kegHint.style.display = isKeg ? 'block' : 'none';
                 if (titleEl) titleEl.textContent = isKeg ? '🍺 Serving Presets' : '📋 Portion Presets';
+                // TYPE column (cup/pint/jug) is only meaningful for keg barrel tracking
+                var _typeHdr  = document.getElementById('presetTypeColHeader');
+                var _kegCols  = '2fr 1fr 1fr 80px auto';
+                var _nkCols   = '2fr 1fr 1fr auto';
+                var _gridCols = isKeg ? _kegCols : _nkCols;
+                var _hdrRow   = document.getElementById('presetHeaderRow');
+                if (_hdrRow) _hdrRow.style.gridTemplateColumns = _gridCols;
+                if (_typeHdr) _typeHdr.style.display = isKeg ? '' : 'none';
+                document.querySelectorAll('.preset-row').forEach(function(r) {
+                    r.style.gridTemplateColumns = _gridCols;
+                    var _stSel = r.querySelector('[name="preset_serving_type"]');
+                    if (_stSel) _stSel.style.display = isKeg ? '' : 'none';
+                });
                 // Filter bar optgroups to show only relevant measures
                 if (typeof _applyBarPresetFilter === 'function') _applyBarPresetFilter(isKeg);
                 // Keg and produce are mutually exclusive
@@ -2004,17 +2020,21 @@
                         cat.presets.forEach(function(p) {
                             var row = document.createElement('div');
                             row.className = 'preset-row';
-                            row.style.cssText = 'display:grid;grid-template-columns:2fr 1fr 1fr 80px auto;gap:0.5rem;padding:0.5rem 0.75rem;border-bottom:1px solid #1e1e1e;align-items:center;';
+                            var _qfKegCb  = document.getElementById('is_keg');
+                            var _qfIsKeg  = !!(_qfKegCb && _qfKegCb.checked);
+                            var _qfCols   = _qfIsKeg ? '2fr 1fr 1fr 80px auto' : '2fr 1fr 1fr auto';
+                            row.style.cssText = 'display:grid;grid-template-columns:' + _qfCols + ';gap:0.5rem;padding:0.5rem 0.75rem;border-bottom:1px solid #1e1e1e;align-items:center;';
                             var qtyVal = (p.qty !== null && p.qty !== undefined) ? p.qty : '';
                             var priceVal = (p.price !== null && p.price !== undefined) ? p.price : '';
+                            var _qfTypeHtml = _qfIsKeg
+                                ? '<select name="preset_serving_type" style="background:#1a1a1a;color:#f0ece4;border:1px solid #333;border-radius:4px;font-size:0.75rem;padding:2px 4px;width:100%;"><option value="cup">☕ Cup</option><option value="pint">🍺 Pint</option><option value="jug">🫙 Jug</option></select>'
+                                : '';
                             row.innerHTML =
                                 '<input type="hidden" name="preset_id" value="">' +
                                 '<input type="text" name="preset_label" class="form-select form-select-sm" value="' + (p.label || '') + '" placeholder="Label">' +
                                 '<input type="number" name="preset_price" class="form-control form-control-sm" step="0.01" min="0" placeholder="KES" value="' + priceVal + '">' +
                                 '<input type="number" name="preset_qty_consumed" class="form-control form-control-sm" step="0.0001" min="0" value="' + qtyVal + '" placeholder="qty">' +
-                                '<select name="preset_serving_type" style="background:#1a1a1a;color:#f0ece4;border:1px solid #333;border-radius:4px;font-size:0.75rem;padding:2px 4px;width:100%;">' +
-                                '<option value="cup">☕ Cup</option><option value="pint">🍺 Pint</option><option value="jug">🫙 Jug</option>' +
-                                '</select>' +
+                                _qfTypeHtml +
                                 '<button type="button" onclick="this.closest(\'.preset-row\').remove()" style="background:none;border:none;color:#f87171;font-size:1.1rem;cursor:pointer;padding:0.25rem;">✕</button>';
                             rowsContainer.appendChild(row);
                         });
