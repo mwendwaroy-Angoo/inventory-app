@@ -1540,6 +1540,18 @@
                     ]
                 },
                 {
+                    type: 'non_alcoholic',
+                    match: ['non alcoholic','non-alcoholic','punch','brees','alvaro','malta','sting','novida','fruit drink','mocktail','juice drink','ceres','minute maid','delmonte','tropical'],
+                    label: 'Non-Alcoholic',
+                    sizes: [250, 330, 500, 750],
+                    sizeLabels: ['250ml','330ml','500ml','750ml'],
+                    defaultSizeMl: 330,
+                    presets: [
+                        { label: 'Full Bottle', type: 'fraction', qty: 1.0 },
+                        { label: 'Full Can',    type: 'fraction', qty: 1.0 }
+                    ]
+                },
+                {
                     type: 'energy_drink',
                     match: ['energy drink','energy','redbull','red bull','monster','power horse','burn','adrenaline','kabisa'],
                     label: 'Energy Drink',
@@ -1552,7 +1564,7 @@
                 },
                 {
                     type: 'soft_drink',
-                    match: ['soda','soft drink','coke','cola','fanta','sprite','stoney','novida','tonic','ginger beer','juice','water','squash'],
+                    match: ['soda','soft drink','coke','cola','fanta','sprite','stoney','tonic','ginger beer','lemonade','lemon soda','lemon','ribena','juice','water','squash'],
                     label: 'Soft Drink / Soda',
                     sizes: [250, 300, 330, 500],
                     sizeLabels: ['250ml','300ml','330ml','500ml'],
@@ -1673,8 +1685,9 @@
                 { keys: ['wine','champagne','prosecco','sparkling'],        prefix: 'WN' },
                 { keys: ['beer','lager','stout','pilsner','guinness','tusker','senator'], prefix: 'BE' },
                 { keys: ['energy drink','energy','redbull','red bull','monster','power horse','burn'], prefix: 'ED' },
+                { keys: ['non alcoholic','non-alcoholic','punch','alvaro','malta','novida'],     prefix: 'NA' },
                 { keys: ['water'],                                          prefix: 'WT' },
-                { keys: ['soda','soft drink','cola','fanta','sprite','stoney','juice','tonic'], prefix: 'SD' },
+                { keys: ['soda','soft drink','lemonade','cola','fanta','sprite','stoney','juice','tonic'], prefix: 'SD' },
                 { keys: ['keg'],                                            prefix: 'KG' },
                 { keys: ['kitchen','food','chipo','chicken','smokies','nyama','mutura'], prefix: 'KT' },
             ];
