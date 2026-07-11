@@ -738,7 +738,6 @@ def analytics_dashboard(request):
         _agg = Transaction.objects.filter(
             business=business,
             type='Issue',
-            keg_barrel__isnull=False,
             created_at__gte=_shift.started_at,
             created_at__lte=_shift_end,
             item__store__is_kitchen=False,

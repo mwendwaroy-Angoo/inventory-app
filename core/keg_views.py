@@ -597,7 +597,7 @@ def receive_barrel(request):
     net_ml = (actual_gross - tare_kg) * 1000
     created_ids = []
 
-    for _ in range(count):
+    for _barrel_idx in range(count):
         barrel = KegBarrel.objects.create(
             business=business,
             store=item.store,

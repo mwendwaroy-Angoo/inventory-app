@@ -987,32 +987,6 @@
   </div>
 </div>
 
-<!-- QS Tick payment picker modal -->
-<div class="modal fade" id="qsTickModal" tabindex="-1" style="z-index:1060;">
-  <div class="modal-dialog modal-dialog-centered modal-sm">
-    <div class="modal-content" style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:12px;">
-      <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
-        <h6 class="modal-title" style="color:#c9a84c;">Malipo ya sehemu hii</h6>
-      </div>
-      <div class="modal-body" style="padding:0.75rem 1rem;">
-        <p id="qs-tick-desc" style="color:#f0ece4; font-size:0.88rem; margin:0;"></p>
-      </div>
-      <div class="modal-footer flex-column gap-2" style="border-top:1px solid #3a3a3a; padding:0.75rem;">
-        <button class="btn btn-gold w-100" onclick="qsDoTick('cash')">Cash</button>
-        <button class="btn w-100"
-                style="background:rgba(76,175,80,0.12); border:1px solid rgba(76,175,90,0.35); color:#4caf50;"
-                onclick="qsDoTick('mpesa')">M-Pesa</button>
-        <button class="btn w-100"
-                style="background:rgba(46,204,113,0.08); border:1px solid rgba(46,204,113,0.3); color:#2ecc71;"
-                onclick="qsDoTickStk()">📲 STK Push</button>
-        <button class="btn btn-sm w-100"
-                style="background:transparent; border:1px solid #333; color:#b0b0b0;"
-                data-bs-dismiss="modal">Acha</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- ── QS Tab STK Push Modal ──────────────────────────────────── -->
 <div class="modal fade" id="qsTabStkModal" tabindex="-1" style="z-index:1060;">
   <div class="modal-dialog modal-dialog-centered modal-sm">
@@ -2266,7 +2240,6 @@
 (function () {
     var CSRF = '{{ csrf_token }}';
     var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
-    var _qsTickPendingId = null;
     var _qsTabsJustSettled = false;
 
     function qsPost(url, data) {
@@ -2357,8 +2330,9 @@
                     : '';
                 entries +=
                     '<div class="qs-tab-entry' + (e.is_paid ? ' paid' : '') + '">' +
-                    '<input type="checkbox"' + (e.is_paid ? ' checked disabled' : '') +
-                    ' onchange="qsTickEntry(' + e.id + ',\'' + sd + '\',' + e.amount + ',' + tab.id + ')"' +
+                    '<input type="checkbox" class="qs-entry-cb"' +
+                    ' data-entry-id="' + e.id + '" data-amount="' + e.amount + '"' +
+                    (e.is_paid ? ' checked disabled' : ' onchange="updateQsSelectionUI(' + tab.id + ')"') +
                     ' style="accent-color:#c9a84c; flex-shrink:0;">' +
                     '<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;">' + sd + '</span>' +
                     '<span class="qs-tab-entry-amt">KES ' + qsFmt(e.amount) + '</span>' +
@@ -2402,7 +2376,13 @@
                 'style="padding:.2rem .5rem;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);' +
                 'border-radius:6px;color:#c9a84c;font-size:.72rem;cursor:pointer;white-space:nowrap;">Hifadhi</button>' +
                 '</div>' +
-                '<div style="margin-bottom:0.4rem;">' + entries + '</div>' +
+                '<div id="qs-tab-entries-' + tab.id + '" style="margin-bottom:0.2rem;">' + entries + '</div>' +
+                '<div id="qs-sel-row-' + tab.id + '" style="display:none;background:rgba(201,168,76,0.07);border:1px solid rgba(201,168,76,0.2);border-radius:8px;padding:.3rem .5rem;margin:.3rem 0;align-items:center;gap:.35rem;flex-wrap:wrap;">' +
+                '<span style="color:#b0b0b0;font-size:.78rem;">Vilivyochaguliwa: <strong id="qs-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
+                '<button id="qs-partial-cash-' + tab.id + '" class="qs-tab-btn qs-tab-btn-cash" style="font-size:.72rem;padding:.18rem .45rem;flex:0;" disabled onclick="qsSettleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
+                '<button id="qs-partial-mpesa-' + tab.id + '" class="qs-tab-btn qs-tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;flex:0;" disabled onclick="qsSettleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
+                '<button id="qs-partial-stk-' + tab.id + '" class="qs-tab-btn" style="font-size:.72rem;padding:.18rem .45rem;flex:0;background:rgba(46,204,113,0.08);color:#2ecc71;border:1px solid rgba(46,204,113,0.3);" disabled onclick="qsSettleTabPartialStk(' + tab.id + ',\'' + sc + '\')">📲 STK</button>' +
+                '</div>' +
                 '<div class="qs-tab-actions">' +
                 '<button class="qs-tab-btn qs-tab-btn-cash" onclick="qsSettleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
                 '<button class="qs-tab-btn qs-tab-btn-mpesa" onclick="qsSettleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
@@ -2458,62 +2438,85 @@
             });
     };
 
-    var _qsTickPendingAmount = 0;
-    var _qsTickPendingTabId  = null;
+    /* Multi-select entry IDs for partial-settle STK; null = full-tab STK */
+    window._qsStkEntryIds = null;
+    window._qsStkTabId    = null;
 
-    window.qsTickEntry = function (entryId, desc, amount, tabId) {
-        _qsTickPendingId = entryId;
-        _qsTickPendingAmount = amount;
-        _qsTickPendingTabId  = tabId || null;
-        var el = document.getElementById('qs-tick-desc');
-        if (el) el.textContent = desc + ' — KES ' + qsFmt(amount);
-        var m = document.getElementById('qsTickModal');
-        if (m) new bootstrap.Modal(m).show();
+    window.updateQsSelectionUI = function (tabId) {
+        var container = document.getElementById('qs-tab-entries-' + tabId);
+        if (!container) return;
+        var checked  = container.querySelectorAll('.qs-entry-cb:not(:disabled):checked');
+        var total    = 0;
+        checked.forEach(function (cb) { total += parseFloat(cb.dataset.amount || 0); });
+        var selRow   = document.getElementById('qs-sel-row-'      + tabId);
+        var selTotal = document.getElementById('qs-sel-total-'    + tabId);
+        var btnCash  = document.getElementById('qs-partial-cash-' + tabId);
+        var btnMpesa = document.getElementById('qs-partial-mpesa-'+ tabId);
+        var btnStk   = document.getElementById('qs-partial-stk-'  + tabId);
+        if (selRow)   selRow.style.display = checked.length > 0 ? 'flex' : 'none';
+        if (selTotal) selTotal.textContent = 'KES ' + qsFmt(total);
+        if (btnCash)  btnCash.disabled     = checked.length === 0;
+        if (btnMpesa) btnMpesa.disabled    = checked.length === 0;
+        if (btnStk)   btnStk.disabled      = checked.length === 0;
     };
 
-    // _qsStkEntryId / _qsStkTabId: set when STK modal is opened for a single entry
-    window._qsStkEntryId = null;
-    window._qsStkTabId   = null;
+    window.qsSettleTabPartial = function (tabId, payMethod) {
+        var container = document.getElementById('qs-tab-entries-' + tabId);
+        if (!container) return;
+        var checked = container.querySelectorAll('.qs-entry-cb:not(:disabled):checked');
+        if (!checked.length) return;
+        var body = new URLSearchParams({payment_method: payMethod, csrfmiddlewaretoken: CSRF});
+        checked.forEach(function (cb) { body.append('entry_ids', cb.dataset.entryId); });
+        document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = true; });
+        fetch('/bar/tabs/' + tabId + '/settle/', {
+            method: 'POST',
+            headers: {'X-CSRFToken': CSRF},
+            body: body,
+            credentials: 'same-origin',
+        })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (d) {
+            document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
+            if (d.ok) {
+                if (d.tab_settled) {
+                    _qsTabsJustSettled = true;
+                    qsShowToast('✓ Tab imelipwa! KES ' + qsFmt(d.total));
+                } else {
+                    qsShowToast('✓ Vilivyochaguliwa vimelipwa — KES ' + qsFmt(d.settled_amount));
+                }
+                qsLoadTabs();
+            } else {
+                qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'), true);
+            }
+        })
+        .catch(function () {
+            document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
+            qsShowToast('Hitilafu ya mtandao. Jaribu tena.', true);
+        });
+    };
 
-    window.qsDoTickStk = function () {
-        if (!_qsTickPendingId) return;
-        var entryId = _qsTickPendingId;
-        var amt     = _qsTickPendingAmount;
-        var tabId   = _qsTickPendingTabId;
-        _qsTickPendingId = null;
-        var m = document.getElementById('qsTickModal');
-        if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
-        // Store entry context so qsSendTabStk sends entry_ids + tab_id
-        window._qsStkEntryId = entryId;
-        window._qsStkTabId   = tabId;
+    window.qsSettleTabPartialStk = function (tabId, custName) {
+        var container = document.getElementById('qs-tab-entries-' + tabId);
+        if (!container) return;
+        var checked = container.querySelectorAll('.qs-entry-cb:not(:disabled):checked');
+        if (!checked.length) return;
+        var total = 0;
+        var ids   = [];
+        checked.forEach(function (cb) {
+            total += parseFloat(cb.dataset.amount || 0);
+            ids.push(cb.dataset.entryId);
+        });
+        window._qsStkEntryIds = ids;
+        window._qsStkTabId    = tabId;
         var stkM = document.getElementById('qsTabStkModal');
         if (!stkM) return;
-        document.getElementById('qs-tab-stk-cust').textContent = 'Bidhaa moja — KES ' + qsFmt(amt);
+        document.getElementById('qs-tab-stk-cust').textContent = 'Vilivyochaguliwa — KES ' + qsFmt(total);
         document.getElementById('qs-tab-stk-phone').value = '';
-        document.getElementById('qs-tab-stk-amount').value = amt;
+        document.getElementById('qs-tab-stk-amount').value = Math.round(total);
         document.getElementById('qs-tab-stk-result').style.display = 'none';
         var btn = document.getElementById('qs-tab-stk-btn');
         if (btn) { btn.disabled = false; btn.textContent = '📲 Tuma Ombi'; }
         new bootstrap.Modal(stkM).show();
-    };
-
-    window.qsDoTick = function (payMethod) {
-        if (!_qsTickPendingId) return;
-        var id = _qsTickPendingId;
-        _qsTickPendingId = null;
-        var m = document.getElementById('qsTickModal');
-        if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
-        qsPost('/bar/tabs/entry/' + id + '/tick/', {payment_method: payMethod})
-            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-            .then(function (d) {
-                if (d.ok) {
-                    qsLoadTabs();
-                    if (d.tab_settled) qsShowToast('✓ Tab imelipwa kabisa!');
-                } else {
-                    qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
-                }
-            })
-            .catch(function () { qsShowToast('Hitilafu ya mtandao. Jaribu tena.'); });
     };
 
     /* ── Save phone on existing QS tab ─────────────────────── */
@@ -2538,9 +2541,9 @@
 
     window.qsOpenTabStk = function (tabId, amount, custName, phone) {
         _qsPendingStkTabId = tabId;
-        // Clear entry-mode flags — this is a full-tab call
-        window._qsStkEntryId = null;
-        window._qsStkTabId   = null;
+        // Clear partial-entry flags — this is a full-tab STK call
+        window._qsStkEntryIds = null;
+        window._qsStkTabId    = null;
         var cEl = document.getElementById('qs-tab-stk-cust');
         if (cEl) cEl.textContent = 'Tab ya ' + custName + ' — KES ' + qsFmt(amount);
         var pEl = document.getElementById('qs-tab-stk-phone'); if (pEl) pEl.value = phone || '';
@@ -2567,8 +2570,8 @@
         if (!amount || amount < 1) { stkErr('Ingiza kiasi sahihi.'); return; }
         btn.disabled = true; btn.textContent = '⏳ Inatuma...'; rEl.style.display = 'none';
         var stkPayload = {phone: phone, amount: amount, tab_id: tabId};
-        if (window._qsStkEntryId) {
-            stkPayload.entry_ids = [window._qsStkEntryId];
+        if (window._qsStkEntryIds && window._qsStkEntryIds.length) {
+            stkPayload.entry_ids = window._qsStkEntryIds;
         }
         fetch('/mpesa/stk-push/', {
             method: 'POST',
@@ -2604,8 +2607,8 @@
                 .then(function (d) {
                     if (d.status === 'completed') {
                         clearInterval(iv);
-                        window._qsStkEntryId = null;
-                        window._qsStkTabId   = null;
+                        window._qsStkEntryIds = null;
+                        window._qsStkTabId    = null;
                         rEl.style.background = 'rgba(46,204,113,0.15)'; rEl.style.color = '#2ecc71';
                         rEl.textContent = '✅ Malipo yamepokelewa!';
                         btn.disabled = true; btn.textContent = '✓ Imelipwa';

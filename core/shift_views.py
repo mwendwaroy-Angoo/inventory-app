@@ -644,7 +644,13 @@ def close_shift(request, shift_id):
 
     from .models import BarTab
     from core.models import Customer
-    _is_kitchen_shift = bool(shift.store and shift.store.is_kitchen)
+    # Discriminate by staff role, not shift.store.is_kitchen — open_shift() assigns
+    # stores.first() to all staff regardless of counter, so store cannot be trusted here.
+    # This matches the same logic used in _reconcile() and bar_z_report().
+    try:
+        _is_kitchen_shift = shift.staff.userprofile.role == 'kitchen'
+    except Exception:
+        _is_kitchen_shift = False
     _tab_source = 'kitchen' if _is_kitchen_shift else 'bar'
 
     open_tabs = list(
