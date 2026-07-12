@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}📊 Hesabu ya Stok{% endblock %}
+
+{% block extra_css %}
+<style>
+    .st-header {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1.25rem;
+    }
+    .st-item-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.6rem 0;
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .st-item-row:last-child { border-bottom: none; }
+    .st-item-name {
+        flex: 1;
+        font-size: 0.88rem;
+        color: var(--pearl);
+    }
+    .st-item-meta {
+        font-size: 0.7rem;
+        color: #b0b0b0;
+        margin-top: 0.1rem;
+    }
+    .st-book {
+        font-size: 0.75rem;
+        color: #b0b0b0;
+        min-width: 60px;
+        text-align: right;
+    }
+    .st-actual {
+        width: 88px;
+    }
+    .st-actual input {
+        width: 100%;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid #333;
+        border-radius: 8px;
+        color: var(--pearl);
+        font-size: 0.9rem;
+        padding: 0.35rem 0.55rem;
+        text-align: right;
+    }
+    .st-actual input:focus {
+        outline: none;
+        border-color: var(--gold);
+        box-shadow: 0 0 0 2px rgba(201,168,76,0.15);
+    }
+    .st-actual input.has-variance {
+        border-color: #fbbf24;
+        background: rgba(251,191,36,0.07);
+    }
+    .st-variance {
+        font-size: 0.78rem;
+        font-weight: 600;
+        min-width: 54px;
+        text-align: right;
+    }
+    .st-variance.neg { color: #f87171; }
+    .st-variance.pos { color: #6ee7b7; }
+    .st-section-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--gold);
+        padding: 0.75rem 0 0.3rem;
+        margin-bottom: 0.25rem;
+    }
+    .st-store-block {
+        background: rgba(255,255,255,0.02);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        padding: 0.5rem 1rem;
+        margin-bottom: 1rem;
+    }
+    .st-summary-bar {
+        position: sticky;
+        bottom: 0;
+        background: #1a1a1a;
+        border-top: 1px solid #2a2a2a;
+        padding: 0.75rem 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        z-index: 10;
+    }
+    #variance-count {
+        font-size: 0.82rem;
+        color: #fbbf24;
+    }
+    @media (max-width: 576px) {
+        .st-item-row { flex-wrap: wrap; }
+        .st-book { min-width: 50px; }
+        .st-actual { width: 80px; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex align-items-start justify-content-between flex-wrap gap-2">
+    <div>
+        <h1 class="page-title mb-1">📊 {% trans 'Hesabu ya Stok' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.85rem; margin:0;">
+            {% trans 'Ingiza idadi halisi ya vitu. Tofauti itapelekwa kwa mhusika.' %}
+            {% if linked_shift %}
+            · <span style="color:var(--gold);">🔗 Zamu ya {{ linked_shift.staff.get_full_name|default:linked_shift.staff.username }}</span>
+            {% endif %}
+        </p>
+    </div>
+    <a href="{% url 'stock_list' %}" class="btn btn-sm btn-outline-secondary"
+       style="border-color:rgba(255,255,255,0.15); color:#b0b0b0;">← {% trans 'Orodha ya Stok' %}</a>
+</div>
+
+<!-- Store filter -->
+{% if stores|length > 1 %}
+<div class="st-header">
+    <div style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.5rem;">Chagua duka:</div>
+    <div class="d-flex gap-2 flex-wrap">
+        <a href="?{% if shift_id %}shift={{ shift_id }}&{% endif %}"
+           class="btn btn-sm {% if not scoped_store %}btn-gold{% else %}btn-outline-secondary{% endif %}"
+           style="{% if not scoped_store %}{% else %}border-color:rgba(255,255,255,0.15); color:#b0b0b0;{% endif %}">
+            Vyote
+        </a>
+        {% for store in stores %}
+        <a href="?store={{ store.id }}{% if shift_id %}&shift={{ shift_id }}{% endif %}"
+           class="btn btn-sm {% if scoped_store.id == store.id %}btn-gold{% else %}btn-outline-secondary{% endif %}"
+           style="{% if scoped_store.id == store.id %}{% else %}border-color:rgba(255,255,255,0.15); color:#b0b0b0;{% endif %}">
+            {{ store.name }}
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<form id="stockTakeForm">
+    {% csrf_token %}
+    <input type="hidden" name="store" value="{{ store_id }}">
+    <input type="hidden" name="shift" value="{{ shift_id }}">
+
+    <div id="items-container"></div>
+
+    <!-- Sticky submit bar -->
+    <div class="st-summary-bar">
+        <div>
+            <span id="variance-count" style="display:none;">
+                ⚠️ <span id="vc-num">0</span> tofauti
+            </span>
+            <span style="font-size:0.78rem; color:#b0b0b0;" id="no-variance-msg">
+                Jaza nambari za hesabu halisi
+            </span>
+        </div>
+        <button type="submit" class="btn btn-gold" id="submitBtn">
+            ✅ {% trans 'Wasilisha Hesabu' %}
+        </button>
+    </div>
+</form>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    var ITEMS = {{ items_data|safe }};
+    var container = document.getElementById('items-container');
+
+    // Group by store_name
+    var stores = {};
+    ITEMS.forEach(function(item) {
+        var key = item.store_name || 'Duka';
+        if (!stores[key]) stores[key] = [];
+        stores[key].push(item);
+    });
+
+    Object.keys(stores).forEach(function(storeName) {
+        var block = document.createElement('div');
+        block.className = 'st-store-block';
+
+        var label = document.createElement('div');
+        label.className = 'st-section-label';
+        label.textContent = storeName;
+        block.appendChild(label);
+
+        stores[storeName].forEach(function(item) {
+            var row = document.createElement('div');
+            row.className = 'st-item-row';
+
+            var volChip = item.volume_ml
+                ? '<span style="font-size:0.6rem; padding:0.05rem 0.3rem; background:rgba(201,168,76,0.12); color:var(--gold); border-radius:6px; margin-left:0.3rem;">'
+                  + item.volume_ml + 'ml</span>'
+                : '';
+
+            row.innerHTML =
+                '<div class="st-item-name">' +
+                    _esc(item.description) + volChip +
+                    '<div class="st-item-meta">' + _esc(item.unit) + '</div>' +
+                '</div>' +
+                '<div class="st-book">' + parseFloat(item.balance).toFixed(1) + '<br>' +
+                    '<span style="font-size:0.62rem;">App</span></div>' +
+                '<div class="st-actual">' +
+                    '<input type="number" step="0.25" min="0" placeholder="—"' +
+                    ' data-id="' + item.id + '"' +
+                    ' data-book="' + parseFloat(item.balance) + '"' +
+                    ' data-unit="' + _esc(item.unit) + '">' +
+                '</div>' +
+                '<div class="st-variance" id="var-' + item.id + '">—</div>';
+            block.appendChild(row);
+        });
+        container.appendChild(block);
+    });
+
+    // Live variance display
+    container.addEventListener('input', function(e) {
+        if (e.target.tagName !== 'INPUT') return;
+        var input = e.target;
+        var book = parseFloat(input.dataset.book || 0);
+        var actual = parseFloat(input.value);
+        var varDiv = document.getElementById('var-' + input.dataset.id);
+        if (isNaN(actual) || input.value === '') {
+            varDiv.textContent = '—';
+            varDiv.className = 'st-variance';
+            input.classList.remove('has-variance');
+        } else {
+            var diff = actual - book;
+            var diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(2).replace(/\.?0+$/, '');
+            varDiv.textContent = diffStr + ' ' + input.dataset.unit;
+            varDiv.className = 'st-variance ' + (diff < 0 ? 'neg' : diff > 0 ? 'pos' : '');
+            input.classList.toggle('has-variance', diff !== 0);
+        }
+        _updateSummary();
+    });
+
+    function _updateSummary() {
+        var count = 0;
+        container.querySelectorAll('input[data-id]').forEach(function(inp) {
+            if (inp.value !== '') {
+                var book   = parseFloat(inp.dataset.book || 0);
+                var actual = parseFloat(inp.value);
+                if (!isNaN(actual) && actual !== book) count++;
+            }
+        });
+        var vc = document.getElementById('variance-count');
+        var nv = document.getElementById('no-variance-msg');
+        document.getElementById('vc-num').textContent = count;
+        vc.style.display  = count > 0 ? '' : 'none';
+        nv.style.display  = count > 0 ? 'none' : '';
+    }
+
+    // Submit
+    document.getElementById('stockTakeForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var counts = [];
+        container.querySelectorAll('input[data-id]').forEach(function(inp) {
+            if (inp.value !== '') {
+                counts.push({ item_id: parseInt(inp.dataset.id), actual_count: parseFloat(inp.value) });
+            }
+        });
+        if (!counts.length) {
+            alert('Ingiza angalau idadi moja kabla ya kuwasilisha.');
+            return;
+        }
+        var btn = document.getElementById('submitBtn');
+        btn.disabled = true;
+        btn.textContent = '⏳ Inwasilisha...';
+
+        var fd = new FormData(document.getElementById('stockTakeForm'));
+        fd.append('counts', JSON.stringify(counts));
+
+        fetch(window.location.pathname, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value },
+            body: fd,
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.ok) {
+                window.location.href = '/stock/takes/' + d.take_id + '/';
+            } else {
+                alert(d.error || 'Hitilafu. Jaribu tena.');
+                btn.disabled = false;
+                btn.textContent = '✅ Wasilisha Hesabu';
+            }
+        })
+        .catch(function() {
+            alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.');
+            btn.disabled = false;
+            btn.textContent = '✅ Wasilisha Hesabu';
+        });
+    });
+
+    function _esc(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+}());
+</script>
+{% endblock %}

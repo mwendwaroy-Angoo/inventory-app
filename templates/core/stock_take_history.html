@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}📊 Historia ya Hesabu za Stok{% endblock %}
+
+{% block extra_css %}
+<style>
+    .take-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .take-row:last-child { border-bottom: none; }
+    .take-row:hover { background: rgba(255,255,255,0.02); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-start justify-content-between mb-4 flex-wrap gap-2">
+    <div>
+        <h1 class="page-title mb-1">📊 {% trans 'Historia ya Hesabu za Stok' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem; margin:0;">{% trans 'Hesabu zote zilizofanywa.' %}</p>
+    </div>
+    <a href="{% url 'start_stock_take' %}" class="btn btn-sm btn-gold">+ {% trans 'Hesabu Mpya' %}</a>
+</div>
+
+{% if takes_data %}
+<div style="background:rgba(255,255,255,0.02); border:1px solid #2a2a2a; border-radius:12px; overflow:hidden;">
+    {% for entry in takes_data %}
+    <div class="take-row">
+        <div>
+            <a href="{% url 'stock_take_detail' entry.take.id %}"
+               style="color:var(--pearl); font-weight:600; text-decoration:none; font-size:0.9rem;">
+                {{ entry.take.taken_at|date:"d M Y, H:i" }}
+            </a>
+            <div style="font-size:0.75rem; color:#b0b0b0; margin-top:0.1rem;">
+                {% trans 'Alihesabu' %}: {{ entry.take.conducted_by.get_full_name|default:entry.take.conducted_by.username|default:"?" }}
+                {% if entry.take.store %} · {{ entry.take.store.name }}{% endif %}
+                {% if entry.take.shift %} · Zamu ya {{ entry.take.shift.staff.get_full_name|default:entry.take.shift.staff.username }}{% endif %}
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            {% if entry.total > 0 %}
+            <span style="font-size:0.8rem; padding:0.15rem 0.55rem; border-radius:20px;
+                  background:rgba(251,191,36,0.1); color:#fbbf24; border:1px solid rgba(251,191,36,0.25);">
+                {{ entry.total }} tofauti
+            </span>
+            {% if entry.pending > 0 %}
+            <span style="font-size:0.75rem; padding:0.15rem 0.5rem; border-radius:20px;
+                  background:rgba(248,113,113,0.1); color:#f87171; border:1px solid rgba(248,113,113,0.25);">
+                {{ entry.pending }} inasubiri
+            </span>
+            {% endif %}
+            {% else %}
+            <span style="font-size:0.8rem; color:#6ee7b7;">✅ Hayana tofauti</span>
+            {% endif %}
+            <a href="{% url 'stock_take_detail' entry.take.id %}"
+               class="btn btn-sm btn-outline-secondary"
+               style="border-color:rgba(255,255,255,0.15); color:#b0b0b0; font-size:0.75rem;">
+                Angalia →
+            </a>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div style="text-align:center; padding:3rem 1rem; color:#888;">
+    <div style="font-size:2rem; margin-bottom:0.5rem;">📊</div>
+    <div>{% trans 'Hakuna hesabu zilizofanywa bado.' %}</div>
+    <a href="{% url 'start_stock_take' %}" class="btn btn-sm btn-gold mt-3">
+        + {% trans 'Fanya Hesabu ya Kwanza' %}
+    </a>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Hesabu ya Stok — {{ stock_take.taken_at|date:"d M Y" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .st-stat { min-width: 90px; }
+    .st-stat .si-label { color: #b0b0b0; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.15rem; }
+    .st-stat .si-value { font-size: 1.1rem; font-weight: 700; }
+    .var-card {
+        background: rgba(255,255,255,0.02);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        padding: 0.8rem 1rem;
+        margin-bottom: 0.6rem;
+    }
+    .var-card.decrease { border-left: 3px solid #f87171; }
+    .var-card.increase { border-left: 3px solid #6ee7b7; }
+    .var-badge { font-size: 0.72rem; padding: 0.1rem 0.45rem; border-radius: 20px; font-weight: 600; }
+    .badge-pending  { background: rgba(251,191,36,0.12);  color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+    .badge-responded{ background: rgba(96,165,250,0.12);  color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+    .badge-resolved { background: rgba(110,231,183,0.12); color: #6ee7b7; border: 1px solid rgba(110,231,183,0.3); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex align-items-start justify-content-between flex-wrap gap-2">
+    <div>
+        <h1 class="page-title mb-1">📊 {% trans 'Matokeo ya Hesabu' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem; margin:0;">
+            {{ stock_take.taken_at|date:"d M Y, H:i" }}
+            · {% trans 'Alihesabu' %}: {{ stock_take.conducted_by.get_full_name|default:stock_take.conducted_by.username|default:"?" }}
+            {% if stock_take.shift %}
+            · {% trans 'Zamu' %}: {{ stock_take.shift.staff.get_full_name|default:stock_take.shift.staff.username }}
+            {% endif %}
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        {% if is_owner %}
+        <a href="{% url 'pending_variances' %}" class="btn btn-sm btn-gold">📋 Angalia Tofauti</a>
+        {% endif %}
+        <a href="{% url 'stock_take_history' %}" class="btn btn-sm btn-outline-secondary"
+           style="border-color:rgba(255,255,255,0.15); color:#b0b0b0;">← Historia</a>
+    </div>
+</div>
+
+{% with total=variances|length %}
+{% if total == 0 %}
+<div style="text-align:center; padding:3rem 1rem;">
+    <div style="font-size:2.5rem; margin-bottom:0.5rem;">✅</div>
+    <div style="color:#6ee7b7; font-size:1rem; font-weight:600;">Stok inalingana kikamilifu!</div>
+    <div style="color:#b0b0b0; font-size:0.85rem; margin-top:0.3rem;">Hakuna tofauti zilizopatikana.</div>
+</div>
+{% else %}
+<div style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a; border-radius:12px; padding:1rem 1.25rem; margin-bottom:1.25rem;">
+    <div class="d-flex gap-4 flex-wrap">
+        <div class="st-stat">
+            <div class="si-label">Tofauti</div>
+            <div class="si-value" style="color:#fbbf24;">{{ total }}</div>
+        </div>
+        <div class="st-stat">
+            <div class="si-label">Upungufu</div>
+            <div class="si-value" style="color:#f87171;">
+                {{ variances|length }}
+            </div>
+        </div>
+        {% if is_owner %}
+        <div class="st-stat">
+            <div class="si-label">Mapato Yanayokadiriwa</div>
+            <div class="si-value" style="color:var(--gold);">
+                KES {% for v in variances %}{% if v.estimated_revenue %}{{ v.estimated_revenue|floatformat:0 }}{% if not forloop.last %}+{% endif %}{% endif %}{% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% for v in variances %}
+<div class="var-card {{ v.direction }}">
+    <div class="d-flex align-items-start justify-content-between gap-2 flex-wrap">
+        <div>
+            <span style="color:var(--pearl); font-weight:600;">{{ v.item_name_cache }}</span>
+            {% if v.direction == 'decrease' %}
+            <span style="font-size:0.78rem; color:#f87171; margin-left:0.4rem;">
+                ↓ {{ v.variance|floatformat:"-2" }} (book: {{ v.book_balance|floatformat:"-2" }} → actual: {{ v.actual_count|floatformat:"-2" }})
+            </span>
+            {% else %}
+            <span style="font-size:0.78rem; color:#6ee7b7; margin-left:0.4rem;">
+                ↑ +{{ v.variance|floatformat:"-2" }} (book: {{ v.book_balance|floatformat:"-2" }} → actual: {{ v.actual_count|floatformat:"-2" }})
+            </span>
+            {% endif %}
+        </div>
+        <span class="var-badge badge-{{ v.status }}">
+            {% if v.status == 'pending' %}⏳ Inasubiri{% elif v.status == 'responded' %}💬 Amejibu{% else %}✅ Imekamilika{% endif %}
+        </span>
+    </div>
+    {% if v.direction == 'decrease' and v.estimated_revenue %}
+    <div style="font-size:0.78rem; color:#b0b0b0; margin-top:0.35rem;">
+        {% if is_owner %}Mapato yanayokadiriwa: <span style="color:#fbbf24; font-weight:600;">KES {{ v.estimated_revenue|floatformat:0 }}</span>{% endif %}
+        {% if v.queried_staff %} · Aliyehusika: <span style="color:var(--pearl);">{{ v.queried_staff.user.get_full_name|default:v.queried_staff.user.username }}</span>{% endif %}
+    </div>
+    {% endif %}
+    {% if v.status == 'responded' %}
+    <div style="margin-top:0.4rem; font-size:0.8rem; color:#b0b0b0;">
+        Jibu: <span style="color:#60a5fa;">{{ v.get_response_type_display }}</span>
+        {% if v.response_customer %} · Mteja: <span style="color:var(--pearl);">{{ v.response_customer }}</span>{% endif %}
+        {% if v.response_note %} · <em style="color:#b0b0b0;">{{ v.response_note }}</em>{% endif %}
+    </div>
+    {% endif %}
+    {% if v.status == 'resolved' and v.corrective_txn %}
+    <div style="margin-top:0.4rem; font-size:0.78rem; color:#6ee7b7;">
+        ✅ Transaction imeundwa (#{{ v.corrective_txn.id }})
+    </div>
+    {% elif v.status == 'resolved' and v.compliance_noted %}
+    <div style="margin-top:0.4rem; font-size:0.78rem; color:#f87171;">
+        ⚠️ Imerekodiwa kwenye rekodi ya utendaji
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+{% endwith %}
+{% endblock %}

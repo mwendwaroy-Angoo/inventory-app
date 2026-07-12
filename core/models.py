@@ -3062,3 +3062,101 @@ class StockRequest(models.Model):
 
     def __str__(self):
         return f"{self.item.description} — {self.get_status_display()} ({self.requested_at.date()})"
+
+
+# ── Guided Stock Reconciliation ────────────────────────────────────────────────
+
+class StockTake(models.Model):
+    """Header for one stock-count session (standalone, optionally linked to a shift)."""
+    STATUS_SUBMITTED  = 'submitted'
+    STATUS_RECONCILED = 'reconciled'
+    STATUS_CHOICES = [
+        ('submitted',  'Submitted'),
+        ('reconciled', 'Reconciled'),
+    ]
+
+    business     = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stock_takes')
+    store        = models.ForeignKey('Store', on_delete=models.SET_NULL, null=True, blank=True, related_name='stock_takes')
+    conducted_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, related_name='stock_takes_conducted')
+    shift        = models.ForeignKey('Shift', on_delete=models.SET_NULL, null=True, blank=True, related_name='stock_takes')
+    status       = models.CharField(max_length=20, choices=STATUS_CHOICES, default='submitted')
+    taken_at     = models.DateTimeField(auto_now_add=True)
+    notes        = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ['-taken_at']
+
+    def __str__(self):
+        name = self.conducted_by.get_full_name() if self.conducted_by else '?'
+        return f"Stock Take by {name} on {self.taken_at.date()}"
+
+
+class StockVarianceQuery(models.Model):
+    """
+    One row per item with a non-zero variance from a StockTake session.
+    Holds the full accountability lifecycle: detection → staff response → owner review.
+    """
+    DECREASE = 'decrease'   # actual < book — likely unrecorded sale
+    INCREASE = 'increase'   # actual > book — likely unrecorded receipt
+    DIRECTION_CHOICES = [('decrease', 'Decrease'), ('increase', 'Increase')]
+
+    PENDING   = 'pending'
+    RESPONDED = 'responded'
+    RESOLVED  = 'resolved'
+    STATUS_CHOICES = [
+        ('pending',   'Pending Staff Response'),
+        ('responded', 'Staff Responded'),
+        ('resolved',  'Resolved'),
+    ]
+
+    RESP_CASH        = 'cash'
+    RESP_MPESA       = 'mpesa'
+    RESP_CREDIT      = 'credit'
+    RESP_RECEIPT     = 'receipt'
+    RESP_NO_INTERNET = 'no_internet'
+    RESP_UNKNOWN     = 'unknown'
+    RESPONSE_CHOICES = [
+        ('cash',        'Cash sale'),
+        ('mpesa',       'M-Pesa sale'),
+        ('credit',      'Credit / Deni sale'),
+        ('receipt',     'Unrecorded receipt'),
+        ('no_internet', 'No internet at the time'),
+        ('unknown',     'Unknown'),
+    ]
+
+    stock_take        = models.ForeignKey(StockTake, on_delete=models.CASCADE, related_name='variances')
+    item              = models.ForeignKey('Item', on_delete=models.SET_NULL, null=True, related_name='variance_queries')
+    item_name_cache   = models.CharField(max_length=200)
+    book_balance      = models.DecimalField(max_digits=12, decimal_places=3)
+    actual_count      = models.DecimalField(max_digits=12, decimal_places=3)
+    direction         = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
+    estimated_revenue = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
+    queried_staff     = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL,
+                                          null=True, blank=True, related_name='variance_queries')
+    status            = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
+    response_type     = models.CharField(max_length=20, choices=RESPONSE_CHOICES, blank=True)
+    response_customer = models.CharField(max_length=100, blank=True)
+    response_note     = models.CharField(max_length=300, blank=True)
+    responded_at      = models.DateTimeField(null=True, blank=True)
+
+    owner_accepted    = models.BooleanField(null=True)
+    owner_action_by   = models.ForeignKey('auth.User', on_delete=models.SET_NULL,
+                                           null=True, blank=True, related_name='variance_reviews')
+    owner_acted_at    = models.DateTimeField(null=True, blank=True)
+
+    corrective_txn    = models.ForeignKey('Transaction', on_delete=models.SET_NULL,
+                                           null=True, blank=True, related_name='variance_correction')
+    compliance_noted  = models.BooleanField(default=False)
+    created_at        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @property
+    def variance(self):
+        return self.actual_count - self.book_balance
+
+    def __str__(self):
+        return f"{self.item_name_cache} ({self.direction}: {abs(self.variance)}) — {self.status}"

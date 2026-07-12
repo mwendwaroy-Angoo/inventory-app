@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}📊 Tofauti za Stok{% endblock %}
+
+{% block extra_css %}
+<style>
+    .var-card {
+        background: rgba(255,255,255,0.02);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        margin-bottom: 0.75rem;
+    }
+    .var-card-header {
+        padding: 0.75rem 1.1rem;
+        border-bottom: 1px solid #2a2a2a;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    .var-card-body { padding: 0.75rem 1.1rem; }
+    .var-badge { font-size: 0.72rem; padding: 0.12rem 0.5rem; border-radius: 20px; font-weight: 600; }
+    .badge-pending  { background: rgba(251,191,36,0.12);  color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+    .badge-responded{ background: rgba(96,165,250,0.12);  color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+    .badge-resolved { background: rgba(110,231,183,0.12); color: #6ee7b7; border: 1px solid rgba(110,231,183,0.3); }
+    .section-label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--gold);
+        margin: 1.25rem 0 0.5rem;
+    }
+    .resp-chip {
+        display: inline-block;
+        font-size: 0.72rem;
+        padding: 0.1rem 0.45rem;
+        border-radius: 20px;
+        background: rgba(96,165,250,0.1);
+        color: #60a5fa;
+        border: 1px solid rgba(96,165,250,0.25);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-start justify-content-between mb-4 flex-wrap gap-2">
+    <div>
+        <h1 class="page-title mb-1">📊 {% trans 'Tofauti za Stok' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem; margin:0;">
+            {% trans 'Kagua tofauti, kubali au kataa maelezo ya wafanyakazi.' %}
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'start_stock_take' %}" class="btn btn-sm btn-gold">+ {% trans 'Hesabu Mpya' %}</a>
+        <a href="{% url 'stock_take_history' %}" class="btn btn-sm btn-outline-secondary"
+           style="border-color:rgba(255,255,255,0.15); color:#b0b0b0;">📅 Historia</a>
+    </div>
+</div>
+
+<!-- ── Pending ── -->
+{% if pending %}
+<div class="section-label">⏳ {{ pending|length }} {% trans 'Inasubiri Jibu la Mfanyakazi' %}</div>
+{% for v in pending %}
+<div class="var-card" style="border-left: 3px solid #fbbf24;">
+    <div class="var-card-header">
+        <div>
+            <span style="color:var(--pearl); font-weight:600;">{{ v.item_name_cache }}</span>
+            {% if v.direction == 'decrease' %}
+            <span style="font-size:0.78rem; color:#f87171; margin-left:0.4rem;">
+                ↓ {{ v.variance|floatformat:"-2" }}
+            </span>
+            {% else %}
+            <span style="font-size:0.78rem; color:#6ee7b7; margin-left:0.4rem;">
+                ↑ +{{ v.variance|floatformat:"-2" }}
+            </span>
+            {% endif %}
+        </div>
+        <span class="var-badge badge-pending">⏳ Inasubiri</span>
+    </div>
+    <div class="var-card-body">
+        <div class="row g-2" style="font-size:0.82rem;">
+            <div class="col-sm-4">
+                <div style="color:#b0b0b0; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">Tarehe</div>
+                <div style="color:var(--pearl);">{{ v.created_at|date:"d M Y, H:i" }}</div>
+            </div>
+            <div class="col-sm-4">
+                <div style="color:#b0b0b0; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">Aliyehusika</div>
+                <div style="color:var(--pearl);">
+                    {% if v.queried_staff %}{{ v.queried_staff.user.get_full_name|default:v.queried_staff.user.username }}{% else %}&mdash;{% endif %}
+                </div>
+            </div>
+            {% if v.estimated_revenue %}
+            <div class="col-sm-4">
+                <div style="color:#b0b0b0; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">Makisio ya Mapato</div>
+                <div style="color:#fbbf24; font-weight:600;">KES {{ v.estimated_revenue|floatformat:0 }}</div>
+            </div>
+            {% endif %}
+        </div>
+        <div style="margin-top:0.6rem; font-size:0.78rem; color:#b0b0b0;">
+            Hesabu: {{ v.book_balance|floatformat:"-2" }} (App) → {{ v.actual_count|floatformat:"-2" }} (Halisi)
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- ── Responded — awaiting owner decision ── -->
+{% if responded %}
+<div class="section-label" style="margin-top:1.5rem;">💬 {{ responded|length }} {% trans 'Amejibu — Subiri Uamuzi Wako' %}</div>
+{% for v in responded %}
+<div class="var-card" style="border-left: 3px solid #60a5fa;">
+    <div class="var-card-header">
+        <div>
+            <span style="color:var(--pearl); font-weight:600;">{{ v.item_name_cache }}</span>
+            {% if v.direction == 'decrease' %}
+            <span style="font-size:0.78rem; color:#f87171; margin-left:0.4rem;">↓ {{ v.variance|floatformat:"-2" }}</span>
+            {% else %}
+            <span style="font-size:0.78rem; color:#6ee7b7; margin-left:0.4rem;">↑ +{{ v.variance|floatformat:"-2" }}</span>
+            {% endif %}
+        </div>
+        <span class="var-badge badge-responded">💬 Amejibu</span>
+    </div>
+    <div class="var-card-body">
+        <div class="row g-2 mb-2" style="font-size:0.82rem;">
+            <div class="col-sm-4">
+                <div style="color:#b0b0b0; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">Mfanyakazi</div>
+                <div style="color:var(--pearl);">
+                    {% if v.queried_staff %}{{ v.queried_staff.user.get_full_name|default:v.queried_staff.user.username }}{% else %}&mdash;{% endif %}
+                </div>
+            </div>
+            <div class="col-sm-4">
+                <div style="color:#b0b0b0; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">Aina ya Jibu</div>
+                <div><span class="resp-chip">{{ v.get_response_type_display }}</span></div>
+            </div>
+            {% if v.response_customer %}
+            <div class="col-sm-4">
+                <div style="color:#b0b0b0; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">Mteja</div>
+                <div style="color:var(--pearl);">{{ v.response_customer }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% if v.response_note %}
+        <div style="font-size:0.8rem; color:#b0b0b0; background:rgba(255,255,255,0.02); padding:0.4rem 0.65rem; border-radius:6px; border:1px solid #2a2a2a; margin-bottom:0.65rem;">
+            "{{ v.response_note }}"
+        </div>
+        {% endif %}
+
+        {% if is_owner %}
+        <div class="d-flex gap-2 flex-wrap">
+            <button onclick="reviewVariance({{ v.id }}, 'accept', '{{ v.item_name_cache|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(110,231,183,0.1); border:1px solid rgba(110,231,183,0.3); color:#6ee7b7;">
+                ✅ {% trans 'Kubali — Unda Transaction' %}
+            </button>
+            <button onclick="reviewVariance({{ v.id }}, 'dismiss', '{{ v.item_name_cache|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(192,57,90,0.1); border:1px solid rgba(192,57,90,0.3); color:#c0395a;">
+                ❌ {% trans 'Kataa — Rekodi Utendaji' %}
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if not pending and not responded %}
+<div style="text-align:center; padding:3rem 1rem; color:#888;">
+    <div style="font-size:2rem; margin-bottom:0.5rem;">✅</div>
+    <div>{% trans 'Hakuna tofauti zinazosubiri.' %}</div>
+</div>
+{% endif %}
+
+<!-- ── Recently resolved ── -->
+{% if resolved %}
+<div class="section-label" style="margin-top:2rem; color:#b0b0b0;">
+    {% trans 'Iliyokwisha Shughulikiwa' %} ({{ resolved|length }})
+</div>
+{% for v in resolved %}
+<div class="var-card" style="opacity:0.7;">
+    <div class="var-card-header">
+        <span style="font-size:0.88rem; color:var(--pearl);">{{ v.item_name_cache }}</span>
+        {% if v.owner_accepted %}
+        <span class="var-badge badge-resolved">✅ Imekubaliwa</span>
+        {% else %}
+        <span style="font-size:0.72rem; color:#f87171;">❌ Imekataliwa{% if v.compliance_noted %} · Rekodi utendaji{% endif %}</span>
+        {% endif %}
+    </div>
+    <div class="var-card-body" style="font-size:0.8rem; color:#b0b0b0;">
+        {% if v.corrective_txn %}Transaction #{{ v.corrective_txn.id }} imeundwa · {% endif %}
+        {{ v.owner_acted_at|date:"d M Y, H:i" }}
+        {% if v.owner_action_by %}· Na {{ v.owner_action_by.get_full_name|default:v.owner_action_by.username }}{% endif %}
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function _csrf() {
+    var el = document.querySelector('[name=csrfmiddlewaretoken]');
+    return el ? el.value : '';
+}
+
+function reviewVariance(varId, action, itemName) {
+    var label = action === 'accept'
+        ? 'Kubali jibu la mfanyakazi na uunde transaction ya ' + itemName + '?'
+        : 'Kataa jibu la mfanyakazi na urekodi kama tatizo la utendaji?';
+    if (!confirm(label)) return;
+
+    fetch('/stock/variances/' + varId + '/review/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': _csrf(),
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'action=' + encodeURIComponent(action) + '&csrfmiddlewaretoken=' + encodeURIComponent(_csrf()),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) {
+            alert('✅ ' + (d.message || 'Imekamilika.'));
+            location.reload();
+        } else {
+            alert(d.error || 'Hitilafu. Jaribu tena.');
+        }
+    })
+    .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
+}
+</script>
+{% endblock %}

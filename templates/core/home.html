@@ -279,6 +279,20 @@
     </a>
     {% endif %}
 
+    <!-- Pending stock variance queries badge (owner only) -->
+    {% if user.userprofile.is_owner_or_manager and pending_variances_count > 0 %}
+    <a href="{% url 'pending_variances' %}" style="text-decoration:none; display:block; margin-bottom:0.75rem;">
+      <div style="background:rgba(251,191,36,.08); border:1px solid rgba(251,191,36,.3);
+                  border-left:3px solid #fbbf24; border-radius:8px; padding:0.65rem 1rem;
+                  display:flex; align-items:center; gap:.6rem;">
+        <span style="font-size:1.1rem;">📊</span>
+        <span style="color:#fbbf24; font-size:.88rem;">
+          <strong>{{ pending_variances_count }} stock variance{{ pending_variances_count|pluralize }}</strong> awaiting your review — Kagua →
+        </span>
+      </div>
+    </a>
+    {% endif %}
+
     <!-- Petty cash pending review alert (owner only) -->
     {% if user.userprofile.is_owner_or_manager and pending_petty_cash_count > 0 %}
     <a href="{% url 'petty_cash_list' %}?status=pending" style="text-decoration:none; display:block; margin-bottom:0.75rem;">

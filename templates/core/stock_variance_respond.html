@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Jibu Tofauti — {{ svq.item_name_cache }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .resp-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+    }
+    .resp-radio-group { margin-top: 0.75rem; }
+    .resp-radio-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.6rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        margin-bottom: 0.35rem;
+        transition: border-color 0.15s, background 0.15s;
+    }
+    .resp-radio-item:hover { background: rgba(255,255,255,0.03); border-color: #333; }
+    .resp-radio-item input[type=radio]:checked + label { color: var(--gold); }
+    .resp-radio-item:has(input:checked) {
+        border-color: rgba(201,168,76,0.35);
+        background: rgba(201,168,76,0.06);
+    }
+    .resp-radio-item label { cursor: pointer; font-size: 0.88rem; color: var(--pearl); }
+    .resp-radio-item .radio-desc { font-size: 0.72rem; color: #b0b0b0; margin-top: 0.1rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex align-items-start justify-content-between flex-wrap gap-2">
+    <div>
+        <h1 class="page-title mb-1">📊 {% trans 'Eleza Tofauti' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem; margin:0;">
+            {% trans 'Mmiliki ataona jibu lako na atakata shauri.' %}
+        </p>
+    </div>
+</div>
+
+{% if already_resolved %}
+<div style="text-align:center; padding:3rem 1rem;">
+    <div style="font-size:2rem; margin-bottom:0.5rem;">✅</div>
+    <div style="color:#6ee7b7; font-size:1rem; font-weight:600;">Tofauti hii imeshughulikiwa.</div>
+    <div style="color:#b0b0b0; font-size:0.85rem; margin-top:0.3rem;">Haitahitajika maelezo zaidi.</div>
+</div>
+
+{% elif submitted %}
+<div style="text-align:center; padding:3rem 1rem;">
+    <div style="font-size:2.5rem; margin-bottom:0.5rem;">🙏</div>
+    <div style="color:#6ee7b7; font-size:1rem; font-weight:600;">Asante! Jibu lako limetumwa.</div>
+    <div style="color:#b0b0b0; font-size:0.85rem; margin-top:0.4rem;">
+        Mmiliki ataangalia na atakufahamisha uamuzi wake.
+    </div>
+    <a href="/" class="btn btn-sm btn-gold mt-3">🏠 Kurasa Kuu</a>
+</div>
+
+{% else %}
+
+<!-- Variance summary -->
+<div class="resp-card">
+    <div style="font-size:1rem; font-weight:600; color:var(--pearl); margin-bottom:0.4rem;">
+        {{ svq.item_name_cache }}
+    </div>
+    <div class="d-flex gap-3 flex-wrap" style="font-size:0.82rem;">
+        <div>
+            <span style="color:#b0b0b0;">App ilisema:</span>
+            <span style="color:var(--pearl); font-weight:600; margin-left:0.3rem;">{{ svq.book_balance|floatformat:"-2" }}</span>
+        </div>
+        <div>
+            <span style="color:#b0b0b0;">Ulipata:</span>
+            <span style="color:var(--pearl); font-weight:600; margin-left:0.3rem;">{{ svq.actual_count|floatformat:"-2" }}</span>
+        </div>
+        {% if svq.direction == 'decrease' %}
+        <div>
+            <span style="color:#b0b0b0;">Upungufu:</span>
+            <span style="color:#f87171; font-weight:600; margin-left:0.3rem;">{{ svq.variance|floatformat:"-2" }}</span>
+        </div>
+        {% if svq.estimated_revenue %}
+        <div>
+            <span style="color:#b0b0b0;">Makisio ya mapato:</span>
+            <span style="color:#fbbf24; font-weight:600; margin-left:0.3rem;">KES {{ svq.estimated_revenue|floatformat:0 }}</span>
+        </div>
+        {% endif %}
+        {% else %}
+        <div>
+            <span style="color:#b0b0b0;">Ziada:</span>
+            <span style="color:#6ee7b7; font-weight:600; margin-left:0.3rem;">+{{ svq.variance|floatformat:"-2" }}</span>
+        </div>
+        {% endif %}
+    </div>
+    {% if preset_hint %}
+    <div style="margin-top:0.6rem; font-size:0.78rem; color:#b0b0b0; background:rgba(255,255,255,0.02); padding:0.35rem 0.6rem; border-radius:6px; border:1px solid #2a2a2a;">
+        💡 {{ preset_hint }}
+    </div>
+    {% endif %}
+</div>
+
+{% if error %}
+<div class="alert" style="background:rgba(192,57,90,0.1); border:1px solid rgba(192,57,90,0.3); color:#e87090; border-radius:8px; padding:0.6rem 0.9rem; margin-bottom:1rem; font-size:0.85rem;">
+    ⚠️ {{ error }}
+</div>
+{% endif %}
+
+<form method="post">
+    {% csrf_token %}
+    <div class="resp-card">
+        <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--gold); margin-bottom:0.75rem;">
+            {% if svq.direction == 'decrease' %}
+            Vitu vilipungua — tafadhali eleza:
+            {% else %}
+            Vitu viliongezeka — tafadhali eleza:
+            {% endif %}
+        </div>
+        <div class="resp-radio-group">
+            {% for value, label in response_choices %}
+            {% if svq.direction == 'decrease' and value == 'receipt' %}{% else %}
+            {% if svq.direction == 'increase' and value in 'cash,mpesa,credit' %}{% else %}
+            <div class="resp-radio-item">
+                <input type="radio" name="response_type" id="rt-{{ value }}" value="{{ value }}"
+                       style="margin-top:0.2rem;" required>
+                <div>
+                    <label for="rt-{{ value }}">
+                        {% if value == 'cash' %}💵 {% elif value == 'mpesa' %}📱 {% elif value == 'credit' %}📋 {% elif value == 'receipt' %}📦 {% elif value == 'no_internet' %}📵 {% else %}❓ {% endif %}
+                        {{ label }}
+                    </label>
+                    <div class="radio-desc">
+                        {% if value == 'cash' %}Bidhaa iliuzwa kwa cash lakini haikuingizwa kwenye app.{% endif %}
+                        {% if value == 'mpesa' %}Bidhaa iliuzwa kwa M-Pesa lakini haikuingizwa kwenye app.{% endif %}
+                        {% if value == 'credit' %}Bidhaa iliuzwa kwa deni lakini haikuingizwa kwenye app.{% endif %}
+                        {% if value == 'receipt' %}Bidhaa ilipokelewa kutoka kwa muuzaji lakini haikurekodiwa.{% endif %}
+                        {% if value == 'no_internet' %}Mtandao haukuwa ukifanya kazi wakati huo.{% endif %}
+                        {% if value == 'unknown' %}Sijui — inawezekana ni upotevu au hitilafu nyingine.{% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Credit: show customer name field -->
+    <div id="credit-fields" style="display:none;">
+        <div class="resp-card">
+            <label style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--gold);">Jina la Mteja (kwa deni)</label>
+            <input type="text" name="response_customer" id="response_customer"
+                   class="form-control mt-1"
+                   style="background:rgba(255,255,255,0.05); border-color:#333; color:var(--pearl);"
+                   placeholder="Jina la mteja aliyenunua kwa deni...">
+        </div>
+    </div>
+
+    <div class="resp-card">
+        <label style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--gold);">Maelezo zaidi (si lazima)</label>
+        <textarea name="response_note" class="form-control mt-1" rows="2"
+                  style="background:rgba(255,255,255,0.05); border-color:#333; color:var(--pearl); resize:none;"
+                  placeholder="Ongeza maelezo zaidi ikiwa unajua..."></textarea>
+    </div>
+
+    <button type="submit" class="btn btn-gold w-100">
+        📨 {% trans 'Tuma Jibu' %}
+    </button>
+</form>
+
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var radios = document.querySelectorAll('input[name=response_type]');
+    var creditFields = document.getElementById('credit-fields');
+    if (!creditFields) return;
+    radios.forEach(function(r) {
+        r.addEventListener('change', function() {
+            creditFields.style.display = (r.value === 'credit' && r.checked) ? '' : 'none';
+        });
+    });
+});
+</script>
+{% endblock %}

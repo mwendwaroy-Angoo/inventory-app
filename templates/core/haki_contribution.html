@@ -145,6 +145,11 @@
                 ⚠️ KES {{ row.keg_loss_kes|floatformat:0 }} {% trans 'keg variance' %}
             </div>
             {% endif %}
+            {% if row.dismissed_variances > 0 %}
+            <div class="metric-chip" style="background:rgba(251,191,36,0.08); border-color:rgba(251,191,36,0.25); color:#fbbf24;">
+                ⚠️ {{ row.dismissed_variances }} stock variance{{ row.dismissed_variances|pluralize }} dismissed
+            </div>
+            {% endif %}
             {% if row.deduction_total > 0 %}
             <div class="metric-chip" style="background:rgba(192,57,90,0.08); border-color:rgba(192,57,90,0.22); color:#e87090;">
                 📉 Deductions: <strong style="color:#f87171;">-KES {{ row.deduction_total|floatformat:0 }}</strong>

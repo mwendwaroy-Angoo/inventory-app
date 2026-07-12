@@ -31,7 +31,7 @@ from django.views.decorators.http import require_POST
 from accounts.models import UserProfile
 from core.models import (
     CustomerDebtPayment, SalaryDeduction, SalaryPayment, Shift, Transaction,
-    RecurringExpense, Notification, BarTab, Receipt,
+    RecurringExpense, Notification, BarTab, Receipt, StockVarianceQuery,
 )
 from core.views import get_user_profile, owner_required, owner_or_manager_required
 
@@ -127,6 +127,14 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
     if float(total_revenue) >= 50000:
         milestones.append(f'⭐ KES {float(total_revenue):,.0f} mwezi huu')
 
+    # ── Dismissed stock variances (compliance record) ──
+    dismissed_variances = StockVarianceQuery.objects.filter(
+        queried_staff=staff_profile,
+        compliance_noted=True,
+        stock_take__taken_at__date__gte=date_from,
+        stock_take__taken_at__date__lte=date_to,
+    ).count()
+
     return {
         'profile': staff_profile,
         'user': user,
@@ -141,6 +149,7 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
         'keg_loss_kes': keg_loss,
         'clean_keg_record': clean_keg,
         'milestones': milestones,
+        'dismissed_variances': dismissed_variances,
     }
 
 

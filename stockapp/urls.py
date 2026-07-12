@@ -233,6 +233,14 @@ from core.restock_views import (
     restock_mark_ordered,
 )
 from core.owner_consumption_views import record_owner_consumption
+from core.stock_take_views import (
+    start_stock_take,
+    stock_take_detail,
+    stock_take_history,
+    pending_variances,
+    respond_to_variance,
+    review_variance,
+)
 from core.performer_views import (
     performer_list,
     performer_form,
@@ -274,6 +282,12 @@ urlpatterns = [
     path("stock/restock/", restock_list, name="restock_list"),
     path("stock/restock/request/", request_restock, name="request_restock"),
     path("stock/restock/<int:request_id>/ordered/", restock_mark_ordered, name="restock_mark_ordered"),
+    path("stock/take/",                              start_stock_take,    name="start_stock_take"),
+    path("stock/takes/",                             stock_take_history,  name="stock_take_history"),
+    path("stock/takes/<int:take_id>/",               stock_take_detail,   name="stock_take_detail"),
+    path("stock/variances/",                         pending_variances,   name="pending_variances"),
+    path("stock/variances/<int:var_id>/respond/",    respond_to_variance, name="respond_to_variance"),
+    path("stock/variances/<int:var_id>/review/",     review_variance,     name="review_variance"),
     path("stock/owner-consumption/", record_owner_consumption, name="record_owner_consumption"),
     path("stock/manage/", manage_items, name="manage_items"),
     path("stock/add/", add_item, name="add_item"),

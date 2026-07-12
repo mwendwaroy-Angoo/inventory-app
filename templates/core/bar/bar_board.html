@@ -926,7 +926,12 @@
         <div id="close-shift-result" style="display:none;"></div>
         <div id="close-shift-error" style="display:none; color:#c0395a; font-size:.85rem;"></div>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer" style="flex-wrap:wrap; gap:0.4rem;">
+        <a id="guided-count-link" href="/stock/take/"
+           style="font-size:0.78rem; color:#b0b0b0; border:1px solid #333; border-radius:6px;
+                  padding:0.25rem 0.65rem; text-decoration:none; margin-right:auto;">
+          📊 Hesabu ya Stok →
+        </a>
         <button type="button" data-bs-dismiss="modal"
                 class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">Funga</button>
         <button type="button" id="close-shift-btn" class="btn btn-gold btn-sm"
@@ -3593,6 +3598,8 @@
     if (!_activeShiftId) return;
     document.getElementById('close-shift-cash').value = '';
     document.getElementById('close-shift-notes').value = '';
+    var gcLink = document.getElementById('guided-count-link');
+    if (gcLink) gcLink.href = '/stock/take/?shift=' + _activeShiftId;
     var summEl          = document.getElementById('close-shift-summary');
     var resEl           = document.getElementById('close-shift-result');
     var errEl           = document.getElementById('close-shift-error');

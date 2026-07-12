@@ -138,6 +138,20 @@
     .qs-item-stock.low { color: var(--warning); }
     .qs-item-stock.out { color: var(--danger); }
 
+    .qs-vol-chip {
+        display: inline-block;
+        font-size: 0.6rem;
+        padding: 0.05rem 0.35rem;
+        background: rgba(201,168,76,0.14);
+        color: var(--gold);
+        border-radius: 8px;
+        margin-left: 0.3rem;
+        vertical-align: middle;
+        font-family: 'DM Sans', sans-serif;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+    }
+
     .qs-item.out-of-stock {
         opacity: 0.4;
         pointer-events: none;
@@ -653,7 +667,7 @@
              data-store="{{ item.store_id }}"
              data-is-produce="{{ item.is_produce|yesno:'true,false' }}"
              data-has-presets="{{ item.has_presets|yesno:'true,false' }}">
-            <div class="qs-item-name">{{ item.description }}</div>
+            <div class="qs-item-name">{{ item.description }}{% if item.volume_ml %}<span class="qs-vol-chip">{{ item.volume_ml }}ml</span>{% endif %}</div>
             <div class="qs-item-price">
                 {% if item.selling_price %}
                     KES {{ item.selling_price }}

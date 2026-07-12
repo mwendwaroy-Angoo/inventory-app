@@ -266,6 +266,19 @@ def home(request):
             else:
                 context['pending_restocks'] = 0
 
+            # Pending stock variance queries badge (owner + manager)
+            if user_profile.is_owner_or_manager:
+                try:
+                    from core.models import StockVarianceQuery
+                    context['pending_variances_count'] = StockVarianceQuery.objects.filter(
+                        stock_take__business=business,
+                        status__in=[StockVarianceQuery.PENDING, StockVarianceQuery.RESPONDED],
+                    ).count()
+                except Exception:
+                    context['pending_variances_count'] = 0
+            else:
+                context['pending_variances_count'] = 0
+
             # Bar revenue — computed for any user who can see the bar station,
             # independent of the keg module (bar revenue = all non-kitchen Issue txns).
             try:
@@ -2908,6 +2921,7 @@ def quick_sell(request):
                 "reorder_level": item.reorder_level,
                 "is_produce": item.is_produce,
                 "has_presets": len(item.portion_presets.all()) > 0,
+                "volume_ml": item.volume_ml,
             }
         )
 
