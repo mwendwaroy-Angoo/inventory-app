@@ -1391,5 +1391,30 @@ Verify:
 ```
 python manage.py check                  # 0 issues
 python manage.py makemigrations --check # No changes detected (no new migrations)
-python manage.py test                   # 126 tests, all pass
+python manage.py test                   # 121 tests, all pass
 ```
+
+---
+
+### Bar Operations Audit (2026-07-12)
+
+**Bugs fixed (commit 5ef70b7):**
+
+1. `update_tab_phone` — was missing `@login_required` + `@require_POST`. Every other mutation endpoint has both; this one accepted GET requests from unauthenticated callers and returned a 403 JSON rather than redirecting to login.
+
+2. `bar_daily_report` staff performance — did NOT skip kitchen-staff shifts (unlike Z-report which already had the exclusion). Also did NOT filter `item__store__is_kitchen=False` from the transaction queryset, so on multi-counter businesses, kitchen revenue bled into the bar staff daily report.
+
+3. `convert_tab_to_debt` — no debt-confirmation SMS sent to the customer. Quick Sell credit sales send "KES X imewekwa kwa deni lako" on credit checkout; converting a bar tab to debt is the same accounting event but was silent.
+
+**Manual smoke tests:**
+
+**Tab rename → debt conversion SMS**
+1. Open tab for a customer with a phone number.
+2. Convert to Deni (bar board tabs drawer → Geuza Deni).
+3. ✅ Correct: customer receives SMS "Deni la KES X limeandikwa (Bar). Lipa ndani ya siku N."
+
+**Bar daily report kitchen isolation**
+1. In a business with both bar and kitchen, open a kitchen shift and ring up food sales.
+2. Go to `/bar/daily/` for that date.
+3. ✅ Correct: kitchen staff do NOT appear in the Staff/Shift performance table.
+4. ✅ Correct: kitchen revenue does NOT appear in bar staff revenue totals.
