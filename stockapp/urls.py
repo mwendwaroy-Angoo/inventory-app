@@ -241,6 +241,7 @@ from core.stock_take_views import (
     pending_variances,
     respond_to_variance,
     review_variance,
+    adjust_stock_balance,
 )
 from core.performer_views import (
     performer_list,
@@ -289,6 +290,7 @@ urlpatterns = [
     path("stock/variances/",                         pending_variances,   name="pending_variances"),
     path("stock/variances/<int:var_id>/respond/",    respond_to_variance, name="respond_to_variance"),
     path("stock/variances/<int:var_id>/review/",     review_variance,     name="review_variance"),
+    path("stock/items/<int:item_id>/adjust/",        adjust_stock_balance, name="adjust_stock_balance"),
     path("stock/owner-consumption/", record_owner_consumption, name="record_owner_consumption"),
     path("stock/manage/", manage_items, name="manage_items"),
     path("stock/add/", add_item, name="add_item"),

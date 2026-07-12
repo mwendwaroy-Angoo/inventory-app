@@ -246,8 +246,17 @@
                 <td>{{ item.store.name }}</td>
                 {% if user.userprofile.is_owner %}
                 <td onclick="event.stopPropagation()">
-                    <a href="{% url 'edit_item' item.id %}"
-                       class="btn btn-sm btn-outline-primary">{% trans 'Edit' %}</a>
+                    <div class="d-flex gap-1 flex-wrap">
+                        <a href="{% url 'edit_item' item.id %}"
+                           class="btn btn-sm btn-outline-primary">{% trans 'Edit' %}</a>
+                        {% if not item.is_keg and not item.is_produce %}
+                        <button class="btn btn-sm"
+                                style="border:1px solid rgba(201,168,76,0.4); color:var(--gold); background:rgba(201,168,76,0.07);"
+                                onclick="openAdjustModal({{ item.id }}, '{{ item.description|escapejs }}', '{{ item.unit|escapejs }}', {{ item.current_balance }})">
+                            ⚖️ {% trans 'Rekebisha' %}
+                        </button>
+                        {% endif %}
+                    </div>
                 </td>
                 {% endif %}
             </tr>
@@ -264,6 +273,58 @@
         </tbody>
     </table>
 </div>
+
+<!-- ── Adjust Stock Balance Modal ─────────────────────────────────────────── -->
+{% if user.userprofile.is_owner %}
+<div class="modal fade" id="adjustStockModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:#1e1e1e; border:1px solid #333; border-radius:12px;">
+            <div class="modal-header" style="border-bottom:1px solid #2a2a2a;">
+                <h5 class="modal-title" style="color:var(--gold); font-family:'Playfair Display',serif;">
+                    ⚖️ {% trans 'Rekebisha Salio' %}
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:1rem;">
+                    <div style="color:#b0b0b0; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem;">{% trans 'Item' %}</div>
+                    <div id="adj-item-name" style="color:var(--pearl); font-weight:600; font-size:1rem;"></div>
+                </div>
+                <div class="row g-3 mb-3">
+                    <div class="col-6">
+                        <div style="color:#b0b0b0; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem;">{% trans 'Salio la Sasa (App)' %}</div>
+                        <div id="adj-book-balance" style="color:var(--pearl); font-size:1.4rem; font-weight:700;"></div>
+                    </div>
+                    <div class="col-6">
+                        <div style="color:#b0b0b0; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem;">{% trans 'Tofauti' %}</div>
+                        <div id="adj-variance-preview" style="font-size:1.2rem; font-weight:700; color:#888;">—</div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label style="color:#b0b0b0; font-size:0.82rem; margin-bottom:0.4rem; display:block;">{% trans 'Hesabu Halisi Uliohesabu' %} <span id="adj-unit-label" style="color:var(--gold);"></span></label>
+                    <input type="number" id="adj-actual-count" min="0" step="0.25"
+                           style="width:100%; background:#252525; border:1px solid #444; color:var(--pearl);
+                                  border-radius:8px; padding:0.6rem 0.9rem; font-size:1rem; outline:none;"
+                           placeholder="0">
+                </div>
+                <div class="mb-1">
+                    <label style="color:#b0b0b0; font-size:0.82rem; margin-bottom:0.4rem; display:block;">{% trans 'Sababu (si lazima)' %}</label>
+                    <input type="text" id="adj-note" maxlength="200"
+                           style="width:100%; background:#252525; border:1px solid #444; color:var(--pearl);
+                                  border-radius:8px; padding:0.55rem 0.9rem; font-size:0.9rem; outline:none;"
+                           placeholder="{% trans 'Mf: Hesabu ya mwisho wa mwezi' %}">
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top:1px solid #2a2a2a; gap:0.5rem;">
+                <button type="button" class="btn btn-sm" data-bs-dismiss="modal"
+                        style="border:1px solid #444; color:#b0b0b0;">{% trans 'Ghairi' %}</button>
+                <button type="button" id="adj-submit-btn" class="btn btn-gold"
+                        onclick="submitAdjustment()">{% trans 'Rekebisha Salio' %}</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 {% endblock %}
 
@@ -355,6 +416,79 @@
             .catch(function() {
                 btn.disabled = false;
                 btn.textContent = '🔔 Notify';
+            });
+    }
+
+    // ── Adjust Stock Balance ─────────────────────────────────────────────────
+    var _adjItemId   = null;
+    var _adjBookBal  = 0;
+
+    function openAdjustModal(itemId, itemName, unit, bookBal) {
+        _adjItemId  = itemId;
+        _adjBookBal = parseFloat(bookBal) || 0;
+        document.getElementById('adj-item-name').textContent    = itemName;
+        document.getElementById('adj-book-balance').textContent  = _adjBookBal + ' ' + unit;
+        document.getElementById('adj-unit-label').textContent    = unit;
+        document.getElementById('adj-actual-count').value        = '';
+        document.getElementById('adj-note').value                = '';
+        document.getElementById('adj-variance-preview').textContent = '—';
+        document.getElementById('adj-variance-preview').style.color = '#888';
+        document.getElementById('adj-submit-btn').disabled       = false;
+        document.getElementById('adj-submit-btn').textContent    = '{% trans "Rekebisha Salio" %}';
+        var modal = new bootstrap.Modal(document.getElementById('adjustStockModal'));
+        modal.show();
+        setTimeout(function() {
+            document.getElementById('adj-actual-count').focus();
+        }, 300);
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        var inp = document.getElementById('adj-actual-count');
+        if (!inp) return;
+        inp.addEventListener('input', function() {
+            var actual  = parseFloat(this.value);
+            var preview = document.getElementById('adj-variance-preview');
+            if (isNaN(actual)) { preview.textContent = '—'; preview.style.color = '#888'; return; }
+            var diff = actual - _adjBookBal;
+            if (diff === 0) {
+                preview.textContent = '± 0 (hakuna mabadiliko)';
+                preview.style.color = '#888';
+            } else if (diff < 0) {
+                preview.textContent = '▼ ' + Math.abs(diff).toFixed(2).replace(/\.?0+$/, '');
+                preview.style.color = '#f87171';
+            } else {
+                preview.textContent = '▲ +' + diff.toFixed(2).replace(/\.?0+$/, '');
+                preview.style.color = '#6ee7b7';
+            }
+        });
+    });
+
+    function submitAdjustment() {
+        var actual = document.getElementById('adj-actual-count').value.trim();
+        var note   = document.getElementById('adj-note').value.trim();
+        var btn    = document.getElementById('adj-submit-btn');
+        if (!actual) { alert('{% trans "Ingiza hesabu halisi kwanza." %}'); return; }
+        btn.disabled = true;
+        btn.textContent = '…';
+        var fd = new FormData();
+        fd.append('actual_count', actual);
+        fd.append('note', note);
+        fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        fetch('/stock/items/' + _adjItemId + '/adjust/', { method: 'POST', body: fd })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                bootstrap.Modal.getInstance(document.getElementById('adjustStockModal')).hide();
+                if (d.ok) {
+                    alert('✅ ' + d.message);
+                    location.reload();
+                } else {
+                    alert(d.error || 'Hitilafu. Jaribu tena.');
+                }
+            })
+            .catch(function() {
+                btn.disabled = false;
+                btn.textContent = '{% trans "Rekebisha Salio" %}';
+                alert('{% trans "Hitilafu ya mtandao. Angalia uunganisho." %}');
             });
     }
 

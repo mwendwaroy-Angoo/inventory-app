@@ -461,3 +461,79 @@ def review_variance(request, var_id):
         return JsonResponse({'ok': True, 'message': 'Imekataliwa na imerekodiwa kwenye rekodi ya utendaji.'})
 
     return JsonResponse({'ok': False, 'error': 'Invalid action.'})
+
+
+@owner_or_manager_required
+def adjust_stock_balance(request, item_id):
+    """
+    Quick stock-balance correction for countable items (wines, spirits, dry goods).
+    Owner/manager enters the physical count; a Wastage (shortage) or Receipt (surplus)
+    transaction is created to reconcile the book balance.
+    Returns JSON — called from stock_list.html modal.
+    """
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Not authenticated.'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'error': 'POST required.'}, status=405)
+
+    business = up.business
+    item = Item.objects.filter(id=item_id, store__business=business).select_related('store').first()
+    if not item:
+        return JsonResponse({'ok': False, 'error': 'Item haikupatikana.'}, status=404)
+
+    if item.is_keg or item.is_produce:
+        return JsonResponse({'ok': False, 'error': 'Marekebisho haya ni kwa vitu vinavyohesabika tu.'}, status=400)
+
+    actual_str = request.POST.get('actual_count', '').strip()
+    note = request.POST.get('note', '').strip()
+
+    if not actual_str:
+        return JsonResponse({'ok': False, 'error': 'Taja hesabu halisi.'}, status=400)
+
+    try:
+        actual = Decimal(actual_str)
+        if actual < 0:
+            return JsonResponse({'ok': False, 'error': 'Hesabu haiwezi kuwa chini ya sifuri.'}, status=400)
+    except InvalidOperation:
+        return JsonResponse({'ok': False, 'error': 'Hesabu si sahihi.'}, status=400)
+
+    book = item.current_balance()
+    variance = actual - book
+
+    if variance == 0:
+        return JsonResponse({'ok': True, 'no_change': True, 'message': 'Hesabu inafanana na rekodi — hakuna marekebisho yaliyohitajika.'})
+
+    txn_note = note or 'Stock adjustment'
+
+    if variance < 0:
+        Transaction.objects.create(
+            business=business,
+            item=item,
+            type='Wastage',
+            qty=abs(variance),
+            date=timezone.localdate(),
+            recorded_by=request.user,
+            recipient=txn_note,
+            payment_method='',
+        )
+        direction_label = f'Punguzo la {abs(variance):g} {item.unit}'
+    else:
+        Transaction.objects.create(
+            business=business,
+            item=item,
+            type='Receipt',
+            qty=variance,
+            date=timezone.localdate(),
+            recorded_by=request.user,
+            recipient=txn_note,
+            payment_method='',
+        )
+        direction_label = f'Ongezeko la {variance:g} {item.unit}'
+
+    new_balance = item.current_balance()
+    return JsonResponse({
+        'ok': True,
+        'message': f'{item.description}: {direction_label}. Salio jipya: {new_balance:g} {item.unit}.',
+        'new_balance': str(new_balance),
+    })
