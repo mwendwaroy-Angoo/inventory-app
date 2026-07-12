@@ -191,12 +191,14 @@ def start_stock_take(request):
     items_data = []
     for item in items_qs:
         items_data.append({
-            'id':          item.id,
-            'description': item.description,
-            'unit':        item.unit,
-            'balance':     float(item.current_balance()),
-            'store_name':  item.store.name if item.store else '',
-            'volume_ml':   item.volume_ml,
+            'id':              item.id,
+            'description':     item.description,
+            'unit':            item.unit,
+            'balance':         float(item.current_balance()),
+            'store_name':      item.store.name if item.store else '',
+            'volume_ml':       item.volume_ml,
+            'selling_price':   float(item.selling_price) if item.selling_price else None,
+            'material_number': item.material_number or '',
         })
 
     stores = Store.objects.filter(business=business).order_by('name')

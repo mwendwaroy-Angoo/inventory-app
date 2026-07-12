@@ -198,10 +198,14 @@
                   + item.volume_ml + 'ml</span>'
                 : '';
 
+            var metaParts = [_esc(item.unit)];
+            if (item.selling_price) metaParts.push('KES ' + item.selling_price.toFixed(0));
+            if (item.material_number) metaParts.push('#' + _esc(item.material_number));
+
             row.innerHTML =
                 '<div class="st-item-name">' +
                     _esc(item.description) + volChip +
-                    '<div class="st-item-meta">' + _esc(item.unit) + '</div>' +
+                    '<div class="st-item-meta">' + metaParts.join(' · ') + '</div>' +
                 '</div>' +
                 '<div class="st-book">' + parseFloat(item.balance).toFixed(1) + '<br>' +
                     '<span style="font-size:0.62rem;">App</span></div>' +
