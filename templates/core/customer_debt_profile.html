@@ -372,11 +372,12 @@
                     <th class="py-2">{% trans 'Item' %}</th>
                     <th class="py-2 text-end">{% trans 'Amount Owed' %}</th>
                     <th class="py-2 text-end pe-4">{% trans 'Days Outstanding' %}</th>
+                    {% if is_owner %}<th class="py-2 pe-3"></th>{% endif %}
                 </tr>
             </thead>
             <tbody>
                 {% for entry in unpaid_transactions %}
-                <tr class="txn-row {% if entry.is_overdue %}overdue-row{% endif %}">
+                <tr class="txn-row {% if entry.is_overdue %}overdue-row{% endif %}" id="debt-txn-row-{{ entry.txn.id }}">
                     <td class="ps-4">{{ entry.txn.date|date:"d M Y" }}</td>
                     <td>{{ entry.txn.item.description }}</td>
                     <td class="text-end" style="color:{% if entry.is_overdue %}#f87171{% else %}#fbbf24{% endif %}; font-weight:600;">
@@ -390,6 +391,15 @@
                             {% endif %}
                         </span>
                     </td>
+                    {% if is_owner %}
+                    <td class="pe-3 text-end">
+                        <button onclick="writeOffDebt({{ entry.txn.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
+                            style="background:rgba(192,57,90,0.08);border:1px solid rgba(192,57,90,0.3);border-radius:6px;
+                                   color:#c0395a;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;white-space:nowrap;">
+                            ✕ Futa Kosa
+                        </button>
+                    </td>
+                    {% endif %}
                 </tr>
                 {% endfor %}
             </tbody>
@@ -742,6 +752,37 @@ function _pollDebtStkPayment(paymentId, attempt) {
         .catch(function() { _pollDebtStkPayment(paymentId, attempt + 1); });
     }, 5000);
 }
+
+{% if is_owner %}
+function writeOffDebt(txnId, itemName, amount) {
+    var msg = 'Futa kiingilio hiki kutoka kwa deni?\n\n'
+        + itemName + ' — KES ' + parseFloat(amount).toLocaleString(undefined, {minimumFractionDigits:2})
+        + '\n\nHii inafaa kwa makosa / kiingilio cha ziada tu.\nHatua hii haiwezi kutenduliwa.';
+    if (!confirm(msg)) return;
+    var csrf = document.querySelector('[name=csrfmiddlewaretoken]');
+    fetch('/debt/write-off/' + txnId + '/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrf ? csrf.value : '', 'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'csrfmiddlewaretoken=' + encodeURIComponent(csrf ? csrf.value : ''),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) {
+            var row = document.getElementById('debt-txn-row-' + txnId);
+            if (row) {
+                row.style.transition = 'opacity 0.4s';
+                row.style.opacity = '0';
+                setTimeout(function() { row.remove(); location.reload(); }, 500);
+            } else {
+                location.reload();
+            }
+        } else {
+            alert('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+        }
+    })
+    .catch(function() { alert('Hitilafu ya mtandao. Jaribu tena.'); });
+}
+{% endif %}
 </script>
 {% endblock %}
 

@@ -890,3 +890,46 @@ def update_customer_credit_settings(request, customer_id):
     customer.save(update_fields=['expected_payment_days', 'credit_limit'])
     messages.success(request, _('Credit settings updated for %(customer)s.') % {'customer': customer.name})
     return redirect('customer_debt_profile', customer_id=customer_id)
+
+
+@login_required
+@owner_or_manager_required
+@require_POST
+def write_off_debt_transaction(request, txn_id):
+    """Owner/manager: void a single credit transaction, removing it from the debt ledger.
+
+    Used for duplicate entries, billing errors, or owner-approved debt forgiveness.
+    FIFO recalculates automatically — any payments previously applied to this
+    transaction roll forward to cover the next outstanding charge.
+    """
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    txn = get_object_or_404(
+        Transaction,
+        id=txn_id,
+        business=up.business,
+        payment_method='credit',
+        type='Issue',
+    )
+
+    customer_name = txn.recipient or '—'
+    item_name = txn.item.description if txn.item_id else '?'
+    amount = float(txn.revenue())
+
+    txn.payment_method = 'void'
+    txn.recipient = ''
+    txn.save(update_fields=['payment_method', 'recipient'])
+
+    from .models import Notification
+    recorder = request.user.get_full_name() or request.user.username
+    Notification.objects.create(
+        business=up.business,
+        user=request.user,
+        message=f"Write-off: {item_name} KES {amount:,.0f} ({customer_name}) — imefutwa na {recorder}",
+        notification_type='warning',
+        title='Deni Lifutwa',
+    )
+
+    return JsonResponse({'ok': True, 'voided_amount': amount, 'customer': customer_name})
