@@ -76,107 +76,109 @@ def start_stock_take(request):
         if not counts:
             return JsonResponse({'ok': False, 'error': 'Hakuna hesabu zilizotumwa.'}, status=400)
 
-        # Create the header
-        stock_take = StockTake.objects.create(
-            business=business,
-            store=scoped_store,
-            conducted_by=request.user,
-            shift=linked_shift,
-        )
+        try:
+            # Create the header
+            stock_take = StockTake.objects.create(
+                business=business,
+                store=scoped_store,
+                conducted_by=request.user,
+                shift=linked_shift,
+            )
 
-        # Identify the staff member being queried (shift's staff, if linked)
-        queried_staff = None
-        if linked_shift and linked_shift.staff:
-            from accounts.models import UserProfile
-            queried_staff = UserProfile.objects.filter(
-                user=linked_shift.staff, business=business
-            ).first()
+            # Identify the staff member being queried (shift's staff, if linked)
+            queried_staff = None
+            if linked_shift and linked_shift.staff:
+                from accounts.models import UserProfile
+                queried_staff = UserProfile.objects.filter(
+                    user=linked_shift.staff, business=business
+                ).first()
 
-        variances_created = 0
-        variance_items = []
+            variances_created = 0
+            variance_items = []
 
-        for row in counts:
-            try:
-                item_id      = int(row.get('item_id', 0))
-                actual_count = Decimal(str(row.get('actual_count', 0)))
-            except (TypeError, ValueError, InvalidOperation):
-                continue
+            for row in counts:
+                try:
+                    item_id      = int(row.get('item_id', 0))
+                    actual_count = Decimal(str(row.get('actual_count', 0)))
+                except (TypeError, ValueError, InvalidOperation):
+                    continue
 
-            item = Item.objects.filter(id=item_id, store__business=business).first()
-            if item is None:
-                continue
+                item = Item.objects.filter(id=item_id, store__business=business).first()
+                if item is None:
+                    continue
 
-            book_balance = item.current_balance()
+                book_balance = Decimal(str(item.current_balance()))
 
-            # Write backward-compat ShiftStockCount when shift is linked
-            if linked_shift:
-                ShiftStockCount.objects.update_or_create(
-                    shift=linked_shift,
+                # Write backward-compat ShiftStockCount when shift is linked
+                if linked_shift:
+                    ShiftStockCount.objects.update_or_create(
+                        shift=linked_shift,
+                        item=item,
+                        defaults={
+                            'book_balance': book_balance,
+                            'actual_count': actual_count,
+                            'recorded_by':  request.user,
+                        },
+                    )
+
+                variance = actual_count - book_balance
+                if variance == 0:
+                    continue
+
+                direction = StockVarianceQuery.DECREASE if variance < 0 else StockVarianceQuery.INCREASE
+                estimated_revenue = None
+                if direction == StockVarianceQuery.DECREASE and item.selling_price:
+                    estimated_revenue = abs(variance) * Decimal(str(item.selling_price))
+
+                StockVarianceQuery.objects.create(
+                    stock_take=stock_take,
                     item=item,
-                    defaults={
-                        'book_balance': book_balance,
-                        'actual_count': actual_count,
-                        'recorded_by':  request.user,
-                    },
+                    item_name_cache=item.description,
+                    book_balance=book_balance,
+                    actual_count=actual_count,
+                    direction=direction,
+                    estimated_revenue=estimated_revenue,
+                    queried_staff=queried_staff,
+                )
+                variances_created += 1
+                variance_items.append(
+                    f"{item.description}: {'−' if variance < 0 else '+'}{abs(variance):.2g} {item.unit}"
                 )
 
-            variance = actual_count - book_balance
-            if variance == 0:
-                continue
+            # Notifications
+            if variances_created:
+                items_summary = ', '.join(variance_items[:5])
+                if len(variance_items) > 5:
+                    items_summary += f' ... (+{len(variance_items) - 5} zaidi)'
 
-            direction = StockVarianceQuery.DECREASE if variance < 0 else StockVarianceQuery.INCREASE
-            estimated_revenue = None
-            if direction == StockVarianceQuery.DECREASE and item.selling_price:
-                estimated_revenue = abs(variance) * item.selling_price
-
-            svq = StockVarianceQuery.objects.create(
-                stock_take=stock_take,
-                item=item,
-                item_name_cache=item.description,
-                book_balance=book_balance,
-                actual_count=actual_count,
-                direction=direction,
-                estimated_revenue=estimated_revenue,
-                queried_staff=queried_staff,
-            )
-            variances_created += 1
-            variance_items.append(
-                f"{item.description}: {'−' if variance < 0 else '+'}{abs(variance):.2g} {item.unit}"
-            )
-
-        # Notifications
-        if variances_created:
-            items_summary = ', '.join(variance_items[:5])
-            if len(variance_items) > 5:
-                items_summary += f' ... (+{len(variance_items) - 5} zaidi)'
-
-            conductor_name = (
-                request.user.get_full_name() or request.user.username
-            )
-            owner_msg = (
-                f"Hesabu ya stok na {conductor_name}: tofauti {variances_created} "
-                f"imepatikana ({items_summary}). Angalia: /stock/variances/"
-            )
-            _notify_owner(business, f"📊 Tofauti za Stok ({variances_created})", owner_msg)
-
-            # Notify queried staff
-            if queried_staff and queried_staff.phone:
-                staff_msg = (
-                    f"Kuna tofauti {variances_created} za stok wakati wa zamu yako "
-                    f"({items_summary}). Tafadhali eleza: jaribu ukurasa wa 'Variances' katika app."
+                conductor_name = (
+                    request.user.get_full_name() or request.user.username
                 )
-                create_in_app_notification(
-                    queried_staff.user,
-                    f"📊 Tofauti {variances_created} za Stok",
-                    staff_msg,
-                    notification_type='warning',
+                owner_msg = (
+                    f"Hesabu ya stok na {conductor_name}: tofauti {variances_created} "
+                    f"imepatikana ({items_summary}). Angalia: /stock/variances/"
                 )
-                send_sms_notification(staff_msg, normalize_ke_phone(queried_staff.phone))
+                _notify_owner(business, f"📊 Tofauti za Stok ({variances_created})", owner_msg)
 
-        is_quick = request.POST.get('quick') == '1'
-        if is_quick:
-            return JsonResponse({'ok': True, 'take_id': stock_take.id, 'variance_count': variances_created})
-        return redirect('stock_take_detail', take_id=stock_take.id)
+                # Notify queried staff
+                if queried_staff and queried_staff.phone:
+                    staff_msg = (
+                        f"Kuna tofauti {variances_created} za stok wakati wa zamu yako "
+                        f"({items_summary}). Tafadhali eleza: jaribu ukurasa wa 'Variances' katika app."
+                    )
+                    create_in_app_notification(
+                        queried_staff.user,
+                        f"📊 Tofauti {variances_created} za Stok",
+                        staff_msg,
+                        notification_type='warning',
+                    )
+                    send_sms_notification(staff_msg, normalize_ke_phone(queried_staff.phone))
+
+        except Exception as exc:
+            logger.exception("Stock take POST failed: %s", exc)
+            return JsonResponse({'ok': False, 'error': f'Hitilafu ya seva: {exc}'}, status=500)
+
+        return JsonResponse({'ok': True, 'take_id': stock_take.id, 'variance_count': variances_created})
 
     # ── GET ──────────────────────────────────────────────────────────────────
     # Build item list scoped to the right store(s)
