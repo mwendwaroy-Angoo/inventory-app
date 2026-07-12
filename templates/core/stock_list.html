@@ -93,6 +93,13 @@
 <div class="stock-header">
     <h2 class="page-title">📋 {% trans 'Stock List' %}</h2>
     <div class="d-flex gap-2 flex-wrap">
+        {% if user.userprofile.is_owner_or_manager %}
+        <a href="{% url 'start_stock_take' %}"
+           class="btn btn-sm"
+           style="background:rgba(251,191,36,0.1); border:1px solid rgba(251,191,36,0.35); color:#fbbf24;">
+            📊 {% trans 'Hesabu ya Stok' %}
+        </a>
+        {% endif %}
         {% if user.userprofile.is_owner %}
         <a href="{% url 'add_item' %}" class="btn btn-primary btn-sm">➕ {% trans 'Add Item' %}</a>
         <a href="{% url 'manage_items' %}" class="btn btn-gold btn-sm">⚙️ {% trans 'Manage Items' %}</a>
