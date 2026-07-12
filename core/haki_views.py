@@ -30,7 +30,7 @@ from django.views.decorators.http import require_POST
 
 from accounts.models import UserProfile
 from core.models import (
-    CustomerDebtPayment, SalaryPayment, Shift, Transaction,
+    CustomerDebtPayment, SalaryDeduction, SalaryPayment, Shift, Transaction,
     RecurringExpense, Notification, BarTab, Receipt,
 )
 from core.views import get_user_profile, owner_required, owner_or_manager_required
@@ -211,15 +211,38 @@ def staff_contribution_report(request):
         business=business,
     ).exclude(role='owner').select_related('user').order_by('user__first_name')
 
+    current_period = today.strftime('%Y-%m')
+
     rows = []
     for sp in staff_profiles:
         contrib = _staff_contribution(sp, business, date_from, date_to)
         contrib['salary'] = _salary_status(sp, business)
         _check_and_fire_recognition(sp, business, contrib)
+
+        # Deductions this period (from rejected write-off requests)
+        deductions = list(SalaryDeduction.objects.filter(
+            business=business, staff=sp, period=current_period,
+        ).order_by('-created_at'))
+        contrib['deductions'] = deductions
+        contrib['deduction_total'] = sum(d.amount for d in deductions)
+
+        # Salary payments this period (support multiple partial payments)
+        pay_rows = list(SalaryPayment.objects.filter(
+            business=business, staff=sp, period=current_period, paid=True,
+        ).order_by('paid_at'))
+        contrib['pay_rows'] = pay_rows
+        contrib['paid_total'] = sum(p.amount for p in pay_rows)
+
         rows.append(contrib)
 
     # Sort: most revenue first
     rows.sort(key=lambda r: -r['revenue_kes'])
+
+    from core.models import WriteOffRequest
+    pending_wo_count = WriteOffRequest.objects.filter(
+        transaction__business=business,
+        status=WriteOffRequest.STATUS_PENDING,
+    ).count()
 
     return render(request, 'core/haki_contribution.html', {
         'rows': rows,
@@ -227,6 +250,8 @@ def staff_contribution_report(request):
         'date_to': date_to.isoformat(),
         'date_from_label': date_from.strftime('%d %b %Y'),
         'date_to_label': date_to.strftime('%d %b %Y'),
+        'current_period': current_period,
+        'pending_wo_count': pending_wo_count,
     })
 
 
@@ -236,14 +261,25 @@ def staff_contribution_report(request):
 @owner_or_manager_required
 @require_POST
 def record_salary_payment(request, profile_id):
+    """Record a salary payment (full or partial instalment) for a staff member.
+
+    Multiple payments per period are allowed — they stack. Use payment_type='partial'
+    for instalments; 'full' for a single complete month's payment.
+    staff_note is optional and shown to the staff member on their Kazi Yangu page.
+    """
     user_profile = get_user_profile(request)
     business = user_profile.business
     staff_profile = get_object_or_404(UserProfile, id=profile_id, business=business)
 
-    period   = request.POST.get('period', timezone.localdate().strftime('%Y-%m'))
-    amount   = request.POST.get('amount', '0').strip()
-    method   = request.POST.get('method', 'cash')
-    notes    = request.POST.get('notes', '').strip()
+    period       = request.POST.get('period', timezone.localdate().strftime('%Y-%m'))
+    amount       = request.POST.get('amount', '0').strip()
+    method       = request.POST.get('method', 'cash')
+    notes        = request.POST.get('notes', '').strip()
+    payment_type = request.POST.get('payment_type', 'full')
+    staff_note   = request.POST.get('staff_note', '').strip()
+
+    if payment_type not in ('full', 'partial'):
+        payment_type = 'full'
 
     try:
         amount_dec = Decimal(amount)
@@ -253,50 +289,61 @@ def record_salary_payment(request, profile_id):
         messages.error(request, _('Please enter a valid salary amount.'))
         return redirect('staff_contribution_report')
 
-    # Idempotent: update or create
-    today = timezone.localdate()
+    today    = timezone.localdate()
     last_day = calendar.monthrange(today.year, today.month)[1]
     due_date = date(today.year, today.month, last_day)
 
-    payment, created_flag = SalaryPayment.objects.get_or_create(
+    # Always create a new row (multiple partial payments per period are valid)
+    payment = SalaryPayment.objects.create(
         business=business,
         staff=staff_profile,
         period=period,
-        defaults={
-            'amount': amount_dec,
-            'due_date': due_date,
-        }
+        amount=amount_dec,
+        payment_type=payment_type,
+        due_date=due_date,
+        paid=True,
+        paid_at=timezone.now(),
+        method=method,
+        notes=notes,
+        staff_note=staff_note,
+        recorded_by=request.user,
     )
-    payment.amount = amount_dec
-    payment.paid = True
-    payment.paid_at = timezone.now()
-    payment.method = method
-    payment.notes = notes
-    payment.recorded_by = request.user
-    payment.save()
 
-    staff_name = staff_profile.user.get_full_name() or staff_profile.user.username
+    staff_name  = staff_profile.user.get_full_name() or staff_profile.user.username
+    phone       = staff_profile.phone
+    period_label = ''
+    try:
+        import datetime as _dt
+        period_label = _dt.datetime.strptime(period, '%Y-%m').strftime('%B %Y')
+    except Exception:
+        period_label = period
 
-    # SMS the employee: "Your salary for <month> KES X has been paid. Thank you."
-    phone = staff_profile.phone
     if phone:
         try:
             from core.notifications import normalize_ke_phone, send_sms_notification
             normalized = normalize_ke_phone(phone)
-            month_label = timezone.datetime.strptime(period, '%Y-%m').strftime('%B %Y')
             if normalized:
-                msg = (
-                    f"{business.name}: Mshahara wako wa {month_label} "
-                    f"KES {amount_dec:,.0f} umelipwa. Asante kwa kazi nzuri. 🙏"
-                )
+                if payment_type == 'partial':
+                    msg = (
+                        f"{business.name}: Sehemu ya mshahara wako wa {period_label} "
+                        f"KES {amount_dec:,.0f} imelipwa"
+                        + (f" — {staff_note}" if staff_note else "")
+                        + ". Angalia app kwa maelezo zaidi. 🙏"
+                    )
+                else:
+                    msg = (
+                        f"{business.name}: Mshahara wako wa {period_label} "
+                        f"KES {amount_dec:,.0f} umelipwa. Asante kwa kazi nzuri. 🙏"
+                        + (f"\n{staff_note}" if staff_note else "")
+                    )
                 send_sms_notification(msg, normalized)
         except Exception:
             pass
 
+    type_label = 'Sehemu ya' if payment_type == 'partial' else ''
     messages.success(
         request,
-        _('Salary of KES %(amount)s marked paid for %(staff)s.')
-        % {'amount': f'{amount_dec:,.2f}', 'staff': staff_name}
+        _(f'{type_label} Mshahara wa KES {amount_dec:,.2f} umerekodiwa kwa {staff_name}.').strip()
     )
     return redirect('staff_contribution_report')
 
@@ -321,20 +368,38 @@ def my_work_and_pay(request):
 
     today = timezone.localdate()
     date_from = today.replace(day=1)  # Current month
+    current_period = today.strftime('%Y-%m')
     contrib = _staff_contribution(user_profile, business, date_from, today)
     salary  = _salary_status(user_profile, business)
 
-    # Payment history: last 6 months
+    # Payment history: last 6 months (all individual payment rows, newest first)
     pay_history = SalaryPayment.objects.filter(
         business=business,
         staff=user_profile,
-    ).order_by('-period')[:6]
+    ).order_by('-period', '-paid_at')[:12]
+
+    # Deductions this period — shown to staff so they understand any shortfall
+    deductions = list(SalaryDeduction.objects.filter(
+        business=business, staff=user_profile, period=current_period,
+    ).order_by('-created_at'))
+    deduction_total = sum(d.amount for d in deductions)
+
+    # Paid this period
+    paid_rows = list(SalaryPayment.objects.filter(
+        business=business, staff=user_profile, period=current_period, paid=True,
+    ).order_by('paid_at'))
+    paid_total = sum(p.amount for p in paid_rows)
 
     return render(request, 'core/haki_kazi_yangu.html', {
         **contrib,
         'salary': salary,
         'pay_history': pay_history,
         'period_label': date_from.strftime('%B %Y'),
+        'deductions': deductions,
+        'deduction_total': deduction_total,
+        'paid_rows': paid_rows,
+        'paid_total': paid_total,
+        'current_period': current_period,
     })
 
 

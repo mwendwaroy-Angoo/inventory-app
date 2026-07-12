@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Write-offs — {% trans 'Pending Requests' %}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .wo-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+        transition: border-color 0.2s;
+    }
+    .wo-card:hover { border-color: rgba(201,168,76,0.25); }
+    .wo-card-header {
+        padding: 0.8rem 1.2rem;
+        border-bottom: 1px solid #2a2a2a;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    .wo-card-body { padding: 0.85rem 1.2rem; }
+    .wo-field { margin-bottom: 0.55rem; font-size: 0.85rem; }
+    .wo-field-label { color: #b0b0b0; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .wo-status-pending  { color: #fbbf24; }
+    .wo-status-approved { color: #6ee7b7; }
+    .wo-status-rejected { color: #f87171; }
+    .manager-badge {
+        font-size: 0.7rem; padding: 0.1rem 0.45rem; border-radius: 20px;
+        border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04);
+        color: #b0b0b0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-start justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="page-title mb-1">📝 {% trans 'Write-off Requests' %}</h1>
+        <p style="color:#b0b0b0; font-size:0.875rem; margin:0;">
+            {% trans 'Staff requests to void credit entries — owner approval is final' %}
+        </p>
+    </div>
+    <a href="{% url 'debt_dashboard' %}" class="btn btn-sm btn-outline-secondary"
+       style="border-color:rgba(255,255,255,0.15); color:#b0b0b0;">← {% trans 'Debt Tracker' %}</a>
+</div>
+
+{% if pending %}
+<div style="margin-bottom:0.5rem; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.07em; color:var(--gold);">
+    ⏳ {{ pending|length }} {% trans 'Pending' %}
+</div>
+
+{% for wo in pending %}
+<div class="wo-card">
+    <div class="wo-card-header">
+        <div>
+            <span style="color:var(--gold); font-weight:600; font-size:0.95rem;">
+                {{ wo.transaction.item.description }}
+            </span>
+            <span style="color:#fbbf24; font-size:0.82rem; margin-left:0.6rem;">
+                KES {{ wo.transaction.sale_amount|default:wo.transaction.qty|floatformat:"-0" }}
+            </span>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            {% if wo.manager_verdict %}
+            <span class="manager-badge">
+                {% if wo.manager_verdict == 'approved' %}✅ Meneja Aidhinisha{% else %}❌ Meneja Akataa{% endif %}
+            </span>
+            {% endif %}
+            <span class="wo-status-pending" style="font-size:0.75rem;">⏳ {% trans 'Pending Owner Decision' %}</span>
+        </div>
+    </div>
+    <div class="wo-card-body">
+        <div class="row g-3">
+            <div class="col-sm-4">
+                <div class="wo-field-label">{% trans 'Requested by' %}</div>
+                <div class="wo-field">{{ wo.requested_by.get_full_name|default:wo.requested_by.username }}</div>
+            </div>
+            <div class="col-sm-4">
+                <div class="wo-field-label">{% trans 'Customer' %}</div>
+                <div class="wo-field">{{ wo.customer_name_cache|default:"—" }}</div>
+            </div>
+            <div class="col-sm-4">
+                <div class="wo-field-label">{% trans 'Requested' %}</div>
+                <div class="wo-field" style="color:#b0b0b0;">{{ wo.created_at|date:"d M Y, H:i" }}</div>
+            </div>
+        </div>
+        <div class="wo-field-label mt-1">{% trans 'Reason given' %}</div>
+        <div class="wo-field" style="color:#f0ece4; background:rgba(255,255,255,0.02); padding:0.4rem 0.7rem; border-radius:6px; border:1px solid #2a2a2a;">
+            {{ wo.reason }}
+        </div>
+        {% if is_owner %}
+        <div class="d-flex gap-2 mt-3 flex-wrap">
+            <button onclick="woApprove({{ wo.id }}, '{{ wo.transaction.item.description|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(110,231,183,0.1); border:1px solid rgba(110,231,183,0.35); color:#6ee7b7;">
+                ✅ {% trans 'Idhinisha — Futa Kiingilio' %}
+            </button>
+            <button onclick="woReject({{ wo.id }}, '{{ wo.transaction.item.description|escapejs }}', '{{ wo.requested_by.get_full_name|default:wo.requested_by.username|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(192,57,90,0.1); border:1px solid rgba(192,57,90,0.35); color:#c0395a;">
+                ❌ {% trans 'Kataa — Haki Deduction' %}
+            </button>
+        </div>
+        {% else %}
+        <div style="margin-top:0.75rem;">
+            <div class="d-flex gap-2 flex-wrap">
+                <button onclick="woManagerReview({{ wo.id }}, 'approved', '{{ wo.transaction.item.description|escapejs }}')"
+                    class="btn btn-sm"
+                    style="background:rgba(110,231,183,0.08); border:1px solid rgba(110,231,183,0.3); color:#6ee7b7;">
+                    👍 {% trans 'Pendekeza Iidhinishwe' %}
+                </button>
+                <button onclick="woManagerReview({{ wo.id }}, 'rejected', '{{ wo.transaction.item.description|escapejs }}')"
+                    class="btn btn-sm"
+                    style="background:rgba(192,57,90,0.08); border:1px solid rgba(192,57,90,0.3); color:#c0395a;">
+                    👎 {% trans 'Pendekeza Ikataliwe' %}
+                </button>
+            </div>
+            <p style="color:#b0b0b0; font-size:0.73rem; margin-top:0.4rem;">
+                💡 {% trans 'Your recommendation is advisory — owner makes the final decision.' %}
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+{% else %}
+<div style="text-align:center; padding:3rem 1rem; color:#888;">
+    <div style="font-size:2rem; margin-bottom:0.5rem;">✅</div>
+    <div>{% trans 'No pending write-off requests.' %}</div>
+</div>
+{% endif %}
+
+{% if recent %}
+<div style="margin-top:2rem; margin-bottom:0.5rem; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.07em; color:#b0b0b0;">
+    {% trans 'Recent Decisions' %}
+</div>
+{% for wo in recent %}
+<div class="wo-card" style="opacity:0.75;">
+    <div class="wo-card-header">
+        <div>
+            <span style="font-weight:600; font-size:0.88rem;">{{ wo.transaction.item.description }}</span>
+            <span style="color:#b0b0b0; font-size:0.78rem; margin-left:0.5rem;">{{ wo.customer_name_cache|default:"" }}</span>
+        </div>
+        <span class="wo-status-{{ wo.status }}" style="font-size:0.75rem;">
+            {% if wo.status == 'approved' %}✅ {% trans 'Approved' %}{% else %}❌ {% trans 'Rejected' %}{% endif %}
+            — {{ wo.reviewed_at|date:"d M Y" }}
+        </span>
+    </div>
+    <div class="wo-card-body" style="font-size:0.8rem; color:#b0b0b0;">
+        {% trans 'Requested by' %}: {{ wo.requested_by.get_full_name|default:wo.requested_by.username }}
+        · {% trans 'Decision by' %}: {{ wo.reviewed_by.get_full_name|default:wo.reviewed_by.username|default:"?" }}
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function _csrf() {
+    var el = document.querySelector('[name=csrfmiddlewaretoken]');
+    return el ? el.value : '';
+}
+function _post(url, onOk, onErr) {
+    fetch(url, {
+        method: 'POST',
+        headers: {'X-CSRFToken': _csrf(), 'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'csrfmiddlewaretoken=' + encodeURIComponent(_csrf()),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { if (d.ok) { onOk(d); } else { alert(d.error || 'Hitilafu. Jaribu tena.'); } })
+    .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
+}
+
+{% if is_owner %}
+function woApprove(reqId, itemName) {
+    if (!confirm('Idhinisha kufutwa kwa:\n' + itemName + '\n\nKiingilio kitafutwa kabisa kutoka kwa deni.')) return;
+    _post('/debt/write-off/' + reqId + '/approve/', function(d) {
+        alert('✅ ' + (d.message || 'Imeidhinishwa.'));
+        location.reload();
+    });
+}
+function woReject(reqId, itemName, staffName) {
+    var msg = 'Kataa kufutwa kwa:\n' + itemName;
+    if (staffName) msg += '\n\nHaki deduction itaundwa kwa: ' + staffName;
+    if (!confirm(msg)) return;
+    _post('/debt/write-off/' + reqId + '/reject/', function(d) {
+        alert('❌ ' + (d.message || 'Imekataliwa.'));
+        location.reload();
+    });
+}
+{% else %}
+function woManagerReview(reqId, verdict, itemName) {
+    var label = verdict === 'approved' ? 'Pendekeza iidhinishwe' : 'Pendekeza ikataliwe';
+    if (!confirm(label + ':\n' + itemName + '\n\nMmiliki ataona pendekezo lako.')) return;
+    fetch('/debt/write-off/' + reqId + '/manager-review/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': _csrf(), 'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'csrfmiddlewaretoken=' + encodeURIComponent(_csrf()) + '&verdict=' + encodeURIComponent(verdict),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) { alert('✅ Pendekezo limetumwa kwa mmiliki.'); location.reload(); }
+        else { alert(d.error || 'Hitilafu. Jaribu tena.'); }
+    })
+    .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
+}
+{% endif %}
+</script>
+{% endblock %}

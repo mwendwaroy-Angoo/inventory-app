@@ -1492,20 +1492,31 @@ class SalaryPayment(models.Model):
         max_length=7,
         help_text="Period string in YYYY-MM format (e.g. '2026-06').",
     )
+    PAYMENT_TYPE_CHOICES = [
+        ('full',    _('Full Payment')),
+        ('partial', _('Partial Payment')),
+    ]
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_type = models.CharField(
+        max_length=10, choices=PAYMENT_TYPE_CHOICES, default='full',
+        help_text="'full' = complete salary; 'partial' = instalment toward the period's salary.",
+    )
     due_date = models.DateField()
     paid = models.BooleanField(default=False)
     paid_at = models.DateTimeField(null=True, blank=True)
     method = models.CharField(max_length=10, choices=METHOD_CHOICES, default='cash', blank=True)
     notes = models.CharField(max_length=255, blank=True)
+    staff_note = models.CharField(
+        max_length=500, blank=True,
+        help_text='Optional note shown to the staff member on their Kazi Yangu page.',
+    )
     recorded_by = models.ForeignKey(
         'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='salary_payments_recorded',
     )
 
     class Meta:
-        ordering = ['-period', 'staff']
-        unique_together = [('business', 'staff', 'period')]
+        ordering = ['-period', '-paid_at', 'staff']
         verbose_name = 'Salary Payment'
         verbose_name_plural = 'Salary Payments'
 
@@ -1524,6 +1535,123 @@ class SalaryPayment(models.Model):
     @property
     def is_overdue(self):
         return self.days_overdue > 0
+
+
+# ────────────────────────────────────────────────
+# WRITE-OFF APPROVAL WORKFLOW  (Sprint WO1)
+# ────────────────────────────────────────────────
+
+class WriteOffRequest(models.Model):
+    """Approval workflow for voiding a credit transaction (debt write-off).
+
+    Staff request → owner/manager notified → owner makes final call.
+    Manager verdict is advisory; owner decision (approve/reject) is FINAL.
+    Rejection creates a SalaryDeduction against the requesting staff member.
+    """
+    STATUS_PENDING  = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES  = [
+        ('pending',  _('Inasubiri Idhini')),
+        ('approved', _('Imeidhinishwa')),
+        ('rejected', _('Imekataliwa')),
+    ]
+
+    transaction = models.OneToOneField(
+        'Transaction',
+        on_delete=models.CASCADE,
+        related_name='write_off_request',
+    )
+    requested_by = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='write_off_requests',
+    )
+    reason = models.CharField(max_length=500)
+    # Cache the customer name so we can restore recipient if owner reverses a void
+    customer_name_cache = models.CharField(max_length=100, blank=True)
+
+    # Manager recommendation — sets manager_verdict but does NOT execute void
+    manager_verdict = models.CharField(max_length=20, blank=True)  # 'approved'|'rejected'|''
+    manager_by      = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='write_off_manager_reviews',
+    )
+    manager_at = models.DateTimeField(null=True, blank=True)
+
+    # Owner decision — FINAL: executes void (approved) or triggers Haki deduction (rejected)
+    status      = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    reviewed_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='write_off_reviews',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    haki_deduction_created = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Write-off Request'
+        verbose_name_plural = 'Write-off Requests'
+
+    def __str__(self):
+        item = self.transaction.item.description if self.transaction_id and self.transaction.item_id else '?'
+        who  = self.requested_by.get_full_name() or self.requested_by.username if self.requested_by else '?'
+        return f"Write-off: {item} [{self.status}] by {who}"
+
+    @property
+    def effective_status_display(self):
+        if self.status != WriteOffRequest.STATUS_PENDING:
+            return self.get_status_display()
+        if self.manager_verdict == 'approved':
+            return 'Meneja: Aidhinishwa (Inasubiri Mmiliki)'
+        if self.manager_verdict == 'rejected':
+            return 'Meneja: Amekataa (Inasubiri Mmiliki)'
+        return 'Inasubiri Idhini'
+
+
+# ────────────────────────────────────────────────
+# SALARY DEDUCTIONS  (Sprint WO1)
+# ────────────────────────────────────────────────
+
+class SalaryDeduction(models.Model):
+    """Records a deduction from a staff member's salary.
+
+    Currently created when a write-off request is rejected by the owner,
+    indicating the staff member's request was fraudulent or erroneous in a
+    way that would have cost the business money.
+    """
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='salary_deductions',
+    )
+    staff = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.CASCADE, related_name='salary_deductions',
+    )
+    period = models.CharField(
+        max_length=7,
+        help_text="Period in YYYY-MM format. Deduction counts against this period's salary.",
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=500)
+    created_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, related_name='salary_deductions_created',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    write_off = models.ForeignKey(
+        WriteOffRequest, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='deductions',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Salary Deduction'
+        verbose_name_plural = 'Salary Deductions'
+
+    def __str__(self):
+        name = self.staff.user.get_full_name() or self.staff.user.username
+        return f"Deduction: {name} KES {self.amount:,.2f} [{self.period}]"
 
 
 # ────────────────────────────────────────────────

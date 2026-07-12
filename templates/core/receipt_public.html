@@ -440,25 +440,29 @@
         </div>
         {% endif %}
 
-        <div class="receipt-lines">
+        <div class="receipt-lines" id="receipt-lines-static">
             {% for line in receipt.lines %}
             {% if line.is_paid %}
-            <div class="receipt-line" style="opacity:0.6;">
+            <div class="receipt-line" style="opacity:0.6;"
+                 data-line-name="{{ line.name|escapejs }}" data-line-amount="{{ line.subtotal|floatformat:'2' }}">
                 <span class="line-name" style="text-decoration:line-through; color:#888;">{{ line.name }}</span>
                 <span style="color:#6ee7b7; font-size:0.72rem; white-space:nowrap; margin:0 0.5rem;">✓ Imelipwa</span>
                 <span class="line-amount" style="text-decoration:line-through; color:#888;">KES {{ line.subtotal|floatformat:"0" }}</span>
             </div>
             {% elif line.qty == 0 %}
-            <div class="receipt-line" style="border-bottom:none; padding-top:0.3rem;">
+            <div class="receipt-line" style="border-bottom:none; padding-top:0.3rem;"
+                 data-line-name="{{ line.name|escapejs }}" data-line-amount="0">
                 <span class="line-name" style="color:#b0b0b0; font-size:0.78rem; font-style:italic;">{{ line.name }}</span>
             </div>
             {% elif line.qty == -1 %}
-            <div class="receipt-line" style="background:rgba(192,57,90,0.10); border-radius:7px; padding:0.5rem 0.8rem; border-bottom:none; margin-top:0.5rem; justify-content:space-between;">
+            <div class="receipt-line" style="background:rgba(192,57,90,0.10); border-radius:7px; padding:0.5rem 0.8rem; border-bottom:none; margin-top:0.5rem; justify-content:space-between;"
+                 data-line-name="{{ line.name|escapejs }}" data-line-amount="{{ line.subtotal|floatformat:'2' }}">
                 <span class="line-name" style="color:#e87090; font-weight:600; font-size:0.85rem;">⚠️ {{ line.name }}</span>
                 <span class="line-amount" style="color:#e87090;">KES {{ line.subtotal|floatformat:"0" }}</span>
             </div>
             {% else %}
-            <div class="receipt-line">
+            <div class="receipt-line"
+                 data-line-name="{{ line.name|escapejs }}" data-line-amount="{{ line.subtotal|floatformat:'2' }}">
                 <span class="line-name">{{ line.name }}</span>
                 {% if line.qty > 1 %}<span class="line-qty">×{{ line.qty|floatformat:"-2" }}</span>{% endif %}
                 <span class="line-amount">KES {{ line.subtotal|floatformat:"0" }}</span>
@@ -998,6 +1002,21 @@
     function renderLines(lines) {
         if (!linesWrap || !lines) return;
         var html = '';
+        // Suppress written-off lines on dynamic re-renders
+        var _woList = window._writeOffLines;
+        if (_woList && _woList.length) {
+            var _woRem = _woList.slice();
+            lines = lines.filter(function(l) {
+                for (var i = 0; i < _woRem.length; i++) {
+                    var wo = _woRem[i];
+                    if (wo.name === (l.name || '') && Math.abs(parseFloat(wo.amount || 0) - parseFloat(l.subtotal || 0)) < 0.01) {
+                        _woRem.splice(i, 1);
+                        return false;
+                    }
+                }
+                return true;
+            });
+        }
         lines.forEach(function (l) {
             if (l.is_paid) {
                 html += '<div class="receipt-line" style="opacity:0.6;">' +
@@ -1117,6 +1136,31 @@
     var pollIv = setInterval(poll, pollSecs * 1000);
 }());
 {% endif %}
+
+/* ── Write-off line suppression ── */
+(function() {
+    var _writeOffs = {{ receipt.meta.write_offs|default:"[]"|safe }};
+    window._writeOffLines = _writeOffs;
+    if (!_writeOffs.length) return;
+    // Hide matching lines from the server-rendered static block
+    document.addEventListener('DOMContentLoaded', function() {
+        var remaining = _writeOffs.slice();
+        var wrap = document.getElementById('receipt-lines-static');
+        if (!wrap) return;
+        wrap.querySelectorAll('.receipt-line[data-line-name]').forEach(function(el) {
+            var name = el.getAttribute('data-line-name');
+            var amt  = parseFloat(el.getAttribute('data-line-amount') || '0');
+            for (var i = 0; i < remaining.length; i++) {
+                var wo = remaining[i];
+                if (wo.name === name && Math.abs(parseFloat(wo.amount || 0) - amt) < 0.01) {
+                    el.style.display = 'none';
+                    remaining.splice(i, 1);
+                    break;
+                }
+            }
+        });
+    });
+}());
 </script>
 </body>
 </html>

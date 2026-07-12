@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
-from core.models import Customer, CustomerDebtPayment, Transaction
+from core.models import Customer, CustomerDebtPayment, SalaryDeduction, Transaction, WriteOffRequest
 from core.views import get_user_profile, owner_required, owner_or_manager_required
 
 
@@ -295,16 +295,33 @@ def customer_debt_profile(request, customer_id):
         and (getattr(business, 'mpesa_till', None) or getattr(business, 'mpesa_paybill', None))
     )
 
+    # Annotate each unpaid entry with its write-off request (if any) for the template
+    all_txn_ids = [entry['txn'].id for entry in data.get('unpaid_transactions', [])]
+    if all_txn_ids:
+        wo_map = {}
+        for wo_obj in WriteOffRequest.objects.filter(
+            transaction_id__in=all_txn_ids,
+        ).select_related('requested_by', 'manager_by', 'reviewed_by'):
+            wo_map[wo_obj.transaction_id] = wo_obj
+        for entry in data.get('unpaid_transactions', []):
+            entry['write_off'] = wo_map.get(entry['txn'].id)
+
+    pending_wo_count = WriteOffRequest.objects.filter(
+        transaction__business=business,
+        status=WriteOffRequest.STATUS_PENDING,
+    ).count() if is_owner else 0
+
     return render(request, 'core/customer_debt_profile.html', {
         **data,
-        'is_owner':       is_owner,
-        'scope':          scope,
-        'has_kitchen':    has_kitchen,
-        'has_daraja':     has_daraja,
-        'today':          timezone.now().date().isoformat(),
-        'today_label':    timezone.now().date().strftime('%B %d, %Y'),
+        'is_owner':        is_owner,
+        'scope':           scope,
+        'has_kitchen':     has_kitchen,
+        'has_daraja':      has_daraja,
+        'today':           timezone.now().date().isoformat(),
+        'today_label':     timezone.now().date().strftime('%B %d, %Y'),
         'payment_methods': CustomerDebtPayment.PAYMENT_METHOD_CHOICES,
         'credit_standing': credit_standing,
+        'pending_wo_count': pending_wo_count,
     })
 
 
@@ -892,15 +909,16 @@ def update_customer_credit_settings(request, customer_id):
     return redirect('customer_debt_profile', customer_id=customer_id)
 
 
-@login_required
-@owner_or_manager_required
-@require_POST
-def write_off_debt_transaction(request, txn_id):
-    """Owner/manager: void a single credit transaction, removing it from the debt ledger.
+# ── Write-off approval workflow (Sprint WO1) ──────────────────────────────────
 
-    Used for duplicate entries, billing errors, or owner-approved debt forgiveness.
-    FIFO recalculates automatically — any payments previously applied to this
-    transaction roll forward to cover the next outstanding charge.
+@login_required
+@require_POST
+def request_write_off(request, txn_id):
+    """Any staff member (or owner) creates a write-off request for a credit transaction.
+
+    Staff: creates WriteOffRequest and notifies owner + managers. Does NOT void yet.
+    Owner/manager: same — approval is always a separate action for audit trail.
+    The customer is never blocked by this — they can pay any time regardless.
     """
     up = get_user_profile(request)
     if not up:
@@ -914,22 +932,364 @@ def write_off_debt_transaction(request, txn_id):
         type='Issue',
     )
 
-    customer_name = txn.recipient or '—'
+    # Check for an existing pending request on this transaction
+    existing = WriteOffRequest.objects.filter(transaction=txn).first()
+    if existing:
+        if existing.status == WriteOffRequest.STATUS_PENDING:
+            return JsonResponse({'ok': False, 'error': 'Ombi tayari lipo — subiri idhini ya mmiliki.'}, status=400)
+        if existing.status == WriteOffRequest.STATUS_APPROVED:
+            return JsonResponse({'ok': False, 'error': 'Kiingilio hiki kimefutwa tayari.'}, status=400)
+        if existing.status == WriteOffRequest.STATUS_REJECTED:
+            return JsonResponse({'ok': False, 'error': 'Ombi lilikataliwa awali. Wasiliana na mmiliki moja kwa moja.'}, status=400)
+
+    reason = request.POST.get('reason', '').strip()
+    if not reason:
+        return JsonResponse({'ok': False, 'error': 'Andika sababu ya kuomba kufuta.'}, status=400)
+
+    customer_name = txn.recipient or ''
     item_name = txn.item.description if txn.item_id else '?'
     amount = float(txn.revenue())
+    requester_name = request.user.get_full_name() or request.user.username
 
+    wo = WriteOffRequest.objects.create(
+        transaction=txn,
+        requested_by=request.user,
+        reason=reason,
+        customer_name_cache=customer_name,
+    )
+
+    # Notify all owners and managers (not the requester themselves)
+    from .models import Notification
+    from accounts.models import UserProfile as _UP
+    from core.notifications import normalize_ke_phone, send_sms_notification
+
+    targets = _UP.objects.filter(
+        business=up.business, role__in=['owner', 'manager'],
+    ).exclude(user=request.user).select_related('user')
+
+    for om in targets:
+        Notification.objects.create(
+            business=up.business,
+            user=om.user,
+            title='📝 Ombi la Kufuta Kiingilio',
+            message=(
+                f"{requester_name} anaomba kufuta: {item_name} "
+                f"KES {amount:,.0f} ({customer_name}). Sababu: {reason}"
+            ),
+            notification_type='warning',
+        )
+        if om.phone:
+            normalized = normalize_ke_phone(om.phone)
+            if normalized:
+                sms = (
+                    f"{up.business.name}: {requester_name} anaomba kufuta kiingilio: "
+                    f"{item_name} KES {amount:,.0f} ({customer_name}). "
+                    f"Sababu: {reason}. Angalia app kuidhinisha au kukataa."
+                )
+                send_sms_notification(sms, normalized)
+
+    return JsonResponse({
+        'ok': True,
+        'request_id': wo.id,
+        'message': 'Ombi limetumwa. Mmiliki/meneja ataona na kukuambia uamuzi.',
+    })
+
+
+@login_required
+@owner_or_manager_required
+@require_POST
+def manager_review_write_off(request, req_id):
+    """Manager records a recommendation (approve/reject advisory) on a write-off request.
+
+    This does NOT execute the void — only the owner's final decision does.
+    The owner is notified of the manager's recommendation.
+    """
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    wo = get_object_or_404(WriteOffRequest, id=req_id, transaction__business=up.business)
+
+    if wo.status != WriteOffRequest.STATUS_PENDING:
+        return JsonResponse({'ok': False, 'error': 'Ombi hili lishafanyiwa uamuzi wa mwisho.'}, status=400)
+
+    verdict = request.POST.get('verdict', '').strip()
+    if verdict not in ('approved', 'rejected'):
+        return JsonResponse({'ok': False, 'error': 'Tuma verdict=approved au rejected.'}, status=400)
+
+    wo.manager_verdict = verdict
+    wo.manager_by = request.user
+    wo.manager_at = timezone.now()
+    wo.save(update_fields=['manager_verdict', 'manager_by', 'manager_at'])
+
+    txn = wo.transaction
+    item_name = txn.item.description if txn.item_id else '?'
+    amount = float(txn.revenue())
+    manager_name = request.user.get_full_name() or request.user.username
+    verdict_sw = 'ameidhinisha' if verdict == 'approved' else 'amekataa'
+
+    # Notify all owners of the manager's recommendation
+    from .models import Notification
+    from accounts.models import UserProfile as _UP
+    from core.notifications import normalize_ke_phone, send_sms_notification
+
+    owners = _UP.objects.filter(business=up.business, role='owner').select_related('user')
+    for ow in owners:
+        Notification.objects.create(
+            business=up.business,
+            user=ow.user,
+            title=f"{'✅' if verdict == 'approved' else '❌'} Meneja {verdict_sw} write-off",
+            message=(
+                f"{manager_name} {verdict_sw} kufuta: {item_name} "
+                f"KES {amount:,.0f} ({wo.customer_name_cache}). "
+                f"Uamuzi wako (mmiliki) ndio wa mwisho."
+            ),
+            notification_type='info' if verdict == 'approved' else 'warning',
+        )
+        if ow.phone:
+            normalized = normalize_ke_phone(ow.phone)
+            if normalized:
+                send_sms_notification(
+                    f"{up.business.name}: Meneja {manager_name} {verdict_sw} write-off "
+                    f"{item_name} KES {amount:,.0f}. Angalia app kufanya uamuzi wa mwisho.",
+                    normalized,
+                )
+
+    label = 'Imependekezwa' if verdict == 'approved' else 'Imekataliwa na Meneja'
+    return JsonResponse({'ok': True, 'verdict': verdict, 'label': label})
+
+
+@login_required
+@owner_required
+@require_POST
+def approve_write_off(request, req_id):
+    """Owner approves a write-off request — executes the void immediately.
+
+    This is the FINAL decision. The transaction's payment_method is set to 'void',
+    removing it from the debt tracker and revenue. The customer's receipt meta is
+    updated so the line is hidden on the public receipt page.
+    If the requesting staff member was already penalised by a manager rejection,
+    that Haki deduction is deleted (owner overrides manager).
+    """
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    wo = get_object_or_404(WriteOffRequest, id=req_id, transaction__business=up.business)
+
+    if wo.status == WriteOffRequest.STATUS_APPROVED:
+        return JsonResponse({'ok': False, 'error': 'Ombi hili lishaidhinishwa tayari.'}, status=400)
+    if wo.status == WriteOffRequest.STATUS_REJECTED:
+        return JsonResponse({'ok': False, 'error': 'Ombi hili lilikataliwa — haliwezi kuidhinishwa tena.'}, status=400)
+
+    txn = wo.transaction
+    item_name = txn.item.description if txn.item_id else '?'
+    customer_name = wo.customer_name_cache or txn.recipient or '—'
+    amount = float(txn.revenue())
+    reviewer_name = request.user.get_full_name() or request.user.username
+
+    # Execute the void
     txn.payment_method = 'void'
     txn.recipient = ''
     txn.save(update_fields=['payment_method', 'recipient'])
 
+    wo.status = WriteOffRequest.STATUS_APPROVED
+    wo.reviewed_by = request.user
+    wo.reviewed_at = timezone.now()
+    wo.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
+
+    # Remove any Haki deduction the manager may have already created (owner overrides)
+    SalaryDeduction.objects.filter(write_off=wo).delete()
+
+    # Update recent receipts so the line is hidden on the public receipt page
+    _mark_receipt_write_off(up.business, customer_name, item_name, amount)
+
     from .models import Notification
-    recorder = request.user.get_full_name() or request.user.username
+    from core.notifications import normalize_ke_phone, send_sms_notification
+
     Notification.objects.create(
         business=up.business,
         user=request.user,
-        message=f"Write-off: {item_name} KES {amount:,.0f} ({customer_name}) — imefutwa na {recorder}",
-        notification_type='warning',
-        title='Deni Lifutwa',
+        title='✅ Write-off Imeidhinishwa',
+        message=f"{reviewer_name} amefuta: {item_name} KES {amount:,.0f} ({customer_name}).",
+        notification_type='info',
     )
 
-    return JsonResponse({'ok': True, 'voided_amount': amount, 'customer': customer_name})
+    # Notify the requesting staff member
+    if wo.requested_by:
+        Notification.objects.create(
+            business=up.business,
+            user=wo.requested_by,
+            title='✅ Ombi la Write-off Limeidhinishwa',
+            message=f"Mmiliki ameidhinisha: {item_name} KES {amount:,.0f} ({customer_name}) imefutwa.",
+            notification_type='info',
+        )
+        from accounts.models import UserProfile as _UP
+        sp = _UP.objects.filter(user=wo.requested_by, business=up.business).first()
+        if sp and sp.phone:
+            normalized = normalize_ke_phone(sp.phone)
+            if normalized:
+                send_sms_notification(
+                    f"{up.business.name}: Mmiliki ameidhinisha ombi lako — "
+                    f"{item_name} KES {amount:,.0f} imefutwa kutoka kwa deni.",
+                    normalized,
+                )
+
+    return JsonResponse({'ok': True, 'status': 'approved', 'voided_amount': amount, 'customer': customer_name})
+
+
+@login_required
+@owner_required
+@require_POST
+def reject_write_off(request, req_id):
+    """Owner rejects a write-off request — creates a Haki salary deduction.
+
+    FINAL decision. The transaction stays as a credit (not voided).
+    A SalaryDeduction is created for the requesting staff member for this period.
+    The staff member is notified via in-app + SMS.
+    """
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    wo = get_object_or_404(WriteOffRequest, id=req_id, transaction__business=up.business)
+
+    if wo.status == WriteOffRequest.STATUS_REJECTED:
+        return JsonResponse({'ok': False, 'error': 'Ombi hili lilikataliwa tayari.'}, status=400)
+    if wo.status == WriteOffRequest.STATUS_APPROVED:
+        return JsonResponse({'ok': False, 'error': 'Ombi hili lishaidhinishwa — haliwezi kukataliwa tena.'}, status=400)
+
+    txn = wo.transaction
+    item_name = txn.item.description if txn.item_id else '?'
+    customer_name = wo.customer_name_cache or txn.recipient or '—'
+    amount = float(txn.revenue())
+    reviewer_name = request.user.get_full_name() or request.user.username
+
+    # If a void was applied (e.g., manager had approved), restore the transaction
+    if txn.payment_method == 'void':
+        txn.payment_method = 'credit'
+        txn.recipient = wo.customer_name_cache
+        txn.save(update_fields=['payment_method', 'recipient'])
+
+    wo.status = WriteOffRequest.STATUS_REJECTED
+    wo.reviewed_by = request.user
+    wo.reviewed_at = timezone.now()
+    wo.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
+
+    # Create Haki deduction for the requesting staff member
+    from accounts.models import UserProfile as _UP
+    from core.notifications import normalize_ke_phone, send_sms_notification
+
+    if wo.requested_by and not wo.haki_deduction_created:
+        staff_profile = _UP.objects.filter(user=wo.requested_by, business=up.business).first()
+        if staff_profile:
+            period = timezone.localdate().strftime('%Y-%m')
+            SalaryDeduction.objects.create(
+                business=up.business,
+                staff=staff_profile,
+                period=period,
+                amount=amount,
+                reason=(
+                    f"Ombi la kufuta deni lilikataliwa na mmiliki: "
+                    f"{item_name} KES {amount:,.0f} ({customer_name})"
+                ),
+                created_by=request.user,
+                write_off=wo,
+            )
+            wo.haki_deduction_created = True
+            wo.save(update_fields=['haki_deduction_created'])
+
+            from .models import Notification
+            Notification.objects.create(
+                business=up.business,
+                user=wo.requested_by,
+                title='❌ Ombi la Write-off Limekataliwa',
+                message=(
+                    f"Mmiliki amekataa: {item_name} KES {amount:,.0f} ({customer_name}). "
+                    f"KES {amount:,.0f} itaondolewa kwenye mshahara wako."
+                ),
+                notification_type='warning',
+            )
+            if staff_profile.phone:
+                normalized = normalize_ke_phone(staff_profile.phone)
+                if normalized:
+                    send_sms_notification(
+                        f"{up.business.name}: Ombi lako la kufuta {item_name} "
+                        f"KES {amount:,.0f} limekataliwa. KES {amount:,.0f} "
+                        f"itaondolewa kwenye mshahara wako wa {period}.",
+                        normalized,
+                    )
+
+    from .models import Notification
+    Notification.objects.create(
+        business=up.business,
+        user=request.user,
+        title='❌ Write-off Imekataliwa',
+        message=f"{reviewer_name} alikataa: {item_name} KES {amount:,.0f} ({customer_name}). Haki deduction imetumwa.",
+        notification_type='warning',
+    )
+
+    deducted_from = ''
+    if wo.requested_by:
+        deducted_from = wo.requested_by.get_full_name() or wo.requested_by.username
+
+    return JsonResponse({
+        'ok': True,
+        'status': 'rejected',
+        'message': f'Imekataliwa — Haki deduction ya KES {amount:,.0f} imetumwa kwa {deducted_from}.',
+    })
+
+
+@login_required
+@owner_or_manager_required
+def pending_write_offs(request):
+    """Owner/manager: list of all pending write-off requests for this business."""
+    up = get_user_profile(request)
+    if not up:
+        return redirect('login')
+
+    pending = (
+        WriteOffRequest.objects
+        .filter(transaction__business=up.business, status=WriteOffRequest.STATUS_PENDING)
+        .select_related(
+            'transaction__item', 'requested_by', 'manager_by',
+            'transaction__item__store',
+        )
+        .order_by('-created_at')
+    )
+    recent = (
+        WriteOffRequest.objects
+        .filter(transaction__business=up.business)
+        .exclude(status=WriteOffRequest.STATUS_PENDING)
+        .select_related('transaction__item', 'requested_by', 'reviewed_by')
+        .order_by('-reviewed_at')[:20]
+    )
+
+    return render(request, 'core/write_offs_pending.html', {
+        'pending': pending,
+        'recent': recent,
+        'is_owner': up.is_owner,
+    })
+
+
+def _mark_receipt_write_off(business, customer_name, item_name, amount):
+    """Add a write-off marker to the customer's recent receipts.
+
+    The receipt public page reads receipt.meta['write_offs'] and hides matching lines.
+    Matches by item name + amount. Handles the duplicate-entry case by consuming
+    one match per write-off entry (a list, not a set).
+    """
+    from .models import Receipt
+    import datetime
+    since = timezone.localdate() - datetime.timedelta(days=14)
+    receipts = (
+        Receipt.objects
+        .filter(business=business, customer_name=customer_name, created_at__date__gte=since)
+        .exclude(payment_method='statement')
+    )
+    for rcpt in receipts:
+        meta = rcpt.meta or {}
+        wo_list = meta.setdefault('write_offs', [])
+        wo_list.append({'name': item_name, 'amount': round(amount, 2)})
+        rcpt.meta = meta
+        rcpt.save(update_fields=['meta'])

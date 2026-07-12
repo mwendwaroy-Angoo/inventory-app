@@ -1193,20 +1193,24 @@ class SalaryPaymentModelTest(TestCase):
             user=staff_user, business=self.biz, role='staff',
         )
 
-    def test_salary_payment_created_and_unique(self):
-        from django.db import IntegrityError
+    def test_salary_payment_allows_multiple_per_period(self):
+        # unique_together removed to support partial payment instalments
         from datetime import date
         SalaryPayment.objects.create(
             business=self.biz, staff=self.staff_profile,
-            period='2026-06', amount=Decimal('20000'),
-            due_date=date(2026, 6, 30),
+            period='2026-06', amount=Decimal('10000'),
+            due_date=date(2026, 6, 30), payment_type='partial',
         )
-        with self.assertRaises(IntegrityError):
-            SalaryPayment.objects.create(
-                business=self.biz, staff=self.staff_profile,
-                period='2026-06', amount=Decimal('20000'),
-                due_date=date(2026, 6, 30),
-            )
+        pay2 = SalaryPayment.objects.create(
+            business=self.biz, staff=self.staff_profile,
+            period='2026-06', amount=Decimal('10000'),
+            due_date=date(2026, 6, 30), payment_type='partial',
+        )
+        self.assertIsNotNone(pay2.pk)
+        total = SalaryPayment.objects.filter(
+            business=self.biz, staff=self.staff_profile, period='2026-06',
+        ).count()
+        self.assertEqual(total, 2)
 
     def test_days_overdue_is_positive_when_past_due(self):
         from datetime import date, timedelta

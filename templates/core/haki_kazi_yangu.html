@@ -46,6 +46,25 @@
     .pay-paid    { background: rgba(110,231,183,0.12); color: #6ee7b7; border: 1px solid rgba(110,231,183,0.3); }
     .pay-pending { background: rgba(251,191,36,0.12);  color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
     .pay-late    { background: rgba(248,113,113,0.12); color: #f87171; border: 1px solid rgba(248,113,113,0.3); }
+    .ded-row {
+        font-size: 0.8rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 0.22rem 0;
+        border-bottom: 1px solid rgba(192,57,90,0.1);
+        gap: 0.5rem;
+    }
+    .ded-row:last-child { border-bottom: none; }
+    .pay-hist-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.28rem 0;
+        border-bottom: 1px solid #222;
+        font-size: 0.82rem;
+    }
+    .pay-hist-row:last-child { border-bottom: none; }
 </style>
 {% endblock %}
 
@@ -107,27 +126,74 @@
     {% endif %}
 </div>
 
+<!-- Salary deductions (shown so staff understands why pay may differ) -->
+{% if deductions %}
+<div class="kazi-card" style="border-color:rgba(192,57,90,0.25);">
+    <div class="kazi-card-title" style="color:#e87090;">⚠️ {% trans 'Makato ya Mshahara' %}</div>
+    <p style="color:#b0b0b0; font-size:0.8rem; margin-bottom:0.75rem;">
+        {% trans 'The following amounts will be deducted from your salary following rejected write-off requests.' %}
+    </p>
+    {% for ded in deductions %}
+    <div class="ded-row">
+        <span style="color:#f0ece4; flex:1;">{{ ded.reason|truncatechars:80 }}</span>
+        <span style="color:#f87171; font-weight:700; white-space:nowrap;">-KES {{ ded.amount|floatformat:0 }}</span>
+    </div>
+    {% endfor %}
+    <div style="font-size:0.82rem; color:#fbbf24; font-weight:700; margin-top:0.6rem; border-top:1px solid rgba(192,57,90,0.18); padding-top:0.5rem;">
+        Jumla ya makato: -KES {{ deduction_total|floatformat:0 }}
+    </div>
+</div>
+{% endif %}
+
 <!-- Pay status -->
 {% if salary %}
 <div class="kazi-card">
     <div class="kazi-card-title">💵 {% trans 'Mshahara — ' %}{{ salary.period }}</div>
-    <div class="d-flex align-items-center gap-3 flex-wrap">
+    <div class="d-flex align-items-center gap-3 flex-wrap mb-3">
         <div style="font-size:1.5rem; font-weight:700; color:#e0e0e0;">
             KES {{ salary.amount|floatformat:0 }}
         </div>
-        {% if salary.paid %}
-        <span class="pay-badge pay-paid">✓ {% trans 'Umelipwa' %}
-            {% if salary.paid_at %} · {{ salary.paid_at|date:"d M Y" }}{% endif %}
-        </span>
+        {% if paid_rows %}
+            {% if paid_total >= salary.amount %}
+            <span class="pay-badge pay-paid">✓ {% trans 'Umelipwa Kikamilifu' %}</span>
+            {% else %}
+            <span class="pay-badge pay-pending">🔄 KES {{ paid_total|floatformat:0 }} / {{ salary.amount|floatformat:0 }} {% trans 'imelipwa' %}</span>
+            {% endif %}
         {% elif salary.days_overdue > 0 %}
         <span class="pay-badge pay-late">⚠️ {{ salary.days_overdue }} {% trans 'siku imepita' %}</span>
         {% else %}
         <span class="pay-badge pay-pending">⏳ {% trans 'Inangoja' %} — {% trans 'due' %} {{ salary.due_date }}</span>
         {% endif %}
     </div>
+
+    <!-- Current-period payment rows -->
+    {% if paid_rows %}
+    <div style="border-top:1px solid #2a2a2a; padding-top:0.65rem;">
+        <div style="font-size:0.72rem; color:#b0b0b0; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem;">Malipo yaliyofanywa:</div>
+        {% for pay in paid_rows %}
+        <div class="pay-hist-row">
+            <span>
+                <span style="color:#6ee7b7; font-weight:600;">KES {{ pay.amount|floatformat:0 }}</span>
+                <span style="color:#888; font-size:0.72rem; margin-left:0.4rem;">{{ pay.paid_at|date:"d M Y, H:i" }}</span>
+                {% if pay.payment_type == 'partial' %}
+                <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(251,191,36,0.12); color:#fbbf24; margin-left:0.35rem;">Sehemu</span>
+                {% else %}
+                <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(110,231,183,0.1); color:#6ee7b7; margin-left:0.35rem;">Kamili</span>
+                {% endif %}
+            </span>
+            <span style="color:#888; font-size:0.72rem;">{{ pay.method|default:"" }}</span>
+        </div>
+        {% if pay.staff_note %}
+        <div style="font-size:0.72rem; color:#c9a84c; font-style:italic; padding:0.05rem 0 0.3rem 0.25rem;">
+            "{{ pay.staff_note }}"
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
 </div>
 
-<!-- Payment history -->
+<!-- Full payment history (previous periods) -->
 {% if pay_history %}
 <div class="kazi-card">
     <div class="kazi-card-title">📅 {% trans 'Historia ya Malipo' %}</div>
@@ -137,8 +203,9 @@
                 <tr>
                     <th>{% trans 'Mwezi' %}</th>
                     <th class="text-end">{% trans 'Kiasi' %}</th>
-                    <th class="text-center">{% trans 'Hali' %}</th>
+                    <th>{% trans 'Aina' %}</th>
                     <th>{% trans 'Njia' %}</th>
+                    <th>{% trans 'Tarehe' %}</th>
                 </tr>
             </thead>
             <tbody style="font-size:0.85rem;">
@@ -146,21 +213,30 @@
                 <tr style="border-color:#2a2a2a;">
                     <td>{{ pay.period }}</td>
                     <td class="text-end" style="color:#e0e0e0;">KES {{ pay.amount|floatformat:0 }}</td>
-                    <td class="text-center">
-                        {% if pay.paid %}
-                        <span style="color:#6ee7b7;">✓</span>
+                    <td>
+                        {% if pay.payment_type == 'partial' %}
+                        <span style="font-size:0.72rem; color:#fbbf24;">Sehemu</span>
                         {% else %}
-                        <span style="color:#f87171;">✗</span>
+                        <span style="font-size:0.72rem; color:#6ee7b7;">Kamili</span>
                         {% endif %}
                     </td>
-                    <td style="color:#b0b0b0; font-size:0.78rem;">{{ pay.get_method_display|default:"—" }}</td>
+                    <td style="color:#b0b0b0; font-size:0.78rem;">{{ pay.method|default:"—" }}</td>
+                    <td style="color:#b0b0b0; font-size:0.78rem;">{{ pay.paid_at|date:"d M Y" }}</td>
                 </tr>
+                {% if pay.staff_note %}
+                <tr style="border-color:#2a2a2a;">
+                    <td colspan="5" style="color:#c9a84c; font-style:italic; font-size:0.72rem; padding-top:0; border:none;">
+                        "{{ pay.staff_note }}"
+                    </td>
+                </tr>
+                {% endif %}
                 {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
 {% endif %}
+
 {% else %}
 <div class="kazi-card text-center" style="color:#888;">
     <p style="margin:0; font-size:0.875rem;">

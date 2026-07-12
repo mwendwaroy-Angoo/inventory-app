@@ -372,7 +372,7 @@
                     <th class="py-2">{% trans 'Item' %}</th>
                     <th class="py-2 text-end">{% trans 'Amount Owed' %}</th>
                     <th class="py-2 text-end pe-4">{% trans 'Days Outstanding' %}</th>
-                    {% if is_owner %}<th class="py-2 pe-3"></th>{% endif %}
+                    <th class="py-2 pe-3"></th>
                 </tr>
             </thead>
             <tbody>
@@ -391,15 +391,33 @@
                             {% endif %}
                         </span>
                     </td>
-                    {% if is_owner %}
-                    <td class="pe-3 text-end">
-                        <button onclick="writeOffDebt({{ entry.txn.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
-                            style="background:rgba(192,57,90,0.08);border:1px solid rgba(192,57,90,0.3);border-radius:6px;
-                                   color:#c0395a;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;white-space:nowrap;">
-                            ✕ Futa Kosa
+                    <td class="pe-3 text-end" style="white-space:nowrap;">
+                        {% if entry.write_off %}
+                            {% if entry.write_off.status == 'approved' %}
+                            <span style="color:#6ee7b7; font-size:0.72rem;">✅ Imefutwa</span>
+                            {% elif entry.write_off.status == 'rejected' %}
+                            <span style="color:#f87171; font-size:0.72rem;">❌ Ilikataliwa</span>
+                            {% else %}
+                            <span style="color:#fbbf24; font-size:0.72rem;">⏳ Inasubiri</span>
+                            {% if is_owner %}
+                            <button onclick="woApprove({{ entry.write_off.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
+                                style="background:rgba(110,231,183,0.08);border:1px solid rgba(110,231,183,0.3);border-radius:5px;
+                                       color:#6ee7b7;font-size:0.68rem;padding:0.12rem 0.45rem;cursor:pointer;margin-left:0.3rem;"
+                                title="Idhinisha kufutwa">✅</button>
+                            <button onclick="woReject({{ entry.write_off.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }}, '{{ entry.write_off.requested_by.get_full_name|default:entry.write_off.requested_by.username|escapejs }}')"
+                                style="background:rgba(192,57,90,0.08);border:1px solid rgba(192,57,90,0.3);border-radius:5px;
+                                       color:#c0395a;font-size:0.68rem;padding:0.12rem 0.45rem;cursor:pointer;margin-left:0.15rem;"
+                                title="Kataa — Haki deduction">❌</button>
+                            {% endif %}
+                            {% endif %}
+                        {% else %}
+                        <button onclick="openWriteOffModal({{ entry.txn.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
+                            style="background:rgba(192,57,90,0.06);border:1px solid rgba(192,57,90,0.25);border-radius:6px;
+                                   color:#c0395a;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;">
+                            📝 {% if is_owner %}Futa / Omba{% else %}Omba Kufutwa{% endif %}
                         </button>
+                        {% endif %}
                     </td>
-                    {% endif %}
                 </tr>
                 {% endfor %}
             </tbody>
@@ -501,6 +519,47 @@
                 </div>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- ── Write-off Request Modal ── -->
+<div class="modal fade" id="writeOffModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0" style="background:#1e1e1e; border:1px solid rgba(255,255,255,0.1) !important;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title" style="color:var(--gold); font-family:'Playfair Display',serif; font-size:1rem;">
+                    📝 {% if is_owner %}Futa / Omba Write-off{% else %}Omba Kufutwa{% endif %}
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p id="woItemName" style="color:#fbbf24; font-size:0.88rem; font-weight:600; margin-bottom:0.75rem;"></p>
+                {% if not is_owner %}
+                <div style="background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:0.7rem 0.9rem; margin-bottom:1rem; font-size:0.8rem; color:#b0b0b0;">
+                    📌 Ombi lako litatumwa kwa mmiliki/meneja kwa idhini. Mteja anaweza kulipa wakati wowote — huhitaji kusubiri.
+                </div>
+                {% endif %}
+                <form id="woForm">
+                    <input type="hidden" id="woTxnId" name="txn_id">
+                    <div class="mb-3">
+                        <label style="font-size:0.8rem; color:#b0b0b0; display:block; margin-bottom:0.35rem;">Sababu ya Kuomba Kufutwa <span style="color:#c0395a;">*</span></label>
+                        <textarea id="woReason" name="reason" rows="3" required
+                            placeholder="Mfano: Kiingilio kiliingia mara mbili kwa bahati mbaya wakati wa mauzo..."
+                            style="width:100%; background:#111; border:1px solid rgba(255,255,255,0.12); border-radius:8px;
+                                   color:#f0ece4; padding:0.6rem 0.75rem; font-size:0.85rem; resize:vertical;"></textarea>
+                    </div>
+                    <p id="woError" style="color:#f87171; font-size:0.78rem; min-height:1.2em; margin:0;"></p>
+                    <div class="d-flex gap-2 justify-content-end mt-3">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal"
+                            style="border-color:rgba(255,255,255,0.2); color:#b0b0b0;">Ghairi</button>
+                        <button type="submit" id="woSubmitBtn" class="btn btn-sm"
+                            style="background:rgba(192,57,90,0.15); border:1px solid rgba(192,57,90,0.4); color:#c0395a;">
+                            Tuma Ombi
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -753,34 +812,89 @@ function _pollDebtStkPayment(paymentId, attempt) {
     }, 5000);
 }
 
+/* ── Write-off request (all staff) + owner approve/reject ── */
+var _woCsrf = function() {
+    var el = document.querySelector('[name=csrfmiddlewaretoken]');
+    return el ? el.value : '';
+};
+
+function openWriteOffModal(txnId, itemName, amount) {
+    document.getElementById('woTxnId').value   = txnId;
+    document.getElementById('woItemName').textContent = itemName + ' — KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0});
+    document.getElementById('woReason').value  = '';
+    document.getElementById('woError').textContent = '';
+    var modal = new bootstrap.Modal(document.getElementById('writeOffModal'));
+    modal.show();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    var form = document.getElementById('woForm');
+    if (!form) return;
+    var _woSubmitted = false;
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        if (_woSubmitted) return;
+        var txnId  = document.getElementById('woTxnId').value;
+        var reason = document.getElementById('woReason').value.trim();
+        if (!reason) { document.getElementById('woError').textContent = 'Andika sababu kwanza.'; return; }
+        _woSubmitted = true;
+        var btn = document.getElementById('woSubmitBtn');
+        btn.disabled = true; btn.textContent = '⏳ Inatumwa...';
+        fetch('/debt/write-off/request/' + txnId + '/', {
+            method: 'POST',
+            headers: {'X-CSRFToken': _woCsrf(), 'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'csrfmiddlewaretoken=' + encodeURIComponent(_woCsrf()) + '&reason=' + encodeURIComponent(reason),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.ok) {
+                bootstrap.Modal.getInstance(document.getElementById('writeOffModal')).hide();
+                setTimeout(function() { location.reload(); }, 400);
+            } else {
+                document.getElementById('woError').textContent = d.error || 'Hitilafu. Jaribu tena.';
+                btn.disabled = false; btn.textContent = 'Tuma Ombi';
+                _woSubmitted = false;
+            }
+        })
+        .catch(function() {
+            document.getElementById('woError').textContent = 'Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.';
+            btn.disabled = false; btn.textContent = 'Tuma Ombi';
+            _woSubmitted = false;
+        });
+    });
+});
+
 {% if is_owner %}
-function writeOffDebt(txnId, itemName, amount) {
-    var msg = 'Futa kiingilio hiki kutoka kwa deni?\n\n'
-        + itemName + ' — KES ' + parseFloat(amount).toLocaleString(undefined, {minimumFractionDigits:2})
-        + '\n\nHii inafaa kwa makosa / kiingilio cha ziada tu.\nHatua hii haiwezi kutenduliwa.';
-    if (!confirm(msg)) return;
-    var csrf = document.querySelector('[name=csrfmiddlewaretoken]');
-    fetch('/debt/write-off/' + txnId + '/', {
+function woApprove(reqId, itemName, amount) {
+    if (!confirm('Idhinisha kufutwa kwa:\n' + itemName + ' — KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0}) + '\n\nKiingilio kitafutwa kabisa kutoka kwa deni.')) return;
+    fetch('/debt/write-off/' + reqId + '/approve/', {
         method: 'POST',
-        headers: {'X-CSRFToken': csrf ? csrf.value : '', 'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'csrfmiddlewaretoken=' + encodeURIComponent(csrf ? csrf.value : ''),
+        headers: {'X-CSRFToken': _woCsrf(), 'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'csrfmiddlewaretoken=' + encodeURIComponent(_woCsrf()),
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
-        if (d.ok) {
-            var row = document.getElementById('debt-txn-row-' + txnId);
-            if (row) {
-                row.style.transition = 'opacity 0.4s';
-                row.style.opacity = '0';
-                setTimeout(function() { row.remove(); location.reload(); }, 500);
-            } else {
-                location.reload();
-            }
-        } else {
-            alert('Hitilafu: ' + (d.error || 'Jaribu tena.'));
-        }
+        if (d.ok) { setTimeout(function() { location.reload(); }, 300); }
+        else { alert('Hitilafu: ' + (d.error || 'Jaribu tena.')); }
     })
-    .catch(function() { alert('Hitilafu ya mtandao. Jaribu tena.'); });
+    .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
+}
+
+function woReject(reqId, itemName, amount, staffName) {
+    var msg = 'Kataa ombi la kufuta:\n' + itemName + ' — KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0});
+    if (staffName) msg += '\n\nOmbi lilitoka kwa: ' + staffName + '\nHaki deduction ya KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0}) + ' itaundwa kwa ajili yake.';
+    if (!confirm(msg)) return;
+    fetch('/debt/write-off/' + reqId + '/reject/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': _woCsrf(), 'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'csrfmiddlewaretoken=' + encodeURIComponent(_woCsrf()),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) { setTimeout(function() { location.reload(); }, 300); }
+        else { alert('Hitilafu: ' + (d.error || 'Jaribu tena.')); }
+    })
+    .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
 }
 {% endif %}
 </script>

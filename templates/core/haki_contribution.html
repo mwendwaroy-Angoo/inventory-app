@@ -44,6 +44,25 @@
     .salary-due   { color: #fbbf24; }
     .salary-paid  { color: #6ee7b7; }
     .salary-late  { color: #f87171; }
+    .ded-row {
+        font-size: 0.8rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 0.22rem 0;
+        border-bottom: 1px solid rgba(192,57,90,0.1);
+        gap: 0.5rem;
+    }
+    .ded-row:last-child { border-bottom: none; }
+    .pay-history-row {
+        font-size: 0.8rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.22rem 0;
+        border-bottom: 1px solid #222;
+    }
+    .pay-history-row:last-child { border-bottom: none; }
 </style>
 {% endblock %}
 
@@ -54,6 +73,9 @@
         <p style="color:#b0b0b0; font-size:0.875rem; margin-bottom:0;">
             {{ date_from_label }} → {{ date_to_label }} ·
             <span style="color:var(--gold);">{{ rows|length }} {% trans 'staff member(s)' %}</span>
+            {% if pending_wo_count %}
+            · <a href="{% url 'pending_write_offs' %}" style="color:#fbbf24; font-size:0.82rem;">⏳ {{ pending_wo_count }} write-off pending</a>
+            {% endif %}
         </p>
     </div>
     <div>
@@ -76,6 +98,9 @@
             <div>
                 <div style="font-weight:700; color:var(--pearl); font-size:1rem;">
                     {{ row.user.get_full_name|default:row.user.username }}
+                    {% if row.pending_wo_count %}
+                    <span style="font-size:0.7rem; padding:0.1rem 0.4rem; border-radius:8px; background:rgba(251,191,36,0.15); color:#fbbf24; margin-left:0.4rem;">⏳ {{ row.pending_wo_count }} write-off</span>
+                    {% endif %}
                 </div>
                 <div style="color:#888; font-size:0.78rem;">
                     {{ row.profile.get_role_display }}
@@ -99,6 +124,7 @@
     </div>
 
     <div class="p-3">
+        <!-- Performance metrics -->
         <div class="d-flex flex-wrap gap-3 mb-3">
             <div class="metric-chip">
                 💰 {% trans 'Revenue' %}: <strong style="color:var(--gold);">KES {{ row.total_revenue|floatformat:0 }}</strong>
@@ -119,9 +145,32 @@
                 ⚠️ KES {{ row.keg_loss_kes|floatformat:0 }} {% trans 'keg variance' %}
             </div>
             {% endif %}
+            {% if row.deduction_total > 0 %}
+            <div class="metric-chip" style="background:rgba(192,57,90,0.08); border-color:rgba(192,57,90,0.22); color:#e87090;">
+                📉 Deductions: <strong style="color:#f87171;">-KES {{ row.deduction_total|floatformat:0 }}</strong>
+            </div>
+            {% endif %}
         </div>
 
-        <!-- Salary status + record payment -->
+        <!-- Salary deductions -->
+        {% if row.deductions %}
+        <div style="background:rgba(192,57,90,0.05); border:1px solid rgba(192,57,90,0.18); border-radius:8px; padding:0.65rem 0.9rem; margin-bottom:0.8rem;">
+            <div style="font-size:0.72rem; color:#e87090; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.45rem;">
+                ⚠️ {% trans 'Salary Deductions — rejected write-offs' %}
+            </div>
+            {% for ded in row.deductions %}
+            <div class="ded-row">
+                <span style="color:#f0ece4; flex:1;">{{ ded.reason|truncatechars:70 }}</span>
+                <span style="color:#f87171; font-weight:600; white-space:nowrap;">-KES {{ ded.amount|floatformat:0 }}</span>
+            </div>
+            {% endfor %}
+            <div style="font-size:0.75rem; color:#fbbf24; margin-top:0.4rem; font-weight:600;">
+                Jumla: -KES {{ row.deduction_total|floatformat:0 }}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Salary status + payment history -->
         {% if row.salary %}
         <div style="background:rgba(255,255,255,0.03); border-radius:8px; padding:0.75rem 1rem; border:1px solid #2a2a2a;">
             <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -131,30 +180,54 @@
                         <strong style="color:#e0e0e0;">KES {{ row.salary.amount|floatformat:0 }}</strong>
                         · {% trans 'due' %} {{ row.salary.due_date }}
                     </span>
-                    {% if row.salary.paid %}
-                    <span class="ms-2 salary-paid">✓ {% trans 'Paid' %}
-                        {% if row.salary.paid_at %}{{ row.salary.paid_at|date:"d M Y" }}{% endif %}
-                    </span>
+                    {% if row.pay_rows %}
+                        {% if row.paid_total >= row.salary.amount %}
+                        <span class="ms-2 salary-paid">✓ {% trans 'Fully Paid' %}</span>
+                        {% else %}
+                        <span class="ms-2 salary-due">⏳ KES {{ row.paid_total|floatformat:0 }} / {{ row.salary.amount|floatformat:0 }} {% trans 'paid' %}</span>
+                        {% endif %}
                     {% elif row.salary.days_overdue > 0 %}
                     <span class="ms-2 salary-late">⚠️ {{ row.salary.days_overdue }} {% trans 'days overdue' %}</span>
                     {% else %}
                     <span class="ms-2 salary-due">⏳ {% trans 'Due' %}</span>
                     {% endif %}
                 </div>
-                {% if not row.salary.paid %}
                 <button type="button" class="btn btn-sm btn-gold"
                         data-bs-toggle="modal" data-bs-target="#salaryModal{{ row.profile.id }}">
-                    ✅ {% trans 'Mark Paid' %}
+                    {% if row.pay_rows %}➕ {% trans 'Add Payment' %}{% else %}✅ {% trans 'Mark Paid' %}{% endif %}
                 </button>
-                {% endif %}
             </div>
+
+            <!-- Payment history rows -->
+            {% if row.pay_rows %}
+            <div style="margin-top:0.6rem; border-top:1px solid #2a2a2a; padding-top:0.6rem;">
+                {% for pay in row.pay_rows %}
+                <div class="pay-history-row">
+                    <span>
+                        <span style="color:#6ee7b7; font-weight:600;">KES {{ pay.amount|floatformat:0 }}</span>
+                        <span style="color:#888; font-size:0.72rem; margin-left:0.4rem;">{{ pay.paid_at|date:"d M Y" }}</span>
+                        {% if pay.payment_type == 'partial' %}
+                        <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(251,191,36,0.12); color:#fbbf24; margin-left:0.35rem;">Sehemu</span>
+                        {% else %}
+                        <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(110,231,183,0.1); color:#6ee7b7; margin-left:0.35rem;">Kamili</span>
+                        {% endif %}
+                    </span>
+                    <span style="color:#888; font-size:0.72rem;">{{ pay.method|default:"" }}</span>
+                </div>
+                {% if pay.staff_note %}
+                <div style="font-size:0.72rem; color:#b0b0b0; font-style:italic; padding:0.05rem 0 0.3rem 0.25rem;">
+                    "{{ pay.staff_note }}"
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
         </div>
         {% endif %}
     </div>
 </div>
 
-<!-- Salary Modal -->
-{% if row.salary and not row.salary.paid %}
+<!-- Salary Payment Modal -->
 <div class="modal fade" id="salaryModal{{ row.profile.id }}" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0" style="background:#1e1e1e; border:1px solid rgba(255,255,255,0.1) !important;">
@@ -167,13 +240,24 @@
             <form method="post" action="{% url 'record_salary_payment' row.profile.id %}">
                 {% csrf_token %}
                 <div class="modal-body">
-                    <input type="hidden" name="period" value="{{ row.salary.period }}">
+                    <input type="hidden" name="period" value="{% if row.salary %}{{ row.salary.period }}{% else %}{{ current_period }}{% endif %}">
+                    <div class="mb-3">
+                        <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
+                            {% trans 'Payment Type' %}
+                        </label>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <input type="radio" class="btn-check" name="payment_type" id="pt_full_{{ row.profile.id }}" value="full" checked>
+                            <label class="btn btn-sm btn-outline-success" for="pt_full_{{ row.profile.id }}">✅ {% trans 'Full Payment' %}</label>
+                            <input type="radio" class="btn-check" name="payment_type" id="pt_partial_{{ row.profile.id }}" value="partial">
+                            <label class="btn btn-sm btn-outline-warning" for="pt_partial_{{ row.profile.id }}">🔄 {% trans 'Partial Payment' %}</label>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
                             {% trans 'Amount (KES)' %} *
                         </label>
                         <input type="number" name="amount" class="form-control"
-                               step="0.01" min="1" value="{{ row.salary.amount|floatformat:2 }}" required>
+                               step="0.01" min="1" value="{% if row.salary %}{{ row.salary.amount|floatformat:2 }}{% endif %}" required>
                     </div>
                     <div class="mb-3">
                         <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
@@ -190,10 +274,10 @@
                     </div>
                     <div class="mb-1">
                         <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
-                            {% trans 'Notes' %} <span style="color:#888;">({% trans 'optional' %})</span>
+                            {% trans 'Note to staff' %} <span style="color:#888;">({% trans 'optional — sent in SMS to staff' %})</span>
                         </label>
-                        <input type="text" name="notes" class="form-control"
-                               placeholder="{% trans 'e.g. bank ref, partial note' %}">
+                        <input type="text" name="staff_note" class="form-control"
+                               placeholder="{% trans 'e.g. partial — rest next week, deduction applied' %}">
                     </div>
                     <p class="mt-2" style="color:#888; font-size:0.78rem;">
                         {% trans 'An SMS confirmation will be sent to the staff member.' %}
@@ -211,7 +295,6 @@
         </div>
     </div>
 </div>
-{% endif %}
 
 {% endfor %}
 
