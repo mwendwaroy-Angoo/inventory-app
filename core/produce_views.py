@@ -243,7 +243,7 @@ def receive_bunches(request):
         target = item.default_bunch_target(cost)
 
     created = []
-    for _ in range(count):
+    for _bunch_idx in range(count):
         b = ProduceBunch.objects.create(
             item=item, business=business, size=size,
             cost_price=cost, target_revenue=target,

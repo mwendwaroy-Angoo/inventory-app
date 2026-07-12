@@ -1526,7 +1526,7 @@ def expense_report(request):
     month_start = today.replace(day=1)
     months = []
     m = month_start
-    for _ in range(12):
+    for _month_idx in range(12):
         months.append(m)
         m = (m - timedelta(days=1)).replace(day=1)
     months.reverse()
