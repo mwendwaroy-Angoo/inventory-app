@@ -404,25 +404,27 @@ def review_variance(request, var_id):
 
             if svq.direction == StockVarianceQuery.DECREASE and svq.item:
                 if _pay == 'wastage':
-                    # Owner says cause is unknown — record as wastage, no revenue
+                    # Owner says cause is unknown — record as wastage, no revenue.
+                    # Wastage must be negative so current_balance() decreases.
                     corrective_txn = Transaction.objects.create(
                         business=business,
                         item=svq.item,
                         type='Wastage',
-                        qty=abs(svq.variance),
+                        qty=-abs(svq.variance),
                         payment_method='',
                         recipient=_owner_note or 'Stock adjustment — cause unknown',
                         recorded_by=request.user,
                         date=svq.stock_take.taken_at.date(),
                     )
                 else:
-                    # Unrecorded sale — cash / mpesa / credit
+                    # Unrecorded sale — cash / mpesa / credit.
+                    # Issue must be negative so current_balance() decreases.
                     _pay_for_txn = _pay if _pay in ('cash', 'mpesa', 'credit') else 'cash'
                     corrective_txn = Transaction.objects.create(
                         business=business,
                         item=svq.item,
                         type='Issue',
-                        qty=abs(svq.variance),
+                        qty=-abs(svq.variance),
                         sale_amount=(svq.estimated_revenue if svq.estimated_revenue else None),
                         payment_method=_pay_for_txn,
                         recipient=_customer,
@@ -529,11 +531,12 @@ def adjust_stock_balance(request, item_id):
     txn_note = note or 'Stock adjustment'
 
     if variance < 0:
+        # Wastage must be negative so current_balance() decreases to the actual count.
         Transaction.objects.create(
             business=business,
             item=item,
             type='Wastage',
-            qty=abs(variance),
+            qty=-abs(variance),
             date=timezone.localdate(),
             recorded_by=request.user,
             recipient=txn_note,
@@ -541,6 +544,9 @@ def adjust_stock_balance(request, item_id):
         )
         direction_label = f'Punguzo la {abs(variance):g} {item.unit}'
     else:
+        # Surplus — stock found above book.  invoice_no='[ADJ]' marks this as
+        # a count correction so the home dashboard "missing cost price" alert
+        # (which targets supplier Receipts) ignores it.
         Transaction.objects.create(
             business=business,
             item=item,
@@ -549,6 +555,7 @@ def adjust_stock_balance(request, item_id):
             date=timezone.localdate(),
             recorded_by=request.user,
             recipient=txn_note,
+            invoice_no='[ADJ]',
             payment_method='',
         )
         direction_label = f'Ongezeko la {variance:g} {item.unit}'

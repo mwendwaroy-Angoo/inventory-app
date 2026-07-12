@@ -153,7 +153,11 @@
                 <input type="text" id="customer-{{ v.id }}" maxlength="100"
                        placeholder="{% trans 'Jina la mteja (si lazima)' %}"
                        style="width:100%; background:#1a1a1a; border:1px solid #444; color:var(--pearl);
-                              border-radius:6px; padding:0.45rem 0.75rem; font-size:0.85rem; outline:none;">
+                              border-radius:6px; padding:0.45rem 0.75rem; font-size:0.85rem; outline:none;"
+                       oninput="updateCreditWarning({{ v.id }})">
+                <div id="credit-warn-{{ v.id }}" style="display:none; margin-top:0.3rem; font-size:0.72rem; color:#fbbf24;">
+                    ⚠️ {% trans 'Bila jina, deni hili halitaonekana kwenye orodha ya wadaiwa — huwezi kukusanya baadaye.' %}
+                </div>
             </div>
 
             <div style="margin-bottom:0.6rem;">
@@ -289,6 +293,14 @@ function toggleReasonForm(varId) {
 function onRtypeChange(varId, val) {
     var row = document.getElementById('customer-row-' + varId);
     if (row) row.style.display = val === 'credit' ? 'block' : 'none';
+    if (val === 'credit') updateCreditWarning(varId);
+}
+
+function updateCreditWarning(varId) {
+    var inp  = document.getElementById('customer-' + varId);
+    var warn = document.getElementById('credit-warn-' + varId);
+    if (!inp || !warn) return;
+    warn.style.display = inp.value.trim() ? 'none' : 'block';
 }
 
 function submitReasonAccept(varId, itemName) {

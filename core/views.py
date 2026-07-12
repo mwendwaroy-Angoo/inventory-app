@@ -214,7 +214,7 @@ def home(request):
                     type='Receipt',
                     date__gte=seven_days_ago,
                     item__cost_price__isnull=True,
-                ).values('item__description', 'item__id').distinct()
+                ).exclude(invoice_no='[ADJ]').values('item__description', 'item__id').distinct()
                 context['items_missing_cost_price'] = list(recent_receipts_no_cost)
                 context['missing_cost_price_count'] = len(context['items_missing_cost_price'])
             except Exception:
