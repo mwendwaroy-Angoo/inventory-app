@@ -1132,6 +1132,8 @@ def update_tab_name(request, tab_id):
     return JsonResponse({'ok': True, 'customer_name': new_name})
 
 
+@login_required
+@require_POST
 def update_tab_phone(request, tab_id):
     """Allow staff to add/update the customer phone number on an open tab."""
     up = _get_up(request)
@@ -1538,6 +1540,26 @@ def convert_tab_to_debt(request, tab_id):
     tab.settled_at = timezone.now()
     tab.save(update_fields=['customer', 'status', 'settled_at'])
 
+    # SMS to customer confirming the debt (mirrors Quick Sell credit flow)
+    if customer.phone:
+        try:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            _norm = normalize_ke_phone(customer.phone)
+            if _norm:
+                _source_label = 'Kitchen' if tab.source == 'kitchen' else 'Bar'
+                _sms = (
+                    f"Habari {customer.name},\n"
+                    f"{up.business.name}: Deni la KES {unpaid_total:,.0f} "
+                    f"limeandikwa ({_source_label}).\n"
+                    f"Tafadhali lipa ndani ya siku {up.business.credit_window_days}."
+                )
+                send_sms_notification(_sms, _norm)
+        except Exception:
+            logger.exception(
+                'convert_tab_to_debt SMS failed (business=%s customer=%s)',
+                up.business.id, customer.id,
+            )
+
     return JsonResponse({
         'ok': True,
         'customer_name': customer.name,
@@ -1776,12 +1798,19 @@ def bar_daily_report(request):
     for shift in Shift.objects.filter(
         business=business, started_at__date=report_date
     ).select_related('staff').order_by('started_at'):
+        # Skip kitchen-staff shifts — they belong in the kitchen board report
+        try:
+            if shift.staff.userprofile.role == 'kitchen':
+                continue
+        except Exception:
+            pass
         shift_end = shift.ended_at or timezone.now()
         st = Transaction.objects.filter(
             business=business,
             created_at__gte=shift.started_at,
             created_at__lte=shift_end,
             type='Issue',
+            item__store__is_kitchen=False,
         )
         delta   = shift_end - shift.started_at
         h, rem  = divmod(int(delta.total_seconds()), 3600)
