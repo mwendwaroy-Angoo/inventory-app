@@ -215,8 +215,30 @@
 
             <div class="mb-4">
                 <label class="form-label">{% trans 'Item' %}</label>
-                <select name="item" id="item" class="form-select select2" required style="width:100%">
-                    <option value="">{% trans 'Type to search item...' %}</option>
+                <!-- Vanilla JS typeahead — no CDN dependency, always typeable -->
+                <div style="position:relative;" id="item-search-container">
+                    <input type="text" id="item-search" autocomplete="off"
+                           placeholder="{% trans 'Type to search item...' %}"
+                           style="width:100%; background:#222; border:1px solid #444; color:var(--pearl);
+                                  border-radius:6px; padding:0.5rem 2rem 0.5rem 0.75rem; font-size:0.9rem;
+                                  outline:none; transition:border-color .2s;"
+                           onfocus="this.style.borderColor='var(--gold)'"
+                           onblur="this.style.borderColor='#444'">
+                    <span id="item-search-clear"
+                          style="display:none; position:absolute; right:0.65rem; top:50%;
+                                 transform:translateY(-50%); cursor:pointer; color:#888;
+                                 font-size:1.1rem; line-height:1; user-select:none;"
+                          onclick="window._clearItemSearch()">&#x2715;</span>
+                    <div id="item-dropdown"
+                         style="display:none; position:absolute; z-index:9999; width:100%;
+                                background:#1e1e1e; border:1px solid var(--gold); border-top:none;
+                                border-radius:0 0 8px 8px; max-height:280px; overflow-y:auto;
+                                box-shadow:0 6px 20px rgba(0,0,0,.5);">
+                    </div>
+                </div>
+                <!-- Hidden select: form submits this; jQuery .val() / .on('change') still work -->
+                <select id="item" name="item" style="position:absolute; opacity:0; width:0; height:0; pointer-events:none; tabindex='-1';">
+                    <option value=""></option>
                     {% for item in items %}
                     <option value="{{ item.id }}" data-unit="{{ item.unit }}">
                         {{ item.material_no }} — {{ item.description }}
@@ -509,7 +531,7 @@
 (function() {
     var steps = [
         {
-            element: '#item',
+            element: '#item-search',
             popover: {
                 title: 'Select an Item',
                 description: 'Start typing an item name or material number. The searchable dropdown filters your inventory in real time. Select the item you want to move.',
@@ -640,18 +662,100 @@ $(document).ready(function () {
     var storedIsYield   = false;
     var storedYieldFactor = null;
 
-    // ── Select2 inits ──────────────────────────────────────────────────────
-    $('#item').select2({
-        placeholder: '{% trans "Type to search item..." %}',
-        allowClear: true,
-        width: '100%'
-    });
+    // ── Customer dropdown (Select2 with tag creation) ─────────────────────
     $('.select2-customer').select2({
         placeholder: '{% trans "Select or type customer name..." %}',
         allowClear: true,
         width: '100%',
         tags: true,
     });
+
+    // ── Item typeahead — vanilla JS, no CDN dependency ────────────────────
+    (function () {
+        var si  = document.getElementById('item-search');
+        var dd  = document.getElementById('item-dropdown');
+        var hs  = document.getElementById('item');           // hidden select
+        var clr = document.getElementById('item-search-clear');
+        var cnt = document.getElementById('item-search-container');
+
+        // Build flat list from option elements (already in the DOM)
+        var allItems = Array.from(hs.options).filter(function (o) { return o.value; }).map(function (o) {
+            return { id: o.value, text: o.text.trim(), unit: o.getAttribute('data-unit') || '' };
+        });
+
+        function renderList(list) {
+            dd.innerHTML = '';
+            if (!list.length) {
+                dd.innerHTML = '<div style="padding:.6rem .9rem; color:#888; font-size:.85rem;">Hakuna matokeo — jaribu neno lingine.</div>';
+                dd.style.display = 'block';
+                return;
+            }
+            list.forEach(function (it) {
+                var el = document.createElement('div');
+                el.textContent = it.text;
+                el.style.cssText = 'padding:.5rem .9rem; cursor:pointer; color:var(--pearl); font-size:.87rem; border-bottom:1px solid #2a2a2a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+                el.addEventListener('mouseenter', function () { this.style.background = 'rgba(192,57,90,.18)'; });
+                el.addEventListener('mouseleave', function () { this.style.background = ''; });
+                el.addEventListener('mousedown', function (e) { e.preventDefault(); pickItem(it); });
+                dd.appendChild(el);
+            });
+            dd.style.display = 'block';
+        }
+
+        function pickItem(it) {
+            si.value   = it.text;
+            hs.value   = it.id;
+            // Trigger jQuery's .on('change') handler registered below
+            hs.dispatchEvent(new Event('change', { bubbles: true }));
+            dd.style.display = 'none';
+            clr.style.display = 'inline';
+            si.setCustomValidity('');
+        }
+
+        window._clearItemSearch = function () {
+            si.value  = '';
+            hs.value  = '';
+            hs.dispatchEvent(new Event('change', { bubbles: true }));
+            dd.style.display   = 'none';
+            clr.style.display  = 'none';
+        };
+
+        si.addEventListener('input', function () {
+            var q = this.value.trim().toLowerCase();
+            if (!q) { dd.style.display = 'none'; clr.style.display = 'none'; return; }
+            clr.style.display = 'inline';
+            var matched = allItems.filter(function (it) { return it.text.toLowerCase().indexOf(q) !== -1; });
+            renderList(matched.slice(0, 60));
+        });
+
+        si.addEventListener('focus', function () {
+            // Show top items immediately on focus so user can see or start typing
+            if (!hs.value) renderList(allItems.slice(0, 20));
+        });
+
+        // Close dropdown when clicking elsewhere
+        document.addEventListener('click', function (e) {
+            if (!cnt.contains(e.target)) dd.style.display = 'none';
+        });
+
+        // Manual required validation on form submit
+        document.getElementById('transactionForm').addEventListener('submit', function (e) {
+            if (!hs.value) {
+                e.preventDefault();
+                si.setCustomValidity('{% trans "Tafadhali chagua bidhaa kutoka kwenye orodha." %}');
+                si.reportValidity();
+            } else {
+                si.setCustomValidity('');
+            }
+        });
+        si.addEventListener('input', function () { si.setCustomValidity(''); });
+
+        // Pre-fill if form re-rendered with a value (after validation error)
+        if (hs.value) {
+            var sel = Array.from(hs.options).find(function (o) { return o.value === hs.value; });
+            if (sel) { si.value = sel.text.trim(); clr.style.display = 'inline'; }
+        }
+    }());
 
     // ── Toggle Receipt / Issue UI ──────────────────────────────────────────
     function toggleRecipient() {
