@@ -493,7 +493,7 @@
               </button>
             </div>
 
-            <button type="submit" class="btn btn-gold w-100 py-2 mt-2">
+            <button type="submit" id="addTxnSubmitBtn" class="btn btn-gold w-100 py-2 mt-2">
                 {% trans 'Submit Transaction' %}
             </button>
 
@@ -1008,6 +1008,15 @@ $(document).ready(function () {
 
     // ── Init ──────────────────────────────────────────────────────────────
     toggleRecipient();
+
+    // ── Double-submit guard ───────────────────────────────────────────────
+    var _txnFormSubmitted = false;
+    document.getElementById('transactionForm').addEventListener('submit', function (e) {
+        if (_txnFormSubmitted) { e.preventDefault(); return; }
+        _txnFormSubmitted = true;
+        var btn = document.getElementById('addTxnSubmitBtn');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Inarekodiwa...'; }
+    });
 });
 </script>
 {% endblock %}
