@@ -59,6 +59,7 @@ from core.keg_views import (
     edit_barrel,
     add_cups,
     tabs_list,
+    update_tab_name,
     update_tab_phone,
     bulk_convert_tabs_to_debt,
     tick_entry,
@@ -321,6 +322,7 @@ urlpatterns = [
     path("bar/cups/add/", add_cups, name="add_cups"),
     # ── Bar Tabs (Sprint 3) ───────────────────────────────────────────────────
     path("bar/tabs/", tabs_list, name="tabs_list"),
+    path("bar/tabs/<int:tab_id>/rename/", update_tab_name, name="update_tab_name"),
     path("bar/tabs/<int:tab_id>/phone/", update_tab_phone, name="update_tab_phone"),
     path("bar/tabs/bulk-convert-to-debt/", bulk_convert_tabs_to_debt, name="bulk_convert_tabs_to_debt"),
     path("bar/tabs/<int:tab_id>/settle/", settle_tab, name="settle_tab"),

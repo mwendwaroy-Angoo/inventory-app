@@ -2439,7 +2439,15 @@
           '<div class="tab-server-label">' + subLabel + '</div>' +
           staleHtmlF +
           (tab.cross_notice ? '<div style="font-size:.72rem;color:#f39c12;background:rgba(243,156,18,.07);border:1px solid rgba(243,156,18,.2);border-radius:5px;padding:.15rem .5rem;margin-bottom:.3rem;">🔀 ' + tab.cross_notice + '</div>' : '') +
-          receiptLinkHtmlF;
+          receiptLinkHtmlF +
+          '<div style="display:flex;gap:.3rem;align-items:center;margin:.3rem 0 .15rem;">' +
+          '<input type="text" id="tab-name-edit-' + tab.id + '" value="' + tab.customer_name.replace(/"/g,'&quot;') + '" ' +
+          'placeholder="👤 Jina la mteja" ' +
+          'onkeydown="if(event.key===\'Enter\')window.saveTabName(' + tab.id + ')" ' +
+          'style="flex:1;background:#111;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.2rem .5rem;font-size:.75rem;">' +
+          '<button onclick="window.saveTabName(' + tab.id + ')" ' +
+          'style="padding:.2rem .5rem;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);border-radius:6px;color:#c9a84c;font-size:.72rem;cursor:pointer;white-space:nowrap;">✏️ Badilisha</button>' +
+          '</div>';
 
         if (kitchenHtml) {
           html +=
@@ -2523,6 +2531,14 @@
           staleHtml +
           (tab.cross_notice ? '<div style="font-size:.72rem;color:#f39c12;background:rgba(243,156,18,.07);border:1px solid rgba(243,156,18,.2);border-radius:5px;padding:.15rem .5rem;margin-bottom:.3rem;">🔀 ' + tab.cross_notice + '</div>' : '') +
           receiptLinkHtml +
+          '<div style="display:flex;gap:.3rem;align-items:center;margin:.3rem 0 .15rem;">' +
+          '<input type="text" id="tab-name-edit-' + tab.id + '" value="' + tab.customer_name.replace(/"/g,'&quot;') + '" ' +
+          'placeholder="👤 Jina la mteja" ' +
+          'onkeydown="if(event.key===\'Enter\')window.saveTabName(' + tab.id + ')" ' +
+          'style="flex:1;background:#111;border:1px solid #3a3a3a;border-radius:6px;color:#f0ece4;padding:.2rem .5rem;font-size:.75rem;">' +
+          '<button onclick="window.saveTabName(' + tab.id + ')" ' +
+          'style="padding:.2rem .5rem;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);border-radius:6px;color:#c9a84c;font-size:.72rem;cursor:pointer;white-space:nowrap;">✏️ Badilisha</button>' +
+          '</div>' +
           '<div style="display:flex;gap:.3rem;align-items:center;margin:.3rem 0;">' +
           '<input type="tel" id="tab-phone-edit-' + tab.id + '" value="' + (tab.customer_phone || '') + '" ' +
           'placeholder="📞 Simu (kwa SMS risiti)" ' +
@@ -2553,6 +2569,20 @@
     });
 
     body.innerHTML = html;
+  };
+
+  window.saveTabName = function (tabId) {
+    var input = document.getElementById('tab-name-edit-' + tabId);
+    if (!input) return;
+    var name = input.value.trim();
+    if (!name) { showToast('Weka jina la mteja.'); return; }
+    post('/bar/tabs/' + tabId + '/rename/', {name: name})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) { showToast('✓ Jina limebadilishwa.'); window.loadTabs(); }
+        else showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao.'); });
   };
 
   window.saveTabPhone = function (tabId) {

@@ -2381,6 +2381,16 @@
                 '</div>' +
                 staleHtml +
                 receiptLinkHtml +
+                '<div style="display:flex;gap:.3rem;align-items:center;margin:.3rem 0 .15rem;">' +
+                '<input type="text" id="qs-tab-name-' + tab.id + '" value="' + tab.customer_name.replace(/"/g,'&quot;') + '" ' +
+                'placeholder="👤 Jina la mteja" ' +
+                'onkeydown="if(event.key===\'Enter\')qsSaveTabName(' + tab.id + ')" ' +
+                'style="flex:1;background:#111;border:1px solid #3a3a3a;border-radius:6px;' +
+                'color:#f0ece4;padding:.2rem .5rem;font-size:.75rem;">' +
+                '<button onclick="qsSaveTabName(' + tab.id + ')" ' +
+                'style="padding:.2rem .5rem;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);' +
+                'border-radius:6px;color:#c9a84c;font-size:.72rem;cursor:pointer;white-space:nowrap;">✏️ Badilisha</button>' +
+                '</div>' +
                 '<div style="display:flex;gap:.3rem;align-items:center;margin:.3rem 0;">' +
                 '<input type="tel" id="qs-tab-phone-' + tab.id + '" value="' + (tab.customer_phone || '') + '" ' +
                 'placeholder="📞 Simu ya mteja (hiari)" ' +
@@ -2534,6 +2544,24 @@
     };
 
     /* ── Save phone on existing QS tab ─────────────────────── */
+    window.qsSaveTabName = function (tabId) {
+        var input = document.getElementById('qs-tab-name-' + tabId);
+        if (!input) return;
+        var name = input.value.trim();
+        if (!name) { qsShowToast('Weka jina la mteja.'); return; }
+        var csrf = (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '';
+        var fd = new URLSearchParams();
+        fd.append('name', name);
+        fd.append('csrfmiddlewaretoken', csrf);
+        fetch('/bar/tabs/' + tabId + '/rename/', {method: 'POST', credentials: 'same-origin', body: fd})
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.ok) { qsShowToast('✓ Jina limebadilishwa.'); qsLoadTabs(); }
+                else qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+            })
+            .catch(function () { qsShowToast('Hitilafu ya mtandao.'); });
+    };
+
     window.qsSaveTabPhone = function (tabId) {
         var input = document.getElementById('qs-tab-phone-' + tabId);
         if (!input) return;

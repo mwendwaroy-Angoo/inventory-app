@@ -1104,6 +1104,34 @@ def tabs_list(request):
 
 @login_required
 @require_POST
+def update_tab_name(request, tab_id):
+    """Allow staff to rename the customer on an open tab (also updates linked Customer + Transaction.recipient)."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
+    new_name = (request.POST.get('name') or '').strip()
+    if not new_name:
+        return JsonResponse({'ok': False, 'error': 'Jina haliwezi kuwa tupu.'}, status=400)
+
+    old_name = tab.customer_name
+    tab.customer_name = new_name
+    tab.save(update_fields=['customer_name'])
+
+    if tab.customer_id:
+        tab.customer.name = new_name
+        tab.customer.save(update_fields=['name'])
+
+    # Propagate to Transaction.recipient so debt tracker shows the corrected name
+    Transaction.objects.filter(
+        id__in=tab.entries.values('transaction_id'),
+        recipient__iexact=old_name,
+    ).update(recipient=new_name)
+
+    return JsonResponse({'ok': True, 'customer_name': new_name})
+
+
 def update_tab_phone(request, tab_id):
     """Allow staff to add/update the customer phone number on an open tab."""
     up = _get_up(request)
