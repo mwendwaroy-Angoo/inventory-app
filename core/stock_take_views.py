@@ -391,27 +391,24 @@ def review_variance(request, var_id):
     if action == 'accept':
         corrective_txn = None
         try:
-            if (svq.direction == StockVarianceQuery.DECREASE
-                    and svq.response_type in (
-                        StockVarianceQuery.RESP_CASH,
-                        StockVarianceQuery.RESP_MPESA,
-                        StockVarianceQuery.RESP_CREDIT,
-                    )
-                    and svq.item):
+            _pay = svq.response_type or 'cash'  # default to cash when no staff response
+            if svq.direction == StockVarianceQuery.DECREASE and svq.item:
+                # Create corrective Issue for any decrease regardless of response type.
+                # When staff responded with UNKNOWN/NO_INTERNET/RECEIPT, record as cash
+                # adjustment (owner is accepting the stock count as ground truth).
+                _pay_for_txn = _pay if _pay in ('cash', 'mpesa', 'credit') else 'cash'
                 corrective_txn = Transaction.objects.create(
                     business=business,
                     item=svq.item,
                     type='Issue',
                     qty=abs(svq.variance),
                     sale_amount=(svq.estimated_revenue if svq.estimated_revenue else None),
-                    payment_method=svq.response_type,
+                    payment_method=_pay_for_txn,
                     recipient=svq.response_customer or '',
                     recorded_by=request.user,
                     date=svq.stock_take.taken_at.date(),
                 )
-            elif (svq.direction == StockVarianceQuery.INCREASE
-                  and svq.response_type == StockVarianceQuery.RESP_RECEIPT
-                  and svq.item):
+            elif (svq.direction == StockVarianceQuery.INCREASE and svq.item):
                 corrective_txn = Transaction.objects.create(
                     business=business,
                     item=svq.item,

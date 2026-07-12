@@ -101,6 +101,21 @@
         <div style="margin-top:0.6rem; font-size:0.78rem; color:#b0b0b0;">
             Hesabu: {{ v.book_balance|floatformat:"-2" }} (App) → {{ v.actual_count|floatformat:"-2" }} (Halisi)
         </div>
+
+        {% if is_owner %}
+        <div class="d-flex gap-2 flex-wrap" style="margin-top:0.75rem; padding-top:0.65rem; border-top:1px solid #2a2a2a;">
+            <button onclick="reviewVariance({{ v.id }}, 'accept', '{{ v.item_name_cache|escapejs }}', true)"
+                class="btn btn-sm"
+                style="background:rgba(110,231,183,0.08); border:1px solid rgba(110,231,183,0.25); color:#6ee7b7;">
+                ✅ {% trans 'Kubali bila jibu' %}
+            </button>
+            <button onclick="reviewVariance({{ v.id }}, 'dismiss', '{{ v.item_name_cache|escapejs }}', true)"
+                class="btn btn-sm"
+                style="background:rgba(192,57,90,0.08); border:1px solid rgba(192,57,90,0.25); color:#c0395a;">
+                ❌ {% trans 'Kataa — Rekodi Utendaji' %}
+            </button>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endfor %}
@@ -206,10 +221,17 @@ function _csrf() {
     return el ? el.value : '';
 }
 
-function reviewVariance(varId, action, itemName) {
-    var label = action === 'accept'
-        ? 'Kubali jibu la mfanyakazi na uunde transaction ya ' + itemName + '?'
-        : 'Kataa jibu la mfanyakazi na urekodi kama tatizo la utendaji?';
+function reviewVariance(varId, action, itemName, noPriorResponse) {
+    var label;
+    if (noPriorResponse) {
+        label = action === 'accept'
+            ? 'Kubali tofauti ya ' + itemName + ' bila jibu la mfanyakazi?\n\nTransaction ya marekebisho itaundwa.'
+            : 'Kataa tofauti ya ' + itemName + ' bila jibu la mfanyakazi?\n\nItarekodiwa kwenye rekodi ya utendaji wake.';
+    } else {
+        label = action === 'accept'
+            ? 'Kubali jibu la mfanyakazi na uunde transaction ya ' + itemName + '?'
+            : 'Kataa jibu la mfanyakazi na urekodi kama tatizo la utendaji?';
+    }
     if (!confirm(label)) return;
 
     fetch('/stock/variances/' + varId + '/review/', {
