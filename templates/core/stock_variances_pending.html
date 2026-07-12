@@ -106,14 +106,71 @@
         <div class="d-flex gap-2 flex-wrap" style="margin-top:0.75rem; padding-top:0.65rem; border-top:1px solid #2a2a2a;">
             <button onclick="reviewVariance({{ v.id }}, 'accept', '{{ v.item_name_cache|escapejs }}', true)"
                 class="btn btn-sm"
-                style="background:rgba(110,231,183,0.08); border:1px solid rgba(110,231,183,0.25); color:#6ee7b7;">
-                ✅ {% trans 'Kubali bila jibu' %}
+                style="background:rgba(110,231,183,0.06); border:1px solid rgba(110,231,183,0.2); color:#6ee7b7;">
+                ⚡ {% trans 'Mauzo ya Kawaida (Cash)' %}
+            </button>
+            <button onclick="toggleReasonForm({{ v.id }})"
+                id="reason-toggle-{{ v.id }}"
+                class="btn btn-sm"
+                style="background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3); color:var(--gold);">
+                📝 {% trans 'Kubali na Sababu' %}
             </button>
             <button onclick="reviewVariance({{ v.id }}, 'dismiss', '{{ v.item_name_cache|escapejs }}', true)"
                 class="btn btn-sm"
                 style="background:rgba(192,57,90,0.08); border:1px solid rgba(192,57,90,0.25); color:#c0395a;">
-                ❌ {% trans 'Kataa — Rekodi Utendaji' %}
+                ❌ {% trans 'Kataa' %}
             </button>
+        </div>
+
+        <!-- Inline reason form — hidden until "Kubali na Sababu" is clicked -->
+        <div id="reason-form-{{ v.id }}" style="display:none; margin-top:0.75rem; padding:0.85rem; background:rgba(201,168,76,0.04); border:1px solid rgba(201,168,76,0.2); border-radius:8px;">
+            <div style="color:var(--gold); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.7rem;">{% trans 'Taja sababu ya tofauti' %}</div>
+
+            <div class="d-flex flex-wrap gap-3 mb-3" style="font-size:0.82rem;">
+                <label style="display:flex; align-items:center; gap:0.4rem; color:var(--pearl); cursor:pointer;">
+                    <input type="radio" name="rtype-{{ v.id }}" value="cash" checked
+                           onchange="onRtypeChange({{ v.id }}, this.value)">
+                    💵 {% trans 'Pesa Taslimu' %}
+                </label>
+                <label style="display:flex; align-items:center; gap:0.4rem; color:var(--pearl); cursor:pointer;">
+                    <input type="radio" name="rtype-{{ v.id }}" value="mpesa"
+                           onchange="onRtypeChange({{ v.id }}, this.value)">
+                    📱 M-Pesa
+                </label>
+                <label style="display:flex; align-items:center; gap:0.4rem; color:var(--pearl); cursor:pointer;">
+                    <input type="radio" name="rtype-{{ v.id }}" value="credit"
+                           onchange="onRtypeChange({{ v.id }}, this.value)">
+                    📒 {% trans 'Deni (Credit)' %}
+                </label>
+                <label style="display:flex; align-items:center; gap:0.4rem; color:#b0b0b0; cursor:pointer;">
+                    <input type="radio" name="rtype-{{ v.id }}" value="wastage"
+                           onchange="onRtypeChange({{ v.id }}, this.value)">
+                    🗑️ {% trans 'Kipotea / Haijulikani' %}
+                </label>
+            </div>
+
+            <div id="customer-row-{{ v.id }}" style="display:none; margin-bottom:0.6rem;">
+                <input type="text" id="customer-{{ v.id }}" maxlength="100"
+                       placeholder="{% trans 'Jina la mteja (si lazima)' %}"
+                       style="width:100%; background:#1a1a1a; border:1px solid #444; color:var(--pearl);
+                              border-radius:6px; padding:0.45rem 0.75rem; font-size:0.85rem; outline:none;">
+            </div>
+
+            <div style="margin-bottom:0.6rem;">
+                <input type="text" id="note-{{ v.id }}" maxlength="200"
+                       placeholder="{% trans 'Maelezo ya ziada (si lazima)' %}"
+                       style="width:100%; background:#1a1a1a; border:1px solid #444; color:var(--pearl);
+                              border-radius:6px; padding:0.45rem 0.75rem; font-size:0.85rem; outline:none;">
+            </div>
+
+            <div class="d-flex gap-2">
+                <button onclick="submitReasonAccept({{ v.id }}, '{{ v.item_name_cache|escapejs }}')"
+                        class="btn btn-sm btn-gold">
+                    ✅ {% trans 'Kubali na Sababu Hii' %}
+                </button>
+                <button onclick="toggleReasonForm({{ v.id }})" class="btn btn-sm"
+                        style="border:1px solid #444; color:#b0b0b0;">{% trans 'Ghairi' %}</button>
+            </div>
         </div>
         {% endif %}
     </div>
@@ -219,6 +276,48 @@
 function _csrf() {
     var el = document.querySelector('[name=csrfmiddlewaretoken]');
     return el ? el.value : '';
+}
+
+function toggleReasonForm(varId) {
+    var form = document.getElementById('reason-form-' + varId);
+    var btn  = document.getElementById('reason-toggle-' + varId);
+    var open = form.style.display === 'none' || form.style.display === '';
+    form.style.display = open ? 'block' : 'none';
+    if (btn) btn.style.background = open ? 'rgba(201,168,76,0.18)' : 'rgba(201,168,76,0.08)';
+}
+
+function onRtypeChange(varId, val) {
+    var row = document.getElementById('customer-row-' + varId);
+    if (row) row.style.display = val === 'credit' ? 'block' : 'none';
+}
+
+function submitReasonAccept(varId, itemName) {
+    var rtypeEl  = document.querySelector('input[name="rtype-' + varId + '"]:checked');
+    var rtype    = rtypeEl ? rtypeEl.value : 'cash';
+    var customer = (document.getElementById('customer-' + varId) || {value:''}).value.trim();
+    var note     = (document.getElementById('note-' + varId) || {value:''}).value.trim();
+
+    var labels = {cash: 'mauzo ya pesa taslimu', mpesa: 'mauzo ya M-Pesa',
+                  credit: customer ? 'deni la ' + customer : 'deni (mteja hajatajwa)', wastage: 'stock iliyopotea/haijulikani'};
+    var label = 'Kubali tofauti ya "' + itemName + '" kama ' + (labels[rtype] || rtype) + '?';
+    if (rtype !== 'wastage') label += '\n\nTransaction ya Issue itaundwa.';
+    else label += '\n\nTransaction ya Wastage itaundwa (bila mapato).';
+    if (!confirm(label)) return;
+
+    var fd = new FormData();
+    fd.append('action', 'accept');
+    fd.append('owner_response_type', rtype);
+    fd.append('owner_response_customer', customer);
+    fd.append('owner_response_note', note);
+    fd.append('csrfmiddlewaretoken', _csrf());
+
+    fetch('/stock/variances/' + varId + '/review/', { method: 'POST', body: fd })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.ok) { alert('✅ ' + (d.message || 'Imekamilika.')); location.reload(); }
+            else { alert(d.error || 'Hitilafu. Jaribu tena.'); }
+        })
+        .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
 }
 
 function reviewVariance(varId, action, itemName, noPriorResponse) {

@@ -391,23 +391,44 @@ def review_variance(request, var_id):
     if action == 'accept':
         corrective_txn = None
         try:
-            _pay = svq.response_type or 'cash'  # default to cash when no staff response
+            # Staff-responded variances use the staff's response type.
+            # Pending variances accept an owner-provided reason via POST.
+            if svq.response_type:
+                _pay      = svq.response_type
+                _customer = svq.response_customer or ''
+            else:
+                _pay      = request.POST.get('owner_response_type', 'cash').strip()
+                _customer = request.POST.get('owner_response_customer', '').strip()
+
+            _owner_note = request.POST.get('owner_response_note', '').strip()
+
             if svq.direction == StockVarianceQuery.DECREASE and svq.item:
-                # Create corrective Issue for any decrease regardless of response type.
-                # When staff responded with UNKNOWN/NO_INTERNET/RECEIPT, record as cash
-                # adjustment (owner is accepting the stock count as ground truth).
-                _pay_for_txn = _pay if _pay in ('cash', 'mpesa', 'credit') else 'cash'
-                corrective_txn = Transaction.objects.create(
-                    business=business,
-                    item=svq.item,
-                    type='Issue',
-                    qty=abs(svq.variance),
-                    sale_amount=(svq.estimated_revenue if svq.estimated_revenue else None),
-                    payment_method=_pay_for_txn,
-                    recipient=svq.response_customer or '',
-                    recorded_by=request.user,
-                    date=svq.stock_take.taken_at.date(),
-                )
+                if _pay == 'wastage':
+                    # Owner says cause is unknown — record as wastage, no revenue
+                    corrective_txn = Transaction.objects.create(
+                        business=business,
+                        item=svq.item,
+                        type='Wastage',
+                        qty=abs(svq.variance),
+                        payment_method='',
+                        recipient=_owner_note or 'Stock adjustment — cause unknown',
+                        recorded_by=request.user,
+                        date=svq.stock_take.taken_at.date(),
+                    )
+                else:
+                    # Unrecorded sale — cash / mpesa / credit
+                    _pay_for_txn = _pay if _pay in ('cash', 'mpesa', 'credit') else 'cash'
+                    corrective_txn = Transaction.objects.create(
+                        business=business,
+                        item=svq.item,
+                        type='Issue',
+                        qty=abs(svq.variance),
+                        sale_amount=(svq.estimated_revenue if svq.estimated_revenue else None),
+                        payment_method=_pay_for_txn,
+                        recipient=_customer,
+                        recorded_by=request.user,
+                        date=svq.stock_take.taken_at.date(),
+                    )
             elif (svq.direction == StockVarianceQuery.INCREASE and svq.item):
                 corrective_txn = Transaction.objects.create(
                     business=business,
@@ -415,6 +436,7 @@ def review_variance(request, var_id):
                     type='Receipt',
                     qty=svq.variance,
                     payment_method='',
+                    recipient=_owner_note or '',
                     recorded_by=request.user,
                     date=svq.stock_take.taken_at.date(),
                 )
