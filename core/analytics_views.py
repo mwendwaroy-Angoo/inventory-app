@@ -382,7 +382,7 @@ def analytics_dashboard(request):
 
     profit_margin = round(cur_profit / cur_revenue * 100, 1) if cur_revenue > 0 else 0
 
-    # ── Net Profit (gross profit - expenses - owner drawings) ──
+    # ── Net Profit (gross profit - expenses - drawings - wastage - void losses) ──
     total_expenses = BusinessExpense.objects.filter(
         business=business,
         date__gte=start_date,
@@ -400,7 +400,40 @@ def analytics_dashboard(request):
         for t in owner_drawing_txns
     ), 2)
 
-    net_profit = cur_profit - float(total_expenses) - owner_drawings_cost
+    # Wastage loss: cost of stock discarded, broken, or adjusted out — no revenue received.
+    # Uses cost_price × |qty| for each Wastage transaction in the period.
+    wastage_txns = Transaction.objects.filter(
+        business=business,
+        type='Wastage',
+        date__gte=start_date,
+        date__lte=today,
+    ).select_related('item')
+    wastage_loss = round(sum(
+        abs(float(t.qty or 0)) * float(t.item.cost_price or 0)
+        for t in wastage_txns
+        if t.item and t.item.cost_price
+    ), 2)
+
+    # Void/write-off loss: stock was served but payment was cancelled/waived.
+    # Revenue was already excluded from cur_revenue (payment_method='void' excluded from
+    # current_sales). But the COGS of those goods is also excluded, overstating gross profit.
+    # Add back the cost here so net_profit reflects the true position.
+    void_txns = Transaction.objects.filter(
+        business=business,
+        type='Issue',
+        payment_method='void',
+        date__gte=start_date,
+        date__lte=today,
+    ).select_related('item')
+    void_loss = round(sum(
+        abs(float(t.qty or 0)) * float(t.item.cost_price or 0)
+        for t in void_txns
+        if t.item and t.item.cost_price
+    ), 2)
+
+    total_losses = round(wastage_loss + void_loss, 2)
+
+    net_profit = cur_profit - float(total_expenses) - owner_drawings_cost - total_losses
 
     # ── Break-Even Analysis (all-time, not period-filtered) ──────────────────────
     total_capital = float(
@@ -893,9 +926,12 @@ def analytics_dashboard(request):
         'avg_daily_revenue': avg_daily_revenue,
         'active_days': active_days,
 
-        # Expenses, Drawings & Net Profit
+        # Expenses, Drawings, Losses & Net Profit
         'total_expenses': round(float(total_expenses), 2),
         'owner_drawings_cost': owner_drawings_cost,
+        'wastage_loss': wastage_loss,
+        'void_loss': void_loss,
+        'total_losses': total_losses,
         'net_profit': round(net_profit, 2),
         # Market Day Intelligence
         'market_day_labels': json.dumps(day_names),
