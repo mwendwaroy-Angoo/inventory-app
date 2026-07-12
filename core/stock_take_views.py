@@ -198,7 +198,7 @@ def start_stock_take(request):
             'store_name':      item.store.name if item.store else '',
             'volume_ml':       item.volume_ml,
             'selling_price':   float(item.selling_price) if item.selling_price else None,
-            'material_number': item.material_number or '',
+            'material_number': item.material_no or '',
         })
 
     stores = Store.objects.filter(business=business).order_by('name')
