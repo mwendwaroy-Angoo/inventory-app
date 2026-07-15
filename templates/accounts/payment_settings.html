@@ -736,6 +736,33 @@
 </div>
 {% endif %}
 
+{% if biz_profile.modules.keg %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card mb-4">
+      <div class="card-header">
+        <h5 class="mb-0">🪧 {% trans 'Wall Tab QR — Scan to View Your Bill' %}</h5>
+      </div>
+      <div class="card-body">
+        <p style="color: #b0b0b0; font-size: 0.875rem; margin-bottom: 1.1rem;">
+          {% trans 'Print, laminate, and mount this QR code on your bar wall. Customers scan it with their phone camera, type their name or 4-digit tab PIN, and see their own running tab — no app or login needed.' %}
+        </p>
+        <p style="color: #b0b0b0; font-size: 0.82rem; margin-bottom: 1.2rem;">
+          <strong style="color: #c9a84c;">PIN:</strong>
+          {% trans 'When a tab is opened, a 4-digit PIN is shown in the tabs drawer next to the customer name. The bartender reads it aloud so the customer can use it to find their tab.' %}
+        </p>
+        <div id="wallQrBox" style="width:180px; height:180px; background:#f0ece4; padding:8px; border-radius:10px; display:inline-block;"></div>
+        <div class="mt-3">
+          <button onclick="window.print()" class="btn btn-sm" style="color:var(--gold); border:1px solid rgba(201,168,76,0.5);">
+            🖨️ {% trans 'Print QR' %}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block extra_js %}
@@ -783,5 +810,33 @@
     });
   });
 })();
+
+// Wall Tab QR
+(function () {
+  var qrBox = document.getElementById('wallQrBox');
+  if (!qrBox) return;
+  function _genWallQr() {
+    new QRCode(qrBox, {
+      text: window.location.origin + '/bar/find-tab/{{ business.id }}/',
+      width: 164, height: 164,
+      colorDark: '#1a1a1a', colorLight: '#f0ece4',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+  }
+  if (typeof QRCode !== 'undefined') {
+    _genWallQr();
+  } else {
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    s.onload = _genWallQr;
+    document.head.appendChild(s);
+  }
+})();
 </script>
+<style>
+@media print {
+  body > *:not(#wallQrBox) { display: none !important; }
+  #wallQrBox { display: block !important; margin: 60px auto; }
+}
+</style>
 {% endblock %}

@@ -245,6 +245,7 @@ def bar_board(request):
                 ).first()
                 if not active_tab:
                     import secrets as _secrets
+                    import random as _random
                     first_barrel = None
                     for entry in cart:
                         try:
@@ -262,6 +263,7 @@ def bar_board(request):
                         server_name=tab_server,
                         served_by=request.user if not tab_server else None,
                         tab_receipt_token=_secrets.token_urlsafe(20),
+                        tab_pin=str(_random.randint(1000, 9999)),
                     )
 
         receipt_lines = []
@@ -1062,6 +1064,7 @@ def tabs_list(request):
                 'is_food_tab': tab.source == 'kitchen',
                 'cross_notice': cross_notice,
                 'receipt_url': _rcpt_url,
+                'tab_pin': tab.tab_pin,
             })
         else:
             # Bar-only staff: see only bar (non-kitchen) entries
@@ -1097,6 +1100,7 @@ def tabs_list(request):
                 'is_food_tab': tab.source == 'kitchen',
                 'cross_notice': cross_notice,
                 'receipt_url': _rcpt_url,
+                'tab_pin': tab.tab_pin,
             })
 
     return JsonResponse({'tabs': result, 'bar_only_view': not _see_all})
@@ -2549,3 +2553,70 @@ def voided_tabs_list(request):
         'date_to': date_to,
         'today': today,
     })
+
+
+def find_tab_public(request, business_id):
+    """Public landing page for the wall-mounted bar QR — no login required.
+
+    Renders a search form. The actual lookup is handled by find_tab_search (AJAX).
+    """
+    from accounts.models import Business as _Business
+    business = get_object_or_404(_Business, id=business_id)
+    open_count = BarTab.objects.filter(business=business, status='OPEN').count()
+    return render(request, 'core/find_tab.html', {
+        'business': business,
+        'open_count': open_count,
+        'search_url': f'/bar/find-tab/{business_id}/search/',
+    })
+
+
+def find_tab_search(request, business_id):
+    """Public AJAX name-or-PIN lookup for find_tab_public — no login required.
+
+    GET ?q=<query>
+    - 4-digit numeric string → PIN lookup → returns {'redirect': '/tab/<token>/'}
+    - Text string → name icontains search → returns {'tabs': [...]}
+    Rate-limited to 5 calls/minute per IP to prevent enumeration.
+    """
+    from django.core.cache import cache
+    from accounts.models import Business as _Business
+
+    ip = request.META.get('HTTP_X_FORWARDED_FOR', '') or request.META.get('REMOTE_ADDR', '')
+    ip = ip.split(',')[0].strip()
+    rate_key = f'find_tab_rl:{business_id}:{ip}'
+    calls = cache.get(rate_key, 0)
+    if calls >= 5:
+        return JsonResponse({'error': 'Subiri kidogo', 'tabs': []}, status=429)
+    cache.set(rate_key, calls + 1, timeout=60)
+
+    q = request.GET.get('q', '').strip()
+    if len(q) < 2:
+        return JsonResponse({'tabs': []})
+
+    business = get_object_or_404(_Business, id=business_id)
+
+    # PIN lookup: exactly 4 digits → direct token redirect
+    if q.isdigit() and len(q) == 4:
+        tab = BarTab.objects.filter(
+            business=business, status='OPEN', tab_pin=q,
+        ).first()
+        if tab and tab.tab_receipt_token:
+            return JsonResponse({'tabs': [], 'redirect': f'/tab/{tab.tab_receipt_token}/'})
+        return JsonResponse({'tabs': [], 'pin_not_found': True})
+
+    # Name search: case-insensitive substring match
+    tabs = BarTab.objects.filter(
+        business=business, status='OPEN',
+        customer_name__icontains=q,
+    ).order_by('-opened_at')[:10]
+
+    results = []
+    for t in tabs:
+        if not t.tab_receipt_token:
+            continue  # pre-migration 0092 tabs have no token — skip silently
+        results.append({
+            'name': t.customer_name or '—',
+            'token': t.tab_receipt_token,
+            'opened_at': t.opened_at.strftime('%I:%M %p'),
+        })
+    return JsonResponse({'tabs': results})

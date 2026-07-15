@@ -76,6 +76,8 @@ from core.keg_views import (
     bar_z_report,
     bar_z_report_share,
     voided_tabs_list,
+    find_tab_public,
+    find_tab_search,
 )
 from core.shift_views import (
     open_shift,
@@ -199,7 +201,7 @@ from core.recurring_expense_views import (
     recurring_expense_review,
     recurring_expense_confirm,
 )
-from core.receipt_views import receipts_list, public_receipt, send_receipt, receipt_live_status, receipt_pay
+from core.receipt_views import receipts_list, public_receipt, send_receipt, receipt_live_status, receipt_pay, tab_live_view
 from core.onboarding_views import mark_section_seen
 from core.restricted_items_views import (
     request_sale_approval, pending_approvals,
@@ -618,6 +620,10 @@ urlpatterns = [
     path("r/<str:token>/live/", receipt_live_status, name="receipt_live_status"),
     path("r/<str:token>/pay/", receipt_pay, name="receipt_pay"),
     path("receipts/<int:receipt_id>/send/", send_receipt, name="send_receipt"),
+    # ── Scan to View Your Bill — wall QR ─────────────────────────────────────
+    path("tab/<str:token>/", tab_live_view, name="tab_live_view"),
+    path("bar/find-tab/<int:business_id>/", find_tab_public, name="find_tab_public"),
+    path("bar/find-tab/<int:business_id>/search/", find_tab_search, name="find_tab_search"),
     # ── Compliance & Licensing ──
     path("analytics/compliance/", compliance_checklist, name="compliance_checklist"),
     # ── Analytics ──

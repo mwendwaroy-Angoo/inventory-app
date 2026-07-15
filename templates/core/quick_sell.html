@@ -2373,7 +2373,7 @@
             html +=
                 '<div class="qs-tab-card" id="qs-tab-card-' + tab.id + '">' +
                 '<div class="qs-tab-head">' +
-                '<span class="qs-tab-cust">' + tab.customer_name + '</span>' +
+                '<span class="qs-tab-cust">' + tab.customer_name + (tab.tab_pin ? '<span style="font-size:0.72rem;color:#b0b0b0;margin-left:6px;">PIN: ' + tab.tab_pin + '</span>' : '') + '</span>' +
                 '<span class="qs-tab-total">KES ' + qsFmt(tab.unpaid_total) + '</span>' +
                 '</div>' +
                 '<div class="qs-tab-server">' +

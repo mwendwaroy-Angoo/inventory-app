@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="sw">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tafuta Tab Yako — {{ business.name }}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --onyx: #1a1a1a; --card: #242424; --gold: #c9a84c; --gold-l: #e2c36e;
+    --pearl: #f0ece4; --rasp: #c0395a; --muted: #b0b0b0;
+    --border: rgba(201,168,76,0.18);
+  }
+  body {
+    background: var(--onyx); color: var(--pearl);
+    font-family: 'DM Sans', system-ui, sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 2.5rem 1rem 3rem;
+  }
+  .hero { text-align: center; margin-bottom: 2rem; }
+  .biz-name {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.5rem; color: var(--gold); letter-spacing: 0.02em;
+  }
+  .tagline { font-size: 0.88rem; color: var(--muted); margin-top: 0.35rem; }
+  .open-count {
+    display: inline-block; background: rgba(201,168,76,0.1);
+    border: 1px solid var(--border); border-radius: 20px;
+    font-size: 0.78rem; color: var(--gold-l);
+    padding: 0.25rem 0.75rem; margin-top: 0.65rem;
+  }
+  .search-card {
+    width: 100%; max-width: 420px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 1.5rem 1.3rem;
+  }
+  .search-label {
+    display: block; font-size: 0.8rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.55rem;
+  }
+  .search-input {
+    width: 100%; background: var(--onyx); border: 1px solid var(--border);
+    border-radius: 10px; color: var(--pearl); font-size: 1.1rem;
+    padding: 0.75rem 1rem; outline: none; font-family: inherit;
+    transition: border-color 0.15s;
+  }
+  .search-input:focus { border-color: var(--gold); }
+  .search-hint {
+    font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem; text-align: center;
+  }
+  .results { margin-top: 1.2rem; }
+  .tab-card {
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--onyx); border: 1px solid var(--border);
+    border-radius: 10px; padding: 0.75rem 1rem; margin-bottom: 0.5rem;
+    cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    text-decoration: none; color: inherit;
+  }
+  .tab-card:hover, .tab-card:active {
+    border-color: var(--gold); background: rgba(201,168,76,0.07);
+  }
+  .tab-name { font-size: 0.95rem; font-weight: 500; }
+  .tab-time { font-size: 0.78rem; color: var(--muted); margin-top: 0.12rem; }
+  .tab-arrow { color: var(--gold); font-size: 1.1rem; }
+  .empty-msg {
+    text-align: center; color: var(--muted); font-size: 0.88rem;
+    margin-top: 1rem; padding: 0.5rem;
+  }
+  .error-msg {
+    text-align: center; color: var(--rasp); font-size: 0.85rem;
+    margin-top: 1rem;
+  }
+  .footer {
+    margin-top: 2.5rem; font-size: 0.72rem; color: var(--muted); text-align: center;
+  }
+  .spinner {
+    text-align: center; color: var(--muted); font-size: 0.85rem;
+    margin-top: 1rem; display: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="biz-name">{{ business.name }}</div>
+  <div class="tagline">Tafuta Tab Yako</div>
+  {% if open_count %}
+  <div class="open-count">{{ open_count }} tab{% if open_count != 1 %}s{% endif %} zinafanya kazi sasa</div>
+  {% endif %}
+</div>
+
+<div class="search-card">
+  <label class="search-label" for="q">Jina lako au PIN ya tab</label>
+  <input type="text" id="q" class="search-input"
+         placeholder="e.g. John au 4827"
+         autocomplete="off" autocorrect="off" spellcheck="false"
+         inputmode="text">
+  <p class="search-hint">Mwulize bartender PIN yako ukisahau</p>
+  <div class="spinner" id="spinner">Inatafuta…</div>
+  <div class="results" id="results"></div>
+</div>
+
+<p class="footer">Powered by <strong>Duka Mwecheche</strong></p>
+
+<script>
+(function () {
+  var input = document.getElementById('q');
+  var results = document.getElementById('results');
+  var spinner = document.getElementById('spinner');
+  var timer = null;
+  var searchUrl = "{{ search_url }}";
+
+  function render(data) {
+    spinner.style.display = 'none';
+    if (data.redirect) {
+      window.location.href = data.redirect;
+      return;
+    }
+    if (data.pin_not_found) {
+      results.innerHTML = '<p class="empty-msg">PIN haikupatikana. Jaribu jina lako badala yake.</p>';
+      return;
+    }
+    if (data.error) {
+      results.innerHTML = '<p class="error-msg">' + data.error + '</p>';
+      return;
+    }
+    if (!data.tabs || data.tabs.length === 0) {
+      var q = input.value.trim();
+      results.innerHTML = q.length >= 2
+        ? '<p class="empty-msg">Hakuna tab kwa tafuta hiyo.</p>'
+        : '';
+      return;
+    }
+    var html = '';
+    data.tabs.forEach(function (tab) {
+      var name = tab.name || '—';
+      html += '<a class="tab-card" href="/tab/' + tab.token + '/">' +
+        '<div><div class="tab-name">' + name + '</div>' +
+        '<div class="tab-time">Imefunguliwa saa ' + tab.opened_at + '</div></div>' +
+        '<span class="tab-arrow">›</span></a>';
+    });
+    results.innerHTML = html;
+  }
+
+  function doSearch(q) {
+    if (q.length < 2) { results.innerHTML = ''; return; }
+    spinner.style.display = 'block';
+    results.innerHTML = '';
+    fetch(searchUrl + '?q=' + encodeURIComponent(q))
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function () {
+        spinner.style.display = 'none';
+        results.innerHTML = '<p class="error-msg">Hitilafu ya mtandao. Jaribu tena.</p>';
+      });
+  }
+
+  input.addEventListener('input', function () {
+    clearTimeout(timer);
+    var q = input.value.trim();
+    if (!q) { results.innerHTML = ''; return; }
+    timer = setTimeout(function () { doSearch(q); }, 400);
+  });
+})();
+</script>
+</body>
+</html>

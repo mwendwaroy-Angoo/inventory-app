@@ -513,3 +513,47 @@ def receipt_pay(request, token):
     except Exception:
         logger.exception('receipt_pay STK failed token=%s', token)
         return JsonResponse({'error': 'stk_failed'}, status=500)
+
+
+def tab_live_view(request, token):
+    """Public live-bill page for a bar tab — no login required.
+
+    Reached by scanning the wall QR → find_tab page → typing name or PIN.
+    Shows all non-voided tab entries with running total and outstanding balance.
+    Auto-refreshes every 20 seconds so customers see new items as they're added.
+    """
+    from decimal import Decimal as _Decimal
+    from .models import BarTab as _BarTab
+    tab = get_object_or_404(_BarTab, tab_receipt_token=token)
+    entries = (
+        tab.entries
+        .exclude(payment_method='void')
+        .order_by('id')
+        .select_related('transaction__item__store')
+    )
+    lines = []
+    outstanding = _Decimal('0')
+    for e in entries:
+        try:
+            is_k = e.transaction.item.store.is_kitchen
+        except Exception:
+            is_k = False
+        icon = '🍽 ' if is_k else '🍺 '
+        amt = e.amount
+        if not e.is_paid:
+            outstanding += amt
+        lines.append({
+            'icon': icon,
+            'description': e.description,
+            'amount': float(amt),
+            'is_paid': e.is_paid,
+        })
+    total_val = sum(_Decimal(str(l['amount'])) for l in lines)
+    return render(request, 'core/tab_live.html', {
+        'tab': tab,
+        'business': tab.business,
+        'lines': lines,
+        'outstanding': float(outstanding),
+        'total': float(total_val),
+        'is_settled': tab.status in ('SETTLED', 'VOID'),
+    })

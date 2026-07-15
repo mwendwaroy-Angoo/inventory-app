@@ -1948,6 +1948,7 @@
         return '<div style="background:#2a2a2a;border:1px solid rgba(201,168,76,.25);border-radius:10px;padding:.65rem .75rem;margin-bottom:.6rem;">' +
                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem;">' +
                '<div><strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +
+               (tab.tab_pin ? '<span style="font-size:0.72rem;color:#b0b0b0;margin-left:6px;">PIN: ' + tab.tab_pin + '</span>' : '') +
                '<span style="margin-left:.4rem;font-size:.7rem;background:rgba(201,168,76,.12);color:#c9a84c;border:1px solid rgba(201,168,76,.3);border-radius:4px;padding:1px 6px;">🍺 Bar Tab</span></div>' +
                '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
                entriesHtml +
@@ -1975,7 +1976,8 @@
 
       return '<div style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:10px;padding:.65rem .75rem;margin-bottom:.6rem;">' +
              '<div style="display:flex;justify-content:space-between;margin-bottom:.35rem;">' +
-             '<strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +
+             '<span><strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' +
+             (tab.tab_pin ? '<span style="font-size:0.72rem;color:#b0b0b0;margin-left:6px;">PIN: ' + tab.tab_pin + '</span>' : '') + '</span>' +
              '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
              staleHtml +
              receiptLink +

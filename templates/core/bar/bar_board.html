@@ -2433,7 +2433,7 @@
         html +=
           '<div class="tab-card" id="tab-card-' + tab.id + '" style="border-color:rgba(201,168,76,.3);">' +
           '<div class="tab-card-head">' +
-          '<span class="tab-cust-name">' + tab.customer_name + tabBadge + '</span>' +
+          '<span class="tab-cust-name">' + tab.customer_name + tabBadge + (tab.tab_pin ? '<span style="font-size:0.72rem;color:#b0b0b0;margin-left:6px;">PIN: ' + tab.tab_pin + '</span>' : '') + '</span>' +
           '<span class="tab-unpaid-amt" id="tab-unpaid-' + tab.id + '">KES ' + fmt(tab.unpaid_total) + '</span>' +
           '</div>' +
           '<div class="tab-server-label">' + subLabel + '</div>' +
@@ -2522,7 +2522,7 @@
         html +=
           '<div class="tab-card" id="tab-card-' + tab.id + '">' +
           '<div class="tab-card-head">' +
-          '<span class="tab-cust-name">' + tab.customer_name + tabBadge + '</span>' +
+          '<span class="tab-cust-name">' + tab.customer_name + tabBadge + (tab.tab_pin ? '<span style="font-size:0.72rem;color:#b0b0b0;margin-left:6px;">PIN: ' + tab.tab_pin + '</span>' : '') + '</span>' +
           '<span class="tab-unpaid-amt" id="tab-unpaid-' + tab.id + '">KES ' + fmt(tab.unpaid_total) + '</span>' +
           '</div>' +
           (tab.server_name

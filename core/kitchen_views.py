@@ -448,6 +448,7 @@ def _kitchen_checkout(request, up, business, is_owner):
         ).first()
         if not active_tab and payment_method == 'food_tab':
             import secrets as _secrets
+            import random as _random
             active_tab = BarTab.objects.create(
                 business=business,
                 store=kitchen_store,
@@ -455,6 +456,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 source='kitchen',
                 served_by=request.user,
                 tab_receipt_token=_secrets.token_urlsafe(20),
+                tab_pin=str(_random.randint(1000, 9999)),
             )
         elif not active_tab and payment_method == 'bar_tab':
             return JsonResponse({'ok': False, 'error': f'Hakuna tab wazi kwa "{tab_customer}"'}, status=400)
