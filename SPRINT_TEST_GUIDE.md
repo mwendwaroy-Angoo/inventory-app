@@ -11,7 +11,7 @@ Run with:
 python manage.py test
 ```
 
-Expected: **126 tests, 0 failures** (84 original + K3/K4/SG/K5/K6/DJ1/DJ3 additions; pre-existing 301 trailing-slash failures in K2a–K6 tests are known and non-blocking).
+Expected: **117 tests, 0 failures** (84 original + K3/K4/SG/K5/K6/DJ1/DJ3 additions; pre-existing 301 trailing-slash failures in K2a–K6 tests are known and non-blocking).
 
 ### Full test list (`core/tests.py`)
 
@@ -1418,3 +1418,107 @@ python manage.py test                   # 121 tests, all pass
 2. Go to `/bar/daily/` for that date.
 3. ✅ Correct: kitchen staff do NOT appear in the Staff/Shift performance table.
 4. ✅ Correct: kitchen revenue does NOT appear in bar staff revenue totals.
+
+---
+
+## Sprint BillScan — Scan to View Your Bill (2026-07-15)
+
+**Goal:** A single static QR the owner prints and mounts on the bar wall. Customers scan with their phone camera, type their name or 4-digit PIN, and see their own running tab — no barman involvement needed.
+
+### BillScan-1: Wall QR in Payment Settings
+
+1. Log in as RoyMwendwa (owner) → Manage → Payment Settings.
+2. Scroll to the "🪧 Wall Tab QR" card (visible only for keg/bar businesses).
+- ✅ Correct: a QR code is rendered inside the card pointing to `/bar/find-tab/<business_id>/`.
+- ✅ Correct: clicking "🖨️ Print QR" opens the browser print dialog; only the QR box is visible in print preview (all other page content is hidden).
+- ❌ Bug if: QR card is absent, or QR fails to render (empty white box).
+
+### BillScan-2: PIN shown in bar board tabs drawer
+
+1. Bar Board → open a tab for a customer (name them "Test Scan").
+2. Open the Tabs drawer.
+3. Find the new tab in the list.
+- ✅ Correct: a small "PIN: XXXX" label appears in muted grey next to the customer name.
+- ✅ Correct: PIN is visible whether you're logged in as owner or as bar staff.
+- ❌ Bug if: no PIN label, or label shows "PIN: " with no digits.
+
+### BillScan-3: PIN shown in Quick Sell tabs drawer
+
+1. Open Quick Sell → Tabs drawer (if a tab exists).
+- ✅ Correct: "PIN: XXXX" label is visible next to the customer name for each open tab.
+
+### BillScan-4: PIN shown in Kitchen Board tabs drawer
+
+1. Kitchen Board → open a food tab → Tabs offcanvas.
+- ✅ Correct: "PIN: XXXX" label visible next to the customer name (both food tabs and bar tabs shown in kitchen drawer).
+
+### BillScan-5: Find-tab page — name search (not logged in)
+
+1. Open a private/incognito browser window (no login).
+2. Navigate to `/bar/find-tab/<business_id>/` (or scan the wall QR).
+3. Type at least 2 characters of "Test Scan".
+4. Tap the result card.
+- ✅ Correct: page loads without redirecting to login. Shows business name + "N tabs zinafanya kazi sasa" count.
+- ✅ Correct: after ~400 ms, a card appears showing "Test Scan" + "Imefunguliwa saa HH:MM AM/PM".
+- ✅ Correct: tapping navigates to `/tab/<token>/` (the live bill page).
+- ❌ Bug if: redirected to login, or card doesn't appear after typing.
+
+### BillScan-6: Find-tab page — PIN direct-match
+
+1. On the find-tab page (incognito), type the exact 4-digit PIN from BillScan-2.
+- ✅ Correct: page immediately redirects to `/tab/<token>/` — no name-cards list shown.
+- ❌ Bug if: a list of tab cards appears instead of direct navigation.
+
+### BillScan-7: Wrong PIN returns helpful message
+
+1. On the find-tab page, type a 4-digit number not matching any open tab (e.g. `0000`).
+- ✅ Correct: "PIN haikupatikana. Jaribu jina lako badala yake." message appears below the input.
+- ❌ Bug if: blank result, 500 error, or silent failure.
+
+### BillScan-8: Live bill page — content (not logged in)
+
+1. Open `/tab/<token>/` in an incognito browser.
+- ✅ Correct: page loads without redirecting to login.
+- ✅ Correct: business name in header; "Tawi la: Test Scan" label.
+- ✅ Correct: all items listed with 🍺 (bar) or 🍽 (kitchen) icon, description, and KES amount.
+- ✅ Correct: "Jumla" tile in gold shows grand total; "Bado kulipa" tile in raspberry shows outstanding.
+- ✅ Correct: footer: "Powered by Duka Mwecheche".
+- ❌ Bug if: blank page, missing items, or login redirect.
+
+### BillScan-9: Live bill auto-refresh
+
+1. On the open live bill page, add a new item to the same tab from the bar board.
+2. Wait up to 20 seconds (or manually reload).
+- ✅ Correct: the new item appears on the live bill page after the auto-refresh cycle.
+
+### BillScan-10: Settled tab shows settled banner
+
+1. Settle the tab (bar board → settle via cash or M-Pesa).
+2. Reload `/tab/<token>/`.
+- ✅ Correct: amber "✓ Tab hii imelipwa — asante!" banner at the top.
+- ✅ Correct: no "Inasasisha kila sekunde 20" refresh note (auto-refresh stops on settled tabs).
+
+### BillScan-11: Anonymous tab accessible via PIN only
+
+1. Bar Board → open a tab with NO customer name (or a table number like "Table 3").
+2. Tabs drawer → note the PIN for this tab.
+3. On the find-tab page (incognito), type the PIN → navigates to the live bill.
+4. Live bill header shows "Tab inayoendelea · Imefunguliwa HH:MM" (no "Tawi la:" line since no name).
+- ✅ Correct: anonymous tabs reachable by PIN; header shows fallback text.
+
+### BillScan-12: Rate limiting on search endpoint
+
+1. On the find-tab page (incognito), perform 6 search queries within 60 seconds.
+2. The 6th request should return the rate-limit message.
+- ✅ Correct: "Subiri kidogo" error text appears.
+- ❌ Bug if: unlimited requests accepted without rate limiting.
+
+---
+
+### Final checks (post-BillScan)
+
+```bash
+python manage.py check                  # 0 issues
+python manage.py makemigrations --check # No changes detected (migration 0103 already applied)
+python manage.py test                   # 117 tests, all pass
+```
