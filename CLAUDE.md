@@ -642,6 +642,21 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   keg_loss_baseline_sample, credit_policy_enabled, debt_cycle, debt_cutoff_days_before_month_end,
   block_if_overdue, overdue_grace_days, late_repayment_strikes, late_threshold_days, cooldown_days,
   defaulter_permanent, haki_enabled, event_sms_enabled, performer_approval_threshold.
+- **`Notification.objects.create()` — widespread `business=` kwarg bug (found 2026-07-15).**
+  `core.models.Notification` (core/models.py:189) has no `business` field — only `user, title,
+  message, notification_type, is_read, created_at` — and `title` has no default. Many call sites
+  across the codebase pass `business=...` anyway, which raises `TypeError` every time; silently
+  swallowed wherever the call sits inside a broad `except Exception`, so it never actually crashes
+  — it just quietly never notifies anyone. Confirmed still-broken as of 2026-07-15:
+  `core/shift_views.py:480` (shift-open notification to owner), `core/debt_views.py:843,971,1038,
+  1110,1120,1203,1224` (write-off approval/denial notifications). `core/mpesa_views.py`'s
+  debt-payment notification had the identical bug — fixed while building the Pay-Cash-at-Counter
+  feature (see Sprint Status Log) since it sat in code that feature directly mirrors; the others
+  are NOT yet fixed — each needs its own careful pass (verify intended recipient logic, add a
+  regression test) rather than a blind bulk find-replace. Correct call shape:
+  `Notification.objects.create(user=X, title=Y, message=Z, notification_type='info'|'warning'|...)`
+  — no `business` kwarg. Grep `Notification.objects.create\(\s*\n?\s*business=` to find remaining
+  occurrences before starting that cleanup.
 
 ## Cause-&-Effect Protocol (run for EVERY feature or module)
 
@@ -773,3 +788,33 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   disable) — added to match. 2 new tests (CheckoutIdempotencyTest): duplicate token does not
   double-book a sale; two genuinely different tokens both go through as real, separate sales (the
   guard must not suppress legitimate repeat purchases). No migrations. 129 tests pass.
+- Feature: Pay-Cash-at-Counter from the live tab receipt (2026-07-15): Roy scanned the BillScan
+  wall QR and wanted the same payment options the tabs drawer has — including a Cash option that
+  doesn't process payment, just tells staff the customer is coming to the counter. (1) Routing:
+  find_tab_search now resolves the customer's PIN/name match to their existing Receipt
+  (/r/<token>/) via new _resolve_tab_public_url() helper, reusing the fully-built STK/QR/checkbox
+  payment UI on receipt_public.html instead of the bare read-only /tab/<token>/ page; falls back
+  to the old page only for a tab with zero sales yet (no receipt issued). (2) BarTab.cash_requested_at
+  (migration 0104, nullable datetime) — set when a customer taps "Lipa Cash"; cleared the moment
+  staff settles any entry on the tab (settle_tab, tick_entry, STK settlement, void_tab all clear
+  it) — per Roy's explicit requirement, the tab is NOT auto-cleared, only a real counter payment
+  clears it. (3) receipt_pay() gains type='cash': resolves the same entry_ids/debt-mode amount as
+  STK does, but creates no Payment — just sets the flag (entry-mode only, not debt-mode, since debt
+  isn't tied to a live BarTab) and fires _fire_cash_payment_request() — in-app + SMS to serving
+  staff/on-shift staff/owners/managers, mirroring the debt-payment notification recipient pattern.
+  (4) Persistent "💵 Anataka kulipa Cash" badge added to all three tabs drawers (bar_board.html,
+  quick_sell.html, kitchen_board.html) via cash_requested in tabs_list/kitchen_tabs_list JSON.
+  (5) Card/PDQ deliberately deferred — Cash only this sprint (Roy's call), no new Business field.
+  Three pre-existing bugs found and fixed while working in this exact code (all now covered by
+  tests or manually verified): (a) receipt_public.html had TWO functions both named `stkStatus` —
+  a 3-arg debt-mode version (line 770) and a 2-arg OPEN-tab version (line 931) — JS function
+  hoisting meant only the LAST one won, so every debt-mode status call silently passed the wrong
+  arguments; renamed the debt one to `debtStkStatus` and fixed its 12 call sites. (b) My own edit
+  briefly misplaced `@csrf_exempt` onto a helper function instead of `receipt_pay` — caught and
+  fixed before commit. (c) `core.models.Notification` has no `business` field and requires `title`
+  (see Known Issues below) — mpesa_views.py's `_settle_receipt_entries_from_payment` (the function
+  this feature's notification code mirrors) has been silently failing to notify staff of debt
+  payments since the 2026-07-08 sprint, masked by a broad except; fixed it alongside the new code
+  since it's the same block. 4 new tests (CashPaymentRequestTest). Also: "Tawi la" (mistranslated
+  "branch") on tab_live.html renamed to "Bill ya" per Roy's request — clearer for customers. 133
+  tests pass.

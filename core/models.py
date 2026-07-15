@@ -2320,6 +2320,12 @@ class BarTab(models.Model):
     void_reason   = models.CharField(max_length=120, blank=True)
     tab_receipt_token = models.CharField(max_length=32, blank=True, default='')
     tab_pin           = models.CharField(max_length=6,  blank=True, default='')
+    cash_requested_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Set when a customer taps "Lipa Cash" on their live receipt — no money '
+                   'has moved, this just flags staff to expect them at the counter. Cleared '
+                   'the moment staff settles any entry on the tab.'
+    )
 
     class Meta:
         ordering = ['-opened_at']

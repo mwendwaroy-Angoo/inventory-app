@@ -1075,6 +1075,7 @@ def tabs_list(request):
                 'cross_notice': cross_notice,
                 'receipt_url': _rcpt_url,
                 'tab_pin': tab.tab_pin,
+                'cash_requested': bool(tab.cash_requested_at),
             })
         else:
             # Bar-only staff: see only bar (non-kitchen) entries
@@ -1111,6 +1112,7 @@ def tabs_list(request):
                 'cross_notice': cross_notice,
                 'receipt_url': _rcpt_url,
                 'tab_pin': tab.tab_pin,
+                'cash_requested': bool(tab.cash_requested_at),
             })
 
     return JsonResponse({'tabs': result, 'bar_only_view': not _see_all})
@@ -1220,6 +1222,10 @@ def tick_entry(request, entry_id):
     tab_settled = not tab.entries.filter(is_paid=False).exists()
     receipt_url = None
     receipt_id = None
+    if tab.cash_requested_at:
+        # Staff has now acted on this tab — clear the "customer wants cash" badge.
+        tab.cash_requested_at = None
+        tab.save(update_fields=['cash_requested_at'])
     if tab_settled:
         tab.status = 'SETTLED'
         tab.settled_at = now
@@ -1359,6 +1365,10 @@ def settle_tab(request, tab_id):
         tab.status = 'SETTLED'
         tab.settled_at = now
         tab.save(update_fields=['status', 'settled_at'])
+    if tab.cash_requested_at:
+        # Staff has now acted on this tab — clear the "customer wants cash" badge.
+        tab.cash_requested_at = None
+        tab.save(update_fields=['cash_requested_at'])
 
     settled_amount = sum(float(e.amount) for e in entries_to_settle)
     customer_phone = (request.POST.get('customer_phone') or '').strip()
@@ -1490,7 +1500,8 @@ def void_tab(request, tab_id):
     tab.status = 'VOID'
     tab.settled_at = now
     tab.void_reason = reason[:120]
-    tab.save(update_fields=['status', 'settled_at', 'void_reason'])
+    tab.cash_requested_at = None
+    tab.save(update_fields=['status', 'settled_at', 'void_reason', 'cash_requested_at'])
 
     # Only mark defaulter when the voided tab actually carried converted credit transactions
     if had_credit and tab.customer_name:
@@ -2580,6 +2591,25 @@ def find_tab_public(request, business_id):
     })
 
 
+def _resolve_tab_public_url(tab):
+    """Where should a customer looking up this tab land?
+
+    Prefer the tab's own Receipt page (/r/<token>/) — it already has the full
+    payment UI (STK, QR, cash request). Only a tab with zero sales yet (no
+    receipt issued) falls back to the bare read-only /tab/<token>/ page.
+    """
+    rcpt = Receipt.objects.filter(business=tab.business, meta__tab_id=tab.id).first()
+    if rcpt is None:
+        rcpt = Receipt.objects.filter(
+            business=tab.business, meta__linked_tab_ids__contains=[tab.id]
+        ).first()
+    if rcpt:
+        return f'/r/{rcpt.token}/'
+    if tab.tab_receipt_token:
+        return f'/tab/{tab.tab_receipt_token}/'
+    return None
+
+
 def find_tab_search(request, business_id):
     """Public AJAX name-or-PIN lookup for find_tab_public — no login required.
 
@@ -2605,13 +2635,14 @@ def find_tab_search(request, business_id):
 
     business = get_object_or_404(_Business, id=business_id)
 
-    # PIN lookup: exactly 4 digits → direct token redirect
+    # PIN lookup: exactly 4 digits → direct redirect
     if q.isdigit() and len(q) == 4:
         tab = BarTab.objects.filter(
             business=business, status='OPEN', tab_pin=q,
         ).first()
-        if tab and tab.tab_receipt_token:
-            return JsonResponse({'tabs': [], 'redirect': f'/tab/{tab.tab_receipt_token}/'})
+        url = _resolve_tab_public_url(tab) if tab else None
+        if url:
+            return JsonResponse({'tabs': [], 'redirect': url})
         return JsonResponse({'tabs': [], 'pin_not_found': True})
 
     # Name search: case-insensitive substring match
@@ -2622,11 +2653,12 @@ def find_tab_search(request, business_id):
 
     results = []
     for t in tabs:
-        if not t.tab_receipt_token:
+        url = _resolve_tab_public_url(t)
+        if not url:
             continue  # pre-migration 0092 tabs have no token — skip silently
         results.append({
             'name': t.customer_name or '—',
-            'token': t.tab_receipt_token,
+            'url': url,
             'opened_at': t.opened_at.strftime('%I:%M %p'),
         })
     return JsonResponse({'tabs': results})

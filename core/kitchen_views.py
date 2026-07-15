@@ -1086,6 +1086,7 @@ def kitchen_tabs_list(request):
             'is_bar_tab': False,
             'cross_notice': cross_notice,
             'receipt_url': _rcpt_url,
+            'cash_requested': bool(tab.cash_requested_at),
         })
 
     # Bar tabs that have kitchen entries — show read-only (kitchen items only).
@@ -1122,6 +1123,7 @@ def kitchen_tabs_list(request):
             'entries': kitchen_entries,
             'opened_at': timezone.localtime(tab.opened_at).strftime('%I:%M %p').lstrip('0'),
             'is_bar_tab': True,  # renders as read-only — actions stay on bar board
+            'cash_requested': bool(tab.cash_requested_at),
         })
 
     return JsonResponse({'tabs': result})

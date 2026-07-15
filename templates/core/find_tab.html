@@ -134,7 +134,7 @@
     var html = '';
     data.tabs.forEach(function (tab) {
       var name = tab.name || '—';
-      html += '<a class="tab-card" href="/tab/' + tab.token + '/">' +
+      html += '<a class="tab-card" href="' + tab.url + '">' +
         '<div><div class="tab-name">' + name + '</div>' +
         '<div class="tab-time">Imefunguliwa saa ' + tab.opened_at + '</div></div>' +
         '<span class="tab-arrow">›</span></a>';

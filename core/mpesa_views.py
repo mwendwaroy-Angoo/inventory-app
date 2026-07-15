@@ -336,13 +336,19 @@ def _settle_receipt_entries_from_payment(payment):
                 entry.transaction.save(update_fields=['payment_method'])
             tabs_affected.add(entry.tab_id)
 
-        # Close fully-paid tabs
+        # Close fully-paid tabs, and clear any pending "customer wants cash"
+        # badge — a payment just landed via STK, so it's no longer accurate.
         for tab_id in tabs_affected:
             tab = BarTab.objects.filter(id=tab_id).first()
-            if tab and not tab.entries.filter(is_paid=False).exists():
+            if not tab:
+                continue
+            if not tab.entries.filter(is_paid=False).exists():
                 tab.status = 'SETTLED'
                 tab.settled_at = now
                 tab.save(update_fields=['status', 'settled_at'])
+            if tab.cash_requested_at:
+                tab.cash_requested_at = None
+                tab.save(update_fields=['cash_requested_at'])
 
         # SMS the customer and update the receipt payment_method
         rcpt_for_notif = None
@@ -413,9 +419,10 @@ def _settle_receipt_entries_from_payment(payment):
 
             for up in notify_targets.values():
                 _Notif.objects.create(
-                    business=business,
                     user=up.user,
+                    title='💰 Malipo ya deni yamepokelewa',
                     message=notif_msg,
+                    notification_type='info',
                 )
                 phone = (up.phone or '').strip()
                 if phone:

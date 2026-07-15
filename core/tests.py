@@ -2540,6 +2540,83 @@ class CheckoutIdempotencyTest(TestCase):
         self.assertEqual(tab.entries.count(), 2, 'Two distinct tokens must both be processed as real sales')
 
 
+class CashPaymentRequestTest(TestCase):
+    """New feature (2026-07-15): customer taps "Lipa Cash" on their live receipt page.
+    No money moves — staff get notified (in-app + SMS) and a badge flag is set on the
+    tab until staff actually settles it at the counter through the normal flow."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Cash Request Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='cashreq_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Cash Req Beer',
+            material_no='CASHREQ-01', unit='pcs', selling_price=Decimal('200'),
+        )
+        self.tab = BarTab.objects.create(
+            business=self.biz, customer_name='Cash Req Patron', status='OPEN',
+            served_by=self.owner,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='credit',
+        )
+        self.entry = BarTabEntry.objects.create(
+            tab=self.tab, transaction=txn, description='Cash Req Beer', amount=Decimal('200'),
+        )
+        self.receipt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Cash Req Beer', 'qty': 1, 'subtotal': 200}],
+            payment_method='tab', customer_name='Cash Req Patron',
+            meta={'tab_id': self.tab.id},
+        )
+
+    def test_cash_request_sets_flag_and_notifies_without_creating_a_payment(self):
+        import json
+        resp = self.client.post(
+            f'/r/{self.receipt.token}/pay/',
+            data=json.dumps({'type': 'cash', 'entry_ids': [self.entry.id]}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'))
+        self.tab.refresh_from_db()
+        self.assertIsNotNone(self.tab.cash_requested_at)
+        self.entry.refresh_from_db()
+        self.assertFalse(self.entry.is_paid, 'A cash request must not mark the entry paid')
+        self.assertFalse(
+            Payment.objects.filter(business=self.biz).exists(),
+            'No Payment/STK should be created for a cash request',
+        )
+        self.assertTrue(Notification.objects.filter(user=self.owner).exists())
+
+    def test_settle_tab_clears_cash_requested_flag(self):
+        self.tab.cash_requested_at = timezone.now()
+        self.tab.save(update_fields=['cash_requested_at'])
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{self.tab.id}/settle/', {'payment_method': 'cash'})
+        self.tab.refresh_from_db()
+        self.assertIsNone(self.tab.cash_requested_at)
+
+    def test_tabs_list_exposes_cash_requested_flag(self):
+        self.tab.cash_requested_at = timezone.now()
+        self.tab.save(update_fields=['cash_requested_at'])
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/')
+        data = resp.json()
+        tab_row = next((t for t in data['tabs'] if t['id'] == self.tab.id), None)
+        self.assertIsNotNone(tab_row)
+        self.assertTrue(tab_row['cash_requested'])
+
+    def test_find_tab_search_pin_redirects_to_receipt_when_available(self):
+        self.tab.tab_pin = '4321'
+        self.tab.tab_receipt_token = 'legacy-token-abc'
+        self.tab.save(update_fields=['tab_pin', 'tab_receipt_token'])
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '4321'})
+        data = resp.json()
+        self.assertEqual(data.get('redirect'), f'/r/{self.receipt.token}/')
+
+
 class NetProfitWastageDeductionTest(TestCase):
     """K8 audit (Task 1, deferred): regression-locks the current, intentional net_profit
     formula — wastage_loss must be deducted exactly once (added in the 2026-07-13 sprint

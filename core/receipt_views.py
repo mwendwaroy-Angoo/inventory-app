@@ -341,6 +341,50 @@ def send_receipt(request, receipt_id):
     return JsonResponse({'ok': False, 'error': 'unknown_channel'})
 
 
+def _fire_cash_payment_request(business, tab_ids, customer_name, amount):
+    """Notify staff that a customer intends to pay cash at the counter.
+
+    No money moves here — this is a heads-up only, fired from the customer's
+    live receipt page. Mirrors the recipient pattern already used for
+    debt-payment notifications (_settle_receipt_entries_from_payment in
+    mpesa_views.py): original serving staff, current on-shift staff, owners
+    and managers, via in-app + SMS.
+    """
+    from .models import BarTab as _BarTab, Notification as _Notif, Shift as _Shift
+    from .notifications import normalize_ke_phone, send_sms_notification
+    from accounts.models import UserProfile as _UP
+
+    msg = f"💵 {customer_name or 'Mteja'} anataka kulipa CASH — KES {amount:,.0f}. Mngoje kwenye counter."
+
+    notify_targets = {}  # user_pk -> UserProfile
+
+    for tab_id in tab_ids:
+        tab_obj = _BarTab.objects.filter(id=tab_id, business=business).select_related('served_by').first()
+        if tab_obj and tab_obj.served_by_id:
+            up = _UP.objects.filter(user_id=tab_obj.served_by_id, business=business).first()
+            if up:
+                notify_targets[tab_obj.served_by_id] = up
+
+    for sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
+        up = _UP.objects.filter(user_id=sh.staff_id, business=business).first()
+        if up:
+            notify_targets[sh.staff_id] = up
+
+    for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
+        notify_targets[up.user_id] = up
+
+    for up in notify_targets.values():
+        _Notif.objects.create(
+            user=up.user, title='💵 Mteja anataka kulipa Cash',
+            message=msg, notification_type='warning',
+        )
+        phone = (up.phone or '').strip()
+        if phone:
+            phone_n = normalize_ke_phone(phone)
+            if phone_n:
+                send_sms_notification(msg, phone_n)
+
+
 @csrf_exempt
 def receipt_pay(request, token):
     """Customer-initiated payment from the public receipt page.
@@ -455,6 +499,24 @@ def receipt_pay(request, token):
         except Exception:
             logger.exception('receipt_pay QR failed token=%s', token)
             return JsonResponse({'error': 'qr_failed'}, status=500)
+
+    if pay_type == 'cash':
+        # No money moves — flag the tab(s) so staff see a badge in the tabs
+        # drawer, and fire a heads-up notification. Actual settlement still
+        # happens at the counter through the existing settle_tab/tick_entry
+        # flow, which clears the flag.
+        tab_ids_for_flag = set()
+        if not is_debt_mode:
+            tab_ids_for_flag = {e.tab_id for e in entries_list}
+            if tab_ids_for_flag:
+                from .models import BarTab as _BarTab
+                from django.utils import timezone as _tz
+                _BarTab.objects.filter(id__in=tab_ids_for_flag).update(cash_requested_at=_tz.now())
+        try:
+            _fire_cash_payment_request(business, tab_ids_for_flag, receipt.customer_name, amount)
+        except Exception:
+            logger.exception('receipt_pay cash notify failed token=%s', token)
+        return JsonResponse({'ok': True, 'type': 'cash', 'amount': amount})
 
     # STK Push
     if not phone:
