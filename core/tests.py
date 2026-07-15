@@ -2372,3 +2372,138 @@ class KitchenBatchReceiveViewTest(TestCase):
         self.assertEqual(KitchenConsumableLog.objects.filter(business=self.biz).count(), 1)
         pool = data['pool']
         self.assertEqual(pool['khaki_small_bought'], 200)
+
+
+# ── Sprint K8 ──────────────────────────────────────────────────────────────
+
+class BackfillTabTokensCommandTest(TestCase):
+    """K8-Task2: backfill_tab_tokens fills blank tab_receipt_token/tab_pin on OPEN tabs only."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K8 Backfill Biz')
+
+    def test_open_tab_with_blank_token_and_pin_gets_backfilled(self):
+        from django.core.management import call_command
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Old Patron', status='OPEN',
+            tab_receipt_token='', tab_pin='',
+        )
+        call_command('backfill_tab_tokens')
+        tab.refresh_from_db()
+        self.assertTrue(tab.tab_receipt_token)
+        self.assertRegex(tab.tab_pin, r'^\d{4}$')
+
+    def test_already_populated_tab_is_left_untouched(self):
+        from django.core.management import call_command
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Fresh Patron', status='OPEN',
+            tab_receipt_token='already-set-token', tab_pin='1234',
+        )
+        call_command('backfill_tab_tokens')
+        tab.refresh_from_db()
+        self.assertEqual(tab.tab_receipt_token, 'already-set-token')
+        self.assertEqual(tab.tab_pin, '1234')
+
+    def test_settled_tab_is_not_touched(self):
+        from django.core.management import call_command
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Closed Patron', status='SETTLED',
+            tab_receipt_token='', tab_pin='',
+        )
+        call_command('backfill_tab_tokens')
+        tab.refresh_from_db()
+        self.assertEqual(tab.tab_receipt_token, '')
+        self.assertEqual(tab.tab_pin, '')
+
+    def test_backfilled_pins_unique_within_business(self):
+        from django.core.management import call_command
+        tabs = [
+            BarTab.objects.create(
+                business=self.biz, customer_name=f'Patron {i}', status='OPEN',
+                tab_receipt_token='', tab_pin='',
+            )
+            for i in range(5)
+        ]
+        call_command('backfill_tab_tokens')
+        pins = [BarTab.objects.get(id=t.id).tab_pin for t in tabs]
+        self.assertEqual(len(pins), len(set(pins)), 'PINs backfilled for the same business must be unique')
+
+
+class NetProfitWastageDeductionTest(TestCase):
+    """K8 audit (Task 1, deferred): regression-locks the current, intentional net_profit
+    formula — wastage_loss must be deducted exactly once (added in the 2026-07-13 sprint
+    to fix wastage being invisible to P&L). A future change must not re-break this."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K8 PnL Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='k8_pnl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='K8 Item', unit='Pcs',
+            material_no='K8-ITEM-01', selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+
+    def test_wastage_reduces_net_profit_but_not_gross_profit(self):
+        today = timezone.localdate()
+        # One sale: revenue 100, cost 40 -> gross profit 60
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'),
+            payment_method='cash', date=today,
+        )
+        # One wastage event: 2 units at cost 40 each = 80 loss, zero revenue impact
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Wastage',
+            qty=Decimal('-2'), date=today,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/analytics/?period=30')
+        self.assertEqual(resp.status_code, 200)
+        ctx = resp.context
+        self.assertEqual(ctx['cur_profit'], 60.0, 'Wastage must not appear in gross profit (COGS-of-sold only)')
+        self.assertEqual(ctx['wastage_loss'], 80.0)
+        self.assertEqual(
+            ctx['net_profit'], ctx['cur_profit'] - ctx['total_losses'],
+            'net_profit must deduct wastage_loss exactly once via total_losses',
+        )
+        self.assertEqual(ctx['net_profit'], -20.0)
+
+
+class TabLiveOutstandingTileTest(TestCase):
+    """K8-Task4: the 'Bado kulipa' tile must be hidden once outstanding drops to 0."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='K8 Tab Live Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='K8 Live Item', unit='Pcs',
+            material_no='K8-LIVE-01', selling_price=Decimal('100'),
+        )
+
+    def _make_tab_with_entry(self, is_paid):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Live Patron', status='OPEN',
+            tab_receipt_token='k8-live-token', tab_pin='4321',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'),
+            payment_method='cash' if is_paid else 'credit',
+            recipient='Live Patron', date=timezone.localdate(),
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='K8 Live Item',
+            amount=Decimal('100'), is_paid=is_paid,
+        )
+        return tab
+
+    def test_outstanding_tile_shown_when_balance_due(self):
+        self._make_tab_with_entry(is_paid=False)
+        resp = self.client.get('/tab/k8-live-token/')
+        self.assertContains(resp, 'Bado kulipa')
+
+    def test_outstanding_tile_hidden_when_fully_paid(self):
+        self._make_tab_with_entry(is_paid=True)
+        resp = self.client.get('/tab/k8-live-token/')
+        self.assertNotContains(resp, 'Bado kulipa')

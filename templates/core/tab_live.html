@@ -112,12 +112,12 @@
     <div class="total-label">Jumla</div>
     <div class="total-value">{{ total|floatformat:0 }}</div>
   </div>
+  {% if outstanding > 0 %}
   <div class="total-card outstanding">
     <div class="total-label">Bado kulipa</div>
-    <div class="total-value">
-      {% if outstanding > 0 %}{{ outstanding|floatformat:0 }}{% else %}0{% endif %}
-    </div>
+    <div class="total-value">{{ outstanding|floatformat:0 }}</div>
   </div>
+  {% endif %}
 </div>
 {% endif %}
 

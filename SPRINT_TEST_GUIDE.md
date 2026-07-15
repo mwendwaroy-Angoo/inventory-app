@@ -1522,3 +1522,50 @@ python manage.py check                  # 0 issues
 python manage.py makemigrations --check # No changes detected (migration 0103 already applied)
 python manage.py test                   # 117 tests, all pass
 ```
+
+---
+
+## Sprint K8 — Audit Fixes (2026-07-15)
+
+**Automated (7 new tests, 133 total):**
+- `BackfillTabTokensCommandTest` — `backfill_tab_tokens` fills blank `tab_receipt_token`/`tab_pin`
+  on OPEN tabs only (leaves already-populated and SETTLED tabs untouched); PINs backfilled for
+  the same business are unique.
+- `NetProfitWastageDeductionTest` — regression lock: `wastage_loss` is deducted from `net_profit`
+  exactly once via `total_losses` (this is the intentional 2026-07-13 formula — the July 15 audit's
+  claim that this was a double-deduction was reviewed and rejected; formula is unchanged).
+- `TabLiveOutstandingTileTest` — the "Bado kulipa" tile is present when a tab has an unpaid balance
+  and absent once every entry is `is_paid=True`.
+
+**Manual smoke tests:**
+
+### K8-1: Wall QR reaches pre-existing open tabs after backfill
+
+1. On Render (or any environment with tabs opened before this sprint), run:
+   `python manage.py backfill_tab_tokens` — note the "Backfilled N tabs." count.
+2. Scan the bar wall QR (or open `/bar/find-tab/<business_id>/`) and search by the name of a
+   customer whose tab was opened before the sprint.
+- ✅ Correct: the tab now appears in search results and opens the live bill.
+- ❌ Bug if: pre-existing open tabs are still invisible to search.
+
+### K8-2: Settled tab shows only the Jumla tile
+
+1. Open a tab, add an item, settle it fully (cash or M-Pesa).
+2. Visit `/tab/<token>/` for that tab.
+- ✅ Correct: only the "Jumla" (grand total) tile is shown — no "Bado kulipa: 0" tile.
+- ❌ Bug if: a "Bado kulipa" tile still appears showing 0.
+
+### K8-3: analytics.html and delete_item.html render correctly on dark theme
+
+1. Open Analytics → Revenue Forecast section; open any item's Delete page.
+- ✅ Correct: "Product"/"Model"/"Forecast horizon" labels and the delete-confirmation subtitle are
+  legible grey text (`#b0b0b0`), not near-invisible Bootstrap `text-muted`.
+
+### Final checks (post-K8)
+
+```bash
+python manage.py check                  # 0 issues
+python manage.py makemigrations --check # No changes detected
+python manage.py backfill_tab_tokens    # one-time run on each deployed environment
+python manage.py test                   # 133 tests, all pass
+```

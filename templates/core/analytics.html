@@ -345,7 +345,7 @@
     <!-- Controls -->
     <div class="row g-2 align-items-end mb-3">
       <div class="col-auto">
-        <label class="form-label text-muted small mb-1">Product</label>
+        <label class="form-label small mb-1" style="color: #b0b0b0">Product</label>
         <select id="fc-product" class="form-select form-select-sm bg-dark text-white border-secondary">
           <option value="">All products</option>
           {% for item in items %}
@@ -354,14 +354,14 @@
         </select>
       </div>
       <div class="col-auto">
-        <label class="form-label text-muted small mb-1">Model</label>
+        <label class="form-label small mb-1" style="color: #b0b0b0">Model</label>
         <select id="fc-model" class="form-select form-select-sm bg-dark text-white border-secondary">
           <option value="ets">ETS (Holt's Trend)</option>
           <option value="regression">Linear Regression</option>
         </select>
       </div>
       <div class="col-auto">
-        <label class="form-label text-muted small mb-1">Forecast horizon (days)</label>
+        <label class="form-label small mb-1" style="color: #b0b0b0">Forecast horizon (days)</label>
         <select id="fc-horizon" class="form-select form-select-sm bg-dark text-white border-secondary">
           <option value="7">7 days</option>
           <option value="14">14 days</option>
@@ -383,8 +383,8 @@
     <!-- Chart -->
     <div style="position:relative; height:260px;">
       <canvas id="forecastChart"></canvas>
-      <div id="fc-placeholder" class="text-center text-muted pt-5"
-           style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+      <div id="fc-placeholder" class="text-center pt-5"
+           style="color: #b0b0b0; position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
         Select a model and click <strong class="text-warning ms-1">▶ Forecast</strong>
       </div>
       <div id="fc-spinner" style="display:none;position:absolute;inset:0;
