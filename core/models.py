@@ -2329,6 +2329,24 @@ class BarTab(models.Model):
     def __str__(self):
         return f"Tab — {self.customer_name} ({self.status})"
 
+    @staticmethod
+    def new_credentials(business):
+        """Generate a receipt token + business-unique 4-digit PIN for a new tab.
+
+        Single source of truth for all BarTab creation sites (bar board, kitchen,
+        Quick Sell) so BillScan lookup (find_tab_search, tab_live) never sees a
+        tab with a blank or colliding PIN.
+        """
+        import random
+        import secrets
+        existing_pins = set(
+            BarTab.objects.filter(business=business, status='OPEN').values_list('tab_pin', flat=True)
+        )
+        pin = str(random.randint(1000, 9999))
+        while pin in existing_pins:
+            pin = str(random.randint(1000, 9999))
+        return secrets.token_urlsafe(20), pin
+
     def total(self):
         result = self.entries.aggregate(t=models.Sum('amount'))['t']
         return result or Decimal('0')

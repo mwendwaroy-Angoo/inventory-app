@@ -745,3 +745,14 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   dev venv Django synced 6.0.3→4.2.29 to match the existing requirements.txt pin (was already
   correct; only the installed package was stale). Cause-&-Effect Protocol section in this file now
   opens with a "map is a required deliverable" paragraph. 133 tests pass (7 new).
+- Fix: Quick Sell tabs had no PIN/token (2026-07-15): Roy caught this live — after running
+  backfill_tab_tokens, new tabs opened via Quick Sell's "Tab" checkout still came out with a blank
+  tab_pin/tab_receipt_token, invisible to the BillScan wall-QR lookup. ROOT CAUSE: BarTab creation
+  exists at three call sites (bar board, kitchen, Quick Sell) but Sprint BillScan only added
+  token/PIN generation to bar board and kitchen — Quick Sell's tab-sale path (core/views.py) was
+  missed entirely. Fix: added BarTab.new_credentials(business) classmethod (core/models.py) as the
+  single source of truth — generates a receipt token plus a PIN checked for uniqueness against that
+  business's other open tabs (the two existing call sites also lacked collision-checking). All three
+  creation sites (core/views.py, core/keg_views.py, core/kitchen_views.py) now call it. 3 new tests
+  (BarTabNewCredentialsTest) including an end-to-end POST /quick-sell/ regression lock. No
+  migrations. 127 tests pass.

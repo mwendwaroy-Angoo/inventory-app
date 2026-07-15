@@ -2658,11 +2658,14 @@ def quick_sell(request):
                     source='qs',  # QS tabs are isolated from bar board tabs
                 ).first()
                 if not bar_tab:
+                    _token, _pin = BarTab.new_credentials(user_profile.business)
                     bar_tab = BarTab.objects.create(
                         business=user_profile.business,
                         customer_name=credit_recipient,
                         served_by=request.user,
                         source='qs',
+                        tab_receipt_token=_token,
+                        tab_pin=_pin,
                     )
                 for txn, desc, amt in tab_transactions:
                     BarTabEntry.objects.create(

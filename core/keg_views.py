@@ -244,8 +244,6 @@ def bar_board(request):
                     source='bar',  # bar board only manages bar tabs; cross-counter uses merge_tab_id
                 ).first()
                 if not active_tab:
-                    import secrets as _secrets
-                    import random as _random
                     first_barrel = None
                     for entry in cart:
                         try:
@@ -255,6 +253,7 @@ def bar_board(request):
                                 break
                         except (TypeError, ValueError):
                             pass
+                    _token, _pin = BarTab.new_credentials(business)
                     active_tab = BarTab.objects.create(
                         business=business,
                         store=first_barrel.store if first_barrel else None,
@@ -262,8 +261,8 @@ def bar_board(request):
                         customer=linked_customer,
                         server_name=tab_server,
                         served_by=request.user if not tab_server else None,
-                        tab_receipt_token=_secrets.token_urlsafe(20),
-                        tab_pin=str(_random.randint(1000, 9999)),
+                        tab_receipt_token=_token,
+                        tab_pin=_pin,
                     )
 
         receipt_lines = []

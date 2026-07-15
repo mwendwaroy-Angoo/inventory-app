@@ -2429,6 +2429,64 @@ class BackfillTabTokensCommandTest(TestCase):
         self.assertEqual(len(pins), len(set(pins)), 'PINs backfilled for the same business must be unique')
 
 
+class BarTabNewCredentialsTest(TestCase):
+    """Fix (2026-07-15, post-K8): BarTab.new_credentials is the single source of truth
+    for tab_receipt_token/tab_pin generation, used by bar board, kitchen, and Quick Sell
+    tab creation alike. Root cause of the live bug: Quick Sell's tab creation
+    (core/views.py) never set these fields at all, so every QS tab was invisible to the
+    wall-QR PIN lookup (BillScan) until manually backfilled."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Credentials Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='cred_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Cred Test Beer',
+            material_no='CRED-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('10'),
+        )
+
+    def test_generates_nonblank_token_and_four_digit_pin(self):
+        token, pin = BarTab.new_credentials(self.biz)
+        self.assertTrue(token)
+        self.assertRegex(pin, r'^\d{4}$')
+
+    def test_pin_never_collides_with_an_open_tab_in_the_same_business(self):
+        # Force the entire PIN space open except one value, then confirm new_credentials
+        # avoids every existing open tab's PIN.
+        taken = set()
+        for i in range(20):
+            _token, pin = BarTab.new_credentials(self.biz)
+            self.assertNotIn(pin, taken)
+            taken.add(pin)
+            BarTab.objects.create(
+                business=self.biz, customer_name=f'Patron {i}', status='OPEN',
+                tab_receipt_token=_token, tab_pin=pin,
+            )
+
+    def test_quick_sell_tab_sale_sets_pin_and_token(self):
+        """The actual regression: Quick Sell's 'tab' payment method must produce a
+        BarTab with a usable PIN/token, exactly like bar board and kitchen do."""
+        import json
+        self.client.force_login(self.owner)
+        cart = json.dumps([{'id': self.item.id, 'qty': 2, 'price': 50}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'tab',
+            'recipient': 'QS Tab Patron',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        tab = BarTab.objects.filter(
+            business=self.biz, customer_name='QS Tab Patron', source='qs',
+        ).first()
+        self.assertIsNotNone(tab, 'Quick Sell tab sale must create a BarTab')
+        self.assertTrue(tab.tab_receipt_token, 'QS tab must get a receipt token like bar/kitchen tabs')
+        self.assertRegex(tab.tab_pin, r'^\d{4}$', 'QS tab must get a 4-digit PIN like bar/kitchen tabs')
+
+
 class NetProfitWastageDeductionTest(TestCase):
     """K8 audit (Task 1, deferred): regression-locks the current, intentional net_profit
     formula — wastage_loss must be deducted exactly once (added in the 2026-07-13 sprint
