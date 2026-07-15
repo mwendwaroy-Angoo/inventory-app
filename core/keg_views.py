@@ -196,6 +196,17 @@ def bar_board(request):
                     )
                 return redirect('bar_board')
 
+        # Server-side double-submit backstop — see core/idempotency.py. Client-side
+        # guards only cover a second click on the same live page; this catches real
+        # duplicate requests (slow-network retry, back-button resubmission of the
+        # real <form> this view is posted from).
+        from core.idempotency import claim_checkout_token
+        idem_token = (request.POST.get('idempotency_token') or '').strip()
+        if not claim_checkout_token(business.id, idem_token):
+            from django.contrib import messages as _msg
+            _msg.info(request, 'Mauzo haya tayari yamehifadhiwa.')
+            return redirect('bar_board')
+
         cart_json = request.POST.get('keg_cart', '[]')
         payment_method = request.POST.get('payment_method', 'cash')
         tab_customer = (request.POST.get('tab_customer') or '').strip()

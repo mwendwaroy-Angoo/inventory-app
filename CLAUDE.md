@@ -756,3 +756,20 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   creation sites (core/views.py, core/keg_views.py, core/kitchen_views.py) now call it. 3 new tests
   (BarTabNewCredentialsTest) including an end-to-end POST /quick-sell/ regression lock. No
   migrations. 127 tests pass.
+- Fix: checkout double-submit safety net (2026-07-15): Roy saw a Quick Sell tab entry double
+  (KES 1000 -> KES 2000 in the tabs drawer) after a possible double-tap / slow-network moment —
+  not fully reproducible, but the doubled amount ruled out a pure display glitch. ROOT CAUSE
+  CLASS: all three checkout surfaces (Quick Sell, Bar Board, Kitchen) relied only on client-side
+  JS (button disable, a JS flag) to prevent double-submission — that protection only stops a
+  second click on the same live page, not a real duplicate request reaching the server (network
+  retry, back-button resubmission of a real <form>, a double tap that both landed before the
+  button could disable). FIX: core/idempotency.py — claim_checkout_token(business_id, token, ttl)
+  atomically claims a client-supplied random token via cache.add(); a second POST with the same
+  token is treated as a duplicate and skipped rather than re-processed. Wired into all three
+  checkout views (core/views.py quick_sell, core/keg_views.py bar_board, core/kitchen_views.py
+  _kitchen_checkout) in the same change, per the existing tabs-drawer "fix one, fix all three"
+  rule for these counters. Also closed an asymmetry found while auditing: Bar Board's checkout
+  form was missing the form-level submit guard that Quick Sell already had (only had button
+  disable) — added to match. 2 new tests (CheckoutIdempotencyTest): duplicate token does not
+  double-book a sale; two genuinely different tokens both go through as real, separate sales (the
+  guard must not suppress legitimate repeat purchases). No migrations. 129 tests pass.

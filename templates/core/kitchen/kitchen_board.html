@@ -1705,6 +1705,7 @@
       credit_phone: creditPhone,
       merge_tab_id: mergeTabId,
       stk_payment_id: (meta && meta.stk_payment_id) ? String(meta.stk_payment_id) : '',
+      idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
       csrfmiddlewaretoken: CSRF,
     });
     fetch('/kitchen/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})

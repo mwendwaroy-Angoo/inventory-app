@@ -970,6 +970,7 @@
     <input type="hidden" name="payment_method" id="qsPaymentMethodData" value="cash">
     <input type="hidden" name="recipient" id="qsRecipientData" value="">
     <input type="hidden" name="credit_phone" id="qsCreditPhoneData" value="">
+    <input type="hidden" name="idempotency_token" id="qsIdemToken" value="">
 </form>
 
 {% if biz_profile.type == 'bar' %}
@@ -1540,6 +1541,8 @@
         }
         document.getElementById('qsCartData').value = JSON.stringify(cart);
         document.getElementById('qsPaymentMethodData').value = pm;
+        document.getElementById('qsIdemToken').value =
+            (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
         var btn = this;
         btn.disabled = true;
         btn.textContent = '⏳ Inawasilisha...';

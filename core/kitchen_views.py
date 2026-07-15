@@ -363,8 +363,17 @@ def _kitchen_checkout(request, up, business, is_owner):
         merge_tab_id_raw = (request.POST.get('merge_tab_id') or '').strip()
         merge_tab_id = int(merge_tab_id_raw) if merge_tab_id_raw.isdigit() else None
         stk_payment_id_raw = (request.POST.get('stk_payment_id') or '').strip()
+        idem_token = (request.POST.get('idempotency_token') or '').strip()
     except (json.JSONDecodeError, Exception):
         return JsonResponse({'ok': False, 'error': 'Invalid request'}, status=400)
+
+    # Server-side double-submit backstop — see core/idempotency.py. Client-side
+    # guards only cover a second click on the same live page; this catches real
+    # duplicate requests (slow-network retry, a stray double tap that both landed
+    # before the button could disable).
+    from core.idempotency import claim_checkout_token
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Mauzo haya tayari yamehifadhiwa.', 'duplicate': True}, status=409)
 
     # ── STK idempotency gate ──────────────────────────────────────────────────
     # If this checkout was initiated by a kitchen STK push, claim kitchen_settled

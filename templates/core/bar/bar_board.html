@@ -1005,6 +1005,7 @@
   <input type="hidden" name="tab_server"     id="keg-tab-server-input">
   <input type="hidden" name="tab_phone"      id="keg-tab-phone-input">
   <input type="hidden" name="merge_tab_id"   id="keg-merge-tab-id" value="">
+  <input type="hidden" name="idempotency_token" id="keg-idem-token" value="">
 </form>
 
 <!-- ════════════════════════════════════════════════════
@@ -2093,7 +2094,14 @@
     if (sf) sf.style.display = 'none';
   };
 
+  var _kegSaleSubmitted = false;
+  document.getElementById('keg-sale-form').addEventListener('submit', function (e) {
+    if (_kegSaleSubmitted) { e.preventDefault(); return false; }
+    _kegSaleSubmitted = true;
+  });
+
   window.completeSale = function () {
+    if (_kegSaleSubmitted) return;
     if (Object.keys(kegCart).length === 0) return;
     var method = document.querySelector('input[name="keg_payment"]:checked').value;
 
@@ -2128,6 +2136,8 @@
     });
     document.getElementById('keg-cart-input').value    = JSON.stringify(cartArray);
     document.getElementById('keg-payment-input').value = method;
+    document.getElementById('keg-idem-token').value =
+        (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
     // Refresh the CSRF token from the cookie before submit — the cookie is always
     // current even when the page was loaded from a stale SW cache.
     (function () {

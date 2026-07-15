@@ -2488,6 +2488,16 @@ def quick_sell(request):
                 )
                 return redirect('quick_sell')
 
+        # Server-side double-submit backstop — see core/idempotency.py. Client-side
+        # guards (button disable, JS flag) only cover a second click on the same
+        # live page; this catches real duplicate requests (slow-network retry,
+        # back-button resubmission of the real <form> this view is posted from).
+        from core.idempotency import claim_checkout_token
+        idem_token = request.POST.get("idempotency_token", "").strip()
+        if not claim_checkout_token(user_profile.business_id, idem_token):
+            messages.info(request, 'Mauzo haya tayari yamehifadhiwa.')
+            return redirect('quick_sell')
+
         cart_json = request.POST.get("cart", "[]")
         try:
             cart = json.loads(cart_json)

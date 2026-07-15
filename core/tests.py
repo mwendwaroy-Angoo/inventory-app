@@ -2487,6 +2487,59 @@ class BarTabNewCredentialsTest(TestCase):
         self.assertRegex(tab.tab_pin, r'^\d{4}$', 'QS tab must get a 4-digit PIN like bar/kitchen tabs')
 
 
+class CheckoutIdempotencyTest(TestCase):
+    """Fix (2026-07-15): Roy saw a Quick Sell tab entry double (KES 1000 -> KES 2000) in
+    the tabs drawer after a possible double-tap / slow-network resubmit. Client-side
+    guards (button disable, JS flags) only stop a second click on the SAME live page —
+    they do nothing against a real duplicate request reaching the server. This locks in
+    the server-side backstop (core/idempotency.py claim_checkout_token): the same
+    idempotency_token from the same business can only create a sale once."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='idem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Idem Test Beer',
+            material_no='IDEM-01', unit='pcs', selling_price=Decimal('1000'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('10'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_duplicate_token_does_not_double_book_the_sale(self):
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 1000}])
+        payload = {
+            'cart': cart, 'payment_method': 'tab', 'recipient': 'Idem Tab Patron',
+            'idempotency_token': 'same-token-123',
+        }
+        self.client.post('/quick-sell/', payload)
+        self.client.post('/quick-sell/', payload)  # simulated resubmit: identical token
+        tab = BarTab.objects.filter(business=self.biz, customer_name='Idem Tab Patron').first()
+        self.assertIsNotNone(tab)
+        self.assertEqual(tab.entries.count(), 1, 'Duplicate token must not create a second entry')
+        self.assertEqual(tab.unpaid_total(), Decimal('1000'), 'Duplicate submission must not double the amount')
+
+    def test_different_tokens_are_independent_real_sales(self):
+        """Two genuinely separate sales (different tokens) must both go through —
+        the guard must not accidentally suppress legitimate repeat purchases."""
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 1000}])
+        self.client.post('/quick-sell/', {
+            'cart': cart, 'payment_method': 'tab', 'recipient': 'Repeat Patron',
+            'idempotency_token': 'token-A',
+        })
+        self.client.post('/quick-sell/', {
+            'cart': cart, 'payment_method': 'tab', 'recipient': 'Repeat Patron',
+            'idempotency_token': 'token-B',
+        })
+        tab = BarTab.objects.filter(business=self.biz, customer_name='Repeat Patron').first()
+        self.assertEqual(tab.entries.count(), 2, 'Two distinct tokens must both be processed as real sales')
+
+
 class NetProfitWastageDeductionTest(TestCase):
     """K8 audit (Task 1, deferred): regression-locks the current, intentional net_profit
     formula — wastage_loss must be deducted exactly once (added in the 2026-07-13 sprint
