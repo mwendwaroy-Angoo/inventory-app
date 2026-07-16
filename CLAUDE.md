@@ -818,3 +818,27 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   since it's the same block. 4 new tests (CashPaymentRequestTest). Also: "Tawi la" (mistranslated
   "branch") on tab_live.html renamed to "Bill ya" per Roy's request — clearer for customers. 133
   tests pass.
+- Fix: cross-counter receipt linking was asymmetric (2026-07-16). Roy asked for a diagnosis of
+  PIN generation + receipt flow across all three counters. PIN generation was already correct
+  (single BarTab.new_credentials() source since the 2026-07-15 fix). Receipt/bill unification was
+  NOT: each counter had its own hand-copied master-receipt lookup and they'd drifted — Bar Board
+  checked everything (own receipt, linked_tab_ids, kitchen tab, any same-day receipt from any
+  source), Kitchen only checked Bar (never Quick Sell), and Quick Sell's tab flow checked nothing
+  beyond its own tab. Net effect: a customer's tab opened at Bar or Kitchen first, then rung up
+  again at Quick Sell, got a SECOND separate receipt and PIN instead of joining their existing
+  bill. FIX: core/tab_receipts.py — resolve_master_receipt(business, tab) is now the single
+  source of truth for all three counters (core/views.py quick_sell, core/keg_views.py bar_board,
+  core/kitchen_views.py food_tab), collapsing the old per-counter priority chains into one:
+  (1) own receipt, (2) already linked elsewhere, (3) another OPEN tab for the same customer on
+  ANY counter that already has a receipt, (4) any receipt issued today for that customer name on
+  any counter. Bar Board's two near-duplicate "linked" SMS blocks (one per old priority 3/4)
+  collapsed into one; Quick Sell gained the same "bidhaa imeongezwa" cross-link SMS Bar Board and
+  Kitchen already had, for parity. Bug found while building this: `meta__linked_tab_ids__contains`
+  (used by the old code and carried into the new helper) is a JSONField `contains` lookup that
+  Django does not support on SQLite, only PostgreSQL — production was never at risk (Postgres),
+  but it meant this code path had apparently never been exercised by any test in the project's
+  history; wrapped it in `core/tab_receipts.py:_receipt_linked_to()` to degrade to "no match"
+  under SQLite instead of raising, with zero behavior change on Postgres. 4 new tests
+  (CrossCounterReceiptLinkingTest): direct priority-chain coverage plus one end-to-end regression
+  lock (Bar tab first, Quick Sell second, for the same customer, must reuse one receipt). No
+  migrations. 137 tests pass.

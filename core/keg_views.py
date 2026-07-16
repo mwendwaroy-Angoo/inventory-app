@@ -339,80 +339,20 @@ def bar_board(request):
                     # they scan once and see all subsequent rounds in real-time.
                     rcpt_meta['tab_id'] = active_tab.id
 
-                # For tab sales: resolve the master receipt so the customer keeps one URL.
-                # Priority 1: bar tab already has its own receipt (subsequent rounds).
-                # Priority 2: bar tab appears in another receipt's linked_tab_ids (linked earlier).
-                # Priority 3: customer has an open kitchen food tab with a receipt — link this
-                #             bar tab into it so all items appear under one URL.
+                # For tab sales: resolve the master receipt so the customer keeps one URL,
+                # regardless of which counter (bar/kitchen/Quick Sell) rings up their next
+                # item. Single source of truth — see core/tab_receipts.py.
                 master_rcpt = None
-                _is_linked_to_food_rcpt = False
-                _is_linked_to_qs_rcpt = False  # Priority 4: linked to a cross-module QS receipt
+                _is_freshly_linked = False
                 if payment_method == 'tab' and active_tab:
-                    master_rcpt = Receipt.objects.filter(
-                        business=business,
-                        meta__tab_id=active_tab.id,
-                    ).first()
-                    if master_rcpt is None:
-                        master_rcpt = Receipt.objects.filter(
-                            business=business,
-                            meta__linked_tab_ids__contains=[active_tab.id],
-                        ).first()
-                    if master_rcpt is None:
-                        try:
-                            _kf_qs = BarTab.objects.filter(
-                                business=business, status='OPEN', source='kitchen',
-                            )
-                            _kf_tab = (
-                                _kf_qs.filter(customer=linked_customer).first()
-                                if linked_customer
-                                else _kf_qs.filter(customer_name__iexact=tab_customer).first()
-                            )
-                            if _kf_tab:
-                                _kf_rcpt = Receipt.objects.filter(
-                                    business=business,
-                                    meta__tab_id=_kf_tab.id,
-                                ).first()
-                                if _kf_rcpt is None:
-                                    _kf_rcpt = Receipt.objects.filter(
-                                        business=business,
-                                        meta__linked_tab_ids__contains=[_kf_tab.id],
-                                    ).first()
-                                if _kf_rcpt:
-                                    _kf_linked = list(_kf_rcpt.meta.get('linked_tab_ids') or [])
-                                    if active_tab.id not in _kf_linked:
-                                        _kf_linked.append(active_tab.id)
-                                        _kf_rcpt.meta['linked_tab_ids'] = _kf_linked
-                                        _kf_rcpt.save(update_fields=['meta'])
-                                    master_rcpt = _kf_rcpt
-                                    _is_linked_to_food_rcpt = True
-                        except Exception:
-                            logger.exception(
-                                'bar_board: kitchen-receipt link lookup failed business=%s',
-                                business.id,
-                            )
-
-                    if master_rcpt is None and tab_customer:
-                        # Priority 4: any receipt issued today for this customer from Quick Sell
-                        # or another module (handles QS-deni-first → bar-tab-second scenario).
-                        try:
-                            _any_today = Receipt.objects.filter(
-                                business=business,
-                                customer_name__iexact=tab_customer,
-                                created_at__date=timezone.localdate(),
-                            ).exclude(payment_method='statement').order_by('-created_at').first()
-                            if _any_today:
-                                _linked_ids = list(_any_today.meta.get('linked_tab_ids') or [])
-                                if active_tab.id not in _linked_ids:
-                                    _linked_ids.append(active_tab.id)
-                                    _any_today.meta['linked_tab_ids'] = _linked_ids
-                                    _any_today.save(update_fields=['meta'])
-                                master_rcpt = _any_today
-                                _is_linked_to_qs_rcpt = True
-                        except Exception:
-                            logger.exception(
-                                'bar_board: cross-module receipt link lookup failed business=%s',
-                                business.id,
-                            )
+                    try:
+                        from core.tab_receipts import resolve_master_receipt
+                        master_rcpt, _is_freshly_linked = resolve_master_receipt(business, active_tab)
+                    except Exception:
+                        logger.exception(
+                            'bar_board: master receipt resolution failed business=%s',
+                            business.id,
+                        )
 
                 if master_rcpt:
                     # Reuse existing master receipt — customer's QR stays the same
@@ -473,42 +413,24 @@ def bar_board(request):
                         "Tab open SMS failed in bar_board (business=%s)", business.id
                     )
 
-            # SMS: bar item linked to existing kitchen food tab receipt — update customer
-            if payment_method == 'tab' and _is_linked_to_food_rcpt and receipt_url and active_tab:
+            # SMS: bar item freshly linked into an existing tab/receipt from another
+            # counter (kitchen or Quick Sell) — update the customer.
+            if payment_method == 'tab' and _is_freshly_linked and receipt_url and active_tab:
                 try:
                     from .notifications import normalize_ke_phone, send_sms_notification
-                    _sms_phone_kf = normalize_ke_phone(
+                    _sms_phone_link = normalize_ke_phone(
                         tab_phone or (linked_customer.phone if linked_customer else '') or ''
                     ) if (tab_phone or linked_customer) else ''
-                    if _sms_phone_kf:
-                        _sms_kf = (
+                    if _sms_phone_link:
+                        _sms_link = (
                             f"Habari {tab_customer},\n"
                             f"{business.name}: Kinywaji kimeongezwa kwenye tab yako.\n"
                             f"Angalia risiti iliyosasishwa: {receipt_url}"
                         )
-                        send_sms_notification(_sms_kf, _sms_phone_kf)
+                        send_sms_notification(_sms_link, _sms_phone_link)
                 except Exception:
                     logger.exception(
-                        "Tab food-link SMS failed in bar_board (business=%s)", business.id
-                    )
-
-            # SMS: bar tab linked to an existing QS/cross-module receipt (Priority 4)
-            if payment_method == 'tab' and _is_linked_to_qs_rcpt and receipt_url and active_tab:
-                try:
-                    from .notifications import normalize_ke_phone, send_sms_notification
-                    _sms_phone_p4 = normalize_ke_phone(
-                        tab_phone or (linked_customer.phone if linked_customer else '') or ''
-                    ) if (tab_phone or linked_customer) else ''
-                    if _sms_phone_p4:
-                        _sms_p4 = (
-                            f"Habari {tab_customer},\n"
-                            f"{business.name}: Kinywaji kimeongezwa kwenye tab yako.\n"
-                            f"Angalia risiti iliyosasishwa: {receipt_url}"
-                        )
-                        send_sms_notification(_sms_p4, _sms_phone_p4)
-                except Exception:
-                    logger.exception(
-                        "Tab P4-link SMS failed in bar_board (business=%s)", business.id
+                        "Tab cross-link SMS failed in bar_board (business=%s)", business.id
                     )
 
             # SMS notification when bar items are merged into an existing kitchen food tab

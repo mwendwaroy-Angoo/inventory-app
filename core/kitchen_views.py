@@ -571,53 +571,19 @@ def _kitchen_checkout(request, up, business, is_owner):
     receipt_number = None
     rcpt = None
     master_rcpt = None    # tracked outside try so SMS guard can read it
-    _is_new_bar_link = False  # True when food tab is freshly linked to an existing bar tab receipt
+    _is_new_bar_link = False  # True when food tab is freshly linked to an existing tab/receipt
 
-    # ── food_tab: resolve master receipt ─────────────────────────────────────
-    # Priority 1: food tab already has its own master receipt (subsequent rounds)
-    # Priority 2: same customer has an open bar tab with a master receipt —
-    #             link the food tab to it so the customer keeps one URL for both.
-    # Priority 3: neither found — a new receipt will be created below.
+    # ── food_tab: resolve master receipt so the customer keeps one URL, regardless
+    # of which counter (bar/kitchen/Quick Sell) rings up their next item.
+    # Single source of truth — see core/tab_receipts.py.
     if payment_method == 'food_tab' and active_tab:
-        master_rcpt = Receipt.objects.filter(
-            business=business,
-            meta__tab_id=active_tab.id,
-        ).first()
-        if master_rcpt is None:
-            # Also check if this food tab's ID appears in another receipt's linked_tab_ids
-            # (e.g. bar board already linked this tab into its bar receipt on a previous order)
-            master_rcpt = Receipt.objects.filter(
-                business=business,
-                meta__linked_tab_ids__contains=[active_tab.id],
-            ).first()
-
-        if master_rcpt is None:
-            try:
-                _bar_qs = BarTab.objects.filter(
-                    business=business, status='OPEN', source='bar'
-                )
-                _btab = (
-                    _bar_qs.filter(customer=active_tab.customer).first()
-                    if active_tab.customer
-                    else _bar_qs.filter(customer_name__iexact=tab_customer).first()
-                )
-                if _btab:
-                    _bar_rcpt = Receipt.objects.filter(
-                        business=business,
-                        meta__tab_id=_btab.id,
-                    ).first()
-                    if _bar_rcpt:
-                        _linked = list(_bar_rcpt.meta.get('linked_tab_ids') or [])
-                        if active_tab.id not in _linked:
-                            _linked.append(active_tab.id)
-                            _bar_rcpt.meta['linked_tab_ids'] = _linked
-                            _bar_rcpt.save(update_fields=['meta'])
-                            _is_new_bar_link = True
-                        master_rcpt = _bar_rcpt
-            except Exception:
-                logger.exception(
-                    'food_tab: bar-tab receipt lookup failed business=%s', business.id
-                )
+        try:
+            from core.tab_receipts import resolve_master_receipt
+            master_rcpt, _is_new_bar_link = resolve_master_receipt(business, active_tab)
+        except Exception:
+            logger.exception(
+                'food_tab: master receipt resolution failed business=%s', business.id
+            )
 
     _kitchen_rcpt_reused = False  # True when credit lines appended to existing receipt
 

@@ -2617,6 +2617,103 @@ class CashPaymentRequestTest(TestCase):
         self.assertEqual(data.get('redirect'), f'/r/{self.receipt.token}/')
 
 
+class CrossCounterReceiptLinkingTest(TestCase):
+    """Fix (2026-07-16): a customer's running tab must resolve to ONE shared receipt/PIN
+    regardless of which counter (Bar, Kitchen, Quick Sell) rings up their next item.
+
+    Root cause of the gap: each counter had its own hand-copied version of the
+    master-receipt lookup and they'd drifted — Bar Board checked everything
+    (own receipt, linked_tab_ids, kitchen tabs, any same-day receipt), Kitchen only
+    checked Bar (not Quick Sell), and Quick Sell's tab flow checked nothing beyond its
+    own tab. core/tab_receipts.py:resolve_master_receipt() is now the single source of
+    truth all three call. These tests cover the two directions that were previously
+    broken (Bar/Kitchen tab exists first, Quick Sell rings up second) plus a direct
+    unit test of the priority chain."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Cross Counter Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='xcounter_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='XCounter Soda',
+            material_no='XCTR-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner)
+
+    def _make_tab_with_receipt(self, source, customer_name='Cross Patron'):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=customer_name, status='OPEN', source=source,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='credit',
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='XCounter Soda', amount=Decimal('100'))
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'XCounter Soda', 'qty': 1, 'subtotal': 100}],
+            payment_method='tab', customer_name=customer_name, meta={'tab_id': tab.id},
+        )
+        return tab, rcpt
+
+    def test_resolver_finds_own_receipt_first(self):
+        from core.tab_receipts import resolve_master_receipt
+        tab, rcpt = self._make_tab_with_receipt('bar')
+        found, freshly_linked = resolve_master_receipt(self.biz, tab)
+        self.assertEqual(found.id, rcpt.id)
+        self.assertFalse(freshly_linked)
+
+    def test_resolver_links_to_another_open_tabs_receipt_any_source(self):
+        from core.tab_receipts import resolve_master_receipt
+        bar_tab, bar_rcpt = self._make_tab_with_receipt('bar')
+        qs_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Cross Patron', status='OPEN', source='qs',
+        )
+        found, freshly_linked = resolve_master_receipt(self.biz, qs_tab)
+        self.assertEqual(found.id, bar_rcpt.id)
+        self.assertTrue(freshly_linked)
+        bar_rcpt.refresh_from_db()
+        self.assertIn(qs_tab.id, bar_rcpt.meta.get('linked_tab_ids', []))
+
+    def test_resolver_falls_back_to_any_todays_receipt_for_customer(self):
+        from core.tab_receipts import resolve_master_receipt
+        # A receipt with no live OPEN tab attached (e.g. a settled/standalone credit sale)
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'XCounter Soda', 'qty': 1, 'subtotal': 100}],
+            payment_method='credit', customer_name='Cross Patron',
+        )
+        new_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Cross Patron', status='OPEN', source='kitchen',
+        )
+        found, freshly_linked = resolve_master_receipt(self.biz, new_tab)
+        self.assertEqual(found.id, rcpt.id)
+        self.assertTrue(freshly_linked)
+
+    def test_quick_sell_tab_links_into_existing_bar_tab_receipt(self):
+        """The actual regression: previously Quick Sell's tab flow never looked for a
+        pre-existing Bar tab receipt — it always issued a second, separate receipt."""
+        import json
+        bar_tab, bar_rcpt = self._make_tab_with_receipt('bar', customer_name='QS Link Patron')
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        self.client.post('/quick-sell/', {
+            'cart': cart, 'payment_method': 'tab', 'recipient': 'QS Link Patron',
+        })
+        qs_tab = BarTab.objects.filter(
+            business=self.biz, customer_name='QS Link Patron', source='qs',
+        ).first()
+        self.assertIsNotNone(qs_tab)
+        self.assertEqual(
+            Receipt.objects.filter(business=self.biz, customer_name__iexact='QS Link Patron').count(),
+            1,
+            'Quick Sell must reuse the existing Bar tab receipt, not create a second one',
+        )
+        bar_rcpt.refresh_from_db()
+        self.assertIn(qs_tab.id, bar_rcpt.meta.get('linked_tab_ids', []))
+
+
 class NetProfitWastageDeductionTest(TestCase):
     """K8 audit (Task 1, deferred): regression-locks the current, intentional net_profit
     formula — wastage_loss must be deducted exactly once (added in the 2026-07-13 sprint

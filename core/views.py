@@ -2703,18 +2703,21 @@ def quick_sell(request):
                     bar_tab.customer = _cust
                     bar_tab.save(update_fields=["customer"])
 
-                # Issue or reuse master receipt for this tab so the customer has a live QR
+                # Issue or reuse master receipt for this tab so the customer has a live QR,
+                # regardless of which counter (bar/kitchen/Quick Sell) rings up their next
+                # item. Single source of truth — see core/tab_receipts.py.
                 _tab_rcpt_token = None
                 _tab_rcpt_number = None
                 _tab_rcpt_id = None
                 _tab_receipt_url = None
                 _tab_master_rcpt = None
+                _tab_freshly_linked = False
                 try:
                     from .models import Receipt as _Rcpt
-                    _tab_master_rcpt = _Rcpt.objects.filter(
-                        business=user_profile.business,
-                        meta__tab_id=bar_tab.id,
-                    ).first()
+                    from core.tab_receipts import resolve_master_receipt
+                    _tab_master_rcpt, _tab_freshly_linked = resolve_master_receipt(
+                        user_profile.business, bar_tab
+                    )
                     if _tab_master_rcpt:
                         _tab_rcpt_token  = _tab_master_rcpt.token
                         _tab_rcpt_number = _tab_master_rcpt.receipt_number
@@ -2737,20 +2740,29 @@ def quick_sell(request):
                 except Exception:
                     pass
 
-                # SMS to customer on first tab round (new receipt only)
-                if _tab_master_rcpt is None and _tab_receipt_url:
+                # SMS to customer: brand-new tab, or freshly linked into an existing
+                # tab/receipt from another counter (bar or kitchen) — no SMS on a plain
+                # subsequent round against a receipt we already knew about.
+                if (_tab_master_rcpt is None or _tab_freshly_linked) and _tab_receipt_url:
                     _sms_phone_raw = credit_phone or (_cust.phone if _cust else '')
                     if _sms_phone_raw:
                         try:
                             from .notifications import normalize_ke_phone, send_sms_notification
                             _sms_phone_qs = normalize_ke_phone(_sms_phone_raw)
                             if _sms_phone_qs:
-                                _sms_qs = (
-                                    f"Habari {credit_recipient},\n"
-                                    f"{user_profile.business.name}: Tab imefunguliwa — "
-                                    f"KES {total:,.0f}.\n"
-                                    f"Angalia risiti yako: {_tab_receipt_url}"
-                                )
+                                if _tab_freshly_linked:
+                                    _sms_qs = (
+                                        f"Habari {credit_recipient},\n"
+                                        f"{user_profile.business.name}: Bidhaa imeongezwa kwenye tab yako.\n"
+                                        f"Angalia risiti iliyosasishwa: {_tab_receipt_url}"
+                                    )
+                                else:
+                                    _sms_qs = (
+                                        f"Habari {credit_recipient},\n"
+                                        f"{user_profile.business.name}: Tab imefunguliwa — "
+                                        f"KES {total:,.0f}.\n"
+                                        f"Angalia risiti yako: {_tab_receipt_url}"
+                                    )
                                 send_sms_notification(_sms_qs, _sms_phone_qs)
                         except Exception:
                             pass
