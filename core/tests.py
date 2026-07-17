@@ -2792,3 +2792,235 @@ class TabLiveOutstandingTileTest(TestCase):
         self._make_tab_with_entry(is_paid=True)
         resp = self.client.get('/tab/k8-live-token/')
         self.assertNotContains(resp, 'Bado kulipa')
+
+
+class LinkedTabSQLiteGuardTest(TestCase):
+    """K9 Task 1: meta__linked_tab_ids__contains is a JSONField `contains` lookup
+    that only PostgreSQL (production) supports — SQLite (this test DB, and local
+    dev) raises NotSupportedError. core/tab_receipts.py already guarded its own
+    use of this lookup; keg_views.py:_resolve_tab_public_url, keg_views.py:tabs_list
+    Pass 2, and kitchen_views.py:kitchen_tabs_list Pass 2 each had their own
+    unguarded copy of the same Q() chain — a 500 waiting to happen the moment any
+    of those code paths ran against a tab with no directly-owned receipt. Fixed by
+    routing all three through the shared _safe_linked_query() helper. These tests
+    exercise the real endpoints (not mocks) — on SQLite they crash pre-fix simply
+    by reaching the Pass-2 query, regardless of whether any receipt actually is
+    linked, which is exactly what makes this a correctness bug and not just an
+    edge case."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='SQLite Guard Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='sqliteguard_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_safe_linked_query_degrades_gracefully_on_notsupported(self):
+        from django.db.utils import NotSupportedError
+        from core.tab_receipts import _safe_linked_query
+
+        class _BoomQS:
+            def filter(self, *a, **k):
+                raise NotSupportedError('contains lookup not supported')
+
+            def none(self):
+                return Receipt.objects.none()
+
+        result = _safe_linked_query(_BoomQS(), [1, 2, 3])
+        self.assertEqual(list(result), [])
+
+    def test_resolve_tab_public_url_no_crash_when_tab_has_no_receipt(self):
+        from core.keg_views import _resolve_tab_public_url
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Guard Patron', status='OPEN',
+            tab_receipt_token='guard-token', tab_pin='9911',
+        )
+        url = _resolve_tab_public_url(tab)
+        self.assertEqual(url, '/tab/guard-token/')
+
+    def test_bar_tabs_list_no_crash_with_unmapped_open_tab(self):
+        BarTab.objects.create(
+            business=self.biz, customer_name='Guard Patron 2', status='OPEN',
+            source='bar', tab_receipt_token='guard-token-2', tab_pin='9912',
+        )
+        resp = self.client.get('/bar/tabs/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_kitchen_tabs_list_no_crash_with_unmapped_open_tab(self):
+        BarTab.objects.create(
+            business=self.biz, customer_name='Guard Patron 3', status='OPEN',
+            source='kitchen', store=self.kitchen_store,
+            tab_receipt_token='guard-token-3', tab_pin='9913',
+        )
+        resp = self.client.get('/kitchen/tabs/')
+        self.assertEqual(resp.status_code, 200)
+
+
+class NotificationShiftOpenTest(TestCase):
+    """K9 Task 2: shift_views.py open_shift() passed business=up.business into
+    Notification.objects.create — Notification has no business field, so this
+    raised TypeError on every non-owner shift-open, silently swallowed by the
+    surrounding except Exception. It was also missing the required title= kwarg
+    (no default). Net effect: owners were never notified when staff opened a
+    shift. Documented in CLAUDE.md Known Issues since 2026-07-15."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Shift Notif Biz')
+        self.owner = User.objects.create_user(username='shiftnotif_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='shiftnotif_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def test_owner_notified_when_staff_opens_shift(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '500'})
+        self.assertEqual(resp.status_code, 200)
+        notif = Notification.objects.filter(user=self.owner).first()
+        self.assertIsNotNone(notif, 'Owner must receive an in-app notification when staff opens a shift')
+        self.assertTrue(notif.title, 'title is required — the pre-fix call omitted it entirely')
+        self.assertIn('KES 500', notif.message)
+
+
+class NotificationWriteOffTest(TestCase):
+    """K9 Task 2: debt_views.py request_write_off() (and 6 sibling write-off /
+    credit-approval notification sites) passed business=up.business into
+    Notification.objects.create — an invalid kwarg that raised TypeError every
+    time, silently swallowed. Owners were flying blind on staff debt-forgiveness
+    requests — the highest-stakes of the 8 broken sites."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WriteOff Notif Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='wonotif_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='wonotif_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='WriteOff Item',
+            material_no='WO-NOTIF-01', unit='Pcs', selling_price=Decimal('50'),
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('50'),
+            payment_method='credit', recipient='WO Customer',
+        )
+
+    def test_owner_notified_on_write_off_request(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f'/debt/write-off/request/{self.txn.id}/', {'reason': 'Customer disputed amount'}
+        )
+        self.assertEqual(resp.status_code, 200)
+        notif = Notification.objects.filter(user=self.owner).first()
+        self.assertIsNotNone(notif, 'Owner must be notified of a staff write-off request')
+        self.assertIn('Kufuta', notif.title)
+
+
+class CashRequestedClearedOnDebtConversionTest(TestCase):
+    """K9 Task 3: cash_requested_at (the "customer tapped Lipa Cash" badge) must be
+    cleared whenever a tab's unpaid balance is resolved by any path, not just a
+    direct settle/void/STK payment. Full regression sweep of every status=SETTLED/
+    VOID write site found convert_tab_to_debt and bulk_convert_tabs_to_debt both
+    missing the clear (the sprint's named targets), plus two more not mentioned in
+    the brief: mpesa_views._settle_tab_from_payment (STK full-tab settlement) and
+    shift_views' auto-convert-tabs-at-shift-close loop — both fixed in the same
+    pass per the "audit ALL surfaces" rule."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Cash Badge Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='cashbadge_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Cash Badge Beer',
+            material_no='CB-BADGE-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.client.force_login(self.owner)
+
+    def _make_tab(self, name, pin):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN',
+            tab_receipt_token=f'cb-token-{pin}', tab_pin=pin,
+            cash_requested_at=timezone.now(),
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Cash Badge Beer', amount=Decimal('100'),
+        )
+        return tab
+
+    def test_convert_tab_to_debt_clears_cash_requested(self):
+        tab = self._make_tab('Cash Badge Patron', '1231')
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Cash Badge Patron'})
+        self.assertEqual(resp.status_code, 200)
+        tab.refresh_from_db()
+        self.assertIsNone(tab.cash_requested_at)
+
+    def test_bulk_convert_tabs_to_debt_clears_cash_requested(self):
+        import json
+        tab = self._make_tab('Bulk Cash Badge Patron', '1232')
+        resp = self.client.post('/bar/tabs/bulk-convert-to-debt/', {'tab_ids': json.dumps([tab.id])})
+        self.assertEqual(resp.status_code, 200)
+        tab.refresh_from_db()
+        self.assertIsNone(tab.cash_requested_at)
+
+
+class TabPinUniqueConstraintTest(TestCase):
+    """K9 Task 4: BarTab.new_credentials() reads existing OPEN-tab PINs then hands
+    back a value with no DB lock between the read and the eventual save — two
+    concurrent tab-opens on a busy night could pick the same PIN, and the wall-QR
+    PIN lookup (find_tab_search) only ever returns the first match. The
+    unique_open_tab_pin_per_business constraint is the real guarantee;
+    BarTab.create_with_credentials() is the single retry point used by all 3
+    creation sites (bar board, kitchen, Quick Sell)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Pin Constraint Biz')
+
+    def test_constraint_blocks_duplicate_open_pin_same_business(self):
+        from django.db import IntegrityError, transaction as db_transaction
+        BarTab.objects.create(
+            business=self.biz, customer_name='First', status='OPEN',
+            tab_receipt_token='tok-1', tab_pin='5555',
+        )
+        with self.assertRaises(IntegrityError):
+            with db_transaction.atomic():
+                BarTab.objects.create(
+                    business=self.biz, customer_name='Second', status='OPEN',
+                    tab_receipt_token='tok-2', tab_pin='5555',
+                )
+
+    def test_constraint_allows_same_pin_once_earlier_tab_is_no_longer_open(self):
+        first = BarTab.objects.create(
+            business=self.biz, customer_name='First', status='OPEN',
+            tab_receipt_token='tok-1', tab_pin='5555',
+        )
+        first.status = 'SETTLED'
+        first.save(update_fields=['status'])
+        BarTab.objects.create(
+            business=self.biz, customer_name='Second', status='OPEN',
+            tab_receipt_token='tok-2', tab_pin='5555',
+        )  # must not raise
+
+    def test_create_with_credentials_retries_once_on_pin_collision(self):
+        BarTab.objects.create(
+            business=self.biz, customer_name='Taken', status='OPEN',
+            tab_receipt_token='tok-taken', tab_pin='1111',
+        )
+        calls = {'n': 0}
+        real_new_credentials = BarTab.new_credentials
+
+        def _colliding_then_fresh(business):
+            calls['n'] += 1
+            if calls['n'] == 1:
+                return 'forced-collision-token', '1111'
+            return real_new_credentials(business)
+
+        with patch.object(BarTab, 'new_credentials', staticmethod(_colliding_then_fresh)):
+            tab = BarTab.create_with_credentials(business=self.biz, customer_name='Retry Patron')
+        self.assertEqual(calls['n'], 2)
+        self.assertNotEqual(tab.tab_pin, '1111')

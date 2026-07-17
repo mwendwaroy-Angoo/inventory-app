@@ -2331,6 +2331,13 @@ class BarTab(models.Model):
         ordering = ['-opened_at']
         verbose_name = 'Bar Tab'
         verbose_name_plural = 'Bar Tabs'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['business', 'tab_pin'],
+                condition=models.Q(status='OPEN') & ~models.Q(tab_pin=''),
+                name='unique_open_tab_pin_per_business',
+            )
+        ]
 
     def __str__(self):
         return f"Tab — {self.customer_name} ({self.status})"
@@ -2341,7 +2348,11 @@ class BarTab(models.Model):
 
         Single source of truth for all BarTab creation sites (bar board, kitchen,
         Quick Sell) so BillScan lookup (find_tab_search, tab_live) never sees a
-        tab with a blank or colliding PIN.
+        tab with a blank or colliding PIN. The read-then-return here has no DB
+        lock between the read and the eventual save, so two concurrent tab-opens
+        could still race onto the same PIN — the unique_open_tab_pin_per_business
+        constraint is the real guarantee; create_with_credentials() below retries
+        on the resulting IntegrityError.
         """
         import random
         import secrets
@@ -2352,6 +2363,23 @@ class BarTab(models.Model):
         while pin in existing_pins:
             pin = str(random.randint(1000, 9999))
         return secrets.token_urlsafe(20), pin
+
+    @classmethod
+    def create_with_credentials(cls, **fields):
+        """Create a BarTab with a fresh token/PIN, retrying once on a PIN collision.
+
+        Single retry point for all 3 creation sites (bar board, kitchen, Quick
+        Sell) — see new_credentials() for why the collision is possible at all
+        despite the pre-check.
+        """
+        from django.db import IntegrityError, transaction as _db_transaction
+        token, pin = cls.new_credentials(fields['business'])
+        try:
+            with _db_transaction.atomic():
+                return cls.objects.create(tab_receipt_token=token, tab_pin=pin, **fields)
+        except IntegrityError:
+            token, pin = cls.new_credentials(fields['business'])
+            return cls.objects.create(tab_receipt_token=token, tab_pin=pin, **fields)
 
     def total(self):
         result = self.entries.aggregate(t=models.Sum('amount'))['t']

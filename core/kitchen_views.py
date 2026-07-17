@@ -456,15 +456,12 @@ def _kitchen_checkout(request, up, business, is_owner):
             status='OPEN',
         ).first()
         if not active_tab and payment_method == 'food_tab':
-            _token, _pin = BarTab.new_credentials(business)
-            active_tab = BarTab.objects.create(
+            active_tab = BarTab.create_with_credentials(
                 business=business,
                 store=kitchen_store,
                 customer_name=tab_customer,
                 source='kitchen',
                 served_by=request.user,
-                tab_receipt_token=_token,
-                tab_pin=_pin,
             )
         elif not active_tab and payment_method == 'bar_tab':
             return JsonResponse({'ok': False, 'error': f'Hakuna tab wazi kwa "{tab_customer}"'}, status=400)
@@ -998,15 +995,14 @@ def kitchen_tabs_list(request):
         # Pass 2: receipts that reference the food tab via linked_tab_ids
         _kb_unmapped = [tid for tid in _food_tab_ids_all if tid not in _kb_receipt_map]
         if _kb_unmapped:
-            from django.db.models import Q as _QK
-            _klq = _QK()
-            for _kut in _kb_unmapped:
-                _klq |= _QK(meta__linked_tab_ids__contains=[_kut])
-            for _r in _KbReceipt.objects.filter(business=up.business).filter(_klq).values('meta', 'token'):
-                _rmeta = _r.get('meta') or {}
+            from core.tab_receipts import _safe_linked_query
+            for _r in _safe_linked_query(
+                _KbReceipt.objects.filter(business=up.business), _kb_unmapped
+            ):
+                _rmeta = _r.meta or {}
                 for _ltid in (_rmeta.get('linked_tab_ids') or []):
                     if _ltid in _kb_unmapped and _ltid not in _kb_receipt_map:
-                        _kb_receipt_map[_ltid] = _r['token']
+                        _kb_receipt_map[_ltid] = _r.token
 
     result = []
     for tab in food_tabs:

@@ -841,7 +841,6 @@ def clear_defaulter(request, customer_id):
 
     from .models import Notification
     Notification.objects.create(
-        business=user_profile.business,
         user=request.user,
         title=f"✅ {customer.name} — Ameruhusiwa Tena",
         message=f"{customer.name} amesamehewa deni la zamani na anaweza kukopa tena.",
@@ -969,7 +968,6 @@ def request_write_off(request, txn_id):
 
     for om in targets:
         Notification.objects.create(
-            business=up.business,
             user=om.user,
             title='📝 Ombi la Kufuta Kiingilio',
             message=(
@@ -1036,7 +1034,6 @@ def manager_review_write_off(request, req_id):
     owners = _UP.objects.filter(business=up.business, role='owner').select_related('user')
     for ow in owners:
         Notification.objects.create(
-            business=up.business,
             user=ow.user,
             title=f"{'✅' if verdict == 'approved' else '❌'} Meneja {verdict_sw} write-off",
             message=(
@@ -1108,7 +1105,6 @@ def approve_write_off(request, req_id):
     from core.notifications import normalize_ke_phone, send_sms_notification
 
     Notification.objects.create(
-        business=up.business,
         user=request.user,
         title='✅ Write-off Imeidhinishwa',
         message=f"{reviewer_name} amefuta: {item_name} KES {amount:,.0f} ({customer_name}).",
@@ -1118,7 +1114,6 @@ def approve_write_off(request, req_id):
     # Notify the requesting staff member
     if wo.requested_by:
         Notification.objects.create(
-            business=up.business,
             user=wo.requested_by,
             title='✅ Ombi la Write-off Limeidhinishwa',
             message=f"Mmiliki ameidhinisha: {item_name} KES {amount:,.0f} ({customer_name}) imefutwa.",
@@ -1201,7 +1196,6 @@ def reject_write_off(request, req_id):
 
             from .models import Notification
             Notification.objects.create(
-                business=up.business,
                 user=wo.requested_by,
                 title='❌ Ombi la Write-off Limekataliwa',
                 message=(
@@ -1222,7 +1216,6 @@ def reject_write_off(request, req_id):
 
     from .models import Notification
     Notification.objects.create(
-        business=up.business,
         user=request.user,
         title='❌ Write-off Imekataliwa',
         message=f"{reviewer_name} alikataa: {item_name} KES {amount:,.0f} ({customer_name}). Haki deduction imetumwa.",

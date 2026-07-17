@@ -1569,3 +1569,64 @@ python manage.py makemigrations --check # No changes detected
 python manage.py backfill_tab_tokens    # one-time run on each deployed environment
 python manage.py test                   # 133 tests, all pass
 ```
+
+---
+
+## Sprint K9 — SQLite Guard, Silent Notifications, Cash Badge, Tab PIN Race (2026-07-17)
+
+**Automated (15 new tests, 152 total):**
+- `LinkedTabSQLiteGuardTest` — `_safe_linked_query()` (core/tab_receipts.py) degrades to an empty
+  result instead of raising `NotSupportedError`; `_resolve_tab_public_url`, `tabs_list`
+  (`/bar/tabs/`), and `kitchen_tabs_list` (`/kitchen/tabs/`) all survive an unmapped open tab
+  without a 500 on SQLite.
+- `NotificationShiftOpenTest` — owner receives a real in-app notification (with a title) when
+  staff open a shift; previously silently failed.
+- `NotificationWriteOffTest` — owner receives a real in-app notification when staff request a
+  write-off; previously silently failed.
+- `CashRequestedClearedOnDebtConversionTest` — `convert_tab_to_debt` and
+  `bulk_convert_tabs_to_debt` both clear `cash_requested_at`.
+- `TabPinUniqueConstraintTest` — the DB constraint rejects a second OPEN tab with the same
+  `(business, tab_pin)`, allows PIN reuse once the earlier tab is no longer OPEN, and
+  `BarTab.create_with_credentials()` recovers from a forced PIN collision by retrying once.
+
+**Manual smoke tests:**
+
+### K9-1: Two tabs opened at once never collide on PIN
+
+1. On a busy-simulating test, open two tabs back-to-back for different customers on the same
+   business (bar board or kitchen board).
+2. Check the tabs drawer for both PINs.
+- ✅ Correct: the two PINs are always different.
+- ❌ Bug if: a collision is ever observed (should be extremely rare — the constraint + retry
+  exist specifically to make this structurally impossible, not just unlikely).
+
+### K9-2: Cash badge clears when a kitchen food tab is settled
+
+1. On a live tab's receipt page (`/r/<token>/`), tap "Lipa Cash" — confirm the amber cash-request
+   badge appears in the bar board / kitchen board / Quick Sell tabs drawers.
+2. Settle the tab from the Kitchen Board (Cash or M-Pesa).
+3. Refresh the tabs drawer.
+- ✅ Correct: the "💵 Anataka kulipa Cash" badge is gone.
+
+### K9-3: Owner sees a shift-open notification
+
+1. Log in as a non-owner staff member, open a shift with an opening float.
+2. Log in as the owner (or check the owner's notification bell).
+- ✅ Correct: a new in-app notification appears announcing the staff member opened a shift with
+  the correct float amount.
+
+### K9-4: Owner sees a write-off request notification
+
+1. Log in as staff, request a write-off on a credit transaction with a reason.
+2. Log in as the owner.
+- ✅ Correct: a new in-app notification appears describing the write-off request.
+
+### Final checks (post-K9)
+
+```bash
+python manage.py check                                              # 0 issues
+python manage.py makemigrations --check                             # No changes (0105 already applied)
+grep -rn "linked_tab_ids__contains" core/                            # only inside _safe_linked_query itself
+grep -rn "Notification.objects.create" core/ accounts/ | grep "business="  # zero results
+python manage.py test                                                # 152 tests, all pass
+```

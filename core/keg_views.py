@@ -264,16 +264,13 @@ def bar_board(request):
                                 break
                         except (TypeError, ValueError):
                             pass
-                    _token, _pin = BarTab.new_credentials(business)
-                    active_tab = BarTab.objects.create(
+                    active_tab = BarTab.create_with_credentials(
                         business=business,
                         store=first_barrel.store if first_barrel else None,
                         customer_name=tab_customer,
                         customer=linked_customer,
                         server_name=tab_server,
                         served_by=request.user if not tab_server else None,
-                        tab_receipt_token=_token,
-                        tab_pin=_pin,
                     )
 
         receipt_lines = []
@@ -937,15 +934,14 @@ def tabs_list(request):
         # Pass 2: receipts that reference the tab via linked_tab_ids (Priority 3/4 links)
         _unmapped = [tid for tid in _tab_ids if tid not in _receipt_token_map]
         if _unmapped:
-            from django.db.models import Q as _Q
-            _lq = _Q()
-            for _ut in _unmapped:
-                _lq |= _Q(meta__linked_tab_ids__contains=[_ut])
-            for _r in Receipt.objects.filter(business=up.business).filter(_lq).values('meta', 'token'):
-                _rmeta = _r.get('meta') or {}
+            from core.tab_receipts import _safe_linked_query
+            for _r in _safe_linked_query(
+                Receipt.objects.filter(business=up.business), _unmapped
+            ):
+                _rmeta = _r.meta or {}
                 for _ltid in (_rmeta.get('linked_tab_ids') or []):
                     if _ltid in _unmapped and _ltid not in _receipt_token_map:
-                        _receipt_token_map[_ltid] = _r['token']
+                        _receipt_token_map[_ltid] = _r.token
 
     def _entry_dict(e):
         """Serialise one BarTabEntry, including whether its item is a kitchen (food) item."""
@@ -1485,7 +1481,8 @@ def convert_tab_to_debt(request, tab_id):
     tab.customer = customer
     tab.status = 'SETTLED'
     tab.settled_at = timezone.now()
-    tab.save(update_fields=['customer', 'status', 'settled_at'])
+    tab.cash_requested_at = None
+    tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
 
     # SMS to customer confirming the debt (mirrors Quick Sell credit flow)
     if customer.phone:
@@ -1562,7 +1559,8 @@ def bulk_convert_tabs_to_debt(request):
         tab.customer = customer
         tab.status = 'SETTLED'
         tab.settled_at = timezone.now()
-        tab.save(update_fields=['customer', 'status', 'settled_at'])
+        tab.cash_requested_at = None
+        tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
         converted += 1
 
     return JsonResponse({'ok': True, 'converted': converted})
@@ -2520,11 +2518,13 @@ def _resolve_tab_public_url(tab):
     payment UI (STK, QR, cash request). Only a tab with zero sales yet (no
     receipt issued) falls back to the bare read-only /tab/<token>/ page.
     """
+    from core.tab_receipts import _safe_linked_query
     rcpt = Receipt.objects.filter(business=tab.business, meta__tab_id=tab.id).first()
     if rcpt is None:
-        rcpt = Receipt.objects.filter(
-            business=tab.business, meta__linked_tab_ids__contains=[tab.id]
-        ).first()
+        _linked = _safe_linked_query(
+            Receipt.objects.filter(business=tab.business), [tab.id]
+        )
+        rcpt = _linked[0] if _linked else None
     if rcpt:
         return f'/r/{rcpt.token}/'
     if tab.tab_receipt_token:

@@ -140,6 +140,10 @@ def _settle_tab_from_payment(payment):
                 entry.transaction.payment_method = 'mpesa'
                 entry.transaction.save(update_fields=['payment_method'])
 
+        if tab.cash_requested_at:
+            tab.cash_requested_at = None
+            tab.save(update_fields=['cash_requested_at'])
+
         if not tab.entries.filter(is_paid=False).exists():
             tab.status = 'SETTLED'
             tab.settled_at = now

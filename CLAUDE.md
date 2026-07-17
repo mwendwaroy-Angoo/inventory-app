@@ -531,7 +531,8 @@ Every queryset scoped to `request.user.userprofile.business`. Never query withou
 
 ### Notification Creation
 ```python
-Notification.objects.create(business=business, user=user, message="...")
+Notification.objects.create(user=user, title="...", message="...", notification_type='info')
+# No `business` kwarg — Notification has no business field (see Known Issues).
 # Query: user.app_notifications.filter(is_read=False)
 ```
 
@@ -642,21 +643,16 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   keg_loss_baseline_sample, credit_policy_enabled, debt_cycle, debt_cutoff_days_before_month_end,
   block_if_overdue, overdue_grace_days, late_repayment_strikes, late_threshold_days, cooldown_days,
   defaulter_permanent, haki_enabled, event_sms_enabled, performer_approval_threshold.
-- **`Notification.objects.create()` — widespread `business=` kwarg bug (found 2026-07-15).**
-  `core.models.Notification` (core/models.py:189) has no `business` field — only `user, title,
-  message, notification_type, is_read, created_at` — and `title` has no default. Many call sites
-  across the codebase pass `business=...` anyway, which raises `TypeError` every time; silently
-  swallowed wherever the call sits inside a broad `except Exception`, so it never actually crashes
-  — it just quietly never notifies anyone. Confirmed still-broken as of 2026-07-15:
-  `core/shift_views.py:480` (shift-open notification to owner), `core/debt_views.py:843,971,1038,
-  1110,1120,1203,1224` (write-off approval/denial notifications). `core/mpesa_views.py`'s
-  debt-payment notification had the identical bug — fixed while building the Pay-Cash-at-Counter
-  feature (see Sprint Status Log) since it sat in code that feature directly mirrors; the others
-  are NOT yet fixed — each needs its own careful pass (verify intended recipient logic, add a
-  regression test) rather than a blind bulk find-replace. Correct call shape:
+- **`Notification.objects.create()` — widespread `business=` kwarg bug (found 2026-07-15,
+  FIXED Sprint K9 2026-07-17).** `core.models.Notification` (core/models.py:189) has no
+  `business` field — only `user, title, message, notification_type, is_read, created_at` —
+  and `title` has no default. All 8 remaining call sites (`core/shift_views.py:480` —
+  also missing `title=` entirely — and `core/debt_views.py:843,971,1038,1110,1120,1203,1224`)
+  fixed in Sprint K9; regression-locked by `NotificationShiftOpenTest` +
+  `NotificationWriteOffTest` in core/tests.py. Correct call shape:
   `Notification.objects.create(user=X, title=Y, message=Z, notification_type='info'|'warning'|...)`
-  — no `business` kwarg. Grep `Notification.objects.create\(\s*\n?\s*business=` to find remaining
-  occurrences before starting that cleanup.
+  — no `business` kwarg. Grep `Notification.objects.create\(\s*\n?\s*business=` before adding any
+  new call site — should return zero results.
 
 ## Cause-&-Effect Protocol (run for EVERY feature or module)
 
@@ -842,3 +838,31 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (CrossCounterReceiptLinkingTest): direct priority-chain coverage plus one end-to-end regression
   lock (Bar tab first, Quick Sell second, for the same customer, must reuse one receipt). No
   migrations. 137 tests pass.
+- Sprint K9 (2026-07-17): Four bug fixes from a targeted audit. (1) SQLite NotSupportedError
+  guard: `core/keg_views.py` (`_resolve_tab_public_url`, `tabs_list` Pass 2) and
+  `core/kitchen_views.py` (`kitchen_tabs_list` Pass 2) each had their own unguarded
+  `meta__linked_tab_ids__contains` Q() chain — a guaranteed 500 on SQLite (local dev/tests) the
+  moment any tab had no directly-owned receipt. New `_safe_linked_query()` in
+  `core/tab_receipts.py` is now the single guarded entry point for all 4 call sites (including
+  the pre-existing `_receipt_linked_to`). Root-cause note for next time: a `try/except
+  NotSupportedError` around `qs.filter(...)` alone does NOT work — Django querysets are lazy, so
+  the exception only fires when the caller evaluates the queryset later (`.first()`, iteration),
+  by which point it has escaped the guard. `_safe_linked_query()` forces evaluation
+  (`list(qs.filter(q))`) inside its own try block and returns a materialized list, which is what
+  actually catches it; this bug briefly reappeared in this sprint's own first draft of the fix
+  before being caught by the test suite. (2) `Notification.objects.create(business=...)`: fixed
+  all 8 remaining sites (`shift_views.py:480` — also missing `title=` — plus 7 in
+  `debt_views.py`); the misleading `## Notification Creation` pattern example earlier in this
+  file (showing `business=` as correct) also fixed. (3) `cash_requested_at` not cleared on debt
+  conversion: fixed `convert_tab_to_debt` + `bulk_convert_tabs_to_debt` (the sprint's named
+  targets) plus two more found by the regression sweep — `mpesa_views._settle_tab_from_payment`
+  (STK full-tab settlement) and the shift-close auto-convert-tabs-to-debt loop in
+  `shift_views.py` — same bug pattern, not mentioned in the brief. The sprint brief's claim of a
+  separate "kitchen settle path" gap was investigated and found incorrect: kitchen board settles
+  food tabs through the same shared `/bar/tabs/<id>/settle/` endpoint bar board uses, which
+  already cleared the flag. (4) `BarTab` gained a partial `UniqueConstraint` on
+  `(business, tab_pin)` for `status='OPEN'` rows, closing the race in `new_credentials()` between
+  reading existing PINs and saving. New `BarTab.create_with_credentials()` classmethod is the
+  single retry point (one retry on `IntegrityError`) used by all 3 tab-creation sites (bar board,
+  kitchen, Quick Sell), replacing each site's own `new_credentials()` + `objects.create()` pair.
+  15 new tests. 152 tests pass.

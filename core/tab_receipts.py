@@ -2,6 +2,35 @@ from django.db.utils import NotSupportedError
 from django.utils import timezone
 
 
+def _safe_linked_query(qs, tab_ids):
+    """Return a materialized list of qs rows whose meta.linked_tab_ids contains
+    any of tab_ids.
+
+    `meta__linked_tab_ids__contains` is a JSONField `contains` lookup that only
+    PostgreSQL (production) supports — SQLite (local dev/tests) raises
+    NotSupportedError. Returns [] in that case so callers degrade to "no match"
+    instead of a 500. Single source of truth for this guard — core/keg_views.py
+    and core/kitchen_views.py used to build the same Q() chain unguarded
+    (Sprint K9 audit).
+
+    Deliberately returns a list, not a queryset: querysets are lazy, so a
+    try/except around `.filter()` alone never actually catches anything — the
+    NotSupportedError only fires when the caller evaluates it later (`.first()`,
+    iteration), by which point it has escaped this function's guard entirely.
+    Evaluating eagerly here (via list()) is what makes the guard real.
+    """
+    from django.db.models import Q
+    if not tab_ids:
+        return []
+    q = Q()
+    for tid in tab_ids:
+        q |= Q(meta__linked_tab_ids__contains=[tid])
+    try:
+        return list(qs.filter(q))
+    except NotSupportedError:
+        return []
+
+
 def _receipt_linked_to(business, tab_id):
     """Receipt.objects.filter(meta__linked_tab_ids__contains=[tab_id]).first(),
     tolerant of SQLite (used in local dev/tests), which doesn't support the
@@ -10,12 +39,10 @@ def _receipt_linked_to(business, tab_id):
     behavior is unchanged.
     """
     from .models import Receipt
-    try:
-        return Receipt.objects.filter(
-            business=business, meta__linked_tab_ids__contains=[tab_id],
-        ).first()
-    except NotSupportedError:
-        return None
+    results = _safe_linked_query(
+        Receipt.objects.filter(business=business), [tab_id]
+    )
+    return results[0] if results else None
 
 
 def resolve_master_receipt(business, tab):

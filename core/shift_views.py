@@ -478,9 +478,10 @@ def open_shift(request):
             )
             for owner in owners:
                 Notification.objects.create(
-                    business=up.business,
                     user=owner,
+                    title=f'🟢 Shift Imefunguliwa — {staff_name}',
                     message=f"{staff_name} amefungua shift na float ya {float_str}.",
+                    notification_type='staff',
                 )
         except Exception:
             pass
@@ -691,7 +692,8 @@ def close_shift(request, shift_id):
             tab.customer = cust
             tab.status = 'SETTLED'
             tab.settled_at = timezone.now()
-            tab.save(update_fields=['customer', 'status', 'settled_at'])
+            tab.cash_requested_at = None
+            tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
             auto_converted += 1
             auto_converted_names.append(customer_name)
         except Exception:
