@@ -6,11 +6,18 @@ import os
 import sys
 import dj_database_url
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Detect when running under the test runner (manage.py test)
 TESTING = "test" in sys.argv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Local dev only: load a .env file (gitignored) so SECRET_KEY/DEBUG don't need
+# to be exported manually in every new terminal session. On Render, no .env
+# file exists (never deployed — see .gitignore), so this is a silent no-op and
+# real env vars set in the Render dashboard are unaffected.
+load_dotenv(BASE_DIR / ".env")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
