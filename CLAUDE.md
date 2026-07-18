@@ -866,3 +866,22 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   single retry point (one retry on `IntegrityError`) used by all 3 tab-creation sites (bar board,
   kitchen, Quick Sell), replacing each site's own `new_credentials()` + `objects.create()` pair.
   15 new tests. 152 tests pass.
+- Post-K9 commit audit (2026-07-18): Reviewed the 5 most recent commits (BillScan
+  Pay-Cash-at-Counter arc through Sprint K9) diff-by-diff against current code rather than
+  trusting commit messages. Idempotency backstop, cross-counter receipt-link collapse, and tabs-
+  drawer parity all checked out correct. Found and fixed two real gaps in the Pay-Cash-at-Counter
+  feature (`c9e7829`, not caught before merge): (1) Station Scoping Principle violation —
+  `_fire_cash_payment_request` (`core/receipt_views.py`) looped over every on-shift staff member
+  for the business with no bar/kitchen filter, so a kitchen-only staffer got an in-app + SMS ping
+  about a bar tab's cash request and vice versa. Fixed by threading `BarTab.source` (or
+  `debt_source` for debt-mode calls, which have no live tab) through `_station_scope()`, the same
+  helper `home()`/`shift_history()` already use — 'qs' tabs and unknown sources stay unscoped
+  since Quick Sell isn't station-partitioned. (2) No rate limit on repeated "Lipa Cash" taps — this
+  endpoint is public/unauthenticated and its button carries no idempotency token (unlike every
+  checkout form, fixed one commit earlier in the same arc), so a customer double-tapping fired a
+  fresh SMS to every recipient on every tap with zero cost control, unlike every other SMS path in
+  this app (`Business.last_txn_sms_at` 10-min bundling). Fixed with a 10-minute
+  `django.core.cache` cooldown keyed per receipt token, gating only the notification fan-out — the
+  `cash_requested_at` flag itself still refreshes on every tap so the tabs-drawer badge stays
+  accurate. 2 new tests (`CashRequestStationScopingTest`, `CashRequestCooldownTest`). No
+  migrations. 154 tests pass.

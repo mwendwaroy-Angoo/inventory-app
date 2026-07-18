@@ -341,7 +341,7 @@ def send_receipt(request, receipt_id):
     return JsonResponse({'ok': False, 'error': 'unknown_channel'})
 
 
-def _fire_cash_payment_request(business, tab_ids, customer_name, amount):
+def _fire_cash_payment_request(business, tab_ids, customer_name, amount, sources=None):
     """Notify staff that a customer intends to pay cash at the counter.
 
     No money moves here — this is a heads-up only, fired from the customer's
@@ -349,26 +349,50 @@ def _fire_cash_payment_request(business, tab_ids, customer_name, amount):
     debt-payment notifications (_settle_receipt_entries_from_payment in
     mpesa_views.py): original serving staff, current on-shift staff, owners
     and managers, via in-app + SMS.
+
+    `sources` is the set of BarTab.source values ('bar'/'kitchen'/'qs') this
+    cash request concerns, used to station-scope the "current on-shift staff"
+    fan-out via _station_scope() — a kitchen-only staffer must not be pinged
+    about a bar tab, and vice versa (Station Scoping Principle, CLAUDE.md).
+    Callers with a live tab don't need to pass this — the tab's own `source`
+    is read below and merged in automatically; debt-mode callers (no live
+    tab) should pass the debt ledger's source explicitly. 'qs' and unknown/
+    empty sources are left unscoped (Quick Sell tabs aren't station-specific).
     """
     from .models import BarTab as _BarTab, Notification as _Notif, Shift as _Shift
     from .notifications import normalize_ke_phone, send_sms_notification
     from accounts.models import UserProfile as _UP
+    from .views import _station_scope
 
     msg = f"💵 {customer_name or 'Mteja'} anataka kulipa CASH — KES {amount:,.0f}. Mngoje kwenye counter."
 
     notify_targets = {}  # user_pk -> UserProfile
+    sources = set(sources or [])
 
     for tab_id in tab_ids:
         tab_obj = _BarTab.objects.filter(id=tab_id, business=business).select_related('served_by').first()
-        if tab_obj and tab_obj.served_by_id:
+        if not tab_obj:
+            continue
+        sources.add(tab_obj.source)
+        if tab_obj.served_by_id:
             up = _UP.objects.filter(user_id=tab_obj.served_by_id, business=business).first()
             if up:
                 notify_targets[tab_obj.served_by_id] = up
 
+    scoped_sources = {s for s in sources if s in ('bar', 'kitchen')}
     for sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
         up = _UP.objects.filter(user_id=sh.staff_id, business=business).first()
-        if up:
-            notify_targets[sh.staff_id] = up
+        if not up:
+            continue
+        if scoped_sources:
+            show_bar, show_kitchen = _station_scope(up)
+            relevant = (
+                ('bar' in scoped_sources and show_bar)
+                or ('kitchen' in scoped_sources and show_kitchen)
+            )
+            if not relevant:
+                continue
+        notify_targets[sh.staff_id] = up
 
     for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
         notify_targets[up.user_id] = up
@@ -506,16 +530,34 @@ def receipt_pay(request, token):
         # happens at the counter through the existing settle_tab/tick_entry
         # flow, which clears the flag.
         tab_ids_for_flag = set()
+        cash_sources = set()
         if not is_debt_mode:
             tab_ids_for_flag = {e.tab_id for e in entries_list}
             if tab_ids_for_flag:
                 from .models import BarTab as _BarTab
                 from django.utils import timezone as _tz
                 _BarTab.objects.filter(id__in=tab_ids_for_flag).update(cash_requested_at=_tz.now())
-        try:
-            _fire_cash_payment_request(business, tab_ids_for_flag, receipt.customer_name, amount)
-        except Exception:
-            logger.exception('receipt_pay cash notify failed token=%s', token)
+        elif debt_source in ('bar', 'kitchen'):
+            cash_sources = {debt_source}
+
+        # Cooldown on the notification fan-out only (not on the flag update
+        # above) — this endpoint is public/unauthenticated and the "Lipa Cash"
+        # button has no client-side idempotency token, so a customer tapping
+        # repeatedly (impatience, confusion, or a stray bot hit) would
+        # otherwise fire a fresh in-app + SMS notification to every serving
+        # staff, on-shift staff, and owner/manager on every single tap. Mirrors
+        # the 10-min SMS-bundling convention already used elsewhere in this
+        # app (Business.last_txn_sms_at).
+        from django.core.cache import cache
+        _cooldown_key = f'cash_request_notif:{token}'
+        _notify_now = cache.add(_cooldown_key, True, timeout=600)
+        if _notify_now:
+            try:
+                _fire_cash_payment_request(
+                    business, tab_ids_for_flag, receipt.customer_name, amount, sources=cash_sources,
+                )
+            except Exception:
+                logger.exception('receipt_pay cash notify failed token=%s', token)
         return JsonResponse({'ok': True, 'type': 'cash', 'amount': amount})
 
     # STK Push

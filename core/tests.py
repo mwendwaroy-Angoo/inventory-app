@@ -3024,3 +3024,114 @@ class TabPinUniqueConstraintTest(TestCase):
             tab = BarTab.create_with_credentials(business=self.biz, customer_name='Retry Patron')
         self.assertEqual(calls['n'], 2)
         self.assertNotEqual(tab.tab_pin, '1111')
+
+
+class CashRequestStationScopingTest(TestCase):
+    """Post-K9 audit: _fire_cash_payment_request (core/receipt_views.py) notified every
+    on-shift staff member regardless of station, violating the Station Scoping Principle
+    (CLAUDE.md) — a kitchen-only staffer got pinged (in-app + SMS) about a bar tab's cash
+    request, and vice versa. Fixed by threading BarTab.source through _station_scope()
+    the same way every other tab-touching surface in this app already does."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Cash Scope Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='cashscope_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_staff = User.objects.create_user(username='cashscope_barstaff', password='x')
+        UserProfile.objects.create(
+            user=self.bar_staff, business=self.biz, role='staff', can_access_kitchen=False,
+        )
+        self.kitchen_staff = User.objects.create_user(username='cashscope_kitchenstaff', password='x')
+        UserProfile.objects.create(
+            user=self.kitchen_staff, business=self.biz, role='kitchen', can_access_bar=False,
+        )
+
+        # Both on shift at the same time.
+        Shift.objects.create(business=self.biz, staff=self.bar_staff, status='OPEN')
+        Shift.objects.create(business=self.biz, staff=self.kitchen_staff, status='OPEN')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Cash Scope Beer',
+            material_no='CASHSCOPE-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+
+    def test_bar_tab_cash_request_does_not_notify_kitchen_only_staff(self):
+        import json
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Scope Patron', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='Cash Scope Beer', amount=Decimal('100'))
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Cash Scope Beer', 'qty': 1, 'subtotal': 100}],
+            payment_method='tab', customer_name='Scope Patron', meta={'tab_id': tab.id},
+        )
+        resp = self.client.post(
+            f'/r/{rcpt.token}/pay/', data=json.dumps({'type': 'cash'}), content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(
+            Notification.objects.filter(user=self.bar_staff).exists(),
+            'Bar staff must be notified of a bar tab cash request',
+        )
+        self.assertTrue(
+            Notification.objects.filter(user=self.owner).exists(),
+            'Owner must always be notified regardless of station',
+        )
+        self.assertFalse(
+            Notification.objects.filter(user=self.kitchen_staff).exists(),
+            'Kitchen-only staff must NOT be notified about a bar tab cash request',
+        )
+
+
+class CashRequestCooldownTest(TestCase):
+    """Post-K9 audit: receipt_pay's type=cash branch had no throttle — a public,
+    unauthenticated endpoint with a button carrying no idempotency token (unlike every
+    checkout form in this app). Repeated taps would fire a fresh SMS + in-app
+    notification to every recipient on every single tap. Fixed with a 10-minute
+    cooldown per receipt token, mirroring the Business.last_txn_sms_at bundling
+    convention already used elsewhere in this app."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Cash Cooldown Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='cashcooldown_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Cooldown Beer',
+            material_no='COOLDOWN-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+
+    def test_repeated_taps_within_window_only_notify_once(self):
+        import json
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Cooldown Patron', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='Cooldown Beer', amount=Decimal('100'))
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Cooldown Beer', 'qty': 1, 'subtotal': 100}],
+            payment_method='tab', customer_name='Cooldown Patron', meta={'tab_id': tab.id},
+        )
+        for _ in range(3):
+            resp = self.client.post(
+                f'/r/{rcpt.token}/pay/', data=json.dumps({'type': 'cash'}), content_type='application/json',
+            )
+            self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            Notification.objects.filter(user=self.owner).count(), 1,
+            'Repeated cash-pay taps within the cooldown window must only notify once',
+        )
+        # The flag itself must still refresh on every tap (not throttled) — staff still
+        # see the badge, they just aren't spammed with a fresh SMS/notification per tap.
+        tab.refresh_from_db()
+        self.assertIsNotNone(tab.cash_requested_at)
