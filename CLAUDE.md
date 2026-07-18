@@ -934,3 +934,52 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   correctly out of scope — they're anonymous walk-up checkouts with no tab/customer to
   consolidate into. 7 new tests (`LinkedOnlyReceiptLiveStateTest`,
   `SettleTabFromPaymentReusesReceiptTest`). No migrations. 161 tests pass.
+- Bar/Keg Module Systemic Audit (2026-07-19). Roy requested a comprehensive, theme-by-theme
+  audit of the whole bar business scheme — this is the deferred systemic audit from
+  `[[project_systemic_audit_deferred]]`, scoped to bar/keg. Ran three staged themes across
+  `keg_views.py`, `shift_views.py`, `performer_views.py`, and their templates/tests (three
+  separate commits, each independently tested and pushed):
+  **Theme 1 (money-path idempotency):** `tick_entry()`/`settle_tab()` (the staff-side tab
+  settlement paths — far more common than customer-initiated STK) unconditionally issued a
+  brand-new `Receipt` on every settlement even when the tab already had a master receipt from
+  when it was opened; on a full settlement via `settle_tab` the new receipt carried no
+  `tab_id` at all, a permanent orphan. This was hitting nearly every everyday tab, not an
+  edge case. Fixed both to reuse the master receipt via `resolve_master_receipt()`, same
+  pattern as `mpesa_views._settle_tab_from_payment`. Also fixed: `session_pay()` (DJ/MC
+  payout) had no lock — a double-tap during a rushed end-of-night payout could create two
+  `BusinessExpense` rows for one session, double-counting a real cost in the P&L; fixed with
+  `select_for_update()` inside `atomic()`, same pattern as `KegBarrel.record_sale_locked`.
+  `record_breakage()`, `add_cups()`, `receive_barrel()` had no idempotency guard at all
+  against a duplicate/retried request silently double-recording wastage, cup purchases, or
+  received stock; fixed by reusing `core.idempotency.claim_checkout_token`. 10 new tests.
+  **Theme 2 (state-transition completeness):** `_auto_close_expired_shifts()` — the safety
+  net that force-closes a shift when staff forgot and business hours have passed — flipped
+  `shift.status` to `CLOSED` directly, completely bypassing the tab-to-debt conversion sweep
+  a manual `close_shift()` performs. This is precisely the scenario most likely to also have
+  forgotten open tabs, and the missed-tasks reminder shown afterward only checks stock-take
+  and barrel-weight readings, never tabs — an abandoned tab from an auto-closed shift had no
+  automatic resolution path and no visibility anywhere. Extracted the conversion logic into a
+  shared `_convert_open_tabs_to_debt_for_shift()` helper now called from both close paths so
+  they can never drift apart again. 2 new tests. **Theme 3 (access-control scoping):**
+  `tabs_list()` (read/GET) already scoped correctly by station via `_station_scope()`, but
+  every WRITE endpoint on tabs (`tick_entry`, `settle_tab`, `update_tab_name`,
+  `update_tab_phone`, `convert_tab_to_debt`) filtered only by business — a kitchen-only
+  staffer could act directly on a bar tab via the API even though the UI never shows them
+  one, because hiding a button in the template is not the same as gating the endpoint.
+  `bulk_convert_tabs_to_debt` was worse: no permission check of any kind beyond being logged
+  into the business — any staff member could bulk-convert arbitrary tab IDs regardless of
+  role or station. Fixed with a shared `_allowed_tab_sources(up)` helper; `settle_tab` checks
+  each entry's own station (`item.store.is_kitchen`) rather than the tab's overall `source`,
+  since a bar-only staffer must still be able to settle just the bar-item entries within a
+  mixed/cross-counter-merged tab (an existing, intentional feature). 8 new tests. **Verified
+  already correct and not touched:** `bar_board` checkout idempotency, `KegBarrel.record_
+  sale_locked`'s `select_for_update`, `void_tab`/`remove_tab_entry` (owner/manager-only,
+  correctly see both stations by design), `_auto_complete_stale_sessions` (DJ/MC — properly
+  wired up, not dead code), `KegBarrel.is_stale()` (informational-only by design — a
+  lingering tapped barrel isn't customer debt), all report views (`keg_reconciliation`,
+  `keg_barrel_detail`, `bar_shrinkage_report`, `voided_tabs_list`), DJ/MC public pages (no fee
+  leak, matching the Sprint K7 fix). **Noted but out of this pass's scope:** `kitchen_
+  wastage()` has an analogous smaller station gap (a bar-only staffer with any open shift can
+  log kitchen wastage) — flagged for a future kitchen-module audit rather than fixed here.
+  20 new tests total across all three themes, 181 tests pass. Three commits: `366c4c7`,
+  `9c38b23`, `5a2543f`.
