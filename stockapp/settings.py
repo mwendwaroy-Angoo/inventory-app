@@ -8,7 +8,7 @@ import dj_database_url
 from pathlib import Path
 
 # Detect when running under the test runner (manage.py test)
-TESTING = 'test' in sys.argv
+TESTING = "test" in sys.argv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -44,11 +44,11 @@ if "testserver" not in ALLOWED_HOSTS:
 
 # Django 4.0+ requires CSRF_TRUSTED_ORIGINS for HTTPS form submissions.
 # Without this, any HTTPS POST can fail CSRF validation — especially after
-# Render free-tier cold starts where the process/cookie context resets.
+# Render cold starts where the process/cookie context resets.
 CSRF_TRUSTED_ORIGINS = [
-    'https://dukamwecheche.co.ke',
-    'https://www.dukamwecheche.co.ke',
-    'https://stock-made-simpler-sms.onrender.com',
+    "https://dukamwecheche.co.ke",
+    "https://www.dukamwecheche.co.ke",
+    "https://stock-made-simpler-sms.onrender.com",
 ]
 
 INSTALLED_APPS = [
@@ -118,6 +118,9 @@ DATABASES = {
     "default": dj_database_url.config(
         default=os.getenv("DATABASE_URL", f'sqlite:///{BASE_DIR / "db.sqlite3"}'),
         conn_max_age=600,
+        # Re-validate the connection before reuse — prevents silent "connection
+        # already closed" errors on Render after periods of low traffic.
+        conn_health_checks=True,
     )
 }
 
@@ -168,17 +171,14 @@ LOGOUT_REDIRECT_URL = "/"
 LOGIN_URL = "/accounts/login/"
 DEVICE_LANGUAGE_COOKIE_NAME = "duka_device_language"
 
-# ── EMAIL ─────────────────────────────────────────────────────────────────────
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.gmail.com"
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = os.getenv("GMAIL_USER", "")
-EMAIL_HOST_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
-DEFAULT_FROM_EMAIL = os.getenv("GMAIL_USER", "")
-EMAIL_TIMEOUT = 5  # seconds — fail fast instead of hanging
-RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'Duka Mwecheche <onboarding@resend.dev>')
+# ── EMAIL (Resend API — Gmail SMTP is blocked on Render free tier) ────────────
+# The Gmail SMTP block that previously appeared here was dead code: Render blocks
+# outbound port 587, and DEFAULT_FROM_EMAIL was being overwritten by the Resend
+# value on the very next line. Removed to avoid confusion.
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL", "Duka Mwecheche <onboarding@resend.dev>"
+)
 
 # ── AFRICA'S TALKING ──────────────────────────────────────────────────────────
 AT_USERNAME = os.getenv("AT_USERNAME", "dukamwecheche")
@@ -189,7 +189,10 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 
 # ── CRON ──────────────────────────────────────────────────────────────────────
-CRON_SECRET = os.getenv("CRON_SECRET", "duka-mwecheche-cron-2026")
+# No hardcoded default — a blank secret means cron endpoints reject all callers,
+# which is safer than a known default. Set CRON_SECRET in Render Environment to
+# a long random string (e.g. openssl rand -hex 32).
+CRON_SECRET = os.getenv("CRON_SECRET", "")
 
 # ── M-PESA DARAJA ─────────────────────────────────────────────────────────────
 MPESA_ENV = os.getenv("MPESA_ENV", "sandbox")  # 'sandbox' or 'production'
@@ -202,7 +205,7 @@ MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "")
 # Render terminates TLS at the edge and forwards to Django over plain HTTP
 # internally, adding X-Forwarded-Proto: https. Without this, request.is_secure()
 # returns False, breaking CSRF validation and HTTPS-only cookie behaviour.
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # Force-upgrade any stray HTTP hit to HTTPS (Render also does this, but belt+braces).
 # Disabled during `manage.py test` — test client speaks plain HTTP and would get 301s.
@@ -213,7 +216,7 @@ CSRF_COOKIE_SECURE = not DEBUG and not TESTING
 SESSION_COOKIE_SECURE = not DEBUG and not TESTING
 
 # ── SESSION ───────────────────────────────────────────────────────────────────
-SESSION_COOKIE_AGE = 86400        # 24 hours — keeps retail owners logged in all day
+SESSION_COOKIE_AGE = 86400  # 24 hours — keeps retail owners logged in all day
 SESSION_SAVE_EVERY_REQUEST = True  # Refresh session expiry on every request
 
 # ── REST FRAMEWORK ────────────────────────────────────────────────────────────
@@ -229,8 +232,11 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 25,
 }
 
-
-# Celery configuration
+# ── CELERY ────────────────────────────────────────────────────────────────────
+# Note: no Redis is provisioned on Render Starter. Celery tasks will not run
+# unless a Redis add-on is added. For the nightly forecast precompute, consider
+# using Render's native Cron Jobs (hits a secure endpoint) instead of Celery —
+# simpler, no broker required, works on Starter out of the box.
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -272,8 +278,7 @@ LOGGING = {
     },
 }
 
-
-# Optional Beat schedule: default nightly precompute at 02:15 if celery is installed
+# ── OPTIONAL CELERY BEAT SCHEDULE ─────────────────────────────────────────────
 try:
     from celery.schedules import crontab
 except Exception:
