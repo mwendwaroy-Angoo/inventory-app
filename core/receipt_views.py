@@ -64,6 +64,31 @@ def receipts_list(request):
     })
 
 
+def _receipt_all_tab_ids(receipt):
+    """Every BarTab id this receipt's live state should be computed from — its
+    own meta.tab_id (if any) plus every tab in meta.linked_tab_ids.
+
+    A receipt can be a customer's "master" bill via EITHER slot:
+    resolve_master_receipt() (core/tab_receipts.py) links a tab into a
+    receipt's linked_tab_ids (Priority 2/3/4) even when that receipt has no
+    tab_id of its own — e.g. an earlier Deni/credit receipt with no live tab,
+    or (via the same-day/same-name consolidation in Priority 4) a completely
+    unrelated, already-completed one-off cash/mpesa sale. Root cause of a
+    real production report: code that only checked meta.tab_id treated such a
+    receipt as "not live" and fell back to its stale original snapshot — so a
+    customer scanning the wall QR and entering their PIN landed on an old,
+    already-resolved receipt showing their brand-new tab as if it were
+    already paid. Always use this helper instead of reading meta.tab_id
+    directly — every function below (and receipt_pay in this same file) was
+    audited and fixed to do so.
+    """
+    if not receipt.meta:
+        return []
+    tab_id = receipt.meta.get('tab_id')
+    linked = list(receipt.meta.get('linked_tab_ids') or [])
+    return ([tab_id] if tab_id else []) + linked
+
+
 def _get_live_tab_state(receipt):
     """Return (is_live, tab_status, lines, outstanding) for a tab-linked receipt.
 
@@ -73,69 +98,84 @@ def _get_live_tab_state(receipt):
         is_paid   — bool flag
         is_kitchen — bool, for station icon rendering
     The returned ``outstanding`` total is the sum of UNPAID entries only.
-    Returns is_live=False when no tab_id in meta or tab not found.
+    Returns is_live=False when this receipt has no tab reference at all (see
+    _receipt_all_tab_ids) or none of them resolve to a real tab.
     """
-    tab_id = receipt.meta.get('tab_id') if receipt.meta else None
-    if not tab_id:
+    all_tab_ids = _receipt_all_tab_ids(receipt)
+    if not all_tab_ids:
         return False, None, None, None
     try:
         from .models import BarTab as _BarTab
-        tab = _BarTab.objects.get(id=tab_id, business=receipt.business)
-        all_tab_ids = [tab_id] + list(receipt.meta.get('linked_tab_ids') or [])
         lines = []
         outstanding = 0.0
+        tabs_found = []
         for btab_id in all_tab_ids:
             try:
                 btab = _BarTab.objects.get(id=btab_id, business=receipt.business)
-                for e in btab.entries.all().select_related(
-                    'transaction__item__store'
-                ).order_by('id'):
-                    # Entries removed via ✕ (payment_method='void', is_paid=True) are
-                    # excluded entirely — they were data-entry corrections, not real sales.
-                    if e.payment_method == 'void':
-                        continue
-                    is_kitchen = False
-                    try:
-                        is_kitchen = e.transaction.item.store.is_kitchen
-                    except Exception:
-                        pass
-                    icon = '🍽 ' if is_kitchen else '🍺 '
-                    amt = float(e.amount)
-                    if not e.is_paid:
-                        outstanding += amt
-                    lines.append({
-                        'name': icon + e.description,
-                        'qty': 1,
-                        'subtotal': amt,
-                        'entry_id': e.id if not e.is_paid else None,
-                        'tab_id': btab_id,
-                        'is_paid': e.is_paid,
-                        'is_kitchen': is_kitchen,
-                    })
             except _BarTab.DoesNotExist:
-                pass
-        # DEBT detection: SETTLED tab with unpaid balance means Geuza Deni was used.
-        effective_status = tab.status
-        if tab.status == 'SETTLED' and outstanding > 0:
+                continue
+            tabs_found.append(btab)
+            for e in btab.entries.all().select_related(
+                'transaction__item__store'
+            ).order_by('id'):
+                # Entries removed via ✕ (payment_method='void', is_paid=True) are
+                # excluded entirely — they were data-entry corrections, not real sales.
+                if e.payment_method == 'void':
+                    continue
+                is_kitchen = False
+                try:
+                    is_kitchen = e.transaction.item.store.is_kitchen
+                except Exception:
+                    pass
+                icon = '🍽 ' if is_kitchen else '🍺 '
+                amt = float(e.amount)
+                if not e.is_paid:
+                    outstanding += amt
+                lines.append({
+                    'name': icon + e.description,
+                    'qty': 1,
+                    'subtotal': amt,
+                    'entry_id': e.id if not e.is_paid else None,
+                    'tab_id': btab_id,
+                    'is_paid': e.is_paid,
+                    'is_kitchen': is_kitchen,
+                })
+
+        if not tabs_found:
+            return False, None, None, None
+
+        # Effective status across every linked tab: any tab still OPEN wins
+        # (the bill is live); otherwise settled-with-outstanding is DEBT
+        # (Geuza Deni was used on at least one of them); otherwise report
+        # whatever the (single, or first) tab's own status is.
+        if any(t.status == 'OPEN' for t in tabs_found):
+            effective_status = 'OPEN'
+        elif outstanding > 0:
             effective_status = 'DEBT'
+        else:
+            effective_status = tabs_found[0].status
+
+        # Representative customer for the debt-tracker lookup below — whichever
+        # linked tab has one set. A correctly-merged bill's tabs should all
+        # point at the same customer.
+        rep_customer_id = next((t.customer_id for t in tabs_found if t.customer_id), None)
 
         # For DEBT tabs: the is_paid flags only flip when a payment FULLY covers
         # an entry. Partial cash/mpesa debt payments (recorded by staff in the
         # debt tracker) reduce the real balance without flipping any flag.
         # Pull the true outstanding from the debt tracker so partial payments
         # are reflected on the customer's live receipt immediately.
-        if effective_status == 'DEBT' and tab.customer_id:
+        if effective_status == 'DEBT' and rep_customer_id:
             try:
                 from .models import Customer as _Customer
                 from .debt_views import _get_customer_debt_data
                 cust = _Customer.objects.filter(
-                    id=tab.customer_id, business=receipt.business
+                    id=rep_customer_id, business=receipt.business
                 ).first()
                 if cust:
-                    # Scope to the tab's source ('bar'/'kitchen'); if the receipt
-                    # spans both sources via linked_tab_ids use 'all'.
-                    has_linked = bool(receipt.meta.get('linked_tab_ids'))
-                    tab_source = getattr(tab, 'source', 'bar') if not has_linked else 'all'
+                    # Scope to a single source only when exactly one tab is
+                    # linked; a multi-tab (cross-counter merged) bill spans both.
+                    tab_source = tabs_found[0].source if len(tabs_found) == 1 else 'all'
                     debt_data = _get_customer_debt_data(cust, receipt.business, scope=tab_source)
                     outstanding = float(debt_data.get('outstanding', outstanding))
                     # Debt fully cleared: receipt stops being live
@@ -173,15 +213,20 @@ def _get_station_debt_data(receipt, live_lines):
         key = 'kitchen' if line.get('is_kitchen') else 'bar'
         result[key]['total'] += float(line.get('subtotal', 0))
 
-    tab_id = receipt.meta.get('tab_id') if receipt.meta else None
-    if not tab_id:
+    all_tab_ids = _receipt_all_tab_ids(receipt)
+    if not all_tab_ids:
         return result
 
     try:
         from .models import BarTab as _BTab, Customer as _Customer
         from .debt_views import _get_customer_debt_data
-        tab = _BTab.objects.filter(id=tab_id, business=receipt.business).first()
-        if not tab or not tab.customer_id:
+        tab = None
+        for btab_id in all_tab_ids:
+            _t = _BTab.objects.filter(id=btab_id, business=receipt.business).first()
+            if _t and _t.customer_id:
+                tab = _t
+                break
+        if not tab:
             return result
 
         cust = _Customer.objects.filter(id=tab.customer_id, business=receipt.business).first()
@@ -425,9 +470,6 @@ def receipt_pay(request, token):
         return JsonResponse({'error': 'POST required'}, status=405)
 
     receipt = get_object_or_404(Receipt, token=token)
-    tab_id = receipt.meta.get('tab_id') if receipt.meta else None
-    if not tab_id:
-        return JsonResponse({'error': 'not_a_tab'}, status=400)
 
     try:
         data = json.loads(request.body)
@@ -439,7 +481,7 @@ def receipt_pay(request, token):
     phone     = (data.get('phone') or receipt.customer_phone or '').strip()
 
     business    = receipt.business
-    all_tab_ids = [tab_id] + list(receipt.meta.get('linked_tab_ids') or [])
+    all_tab_ids = _receipt_all_tab_ids(receipt)
 
     from .mpesa import resolve_mpesa_config
 
@@ -448,6 +490,15 @@ def receipt_pay(request, token):
     # This creates a CustomerDebtPayment on callback instead of marking entries.
     debt_source = data.get('source')  # 'bar' or 'kitchen'
     is_debt_mode = bool(debt_source)
+
+    # Entry mode needs a real tab to select unpaid entries from — debt mode
+    # doesn't (it pays a summary amount off the debt tracker directly). Was
+    # previously gated unconditionally on receipt.meta.tab_id alone (before
+    # even parsing is_debt_mode), which 400'd every payment attempt — STK, QR,
+    # AND cash — for a receipt reached only via linked_tab_ids (see
+    # _receipt_all_tab_ids docstring).
+    if not is_debt_mode and not all_tab_ids:
+        return JsonResponse({'error': 'not_a_tab'}, status=400)
 
     if is_debt_mode:
         try:

@@ -653,6 +653,29 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   `Notification.objects.create(user=X, title=Y, message=Z, notification_type='info'|'warning'|...)`
   — no `business` kwarg. Grep `Notification.objects.create\(\s*\n?\s*business=` before adding any
   new call site — should return zero results.
+- **`receipt.meta.get('tab_id')` alone is NOT the test for "does this receipt have a live
+  tab" — always use `core.receipt_views._receipt_all_tab_ids(receipt)` instead (found
+  2026-07-19 from a real production report: a customer's brand-new, still-open tab showed
+  as already paid on their live receipt).** `resolve_master_receipt()` (core/tab_receipts.py)
+  can link a tab into a receipt's `meta.linked_tab_ids` (Priority 2/3/4) even when that
+  receipt has no `tab_id` of its own — e.g. Priority 4 matches ANY same-day, same-name
+  receipt, including an earlier, unrelated, already-completed one-off cash sale. Every
+  function that only checked `meta.get('tab_id')` treated such a receipt as "not live" /
+  "not a tab": `_get_live_tab_state`, `_get_station_debt_data`, and `receipt_pay` (all in
+  core/receipt_views.py) fell back to the OLD receipt's stale static snapshot instead of
+  recomputing from the new tab, and `receipt_pay`'s gate 400'd every payment attempt — STK,
+  QR, AND cash — outright. Worse: `mpesa_views._create_debt_payment_from_receipt` (the STK
+  callback for debt-mode payments) had the identical gate, meaning a debt payment could
+  complete on Safaricom's side — the customer's money moves — and then be silently dropped
+  by this check, never recorded. All fixed via the shared `_receipt_all_tab_ids()` helper.
+  `mpesa_views._settle_tab_from_payment` (staff-initiated full-tab STK settlement) had a
+  related but separate bug: it unconditionally issued a brand-new receipt on every full
+  settlement instead of checking for an existing master receipt first, orphaning the
+  customer's already-known PIN/link — fixed to call `resolve_master_receipt()` like every
+  other receipt-issuing call site. Regression-locked by `LinkedOnlyReceiptLiveStateTest` and
+  `SettleTabFromPaymentReusesReceiptTest` in core/tests.py. Before adding any new code that
+  reads a receipt's tab, grep `meta.get('tab_id')` / `meta\['tab_id'\]` — every READ (not
+  write) should go through `_receipt_all_tab_ids()`.
 
 ## Cause-&-Effect Protocol (run for EVERY feature or module)
 
@@ -885,3 +908,29 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `cash_requested_at` flag itself still refreshes on every tap so the tabs-drawer badge stays
   accurate. 2 new tests (`CashRequestStationScopingTest`, `CashRequestCooldownTest`). No
   migrations. 154 tests pass.
+- Fix: QR-scan/PIN receipt showed a live tab as already paid (2026-07-19). Roy reported the
+  exact production incident live: opened a tab, customer scanned the wall QR, entered their
+  PIN, and the receipt showed the item as paid when it was still open. Root-caused via full
+  code trace (see Known Issues entry above for the complete mechanism):
+  `resolve_master_receipt()` can hand a brand-new tab a receipt that has no `meta.tab_id` of
+  its own — only `linked_tab_ids` — most plausibly Priority 4 matching an EARLIER, unrelated,
+  already-completed one-off cash sale for the same customer name earlier that day (an
+  everyday scenario for a repeat customer, not an edge case). Every function reading
+  `receipt.meta.get('tab_id')` directly treated that receipt as "not live," so the page fell
+  back to the OLD sale's stale static snapshot. New shared helper
+  `core.receipt_views._receipt_all_tab_ids()` is now the single way to read a receipt's tab
+  references; audited and fixed every call site: `_get_live_tab_state`,
+  `_get_station_debt_data`, `receipt_pay` (all core/receipt_views.py — display AND the
+  STK/QR/cash payment gate itself, which previously 400'd outright for these receipts),
+  `mpesa_views._create_debt_payment_from_receipt` (the debt-mode STK callback — this one was
+  the most severe: a completed, Safaricom-confirmed M-Pesa charge could be silently dropped
+  and never recorded), and `debt_views.send_debt_reminder`'s SMS pay-link lookup. Separately,
+  while auditing "the STK flow across all counters" as requested:
+  `mpesa_views._settle_tab_from_payment` (staff-initiated full-tab "📲 STK Push") always
+  issued a brand-new receipt on settlement regardless of whether the tab already had a master
+  receipt, orphaning the customer's known PIN/link — fixed to call `resolve_master_receipt()`
+  first, matching every other receipt-issuing site. Kitchen-cart and Quick-Sell-cart STK
+  (`_settle_kitchen_order_from_payment`, `_settle_qs_from_payment`) were audited and are
+  correctly out of scope — they're anonymous walk-up checkouts with no tab/customer to
+  consolidate into. 7 new tests (`LinkedOnlyReceiptLiveStateTest`,
+  `SettleTabFromPaymentReusesReceiptTest`). No migrations. 161 tests pass.

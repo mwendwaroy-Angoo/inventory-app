@@ -150,18 +150,32 @@ def _settle_tab_from_payment(payment):
             tab.save(update_fields=['status', 'settled_at'])
 
             from .models import Receipt as _Receipt
-            all_entries = list(tab.entries.all())
-            lines = [
-                {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
-                for e in all_entries
-            ]
-            tab_rcpt = _Receipt.issue(
-                business=tab.business,
-                lines=lines,
-                payment_method='mpesa',
-                customer_name=tab.customer_name,
-                meta={'tab_id': tab.id},
-            )
+            from core.tab_receipts import resolve_master_receipt
+
+            # Reuse the customer's existing master receipt (same PIN/token they may
+            # already have scanned) instead of always minting a new one — this used
+            # to unconditionally Receipt.issue() here regardless of whether the tab
+            # already had a receipt (its own, or via cross-counter linked_tab_ids),
+            # creating an orphaned duplicate that broke the "one PIN, one running
+            # bill" guarantee resolve_master_receipt() establishes everywhere else.
+            tab_rcpt, _ = resolve_master_receipt(tab.business, tab)
+            if tab_rcpt:
+                if tab_rcpt.payment_method != 'mpesa':
+                    tab_rcpt.payment_method = 'mpesa'
+                    tab_rcpt.save(update_fields=['payment_method'])
+            else:
+                all_entries = list(tab.entries.all())
+                lines = [
+                    {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
+                    for e in all_entries
+                ]
+                tab_rcpt = _Receipt.issue(
+                    business=tab.business,
+                    lines=lines,
+                    payment_method='mpesa',
+                    customer_name=tab.customer_name,
+                    meta={'tab_id': tab.id},
+                )
             _sms_receipt_to_payer(payment, tab_rcpt)
             logger.info("Tab #%s settled via STK receipt=%s", tab.id, payment.mpesa_receipt)
     except Exception as exc:
@@ -174,22 +188,32 @@ def _create_debt_payment_from_receipt(payment):
     Called when payment.receipt_token is set AND payment.tab_entry_ids is None.
     The customer paid a summary amount (not specific entries) from the debt block
     UI. Creates a CustomerDebtPayment and runs FIFO entry reconciliation.
+
+    CRITICAL: by the time this runs, Safaricom has already confirmed the M-Pesa
+    charge succeeded — silently returning here means the customer's money moved
+    but the business's records never show it. Must resolve the customer via the
+    SAME tab_id-or-linked_tab_ids union receipt_pay used to allow the STK Push
+    to be initiated in the first place (core.receipt_views._receipt_all_tab_ids)
+    — using only meta.tab_id here would silently drop every completed debt
+    payment for a receipt reached via linked_tab_ids.
     """
     try:
         from .models import Receipt as _Receipt, BarTab as _BarTab, Customer as _Customer
         from .models import CustomerDebtPayment as _CDP, BarTabEntry as _BTE
         from .debt_views import _get_customer_debt_data
+        from .receipt_views import _receipt_all_tab_ids
 
         receipt = _Receipt.objects.filter(token=payment.receipt_token).first()
         if not receipt:
             return
 
-        tab_id = receipt.meta.get('tab_id') if receipt.meta else None
-        if not tab_id:
-            return
-
-        tab = _BarTab.objects.filter(id=tab_id).first()
-        if not tab or not tab.customer_id:
+        tab = None
+        for _tid in _receipt_all_tab_ids(receipt):
+            _t = _BarTab.objects.filter(id=_tid).first()
+            if _t and _t.customer_id:
+                tab = _t
+                break
+        if not tab:
             return
 
         cust = _Customer.objects.filter(id=tab.customer_id, business=payment.business).first()
@@ -359,7 +383,8 @@ def _settle_receipt_entries_from_payment(payment):
         if payment.receipt_token:
             rcpt_for_notif = _Receipt.objects.filter(token=payment.receipt_token).first()
             if rcpt_for_notif:
-                all_tab_ids = [rcpt_for_notif.meta.get('tab_id')] + list(rcpt_for_notif.meta.get('linked_tab_ids') or [])
+                from .receipt_views import _receipt_all_tab_ids
+                all_tab_ids = _receipt_all_tab_ids(rcpt_for_notif)
                 still_unpaid = BarTabEntry.objects.filter(
                     tab__id__in=all_tab_ids, is_paid=False
                 ).exists()
@@ -380,9 +405,9 @@ def _settle_receipt_entries_from_payment(payment):
 
             # Remaining outstanding across all linked tabs
             notif_tab_ids = []
-            if rcpt_for_notif and rcpt_for_notif.meta:
-                notif_tab_ids = ([rcpt_for_notif.meta.get('tab_id')]
-                                 + list(rcpt_for_notif.meta.get('linked_tab_ids') or []))
+            if rcpt_for_notif:
+                from .receipt_views import _receipt_all_tab_ids
+                notif_tab_ids = _receipt_all_tab_ids(rcpt_for_notif)
             remaining_amt = float(sum(
                 e.amount for e in BarTabEntry.objects.filter(
                     tab__id__in=notif_tab_ids, is_paid=False

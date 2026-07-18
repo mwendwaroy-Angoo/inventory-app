@@ -665,13 +665,17 @@ def send_debt_reminder(request, customer_id):
     # Find the most recent live-receipt (tab receipt) for this customer so they
     # can pay directly from the SMS link without visiting the business in person.
     from .models import Receipt as _Rcpt
+    from .receipt_views import _receipt_all_tab_ids
     pay_link_suffix = ''
     all_cust_receipts = _Rcpt.objects.filter(
         business=business, customer_name=customer.name,
     ).exclude(payment_method='statement').order_by('-created_at')
     latest_tab_rcpt = None
     for _r in all_cust_receipts[:10]:
-        if _r.meta and _r.meta.get('tab_id'):
+        # A receipt is payable even without its own meta.tab_id if a tab was
+        # cross-linked into it (resolve_master_receipt Priority 2/3/4) — check
+        # both, not just tab_id, so a valid pay link isn't skipped.
+        if _receipt_all_tab_ids(_r):
             latest_tab_rcpt = _r
             break
     if latest_tab_rcpt:

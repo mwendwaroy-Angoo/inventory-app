@@ -1630,3 +1630,59 @@ grep -rn "linked_tab_ids__contains" core/                            # only insi
 grep -rn "Notification.objects.create" core/ accounts/ | grep "business="  # zero results
 python manage.py test                                                # 152 tests, all pass
 ```
+
+---
+
+## Fix: QR-scan/PIN receipt showed a live tab as already paid (2026-07-19)
+
+**Automated (7 new tests, 161 total):**
+- `LinkedOnlyReceiptLiveStateTest` — a tab linked into an existing receipt via
+  `linked_tab_ids` (no `meta.tab_id` of its own) still shows correctly as OPEN/unpaid on
+  the live receipt page and the JS poll endpoint; STK/QR/cash payment all succeed instead
+  of 400ing; a completed debt-mode STK payment is correctly recorded against the customer.
+- `SettleTabFromPaymentReusesReceiptTest` — a staff-initiated full-tab STK settlement
+  reuses the tab's existing master receipt (and updates its payment_method to 'mpesa')
+  instead of issuing a duplicate; still issues a fresh receipt when none existed.
+
+**Manual smoke tests:**
+
+### Fix-1: Tab opened same day as an earlier unrelated sale, scanned via wall QR
+
+1. As a regular customer (or reuse an existing Customer name), ring up a plain one-off
+   Quick Sell CASH sale (no tab) earlier in the day.
+2. Later, open a NEW bar (or kitchen) tab for that SAME customer name and add an item.
+3. Scan the bar's wall QR, enter the tab's PIN (from the tabs drawer).
+- ✅ Correct: the receipt page shows a red "🔴 LIVE" badge, the new item listed with a
+  checkbox (not struck through / not "✓ Imelipwa"), and the "LIPA SASA" payment section
+  with working STK/QR/Cash buttons.
+- ❌ Bug if: the page shows the OLD unrelated sale's item(s), or shows the new item as
+  already paid, or clicking any payment button returns an error.
+
+### Fix-2: STK Push completes correctly on a cross-linked receipt
+
+1. Reproduce the setup in Fix-1, then tap "📲 Lipa M-Pesa" and complete the STK Push on a
+   real test device/number.
+- ✅ Correct: payment completes, the item flips to paid on the live page (poll or
+  refresh), and the tabs drawer badge clears.
+- ❌ Bug if: STK Push fails to initiate, or completes on the phone but the app never
+  reflects it as paid.
+
+### Fix-3: Staff "📲 STK Push" from the tabs drawer doesn't orphan the customer's PIN
+
+1. Open a tab, add an item (this issues the tab's master receipt/PIN). Note the PIN.
+2. From the Bar Board tabs drawer, use "📲 STK Push" to settle the FULL tab (not from the
+   customer's own scanned page — the staff-side button).
+3. After it completes, look up the tab again via the SAME original PIN on the find-tab page.
+- ✅ Correct: the original PIN still resolves and shows the tab fully paid — no second,
+  separate receipt/PIN was created for the same tab.
+
+### Final checks (post-Fix)
+
+```bash
+python manage.py check                                              # 0 issues
+python manage.py makemigrations --check                             # No changes
+grep -rn "meta\.get('tab_id')\|meta\['tab_id'\]" core/                # only writes + the
+                                                                       # _receipt_all_tab_ids
+                                                                       # definition itself
+python manage.py test                                                # 161 tests, all pass
+```

@@ -3135,3 +3135,243 @@ class CashRequestCooldownTest(TestCase):
         # see the badge, they just aren't spammed with a fresh SMS/notification per tap.
         tab.refresh_from_db()
         self.assertIsNotNone(tab.cash_requested_at)
+
+
+class LinkedOnlyReceiptLiveStateTest(TestCase):
+    """Production bug report (2026-07-19): a customer opened a NEW bar tab, scanned
+    the wall QR, entered their PIN, and the receipt showed their item as already
+    paid — when the tab was genuinely still open and unpaid.
+
+    ROOT CAUSE: resolve_master_receipt() (core/tab_receipts.py) can link a
+    brand-new tab into an EXISTING receipt that has no tab_id of its own — only
+    meta.linked_tab_ids — e.g. Priority 4 matching an earlier, unrelated,
+    already-completed one-off cash sale for the same customer name earlier that
+    day (a very ordinary scenario, not an edge case, for a regular customer).
+    _get_live_tab_state(), _get_station_debt_data(), and receipt_pay() all used
+    to gate on receipt.meta.get('tab_id') ALONE, so any receipt reached this way
+    was treated as "not live" / "not a tab" — the display fell back to the old
+    receipt's stale static snapshot (showing the new tab as if it were the old,
+    completed sale), and every payment attempt (STK, QR, cash) 400'd outright.
+    Fixed via the shared _receipt_all_tab_ids() helper (core/receipt_views.py),
+    which every one of these functions — plus mpesa_views._create_debt_payment_
+    from_receipt and debt_views.send_debt_reminder's pay-link lookup — now uses
+    instead of reading meta.tab_id directly."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Linked Receipt Biz', mpesa_till='999888')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='linkedrcpt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Linked Rcpt Beer',
+            material_no='LINKRCPT-01', unit='Pcs', selling_price=Decimal('150'),
+        )
+
+    def _make_old_unrelated_receipt(self, name):
+        """An earlier, fully-completed one-off cash sale for this customer name —
+        no BarTab, no meta.tab_id at all. Exactly the kind of receipt Priority 4
+        of resolve_master_receipt() can hand back as a "master"."""
+        return Receipt.issue(
+            business=self.biz,
+            lines=[{'name': 'Old Soda', 'qty': 1, 'subtotal': 50}],
+            payment_method='cash', customer_name=name,
+        )
+
+    def _open_new_tab_and_link(self, name, old_rcpt):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Linked Rcpt Beer', amount=Decimal('150'),
+        )
+        from core.tab_receipts import resolve_master_receipt
+        master, freshly_linked = resolve_master_receipt(self.biz, tab)
+        self.assertEqual(
+            master.id, old_rcpt.id,
+            'test setup sanity check failed: expected the new tab to link into the old receipt',
+        )
+        self.assertTrue(freshly_linked)
+        return tab
+
+    def test_live_page_shows_unpaid_not_stale_paid(self):
+        old_rcpt = self._make_old_unrelated_receipt('Linked Patron')
+        self._open_new_tab_and_link('Linked Patron', old_rcpt)
+
+        resp = self.client.get(f'/r/{old_rcpt.token}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Linked Rcpt Beer')
+        self.assertTrue(resp.context['is_live_tab'])
+        self.assertEqual(resp.context['tab_status'], 'OPEN')
+        # The view must recompute receipt.lines from the live tab (not the stale
+        # static snapshot, which only ever held the OLD unrelated 'Old Soda' sale)
+        # and mark the new item unpaid — this is the exact bug: the static
+        # snapshot has no is_paid key at all, so a template checking it would
+        # never show a false "paid", but it would show the WRONG item entirely,
+        # or (once live-recomputed) the right item with the correct paid flag.
+        rendered_lines = resp.context['receipt'].lines
+        beer_line = next(l for l in rendered_lines if 'Linked Rcpt Beer' in l['name'])
+        self.assertFalse(beer_line['is_paid'])
+        self.assertFalse(any('Old Soda' in l['name'] for l in rendered_lines))
+
+    def test_live_status_poll_reports_open_and_unpaid_line(self):
+        old_rcpt = self._make_old_unrelated_receipt('Poll Linked Patron')
+        self._open_new_tab_and_link('Poll Linked Patron', old_rcpt)
+
+        resp = self.client.get(f'/r/{old_rcpt.token}/live/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['is_live'])
+        self.assertEqual(data['tab_status'], 'OPEN')
+        unpaid_line = next(l for l in data['lines'] if 'Linked Rcpt Beer' in l['name'])
+        self.assertFalse(unpaid_line['is_paid'])
+        self.assertIsNotNone(unpaid_line['entry_id'])
+
+    def test_qr_payment_succeeds_for_linked_only_receipt(self):
+        """Before the fix this 400'd with {'error': 'not_a_tab'} for every payment
+        type — QR needs no Daraja network call, so it's the simplest way to prove
+        the gate no longer blocks a linked-only receipt."""
+        import json
+        old_rcpt = self._make_old_unrelated_receipt('QR Linked Patron')
+        self._open_new_tab_and_link('QR Linked Patron', old_rcpt)
+
+        resp = self.client.post(
+            f'/r/{old_rcpt.token}/pay/',
+            data=json.dumps({'type': 'qr'}), content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data.get('ok'), f'QR generation must succeed for a linked-only receipt, got: {data}')
+        self.assertEqual(data.get('amount'), 150)
+
+    def test_cash_request_succeeds_for_linked_only_receipt(self):
+        import json
+        old_rcpt = self._make_old_unrelated_receipt('Cash Linked Patron')
+        tab = self._open_new_tab_and_link('Cash Linked Patron', old_rcpt)
+
+        resp = self.client.post(
+            f'/r/{old_rcpt.token}/pay/',
+            data=json.dumps({'type': 'cash'}), content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data.get('ok'), f'Cash request must succeed for a linked-only receipt, got: {data}')
+        tab.refresh_from_db()
+        self.assertIsNotNone(tab.cash_requested_at)
+
+    def test_debt_stk_callback_attributes_payment_via_linked_tab(self):
+        """The most severe variant: by the time the STK callback fires, Safaricom
+        has already confirmed the charge succeeded. If the callback can't resolve
+        the customer, the customer's money moved but the business's debt records
+        never show it. This locks in that mpesa_views._create_debt_payment_from_
+        receipt resolves the customer via linked_tab_ids, not just meta.tab_id."""
+        from core.models import Customer, CustomerDebtPayment, Payment
+        from core.mpesa_views import _create_debt_payment_from_receipt
+
+        old_rcpt = self._make_old_unrelated_receipt('Debt Linked Patron')
+        tab = self._open_new_tab_and_link('Debt Linked Patron', old_rcpt)
+
+        # Convert the (linked-only) tab to debt — same as a real "Geuza Deni" action.
+        self.client.force_login(self.owner)
+        conv = self.client.post(
+            f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Debt Linked Patron'},
+        )
+        self.assertEqual(conv.status_code, 200)
+        cust = Customer.objects.get(business=self.biz, name='Debt Linked Patron')
+
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('150'), method='mpesa', status='completed',
+            phone='254712345678', mpesa_receipt='QLINK123', receipt_token=old_rcpt.token,
+            tab_entry_ids=None, source='bar',
+        )
+        _create_debt_payment_from_receipt(payment)
+
+        self.assertTrue(
+            CustomerDebtPayment.objects.filter(customer=cust, business=self.biz).exists(),
+            'A completed M-Pesa debt payment must be recorded even when reached via a '
+            'linked-only receipt — silently dropping it means the customer paid but the '
+            'business never sees it.',
+        )
+
+
+class SettleTabFromPaymentReusesReceiptTest(TestCase):
+    """Post-K9 audit of the STK flow: mpesa_views._settle_tab_from_payment (the
+    handler for a STAFF-initiated full-tab '📲 STK Push') used to unconditionally
+    Receipt.issue() a brand-new receipt on every full settlement, even when the
+    tab already had its own master receipt (from the round that opened it) or was
+    cross-linked into one from another counter. That orphaned the customer's
+    already-known PIN/link and broke the "one PIN, one running bill" guarantee
+    resolve_master_receipt() establishes everywhere else. Fixed to resolve and
+    reuse the existing master receipt first."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='STK Settle Reuse Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='STK Reuse Beer',
+            material_no='STKREUSE-01', unit='Pcs', selling_price=Decimal('200'),
+        )
+
+    def test_stk_full_settle_reuses_existing_master_receipt(self):
+        from core.models import Payment
+        from core.mpesa_views import _settle_tab_from_payment
+
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Reuse Patron', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='STK Reuse Beer', amount=Decimal('200'),
+        )
+        # The tab's own master receipt already exists — as it would after the
+        # first round rang up at the counter.
+        existing_rcpt = Receipt.issue(
+            business=self.biz,
+            lines=[{'name': 'STK Reuse Beer', 'qty': 1, 'subtotal': 200}],
+            payment_method='tab', customer_name='Reuse Patron', meta={'tab_id': tab.id},
+        )
+
+        payment = Payment.objects.create(
+            business=self.biz, bar_tab=tab, amount=Decimal('200'), method='mpesa',
+            status='completed', phone='254712345678', mpesa_receipt='STKREUSE1',
+        )
+        _settle_tab_from_payment(payment)
+
+        self.assertEqual(
+            Receipt.objects.filter(business=self.biz, meta__tab_id=tab.id).count(), 1,
+            'Full-tab STK settlement must not create a second, duplicate receipt '
+            'for a tab that already has its own master receipt',
+        )
+        existing_rcpt.refresh_from_db()
+        self.assertEqual(existing_rcpt.payment_method, 'mpesa')
+
+    def test_stk_full_settle_issues_new_receipt_when_none_exists(self):
+        from core.models import Payment
+        from core.mpesa_views import _settle_tab_from_payment
+
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Fresh Patron', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='STK Reuse Beer', amount=Decimal('200'),
+        )
+
+        payment = Payment.objects.create(
+            business=self.biz, bar_tab=tab, amount=Decimal('200'), method='mpesa',
+            status='completed', phone='254712345678', mpesa_receipt='STKFRESH1',
+        )
+        _settle_tab_from_payment(payment)
+
+        rcpt = Receipt.objects.filter(business=self.biz, meta__tab_id=tab.id).first()
+        self.assertIsNotNone(rcpt, 'Must still issue a receipt when the tab had none')
+        self.assertEqual(rcpt.payment_method, 'mpesa')
