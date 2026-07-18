@@ -3729,3 +3729,166 @@ class AutoCloseShiftConvertsOpenTabsTest(TestCase):
         self.assertEqual(result[0]['tabs_converted'], 0)
         self.shift.refresh_from_db()
         self.assertEqual(self.shift.status, 'CLOSED')
+
+
+class TabStationScopingTest(TestCase):
+    """Bar-module audit, Theme 3 (access-control scoping), 2026-07-19: tabs_list()
+    (the read/GET side) already scopes correctly by station via _station_scope() —
+    but every WRITE endpoint on tabs (tick_entry, settle_tab, update_tab_name,
+    update_tab_phone, convert_tab_to_debt) filtered by business only, with no
+    station check at all. A kitchen-only staffer (no can_access_bar) could act
+    directly on a bar tab via the API — settle it, rename it, convert it to debt
+    — even though the UI never shows them a bar tab, because hiding a button in
+    the template is not the same as gating the endpoint. bulk_convert_tabs_to_debt
+    was worse: no permission check of any kind beyond being logged into the
+    business. Fixed with a shared _allowed_tab_sources(up) helper applied
+    consistently across all of them; settle_tab checks each entry's OWN station
+    (item.store.is_kitchen) rather than the tab's overall source, since a
+    bar-only staffer must still be able to settle just the bar-item entries
+    within a mixed/cross-counter-merged tab (an intentional, existing feature)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Tab Station Scope Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+        self.owner = User.objects.create_user(username='tabscope_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_staff = User.objects.create_user(username='tabscope_barstaff', password='x')
+        UserProfile.objects.create(
+            user=self.bar_staff, business=self.biz, role='staff', can_access_kitchen=False,
+        )
+        self.kitchen_staff = User.objects.create_user(username='tabscope_kitchenstaff', password='x')
+        UserProfile.objects.create(
+            user=self.kitchen_staff, business=self.biz, role='kitchen', can_access_bar=False,
+        )
+        Shift.objects.create(business=self.biz, staff=self.bar_staff, status='OPEN')
+        Shift.objects.create(business=self.biz, staff=self.kitchen_staff, status='OPEN')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Scope Beer',
+            material_no='TABSCOPE-BAR-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Scope Chips',
+            material_no='TABSCOPE-KITCHEN-01', unit='Pcs', selling_price=Decimal('80'),
+        )
+
+    def _make_tab(self, name, source, entries):
+        """entries: list of (item, amount) tuples."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source=source,
+        )
+        for item, amount in entries:
+            txn = Transaction.objects.create(
+                business=self.biz, item=item, type='Issue',
+                qty=Decimal('-1'), sale_amount=amount, payment_method='cash',
+            )
+            BarTabEntry.objects.create(
+                tab=tab, transaction=txn, description=item.description, amount=amount,
+            )
+        return tab
+
+    def test_kitchen_staff_cannot_settle_a_bar_tab(self):
+        # settle_tab intentionally checks station at the ENTRY level (403), not the
+        # tab lookup (404) — it must still find a mixed/cross-linked tab to serve
+        # whichever of its entries the caller IS allowed to settle.
+        tab = self._make_tab('Bar Only Patron', 'bar', [(self.bar_item, Decimal('100'))])
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+        self.assertEqual(resp.status_code, 403)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN', 'A kitchen-only staffer must not be able to settle a bar tab')
+
+    def test_bar_staff_cannot_settle_a_kitchen_tab(self):
+        tab = self._make_tab('Kitchen Only Patron', 'kitchen', [(self.kitchen_item, Decimal('80'))])
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+        self.assertEqual(resp.status_code, 403)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN', 'A bar-only staffer must not be able to settle a kitchen tab')
+
+    def test_bar_staff_can_settle_own_station_tab(self):
+        tab = self._make_tab('Own Station Patron', 'bar', [(self.bar_item, Decimal('100'))])
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_bar_staff_can_settle_only_bar_entries_within_mixed_tab(self):
+        """The nuance: a food tab (source='kitchen') that a bar item was merged
+        into via cross-counter linking. A bar-only staffer must be able to settle
+        just the bar-item entry — this is an existing, intentional feature — but
+        must not be able to settle the kitchen-item entry in the same tab."""
+        tab = self._make_tab(
+            'Mixed Patron', 'kitchen',
+            [(self.kitchen_item, Decimal('80')), (self.bar_item, Decimal('100'))],
+        )
+        bar_entry = tab.entries.get(description='Scope Beer')
+        kitchen_entry = tab.entries.get(description='Scope Chips')
+
+        self.client.force_login(self.bar_staff)
+        ok_resp = self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [bar_entry.id]},
+        )
+        self.assertEqual(ok_resp.status_code, 200)
+        self.assertTrue(ok_resp.json()['ok'], 'Bar staff must be able to settle the bar-item entry in a mixed tab')
+
+        blocked_resp = self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [kitchen_entry.id]},
+        )
+        self.assertEqual(blocked_resp.status_code, 403)
+        kitchen_entry.refresh_from_db()
+        self.assertFalse(
+            kitchen_entry.is_paid,
+            'Bar staff must NOT be able to settle the kitchen-item entry in the same mixed tab',
+        )
+
+    def test_kitchen_staff_cannot_rename_a_bar_tab(self):
+        tab = self._make_tab('Rename Bar Patron', 'bar', [(self.bar_item, Decimal('100'))])
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/rename/', {'name': 'Hacked Name'})
+        self.assertEqual(resp.status_code, 404)
+        tab.refresh_from_db()
+        self.assertEqual(tab.customer_name, 'Rename Bar Patron')
+
+    def test_kitchen_staff_cannot_convert_a_bar_tab_to_debt(self):
+        tab = self._make_tab('Convert Bar Patron', 'bar', [(self.bar_item, Decimal('100'))])
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Convert Bar Patron'})
+        self.assertEqual(resp.status_code, 404)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+
+    def test_bulk_convert_only_touches_callers_own_station(self):
+        import json
+        bar_tab = self._make_tab('Bulk Bar Patron', 'bar', [(self.bar_item, Decimal('100'))])
+        kitchen_tab = self._make_tab('Bulk Kitchen Patron', 'kitchen', [(self.kitchen_item, Decimal('80'))])
+
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post('/bar/tabs/bulk-convert-to-debt/', {
+            'tab_ids': json.dumps([bar_tab.id, kitchen_tab.id]),
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(
+            data['converted'], 1,
+            'bulk_convert_tabs_to_debt must silently skip tabs outside the callers station, '
+            'not convert every tab_id it is handed regardless of who is calling',
+        )
+        bar_tab.refresh_from_db()
+        kitchen_tab.refresh_from_db()
+        self.assertEqual(bar_tab.status, 'OPEN', 'The bar tab must be untouched by a kitchen-only staffer')
+        self.assertEqual(kitchen_tab.status, 'SETTLED')
+
+    def test_owner_can_act_on_both_stations(self):
+        bar_tab = self._make_tab('Owner Bar Patron', 'bar', [(self.bar_item, Decimal('100'))])
+        kitchen_tab = self._make_tab('Owner Kitchen Patron', 'kitchen', [(self.kitchen_item, Decimal('80'))])
+        self.client.force_login(self.owner)
+        for tab in (bar_tab, kitchen_tab):
+            resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json()['ok'])

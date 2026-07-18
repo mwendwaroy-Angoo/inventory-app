@@ -28,6 +28,32 @@ def _get_up(request):
     return get_user_profile(request)
 
 
+def _allowed_tab_sources(up):
+    """Set of BarTab.source values ('bar'/'kitchen') this staffer may act on,
+    per the Station Scoping Principle (CLAUDE.md).
+
+    tabs_list() (the read/GET side) already scopes correctly via this same
+    _station_scope() helper — bar-audit finding, 2026-07-19: every WRITE
+    endpoint on tabs (tick_entry, settle_tab, void_tab, convert_tab_to_debt,
+    bulk_convert_tabs_to_debt, update_tab_name, update_tab_phone) filtered
+    tabs by business only, with no station check at all. A kitchen-only
+    staffer (no can_access_bar) could act directly on a bar tab via the API —
+    settle it, void it, convert it to debt — even though the UI never shows
+    them a bar tab, because "the template doesn't render the button" is not
+    the same as "the endpoint is gated." Owner/manager/cross-access staff see
+    both. 'qs' (Quick Sell) tabs are intentionally excluded — they aren't
+    part of either counter's shift lifecycle and have no station concept.
+    """
+    from .views import _station_scope
+    show_bar, show_kitchen = _station_scope(up)
+    allowed = set()
+    if show_bar:
+        allowed.add('bar')
+    if show_kitchen:
+        allowed.add('kitchen')
+    return allowed
+
+
 # ── Board API ─────────────────────────────────────────────────────────────────
 
 @login_required
@@ -1054,7 +1080,10 @@ def update_tab_name(request, tab_id):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
-    tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
+    tab = get_object_or_404(
+        BarTab, id=tab_id, business=up.business, status='OPEN',
+        source__in=_allowed_tab_sources(up),
+    )
     new_name = (request.POST.get('name') or '').strip()
     if not new_name:
         return JsonResponse({'ok': False, 'error': 'Jina haliwezi kuwa tupu.'}, status=400)
@@ -1084,7 +1113,10 @@ def update_tab_phone(request, tab_id):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
-    tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
+    tab = get_object_or_404(
+        BarTab, id=tab_id, business=up.business, status='OPEN',
+        source__in=_allowed_tab_sources(up),
+    )
     phone = (request.POST.get('phone') or '').strip()
 
     if tab.customer_id:
@@ -1130,6 +1162,7 @@ def tick_entry(request, entry_id):
         BarTabEntry.objects.select_related('tab', 'transaction'),
         id=entry_id,
         tab__business=up.business,
+        tab__source__in=_allowed_tab_sources(up),
         is_paid=False,
     )
 
@@ -1282,7 +1315,7 @@ def settle_tab(request, tab_id):
             selected_ids = None
 
     now = timezone.now()
-    all_entries = list(tab.entries.all().select_related('transaction'))
+    all_entries = list(tab.entries.all().select_related('transaction__item__store'))
 
     entries_to_settle = (
         [e for e in all_entries if not e.is_paid and e.id in selected_ids]
@@ -1292,6 +1325,20 @@ def settle_tab(request, tab_id):
 
     if not entries_to_settle:
         return JsonResponse({'ok': False, 'error': 'Hakuna entries zilizochaguliwa.'}, status=400)
+
+    # Station Scoping Principle: check each entry's OWN station (item.store.is_kitchen),
+    # not the tab's overall source — a bar-only staffer may legitimately settle just the
+    # bar-item entries within a mixed/kitchen-sourced tab (the cross-counter merge
+    # feature), but must never settle a kitchen entry, and vice versa (bar-audit
+    # finding, 2026-07-19 — this endpoint had no station check at all before).
+    _allowed_sources = _allowed_tab_sources(up)
+    for _e in entries_to_settle:
+        try:
+            _entry_source = 'kitchen' if _e.transaction.item.store.is_kitchen else 'bar'
+        except Exception:
+            _entry_source = tab.source or 'bar'
+        if _entry_source not in _allowed_sources:
+            return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kulipa bidhaa hizi.'}, status=403)
 
     for entry in entries_to_settle:
         entry.is_paid = True
@@ -1502,7 +1549,10 @@ def convert_tab_to_debt(request, tab_id):
                 status=403,
             )
 
-    tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
+    tab = get_object_or_404(
+        BarTab, id=tab_id, business=up.business, status='OPEN',
+        source__in=_allowed_tab_sources(up),
+    )
 
     customer_name = (request.POST.get('customer_name') or tab.customer_name).strip()
     phone = (request.POST.get('phone') or '').strip()
@@ -1579,10 +1629,24 @@ def bulk_convert_tabs_to_debt(request):
     except (ValueError, TypeError):
         return JsonResponse({'ok': False, 'error': 'Orodha ya tab si sahihi.'}, status=400)
 
+    # Station Scoping Principle: this endpoint had NO permission check at all
+    # beyond "logged in to this business" — any staff member, bar or kitchen,
+    # could bulk-convert arbitrary tab IDs regardless of role or station
+    # (bar-audit finding, 2026-07-19). No owner/manager-only or shift gate is
+    # added here deliberately — this is designed to be called by whoever just
+    # closed their own shift, at which point their shift is already CLOSED, so
+    # a shift-open check would block the very person meant to use it. The
+    # station filter is the real fix: no gate is more permissive than "act only
+    # on your own station's tabs."
+    _allowed_sources = _allowed_tab_sources(up)
+
     converted = 0
     for tab_id in tab_ids:
         try:
-            tab = BarTab.objects.get(id=int(tab_id), business=up.business, status='OPEN')
+            tab = BarTab.objects.get(
+                id=int(tab_id), business=up.business, status='OPEN',
+                source__in=_allowed_sources,
+            )
         except (BarTab.DoesNotExist, ValueError):
             continue
 
