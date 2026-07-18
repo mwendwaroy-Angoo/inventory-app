@@ -744,7 +744,7 @@
     </div>
     <div id="breakageStatus" style="display:none; font-size:0.82rem; margin-bottom:0.75rem;"></div>
     <div style="display:flex; gap:0.6rem;">
-      <button onclick="window.submitBreakage()"
+      <button id="breakageSubmitBtn" onclick="window.submitBreakage()"
               style="flex:1; padding:0.6rem; background:#c0395a; border:none; border-radius:8px; color:#fff; font-weight:700; font-size:0.9rem; cursor:pointer;">
         Record Wastage
       </button>
@@ -3087,6 +3087,7 @@
       cost_per_barrel: cost,
       gross_kg:        gross,
       tare_kg:         tare,
+      idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
     };
     if (scale)   data.scale_reading     = scale;
     if (target)  data.target_per_barrel = target;
@@ -3295,6 +3296,7 @@
     post('/bar/cups/add/', {
       cup_size: cupSize, qty: totalCups,
       unit_cost: unitCostPerCup.toFixed(4), note: autoNote,
+      idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
     })
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -4273,6 +4275,7 @@
     document.getElementById('breakageItemSel').value = '';
     document.getElementById('breakageQty').value = '1';
     document.getElementById('breakageNote').value = '';
+    document.getElementById('breakageSubmitBtn').disabled = false;
   };
 
   window.closeBreakageModal = function () {
@@ -4302,11 +4305,17 @@
       return;
     }
 
+    var btn = document.getElementById('breakageSubmitBtn');
+    if (btn.disabled) return;  // already submitting — guard against a fast double-tap
+    btn.disabled = true;
+
     var fd = new FormData();
     fd.append('item_id', itemId);
     fd.append('qty', qty);
     fd.append('note', note);
     fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fd.append('idempotency_token',
+      (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
 
     fetch('/stock/bar/breakage/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
@@ -4315,16 +4324,18 @@
         if (data.ok) {
           status.style.color = '#9fcaa0';
           status.textContent = 'Wastage recorded.';
-          setTimeout(function () { window.closeBreakageModal(); }, 1200);
+          setTimeout(function () { window.closeBreakageModal(); btn.disabled = false; }, 1200);
         } else {
           status.style.color = '#f87171';
           status.textContent = data.error || 'Failed. Try again.';
+          btn.disabled = false;
         }
       })
       .catch(function () {
         status.style.display = 'block';
         status.style.color = '#f87171';
         status.textContent = 'Network error.';
+        btn.disabled = false;
       });
   };
 })();

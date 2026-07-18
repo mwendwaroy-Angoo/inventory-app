@@ -488,6 +488,16 @@ def receive_barrel(request):
         return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     business = up.business
+
+    # Server-side double-submit backstop — see core/idempotency.py. The client
+    # already disables the submit button, which covers a second click, but not a
+    # real duplicate request (slow-network retry). This creates real stock
+    # (barrels + Receipt transactions), so a duplicate would double-count both.
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
     item = Item.objects.filter(
         id=request.POST.get('item_id'),
         store__business=business,
@@ -1150,19 +1160,33 @@ def tick_entry(request, entry_id):
         tab.save(update_fields=['status', 'settled_at'])
         try:
             from .models import Receipt as _Receipt
-            all_entries = list(tab.entries.all())
-            lines = [
-                {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
-                for e in all_entries
-            ]
-            rcpt = _Receipt.issue(
-                business=tab.business,
-                lines=lines,
-                payment_method=pay,
-                user=request.user,
-                customer_name=tab.customer_name,
-                meta={'tab_id': tab.id},
-            )
+            from core.tab_receipts import resolve_master_receipt
+            # Reuse the tab's existing master receipt (from when it was opened, or
+            # cross-linked from another counter) instead of always minting a new
+            # one — this used to unconditionally Receipt.issue() here regardless
+            # of whether the tab already had a receipt, orphaning the customer's
+            # already-known PIN with a second, disconnected receipt every time a
+            # staff member ticked the last item paid (bar-audit finding, 2026-07-19).
+            master_rcpt, _ = resolve_master_receipt(tab.business, tab)
+            if master_rcpt:
+                rcpt = master_rcpt
+                if rcpt.payment_method != pay:
+                    rcpt.payment_method = pay
+                    rcpt.save(update_fields=['payment_method'])
+            else:
+                all_entries = list(tab.entries.all())
+                lines = [
+                    {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
+                    for e in all_entries
+                ]
+                rcpt = _Receipt.issue(
+                    business=tab.business,
+                    lines=lines,
+                    payment_method=pay,
+                    user=request.user,
+                    customer_name=tab.customer_name,
+                    meta={'tab_id': tab.id},
+                )
             receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
             receipt_id = rcpt.id
         except Exception:
@@ -1309,39 +1333,69 @@ def settle_tab(request, tab_id):
         tab.customer = _cust
         tab.save(update_fields=['customer'])
 
-    # Issue a receipt covering only the entries just settled
+    # Issue a receipt — reuse the tab's existing master receipt if one exists
+    # (from when it was opened, or cross-linked from another counter) instead of
+    # always minting a new one. This used to unconditionally Receipt.issue() a
+    # SEPARATE receipt here on every settle — partial or full — regardless of
+    # whether the tab already had a receipt; on a full settlement it didn't even
+    # carry a tab_id, so it was a permanent dead-end orphan. Since every counter
+    # settlement (not just customer-initiated STK) is the common path for closing
+    # a tab, this orphaned the customer's known PIN on nearly every tab (bar-audit
+    # finding, 2026-07-19). The live receipt page recomputes its full bill from
+    # the tab regardless of which entries this specific settle action covered, so
+    # reusing the master is strictly more correct, not just less duplicative.
     receipt_url = None
     receipt_id = None
     try:
         from .models import Receipt as _Receipt
-        lines = [
-            {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
-            for e in entries_to_settle
-        ]
-        settle_meta = {}
-        # ── Live tab receipt: include tab_id so the public_receipt view can
-        #    dynamically recompute lines from the BarTab when it's still OPEN ──
-        if not tab_fully_settled:
-            settle_meta['tab_id'] = tab.id
-        if pay == 'credit' and tab.customer:
-            try:
-                from core.debt_views import _build_credit_receipt_meta
-                source_scope = 'kitchen' if (tab.source == 'kitchen') else 'bar'
-                settle_meta = _build_credit_receipt_meta(tab.business, tab.customer, source_scope)
-                if not tab_fully_settled:
-                    settle_meta['tab_id'] = tab.id
-            except Exception:
-                pass
-        rcpt = _Receipt.issue(
-            business=tab.business,
-            lines=lines,
-            payment_method=pay,
-            user=request.user,
-            customer_name=tab.customer_name,
-            customer_phone=customer_phone,
-            source=tab.source or '',
-            meta=settle_meta,
-        )
+        from core.tab_receipts import resolve_master_receipt
+        master_rcpt, _ = resolve_master_receipt(tab.business, tab)
+        if master_rcpt:
+            rcpt = master_rcpt
+            _update_fields = []
+            if pay == 'credit' and tab.customer:
+                try:
+                    from core.debt_views import _build_credit_receipt_meta
+                    source_scope = 'kitchen' if (tab.source == 'kitchen') else 'bar'
+                    _credit_meta = _build_credit_receipt_meta(tab.business, tab.customer, source_scope)
+                    rcpt.meta = {**rcpt.meta, **_credit_meta}
+                    _update_fields.append('meta')
+                except Exception:
+                    pass
+            if rcpt.payment_method != pay:
+                rcpt.payment_method = pay
+                _update_fields.append('payment_method')
+            if _update_fields:
+                rcpt.save(update_fields=_update_fields)
+        else:
+            lines = [
+                {'name': e.description, 'qty': 1, 'subtotal': float(e.amount)}
+                for e in entries_to_settle
+            ]
+            settle_meta = {}
+            # ── Live tab receipt: include tab_id so the public_receipt view can
+            #    dynamically recompute lines from the BarTab when it's still OPEN ──
+            if not tab_fully_settled:
+                settle_meta['tab_id'] = tab.id
+            if pay == 'credit' and tab.customer:
+                try:
+                    from core.debt_views import _build_credit_receipt_meta
+                    source_scope = 'kitchen' if (tab.source == 'kitchen') else 'bar'
+                    settle_meta = _build_credit_receipt_meta(tab.business, tab.customer, source_scope)
+                    if not tab_fully_settled:
+                        settle_meta['tab_id'] = tab.id
+                except Exception:
+                    pass
+            rcpt = _Receipt.issue(
+                business=tab.business,
+                lines=lines,
+                payment_method=pay,
+                user=request.user,
+                customer_name=tab.customer_name,
+                customer_phone=customer_phone,
+                source=tab.source or '',
+                meta=settle_meta,
+            )
         receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
         receipt_id = rcpt.id
         if customer_phone and receipt_url:
@@ -1592,6 +1646,16 @@ def add_cups(request):
         # Also gate to bar staff (role == staff/waitress on bar counter, not kitchen-only)
         if up.role not in ('owner', 'manager', 'staff', 'waitress'):
             return JsonResponse({'ok': False, 'error': 'Hakuna ruhusa'}, status=403)
+
+    # Server-side double-submit backstop — see core/idempotency.py. No natural
+    # "already done" guard exists here (a fresh BarCupLog row is always valid),
+    # so a double-tap/retry would double-count both the purchase cost AND the
+    # "bought" side of the cup pool math, masking a real future shortage behind
+    # false confidence (bar-audit finding, 2026-07-19).
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
 
     try:
         cup_size  = request.POST.get('cup_size', '300')
@@ -2111,6 +2175,16 @@ def record_breakage(request):
             )
 
     business = up.business
+
+    # Server-side double-submit backstop — see core/idempotency.py. This form has
+    # no natural "already done" guard (unlike e.g. settle_tab's tab.status), so a
+    # double-tap or network retry would silently double-record the wastage,
+    # inflating wastage_loss in the P&L (bar-audit finding, 2026-07-19).
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
     item = Item.objects.filter(
         id=request.POST.get("item_id"),
         store__business=business,

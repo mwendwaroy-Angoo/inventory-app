@@ -647,21 +647,39 @@ def session_update(request, session_id):
 @login_required
 @require_POST
 def session_pay(request, session_id):
-    """Mark session paid + auto-create BusinessExpense."""
+    """Mark session paid + auto-create BusinessExpense.
+
+    Locks the session row for the duration of the payment_status check + write —
+    without this, two near-simultaneous taps of "Pay" (a real risk during a
+    rushed end-of-night payout) could both read payment_status as not-yet-PAID
+    before either commits, and both create a separate BusinessExpense for the
+    same session, double-counting a real cost in the P&L (bar-audit finding,
+    2026-07-19 — same race class as every other unlocked "check status then
+    write" money path in this module).
+    """
     up, err = _owner_required(request)
     if err:
         return err
     business = up.business
-    session  = get_object_or_404(PerformerSession, id=session_id, business=business)
 
-    if session.payment_status == PerformerSession.PAYMENT_PAID:
-        return JsonResponse({'ok': False, 'error': 'Already paid'}, status=400)
-
-    if not session.all_confirmed:
-        return JsonResponse(
-            {'ok': False, 'error': 'Sesheni bado haijathibitishwa na pande zote. Malipo hayawezi kufanywa.'},
-            status=400,
+    from django.db import transaction as _db_txn
+    with _db_txn.atomic():
+        session = get_object_or_404(
+            PerformerSession.objects.select_for_update(), id=session_id, business=business,
         )
+
+        if session.payment_status == PerformerSession.PAYMENT_PAID:
+            return JsonResponse({'ok': False, 'error': 'Already paid'}, status=400)
+
+        if not session.all_confirmed:
+            return JsonResponse(
+                {'ok': False, 'error': 'Sesheni bado haijathibitishwa na pande zote. Malipo hayawezi kufanywa.'},
+                status=400,
+            )
+        return _do_session_pay(request, session, business)
+
+
+def _do_session_pay(request, session, business):
 
     try:
         data = json.loads(request.body)

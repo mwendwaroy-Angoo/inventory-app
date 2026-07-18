@@ -3375,3 +3375,276 @@ class SettleTabFromPaymentReusesReceiptTest(TestCase):
         rcpt = Receipt.objects.filter(business=self.biz, meta__tab_id=tab.id).first()
         self.assertIsNotNone(rcpt, 'Must still issue a receipt when the tab had none')
         self.assertEqual(rcpt.payment_method, 'mpesa')
+
+
+class StaffSettlementReusesReceiptTest(TestCase):
+    """Bar-module audit, Theme 1 (money-path idempotency), 2026-07-19: the two
+    STAFF-side settlement paths — tick_entry() (tick a single item paid) and
+    settle_tab() (staff taps Lipa Cash/M-Pesa at the counter) — are the most
+    common way a tab actually gets closed, far more common than a customer
+    self-serving via STK from their scanned receipt. Both used to unconditionally
+    Receipt.issue() a brand-new, separate receipt on every settlement — the exact
+    same bug already found and fixed in mpesa_views._settle_tab_from_payment, just
+    missed here because that earlier fix was scoped to "the STK flow" specifically.
+    Worse for settle_tab(): on a FULL settlement the new receipt carried no
+    tab_id/linked_tab_ids at all, so it was a permanent, disconnected dead end —
+    meaning nearly every everyday tab (opened, drinks added, closed at the
+    counter) ended its life with TWO valid-looking but different receipt links.
+    Fixed to reuse the tab's existing master receipt via resolve_master_receipt(),
+    same as every other receipt-issuing call site."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Staff Settle Reuse Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='staffsettle_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Staff Settle Beer',
+            material_no='STAFFSETTLE-01', unit='Pcs', selling_price=Decimal('150'),
+        )
+        self.client.force_login(self.owner)
+
+    def _open_tab_with_master_receipt(self, name):
+        """Mirrors what bar_board() does when a tab is first opened: one entry,
+        one master receipt correctly carrying meta.tab_id."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='cash',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Staff Settle Beer', amount=Decimal('150'),
+        )
+        master = Receipt.issue(
+            business=self.biz,
+            lines=[{'name': 'Staff Settle Beer', 'qty': 1, 'subtotal': 150}],
+            payment_method='tab', customer_name=name, meta={'tab_id': tab.id},
+        )
+        return tab, entry, master
+
+    def test_tick_entry_reuses_existing_master_receipt_on_full_settle(self):
+        tab, entry, master = self._open_tab_with_master_receipt('Tick Reuse Patron')
+
+        resp = self.client.post(
+            f'/bar/tabs/entry/{entry.id}/tick/', {'payment_method': 'cash'},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['tab_settled'])
+
+        self.assertEqual(
+            Receipt.objects.filter(business=self.biz, meta__tab_id=tab.id).count(), 1,
+            'tick_entry must not create a second, duplicate receipt for a tab that '
+            'already has its own master receipt',
+        )
+        master.refresh_from_db()
+        self.assertEqual(master.payment_method, 'cash')
+        self.assertEqual(data['receipt_id'], master.id)
+
+    def test_settle_tab_reuses_existing_master_receipt_on_full_settle(self):
+        tab, entry, master = self._open_tab_with_master_receipt('Settle Reuse Patron')
+
+        resp = self.client.post(
+            f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'mpesa'},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['tab_settled'])
+
+        self.assertEqual(
+            Receipt.objects.filter(business=self.biz, meta__tab_id=tab.id).count(), 1,
+            'settle_tab must not create a second, orphaned receipt (with no tab_id '
+            'at all) for a tab that already has its own master receipt',
+        )
+        master.refresh_from_db()
+        self.assertEqual(master.payment_method, 'mpesa')
+        self.assertEqual(data['receipt_id'], master.id)
+
+    def test_settle_tab_reuses_master_receipt_on_partial_settle(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Partial Reuse Patron', status='OPEN', source='bar',
+        )
+        entries = []
+        for i in range(2):
+            txn = Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='cash',
+            )
+            entries.append(BarTabEntry.objects.create(
+                tab=tab, transaction=txn, description=f'Staff Settle Beer {i}', amount=Decimal('150'),
+            ))
+        master = Receipt.issue(
+            business=self.biz,
+            lines=[{'name': 'Staff Settle Beer', 'qty': 2, 'subtotal': 300}],
+            payment_method='tab', customer_name='Partial Reuse Patron', meta={'tab_id': tab.id},
+        )
+
+        resp = self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [entries[0].id]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['partial'])
+
+        self.assertEqual(
+            Receipt.objects.filter(business=self.biz, meta__tab_id=tab.id).count(), 1,
+            'A partial settle must also reuse the master receipt, not spin off a '
+            'narrow one covering only the entries just paid',
+        )
+        self.assertEqual(data['receipt_id'], master.id)
+
+    def test_settle_tab_still_issues_new_receipt_when_none_exists(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='No Master Patron', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Staff Settle Beer', amount=Decimal('150'),
+        )
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIsNotNone(data['receipt_id'], 'Must still issue a receipt when the tab had none')
+
+
+class SessionPayLockedAgainstDoubleExpenseTest(TestCase):
+    """Bar-module audit, Theme 1, 2026-07-19: session_pay() had no lock at all — two
+    near-simultaneous taps of "Pay" during a rushed end-of-night DJ/MC payout could
+    both read payment_status as not-yet-PAID before either commits, and both create
+    a separate BusinessExpense for the same session, double-counting a real cost in
+    the P&L. Fixed with select_for_update() inside transaction.atomic(), the same
+    pattern already proven correct in KegBarrel.record_sale_locked. True concurrent
+    locking isn't exercisable in a single-threaded SQLite test (see the existing
+    ConcurrentKegSalesDoNotLoseUpdatesTest docstring for the same caveat) — this
+    locks in the sequential-correctness contract: a second call after the first
+    succeeds must be rejected, not double-processed."""
+
+    def setUp(self):
+        from core.models import Performer, PerformerSession
+        self.biz = Business.objects.create(name='Session Pay Lock Biz')
+        self.owner = User.objects.create_user(username='sessionpay_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.performer = Performer.objects.create(
+            business=self.biz, name='DJ Lock Test', performer_type='DJ',
+        )
+        self.session = PerformerSession.objects.create(
+            business=self.biz, performer=self.performer, date=timezone.localdate(),
+            agreed_fee=Decimal('5000'), performer_checked_in=True, staff_confirmed=True,
+        )
+        self.client.force_login(self.owner)
+
+    def test_second_call_after_success_does_not_double_pay(self):
+        from core.models import BusinessExpense
+        resp1 = self.client.post(
+            f'/bar/session/{self.session.id}/pay/', {'payment_method': 'cash'},
+        )
+        self.assertEqual(resp1.status_code, 200)
+        self.assertTrue(resp1.json()['ok'])
+
+        resp2 = self.client.post(
+            f'/bar/session/{self.session.id}/pay/', {'payment_method': 'cash'},
+        )
+        self.assertEqual(resp2.status_code, 400)
+        self.assertFalse(resp2.json()['ok'])
+
+        self.assertEqual(
+            BusinessExpense.objects.filter(business=self.biz, category='entertainment').count(), 1,
+            'A second pay attempt after the first succeeded must not create a second expense',
+        )
+
+    def test_payment_not_allowed_until_all_confirmed(self):
+        from core.models import Performer, PerformerSession
+        unconfirmed = PerformerSession.objects.create(
+            business=self.biz, performer=self.performer, date=timezone.localdate(),
+            agreed_fee=Decimal('5000'), performer_checked_in=False, staff_confirmed=False,
+        )
+        resp = self.client.post(
+            f'/bar/session/{unconfirmed.id}/pay/', {'payment_method': 'cash'},
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['ok'])
+
+
+class BreakageAndCupsIdempotencyTest(TestCase):
+    """Bar-module audit, Theme 1, 2026-07-19: record_breakage() and add_cups() had
+    no double-submit protection at all — unlike checkout (fixed in 109eb10) or the
+    tab-settlement paths, neither has a natural "already done" status guard, so a
+    duplicate request would silently double-record wastage (inflating wastage_loss
+    in the P&L) or double-log a cup purchase (masking a real future stock shortage
+    behind false confidence). Fixed by reusing core.idempotency.claim_checkout_token,
+    the same mechanism already proven for the three checkout surfaces."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Breakage Cups Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='breakcups_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Breakage Bottle',
+            material_no='BREAKCUP-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('50'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_duplicate_breakage_token_does_not_double_record(self):
+        payload = {'item_id': self.item.id, 'qty': '2', 'note': 'dropped tray', 'idempotency_token': 'brk-token-1'}
+        self.client.post('/stock/bar/breakage/', payload)
+        self.client.post('/stock/bar/breakage/', payload)  # simulated resubmit
+        wastage_count = Transaction.objects.filter(
+            business=self.biz, item=self.item, type='Wastage',
+        ).count()
+        self.assertEqual(wastage_count, 1, 'Duplicate token must not double-record wastage')
+
+    def test_different_breakage_tokens_both_recorded(self):
+        self.client.post('/stock/bar/breakage/', {
+            'item_id': self.item.id, 'qty': '1', 'note': 'a', 'idempotency_token': 'brk-token-A',
+        })
+        self.client.post('/stock/bar/breakage/', {
+            'item_id': self.item.id, 'qty': '1', 'note': 'b', 'idempotency_token': 'brk-token-B',
+        })
+        wastage_count = Transaction.objects.filter(
+            business=self.biz, item=self.item, type='Wastage',
+        ).count()
+        self.assertEqual(wastage_count, 2, 'Two distinct tokens must both be processed as real events')
+
+    def test_duplicate_cups_token_does_not_double_log(self):
+        from core.models import BarCupLog
+        payload = {
+            'cup_size': '300', 'qty': '100', 'unit_cost': '2.5',
+            'note': 'test pack', 'idempotency_token': 'cup-token-1',
+        }
+        self.client.post('/bar/cups/add/', payload)
+        self.client.post('/bar/cups/add/', payload)  # simulated resubmit
+        self.assertEqual(
+            BarCupLog.objects.filter(business=self.biz).count(), 1,
+            'Duplicate token must not double-log the cup purchase',
+        )
+
+    def test_duplicate_receive_barrel_token_does_not_double_receive(self):
+        """Same audit finding: receive_barrel() creates real stock (barrels + Receipt
+        transactions) with no server-side backstop against a network-retry duplicate,
+        despite already having a client-side disable-on-click guard."""
+        keg_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Receive Test Lager',
+            material_no='RECVBARREL-01', unit='ml', is_keg=True, selling_price=Decimal('50'),
+        )
+        from core.models import KegBarrel
+        payload = {
+            'item_id': keg_item.id, 'count': '2', 'cost_per_barrel': '12000',
+            'gross_kg': '60', 'tare_kg': '10', 'idempotency_token': 'recv-token-1',
+        }
+        self.client.post('/stock/bar/receive/', payload)
+        self.client.post('/stock/bar/receive/', payload)  # simulated resubmit
+        self.assertEqual(
+            KegBarrel.objects.filter(business=self.biz, item=keg_item).count(), 2,
+            'Duplicate token must not double-receive the same batch of barrels',
+        )
