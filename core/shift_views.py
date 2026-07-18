@@ -144,6 +144,92 @@ def _tapped_barrels_for_business(business):
 _SHIFT_AUTO_CLOSE_GRACE_HOURS = 2   # grace period after closing time before auto-close fires
 
 
+def _convert_open_tabs_to_debt_for_shift(shift, business, should_convert):
+    """Auto-convert this shift's still-OPEN tabs to debt (Geuza Deni).
+
+    Shared by close_shift() (manual close) and _auto_close_expired_shifts()
+    (system safety-net close) — bar-audit finding, 2026-07-19: the auto-close
+    path used to skip this entirely, meaning a shift auto-closed because staff
+    forgot (precisely the scenario most likely to also have forgotten open
+    tabs) left any customer tab silently OPEN forever, with no conversion, no
+    notification, and no visibility anywhere — not even in the missed-tasks
+    reminder, which only checks stock-take and barrel-weight readings.
+
+    Returns (auto_converted_count, auto_converted_names, open_tabs_list) —
+    open_tabs_list covers tabs left OPEN (should_convert=False) so the caller
+    can surface them for manual resolution, same shape close_shift() already
+    returns to the bar board.
+    """
+    from .models import BarTab
+    from core.models import Customer
+
+    try:
+        _is_kitchen_shift = shift.staff.userprofile.role == 'kitchen'
+    except Exception:
+        _is_kitchen_shift = False
+    _tab_source = 'kitchen' if _is_kitchen_shift else 'bar'
+
+    open_tabs = list(
+        BarTab.objects.filter(business=business, status='OPEN', source=_tab_source)
+        .prefetch_related('entries')
+        .select_related('customer')
+    )
+    auto_converted = 0
+    auto_converted_names = []
+    for tab in open_tabs:
+        if not should_convert:
+            continue
+        try:
+            customer_name = (tab.customer_name or '').strip() or f'Tab #{tab.id}'
+            phone = ''
+            if tab.customer_id and tab.customer.phone:
+                phone = tab.customer.phone
+
+            cust = None
+            if phone:
+                cust = Customer.objects.filter(business=business, phone=phone).first()
+            if cust is None:
+                cust = Customer.objects.filter(
+                    business=business, name__iexact=customer_name,
+                ).first()
+            if cust is None:
+                cust = Customer.objects.create(
+                    business=business, name=customer_name, phone=phone,
+                    credit_approved=True,
+                )
+
+            for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
+                txn = entry.transaction
+                txn.recipient = cust.name
+                txn.payment_method = 'credit'
+                txn.save(update_fields=['recipient', 'payment_method'])
+
+            tab.customer = cust
+            tab.status = 'SETTLED'
+            tab.settled_at = timezone.now()
+            tab.cash_requested_at = None
+            tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
+            auto_converted += 1
+            auto_converted_names.append(customer_name)
+        except Exception:
+            logger.exception('shift close: auto-convert failed for tab %s in shift %s', tab.id, shift.id)
+
+    open_tabs_list = []
+    for tab in open_tabs:
+        if tab.status == 'OPEN':
+            opened_at_str = ''
+            if tab.opened_at:
+                local_dt = timezone.localtime(tab.opened_at)
+                opened_at_str = local_dt.strftime('%H:%M')
+            open_tabs_list.append({
+                'id': tab.id,
+                'customer_name': tab.customer_name or '—',
+                'opened_at': opened_at_str,
+            })
+
+    return auto_converted, auto_converted_names, open_tabs_list
+
+
 def _auto_close_expired_shifts(business):
     """Close any OPEN shifts that ran past the business's closing time + grace.
 
@@ -195,10 +281,19 @@ def _auto_close_expired_shifts(business):
             shift.auto_closed = True
             shift.notes      = (shift.notes + '\n' + note).strip() if shift.notes else note
             shift.save(update_fields=['status', 'ended_at', 'auto_closed', 'notes'])
+
+            # Same tab-to-debt sweep a manual close performs — the system is force-closing
+            # because we're already past closing time + grace, so always convert (no
+            # "manager_taking_over" concept applies to an unattended auto-close).
+            _converted_n, _converted_names, _ = _convert_open_tabs_to_debt_for_shift(
+                shift, business, should_convert=True,
+            )
+
             auto_closed.append({
                 'shift_id':        shift.id,
                 'staff_name':      staff_name,
                 'scheduled_close': closing_time.strftime('%H:%M'),
+                'tabs_converted':  _converted_n,
             })
 
     if auto_closed:
@@ -211,12 +306,18 @@ def _auto_close_expired_shifts(business):
             if owner_profile:
                 names   = ', '.join(r['staff_name'] for r in auto_closed)
                 close_t = auto_closed[0]['scheduled_close']
+                total_tabs_converted = sum(r['tabs_converted'] for r in auto_closed)
+                tabs_note = (
+                    f" {total_tabs_converted} tab(s) zilizoachwa wazi zimegeuzwa deni."
+                    if total_tabs_converted else ''
+                )
                 create_in_app_notification(
                     user=owner_profile.user,
                     title='⏰ Shift Auto-Closed',
                     message=(
                         f"{names}: shift auto-closed at {close_t} "
                         f"(business hours ended). Staff may have forgotten to close shift."
+                        f"{tabs_note}"
                     ),
                     notification_type='shift',
                 )
@@ -643,77 +744,11 @@ def close_shift(request, shift_id):
     _manager_taking_over = request.POST.get('manager_taking_over') == '1'
     _should_convert = (not _has_closing_time or not _biz.is_open()) and not _manager_taking_over
 
-    from .models import BarTab
-    from core.models import Customer
-    # Discriminate by staff role, not shift.store.is_kitchen — open_shift() assigns
-    # stores.first() to all staff regardless of counter, so store cannot be trusted here.
-    # This matches the same logic used in _reconcile() and bar_z_report().
-    try:
-        _is_kitchen_shift = shift.staff.userprofile.role == 'kitchen'
-    except Exception:
-        _is_kitchen_shift = False
-    _tab_source = 'kitchen' if _is_kitchen_shift else 'bar'
-
-    open_tabs = list(
-        BarTab.objects.filter(business=up.business, status='OPEN', source=_tab_source)
-        .prefetch_related('entries')
-        .select_related('customer')
+    # Single source of truth shared with _auto_close_expired_shifts() — see that
+    # function's call site for why this must never be a copy again.
+    auto_converted, auto_converted_names, open_tabs_list = (
+        _convert_open_tabs_to_debt_for_shift(shift, up.business, _should_convert)
     )
-    auto_converted = 0
-    auto_converted_names = []
-    for tab in open_tabs:
-        if not _should_convert:
-            continue
-        try:
-            customer_name = (tab.customer_name or '').strip() or f'Tab #{tab.id}'
-            phone = ''
-            if tab.customer_id and tab.customer.phone:
-                phone = tab.customer.phone
-
-            cust = None
-            if phone:
-                cust = Customer.objects.filter(business=up.business, phone=phone).first()
-            if cust is None:
-                cust = Customer.objects.filter(
-                    business=up.business, name__iexact=customer_name,
-                ).first()
-            if cust is None:
-                cust = Customer.objects.create(
-                    business=up.business, name=customer_name, phone=phone,
-                    credit_approved=True,
-                )
-
-            for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
-                txn = entry.transaction
-                txn.recipient = cust.name
-                txn.payment_method = 'credit'
-                txn.save(update_fields=['recipient', 'payment_method'])
-
-            tab.customer = cust
-            tab.status = 'SETTLED'
-            tab.settled_at = timezone.now()
-            tab.cash_requested_at = None
-            tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
-            auto_converted += 1
-            auto_converted_names.append(customer_name)
-        except Exception:
-            logger.exception('close_shift: auto-convert failed for tab %s in shift %s', tab.id, shift.id)
-
-    # For unconverted tabs (shift closed early or manager taking over) include
-    # them so the bar board can show warnings or let the manager handle them.
-    open_tabs_list = []
-    for tab in open_tabs:
-        if tab.status == 'OPEN':
-            opened_at_str = ''
-            if tab.opened_at:
-                from django.utils import timezone as _tz
-                local_dt = _tz.localtime(tab.opened_at)
-                opened_at_str = local_dt.strftime('%H:%M')
-            open_tabs_list.append({
-                'id': tab.id,
-                'customer_name': tab.customer_name or '—',
-                'opened_at': opened_at_str,
-            })
 
     return JsonResponse({
         'ok': True,

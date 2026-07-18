@@ -3648,3 +3648,84 @@ class BreakageAndCupsIdempotencyTest(TestCase):
             KegBarrel.objects.filter(business=self.biz, item=keg_item).count(), 2,
             'Duplicate token must not double-receive the same batch of barrels',
         )
+
+
+class AutoCloseShiftConvertsOpenTabsTest(TestCase):
+    """Bar-module audit, Theme 2 (state-transition completeness), 2026-07-19:
+    _auto_close_expired_shifts() — the safety net that force-closes a shift when
+    staff forgot and business hours have passed — used to flip shift.status to
+    CLOSED directly, completely bypassing the tab-to-debt conversion sweep that a
+    manual close_shift() performs. This is precisely the scenario most likely to
+    also have forgotten open tabs (staff walked out at the end of the night without
+    closing anything), and the missed-tasks reminder shown to staff afterward only
+    checks stock-take and barrel-weight readings — never tabs. Any tab left OPEN at
+    that point had no automatic resolution path and no visibility anywhere. Fixed by
+    extracting the conversion logic into _convert_open_tabs_to_debt_for_shift(),
+    now called from both close paths — this test locks in the auto-close side."""
+
+    def setUp(self):
+        from datetime import time as _time
+        self.biz = Business.objects.create(
+            name='Auto Close Tabs Biz',
+            opening_time=_time(8, 0), closing_time=_time(20, 0),
+        )
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.staff = User.objects.create_user(username='autoclose_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.owner = User.objects.create_user(username='autoclose_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Autoclose Beer',
+            material_no='AUTOCLOSE-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        # Started well over a day ago so the shift's scheduled close (yesterday's
+        # closing_time) is unambiguously past the 2h grace window regardless of
+        # what real wall-clock time this test happens to run at.
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'),
+            started_at=timezone.now() - timedelta(days=1),
+        )
+
+    def test_open_tab_converted_to_debt_when_shift_auto_closes(self):
+        from core.shift_views import _auto_close_expired_shifts
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Forgotten Patron', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Autoclose Beer', amount=Decimal('100'),
+        )
+
+        result = _auto_close_expired_shifts(self.biz)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['tabs_converted'], 1)
+
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.status, 'CLOSED')
+        self.assertTrue(self.shift.auto_closed)
+
+        tab.refresh_from_db()
+        self.assertEqual(
+            tab.status, 'SETTLED',
+            'An open tab must not be left behind when its shift is force-closed for '
+            'being abandoned — it must convert to debt just like a manual close would',
+        )
+        self.assertIsNotNone(tab.customer)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'credit')
+
+        cust = Customer.objects.get(business=self.biz, name='Forgotten Patron')
+        self.assertTrue(cust.credit_approved)
+
+    def test_no_open_tabs_is_a_no_op(self):
+        from core.shift_views import _auto_close_expired_shifts
+        result = _auto_close_expired_shifts(self.biz)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['tabs_converted'], 0)
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.status, 'CLOSED')
