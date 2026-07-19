@@ -458,14 +458,24 @@ def _kitchen_checkout(request, up, business, is_owner):
             payment_method = 'food_tab'  # treat as tab so receipt isn't issued and flow continues
         except BarTab.DoesNotExist:
             return JsonResponse({'ok': False, 'error': 'Tab haikupatikana au imefungwa tayari.'}, status=400)
-    elif payment_method in ('food_tab', 'bar_tab') and tab_customer:
+    elif payment_method in ('food_tab', 'bar_tab'):
         source = 'kitchen' if payment_method == 'food_tab' else 'bar'
-        active_tab = BarTab.objects.filter(
-            business=business,
-            customer_name__iexact=tab_customer,
-            source=source,
-            status='OPEN',
-        ).first()
+        # Anonymous tab — busy-counter case: staff has no time to capture a name
+        # during peak demand. Never search for an existing tab by blank name
+        # (that would silently merge two unrelated anonymous customers' bills
+        # together) — only look up an existing tab when a name was actually
+        # given. (kitchen-audit follow-up finding, 2026-07-19 — the previous
+        # `and tab_customer` gate meant a blank-name food_tab sale never
+        # created a tab at all; txn_pm below fell back to the literal string
+        # 'food_tab'/'bar_tab', not a recognized payment_method value, and the
+        # sale had no tab, no PIN, no way to ever collect or look it up again.)
+        active_tab = (
+            BarTab.objects.filter(
+                business=business, customer_name__iexact=tab_customer,
+                source=source, status='OPEN',
+            ).first()
+            if tab_customer else None
+        )
         if not active_tab and payment_method == 'food_tab':
             active_tab = BarTab.create_with_credentials(
                 business=business,
@@ -474,6 +484,10 @@ def _kitchen_checkout(request, up, business, is_owner):
                 source='kitchen',
                 served_by=request.user,
             )
+            if not tab_customer:
+                active_tab.customer_name = f'Tab #{active_tab.id}'
+                active_tab.save(update_fields=['customer_name'])
+                tab_customer = active_tab.customer_name
         elif not active_tab and payment_method == 'bar_tab':
             return JsonResponse({'ok': False, 'error': f'Hakuna tab wazi kwa "{tab_customer}"'}, status=400)
 

@@ -2660,13 +2660,25 @@ def quick_sell(request):
                 pass
 
             # ── TAB SALE: create/extend BarTab and attach BarTabEntry records ──
-            if is_tab_sale and tab_transactions and credit_recipient:
-                bar_tab = BarTab.objects.filter(
-                    business=user_profile.business,
-                    customer_name=credit_recipient,
-                    status='OPEN',
-                    source='qs',  # QS tabs are isolated from bar board tabs
-                ).first()
+            if is_tab_sale and tab_transactions:
+                # Anonymous tab — busy-counter case: staff has no time to type a
+                # customer name during peak demand. Never search for an existing
+                # tab by blank name (that would silently merge two unrelated
+                # anonymous customers' bills together) — only look up an
+                # existing tab when a name was actually given. (Quick-Sell
+                # audit follow-up finding, 2026-07-19 — the previous
+                # `and credit_recipient` gate meant a blank-name tab sale never
+                # created a BarTab at all: payment_method_qs was already
+                # correctly 'credit', but recipient='' on every line, so the
+                # debt became an orphaned, unattributed credit transaction with
+                # no tab, no PIN, no way to ever collect or look it up again.)
+                bar_tab = (
+                    BarTab.objects.filter(
+                        business=user_profile.business, customer_name=credit_recipient,
+                        status='OPEN', source='qs',
+                    ).first()
+                    if credit_recipient else None
+                )
                 if not bar_tab:
                     bar_tab = BarTab.create_with_credentials(
                         business=user_profile.business,
@@ -2674,6 +2686,16 @@ def quick_sell(request):
                         served_by=request.user,
                         source='qs',
                     )
+                    if not credit_recipient:
+                        bar_tab.customer_name = f'Tab #{bar_tab.id}'
+                        bar_tab.save(update_fields=['customer_name'])
+                        credit_recipient = bar_tab.customer_name
+                        # The transactions above were already saved with
+                        # recipient='' (credit_recipient was blank at the time) —
+                        # backfill now that the fallback name exists.
+                        for _txn, _desc, _amt in tab_transactions:
+                            _txn.recipient = credit_recipient
+                            _txn.save(update_fields=['recipient'])
                 for txn, desc, amt in tab_transactions:
                     BarTabEntry.objects.create(
                         tab=bar_tab,

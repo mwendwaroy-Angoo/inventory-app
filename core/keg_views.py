@@ -249,7 +249,7 @@ def bar_board(request):
         active_tab = None
         linked_customer = None  # always initialised — avoids NameError in merge-tab receipt block
         tab_phone = (request.POST.get('tab_phone') or '').strip()
-        if payment_method == 'tab' and tab_customer:
+        if payment_method == 'tab':
             if merge_tab_id:
                 # Cross-counter merge: bar items added to an existing kitchen food tab
                 try:
@@ -259,7 +259,7 @@ def bar_board(request):
                 except BarTab.DoesNotExist:
                     from django.http import JsonResponse as _JR
                     return _JR({'ok': False, 'error': 'Tab haikupatikana au imefungwa tayari.'}, status=400)
-            else:
+            elif tab_customer:
                 # Resolve or create the Customer first (filter().first() — no unique_together on
                 # Customer(business, name), get_or_create raises MultipleObjectsReturned in prod).
                 linked_customer = Customer.objects.filter(
@@ -298,6 +298,37 @@ def bar_board(request):
                         server_name=tab_server,
                         served_by=request.user if not tab_server else None,
                     )
+            else:
+                # Anonymous tab — the busy-counter case: staff has no time to type a
+                # customer name during peak demand. The wall-QR + PIN system exists
+                # specifically so the customer can identify themselves later, so the
+                # tab must still open. Always create a NEW tab here — never search
+                # for an existing tab by blank name, which would silently merge two
+                # unrelated anonymous customers' bills together (bar-audit follow-up
+                # finding, 2026-07-19 — the previous `and tab_customer` gate meant
+                # this whole branch never ran, so the sale fell through with
+                # payment_method='tab' literally saved onto the Transaction — not a
+                # recognized value — and no tab, no PIN, no way to ever collect or
+                # look the sale up again).
+                first_barrel = None
+                for entry in cart:
+                    try:
+                        bid = int(entry.get('barrel_id', 0))
+                        first_barrel = KegBarrel.objects.filter(id=bid, business=business).first()
+                        if first_barrel:
+                            break
+                    except (TypeError, ValueError):
+                        pass
+                active_tab = BarTab.create_with_credentials(
+                    business=business,
+                    store=first_barrel.store if first_barrel else None,
+                    customer_name='',
+                    server_name=tab_server,
+                    served_by=request.user if not tab_server else None,
+                )
+                active_tab.customer_name = f'Tab #{active_tab.id}'
+                active_tab.save(update_fields=['customer_name'])
+                tab_customer = active_tab.customer_name
 
         receipt_lines = []
         total_revenue = Decimal('0')

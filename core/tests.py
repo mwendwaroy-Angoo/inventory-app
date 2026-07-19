@@ -4334,3 +4334,217 @@ class KitchenBatchGateStationScopingTest(TestCase):
         resp = self.client.get('/kitchen/stats/')
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json()['ok'])
+
+
+# ── Anonymous tab creation across all three counters (2026-07-19) ────────────
+# Roy's original business requirement (the reason the wall-QR + PIN system was
+# built at all): during high-traffic sales, staff have no time to type a
+# customer's name into a tab. The tab must still open — the customer
+# identifies themselves later by scanning the wall QR and entering their PIN.
+# Audit found all three counters silently broke this: bar board and kitchen
+# gated tab creation on `and tab_customer`/`and credit_recipient` being
+# truthy, so a blank name meant no BarTab was ever created and the raw
+# payment_method string ('tab'/'food_tab'/'bar_tab') got saved directly onto
+# the Transaction — not a recognized value. Quick Sell's gate meant
+# payment_method was correctly 'credit' but recipient='' on every line, so
+# the debt became an orphaned, unattributed transaction. Fixed on all three
+# by always creating a new tab (never searching by blank name — that would
+# silently merge two different anonymous customers' bills) and backfilling a
+# 'Tab #<id>' fallback name immediately after creation.
+
+class AnonymousBarTabTest(TestCase):
+    def setUp(self):
+        self.biz, self.store, self.owner_user, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'Anon Bar Biz'
+        )
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.client.force_login(self.owner_user)
+
+    def test_blank_name_tab_sale_creates_tab_with_fallback_name_and_pin(self):
+        import json
+        cart = json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
+        resp = self.client.post('/bar/', {
+            'keg_cart': cart,
+            'payment_method': 'tab',
+            'tab_customer': '',
+            'idempotency_token': 'anon-bar-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        tab = BarTab.objects.filter(business=self.biz, source='bar', status='OPEN').first()
+        self.assertIsNotNone(tab, 'Blank-name tab sale must still create a BarTab')
+        self.assertEqual(tab.customer_name, f'Tab #{tab.id}')
+        self.assertTrue(tab.tab_receipt_token, 'Anonymous tab must still get a receipt token')
+        self.assertRegex(tab.tab_pin, r'^\d{4}$', 'Anonymous tab must still get a 4-digit PIN')
+
+    def test_blank_name_sale_transaction_has_valid_payment_method(self):
+        import json
+        cart = json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
+        self.client.post('/bar/', {
+            'keg_cart': cart,
+            'payment_method': 'tab',
+            'tab_customer': '',
+            'idempotency_token': 'anon-bar-2',
+        })
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(
+            txn.payment_method, 'credit',
+            "Anonymous tab sale must record 'credit' like every other tab sale, "
+            "not the literal string 'tab'",
+        )
+
+    def test_two_separate_anonymous_sales_never_merge_into_one_tab(self):
+        import json
+        cart = json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
+        self.client.post('/bar/', {
+            'keg_cart': cart, 'payment_method': 'tab', 'tab_customer': '',
+            'idempotency_token': 'anon-bar-3a',
+        })
+        self.client.post('/bar/', {
+            'keg_cart': cart, 'payment_method': 'tab', 'tab_customer': '',
+            'idempotency_token': 'anon-bar-3b',
+        })
+        tabs = BarTab.objects.filter(business=self.biz, source='bar', status='OPEN')
+        self.assertEqual(tabs.count(), 2, 'Two separate anonymous checkouts must never share one tab')
+        names = set(tabs.values_list('customer_name', flat=True))
+        self.assertEqual(len(names), 2, 'Each anonymous tab must get its own distinct fallback name')
+
+
+class AnonymousKitchenTabTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Anon Kitchen Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner_user = User.objects.create_user(username='anonkitchen_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Anon Chipo',
+            material_no='ANONK-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner_user)
+
+    def test_blank_name_food_tab_sale_creates_tab_with_fallback_name_and_pin(self):
+        import json
+        cart = json.dumps([{
+            'item_id': self.item.id, 'qty': 1, 'amount': 100, 'description': 'Anon Chipo',
+        }])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart,
+            'payment_method': 'food_tab',
+            'tab_customer': '',
+            'idempotency_token': 'anon-kitchen-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'))
+        tab = BarTab.objects.filter(business=self.biz, source='kitchen', status='OPEN').first()
+        self.assertIsNotNone(tab, 'Blank-name food_tab sale must still create a BarTab')
+        self.assertEqual(tab.customer_name, f'Tab #{tab.id}')
+        self.assertTrue(tab.tab_receipt_token)
+        self.assertRegex(tab.tab_pin, r'^\d{4}$')
+
+    def test_blank_name_sale_transaction_has_valid_payment_method_and_recipient(self):
+        import json
+        cart = json.dumps([{
+            'item_id': self.item.id, 'qty': 1, 'amount': 100, 'description': 'Anon Chipo',
+        }])
+        self.client.post('/kitchen/', {
+            'cart': cart,
+            'payment_method': 'food_tab',
+            'tab_customer': '',
+            'idempotency_token': 'anon-kitchen-2',
+        })
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(
+            txn.payment_method, 'credit',
+            "Anonymous food_tab sale must record 'credit', not the literal string 'food_tab'",
+        )
+        tab = BarTab.objects.filter(business=self.biz, source='kitchen').first()
+        self.assertEqual(
+            txn.recipient, tab.customer_name,
+            'Transaction recipient must match the fallback tab name, not be blank',
+        )
+
+    def test_two_separate_anonymous_food_tabs_never_merge(self):
+        import json
+        cart = json.dumps([{
+            'item_id': self.item.id, 'qty': 1, 'amount': 100, 'description': 'Anon Chipo',
+        }])
+        self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'food_tab', 'tab_customer': '',
+            'idempotency_token': 'anon-kitchen-3a',
+        })
+        self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'food_tab', 'tab_customer': '',
+            'idempotency_token': 'anon-kitchen-3b',
+        })
+        tabs = BarTab.objects.filter(business=self.biz, source='kitchen', status='OPEN')
+        self.assertEqual(tabs.count(), 2, 'Two separate anonymous food_tab checkouts must never share one tab')
+
+
+class AnonymousQuickSellTabTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Anon QS Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='anonqs_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Anon Soda',
+            material_no='ANONQS-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner_user)
+
+    def test_blank_recipient_tab_sale_creates_tab_with_fallback_name_and_pin(self):
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 50}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'tab',
+            'recipient': '',
+            'idempotency_token': 'anon-qs-1',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        tab = BarTab.objects.filter(business=self.biz, source='qs', status='OPEN').first()
+        self.assertIsNotNone(tab, 'Blank-recipient tab sale must still create a BarTab')
+        self.assertEqual(tab.customer_name, f'Tab #{tab.id}')
+        self.assertTrue(tab.tab_receipt_token)
+        self.assertRegex(tab.tab_pin, r'^\d{4}$')
+
+    def test_blank_recipient_transaction_recipient_is_backfilled(self):
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 50}])
+        self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'tab',
+            'recipient': '',
+            'idempotency_token': 'anon-qs-2',
+        })
+        tab = BarTab.objects.filter(business=self.biz, source='qs').first()
+        self.assertIsNotNone(tab)
+        entry = BarTabEntry.objects.filter(tab=tab).first()
+        self.assertIsNotNone(entry)
+        self.assertEqual(
+            entry.transaction.recipient, tab.customer_name,
+            'Transaction.recipient must be backfilled to the fallback tab name, not left blank '
+            '(previously this was the orphaned-debt bug: payment_method was already correctly '
+            "'credit' but recipient stayed '' forever)",
+        )
+
+    def test_two_separate_anonymous_qs_tabs_never_merge(self):
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 50}])
+        self.client.post('/quick-sell/', {
+            'cart': cart, 'payment_method': 'tab', 'recipient': '',
+            'idempotency_token': 'anon-qs-3a',
+        })
+        self.client.post('/quick-sell/', {
+            'cart': cart, 'payment_method': 'tab', 'recipient': '',
+            'idempotency_token': 'anon-qs-3b',
+        })
+        tabs = BarTab.objects.filter(business=self.biz, source='qs', status='OPEN')
+        self.assertEqual(tabs.count(), 2, 'Two separate anonymous QS checkouts must never share one tab')
