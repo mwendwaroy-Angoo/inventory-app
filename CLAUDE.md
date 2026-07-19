@@ -1050,3 +1050,28 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   once the fallback name exists. 9 new tests (`AnonymousBarTabTest`, `AnonymousKitchenTabTest`,
   `AnonymousQuickSellTabTest`). No migrations. 214 tests pass. Next: resume remaining systemic
   audit scope (Quick Sell, supply chain/procurement, debt tracker, analytics).
+- Quick-Sell-Module Audit Theme 1 (2026-07-19): money-path idempotency. First theme of the
+  next module in the systemic-audit queue. Headline finding: `ProduceBunch.record_sale()` had
+  no single lock-safe entry point shared across all its callers. `KegBarrel` had
+  `record_sale_locked` from the start, and the kitchen-module audit locked kitchen board's own
+  `bunch_id` branch — but two more call sites were still racing: `produce_views.py`'s
+  `_sell_item_amount`/`handle_bunch_cart_entry` (Quick Sell's own greens/mix cart lines, a
+  separate call path from kitchen board's) and `ProduceBunch.sell_mix()` itself, plus **both**
+  STK settlement callbacks in `mpesa_views.py` (kitchen and Quick Sell cart STK settle) called
+  `record_sale()` directly with no lock at all — an STK callback racing a counter sale of the
+  same bunch is a realistic scenario (Safaricom retries, or staff selling the last of a batch
+  while a customer's payment confirms), not just a double-tap. Added
+  `ProduceBunch.record_sale_locked()` (mirrors `KegBarrel.record_sale_locked`) as the single
+  classmethod entry point and routed all five call sites through it, including refactoring
+  kitchen board's own inline `atomic()` block to use it instead of duplicating the lock logic.
+  Also found and fixed three missing idempotency guards, same gap class already closed for
+  `receive_barrel`/`add_cups`/`kitchen_receive` in prior audits: `produce_views.receive_bunches()`
+  (the "+From Market" modal — creates ProduceBunch envelopes or a PORTION Receipt transaction),
+  `owner_consumption_views.record_owner_consumption()` (the "🥃 Mmiliki Alichukua" modal — a
+  duplicate would double-deduct stock as an owner draw with no sale to match it against), and
+  `views.add_transaction()`'s AJAX `quick=1` branch (the "+📦 Pata Stok" modal, built for fast
+  restocking mid-shift under time pressure — the same busy-counter conditions behind every other
+  idempotency fix in this app; scoped to the AJAX branch only, the normal full-page form is
+  untouched). Quick Sell's own main checkout (`quick_sell()`) already had a guard from the
+  2026-07-15 sprint — verified still correct, not re-touched. 8 new tests. No migrations. 222
+  tests pass. Next: Theme 2 (state-transition completeness) for Quick Sell.
