@@ -92,6 +92,17 @@ def kitchen_wastage(request):
                 status=403,
             )
 
+    # Station Scoping Principle: get_active_staff_shift only checks for ANY open
+    # shift, not specifically a kitchen one — a bar-only staffer (no
+    # can_access_kitchen) with an open BAR shift could still log kitchen wastage,
+    # even though the kitchen board is never shown to them (bar-module audit
+    # follow-up finding, 2026-07-19 — same gap class as the tab-write endpoints
+    # fixed in keg_views.py, just in the kitchen module).
+    from .views import _station_scope
+    _, show_kitchen = _station_scope(up)
+    if not show_kitchen:
+        return JsonResponse({'ok': False, 'error': 'Hakuna ruhusa ya kitchen.'}, status=403)
+
     kitchen_store = _kitchen_store(business)
     if not kitchen_store:
         return JsonResponse({"ok": False, "error": "Kitchen not configured"}, status=400)

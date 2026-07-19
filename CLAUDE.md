@@ -978,8 +978,12 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   wired up, not dead code), `KegBarrel.is_stale()` (informational-only by design — a
   lingering tapped barrel isn't customer debt), all report views (`keg_reconciliation`,
   `keg_barrel_detail`, `bar_shrinkage_report`, `voided_tabs_list`), DJ/MC public pages (no fee
-  leak, matching the Sprint K7 fix). **Noted but out of this pass's scope:** `kitchen_
-  wastage()` has an analogous smaller station gap (a bar-only staffer with any open shift can
-  log kitchen wastage) — flagged for a future kitchen-module audit rather than fixed here.
-  20 new tests total across all three themes, 181 tests pass. Three commits: `366c4c7`,
-  `9c38b23`, `5a2543f`.
+  leak, matching the Sprint K7 fix). **Noted then folded in same day (2026-07-19):**
+  `kitchen_wastage()` had the analogous smaller station gap — `get_active_staff_shift()`
+  only checks for ANY open shift, not specifically a kitchen one, so a bar-only staffer
+  (no `can_access_kitchen`) with an open BAR shift could still POST directly to
+  `/kitchen/wastage/` and log kitchen wastage, even though the kitchen board is never
+  shown to them. Fixed with the same `_station_scope()` check used throughout the bar-side
+  fixes. 3 more tests (`KitchenWastageStationScopingTest`). 20 new tests from the three
+  staged themes + 3 from this follow-up = 23 new tests total, 184 tests pass. Four commits:
+  `366c4c7`, `9c38b23`, `5a2543f`, plus this follow-up.

@@ -3892,3 +3892,67 @@ class TabStationScopingTest(TestCase):
             resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
             self.assertEqual(resp.status_code, 200)
             self.assertTrue(resp.json()['ok'])
+
+
+class KitchenWastageStationScopingTest(TestCase):
+    """Bar-module audit follow-up (kitchen_wastage gap folded in as promised),
+    2026-07-19: get_active_staff_shift() only checks for ANY open shift, not
+    specifically a kitchen one — a bar-only staffer (no can_access_kitchen) with
+    an open BAR shift could still POST directly to /kitchen/wastage/ and log
+    kitchen wastage, even though the kitchen board is never shown to them. Same
+    gap class as the tab-write endpoints fixed in keg_views.py, just in the
+    kitchen module. Fixed with the same _station_scope() check."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Wastage Scope Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+        self.owner = User.objects.create_user(username='kwscope_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_staff = User.objects.create_user(username='kwscope_barstaff', password='x')
+        UserProfile.objects.create(
+            user=self.bar_staff, business=self.biz, role='staff', can_access_kitchen=False,
+        )
+        self.kitchen_staff = User.objects.create_user(username='kwscope_kitchenstaff', password='x')
+        UserProfile.objects.create(
+            user=self.kitchen_staff, business=self.biz, role='kitchen', can_access_bar=False,
+        )
+        Shift.objects.create(business=self.biz, staff=self.bar_staff, status='OPEN')
+        Shift.objects.create(business=self.biz, staff=self.kitchen_staff, status='OPEN')
+
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Wastage Chips',
+            material_no='KWSCOPE-01', unit='Pcs', selling_price=Decimal('80'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Receipt', qty=Decimal('20'),
+        )
+
+    def test_bar_only_staff_cannot_log_kitchen_wastage(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post('/kitchen/wastage/', {
+            'item_id': self.kitchen_item.id, 'qty': '1', 'note': 'dropped',
+        })
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(
+            Transaction.objects.filter(business=self.biz, item=self.kitchen_item, type='Wastage').exists(),
+            'A bar-only staffer must not be able to log kitchen wastage',
+        )
+
+    def test_kitchen_staff_can_log_kitchen_wastage(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post('/kitchen/wastage/', {
+            'item_id': self.kitchen_item.id, 'qty': '1', 'note': 'dropped',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_owner_can_log_kitchen_wastage(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/kitchen/wastage/', {
+            'item_id': self.kitchen_item.id, 'qty': '1', 'note': 'dropped',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
