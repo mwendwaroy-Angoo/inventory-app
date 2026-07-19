@@ -987,3 +987,42 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   fixes. 3 more tests (`KitchenWastageStationScopingTest`). 20 new tests from the three
   staged themes + 3 from this follow-up = 23 new tests total, 184 tests pass. Four commits:
   `366c4c7`, `9c38b23`, `5a2543f`, plus this follow-up.
+- Kitchen-Module Systemic Audit (2026-07-19). Same night, same session — Roy greenlit
+  continuing straight into the next module rather than waiting. Same three-theme structure
+  against `kitchen_views.py` and `models.py` (`KitchenBatch`), two commits, each independently
+  tested and pushed. **Theme 1 (money-path idempotency):** `_kitchen_checkout()`'s
+  `KitchenBatch.record_sale()` and `ProduceBunch.record_sale()` calls fetched the envelope via
+  a plain `.get()` with no `select_for_update()` — unlike `KegBarrel.record_sale_locked()`. Two
+  near-simultaneous sales from the same pot/batch (two staff ringing up at once, or a
+  network-retry racing a fresh request) could both read the same stale `revenue_collected` and
+  the last save wins, silently discarding one sale's contribution to the envelope. Locked both
+  call sites the same way kegs already were. `kitchen_receive()` (all modes),
+  `kitchen_batch_receive()`, `kitchen_consumable_add()` had no idempotency guard at all — same
+  gap already fixed for `receive_barrel`/`add_cups`/`record_breakage` in the bar module. Fixed
+  by reusing `core.idempotency.claim_checkout_token`. 6 new tests. **Theme 2 (state-transition
+  completeness):** `KitchenBatch.discard()` used to only flip status — unlike
+  `ProduceBunch.discard()` (the sibling revenue-envelope model), it never created a Wastage
+  Transaction. A pot of chips or stew thrown out went completely unrecorded: invisible to
+  analytics' `wastage_loss`, invisible to `net_profit`, invisible to the owner — food wastage is
+  a marquee metric for a food business. Fixed to mirror `ProduceBunch`'s fraction-of-envelope
+  approach (`qty` = unrecovered fraction of `cost_total`, so a batch that already sold past its
+  cost before being tossed correctly records zero loss). Also fixed `kitchen_receive()`'s
+  `kitchen_batch` mode (and the `kitchen_batch_receive()` duplicate endpoint, dead code from the
+  UI but still a live URL) to set `item.cost_price = cost_total` at receive time — without it the
+  new wastage Transaction's `qty * cost_price` would always price out to KES 0 regardless of how
+  much was actually lost, since that mode never touched `item.cost_price` unlike the
+  `portion`/`batch` receive modes. 6 new tests. **Theme 3 (access-control scoping):** `_kb_gate()`
+  — the shared gate for `kitchen_batch_receive`, `deplete_kitchen_batch`, `discard_kitchen_batch`,
+  and `kitchen_consumable_add` — only checked for ANY open shift, not specifically a kitchen one.
+  `kitchen_batch_receive` happened to be separately protected by its own
+  `can_receive_kitchen_stock` check; the other three had no protection at all — a bar-only
+  staffer could deplete/discard a kitchen batch or log a kitchen consumable purchase directly.
+  Fixed once at the shared gate. Also added the same check to `kitchen_stats_api` and
+  `kitchen_consumable_pool_api` (read-only, lower stakes, but the Station Scoping Principle
+  explicitly calls out revenue visibility). 9 new tests. **Verified already correct:**
+  `kitchen_tabs_list` (already scoped via `_station_scope()`), `deplete_kitchen_batch`/
+  `discard_kitchen_batch`'s own idempotent status guards, `KitchenBatch.days_open` staleness
+  display (informational only by design, matching `KegBarrel.is_stale()`),
+  `_auto_complete_stale_sessions` and the shared shift/tab machinery (already fixed generically
+  for both stations in the bar-module audit). 21 new tests total, 205 tests pass. Two commits:
+  `fa36514`, `23d14b0`.
