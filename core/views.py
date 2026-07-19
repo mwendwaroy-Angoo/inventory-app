@@ -755,6 +755,20 @@ def add_transaction(request):
     if request.method == "POST":
         is_quick = request.GET.get('quick') == '1'
         restock_resolved = False
+
+        # Server-side double-submit backstop for the fast AJAX path only (Quick
+        # Sell's "+📦 Pata Stok" modal — built precisely for restocking mid-shift
+        # under time pressure, the same busy-counter conditions that motivated
+        # every other idempotency fix in this app). The normal full-page form
+        # already has page-reload friction against accidental resubmission, so
+        # it's left untouched — see core/idempotency.py. (Quick-Sell-module
+        # audit finding, 2026-07-19.)
+        if is_quick:
+            from core.idempotency import claim_checkout_token
+            idem_token = (request.POST.get('idempotency_token') or '').strip()
+            if not claim_checkout_token(user_profile.business_id, idem_token):
+                return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
         # Shift gate: staff must have an open shift to write any transaction
         if not user_profile.is_owner_or_manager:
             from core.shift_views import get_active_staff_shift

@@ -22,6 +22,16 @@ from .models import Item, Transaction, ProduceBunch
 # ──────────────────────────────────────────────────────────────────────────
 def _sell_item_amount(business, item, amount, payment_method='cash', recipient='', recorded_by=None):
     amount = Decimal(str(amount))
+    # Candidate bunches are listed unlocked (just to decide FIFO order and which
+    # ones to try) — the actual envelope mutation happens inside
+    # ProduceBunch.record_sale_locked, which re-fetches under SELECT FOR UPDATE
+    # at sale time. Two near-simultaneous sales of the same bunch (a busy
+    # counter, or an STK settlement racing a walk-up sale) can otherwise both
+    # read the same stale remaining()/revenue_collected and the last save
+    # wins, silently discarding one sale — the same race KegBarrel.
+    # record_sale_locked was built to close for kegs (2026-07-19 audit finding:
+    # Quick Sell's own bunch/mix cart entries route through this function, a
+    # separate call site from kitchen board's already-locked one).
     bunches = [
         b for b in item.bunches.filter(business=business, status='OPEN')
                                .order_by('received_on', 'id')
@@ -35,14 +45,16 @@ def _sell_item_amount(business, item, amount, payment_method='cash', recipient='
         if amount <= 0:
             break
         take = min(b.remaining(), amount)
-        t = b.record_sale(take, payment_method, recipient, recorded_by=recorded_by)
+        t = ProduceBunch.record_sale_locked(b.id, business, take, payment_method, recipient, recorded_by=recorded_by)
         if t:
             txns.append(t)
             sold += take
             amount -= take
 
     if amount > 0 and bunches:
-        t = bunches[-1].record_sale(amount, payment_method, recipient, recorded_by=recorded_by)
+        t = ProduceBunch.record_sale_locked(
+            bunches[-1].id, business, amount, payment_method, recipient, recorded_by=recorded_by,
+        )
         if t:
             txns.append(t)
             sold += amount
@@ -185,6 +197,17 @@ def receive_bunches(request):
         return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
 
     business = up.business
+
+    # Server-side double-submit backstop — see core/idempotency.py. This creates
+    # real stock (ProduceBunch envelopes or a PORTION Receipt transaction), so a
+    # slow-network retry or duplicate request would double-count a market
+    # purchase — same gap already closed for receive_barrel/add_cups/
+    # kitchen_receive (Quick-Sell-module audit finding, 2026-07-19).
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
     item = Item.objects.filter(id=request.POST.get('item_id'), store__business=business).first()
     if not item:
         return JsonResponse({'ok': False, 'error': 'Item not found'}, status=404)

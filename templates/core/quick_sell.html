@@ -1984,6 +1984,7 @@
         var itemId = sel ? sel.value : '';
         if (!itemId) { alert('Chagua bidhaa.'); return; }
 
+        var idemToken = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
         var body;
         if (mode === 'PORTION') {
             var units     = document.getElementById('rcvUnits').value;
@@ -2027,6 +2028,7 @@
             }
         }
 
+        body.set('idempotency_token', idemToken);
         fetch('/stock/produce/receive/', {
             method: 'POST',
             headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -2805,6 +2807,7 @@ document.getElementById('pata-stok-form').addEventListener('submit', function (e
   errEl.style.display = 'none';
 
   var fd = new FormData(this);
+  fd.append('idempotency_token', (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
   fetch('{% url "add_transaction" %}?quick=1', {method: 'POST', body: fd})
     .then(function (r) { return r.json(); })
     .then(function (d) {
@@ -2878,6 +2881,7 @@ window.submitOwnerTook = function () {
   body.append('item_id', itemId);
   body.append('qty', qty);
   body.append('note', note);
+  body.append('idempotency_token', (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
 
   fetch('{% url "record_owner_consumption" %}', {
     method: 'POST',

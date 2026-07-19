@@ -4548,3 +4548,175 @@ class AnonymousQuickSellTabTest(TestCase):
         })
         tabs = BarTab.objects.filter(business=self.biz, source='qs', status='OPEN')
         self.assertEqual(tabs.count(), 2, 'Two separate anonymous QS checkouts must never share one tab')
+
+
+# ── Quick Sell module audit, Theme 1 (money-path idempotency), 2026-07-19 ────
+
+class QuickSellProduceBunchLockTest(TestCase):
+    """ProduceBunch.record_sale() had no locked entry point shared across ALL its
+    callers — KegBarrel had record_sale_locked from the start, kitchen board's own
+    bunch_id branch was locked in the kitchen-module audit, but Quick Sell's
+    separate call path (produce_views.handle_bunch_cart_entry -> _sell_item_amount
+    / ProduceBunch.sell_mix) was never touched, and both STK settlement callbacks
+    (mpesa_views.py) called record_sale() directly too. Added
+    ProduceBunch.record_sale_locked() as the single lock-safe entry point and
+    routed all five call sites through it. This locks in that Quick Sell's own
+    path now accumulates correctly under repeated calls."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='QS Bunch Lock Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='qsbunchlock_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Lock Sukuma', unit='Bunch',
+            material_no='QSBLOCK-01', selling_price=Decimal('20'), is_produce=True,
+            produce_mode='BUNCH',
+        )
+        from core.models import ProduceBunch
+        self.bunch = ProduceBunch.objects.create(
+            business=self.biz, item=self.item, size='MEDIUM',
+            cost_price=Decimal('50'), target_revenue=Decimal('85'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_sequential_quick_sell_bunch_sales_accumulate_correctly(self):
+        import json
+        num_sales = 4
+        for i in range(num_sales):
+            cart = json.dumps([{'mode': 'bunch', 'id': self.item.id, 'amount': 20}])
+            resp = self.client.post('/quick-sell/', {
+                'cart': cart, 'payment_method': 'cash',
+                'idempotency_token': f'qs-bunch-race-{i}',
+            })
+            self.assertNotEqual(resp.status_code, 500)
+        self.bunch.refresh_from_db()
+        self.assertEqual(self.bunch.revenue_collected, Decimal('80'))
+        txn_count = Transaction.objects.filter(business=self.biz, item=self.item, type='Issue').count()
+        self.assertEqual(txn_count, num_sales)
+
+    def test_record_sale_locked_returns_none_for_depleted_bunch(self):
+        from core.models import ProduceBunch
+        self.bunch.status = 'DEPLETED'
+        self.bunch.save(update_fields=['status'])
+        result = ProduceBunch.record_sale_locked(self.bunch.id, self.biz, Decimal('20'), 'cash', '')
+        self.assertIsNone(result)
+
+    def test_record_sale_locked_returns_none_for_nonexistent_bunch(self):
+        from core.models import ProduceBunch
+        result = ProduceBunch.record_sale_locked(999999, self.biz, Decimal('20'), 'cash', '')
+        self.assertIsNone(result)
+
+
+class ProduceReceiveIdempotencyTest(TestCase):
+    """receive_bunches() (the "+From Market" modal, Quick Sell) had no double-submit
+    guard — same gap already fixed for receive_barrel/add_cups/kitchen_receive.
+    A slow-network retry would double-create ProduceBunch envelopes or double a
+    PORTION-mode Receipt transaction."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Produce Receive Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='prcvidem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Idem Managu', unit='Bunch',
+            material_no='PRCVIDEM-01', selling_price=Decimal('20'), is_produce=True,
+            produce_mode='BUNCH',
+        )
+        self.client.force_login(self.owner)
+
+    def test_duplicate_token_does_not_double_create_bunches(self):
+        from core.models import ProduceBunch
+        payload = {
+            'item_id': self.item.id, 'cost_price': '500', 'count': '2',
+            'target_revenue': '850', 'idempotency_token': 'prcv-dup-1',
+        }
+        self.client.post('/stock/produce/receive/', payload)
+        self.client.post('/stock/produce/receive/', payload)
+        self.assertEqual(
+            ProduceBunch.objects.filter(business=self.biz, item=self.item).count(), 2,
+            'Duplicate token must not double the bunches created',
+        )
+
+    def test_different_tokens_both_create_bunches(self):
+        from core.models import ProduceBunch
+        self.client.post('/stock/produce/receive/', {
+            'item_id': self.item.id, 'cost_price': '500', 'count': '1',
+            'idempotency_token': 'prcv-a',
+        })
+        self.client.post('/stock/produce/receive/', {
+            'item_id': self.item.id, 'cost_price': '500', 'count': '1',
+            'idempotency_token': 'prcv-b',
+        })
+        self.assertEqual(ProduceBunch.objects.filter(business=self.biz, item=self.item).count(), 2)
+
+
+class OwnerConsumptionIdempotencyTest(TestCase):
+    """record_owner_consumption() (Quick Sell's "🥃 Mmiliki Alichukua" modal) had no
+    double-submit guard — a duplicate request would double-deduct stock as an
+    owner draw with no sale to match it against."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Owner Consumption Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='ocidem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Idem Whisky',
+            material_no='OCIDEM-01', unit='pcs', selling_price=Decimal('500'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'))
+        self.client.force_login(self.owner)
+
+    def test_duplicate_token_does_not_double_deduct_stock(self):
+        payload = {'item_id': self.item.id, 'qty': '1', 'note': 'test', 'idempotency_token': 'oc-dup-1'}
+        self.client.post('/stock/owner-consumption/', payload)
+        self.client.post('/stock/owner-consumption/', payload)
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='OwnerConsumption').count(), 1,
+            'Duplicate token must not double the owner-consumption deduction',
+        )
+
+
+class AddTransactionQuickIdempotencyTest(TestCase):
+    """add_transaction's AJAX quick=1 branch (Quick Sell's "+📦 Pata Stok" modal) had
+    no double-submit guard — the only checkout-adjacent write path in the app that
+    still lacked one. Scoped to the AJAX branch only; the normal full-page form is
+    untouched."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Quick Receive Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='qtxnidem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Idem Soda',
+            material_no='QTXNIDEM-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_duplicate_token_does_not_double_the_receipt(self):
+        payload = {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'idempotency_token': 'qtxn-dup-1',
+        }
+        self.client.post('/add-transaction/?quick=1', payload)
+        self.client.post('/add-transaction/?quick=1', payload)
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').count(), 1,
+            'Duplicate token must not double the quick-receive Receipt',
+        )
+
+    def test_different_tokens_both_go_through(self):
+        self.client.post('/add-transaction/?quick=1', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'idempotency_token': 'qtxn-a',
+        })
+        self.client.post('/add-transaction/?quick=1', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'idempotency_token': 'qtxn-b',
+        })
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').count(), 2,
+        )

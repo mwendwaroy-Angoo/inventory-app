@@ -42,6 +42,15 @@ def record_owner_consumption(request):
         if shift is False:
             return JsonResponse({'ok': False, 'error': 'Hakuna shift iliyofunguliwa. Fungua shift kwanza.'}, status=403)
 
+    # Server-side double-submit backstop — see core/idempotency.py. A duplicate
+    # request would double-deduct stock as an owner draw with no sale to match
+    # it against, creating a false stock discrepancy nobody would think to
+    # trace back here (Quick-Sell-module audit finding, 2026-07-19).
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
     item_id = request.POST.get('item_id')
     qty_str  = request.POST.get('qty', '').strip()
     note     = request.POST.get('note', '').strip()

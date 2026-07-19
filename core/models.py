@@ -1927,6 +1927,25 @@ class ProduceBunch(models.Model):
         self.save(update_fields=['revenue_collected', 'opened_on', 'status', 'closed_on'])
         return txn
 
+    @classmethod
+    def record_sale_locked(cls, bunch_id, business, amount, payment_method='cash',
+                            recipient='', recorded_by=None):
+        """Thread-safe wrapper around record_sale using SELECT FOR UPDATE — mirrors
+        KegBarrel.record_sale_locked. Single lock-safe entry point for all call
+        sites (Quick Sell greens/mix, kitchen board grill batches, both STK
+        settlement callbacks) so the same envelope-sale race class KegBarrel
+        already closed can't reopen at any one of them. Returns None if the
+        bunch was depleted/closed between being listed and being locked."""
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            try:
+                bunch = cls.objects.select_for_update().get(
+                    id=bunch_id, business=business, status='OPEN',
+                )
+            except cls.DoesNotExist:
+                return None
+            return bunch.record_sale(amount, payment_method, recipient, recorded_by=recorded_by)
+
     def discard(self, reason='Wilted / end of day'):
         """Write off the unsold remainder of this bunch as wastage."""
         if self.status == 'DISCARDED':
@@ -1990,7 +2009,15 @@ class ProduceBunch(models.Model):
         for b, share in allocations:
             if share <= 0:
                 continue
-            t = b.record_sale(share, payment_method=payment_method, recipient=recipient, recorded_by=recorded_by)
+            # Locked re-fetch at sale time — `b` above was read outside a lock
+            # purely to compute the proportional split; the actual envelope
+            # mutation must go through record_sale_locked so a concurrent sale
+            # against the same bunch (another mix order, a direct order, or an
+            # STK settlement) can't clobber this one's revenue_collected update.
+            t = cls.record_sale_locked(
+                b.id, business, share, payment_method=payment_method,
+                recipient=recipient, recorded_by=recorded_by,
+            )
             if t:
                 txns.append(t)
                 breakdown.append({'item': b.item.description, 'amount': float(share)})

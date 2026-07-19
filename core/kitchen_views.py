@@ -542,20 +542,14 @@ def _kitchen_checkout(request, up, business, is_owner):
             total += amount
         elif bunch_id:
             # Grill batch item (nyama choma, mutura) — ProduceBunch revenue envelope.
-            # Same lost-update race as KitchenBatch above — locked for the same reason.
-            from django.db import transaction as _db_txn
-            try:
-                with _db_txn.atomic():
-                    bunch = ProduceBunch.objects.select_for_update().get(
-                        id=bunch_id, business=business, status='OPEN',
-                    )
-                    txn = bunch.record_sale(
-                        amount=amount,
-                        payment_method=txn_pm,
-                        recipient=txn_recipient,
-                        recorded_by=request.user,
-                    )
-            except ProduceBunch.DoesNotExist:
+            # Same lost-update race as KitchenBatch above — locked via the shared
+            # ProduceBunch.record_sale_locked classmethod (single lock-safe entry
+            # point also used by Quick Sell's greens/mix path and both STK
+            # settlement callbacks, so the race can't reopen at any one of them).
+            txn = ProduceBunch.record_sale_locked(
+                bunch_id, business, amount, txn_pm, txn_recipient, recorded_by=request.user,
+            )
+            if not txn:
                 continue
             if active_tab:
                 BarTabEntry.objects.create(

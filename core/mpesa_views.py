@@ -522,12 +522,16 @@ def _settle_kitchen_order_from_payment(payment):
                     logger.warning("Kitchen STK: batch %s not found or not OPEN", batch_id)
 
             elif bunch_id:
-                try:
-                    bunch = ProduceBunch.objects.get(id=bunch_id, business=business, status='OPEN')
-                    bunch.record_sale(amount=amount, payment_method='mpesa', recipient='')
+                # Locked — see ProduceBunch.record_sale_locked docstring. An STK
+                # callback racing a counter sale of the same bunch is a realistic
+                # scenario (Safaricom retries, or staff selling the last of a
+                # batch while a customer's payment confirms), not just a
+                # double-tap.
+                txn = ProduceBunch.record_sale_locked(bunch_id, business, amount, 'mpesa', '')
+                if txn:
                     receipt_lines.append({'name': desc, 'subtotal': float(amount)})
                     total += amount
-                except ProduceBunch.DoesNotExist:
+                else:
                     logger.warning("Kitchen STK: bunch %s not found or not OPEN", bunch_id)
 
             elif item_id:
@@ -597,13 +601,17 @@ def _settle_qs_from_payment(payment):
                 continue
 
             if bunch_id:
-                try:
-                    from .models import ProduceBunch
-                    bunch = ProduceBunch.objects.get(id=bunch_id, business=business, status='OPEN')
-                    bunch.record_sale(amount=amount, payment_method='mpesa', recipient='')
+                # Locked — see ProduceBunch.record_sale_locked docstring. An STK
+                # callback racing a counter sale of the same bunch is a realistic
+                # scenario (Safaricom retries, or staff selling the last of a
+                # batch while a customer's payment confirms), not just a
+                # double-tap.
+                from .models import ProduceBunch
+                txn = ProduceBunch.record_sale_locked(bunch_id, business, amount, 'mpesa', '')
+                if txn:
                     receipt_lines.append({'name': desc, 'subtotal': float(amount)})
                     total += amount
-                except Exception:
+                else:
                     logger.warning("QS STK: bunch %s not found or not OPEN", bunch_id)
                 continue
 
