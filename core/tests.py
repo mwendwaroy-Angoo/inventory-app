@@ -3956,3 +3956,168 @@ class KitchenWastageStationScopingTest(TestCase):
         })
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json()['ok'])
+
+
+class KitchenEnvelopeSaleLockTest(TransactionTestCase):
+    """Kitchen-module audit, Theme 1, 2026-07-19: KitchenBatch.record_sale() and
+    ProduceBunch.record_sale() were fetched via a plain .get() inside
+    _kitchen_checkout() with no select_for_update() — unlike KegBarrel.record_
+    sale_locked(). Two near-simultaneous sales from the same pot/batch (two staff
+    ringing up at once, or a network-retry racing a fresh request) could both read
+    the same stale revenue_collected and the last save wins, silently discarding
+    one sale's contribution. Fixed by locking the fetch inside atomic() at the
+    kitchen_views.py call sites. Runs sequentially here, same as
+    ConcurrentKegSalesDoNotLoseUpdatesTest — the lock's real job is preventing a
+    concurrent clobber under real DB concurrency; this locks in that repeated
+    calls accumulate correctly rather than losing an update."""
+
+    def test_sequential_kitchen_batch_sales_accumulate_correctly(self):
+        biz = Business.objects.create(name='KB Lock Biz', has_kitchen=True)
+        store = Store.objects.create(business=biz, name='Kitchen', is_kitchen=True)
+        owner = User.objects.create_user(username='kblock_owner', password='x')
+        UserProfile.objects.create(user=owner, business=biz, role='owner')
+        item = Item.objects.create(
+            business=biz, store=store, description='Lock Chips', unit='Batch',
+            material_no='KBLOCK-01', selling_price=Decimal('50'), is_kitchen_batch=True,
+        )
+        preset = ItemPortionPreset.objects.create(
+            item=item, label='Ya 50', price=Decimal('50'),
+            quantity_consumed=Decimal('1'), khaki_type='SMALL',
+        )
+        batch = KitchenBatch.objects.create(
+            business=biz, store=store, item=item, cost_total=Decimal('1500'),
+        )
+        self.client.force_login(owner)
+
+        import json
+        num_sales = 5
+        for i in range(num_sales):
+            cart = json.dumps([{
+                'batch_id': batch.id, 'preset_id': preset.id,
+                'amount': 50, 'description': 'Ya 50',
+            }])
+            resp = self.client.post('/kitchen/', {
+                'cart': cart, 'payment_method': 'cash',
+                'idempotency_token': f'kb-race-token-{i}',
+            })
+            self.assertEqual(resp.status_code, 200)
+
+        batch.refresh_from_db()
+        self.assertEqual(
+            batch.revenue_collected, Decimal('250'),
+            f'Expected revenue 250 after {num_sales} sales of 50, got {batch.revenue_collected}',
+        )
+        self.assertEqual(batch.khaki_small_used, num_sales)
+        txn_count = Transaction.objects.filter(business=biz, kitchen_batch=batch, type='Issue').count()
+        self.assertEqual(txn_count, num_sales, 'One Transaction per sale must be created')
+
+    def test_sequential_produce_bunch_sales_accumulate_correctly(self):
+        from core.models import ProduceBunch
+        biz = Business.objects.create(name='PB Lock Biz', has_kitchen=True)
+        store = Store.objects.create(business=biz, name='Kitchen', is_kitchen=True)
+        owner = User.objects.create_user(username='pblock_owner', password='x')
+        UserProfile.objects.create(user=owner, business=biz, role='owner')
+        item = Item.objects.create(
+            business=biz, store=store, description='Lock Nyama Choma', unit='Bunch',
+            material_no='PBLOCK-01', selling_price=Decimal('20'), is_produce=True,
+        )
+        bunch = ProduceBunch.objects.create(
+            business=biz, item=item, size='LARGE',
+            cost_price=Decimal('500'), target_revenue=Decimal('850'),
+        )
+        self.client.force_login(owner)
+
+        import json
+        num_sales = 4
+        for i in range(num_sales):
+            cart = json.dumps([{
+                'bunch_id': bunch.id, 'amount': 20, 'description': 'Nyama Choma',
+            }])
+            resp = self.client.post('/kitchen/', {
+                'cart': cart, 'payment_method': 'cash',
+                'idempotency_token': f'pb-race-token-{i}',
+            })
+            self.assertEqual(resp.status_code, 200)
+
+        bunch.refresh_from_db()
+        self.assertEqual(bunch.revenue_collected, Decimal('80'))
+        txn_count = Transaction.objects.filter(business=biz, item=item, type='Issue').count()
+        self.assertEqual(txn_count, num_sales)
+
+
+class KitchenReceiveAndConsumableIdempotencyTest(TestCase):
+    """Kitchen-module audit, Theme 1, 2026-07-19: kitchen_receive() (all modes),
+    kitchen_batch_receive(), and kitchen_consumable_add() had no double-submit
+    protection at all — same gap already fixed for receive_barrel/add_cups/
+    record_breakage in the bar module. Fixed by reusing
+    core.idempotency.claim_checkout_token."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Idem Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kitchenidem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.portion_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Idem Portion Item',
+            unit='Pcs', material_no='KIDEM-PORTION-01', selling_price=Decimal('50'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_duplicate_portion_receive_token_does_not_double_receive(self):
+        payload = {
+            'mode': 'portion', 'item_id': self.portion_item.id, 'qty': '10',
+            'cost_price': '5', 'idempotency_token': 'kr-token-1',
+        }
+        self.client.post('/kitchen/receive/', payload)
+        self.client.post('/kitchen/receive/', payload)  # simulated resubmit
+        receipt_count = Transaction.objects.filter(
+            business=self.biz, item=self.portion_item, type='Receipt',
+        ).count()
+        self.assertEqual(receipt_count, 1, 'Duplicate token must not double-receive stock')
+
+    def test_duplicate_kitchen_batch_receive_token_does_not_double_create(self):
+        batch_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Idem Batch Item',
+            unit='Batch', material_no='KIDEM-BATCH-01', selling_price=Decimal('50'),
+            is_kitchen_batch=True,
+        )
+        payload = {
+            'mode': 'kitchen_batch', 'item_id': batch_item.id, 'cost_total': '1500',
+            'idempotency_token': 'kb-token-1',
+        }
+        self.client.post('/kitchen/receive/', payload)
+        self.client.post('/kitchen/receive/', payload)  # simulated resubmit
+        self.assertEqual(
+            KitchenBatch.objects.filter(business=self.biz, item=batch_item).count(), 1,
+            'Duplicate token must not double-create the batch',
+        )
+
+    def test_duplicate_kitchen_batch_receive_endpoint_token_does_not_double_create(self):
+        """Covers the /kitchen/batch/receive/ endpoint directly (currently dead
+        code from the UI's perspective, but still a live URL)."""
+        batch_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Idem Batch Item 2',
+            unit='Batch', material_no='KIDEM-BATCH-02', selling_price=Decimal('50'),
+            is_kitchen_batch=True,
+        )
+        payload = {
+            'item_id': batch_item.id, 'cost_total': '1500',
+            'idempotency_token': 'kb-endpoint-token-1',
+        }
+        self.client.post('/kitchen/batch/receive/', payload)
+        self.client.post('/kitchen/batch/receive/', payload)
+        self.assertEqual(
+            KitchenBatch.objects.filter(business=self.biz, item=batch_item).count(), 1,
+        )
+
+    def test_duplicate_consumable_token_does_not_double_log(self):
+        payload = {
+            'consumable_type': 'KHAKI_SMALL', 'qty': '10', 'unit_cost': '5',
+            'idempotency_token': 'khaki-token-1',
+        }
+        self.client.post('/kitchen/consumable/add/', payload)
+        self.client.post('/kitchen/consumable/add/', payload)  # simulated resubmit
+        self.assertEqual(
+            KitchenConsumableLog.objects.filter(business=self.biz).count(), 1,
+            'Duplicate token must not double-log the consumable purchase',
+        )

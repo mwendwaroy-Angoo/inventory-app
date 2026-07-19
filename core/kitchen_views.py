@@ -493,21 +493,33 @@ def _kitchen_checkout(request, up, business, is_owner):
         batch_id = entry.get('batch_id')
 
         if batch_id:
-            # Kitchen batch item (chips, stew) — KitchenBatch P&L envelope
+            # Kitchen batch item (chips, stew) — KitchenBatch P&L envelope.
+            # select_for_update() inside atomic() prevents a lost-update race: two
+            # near-simultaneous sales from the same pot/batch (two staff ringing up
+            # at once, or a network-retry racing a fresh request) could otherwise
+            # both read the same stale revenue_collected and the last save wins,
+            # silently discarding one sale's contribution — same race class
+            # KegBarrel.record_sale_locked was built to close for kegs, but
+            # KitchenBatch/ProduceBunch never got the equivalent (kitchen-module
+            # audit finding, 2026-07-19).
+            from django.db import transaction as _db_txn
             try:
-                batch = KitchenBatch.objects.get(id=batch_id, business=business, status='OPEN')
+                with _db_txn.atomic():
+                    batch = KitchenBatch.objects.select_for_update().get(
+                        id=batch_id, business=business, status='OPEN',
+                    )
+                    preset = None
+                    if preset_id:
+                        preset = ItemPortionPreset.objects.filter(id=preset_id, item=batch.item).first()
+                    txn = batch.record_sale(
+                        amount=amount,
+                        payment_method=txn_pm,
+                        recipient=txn_recipient,
+                        preset=preset,
+                        recorded_by=request.user,
+                    )
             except KitchenBatch.DoesNotExist:
                 continue
-            preset = None
-            if preset_id:
-                preset = ItemPortionPreset.objects.filter(id=preset_id, item=batch.item).first()
-            txn = batch.record_sale(
-                amount=amount,
-                payment_method=txn_pm,
-                recipient=txn_recipient,
-                preset=preset,
-                recorded_by=request.user,
-            )
             if active_tab and txn:
                 BarTabEntry.objects.create(
                     tab=active_tab, transaction=txn, description=desc, amount=amount,
@@ -515,17 +527,22 @@ def _kitchen_checkout(request, up, business, is_owner):
             receipt_lines.append({'name': desc, 'subtotal': float(amount)})
             total += amount
         elif bunch_id:
-            # Grill batch item (nyama choma, mutura) — ProduceBunch revenue envelope
+            # Grill batch item (nyama choma, mutura) — ProduceBunch revenue envelope.
+            # Same lost-update race as KitchenBatch above — locked for the same reason.
+            from django.db import transaction as _db_txn
             try:
-                bunch = ProduceBunch.objects.get(id=bunch_id, business=business, status='OPEN')
+                with _db_txn.atomic():
+                    bunch = ProduceBunch.objects.select_for_update().get(
+                        id=bunch_id, business=business, status='OPEN',
+                    )
+                    txn = bunch.record_sale(
+                        amount=amount,
+                        payment_method=txn_pm,
+                        recipient=txn_recipient,
+                        recorded_by=request.user,
+                    )
             except ProduceBunch.DoesNotExist:
                 continue
-            txn = bunch.record_sale(
-                amount=amount,
-                payment_method=txn_pm,
-                recipient=txn_recipient,
-                recorded_by=request.user,
-            )
             if active_tab:
                 BarTabEntry.objects.create(
                     tab=active_tab,
@@ -781,6 +798,17 @@ def kitchen_receive(request):
             )
 
     business = up.business
+
+    # Server-side double-submit backstop — see core/idempotency.py. Every mode
+    # here creates a real stock/financial record (Transaction, ProduceBunch, or
+    # KitchenBatch) with no other guard against a duplicate/retried request
+    # (kitchen-module audit finding, 2026-07-19 — same gap as receive_barrel/
+    # add_cups/record_breakage already fixed in the bar module).
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
     kitchen_store = _ensure_kitchen_store(business)
 
     mode = request.POST.get('mode', 'portion')  # 'portion', 'batch', 'batch_group', or 'kitchen_batch'
@@ -1139,6 +1167,13 @@ def kitchen_batch_receive(request):
     if not can_receive:
         return JsonResponse({'ok': False, 'error': 'Ruhusa ya kupokea stok inahitajika'}, status=403)
 
+    # Server-side double-submit backstop — see core/idempotency.py. Creates a
+    # real KitchenBatch (kitchen-module audit finding, 2026-07-19).
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
     kitchen_store = _ensure_kitchen_store(business)
     item_id = (request.POST.get('item_id') or '').strip()
 
@@ -1227,6 +1262,17 @@ def kitchen_consumable_add(request):
     up, business, err = _kb_gate(request)
     if err:
         return err
+
+    # Server-side double-submit backstop — see core/idempotency.py. No natural
+    # "already done" guard exists here (a fresh KitchenConsumableLog row is
+    # always valid), so a duplicate/retried request would double-count both
+    # the purchase cost and the pool balance, masking a real future shortage
+    # behind false confidence (kitchen-module audit finding, 2026-07-19 — same
+    # gap class as add_cups already fixed in the bar module).
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
 
     consumable_type = (request.POST.get('consumable_type') or '').strip().upper()
     valid_types = ('KHAKI_SMALL', 'KHAKI_LARGE', 'SAUCE_TOMATO', 'OIL_COOKING', 'OTHER')
