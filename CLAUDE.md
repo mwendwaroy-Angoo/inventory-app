@@ -1026,3 +1026,27 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `_auto_complete_stale_sessions` and the shared shift/tab machinery (already fixed generically
   for both stations in the bar-module audit). 21 new tests total, 205 tests pass. Two commits:
   `fa36514`, `23d14b0`.
+- Fix: anonymous tab creation across all three counters (2026-07-19). Before resuming the
+  remaining systemic-audit scope, Roy asked to first verify the original business requirement
+  that motivated building the wall-QR + PIN system in the first place: during high-traffic
+  sales, staff often have no time to type a customer's name into a tab, so the tab must still
+  open — the customer identifies themselves later by scanning the wall QR and entering their
+  PIN. Traced the code and found all three counters silently broke this. `bar_board`
+  (keg_views.py): `if payment_method == 'tab' and tab_customer:` skipped tab creation entirely
+  on a blank name; `KegBarrel.record_sale`'s `pay = 'credit' if tab else (payment_method or
+  'cash')` then fell through to the literal string `'tab'` — not a recognized payment_method —
+  with no BarTab, no PIN, no way to ever find the sale again via BillScan. `_kitchen_checkout`
+  (kitchen_views.py): identical pattern, `elif payment_method in ('food_tab', 'bar_tab') and
+  tab_customer:` — blank name meant `txn_pm` fell back to the literal `'food_tab'`/`'bar_tab'`
+  string. Quick Sell (views.py): `payment_method_qs` was already correctly `'credit'`
+  regardless of name, but the tab-creation block was gated on `credit_recipient` truthy — a
+  blank name meant no BarTab was created and the per-line Transactions (already saved earlier
+  in the loop with `recipient=''`) became an orphaned, unattributed credit/debt entry. Fixed
+  all three the same way: never search for an existing tab by a blank name (that would
+  silently merge two different anonymous customers' bills into one) — always create a
+  brand-new tab, then backfill `customer_name = f'Tab #{tab.id}'` immediately so the tab is
+  still fully usable by name, findable via wall-QR PIN lookup, and convertible to debt like any
+  other tab. Quick Sell additionally backfills the already-saved `Transaction.recipient` fields
+  once the fallback name exists. 9 new tests (`AnonymousBarTabTest`, `AnonymousKitchenTabTest`,
+  `AnonymousQuickSellTabTest`). No migrations. 214 tests pass. Next: resume remaining systemic
+  audit scope (Quick Sell, supply chain/procurement, debt tracker, analytics).
