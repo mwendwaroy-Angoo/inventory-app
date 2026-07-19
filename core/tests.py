@@ -4121,3 +4121,216 @@ class KitchenReceiveAndConsumableIdempotencyTest(TestCase):
             KitchenConsumableLog.objects.filter(business=self.biz).count(), 1,
             'Duplicate token must not double-log the consumable purchase',
         )
+
+
+class KitchenBatchDiscardRecordsWastageTest(TestCase):
+    """Kitchen-module audit, Theme 2 (state-transition completeness), 2026-07-19:
+    KitchenBatch.discard() used to only flip status — unlike ProduceBunch.discard()
+    (the sibling revenue-envelope model), it never created a Wastage Transaction.
+    A pot of chips or stew thrown out went completely unrecorded: invisible to
+    analytics' wastage_loss, invisible to net_profit, invisible to the owner.
+    Fixed to mirror ProduceBunch's fraction-of-envelope approach. Also fixed
+    kitchen_receive()'s kitchen_batch mode (and the kitchen_batch_receive()
+    duplicate endpoint) to set item.cost_price = cost_total at receive time —
+    without it, the new wastage Transaction's qty*cost_price would always price
+    out to KES 0 regardless of how much was actually lost."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Discard Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbdiscard_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Discard Chips',
+            unit='Batch', material_no='KBDISCARD-01', selling_price=Decimal('50'),
+            is_kitchen_batch=True,
+        )
+
+    def test_discard_with_no_sales_writes_off_full_cost(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item, cost_total=Decimal('1500'),
+        )
+        self.item.cost_price = Decimal('1500')
+        self.item.save(update_fields=['cost_price'])
+
+        txn = batch.discard('Kimeoza')
+
+        self.assertIsNotNone(txn, 'A batch discarded with zero sales must record a wastage Transaction')
+        self.assertEqual(txn.type, 'Wastage')
+        self.assertEqual(txn.kitchen_batch_id, batch.id)
+        self.assertEqual(txn.qty, Decimal('-1.0000'), 'No sales recovered => the whole batch (fraction 1) is lost')
+        loss_kes = abs(float(txn.qty)) * float(self.item.cost_price)
+        self.assertAlmostEqual(loss_kes, 1500.0, places=2)
+
+    def test_discard_with_partial_sales_writes_off_only_unrecovered_portion(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item, cost_total=Decimal('1500'),
+        )
+        self.item.cost_price = Decimal('1500')
+        self.item.save(update_fields=['cost_price'])
+        batch.record_sale(Decimal('500'))  # 1000 unrecovered out of 1500
+
+        txn = batch.discard('Imebaki kidogo, imeharibika')
+
+        self.assertIsNotNone(txn)
+        loss_kes = round(abs(float(txn.qty)) * float(self.item.cost_price), 2)
+        # The fraction is quantized to 4 dp (same approach ProduceBunch._fraction()
+        # already uses), so a non-terminating ratio like 1000/1500 carries a few
+        # cents of inherent rounding — not a bug, just floating-point reality of
+        # the envelope-fraction model.
+        self.assertAlmostEqual(loss_kes, 1000.0, delta=1.0)
+
+    def test_discard_after_full_cost_recovered_records_no_wastage(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item, cost_total=Decimal('1500'),
+        )
+        batch.record_sale(Decimal('1600'))  # sold past cost before running out
+
+        txn = batch.discard('Mabaki kidogo mwisho wa siku')
+
+        self.assertIsNone(txn, 'A batch that already recovered its full cost must not record a loss')
+        self.assertFalse(Transaction.objects.filter(business=self.biz, kitchen_batch=batch, type='Wastage').exists())
+
+    def test_discard_is_idempotent(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item, cost_total=Decimal('1500'),
+        )
+        first = batch.discard('Kimeoza')
+        second = batch.discard('Kimeoza tena?')
+        self.assertIsNotNone(first)
+        self.assertIsNone(second, 'Discarding an already-DISCARDED batch must be a no-op')
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, kitchen_batch=batch, type='Wastage').count(), 1,
+        )
+
+    def test_kitchen_receive_sets_item_cost_price_for_kitchen_batch_mode(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/kitchen/receive/', {
+            'mode': 'kitchen_batch', 'item_id': self.item.id, 'cost_total': '1500',
+        })
+        self.assertTrue(resp.json().get('ok'))
+        self.item.refresh_from_db()
+        self.assertEqual(
+            self.item.cost_price, Decimal('1500'),
+            'kitchen_batch receive must set item.cost_price so a later discard prices its loss correctly',
+        )
+
+    def test_discard_view_end_to_end_records_correct_loss(self):
+        self.client.force_login(self.owner)
+        self.client.post('/kitchen/receive/', {
+            'mode': 'kitchen_batch', 'item_id': self.item.id, 'cost_total': '1500',
+        })
+        batch = KitchenBatch.objects.get(business=self.biz, item=self.item)
+
+        resp = self.client.post(f'/kitchen/batch/{batch.id}/discard/', {'reason': 'Kimeoza'})
+        self.assertTrue(resp.json().get('ok'))
+
+        wastage_txn = Transaction.objects.get(business=self.biz, kitchen_batch=batch, type='Wastage')
+        self.item.refresh_from_db()
+        loss_kes = round(abs(float(wastage_txn.qty)) * float(self.item.cost_price), 2)
+        self.assertAlmostEqual(loss_kes, 1500.0, places=2)
+
+
+class KitchenBatchGateStationScopingTest(TestCase):
+    """Kitchen-module audit, Theme 3 (access-control scoping), 2026-07-19: _kb_gate()
+    — the shared gate for kitchen_batch_receive, deplete_kitchen_batch,
+    discard_kitchen_batch, and kitchen_consumable_add — only checked for ANY open
+    shift, not specifically a kitchen one. A bar-only staffer (no can_access_kitchen)
+    with an open BAR shift could deplete/discard a kitchen batch or log a kitchen
+    consumable purchase directly, even though the kitchen board is never shown to
+    them. kitchen_batch_receive happened to be separately protected by its own
+    can_receive_kitchen_stock check; deplete/discard/consumable_add had no
+    protection at all. Fixed once at the shared gate with _station_scope()."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Gate Scope Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+        self.owner = User.objects.create_user(username='kbgate_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_staff = User.objects.create_user(username='kbgate_barstaff', password='x')
+        UserProfile.objects.create(
+            user=self.bar_staff, business=self.biz, role='staff', can_access_kitchen=False,
+        )
+        self.kitchen_staff = User.objects.create_user(username='kbgate_kitchenstaff', password='x')
+        UserProfile.objects.create(
+            user=self.kitchen_staff, business=self.biz, role='kitchen', can_access_bar=False,
+        )
+        Shift.objects.create(business=self.biz, staff=self.bar_staff, status='OPEN')
+        Shift.objects.create(business=self.biz, staff=self.kitchen_staff, status='OPEN')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Gate Chips',
+            unit='Batch', material_no='KBGATE-01', selling_price=Decimal('50'),
+            is_kitchen_batch=True,
+        )
+
+    def test_bar_only_staff_cannot_discard_kitchen_batch(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.item, cost_total=Decimal('1500'),
+        )
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/kitchen/batch/{batch.id}/discard/', {'reason': 'test'})
+        self.assertEqual(resp.status_code, 403)
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, 'OPEN', 'A bar-only staffer must not be able to discard a kitchen batch')
+
+    def test_bar_only_staff_cannot_deplete_kitchen_batch(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.item, cost_total=Decimal('1500'),
+        )
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/kitchen/batch/{batch.id}/deplete/')
+        self.assertEqual(resp.status_code, 403)
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, 'OPEN')
+
+    def test_bar_only_staff_cannot_log_kitchen_consumable(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post('/kitchen/consumable/add/', {
+            'consumable_type': 'KHAKI_SMALL', 'qty': '10', 'unit_cost': '5',
+        })
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(KitchenConsumableLog.objects.filter(business=self.biz).exists())
+
+    def test_kitchen_staff_can_discard_kitchen_batch(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.item, cost_total=Decimal('1500'),
+        )
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/kitchen/batch/{batch.id}/discard/', {'reason': 'test'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_owner_can_discard_kitchen_batch(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.item, cost_total=Decimal('1500'),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/kitchen/batch/{batch.id}/discard/', {'reason': 'test'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_bar_only_staff_cannot_see_kitchen_revenue_stats(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/kitchen/stats/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_bar_only_staff_cannot_see_kitchen_consumable_pool(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/kitchen/consumable/pool/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_kitchen_staff_can_see_kitchen_revenue_stats(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.get('/kitchen/stats/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_owner_can_see_kitchen_revenue_stats(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/kitchen/stats/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])

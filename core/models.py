@@ -2703,14 +2703,40 @@ class KitchenBatch(models.Model):
         self.save(update_fields=['status', 'closed_on'])
 
     def discard(self, reason=''):
-        """Write off unsold remainder."""
+        """Write off the unrecovered cost of this batch as wastage.
+
+        Kitchen-module audit finding, 2026-07-19: this used to only flip status
+        — unlike ProduceBunch.discard() (the sibling revenue-envelope model),
+        it never created a Wastage Transaction. A pot of chips or stew thrown
+        out went completely unrecorded: invisible to analytics' wastage_loss
+        (which only sums Transaction(type='Wastage')), invisible to net_profit,
+        invisible to the owner — food wastage is a marquee metric for a food
+        business and this was silently dropping it. Mirrors ProduceBunch's
+        fraction-of-envelope approach: qty is the UNRECOVERED fraction of
+        cost_total (not the whole batch) so a batch that already sold past its
+        cost before being tossed correctly records zero loss.
+        """
         if self.status == 'DISCARDED':
-            return
+            return None
+        unrecovered = max(Decimal('0'), self.cost_total - (self.revenue_collected or Decimal('0')))
+        txn = None
+        if unrecovered > 0 and self.cost_total > 0:
+            fraction = (unrecovered / self.cost_total).quantize(Decimal('0.0001'))
+            txn = Transaction.objects.create(
+                item=self.item,
+                business=self.business,
+                type='Wastage',
+                qty=-fraction,
+                sale_amount=Decimal('0'),
+                recipient=(reason or 'Discarded')[:200],
+                kitchen_batch=self,
+            )
         from django.utils import timezone as _tz
         self.status = 'DISCARDED'
         self.closed_on = _tz.now()
         self.note = (self.note + ' | ' if self.note else '') + (reason or 'Discarded')
         self.save(update_fields=['status', 'closed_on', 'note'])
+        return txn
 
 
 class KitchenConsumableLog(models.Model):

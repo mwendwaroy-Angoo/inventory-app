@@ -835,6 +835,14 @@ def kitchen_receive(request):
             cost_total=cost_total, cost_note=cost_note, note=note,
             recorded_by=request.user,
         )
+        # Unlike the 'portion'/'batch' modes below, this never updated
+        # item.cost_price — meaning KitchenBatch.discard()'s wastage Transaction
+        # (qty = unrecovered fraction of cost_total) would always price out to
+        # KES 0 in analytics' wastage_loss (qty * item.cost_price), since
+        # cost_price was never set. One batch = one unit here, so cost_total IS
+        # the per-unit cost (kitchen-module audit finding, 2026-07-19).
+        item.cost_price = cost_total
+        item.save(update_fields=['cost_price'])
         return JsonResponse({'ok': True, 'mode': 'kitchen_batch', 'batch': _batch_to_dict(batch),
                              'item_id': item.id, 'item_name': item.description})
 
@@ -1134,8 +1142,19 @@ def kitchen_tabs_list(request):
 
 def _kb_gate(request):
     """
-    Common auth + business + shift gate for kitchen batch endpoints.
+    Common auth + business + shift + station gate for kitchen batch endpoints
+    (kitchen_batch_receive, deplete_kitchen_batch, discard_kitchen_batch,
+    kitchen_consumable_add).
     Returns (up, business, error_response) where error_response is non-None on failure.
+
+    Station Scoping Principle: this used to only check for ANY open shift, not
+    specifically a kitchen one — a bar-only staffer (no can_access_kitchen) with
+    an open BAR shift could deplete/discard a kitchen batch or log a kitchen
+    consumable purchase directly, even though the kitchen board is never shown
+    to them. Same gap class as kitchen_wastage() (kitchen-module audit finding,
+    2026-07-19); kitchen_batch_receive happened to be separately protected by
+    its own can_receive_kitchen_stock check, but the other three callers had no
+    protection at all. Fixed once here at the shared gate.
     """
     if not request.user.is_authenticated:
         return None, None, JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
@@ -1151,6 +1170,10 @@ def _kb_gate(request):
                 {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza'},
                 status=403,
             )
+        from .views import _station_scope
+        _, show_kitchen = _station_scope(up)
+        if not show_kitchen:
+            return up, business, JsonResponse({'ok': False, 'error': 'Hakuna ruhusa ya kitchen.'}, status=403)
     return up, business, None
 
 
@@ -1208,6 +1231,10 @@ def kitchen_batch_receive(request):
         note=note,
         recorded_by=request.user,
     )
+    # See the matching comment in kitchen_receive()'s kitchen_batch branch —
+    # KitchenBatch.discard()'s wastage Transaction relies on item.cost_price.
+    item.cost_price = cost_total
+    item.save(update_fields=['cost_price'])
     return JsonResponse({
         'ok': True,
         'batch': _batch_to_dict(batch),
@@ -1309,15 +1336,31 @@ def kitchen_consumable_pool_api(request):
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False}, status=403)
+    from .views import _station_scope
+    _, show_kitchen = _station_scope(up)
+    if not show_kitchen:
+        return JsonResponse({'ok': False}, status=403)
     pool = keg_metrics.kitchen_consumable_pool(up.business)
     return JsonResponse({'ok': True, 'pool': pool})
 
 
 @login_required
 def kitchen_stats_api(request):
-    """AJAX GET — today's kitchen revenue for the live badge update."""
+    """AJAX GET — today's kitchen revenue for the live badge update.
+
+    Station Scoping Principle explicitly calls out revenue visibility
+    ("bar-only staff must NEVER see kitchen revenue") — this returned kitchen
+    revenue_today to any authenticated staffer regardless of station
+    (kitchen-module audit finding, 2026-07-19). Lower stakes than the
+    write-endpoint gaps fixed alongside it (an aggregate KES figure, not an
+    action), but still a real violation of the documented principle.
+    """
     up = _get_up(request)
     if not up:
+        return JsonResponse({'ok': False}, status=403)
+    from .views import _station_scope
+    _, show_kitchen = _station_scope(up)
+    if not show_kitchen:
         return JsonResponse({'ok': False}, status=403)
     business = up.business
     kitchen_store = _kitchen_store(business)
