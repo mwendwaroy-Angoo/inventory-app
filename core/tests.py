@@ -4720,3 +4720,78 @@ class AddTransactionQuickIdempotencyTest(TestCase):
         self.assertEqual(
             Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').count(), 2,
         )
+
+
+# ── Quick Sell module audit, Theme 2 (state-transition completeness), 2026-07-19 ──
+
+class QuickSellRestockNotifyParityTest(TestCase):
+    """Bar board and kitchen board both let staff raise a restock request
+    ("🔔 Notify") directly from an out-of-stock tile without leaving the
+    point-of-sale screen mid-shift — Quick Sell, the busiest and most general
+    selling surface, was the only one of the three counters missing this.
+    quick_sell() now annotates items with has_pending_restock the same way
+    stock_list() already does."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='QS Restock Parity Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='qsrestock_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='qsrestock_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='OOS Soda',
+            material_no='QSRESTOCK-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+
+    def test_out_of_stock_item_has_pending_restock_flag_in_context(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/quick-sell/')
+        item_row = next((i for i in resp.context['items'] if i['id'] == self.item.id), None)
+        self.assertIsNotNone(item_row)
+        self.assertFalse(item_row['has_pending_restock'])
+
+    def test_pending_restock_reflected_after_staff_requests_it(self):
+        self.client.force_login(self.staff)
+        self.client.post('/stock/restock/request/', {'item_id': self.item.id})
+        resp = self.client.get('/quick-sell/')
+        item_row = next((i for i in resp.context['items'] if i['id'] == self.item.id), None)
+        self.assertIsNotNone(item_row)
+        self.assertTrue(item_row['has_pending_restock'])
+
+
+class QuickSellBunchSaleFailureFeedbackTest(TestCase):
+    """A depleted/closed ProduceBunch used to fail completely silently in Quick
+    Sell — unlike a regular out-of-stock item (which gets a messages.warning),
+    a bunch/mix cart line that couldn't be sold just vanished with no success
+    and no error. If it was the only line in the cart, the whole checkout
+    attempt produced zero feedback."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='QS Bunch Fail Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='qsbunchfail_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Depleted Sukuma', unit='Bunch',
+            material_no='QSBFAIL-01', selling_price=Decimal('20'), is_produce=True,
+            produce_mode='BUNCH',
+        )
+        # No open ProduceBunch exists for this item — every sale attempt must fail.
+        self.client.force_login(self.owner)
+
+    def test_depleted_bunch_sale_shows_a_warning_not_silence(self):
+        import json
+        cart = json.dumps([{'mode': 'bunch', 'id': self.item.id, 'amount': 20, 'name': 'Depleted Sukuma'}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart, 'payment_method': 'cash',
+            'idempotency_token': 'qs-bunch-fail-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        msgs = [str(m) for m in resp.context['messages']]
+        self.assertTrue(
+            any('Depleted Sukuma' in m or 'no stock' in m.lower() for m in msgs),
+            f'Expected a stock-out warning, got messages: {msgs}',
+        )
+        self.assertIsNone(resp.context.get('success_data'))

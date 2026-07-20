@@ -678,6 +678,14 @@
             <div class="qs-item-stock {% if item.balance <= 0 %}out{% elif item.balance <= item.reorder_level %}low{% endif %}">
                 {% if item.balance <= 0 %}Out of Stock{% else %}{{ item.balance|floatformat:-2 }} {{ item.unit }}{% endif %}
             </div>
+            {% if not is_owner and item.balance <= 0 %}
+                {% if item.has_pending_restock %}
+                    <div class="qs-item-restock-badge" style="font-size:.65rem; color:#fbbf24; margin-top:2px;">📦 Requested</div>
+                {% else %}
+                    <button type="button" class="qs-item-restock-btn" style="font-size:.65rem; margin-top:2px; background:rgba(192,57,90,.1); color:#c0395a; border:1px solid rgba(192,57,90,.3); border-radius:4px; padding:.1rem .35rem;"
+                            onclick="event.stopPropagation(); qsNotifyOwnerRestock({{ item.id }}, '{{ item.description|escapejs }}', this)">🔔 Notify</button>
+                {% endif %}
+            {% endif %}
         </div>
         {% empty %}
         <div class="qs-empty">{% trans 'No items found. Add items from the Manage page.' %}</div>
@@ -1597,6 +1605,27 @@
         return el ? el.value : '';
     }
     function money(n) { return 'KES ' + Number(n || 0).toLocaleString(); }
+
+    window.qsNotifyOwnerRestock = function(itemId, itemName, btn) {
+        var fd = new FormData();
+        fd.append('item_id', itemId);
+        fd.append('csrfmiddlewaretoken', csrf());
+        fetch('/stock/restock/request/', { method: 'POST', body: fd })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.ok && btn) {
+                    btn.outerHTML = '<div class="qs-item-restock-badge" style="font-size:.65rem; color:#fbbf24; margin-top:2px;">📦 Requested</div>';
+                }
+                if (window.showToast) {
+                    showToast(d.ok ? '📦 Owner amearifu — ' + itemName : (d.error || 'Hitilafu. Jaribu tena.'));
+                } else if (!d.ok) {
+                    alert(d.error || 'Hitilafu. Jaribu tena.');
+                }
+            })
+            .catch(function() {
+                if (window.showToast) { showToast('Hitilafu ya mtandao.'); }
+            });
+    };
 
     function presetButtons(presets, fallbackPrices) {
         var list = (presets && presets.length)

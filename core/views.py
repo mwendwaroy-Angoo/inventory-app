@@ -2573,6 +2573,21 @@ def quick_sell(request):
                     recorded.append(line)
                     if txn:
                         last_transaction = txn
+                else:
+                    # Unlike the regular-item path below, a depleted/closed bunch
+                    # used to fail completely silently — the client already
+                    # blocks adding an empty bunch tile to the cart, but that
+                    # check is against a snapshot fetched when the greens board
+                    # last loaded, not at checkout time, so a concurrent sale can
+                    # still deplete it in the gap between tap and checkout. If
+                    # this was the only line in the cart, the whole request used
+                    # to end in total silence — no success, no error, the sale
+                    # just vanished (Quick-Sell-module audit finding, 2026-07-19).
+                    messages.warning(
+                        request,
+                        _("Skipped %(name)s: no stock available.")
+                        % {"name": entry.get("label") or entry.get("name") or _("item")},
+                    )
                 continue
             # ─────────────────────────────────────────────────────────────
             item = Item.objects.filter(
@@ -2964,6 +2979,19 @@ def quick_sell(request):
     else:
         balance_lookup = {}
 
+    # Annotate with pending restock request flag — mirrors stock_list()'s same
+    # check, so Quick Sell staff can raise (and see) a restock request without
+    # navigating away from the point-of-sale screen mid-shift, same as bar
+    # board and kitchen board already can (Quick-Sell-module audit finding,
+    # 2026-07-19 — QS was the only one of the three counters missing this).
+    _qs_pending_restock_ids = set(
+        StockRequest.objects.filter(
+            business=user_profile.business,
+            status__in=[StockRequest.STATUS_PENDING, StockRequest.STATUS_ORDERED],
+            item_id__in=[i.id for i in items_qs],
+        ).values_list('item_id', flat=True)
+    )
+
     items = []
     for item in items_qs:
         txn_sum = balance_lookup.get(item.id, 0)
@@ -2980,6 +3008,7 @@ def quick_sell(request):
                 "is_produce": item.is_produce,
                 "has_presets": len(item.portion_presets.all()) > 0,
                 "volume_ml": item.volume_ml,
+                "has_pending_restock": item.id in _qs_pending_restock_ids,
             }
         )
 
