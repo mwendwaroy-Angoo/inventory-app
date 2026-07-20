@@ -173,7 +173,12 @@ def produce_board(request):
     return JsonResponse({
         'greens': greens,
         'mixes': list(mix_map.values()),
-        'can_receive': bool(getattr(up, 'is_owner', False)),
+        # Managers get the same operational access as owners everywhere else in
+        # the app (receive_barrel, kitchen_receive) — this was strict is_owner,
+        # a mismatch with Quick Sell's own "+From market" button, which Sprint
+        # M1 already made visible to managers via QS_IS_OWNER (Quick-Sell-module
+        # audit finding, 2026-07-19).
+        'can_receive': bool(getattr(up, 'is_owner_or_manager', False)),
         'portion_items': portion_items,
     })
 
@@ -193,8 +198,14 @@ def receive_bunches(request):
     """
     from .views import get_user_profile
     up = get_user_profile(request)
-    if not up or not getattr(up, 'is_owner', False):
-        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+    # Managers get the same operational access as owners everywhere else in
+    # the app — this was strict is_owner, a mismatch with the "+From market"
+    # button itself, which Sprint M1 already made visible to managers via
+    # QS_IS_OWNER (Quick-Sell-module audit finding, 2026-07-19): a manager
+    # could see and open this modal, submit it, and be silently rejected by
+    # the server.
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     business = up.business
 
@@ -285,6 +296,20 @@ def discard_bunch(request, bunch_id):
     up = get_user_profile(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    # Shift gate — sibling wastage-recording actions (bar's record_breakage,
+    # kitchen's discard_kitchen_batch) both require staff to have an open
+    # shift; discard_bunch was missed by the Sprint SG universal shift-gate
+    # sweep entirely, so any authenticated staffer could write off stock with
+    # no shift open at all (Quick-Sell-module audit finding, 2026-07-19).
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
     bunch = get_object_or_404(ProduceBunch, id=bunch_id, business=up.business)
     bunch.discard(request.POST.get('reason', 'Wilted / end of day'))
     return JsonResponse({'ok': True, 'status': bunch.status})

@@ -824,7 +824,16 @@ def add_transaction(request):
                 return redirect('add_transaction')
         # ─────────────────────────────────────────────────────────────────────
 
-        item = get_object_or_404(Item, id=item_id)
+        # Multi-tenancy: this was get_object_or_404(Item, id=item_id) with NO
+        # business filter at all — any authenticated staff member of ANY
+        # business could submit another business's item_id and write bogus
+        # Receipt/Issue/Wastage transactions straight into a stranger's stock
+        # records (corrupting their balances, P&L, and triggering false
+        # restock/expiry alerts). Reachable via the normal Add Transaction
+        # form AND Quick Sell's "+📦 Pata Stok" quick=1 AJAX path (Quick-
+        # Sell-module audit finding, 2026-07-19 — the most severe gap found
+        # in this audit series so far).
+        item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
 
         # ── PRODUCE PRESET HANDLING ───────────────────────────────────────────
         preset_id = request.POST.get('preset_id', '').strip()

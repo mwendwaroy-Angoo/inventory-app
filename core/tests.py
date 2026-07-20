@@ -4795,3 +4795,137 @@ class QuickSellBunchSaleFailureFeedbackTest(TestCase):
             f'Expected a stock-out warning, got messages: {msgs}',
         )
         self.assertIsNone(resp.context.get('success_data'))
+
+
+# ── Quick Sell module audit, Theme 3 (access-control scoping), 2026-07-19 ────
+
+class AddTransactionCrossTenantItemTest(TestCase):
+    """CRITICAL finding: add_transaction() fetched the target Item via
+    get_object_or_404(Item, id=item_id) with NO business filter at all — any
+    authenticated staff member of ANY business could submit another business's
+    item_id and write bogus Receipt/Issue/Wastage transactions straight into a
+    stranger's stock records. Reachable via the normal Add Transaction form AND
+    Quick Sell's "+📦 Pata Stok" quick=1 AJAX path. Every other item lookup in
+    this file already scoped by store__business/business — this one call site
+    was missed."""
+
+    def setUp(self):
+        self.biz_a = Business.objects.create(name='Tenant A')
+        self.store_a = Store.objects.create(business=self.biz_a, name='Shop A')
+        self.owner_a = User.objects.create_user(username='tenant_a_owner', password='x')
+        UserProfile.objects.create(user=self.owner_a, business=self.biz_a, role='owner')
+
+        self.biz_b = Business.objects.create(name='Tenant B')
+        self.store_b = Store.objects.create(business=self.biz_b, name='Shop B')
+        self.item_b = Item.objects.create(
+            business=self.biz_b, store=self.store_b, description='Tenant B Secret Stock',
+            material_no='TENB-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(business=self.biz_b, item=self.item_b, type='Receipt', qty=Decimal('50'))
+
+    def test_cannot_write_transaction_against_another_businesss_item(self):
+        self.client.force_login(self.owner_a)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item_b.id, 'type': 'Receipt', 'quantity': '999',
+        })
+        self.assertEqual(resp.status_code, 404)
+        self.assertFalse(
+            Transaction.objects.filter(item=self.item_b, qty=Decimal('999')).exists(),
+            "Tenant A must not be able to inject a transaction into Tenant B's item",
+        )
+
+    def test_quick_mode_also_blocks_cross_tenant_item(self):
+        self.client.force_login(self.owner_a)
+        resp = self.client.post('/add-transaction/?quick=1', {
+            'item': self.item_b.id, 'type': 'Receipt', 'quantity': '999',
+            'idempotency_token': 'xtenant-quick-1',
+        })
+        self.assertEqual(resp.status_code, 404)
+        self.assertFalse(
+            Transaction.objects.filter(item=self.item_b, qty=Decimal('999')).exists(),
+        )
+
+    def test_own_business_item_still_works(self):
+        item_a = Item.objects.create(
+            business=self.biz_a, store=self.store_a, description='Tenant A Own Stock',
+            material_no='TENA-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        self.client.force_login(self.owner_a)
+        resp = self.client.post('/add-transaction/', {
+            'item': item_a.id, 'type': 'Receipt', 'quantity': '10',
+        })
+        self.assertIn(resp.status_code, (200, 302))
+        self.assertTrue(
+            Transaction.objects.filter(business=self.biz_a, item=item_a, qty=Decimal('10')).exists(),
+        )
+
+
+class ProduceReceiveManagerAccessTest(TestCase):
+    """Sprint M1 made Quick Sell's "+From market" button visible to managers
+    (QS_IS_OWNER = is_owner_or_manager), but receive_bunches() and
+    produce_board()'s can_receive flag were both left as strict is_owner —
+    a manager could see and open the modal, submit it, and be silently
+    rejected by the server with a 403."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Manager Receive Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.manager = User.objects.create_user(username='pr_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Manager Test Sukuma', unit='Bunch',
+            material_no='MGRRCV-01', selling_price=Decimal('20'), is_produce=True,
+            produce_mode='BUNCH',
+        )
+        self.client.force_login(self.manager)
+
+    def test_manager_can_receive_bunches(self):
+        from core.models import ProduceBunch
+        resp = self.client.post('/stock/produce/receive/', {
+            'item_id': self.item.id, 'cost_price': '500', 'count': '1',
+            'idempotency_token': 'mgr-receive-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'))
+        self.assertEqual(ProduceBunch.objects.filter(business=self.biz, item=self.item).count(), 1)
+
+    def test_produce_board_reports_can_receive_true_for_manager(self):
+        resp = self.client.get('/stock/produce/board/')
+        self.assertTrue(resp.json().get('can_receive'))
+
+
+class DiscardBunchShiftGateTest(TestCase):
+    """discard_bunch() was missed by the Sprint SG universal shift-gate sweep —
+    sibling wastage-recording actions (bar's record_breakage, kitchen's
+    discard_kitchen_batch) both require an open shift for non-owner/manager
+    staff; discard_bunch had no gate at all."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Discard Gate Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.staff = User.objects.create_user(username='discard_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Discard Test Sukuma', unit='Bunch',
+            material_no='DISCGATE-01', selling_price=Decimal('20'), is_produce=True,
+            produce_mode='BUNCH',
+        )
+        from core.models import ProduceBunch
+        self.bunch = ProduceBunch.objects.create(
+            business=self.biz, item=self.item, size='MEDIUM',
+            cost_price=Decimal('50'), target_revenue=Decimal('85'),
+        )
+        self.client.force_login(self.staff)
+
+    def test_staff_without_open_shift_cannot_discard(self):
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/discard/')
+        self.assertEqual(resp.status_code, 403)
+        self.bunch.refresh_from_db()
+        self.assertNotEqual(self.bunch.status, 'DISCARDED')
+
+    def test_staff_with_open_shift_can_discard(self):
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/discard/')
+        self.assertEqual(resp.status_code, 200)
+        self.bunch.refresh_from_db()
+        self.assertEqual(self.bunch.status, 'DISCARDED')
