@@ -1092,3 +1092,25 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   attempt produced zero feedback to the cashier. Added the same warning-message pattern
   already used for regular items. 3 new tests. No migrations. 225 tests pass. Next: Theme 3
   (access-control scoping) for Quick Sell.
+- Quick-Sell-Module Audit Theme 3 (2026-07-19): access-control scoping. Third and final theme
+  of the Quick Sell audit. **CRITICAL finding — cross-tenant item write in `add_transaction()`**:
+  the target `Item` was fetched via `get_object_or_404(Item, id=item_id)` with NO business
+  filter at all. Any authenticated staff member of ANY business could submit another business's
+  `item_id` and write bogus Receipt/Issue/Wastage transactions straight into a stranger's stock
+  records — corrupting their balances, P&L, and triggering false restock/expiry alerts.
+  Reachable via the normal Add Transaction form AND Quick Sell's "+📦 Pata Stok" `quick=1` AJAX
+  path. A full grep sweep confirmed every OTHER `get_object_or_404(Item, id=...)` call site in
+  the codebase already scopes by `store__business`/`business` — this one was an isolated miss,
+  not a systemic pattern. Fixed to `store__business=user_profile.business`, matching the
+  established pattern everywhere else. 3 new tests including a direct two-tenant regression
+  lock. Manager access gap: Sprint M1 made Quick Sell's "+From market" button visible to
+  managers (`QS_IS_OWNER = is_owner_or_manager`), but `receive_bunches()` and
+  `produce_board()`'s `can_receive` flag were both left as strict `is_owner` — a manager could
+  see and open the receive modal, submit it, and be silently rejected by the server with a 403.
+  Fixed both to `is_owner_or_manager`, matching `receive_barrel`/`kitchen_receive`. Shift-gate
+  gap: `discard_bunch()` (write off a wilted/unsold `ProduceBunch` as wastage) was missed by the
+  Sprint SG universal shift-gate sweep entirely — sibling wastage actions (bar's
+  `record_breakage`, kitchen's `discard_kitchen_batch`) both require an open shift for non-
+  owner/manager staff; `discard_bunch` had no gate at all. Fixed to match. 7 new tests. No
+  migrations. 232 tests pass. **Quick Sell module audit complete** (all 3 themes). Next: resume
+  remaining scope — supply chain/procurement, debt tracker, analytics.
