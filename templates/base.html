@@ -556,6 +556,7 @@
                                 <li><hr class="dropdown-divider"></li>
                                 {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
+                                {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'reset_sales_intro' %}" style="color:var(--danger);">🧹 {% trans 'Reset Sales & Analytics' %}</a></li>{% endif %}
                             </ul>
                         </li>
                     </ul>
@@ -762,6 +763,7 @@
                                 <li><hr class="dropdown-divider"></li>
                                 {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
+                                {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'reset_sales_intro' %}" style="color:var(--danger);">🧹 {% trans 'Reset Sales & Analytics' %}</a></li>{% endif %}
                             </ul>
                         </li>
                     </ul>

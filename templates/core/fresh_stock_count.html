@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}Fresh Stock Count — Duka Mwecheche{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:700px;">
+    <h2 class="page-title">🧮 {% trans 'Fresh Stock Count' %}</h2>
+    <p style="color:var(--muted); font-size:0.88rem; margin-bottom:1.2rem;">
+        {% trans "These items still show zero stock since your reset. Walk through the shop counting what's actually there, then tap Rekebisha to enter the real count — or confirm it's genuinely still empty." %}
+    </p>
+
+    {% if pending_count %}
+        <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; overflow:hidden;">
+            {% for item in pending_items %}
+            <div class="d-flex align-items-center justify-content-between" style="padding:.9rem 1.1rem; {% if not forloop.last %}border-bottom:1px solid #333;{% endif %}">
+                <div>
+                    <div style="color:var(--pearl); font-weight:500;">{{ item.description }}</div>
+                    <div style="color:var(--muted); font-size:0.78rem;">{{ item.material_no }} · {{ item.unit }}</div>
+                </div>
+                <div class="d-flex gap-1 flex-wrap">
+                    <a href="{% url 'stock_list' %}?adjust_item={{ item.id }}"
+                       class="btn btn-sm"
+                       style="border:1px solid rgba(201,168,76,0.4); color:var(--gold); background:rgba(201,168,76,0.07);">
+                        ⚖️ {% trans 'Rekebisha' %}
+                    </a>
+                    <form method="post" action="{% url 'mark_item_recounted' item.id %}" style="display:inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">{% trans 'Still Zero' %}</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div style="background:rgba(46,204,113,0.1); border:1px solid var(--success); border-radius:10px; padding:1.5rem; text-align:center;">
+            <p style="color:var(--pearl); margin-bottom:0;">✅ {% trans "All items have been counted. Your fresh start is complete!" %}</p>
+        </div>
+    {% endif %}
+
+    <div class="mt-3">
+        <a href="{% url 'stock_list' %}" class="btn btn-outline-secondary btn-sm">← {% trans 'Back to Stock List' %}</a>
+    </div>
+</div>
+{% endblock %}

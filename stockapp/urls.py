@@ -236,6 +236,14 @@ from core.restock_views import (
     restock_mark_ordered,
 )
 from core.owner_consumption_views import record_owner_consumption
+from core.reset_views import (
+    reset_sales_intro,
+    reset_sales_backup_download,
+    reset_sales_confirm,
+    reset_sales_complete,
+    fresh_stock_count_checklist,
+    mark_item_recounted,
+)
 from core.stock_take_views import (
     start_stock_take,
     stock_take_detail,
@@ -294,6 +302,12 @@ urlpatterns = [
     path("stock/variances/<int:var_id>/review/",     review_variance,     name="review_variance"),
     path("stock/items/<int:item_id>/adjust/",        adjust_stock_balance, name="adjust_stock_balance"),
     path("stock/owner-consumption/", record_owner_consumption, name="record_owner_consumption"),
+    path("stock/reset-sales/", reset_sales_intro, name="reset_sales_intro"),
+    path("stock/reset-sales/backup/", reset_sales_backup_download, name="reset_sales_backup_download"),
+    path("stock/reset-sales/confirm/", reset_sales_confirm, name="reset_sales_confirm"),
+    path("stock/reset-sales/complete/", reset_sales_complete, name="reset_sales_complete"),
+    path("stock/fresh-count/", fresh_stock_count_checklist, name="fresh_stock_count_checklist"),
+    path("stock/fresh-count/<int:item_id>/recounted/", mark_item_recounted, name="mark_item_recounted"),
     path("stock/manage/", manage_items, name="manage_items"),
     path("stock/add/", add_item, name="add_item"),
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),

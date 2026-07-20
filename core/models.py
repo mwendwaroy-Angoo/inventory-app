@@ -3266,3 +3266,29 @@ class StockVarianceQuery(models.Model):
 
     def __str__(self):
         return f"{self.item_name_cache} ({self.direction}: {abs(self.variance)}) — {self.status}"
+
+
+class SalesResetLog(models.Model):
+    """Audit trail for the owner-triggered 'Reset Sales & Analytics' action —
+    mirrors accounts.AccountDeletionLog's pattern of recording the event
+    BEFORE the destructive action runs, but scoped to a business (not an
+    account) since this wipes sales/analytics history while keeping the
+    business, staff, and item catalog intact."""
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='sales_reset_logs'
+    )
+    business_name_cache = models.CharField(max_length=255, blank=True)
+    performed_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, related_name='sales_resets_performed'
+    )
+    performed_by_username_cache = models.CharField(max_length=150, blank=True)
+    reason = models.TextField(blank=True)
+    counts_snapshot = models.JSONField(default=dict, help_text='Per-model row counts captured immediately before delete')
+    backup_filename = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.business_name_cache} reset by {self.performed_by_username_cache} — {self.created_at:%Y-%m-%d}"

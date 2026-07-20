@@ -90,6 +90,12 @@
      align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem;">
 </div>
 
+{% if fresh_count_pending %}
+<a href="{% url 'fresh_stock_count_checklist' %}" class="d-block text-decoration-none mb-3" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:10px; padding:.7rem 1rem; color:var(--gold-light);">
+    🧮 {% blocktrans count counter=fresh_count_pending %}{{ counter }} item still needs a fresh physical count after your reset{% plural %}{{ counter }} items still need a fresh physical count after your reset{% endblocktrans %} →
+</a>
+{% endif %}
+
 <div class="stock-header">
     <h2 class="page-title">📋 {% trans 'Stock List' %}</h2>
     <div class="d-flex gap-2 flex-wrap">
@@ -250,7 +256,7 @@
                         <a href="{% url 'edit_item' item.id %}"
                            class="btn btn-sm btn-outline-primary">{% trans 'Edit' %}</a>
                         {% if not item.is_keg and not item.is_produce %}
-                        <button class="btn btn-sm"
+                        <button class="btn btn-sm" data-adjust-item="{{ item.id }}"
                                 style="border:1px solid rgba(201,168,76,0.4); color:var(--gold); background:rgba(201,168,76,0.07);"
                                 onclick="openAdjustModal({{ item.id }}, '{{ item.description|escapejs }}', '{{ item.unit|escapejs }}', {{ item.current_balance }})">
                             ⚖️ {% trans 'Rekebisha' %}
@@ -441,6 +447,18 @@
             document.getElementById('adj-actual-count').focus();
         }, 300);
     }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // Auto-open Rekebisha for a specific item when linked from the
+        // post-reset Fresh Stock Count checklist (?adjust_item=<id>) —
+        // reuses the exact same modal/button, no duplicated logic.
+        var params = new URLSearchParams(window.location.search);
+        var adjustItemId = params.get('adjust_item');
+        if (adjustItemId) {
+            var btn = document.querySelector('[data-adjust-item="' + adjustItemId + '"]');
+            if (btn) { setTimeout(function() { btn.click(); }, 150); }
+        }
+    });
 
     document.addEventListener('DOMContentLoaded', function() {
         var inp = document.getElementById('adj-actual-count');

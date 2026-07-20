@@ -4,7 +4,7 @@
 Multi-tenant Django inventory and business management web application for Kenyan SMEs.
 Live at: https://www.dukamwecheche.co.ke
 GitHub: https://github.com/mwendwaroy-Angoo/inventory-app
-Deployed on: Render (free tier web service) with PostgreSQL database
+Deployed on: Render (Starter tier web service) with PostgreSQL database
 
 ## Developer
 - Name: Collins (goes by Roy), based in Nairobi, Kenya
@@ -1114,3 +1114,48 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   owner/manager staff; `discard_bunch` had no gate at all. Fixed to match. 7 new tests. No
   migrations. 232 tests pass. **Quick Sell module audit complete** (all 3 themes). Next: resume
   remaining scope — supply chain/procurement, debt tracker, analytics.
+- Sprint Reset (2026-07-21): "Reset Sales & Analytics" — owner-only, permanent wipe of a
+  business's sales/transaction/analytics history, for businesses (starting with a bar client
+  hit by weeks of staff non-compliance) that need a genuine clean slate without deleting the
+  account. Deliberately a HARD delete, not a soft cutover-date filter — a soft filter would need
+  a new query condition threaded through dozens of separate analytics/dashboard call sites
+  app-wide, too large and too easy to miss one. `SalesResetLog` (core/models.py, migration 0106)
+  mirrors `accounts.AccountDeletionLog`'s pattern — created BEFORE the destructive delete runs,
+  inside the same `transaction.atomic()` block. Two-step flow (`core/reset_views.py`): Step 1
+  downloads a full backup workbook (one sheet per wiped model, reusing the existing
+  `openpyxl.Workbook()` export pattern) and sets a session flag; Step 2 requires typing the
+  business's own name (not a fixed phrase — disambiguates if the owner has ever run more than
+  one business) and re-checks the session flag server-side. 24 models wiped via
+  `.filter(business=business).delete()` (Transaction, Receipt, BarTab, Shift, KegBarrel,
+  ProduceBunch, KitchenBatch, KitchenConsumableLog — has its own direct business FK, does NOT
+  cascade from KitchenBatch — Payment, CustomerDebtPayment, Customer, PerformerSession,
+  StockRequest, BusinessExpense, PettyCash, SalaryPayment, SalaryDeduction, StockTake, Order,
+  Forecast, TableOrder, BarCupLog, ProduceOverhead, ItemSaleApproval,
+  PendingTransactionPrompt) plus Notification (no direct business FK, scoped via
+  `user__userprofile__business`). Explicitly kept: Item, ItemPortionPreset, Store, Category,
+  Business + settings, UserProfile, RecurringExpense (rule definitions), Performer (roster),
+  RevenueTarget (goal config), CapitalInvestment (durable business fact, shown but not wiped).
+  Explicitly excluded as out-of-scope marketplace/cross-business data: Feedback (has both
+  from_business/to_business FKs), SupplierRelationship/SupplierBid/SupplierApplication/
+  ProcurementRequest/PurchaseOrder — wiping one side of a two-business relationship for a
+  single-business reset would orphan the other side's copy. Stock balances: deliberately
+  zeroed (`opening_bin_balance`/`opening_physical` bulk-set to 0), NOT frozen from the
+  pre-reset computed `current_balance()` — Roy's own catch during planning: the computed
+  balance reflects the non-compliant period and would just enshrine bad data. Instead a new
+  Fresh Stock Count checklist (`fresh_stock_count_checklist` + `mark_item_recounted`) guides
+  the owner through the EXISTING "⚖️ Rekebisha" adjust-stock-balance tool
+  (`core/stock_take_views.py:adjust_stock_balance`, unchanged) for every non-keg/non-produce
+  item with no transaction since the reset; `stock_list.html` now supports
+  `?adjust_item=<id>` to auto-open that exact modal when linked from the checklist (no
+  duplicated modal logic). `mark_item_recounted` handles the one gap in reusing Rekebisha
+  as-is: an item genuinely still at zero produces `no_change` there and would never leave the
+  checklist, so this creates an explicit qty=0 `[ADJ]`-tagged Transaction instead, reusing the
+  exact same convention `adjust_stock_balance` already uses to stay invisible to the "missing
+  cost price" home alert. Owner-only nav entry added to both desktop and mobile Manage
+  dropdowns (base.html) next to Business Settings. Housekeeping: CLAUDE.md's "Render (free tier
+  web service)" corrected to Starter — Roy has since upgraded. 12 new tests including a direct
+  two-business isolation regression lock (the critical one for a feature like this) and a
+  marketplace-exclusion regression lock. No app-visible migrations beyond `SalesResetLog`. 244
+  tests pass. Next: Liquor/Spirits Catalogue (Feature 2 of this sprint — one-time price-list
+  enrichment of the existing static BAR_CATALOG plus a reusable per-business supplier-list
+  upload feature).

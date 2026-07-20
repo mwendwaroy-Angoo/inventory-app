@@ -293,6 +293,20 @@
     </a>
     {% endif %}
 
+    <!-- Fresh Stock Count banner (post-reset only, owner/manager) -->
+    {% if user.userprofile.is_owner_or_manager and fresh_count_pending > 0 %}
+    <a href="{% url 'fresh_stock_count_checklist' %}" style="text-decoration:none; display:block; margin-bottom:0.75rem;">
+      <div style="background:rgba(201,168,76,.08); border:1px solid rgba(201,168,76,.3);
+                  border-left:3px solid var(--gold); border-radius:8px; padding:0.65rem 1rem;
+                  display:flex; align-items:center; gap:.6rem;">
+        <span style="font-size:1.1rem;">🧮</span>
+        <span style="color:var(--gold); font-size:.88rem;">
+          <strong>{{ fresh_count_pending }} item{{ fresh_count_pending|pluralize }}</strong> still need a fresh physical count after your reset →
+        </span>
+      </div>
+    </a>
+    {% endif %}
+
     <!-- Petty cash pending review alert (owner only) -->
     {% if user.userprofile.is_owner_or_manager and pending_petty_cash_count > 0 %}
     <a href="{% url 'petty_cash_list' %}?status=pending" style="text-decoration:none; display:block; margin-bottom:0.75rem;">

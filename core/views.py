@@ -279,6 +279,28 @@ def home(request):
             else:
                 context['pending_variances_count'] = 0
 
+            # Fresh Stock Count banner — only relevant right after a Reset
+            # Sales & Analytics run.
+            if user_profile.is_owner_or_manager:
+                try:
+                    from core.models import SalesResetLog
+                    _latest_reset = SalesResetLog.objects.filter(
+                        business=business
+                    ).order_by('-created_at').first()
+                    if _latest_reset:
+                        _counted_ids = Transaction.objects.filter(
+                            business=business, date__gte=_latest_reset.created_at.date(),
+                        ).values_list('item_id', flat=True)
+                        context['fresh_count_pending'] = Item.objects.filter(
+                            business=business, is_keg=False, is_produce=False,
+                        ).exclude(id__in=_counted_ids).count()
+                    else:
+                        context['fresh_count_pending'] = 0
+                except Exception:
+                    context['fresh_count_pending'] = 0
+            else:
+                context['fresh_count_pending'] = 0
+
             # Bar revenue — computed for any user who can see the bar station,
             # independent of the keg module (bar revenue = all non-kitchen Issue txns).
             try:
@@ -667,6 +689,22 @@ def stock_list(request):
     if status_filter == "expiring":
         all_items = [i for i in all_items if i.expiry_status in ('EXPIRED', 'EXPIRING')]
 
+    # Fresh Stock Count banner — only relevant right after a Reset Sales &
+    # Analytics run, only shown to owner/manager.
+    fresh_count_pending = 0
+    if user_profile.is_owner_or_manager:
+        from .models import SalesResetLog
+        _latest_reset = SalesResetLog.objects.filter(
+            business=user_profile.business
+        ).order_by('-created_at').first()
+        if _latest_reset:
+            _counted_ids = Transaction.objects.filter(
+                business=user_profile.business, date__gte=_latest_reset.created_at.date(),
+            ).values_list('item_id', flat=True)
+            fresh_count_pending = Item.objects.filter(
+                business=user_profile.business, is_keg=False, is_produce=False,
+            ).exclude(id__in=_counted_ids).count()
+
     context = {
         "items": all_items,
         "stores": stores,
@@ -674,6 +712,7 @@ def stock_list(request):
         "status_filter": status_filter,
         "today": timezone.now().strftime("%B %d, %Y"),
         "is_owner": user_profile.is_owner_or_manager,
+        "fresh_count_pending": fresh_count_pending,
     }
     return render(request, "core/stock_list.html", context)
 

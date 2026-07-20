@@ -4929,3 +4929,284 @@ class DiscardBunchShiftGateTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.bunch.refresh_from_db()
         self.assertEqual(self.bunch.status, 'DISCARDED')
+
+
+# ── Reset Sales & Analytics (2026-07-21) ──────────────────────────────────────
+
+class SalesResetTest(TestCase):
+    """Owner-only, permanent wipe of a business's sales/analytics history,
+    keeping the business/staff/item catalog intact. Covers: permission
+    gating, the two-step backup-then-confirm sequencing, the critical
+    two-business isolation guarantee, structural-data survival, and the
+    explicit marketplace-model exclusion."""
+
+    def setUp(self):
+        from core.models import (
+            ProduceBunch, PerformerSession, StockRequest, TableOrder, BarCupLog,
+            ProduceOverhead, ItemSaleApproval, PendingTransactionPrompt, StockTake,
+            Forecast, CustomerDebtPayment, SalaryPayment, SalaryDeduction,
+            BusinessExpense, PettyCash, Order, CapitalInvestment, Feedback,
+            SupplierRelationship, SalesResetLog, RecurringExpense,
+            KitchenConsumableLog, BarTabEntry,
+        )
+        self.m = dict(
+            ProduceBunch=ProduceBunch, PerformerSession=PerformerSession,
+            StockRequest=StockRequest, TableOrder=TableOrder, BarCupLog=BarCupLog,
+            ProduceOverhead=ProduceOverhead, ItemSaleApproval=ItemSaleApproval,
+            PendingTransactionPrompt=PendingTransactionPrompt, StockTake=StockTake,
+            Forecast=Forecast, CustomerDebtPayment=CustomerDebtPayment,
+            SalaryPayment=SalaryPayment, SalaryDeduction=SalaryDeduction,
+            BusinessExpense=BusinessExpense, PettyCash=PettyCash, Order=Order,
+            CapitalInvestment=CapitalInvestment, Feedback=Feedback,
+            SupplierRelationship=SupplierRelationship, SalesResetLog=SalesResetLog,
+            RecurringExpense=RecurringExpense,
+            KitchenConsumableLog=KitchenConsumableLog, BarTabEntry=BarTabEntry,
+        )
+
+        self.biz = Business.objects.create(name='Reset Test Biz')
+        self.other_biz = Business.objects.create(name='Reset Other Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='reset_owner', password='x')
+        self.owner_profile = UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='reset_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.manager = User.objects.create_user(username='reset_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Reset Test Item',
+            material_no='RESET-01', unit='pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('50'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.item, type='Receipt', qty=Decimal('50'))
+
+        self.customer = Customer.objects.create(business=self.biz, name='Reset Test Customer')
+        CustomerDebtPayment.objects.create(customer=self.customer, business=self.biz, amount_paid=Decimal('10'))
+
+        Receipt.issue(
+            business=self.biz, lines=[{'name': 'x', 'qty': 1, 'subtotal': 100}],
+            payment_method='cash',
+        )
+
+        self.tab = BarTab.objects.create(business=self.biz, customer_name='Tab Test', status='OPEN')
+        tab_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'), payment_method='credit',
+        )
+        BarTabEntry.objects.create(tab=self.tab, transaction=tab_txn, description='x', amount=Decimal('100'))
+
+        Shift.objects.create(business=self.biz, staff=self.owner, status='OPEN')
+        self.barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_price=Decimal('1000'), target_revenue=Decimal('2000'), status='TAPPED',
+        )
+        self.bunch = ProduceBunch.objects.create(
+            business=self.biz, item=self.item, cost_price=Decimal('50'), target_revenue=Decimal('85'),
+        )
+        KitchenBatch.objects.create(business=self.biz, store=self.store, item=self.item, cost_total=Decimal('500'))
+        KitchenConsumableLog.objects.create(
+            business=self.biz, consumable_type='OTHER', qty=Decimal('1'),
+            unit_cost=Decimal('10'), total_cost=Decimal('10'),
+        )
+        Payment.objects.create(business=self.biz, amount=Decimal('100'))
+        PerformerSession.objects.create(business=self.biz, date=timezone.localdate())
+        StockRequest.objects.create(business=self.biz, item=self.item)
+        BusinessExpense.objects.create(business=self.biz, description='Test expense', amount=Decimal('20'))
+        PettyCash.objects.create(business=self.biz, amount=Decimal('15'))
+        from datetime import date as _date
+        SalaryPayment.objects.create(
+            business=self.biz, staff=self.owner_profile, period='2026-07', amount=Decimal('1000'),
+            due_date=_date(2026, 7, 31),
+        )
+        SalaryDeduction.objects.create(
+            business=self.biz, staff=self.owner_profile, period='2026-07',
+            amount=Decimal('100'), reason='test deduction',
+        )
+        StockTake.objects.create(business=self.biz)
+        Order.objects.create(business=self.biz, customer_name='x', customer_phone='0700000000')
+        Forecast.objects.create(business=self.biz)
+        TableOrder.objects.create(business=self.biz, table_label='T1')
+        BarCupLog.objects.create(business=self.biz, qty=10, unit_cost=Decimal('5'), total_cost=Decimal('50'))
+        ProduceOverhead.objects.create(business=self.biz, cost=Decimal('10'))
+        ItemSaleApproval.objects.create(business=self.biz, item=self.item, requested_by=self.staff, quantity=1)
+        PendingTransactionPrompt.objects.create(business=self.biz, amount=Decimal('50'))
+        Notification.objects.create(user=self.owner, title='Test', message='Test msg', notification_type='info')
+
+        # Kept — structural
+        self.capital = CapitalInvestment.objects.create(
+            business=self.biz, description='Test Capital', amount=Decimal('5000'),
+            date_acquired=timezone.localdate(),
+        )
+        self.recurring = RecurringExpense.objects.create(
+            business=self.biz, description='Rent', amount=Decimal('1000'),
+        )
+
+        # Explicitly excluded — marketplace/cross-business
+        self.feedback = Feedback.objects.create(
+            feedback_type='business_to_supplier', from_business=self.biz,
+            to_business=self.other_biz, rating=5,
+        )
+        self.supplier_rel = SupplierRelationship.objects.create(business=self.biz, supplier=self.other_biz)
+
+        self.client.force_login(self.owner)
+
+    def _do_backup(self):
+        return self.client.get('/stock/reset-sales/backup/')
+
+    def _do_confirm(self, confirm_text=None):
+        return self.client.post('/stock/reset-sales/confirm/', {
+            'confirm_text': confirm_text if confirm_text is not None else self.biz.name,
+            'reason': 'testing',
+        })
+
+    # ── Permission gating ──────────────────────────────────────────────
+    def test_staff_cannot_access_intro(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/stock/reset-sales/')
+        self.assertNotEqual(resp.status_code, 200)
+
+    def test_manager_cannot_access_intro(self):
+        self.client.force_login(self.manager)
+        resp = self.client.get('/stock/reset-sales/')
+        self.assertNotEqual(resp.status_code, 200)
+
+    def test_owner_can_access_intro(self):
+        resp = self.client.get('/stock/reset-sales/')
+        self.assertEqual(resp.status_code, 200)
+
+    # ── Sequencing guards ──────────────────────────────────────────────
+    def test_confirm_without_backup_first_is_rejected(self):
+        resp = self._do_confirm()
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Transaction.objects.filter(business=self.biz).exists())
+        self.assertFalse(self.m['SalesResetLog'].objects.filter(business=self.biz).exists())
+
+    def test_wrong_confirm_text_is_rejected(self):
+        self._do_backup()
+        resp = self._do_confirm(confirm_text='wrong name')
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Transaction.objects.filter(business=self.biz).exists())
+        self.assertFalse(self.m['SalesResetLog'].objects.filter(business=self.biz).exists())
+
+    # ── The critical two-business isolation test ────────────────────────
+    def test_reset_wipes_scoped_models_and_leaves_other_business_untouched(self):
+        # Mirror a subset of the fixtures onto other_biz to prove isolation.
+        other_item = Item.objects.create(
+            business=self.other_biz, store=Store.objects.create(business=self.other_biz, name='Other Shop'),
+            description='Other Item', material_no='OTHERB-01', unit='pcs', selling_price=Decimal('10'),
+        )
+        Transaction.objects.create(business=self.other_biz, item=other_item, type='Receipt', qty=Decimal('5'))
+        Receipt.issue(business=self.other_biz, lines=[{'name': 'y', 'qty': 1, 'subtotal': 10}], payment_method='cash')
+        Customer.objects.create(business=self.other_biz, name='Other Customer')
+
+        self._do_backup()
+        resp = self._do_confirm()
+        self.assertEqual(resp.status_code, 302)
+
+        wiped_labels = [
+            'ProduceBunch', 'PerformerSession', 'StockRequest', 'TableOrder', 'BarCupLog',
+            'ProduceOverhead', 'ItemSaleApproval', 'PendingTransactionPrompt', 'StockTake',
+            'Forecast', 'CustomerDebtPayment', 'SalaryPayment', 'SalaryDeduction',
+            'BusinessExpense', 'PettyCash', 'Order',
+        ]
+        for label in wiped_labels:
+            model = self.m[label]
+            self.assertEqual(
+                model.objects.filter(business=self.biz).count(), 0,
+                f'{label} should be fully wiped for the reset business',
+            )
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(Receipt.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(BarTab.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(self.m['BarTabEntry'].objects.filter(tab__business=self.biz).count(), 0)
+        self.assertEqual(Shift.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(KegBarrel.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(KitchenBatch.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(self.m['KitchenConsumableLog'].objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(Payment.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(Customer.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(Notification.objects.filter(user__userprofile__business=self.biz).count(), 0)
+
+        # Other business fully untouched.
+        self.assertTrue(Transaction.objects.filter(business=self.other_biz).exists())
+        self.assertTrue(Receipt.objects.filter(business=self.other_biz).exists())
+        self.assertTrue(Customer.objects.filter(business=self.other_biz).exists())
+
+    def test_structural_data_survives_and_balances_are_zeroed(self):
+        self._do_backup()
+        self._do_confirm()
+
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.opening_bin_balance, 0)
+        self.assertEqual(self.item.opening_physical, 0)
+        self.assertEqual(self.item.current_balance(), 0)
+
+        self.assertTrue(Item.objects.filter(id=self.item.id, business=self.biz).exists())
+        self.assertTrue(Store.objects.filter(id=self.store.id, business=self.biz).exists())
+        self.assertTrue(UserProfile.objects.filter(business=self.biz).exists())
+        self.assertTrue(self.m['RecurringExpense'].objects.filter(id=self.recurring.id).exists())
+        self.assertTrue(self.m['CapitalInvestment'].objects.filter(id=self.capital.id).exists())
+        self.assertTrue(Business.objects.filter(id=self.biz.id).exists())
+
+    def test_creates_exactly_one_audit_log_with_matching_snapshot(self):
+        self._do_backup()
+        self._do_confirm()
+        logs = self.m['SalesResetLog'].objects.filter(business=self.biz)
+        self.assertEqual(logs.count(), 1)
+        log = logs.first()
+        self.assertEqual(log.performed_by, self.owner)
+        self.assertGreater(log.counts_snapshot.get('Transaction', 0), 0)
+
+    def test_marketplace_models_are_not_wiped(self):
+        self._do_backup()
+        self._do_confirm()
+        self.assertTrue(self.m['Feedback'].objects.filter(id=self.feedback.id).exists())
+        self.assertTrue(self.m['SupplierRelationship'].objects.filter(id=self.supplier_rel.id).exists())
+
+
+class FreshStockCountChecklistTest(TestCase):
+    """After a reset, non-keg/non-produce items with no transaction since the
+    reset appear on the checklist; they drop off once counted (via Rekebisha
+    or the explicit 'still zero' confirmation)."""
+
+    def setUp(self):
+        from core.models import SalesResetLog
+        self.SalesResetLog = SalesResetLog
+
+        self.biz = Business.objects.create(name='Fresh Count Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='freshcount_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.item_a = Item.objects.create(
+            business=self.biz, store=self.store, description='Pending Item',
+            material_no='FRESH-A', unit='pcs', selling_price=Decimal('50'),
+        )
+        self.item_b = Item.objects.create(
+            business=self.biz, store=self.store, description='Already Counted Item',
+            material_no='FRESH-B', unit='pcs', selling_price=Decimal('50'),
+        )
+        SalesResetLog.objects.create(business=self.biz, business_name_cache=self.biz.name)
+        self.client.force_login(self.owner)
+
+    def test_item_with_no_post_reset_transaction_appears_on_checklist(self):
+        resp = self.client.get('/stock/fresh-count/')
+        item_ids = [i.id for i in resp.context['pending_items']]
+        self.assertIn(self.item_a.id, item_ids)
+        self.assertIn(self.item_b.id, item_ids)
+
+    def test_item_drops_off_after_adjust_stock_balance(self):
+        self.client.post(f'/stock/items/{self.item_a.id}/adjust/', {'actual_count': '10'})
+        resp = self.client.get('/stock/fresh-count/')
+        item_ids = [i.id for i in resp.context['pending_items']]
+        self.assertNotIn(self.item_a.id, item_ids)
+        self.assertIn(self.item_b.id, item_ids)
+
+    def test_item_drops_off_after_mark_recounted(self):
+        self.client.post(f'/stock/fresh-count/{self.item_a.id}/recounted/')
+        resp = self.client.get('/stock/fresh-count/')
+        item_ids = [i.id for i in resp.context['pending_items']]
+        self.assertNotIn(self.item_a.id, item_ids)
+        self.assertIn(self.item_b.id, item_ids)
+        txn = Transaction.objects.filter(business=self.biz, item=self.item_a, invoice_no='[ADJ]').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.qty, 0)
