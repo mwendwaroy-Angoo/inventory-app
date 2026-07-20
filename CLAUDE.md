@@ -1075,3 +1075,20 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   untouched). Quick Sell's own main checkout (`quick_sell()`) already had a guard from the
   2026-07-15 sprint — verified still correct, not re-touched. 8 new tests. No migrations. 222
   tests pass. Next: Theme 2 (state-transition completeness) for Quick Sell.
+- Quick-Sell-Module Audit Theme 2 (2026-07-19): state-transition completeness. Two findings.
+  (1) Restock-notify parity gap: bar board and kitchen board both let staff raise a restock
+  request ("🔔 Notify") directly from an out-of-stock tile without leaving the point-of-sale
+  screen mid-shift; Quick Sell — the busiest, most general-purpose selling surface — was the
+  only one of the three counters missing this, forcing staff to navigate away to Stock List.
+  `quick_sell()` now annotates items with `has_pending_restock` the same way `stock_list()`
+  already does, and the item grid shows the same "🔔 Notify" / "📦 Requested" affordance,
+  wired to the same `/stock/restock/request/` endpoint. (2) Silent bunch/mix sale failure: a
+  regular out-of-stock item already gets a `messages.warning` ("Skipped X: only Y in stock"),
+  but a depleted/closed `ProduceBunch` cart line (greens/mix sales) failed completely silently
+  — no success, no error, the line just vanished. The client already blocks adding an empty
+  bunch tile to the cart, but that check is against a snapshot fetched when the greens board
+  last loaded, not at checkout time, so a concurrent sale can still deplete the bunch in the
+  gap between tap and checkout — if it was the only line in the cart, the whole checkout
+  attempt produced zero feedback to the cashier. Added the same warning-message pattern
+  already used for regular items. 3 new tests. No migrations. 225 tests pass. Next: Theme 3
+  (access-control scoping) for Quick Sell.
