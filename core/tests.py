@@ -5717,3 +5717,182 @@ class PurchaseOrderCreateIdempotencyTest(TestCase):
         self.client.post('/purchase-orders/create/', payload)
         self.client.post('/purchase-orders/create/', payload)
         self.assertEqual(self.PurchaseOrder.objects.filter(business=self.biz).count(), 1)
+
+
+# ── Supply Chain / Procurement audit, Theme 2 (state-transition completeness), 2026-07-21 ──
+
+class ProcurementNotificationFieldFixTest(TestCase):
+    """notify_new_bid_opportunity/notify_supplier_bid_received/
+    notify_supplier_bid_awarded all referenced fields that don't exist on
+    ProcurementRequest/SupplierApplication (item_description/quantity/unit/
+    budget/location, and a nonexistent SupplierApplication.business field)
+    — silently no-op-ing via the blanket try/except at every call site.
+    These call the functions directly to prove they no longer raise and
+    actually create the in-app notification."""
+
+    def setUp(self):
+        from core.models import ProcurementRequest, SupplierBid, SupplierApplication
+        self.ProcurementRequest = ProcurementRequest
+        self.SupplierBid = SupplierBid
+        self.SupplierApplication = SupplierApplication
+
+        self.buyer = Business.objects.create(name='Notif Buyer Biz')
+        self.supplier_biz = Business.objects.create(name='Notif Supplier Biz')
+        self.buyer_owner = User.objects.create_user(username='notif_buyer_owner', password='x')
+        UserProfile.objects.create(user=self.buyer_owner, business=self.buyer, role='owner')
+        self.supplier_owner = User.objects.create_user(username='notif_supplier_owner', password='x')
+        UserProfile.objects.create(user=self.supplier_owner, business=self.supplier_biz, role='owner')
+
+        self.procurement = ProcurementRequest.objects.create(
+            business=self.buyer, title='Need Rice', description='50kg bags',
+            deadline=timezone.localdate() + timedelta(days=5),
+            budget_min=Decimal('1000'), budget_max=Decimal('5000'),
+        )
+        self.bid = SupplierBid.objects.create(
+            procurement=self.procurement, supplier=self.supplier_biz,
+            amount=Decimal('3000'), delivery_timeline='2 days', proposal='Fresh stock',
+        )
+
+    def test_notify_new_bid_opportunity_does_not_raise_and_notifies_approved_suppliers(self):
+        from core.notifications import notify_new_bid_opportunity
+        self.SupplierApplication.objects.create(
+            applicant=self.supplier_biz, target_business=self.buyer,
+            status='approved', services_offered='Rice, grains',
+        )
+        notify_new_bid_opportunity(self.procurement)  # must not raise
+        self.assertTrue(
+            Notification.objects.filter(user=self.supplier_owner, title__icontains='Bid Opportunity').exists()
+        )
+
+    def test_notify_supplier_bid_received_does_not_raise_and_notifies_buyer(self):
+        from core.notifications import notify_supplier_bid_received
+        notify_supplier_bid_received(self.bid)  # must not raise
+        self.assertTrue(
+            Notification.objects.filter(user=self.buyer_owner, title__icontains='New Bid').exists()
+        )
+
+    def test_notify_supplier_bid_awarded_does_not_raise_and_notifies_supplier(self):
+        from core.notifications import notify_supplier_bid_awarded
+        notify_supplier_bid_awarded(self.bid)  # must not raise
+        self.assertTrue(
+            Notification.objects.filter(user=self.supplier_owner, title__icontains='Awarded').exists()
+        )
+
+
+class PurchaseOrderStatusFormRestrictionTest(TestCase):
+    """PurchaseOrderForm's status field must not offer part_received/received
+    (derived state, only settable via receive_goods) or cancelled (only
+    settable via cancel_purchase_order)."""
+
+    def test_status_choices_restricted_to_draft_and_ordered(self):
+        from core.forms import PurchaseOrderForm
+        form = PurchaseOrderForm()
+        offered = [c[0] for c in form.fields['status'].choices]
+        self.assertIn('draft', offered)
+        self.assertIn('ordered', offered)
+        self.assertNotIn('received', offered)
+        self.assertNotIn('part_received', offered)
+        self.assertNotIn('cancelled', offered)
+
+
+class CancelPurchaseOrderTest(TestCase):
+    def setUp(self):
+        from core.models import PurchaseOrder
+        self.PurchaseOrder = PurchaseOrder
+        self.biz = Business.objects.create(name='Cancel PO Biz')
+        self.owner = User.objects.create_user(username='cancelpo_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_cancel_from_draft_succeeds(self):
+        po = self.PurchaseOrder.objects.create(business=self.biz, status='draft')
+        self.client.post(f'/purchase-orders/{po.id}/cancel/')
+        po.refresh_from_db()
+        self.assertEqual(po.status, 'cancelled')
+
+    def test_cancel_from_part_received_succeeds(self):
+        po = self.PurchaseOrder.objects.create(business=self.biz, status='part_received')
+        self.client.post(f'/purchase-orders/{po.id}/cancel/')
+        po.refresh_from_db()
+        self.assertEqual(po.status, 'cancelled')
+
+    def test_cancel_from_received_is_rejected(self):
+        po = self.PurchaseOrder.objects.create(business=self.biz, status='received')
+        self.client.post(f'/purchase-orders/{po.id}/cancel/')
+        po.refresh_from_db()
+        self.assertEqual(po.status, 'received')
+
+    def test_cancel_from_already_cancelled_is_idempotent(self):
+        po = self.PurchaseOrder.objects.create(business=self.biz, status='cancelled')
+        resp = self.client.post(f'/purchase-orders/{po.id}/cancel/')
+        self.assertEqual(resp.status_code, 302)
+        po.refresh_from_db()
+        self.assertEqual(po.status, 'cancelled')
+
+
+class CancelProcurementTest(TestCase):
+    def setUp(self):
+        from core.models import ProcurementRequest
+        self.ProcurementRequest = ProcurementRequest
+        self.biz = Business.objects.create(name='Cancel Procurement Biz')
+        self.owner = User.objects.create_user(username='cancelproc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_cancel_from_open_succeeds(self):
+        proc = self.ProcurementRequest.objects.create(
+            business=self.biz, title='Need X', description='desc',
+            deadline=timezone.localdate() + timedelta(days=5),
+        )
+        self.client.post(f'/procurement/{proc.id}/cancel/')
+        proc.refresh_from_db()
+        self.assertEqual(proc.status, 'cancelled')
+
+    def test_cancel_from_awarded_is_rejected(self):
+        proc = self.ProcurementRequest.objects.create(
+            business=self.biz, title='Need X', description='desc',
+            deadline=timezone.localdate() + timedelta(days=5), status='awarded',
+        )
+        self.client.post(f'/procurement/{proc.id}/cancel/')
+        proc.refresh_from_db()
+        self.assertEqual(proc.status, 'awarded')
+
+
+class AwardedBidTraceabilityTest(TestCase):
+    """Awarding a bid must set the structured PurchaseOrder.awarded_bid FK
+    (previously the only link was a free-text note), and confirm_delivery
+    should warn (not silently say nothing) when the auto-created PO hasn't
+    actually been received yet."""
+
+    def setUp(self):
+        from core.models import ProcurementRequest, SupplierBid, PurchaseOrder
+        self.PurchaseOrder = PurchaseOrder
+        self.buyer = Business.objects.create(name='Trace Buyer Biz')
+        self.supplier_biz = Business.objects.create(name='Trace Supplier Biz')
+        self.owner = User.objects.create_user(username='trace_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.buyer, role='owner')
+
+        self.procurement = ProcurementRequest.objects.create(
+            business=self.buyer, title='Need Y', description='desc',
+            deadline=timezone.localdate() + timedelta(days=5),
+        )
+        self.bid = SupplierBid.objects.create(
+            procurement=self.procurement, supplier=self.supplier_biz,
+            amount=Decimal('2000'), delivery_timeline='1 week', proposal='ok',
+        )
+        self.client.force_login(self.owner)
+
+    def test_award_sets_awarded_bid_fk(self):
+        self.client.post(f'/procurement/bid/{self.bid.id}/award/')
+        po = self.PurchaseOrder.objects.filter(business=self.buyer).first()
+        self.assertIsNotNone(po)
+        self.assertEqual(po.awarded_bid_id, self.bid.id)
+
+    def test_confirm_delivery_warns_when_po_unreceived(self):
+        self.client.post(f'/procurement/bid/{self.bid.id}/award/')
+        resp = self.client.post(f'/procurement/bid/{self.bid.id}/confirm-delivery/', follow=True)
+        msgs = [str(m) for m in resp.context['messages']]
+        self.assertTrue(
+            any('hasn' in m.lower() or "n't been marked received" in m for m in msgs),
+            f'Expected an unreceived-PO warning, got: {msgs}',
+        )

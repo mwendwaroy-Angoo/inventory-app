@@ -1401,6 +1401,33 @@ def purchase_order_detail(request, po_id):
 
 @login_required
 @owner_or_manager_required
+@require_POST
+def cancel_purchase_order(request, po_id):
+    """'cancelled' was a valid STATUS_CHOICES value with no view that ever
+    set it — the only way to reach it was hand-editing the raw status field
+    (closed off by PurchaseOrderForm's restricted choices). Allowed from
+    draft/ordered/part_received (a supplier can stop delivering partway
+    through a real order) but not from received/cancelled (nothing left to
+    cancel; cancelling an already-cancelled PO is a harmless no-op redirect,
+    not an error, in case of a double-click)."""
+    user_profile = get_user_profile(request)
+    if not user_profile:
+        return redirect("home")
+    po = get_object_or_404(PurchaseOrder, id=po_id, business=user_profile.business)
+
+    if po.status == "cancelled":
+        messages.info(request, _("This PO is already cancelled."))
+    elif po.status == "received":
+        messages.error(request, _("This PO is already fully received — nothing to cancel."))
+    else:
+        po.status = "cancelled"
+        po.save(update_fields=["status"])
+        messages.success(request, _("Purchase order cancelled."))
+    return redirect("purchase_order_detail", po.id)
+
+
+@login_required
+@owner_or_manager_required
 def purchase_order_create(request):
     user_profile = get_user_profile(request)
     if not user_profile:

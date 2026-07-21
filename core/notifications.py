@@ -642,16 +642,36 @@ def notify_reorder_recommendations(business, max_items=20, create_draft=False):
     return created_po
 
 
+def _budget_range_text(procurement_request):
+    lo, hi = procurement_request.budget_min, procurement_request.budget_max
+    if lo and hi:
+        return f"KES {lo:,.0f} - {hi:,.0f}"
+    if lo:
+        return f"from KES {lo:,.0f}"
+    if hi:
+        return f"up to KES {hi:,.0f}"
+    return "Not specified"
+
+
 def notify_new_bid_opportunity(procurement_request):
-    """Notify registered suppliers about a new procurement opportunity."""
+    """Notify registered suppliers about a new procurement opportunity.
+
+    Fixed (2026-07-21 supply-chain audit): this function referenced fields
+    that don't exist on ProcurementRequest (item_description/quantity/unit/
+    budget/location — the real fields are title/description/budget_min/
+    budget_max/deadline) and filtered SupplierApplication on a nonexistent
+    `business` field (the real field pairing is applicant/target_business).
+    Every call site wraps this in a blanket try/except, so it has been
+    silently no-op-ing on every single call since it was written — suppliers
+    have never actually been notified of a new opportunity."""
     from core.models import SupplierApplication
 
     requesting_business = procurement_request.business
 
-    # Find suppliers approved to bid for this business
+    # Find suppliers approved to bid for this business.
     approved_suppliers = SupplierApplication.objects.filter(
-        business=requesting_business, status="approved"
-    ).select_related("supplier")
+        target_business=requesting_business, status="approved"
+    ).select_related("applicant")
 
     if not approved_suppliers.exists():
         logger.info(
@@ -660,20 +680,19 @@ def notify_new_bid_opportunity(procurement_request):
         return
 
     subject_line = f"💼 New Procurement Opportunity — {requesting_business.name}"
+    budget_text = _budget_range_text(procurement_request)
     message_body = (
         f"A new procurement request has been posted on Duka Mwecheche\n\n"
         f"Business: {requesting_business.name}\n"
-        f"Item: {procurement_request.item_description}\n"
-        f"Quantity: {procurement_request.quantity} {procurement_request.unit}\n"
-        f"Budget: KES {procurement_request.budget:,.0f}\n"
-        f"Deadline: {procurement_request.deadline.strftime('%B %d, %Y') if procurement_request.deadline else 'N/A'}\n"
-        f"Location: {procurement_request.location or 'N/A'}\n\n"
+        f"Request: {procurement_request.title}\n"
+        f"Budget: {budget_text}\n"
+        f"Deadline: {procurement_request.deadline.strftime('%B %d, %Y') if procurement_request.deadline else 'N/A'}\n\n"
         f"Submit your bid on the platform to compete for this opportunity.\n\n"
         f"— Duka Mwecheche"
     )
 
     for app in approved_suppliers:
-        supplier_business = app.supplier
+        supplier_business = app.applicant
         supplier_owner = supplier_business.users.filter(role="owner").first()
 
         if not supplier_owner:
@@ -687,7 +706,7 @@ def notify_new_bid_opportunity(procurement_request):
         create_in_app_notification(
             supplier_user,
             "💼 New Bid Opportunity",
-            f"{requesting_business.name} — {procurement_request.item_description} ({procurement_request.quantity} {procurement_request.unit})",
+            f"{requesting_business.name} — {procurement_request.title} ({budget_text})",
             notification_type="procurement",
         )
 
@@ -699,15 +718,19 @@ def notify_new_bid_opportunity(procurement_request):
         # SMS notification
         sms_msg = (
             f"[Duka Mwecheche] New Bid: {requesting_business.name} seeking "
-            f"{procurement_request.quantity} {procurement_request.unit} of "
-            f"{procurement_request.item_description}. Budget: KES {procurement_request.budget:,.0f}. "
+            f"{procurement_request.title}. Budget: {budget_text}. "
             f"Submit your bid now!"
         )
         send_sms_notification(sms_msg, supplier_phone)
 
 
 def notify_supplier_bid_received(bid):
-    """Notify the requesting business when they receive a new bid."""
+    """Notify the requesting business when they receive a new bid.
+
+    Fixed (2026-07-21 supply-chain audit): referenced bid.procurement.
+    item_description/quantity/unit, none of which exist (real fields:
+    title/description). Silently no-op-ing on every call via the blanket
+    try/except at the submit_bid() call site."""
     requesting_business = bid.procurement.business
     owner_profile = requesting_business.users.filter(role="owner").first()
 
@@ -722,11 +745,11 @@ def notify_supplier_bid_received(bid):
     supplier_name = bid.supplier.name
 
     subject = (
-        f"📋 New Bid Received — {supplier_name} for {bid.procurement.item_description}"
+        f"📋 New Bid Received — {supplier_name} for {bid.procurement.title}"
     )
     message = (
         f"You have received a new bid on Duka Mwecheche\n\n"
-        f"Procurement Request: {bid.procurement.item_description}\n"
+        f"Procurement Request: {bid.procurement.title}\n"
         f"Supplier: {supplier_name}\n"
         f"Bid Amount: KES {bid.amount:,.0f}\n"
         f"Delivery Timeline: {bid.delivery_timeline}\n"
@@ -739,7 +762,7 @@ def notify_supplier_bid_received(bid):
     create_in_app_notification(
         owner,
         f"📋 New Bid from {supplier_name}",
-        f"KES {bid.amount:,.0f} for {bid.procurement.quantity} {bid.procurement.unit}",
+        f"KES {bid.amount:,.0f} for {bid.procurement.title}",
         notification_type="procurement",
     )
 
@@ -749,13 +772,18 @@ def notify_supplier_bid_received(bid):
     # SMS to owner
     sms_msg = (
         f"[Duka Mwecheche] New Bid: {supplier_name} bid KES {bid.amount:,.0f} "
-        f"for {bid.procurement.item_description}. Review on the platform."
+        f"for {bid.procurement.title}. Review on the platform."
     )
     send_sms_notification(sms_msg, owner_phone)
 
 
 def notify_supplier_bid_awarded(bid):
-    """Notify the supplier when their bid is accepted."""
+    """Notify the supplier when their bid is accepted.
+
+    Fixed (2026-07-21 supply-chain audit): referenced bid.procurement.
+    item_description/quantity/unit, none of which exist. Silently
+    no-op-ing on every call via the blanket try/except at the award_bid()
+    call site — suppliers have never actually received this notification."""
     supplier_business = bid.supplier
     owner_profile = supplier_business.users.filter(role="owner").first()
 
@@ -773,8 +801,7 @@ def notify_supplier_bid_awarded(bid):
     message = (
         f"Congratulations! Your bid has been accepted on Duka Mwecheche\n\n"
         f"Buyer: {requesting_business.name}\n"
-        f"Item: {bid.procurement.item_description}\n"
-        f"Quantity: {bid.procurement.quantity} {bid.procurement.unit}\n"
+        f"Request: {bid.procurement.title}\n"
         f"Your Bid: KES {bid.amount:,.0f}\n"
         f"Delivery Timeline: {bid.delivery_timeline}\n\n"
         f"A purchase order will be created shortly. Check your platform for next steps.\n\n"

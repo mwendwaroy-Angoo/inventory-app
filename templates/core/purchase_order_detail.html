@@ -93,6 +93,12 @@
             &#11015; {% trans 'Record Receipt' %}
         </a>
         {% endif %}
+        {% if po.status != 'received' and po.status != 'cancelled' %}
+        <form method="post" action="{% url 'cancel_purchase_order' po.id %}" onsubmit="return confirm('{% trans "Cancel this purchase order?" %}');" style="display:inline;">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-danger btn-sm">&#10005; {% trans 'Cancel PO' %}</button>
+        </form>
+        {% endif %}
     </div>
 </div>
 

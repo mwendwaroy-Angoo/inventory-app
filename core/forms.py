@@ -203,6 +203,14 @@ class ItemForm(forms.ModelForm):
 
 
 class PurchaseOrderForm(forms.ModelForm):
+    """'status' only offers draft/ordered here — part_received/received are
+    derived state that must only ever be set as a consequence of actual
+    goods-receipt processing (receive_goods()), and cancelled has its own
+    dedicated cancel_purchase_order() action. Without this restriction a PO
+    could be hand-set to 'received' with zero GoodsReceipt/Transaction ever
+    created, silently telling on_order() to stop counting it as outstanding
+    while Item.current_balance() never actually moved (2026-07-21
+    supply-chain audit finding)."""
     class Meta:
         model = PurchaseOrder
         fields = [
@@ -210,6 +218,12 @@ class PurchaseOrderForm(forms.ModelForm):
             'status',
             'expected_delivery_date',
             'notes',
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['status'].choices = [
+            c for c in PurchaseOrder.STATUS_CHOICES if c[0] in ('draft', 'ordered')
         ]
 
 

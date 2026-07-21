@@ -19,6 +19,7 @@ from decimal import Decimal
 
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_POST
 from django.contrib import messages as django_messages
 from django.utils import timezone
 from django.db.models import Avg, Q
@@ -313,6 +314,36 @@ def procurement_detail(request, pk):
 
 
 @login_required
+@require_POST
+def cancel_procurement(request, pk):
+    """'cancelled' was a valid STATUS_CHOICES value with no view that ever
+    set it — a buyer had no way to withdraw a posted request. Allowed from
+    open/evaluating only; a bid already having been awarded means suppliers
+    have committed, so cancelling from 'awarded' isn't offered here (the
+    buyer would need to un-award first, which is a separate, not-yet-built
+    concern — out of scope for closing this specific gap)."""
+    profile = getattr(request.user, "userprofile", None)
+    if not profile or not profile.is_owner or not profile.business:
+        return redirect("home")
+
+    procurement = get_object_or_404(
+        ProcurementRequest, pk=pk, business=profile.business
+    )
+
+    if procurement.status in ("open", "evaluating"):
+        procurement.status = "cancelled"
+        procurement.save(update_fields=["status"])
+        django_messages.success(request, "Procurement request cancelled.")
+    elif procurement.status == "cancelled":
+        django_messages.info(request, "This request is already cancelled.")
+    else:
+        django_messages.error(
+            request, "This request can no longer be cancelled from its current state."
+        )
+    return redirect("procurement_detail", pk=procurement.pk)
+
+
+@login_required
 def evaluate_bids(request, pk):
     """Owner: trigger scoring and view ranked bids."""
     profile = getattr(request.user, "userprofile", None)
@@ -421,6 +452,7 @@ def award_bid(request, bid_id):
             po = PurchaseOrder.objects.create(
                 business=profile.business,
                 supplier=bid.supplier,
+                awarded_bid=bid,
                 status="draft",
                 expected_delivery_date=expected,
                 created_by=request.user,
@@ -545,6 +577,23 @@ def confirm_delivery(request, bid_id):
     if request.method == "POST":
         bid.delivery_confirmed_at = timezone.now()
         bid.save(update_fields=["delivery_confirmed_at"])
+
+        # Confirming delivery here and actually receiving the linked PO
+        # (receive_goods(), which is what updates stock) are two completely
+        # separate state machines connected only by the awarded_bid FK — an
+        # owner could confirm delivery and let the procurement close as
+        # "done" while the draft PO sits unreceived forever and zero stock
+        # was ever added. Not auto-linking them (that would silently do a
+        # stock movement the owner never explicitly reviewed) — just making
+        # the gap visible instead of leaving it invisible.
+        unreceived_po = bid.purchase_orders.exclude(status__in=("received", "cancelled")).first()
+        if unreceived_po:
+            django_messages.warning(
+                request,
+                f"Delivery confirmed, but PO-{unreceived_po.id} (auto-created from this award) "
+                f"hasn't been marked received yet — stock won't reflect this delivery until you "
+                f"record the receipt.",
+            )
 
         # Notify the supplier owner that delivery was confirmed
         try:

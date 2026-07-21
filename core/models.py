@@ -1307,6 +1307,12 @@ class PurchaseOrder(models.Model):
 
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='purchase_orders')
     supplier = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='supplier_purchase_orders', null=True, blank=True)
+    awarded_bid = models.ForeignKey(
+        'SupplierBid', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='purchase_orders',
+        help_text='Set when this PO was auto-created from a procurement award — '
+                   'the only prior link was a free-text note in `notes`.',
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     order_date = models.DateField(default=timezone.now)
     expected_delivery_date = models.DateField(null=True, blank=True)

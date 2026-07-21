@@ -46,8 +46,16 @@
     {% endif %}
 
     {% if is_owner and procurement.status == 'open' %}
-    <div class="mb-3">
+    <div class="mb-3 d-flex gap-2 flex-wrap">
         <a href="{% url 'evaluate_bids' pk=procurement.pk %}" class="btn btn-outline-warning">⚡ {% trans 'Evaluate & Score Bids' %}</a>
+    </div>
+    {% endif %}
+    {% if is_owner and procurement.status == 'open' or is_owner and procurement.status == 'evaluating' %}
+    <div class="mb-3">
+        <form method="post" action="{% url 'cancel_procurement' pk=procurement.pk %}" onsubmit="return confirm('{% trans "Cancel this procurement request? Suppliers will no longer be able to bid." %}');" style="display:inline;">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-danger btn-sm">✕ {% trans 'Cancel Request' %}</button>
+        </form>
     </div>
     {% endif %}
 
