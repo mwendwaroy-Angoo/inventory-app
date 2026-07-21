@@ -1,24 +1,32 @@
 """
-Reusable per-business supplier price-list upload — any owner/manager can
-upload their OWN supplier's Excel/CSV price list at any time and the
-system parses it with the same core.catalog_classify engine used for the
-one-time BAR_CATALOG enrichment. Results are stored as SupplierCatalogEntry
-rows, business-scoped, coexisting with the static business_profiles.py
-catalog — the "Add from Catalogue" bulk-add screen (core/views.py
-catalog_bulk_add) merges both.
+Liquor/Spirits Catalogue — reusable per-business supplier price-list
+upload, plus the "Add from Catalogue" bulk-add screen that consumes it.
+
+Any owner/manager can upload their OWN supplier's Excel/CSV price list at
+any time; the system parses it with the same core.catalog_classify engine
+used for the one-time BAR_CATALOG enrichment. Results are stored as
+SupplierCatalogEntry rows, business-scoped, coexisting with the static
+business_profiles.py catalog — catalog_bulk_add() below merges both into
+one pick list so an owner can create several items in a single request
+instead of the item form's one-at-a-time flow.
 """
 import csv
 import io
+import json
 import logging
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
+from django.db import transaction as db_transaction
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
+from .business_profiles import get_profile
 from .catalog_classify import detect_name_price_columns, classify_row
-from .models import CatalogUploadBatch, SupplierCatalogEntry
-from .views import get_user_profile, owner_or_manager_required
+from .models import CatalogUploadBatch, Item, ItemPortionPreset, Store, SupplierCatalogEntry
+from .views import get_user_profile, owner_or_manager_required, _resolve_category
 
 logger = logging.getLogger(__name__)
 
@@ -152,3 +160,152 @@ def catalog_entry_deactivate(request, entry_id):
     entry.save(update_fields=['is_active'])
     messages.success(request, _('%(name)s removed from your catalogue.') % {'name': entry.name})
     return redirect('catalog_upload_form')
+
+
+# ── Bulk "Add from Catalogue" screen ─────────────────────────────────────
+
+def _merged_catalog(business):
+    """Static profile catalog + this business's own uploaded entries, one
+    list, each item tagged with a stable key ('static:<idx>' or
+    'uploaded:<id>') and source. Single source of truth for both the GET
+    (picker data) and POST (server-side re-lookup, never trust client-
+    supplied preset/price data for item creation) sides of the bulk-add
+    screen."""
+    merged = []
+    static_catalog = get_profile(business).get('catalog', [])
+    for i, entry in enumerate(static_catalog):
+        merged.append({
+            'key': f'static:{i}',
+            'source': 'static',
+            'name': entry.get('name', ''),
+            'unit': entry.get('unit', 'Pcs'),
+            'category': entry.get('category', ''),
+            'volume_ml': entry.get('volume_ml'),
+            'cost_price': entry.get('cost_price'),
+            'is_keg': bool(entry.get('is_keg')),
+            'is_produce': bool(entry.get('is_produce')),
+            'produce_mode': entry.get('produce_mode', ''),
+            'presets': entry.get('presets', []),
+        })
+    uploaded = SupplierCatalogEntry.objects.filter(business=business, is_active=True).order_by('name')
+    for e in uploaded:
+        merged.append({
+            'key': f'uploaded:{e.id}',
+            'source': 'uploaded',
+            'name': e.name,
+            'unit': e.unit or 'Pcs',
+            'category': e.category,
+            'volume_ml': e.volume_ml,
+            'cost_price': float(e.cost_price) if e.cost_price is not None else None,
+            'is_keg': False,
+            'is_produce': False,
+            'produce_mode': '',
+            'presets': e.presets_json or [],
+            'default_reorder_level': e.default_reorder_level,
+            'default_reorder_quantity': e.default_reorder_quantity,
+        })
+    return merged
+
+
+@owner_or_manager_required
+def catalog_bulk_add(request):
+    up = get_user_profile(request)
+    business = up.business
+
+    if request.method == 'POST':
+        try:
+            payload = json.loads(request.body.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            return JsonResponse({'ok': False, 'error': 'Invalid request.'}, status=400)
+
+        store_id = payload.get('store_id')
+        store = None
+        if store_id not in (None, ''):
+            try:
+                store = Store.objects.filter(id=int(store_id), business=business).first()
+            except (TypeError, ValueError):
+                store = None
+        if not store:
+            return JsonResponse({'ok': False, 'error': 'Chagua duka/store kwanza.'}, status=400)
+
+        selections = payload.get('items') or []
+        if not selections:
+            return JsonResponse({'ok': False, 'error': 'Hakuna bidhaa iliyochaguliwa.'}, status=400)
+
+        catalog_by_key = {e['key']: e for e in _merged_catalog(business)}
+
+        created_count = 0
+        preset_count = 0
+        with db_transaction.atomic():
+            last_item = Item.objects.filter(business=business).order_by('id').last()
+            next_id = (last_item.id + 1) if last_item else 1
+
+            for sel in selections:
+                key = sel.get('key')
+                entry = catalog_by_key.get(key)
+                if not entry:
+                    continue
+
+                try:
+                    cost_price = Decimal(str(sel.get('cost_price'))) if sel.get('cost_price') not in (None, '') else None
+                except InvalidOperation:
+                    cost_price = None
+                if cost_price is None and entry.get('cost_price') is not None:
+                    cost_price = Decimal(str(entry['cost_price']))
+
+                item = Item.objects.create(
+                    business=business, store=store,
+                    material_no=f"MAT-{next_id:04d}",
+                    description=entry['name'],
+                    unit=entry.get('unit') or 'Pcs',
+                    cost_price=cost_price,
+                    category=_resolve_category(entry.get('category')),
+                    is_keg=entry.get('is_keg', False),
+                    is_produce=entry.get('is_produce', False),
+                    produce_mode=entry.get('produce_mode') or 'PORTION',
+                    volume_ml=entry.get('volume_ml'),
+                    reorder_level=entry.get('default_reorder_level', 0),
+                    reorder_quantity=entry.get('default_reorder_quantity', 0),
+                )
+                next_id += 1
+                created_count += 1
+
+                if sel.get('add_presets') and entry.get('presets'):
+                    for order, preset in enumerate(entry['presets']):
+                        label = preset.get('label', '')
+                        # Kegs need serving_type set correctly for jug/pint
+                        # tracking elsewhere in the app (bar reconciliation,
+                        # cup-pool accounting) — the catalog preset dict
+                        # itself doesn't carry this, so infer it from the
+                        # label the same way it's typically named.
+                        serving_type = 'cup'
+                        if 'jug' in label.lower():
+                            serving_type = 'jug'
+                        elif 'pint' in label.lower():
+                            serving_type = 'pint'
+                        # ItemPortionPreset.price has no null option (unlike
+                        # the catalog dict's 'price': None convention) —
+                        # add_item's own preset loop never persists a blank
+                        # price either, it skips the row entirely. Since the
+                        # whole point of this toggle is to scaffold preset
+                        # structure/quantity_consumed math without making the
+                        # owner do it by hand, use 0 as an explicit
+                        # placeholder they fill in via Edit Item, rather than
+                        # silently dropping every preset.
+                        ItemPortionPreset.objects.create(
+                            item=item,
+                            label=label,
+                            price=Decimal('0'),
+                            quantity_consumed=Decimal(str(preset.get('qty', 1))),
+                            display_order=order,
+                            serving_type=serving_type,
+                        )
+                        preset_count += 1
+
+        return JsonResponse({'ok': True, 'created': created_count, 'presets_created': preset_count})
+
+    stores = Store.objects.filter(business=business, is_kitchen=False)
+    return render(request, 'core/catalog_bulk_add.html', {
+        'catalog_json': json.dumps(_merged_catalog(business)),
+        'stores': stores,
+    })

@@ -62,6 +62,8 @@
     <h2 class="page-title">📦 {% trans 'Manage Items' %}</h2>
     <div class="d-flex gap-2 flex-wrap">
         <a href="{% url 'add_item' %}" class="btn btn-primary btn-sm">➕ {% trans 'Add Item' %}</a>
+        <a href="{% url 'catalog_bulk_add' %}" class="btn btn-gold btn-sm">📋 {% trans 'Add from Catalogue' %}</a>
+        <a href="{% url 'catalog_upload_form' %}" class="btn btn-outline-secondary btn-sm">⬆️ {% trans 'Upload Price List' %}</a>
         <a href="{% url 'export_stock' %}" class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <rect width="16" height="16" rx="2" fill="#1D6F42"/>

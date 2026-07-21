@@ -5450,3 +5450,123 @@ class CatalogUploadProcessTest(TestCase):
         self.client.post(f'/stock/catalog/entries/{entry.id}/deactivate/')
         entry.refresh_from_db()
         self.assertFalse(entry.is_active)
+
+
+# ── Liquor Catalogue — bulk "Add from Catalogue" screen (2026-07-21) ─────────
+
+class CatalogBulkAddTest(TestCase):
+    """New bulk multi-item creation screen — merges the static
+    business_profiles.py catalog with a business's own uploaded
+    SupplierCatalogEntry rows, creates Items (+ optional ItemPortionPreset
+    rows) for all selected entries in one atomic request."""
+
+    def setUp(self):
+        from core.models import SupplierCatalogEntry
+        self.SupplierCatalogEntry = SupplierCatalogEntry
+        self.biz = Business.objects.create(name='Bulk Add Biz')
+        # 'bar' business type so BAR_CATALOG/LIQUOR_PRICELIST_CATALOG applies.
+        from core.models import BusinessType
+        bar_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz.business_type = bar_type
+        self.biz.save(update_fields=['business_type'])
+        self.store = Store.objects.create(business=self.biz, name='Main Bar')
+        self.owner = User.objects.create_user(username='bulkadd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='bulkadd_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+        self.uploaded_entry = SupplierCatalogEntry.objects.create(
+            business=self.biz, name='My Own Whisky 750ml', raw_name='My Own Whisky 750ml',
+            unit='Btl', volume_ml=750, category='spirit', cost_price=Decimal('900'),
+            default_reorder_level=3, default_reorder_quantity=6,
+            presets_json=[
+                {'label': 'Single shot', 'price': None, 'qty': 0.04},
+                {'label': 'Mzima / Full', 'price': None, 'qty': 1.0},
+            ],
+        )
+        self.client.force_login(self.owner)
+
+    def _get_static_key(self):
+        resp = self.client.get('/stock/catalog/bulk-add/')
+        import json as _json
+        catalog = _json.loads(resp.context['catalog_json'])
+        static_entry = next(e for e in catalog if e['source'] == 'static' and e['presets'])
+        return static_entry
+
+    def test_picker_merges_static_and_uploaded(self):
+        resp = self.client.get('/stock/catalog/bulk-add/')
+        import json as _json
+        catalog = _json.loads(resp.context['catalog_json'])
+        sources = {e['source'] for e in catalog}
+        self.assertIn('static', sources)
+        self.assertIn('uploaded', sources)
+        names = [e['name'] for e in catalog]
+        self.assertIn('My Own Whisky 750ml', names)
+
+    def test_bulk_create_items_with_and_without_presets(self):
+        import json
+        static_entry = self._get_static_key()
+        payload = {
+            'store_id': self.store.id,
+            'items': [
+                {'key': static_entry['key'], 'cost_price': '123', 'add_presets': True},
+                {'key': f'uploaded:{self.uploaded_entry.id}', 'cost_price': None, 'add_presets': False},
+            ],
+        }
+        resp = self.client.post(
+            '/stock/catalog/bulk-add/', data=json.dumps(payload), content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['created'], 2)
+
+        item1 = Item.objects.filter(business=self.biz, description=static_entry['name']).first()
+        self.assertIsNotNone(item1)
+        self.assertEqual(item1.cost_price, Decimal('123'))
+        self.assertTrue(item1.portion_presets.exists())
+
+        item2 = Item.objects.filter(business=self.biz, description='My Own Whisky 750ml').first()
+        self.assertIsNotNone(item2)
+        self.assertEqual(item2.cost_price, Decimal('900'))  # falls back to catalog default
+        self.assertFalse(item2.portion_presets.exists())  # add_presets=False
+
+    def test_material_no_does_not_collide_with_normal_add_item(self):
+        import json
+        self.client.post('/stock/add/', {
+            'description': 'Manually Added Item', 'unit': 'pcs', 'selling_price': '10',
+            'reorder_level': '0', 'reorder_quantity': '0', 'lead_time_days': '7', 'safety_days': '2',
+        })
+        static_entry = self._get_static_key()
+        payload = {
+            'store_id': self.store.id,
+            'items': [{'key': static_entry['key'], 'cost_price': '50', 'add_presets': False}],
+        }
+        resp = self.client.post(
+            '/stock/catalog/bulk-add/', data=json.dumps(payload), content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        material_nos = list(Item.objects.filter(business=self.biz).values_list('material_no', flat=True))
+        self.assertEqual(len(material_nos), len(set(material_nos)), 'material_no must never collide')
+
+    def test_staff_cannot_bulk_add(self):
+        import json
+        self.client.force_login(self.staff)
+        static_entry_resp = self.client.get('/stock/catalog/bulk-add/')
+        self.assertNotEqual(static_entry_resp.status_code, 200)
+        payload = {'store_id': self.store.id, 'items': [{'key': 'static:0', 'cost_price': '10', 'add_presets': False}]}
+        resp = self.client.post(
+            '/stock/catalog/bulk-add/', data=json.dumps(payload), content_type='application/json',
+        )
+        self.assertNotEqual(resp.status_code, 200)
+        self.assertEqual(Item.objects.filter(business=self.biz).count(), 0)
+
+    def test_missing_store_is_rejected(self):
+        import json
+        static_entry = self._get_static_key()
+        payload = {'store_id': '', 'items': [{'key': static_entry['key'], 'cost_price': '10', 'add_presets': False}]}
+        resp = self.client.post(
+            '/stock/catalog/bulk-add/', data=json.dumps(payload), content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(Item.objects.filter(business=self.biz).count(), 0)

@@ -249,6 +249,7 @@ from core.catalog_views import (
     catalog_upload_process,
     catalog_upload_batch_detail,
     catalog_entry_deactivate,
+    catalog_bulk_add,
 )
 from core.stock_take_views import (
     start_stock_take,
@@ -318,6 +319,7 @@ urlpatterns = [
     path("stock/catalog/upload/process/", catalog_upload_process, name="catalog_upload_process"),
     path("stock/catalog/upload/<int:batch_id>/", catalog_upload_batch_detail, name="catalog_upload_batch_detail"),
     path("stock/catalog/entries/<int:entry_id>/deactivate/", catalog_entry_deactivate, name="catalog_entry_deactivate"),
+    path("stock/catalog/bulk-add/", catalog_bulk_add, name="catalog_bulk_add"),
     path("stock/manage/", manage_items, name="manage_items"),
     path("stock/add/", add_item, name="add_item"),
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),
