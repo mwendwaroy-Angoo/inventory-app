@@ -192,7 +192,7 @@ def _close_expired_procurement():
 def procurement_list_owner(request):
     """Owner view: all their procurement requests."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     # Auto-close expired ones
@@ -218,7 +218,7 @@ def procurement_list_owner(request):
 def create_procurement(request):
     """Owner: create a new procurement request."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     if request.method == "POST":
@@ -281,8 +281,24 @@ def procurement_detail(request, pk):
         profile
         and profile.business
         and profile.business == procurement.business
-        and profile.is_owner
+        and profile.is_owner_or_manager
     )
+
+    # Suppliers who aren't the buyer may only view: currently-open requests
+    # (matches procurement_browse's own listing criteria) or a request their
+    # business has already bid on (so they can track their own bid's
+    # outcome after it closes/awards). Direct URL access with neither used
+    # to leak every business's procurement — title/description/budget/
+    # deadline — to any authenticated user on the platform (2026-07-21
+    # supply-chain audit finding).
+    if not is_owner:
+        has_bid = bool(
+            profile and profile.business
+            and procurement.bids.filter(supplier=profile.business).exists()
+        )
+        if procurement.status != "open" and not has_bid:
+            django_messages.error(request, "That procurement request is not available to view.")
+            return redirect("procurement_browse")
 
     bids = procurement.bids.select_related(
         "supplier__county", "supplier__business_type"
@@ -323,7 +339,7 @@ def cancel_procurement(request, pk):
     buyer would need to un-award first, which is a separate, not-yet-built
     concern — out of scope for closing this specific gap)."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     procurement = get_object_or_404(
@@ -347,7 +363,7 @@ def cancel_procurement(request, pk):
 def evaluate_bids(request, pk):
     """Owner: trigger scoring and view ranked bids."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     procurement = get_object_or_404(
@@ -385,7 +401,7 @@ def evaluate_bids(request, pk):
 def award_bid(request, bid_id):
     """Owner: accept a bid → creates SupplierRelationship."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     bid = get_object_or_404(
@@ -560,7 +576,7 @@ def confirm_delivery(request, bid_id):
     the bid is marked fully completed and pending bids are auto-cleared.
     """
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     bid = get_object_or_404(
@@ -878,7 +894,7 @@ def apply_as_supplier(request, business_id):
 def supplier_applications(request):
     """Owner: view incoming supplier applications."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     apps = SupplierApplication.objects.filter(
@@ -903,7 +919,7 @@ def supplier_applications(request):
 def review_application(request, app_id):
     """Owner: approve or reject a supplier application."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     app = get_object_or_404(

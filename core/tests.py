@@ -5896,3 +5896,146 @@ class AwardedBidTraceabilityTest(TestCase):
             any('hasn' in m.lower() or "n't been marked received" in m for m in msgs),
             f'Expected an unreceived-PO warning, got: {msgs}',
         )
+
+
+# ── Supply Chain / Procurement audit, Theme 3 (access-control scoping), 2026-07-21 ──
+
+class PurchaseOrderEditCrossTenantTest(TestCase):
+    """CRITICAL finding: purchase_order_edit() called formset.save() with no
+    business restriction on the 'item' field queryset before validation — an
+    authenticated user could inject a PurchaseOrderLine referencing another
+    business's Item, which receive_goods() would then use to write a
+    Transaction against a stranger's Item, corrupting their stock balance."""
+
+    def setUp(self):
+        from core.models import PurchaseOrder
+        self.PurchaseOrder = PurchaseOrder
+
+        self.biz_a = Business.objects.create(name='PO Edit Tenant A')
+        self.store_a = Store.objects.create(business=self.biz_a, name='Shop A')
+        self.owner_a = User.objects.create_user(username='poedit_owner_a', password='x')
+        UserProfile.objects.create(user=self.owner_a, business=self.biz_a, role='owner')
+
+        self.biz_b = Business.objects.create(name='PO Edit Tenant B')
+        self.store_b = Store.objects.create(business=self.biz_b, name='Shop B')
+        self.item_b = Item.objects.create(
+            business=self.biz_b, store=self.store_b, description='Tenant B Item',
+            material_no='POEDITB-01', unit='pcs', selling_price=Decimal('50'),
+        )
+
+        self.po = self.PurchaseOrder.objects.create(business=self.biz_a, status='draft')
+        self.client.force_login(self.owner_a)
+
+    def test_cannot_inject_cross_tenant_item_via_edit(self):
+        from core.models import PurchaseOrderLine
+        payload = {
+            'status': 'draft',
+            'lines-TOTAL_FORMS': '1',
+            'lines-INITIAL_FORMS': '0',
+            'lines-MIN_NUM_FORMS': '0',
+            'lines-MAX_NUM_FORMS': '1000',
+            'lines-0-item': str(self.item_b.id),
+            'lines-0-quantity_ordered': '5',
+            'lines-0-unit_price': '50',
+            'idempotency_token': 'poedit-xtenant-1',
+        }
+        self.client.post(f'/purchase-orders/{self.po.id}/edit/', payload)
+        self.assertFalse(
+            PurchaseOrderLine.objects.filter(po=self.po, item=self.item_b).exists(),
+            "Tenant A must not be able to attach Tenant B's item to their PO",
+        )
+
+    def test_own_item_still_works(self):
+        from core.models import PurchaseOrderLine
+        item_a = Item.objects.create(
+            business=self.biz_a, store=self.store_a, description='Tenant A Item',
+            material_no='POEDITA-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        payload = {
+            'status': 'draft',
+            'lines-TOTAL_FORMS': '1',
+            'lines-INITIAL_FORMS': '0',
+            'lines-MIN_NUM_FORMS': '0',
+            'lines-MAX_NUM_FORMS': '1000',
+            'lines-0-item': str(item_a.id),
+            'lines-0-quantity_ordered': '5',
+            'lines-0-unit_price': '50',
+            'idempotency_token': 'poedit-owntenant-1',
+        }
+        self.client.post(f'/purchase-orders/{self.po.id}/edit/', payload)
+        self.assertTrue(
+            PurchaseOrderLine.objects.filter(po=self.po, item=item_a).exists(),
+        )
+
+
+class ProcurementDetailScopingTest(TestCase):
+    def setUp(self):
+        from core.models import ProcurementRequest, SupplierBid
+        self.ProcurementRequest = ProcurementRequest
+
+        self.buyer = Business.objects.create(name='Detail Scope Buyer')
+        self.random_biz = Business.objects.create(name='Detail Scope Random Supplier')
+        self.bidder_biz = Business.objects.create(name='Detail Scope Bidder Supplier')
+
+        self.buyer_owner = User.objects.create_user(username='detailscope_buyer', password='x')
+        UserProfile.objects.create(user=self.buyer_owner, business=self.buyer, role='owner')
+        self.random_owner = User.objects.create_user(username='detailscope_random', password='x')
+        UserProfile.objects.create(user=self.random_owner, business=self.random_biz, role='owner')
+        self.bidder_owner = User.objects.create_user(username='detailscope_bidder', password='x')
+        UserProfile.objects.create(user=self.bidder_owner, business=self.bidder_biz, role='owner')
+
+        self.open_proc = ProcurementRequest.objects.create(
+            business=self.buyer, title='Open Req', description='desc',
+            deadline=timezone.localdate() + timedelta(days=5), status='open',
+        )
+        self.closed_proc = ProcurementRequest.objects.create(
+            business=self.buyer, title='Closed Req', description='desc',
+            deadline=timezone.localdate() + timedelta(days=5), status='closed',
+        )
+        SupplierBid.objects.create(
+            procurement=self.closed_proc, supplier=self.bidder_biz,
+            amount=Decimal('1000'), delivery_timeline='3 days', proposal='x',
+        )
+
+    def test_random_business_can_view_open_procurement(self):
+        self.client.force_login(self.random_owner)
+        resp = self.client.get(f'/procurement/{self.open_proc.id}/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_random_business_cannot_view_closed_procurement_it_never_bid_on(self):
+        self.client.force_login(self.random_owner)
+        resp = self.client.get(f'/procurement/{self.closed_proc.id}/', follow=True)
+        self.assertNotIn(b'Closed Req', resp.content)
+
+    def test_bidder_can_still_view_closed_procurement_it_bid_on(self):
+        self.client.force_login(self.bidder_owner)
+        resp = self.client.get(f'/procurement/{self.closed_proc.id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b'Closed Req', resp.content)
+
+    def test_buyer_can_always_view_own_procurement_regardless_of_status(self):
+        self.client.force_login(self.buyer_owner)
+        resp = self.client.get(f'/procurement/{self.closed_proc.id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b'Closed Req', resp.content)
+
+
+class ProcurementManagerAccessTest(TestCase):
+    """Sprint M1 extended owner-equivalent operational access to Managers
+    everywhere else in the app (analytics/keg/haki/shift/performer/restock/
+    restricted-items) — procurement_views.py and marketplace_views.py never
+    received that sweep and stayed hard-gated to is_owner only."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Manager Procurement Biz')
+        self.manager = User.objects.create_user(username='procmgr_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.client.force_login(self.manager)
+
+    def test_manager_can_access_create_procurement(self):
+        resp = self.client.get('/procurement/create/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_manager_can_access_supplier_list(self):
+        resp = self.client.get('/suppliers/')
+        self.assertEqual(resp.status_code, 200)

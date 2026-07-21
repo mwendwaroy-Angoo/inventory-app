@@ -558,7 +558,7 @@ from django.contrib import messages as django_messages
 def supplier_list(request):
     """Owner view: manage list of preferred suppliers."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     links = SupplierRelationship.objects.filter(
@@ -578,7 +578,7 @@ def supplier_list(request):
 def add_supplier(request):
     """Owner: add a business from the platform as a supplier."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner or not profile.business:
+    if not profile or not profile.is_owner_or_manager or not profile.business:
         return redirect("home")
 
     my_business = profile.business
@@ -639,7 +639,7 @@ def add_supplier(request):
 def edit_supplier(request, link_id):
     """Owner: edit notes on a supplier relationship."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner:
+    if not profile or not profile.is_owner_or_manager:
         return redirect("home")
 
     link = get_object_or_404(
@@ -659,7 +659,7 @@ def edit_supplier(request, link_id):
 def remove_supplier(request, link_id):
     """Owner: remove a supplier from the list."""
     profile = getattr(request.user, "userprofile", None)
-    if not profile or not profile.is_owner:
+    if not profile or not profile.is_owner_or_manager:
         return redirect("home")
 
     link = get_object_or_404(

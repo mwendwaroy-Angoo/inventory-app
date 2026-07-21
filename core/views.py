@@ -1443,6 +1443,14 @@ def purchase_order_create(request):
         form = PurchaseOrderForm(request.POST)
         temp_po = PurchaseOrder(business=user_profile.business)
         formset = PurchaseOrderLineFormSet(request.POST, instance=temp_po)
+        # Restrict the item queryset before validation too (defense in
+        # depth alongside the per-line business check below) — matches the
+        # fix applied to purchase_order_edit, which lacked both layers.
+        for f in formset.forms:
+            if "item" in f.fields:
+                f.fields["item"].queryset = Item.objects.filter(
+                    business=user_profile.business
+                )
         if form.is_valid() and formset.is_valid():
             po = form.save(commit=False)
             po.business = user_profile.business
@@ -1578,6 +1586,21 @@ def purchase_order_edit(request, po_id):
 
         form = PurchaseOrderForm(request.POST, instance=po)
         formset = PurchaseOrderLineFormSet(request.POST, instance=po)
+        # CRITICAL: restrict the item queryset BEFORE validation, not just
+        # when re-rendering. purchase_order_create() has its own explicit
+        # cross-tenant guard after formset.save(commit=False); this view
+        # called formset.save() directly with an unrestricted 'item' field
+        # queryset, so ModelChoiceField validation accepted ANY business's
+        # item_id and formset.save() persisted it — an authenticated user
+        # could inject a PurchaseOrderLine referencing another business's
+        # Item, which receive_goods() would then use to create a
+        # Transaction against a stranger's Item, corrupting their stock
+        # balance (2026-07-21 supply-chain audit finding).
+        for f in formset.forms:
+            if "item" in f.fields:
+                f.fields["item"].queryset = Item.objects.filter(
+                    business=user_profile.business
+                )
         if form.is_valid() and formset.is_valid():
             form.save()
             lines = formset.save()
