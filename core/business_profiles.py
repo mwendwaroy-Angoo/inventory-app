@@ -12,6 +12,8 @@ Usage:
     # profile['board'], profile['modules']['keg'], profile['catalog']
 """
 
+from core.liquor_pricelist_catalog import LIQUOR_PRICELIST_CATALOG
+
 # ── Catalog helper builders ────────────────────────────────────────────────────
 
 def _keg(name):
@@ -181,7 +183,7 @@ BAR_CATALOG = [
     # Cigarettes
     _cig('SM Cigarettes'),
     _cig('Embassy Cigarettes'),
-]
+] + LIQUOR_PRICELIST_CATALOG  # supplier price-list enrichment — see core/liquor_pricelist_catalog.py
 
 # Liquor store = same as bar minus kegs
 LIQUOR_CATALOG = [item for item in BAR_CATALOG if not item.get('is_keg')]
