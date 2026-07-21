@@ -5210,3 +5210,162 @@ class FreshStockCountChecklistTest(TestCase):
         txn = Transaction.objects.filter(business=self.biz, item=self.item_a, invoice_no='[ADJ]').first()
         self.assertIsNotNone(txn)
         self.assertEqual(txn.qty, 0)
+
+
+# ── Liquor Catalogue — core/catalog_classify.py (2026-07-21) ─────────────────
+
+class CatalogClassifyVolumeExtractionTest(TestCase):
+    """Table-driven coverage of every confirmed messy real-world case from
+    the uploaded supplier price list."""
+
+    def test_volume_extraction_cases(self):
+        from core.catalog_classify import extract_volume_ml
+        cases = [
+            ('ALL SEASONS WHSKY 750ML', 750),
+            ('58 CLASSIC GIN 350ML', 350),
+            ('GORDON LEMON 70CL', 700),
+            ('ABSOLUTE LITRE (PERNOD)', 1000),
+            ('ALL SEASONS LITRE', 1000),
+            ('4TH ROSE 1.5LT', 1500),
+            ('4TH STREET RED SWT 5LT', 5000),
+            ('COURVOSIER VSOP 700ML', 700),
+            ('HENDRICKS 700ML(BMC)', 700),
+            ('BLUE MOON 750M', 750),  # confirmed real typo
+            ('BLUE ICE COCO 1/4', 250),
+            ('KONYAGI -1/4', 250),
+            ('V& A 1/4', 250),
+            ('FAMOUSE 1/2', 375),
+            ('KONYAGI 1/2', 375),
+            ('BACARDI BLANCE 3/4', 500),
+            ('ALLSOPS BEER', None),
+            ('BALOZI CAN', None),
+            ('KO CLASSIC TONIC CAN', None),
+            ('', None),
+            (None, None),
+        ]
+        for name, expected in cases:
+            with self.subTest(name=name):
+                self.assertEqual(extract_volume_ml(name), expected)
+
+
+class CatalogClassifyCategoryTest(TestCase):
+    def test_category_keyword_coverage(self):
+        from core.catalog_classify import classify_category
+        cases = [
+            ('100 STROKES WHISKY 750ML', 'spirit'),
+            ('CHROME GIN 750ML', 'spirit'),
+            ('BLUE ICE VODKA 750ML', 'spirit'),
+            ('DALLAS BRANDY 250ML', 'spirit'),
+            ('KWV 20YRS', 'other'),  # brandy-adjacent brand name with no keyword — expected miss
+            ('BAILEYS ORIGINAL', 'liqueur'),
+            ('JACOB CREEK CHARDONNAY', 'other'),  # no 'wine' keyword in name — expected miss
+            ('FRAGOLINO WHITE 750ML', 'other'),
+            ('4TH STREET WHITE 750ML', 'other'),
+            ('TUSKER LAGER BEER', 'beer'),
+            ('BALOZI BEER', 'beer'),
+            ('TUSKER CIDER', 'cider'),
+            ('SM CIGARETTES', 'cigarette'),
+            ('BREES PUNCH', 'non_alcoholic'),
+            ('RED BULL ENERGY DRINK', 'energy_drink'),
+            ('COCA-COLA 300ML', 'soft_drink'),
+            ('SAFARI MINERAL WATER 500ML', 'soft_drink'),
+            ('SAFARI H2O 500ML', 'other'),  # "H2O" isn't literally "water" — expected miss
+            ('', 'other'),
+        ]
+        for name, expected in cases:
+            with self.subTest(name=name):
+                self.assertEqual(classify_category(name), expected)
+
+
+class CatalogClassifyReorderTierTest(TestCase):
+    def test_reorder_tier_boundaries(self):
+        from core.catalog_classify import infer_reorder_defaults
+        self.assertEqual(infer_reorder_defaults(120), (12, 24))
+        self.assertEqual(infer_reorder_defaults(300), (12, 24))
+        self.assertEqual(infer_reorder_defaults(301), (6, 12))
+        self.assertEqual(infer_reorder_defaults(800), (6, 12))
+        self.assertEqual(infer_reorder_defaults(801), (3, 6))
+        self.assertEqual(infer_reorder_defaults(2000), (3, 6))
+        self.assertEqual(infer_reorder_defaults(2001), (2, 3))
+        self.assertEqual(infer_reorder_defaults(5000), (2, 3))
+        self.assertEqual(infer_reorder_defaults(5001), (1, 2))
+        self.assertEqual(infer_reorder_defaults(43000), (1, 2))
+
+
+class DetectNameColumnTest(TestCase):
+    """The key regression proving column-position independence — the
+    reusable upload feature must not assume a fixed layout."""
+
+    def test_real_file_layout_blank_col_then_name_then_price(self):
+        from core.catalog_classify import detect_name_price_columns
+        rows = [
+            [None, None, None],
+            [None, None, None],
+            [None, 'Product Name', 'Selling Price'],
+            [None, 'Chrome Gin 750ml', 575],
+            [None, 'Blue Ice Vodka 750ml', 420],
+        ]
+        header_idx, name_col, price_col = detect_name_price_columns(rows)
+        self.assertEqual(header_idx, 2)
+        self.assertEqual(name_col, 1)
+        self.assertEqual(price_col, 2)
+
+    def test_swapped_columns_with_unconventional_headers(self):
+        from core.catalog_classify import detect_name_price_columns
+        rows = [
+            ['Buying Price', 'Item Description'],
+            [500, 'Konyagi 750ml'],
+            [200, 'Chrome Gin 250ml'],
+        ]
+        header_idx, name_col, price_col = detect_name_price_columns(rows)
+        self.assertEqual(header_idx, 0)
+        self.assertEqual(name_col, 1)
+        self.assertEqual(price_col, 0)
+
+    def test_no_usable_data_returns_none_triple(self):
+        from core.catalog_classify import detect_name_price_columns
+        header_idx, name_col, price_col = detect_name_price_columns([])
+        self.assertIsNone(header_idx)
+        self.assertIsNone(name_col)
+        self.assertIsNone(price_col)
+
+
+class ClassifyRowTest(TestCase):
+    def test_valid_spirit_row_matches_static_catalog_schema(self):
+        from core.catalog_classify import classify_row
+        entry = classify_row('Chrome Gin 750ml', 575)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry['name'], 'Chrome Gin 750ml')
+        self.assertEqual(entry['unit'], 'Btl')
+        self.assertFalse(entry['is_keg'])
+        self.assertEqual(entry['volume_ml'], 750)
+        self.assertEqual(entry['category'], 'spirit')
+        self.assertEqual(entry['cost_price'], 575.0)
+        self.assertTrue(len(entry['presets']) > 0)
+        self.assertTrue(all(p['price'] is None for p in entry['presets']))
+
+    def test_empty_name_is_skipped(self):
+        from core.catalog_classify import classify_row
+        self.assertIsNone(classify_row('', 100))
+        self.assertIsNone(classify_row(None, 100))
+
+    def test_non_positive_price_is_skipped(self):
+        from core.catalog_classify import classify_row
+        self.assertIsNone(classify_row('Some Drink', 0))
+        self.assertIsNone(classify_row('Some Drink', -5))
+
+    def test_unparseable_price_is_skipped(self):
+        from core.catalog_classify import classify_row
+        self.assertIsNone(classify_row('Some Drink', 'N/A'))
+
+    def test_beer_row_uses_beer_preset_shape(self):
+        from core.catalog_classify import classify_row
+        entry = classify_row('Balozi Beer', 135)
+        self.assertEqual(entry['category'], 'beer')
+        self.assertEqual(len(entry['presets']), 1)
+
+    def test_cheap_item_gets_higher_reorder_defaults(self):
+        from core.catalog_classify import classify_row
+        cheap = classify_row('Dallas Brandy 250ml', 120)
+        expensive = classify_row('KWV 20yrs', 10000)
+        self.assertGreater(cheap['default_reorder_level'], expensive['default_reorder_level'])
