@@ -1242,3 +1242,63 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   logged as Next Sprint Candidate #6, not built now. 4 commits (`bacf39a` classify engine,
   `a8a2c9b` enrichment, `f62151a` upload, `c509a74` bulk-add), 23 new tests across the whole
   feature. 267 tests pass.
+- Supply-Chain/Procurement Module Audit (2026-07-21). Next module in the systemic-audit queue
+  after Quick Sell — this module (`procurement_views.py`, `marketplace_views.py`, PO/GoodsReceipt
+  views in `views.py`) had never been through any C&E pass before; confirmed via a full research
+  agent pass before touching code. Same three-theme structure, three commits. **Theme 1
+  (money-path idempotency):** the module had neither of the codebase's two established
+  double-submit protections anywhere — zero uses of `claim_checkout_token`, zero uses of
+  `select_for_update()`/`transaction.atomic()`. `receive_goods()` — the most severe gap, matching
+  exactly the "double-process a goods receipt" failure mode: its only re-entry guard was checked
+  once against a plain fetch, never re-checked under a lock before the write, so two
+  near-simultaneous submissions could each independently create a `GoodsReceiptLine`, increment
+  `quantity_received`, and write a stock-in `Transaction` — double-counting one physical delivery.
+  Fixed with `claim_checkout_token` + `transaction.atomic()` + `select_for_update()` on the PO and
+  each line, re-checking status under the lock. `award_bid()` had no guard against a bid already
+  being `accepted` before proceeding — a double-click could create a second draft `PurchaseOrder`
+  with duplicated lines and re-fire supplier notifications; fixed with `select_for_update()` +
+  a status check scoped tightly around just the DB-critical writes (notifications/PO-creation
+  correctly stay outside the lock, but are now unreachable on retry since gated behind it).
+  `purchase_order_create`/`edit` got idempotency tokens too, for consistency. 5 new tests.
+  **Theme 2 (state-transition completeness):** three of `notifications.py`'s procurement
+  functions (`notify_new_bid_opportunity`, `notify_supplier_bid_received`,
+  `notify_supplier_bid_awarded`) referenced fields that don't exist on `ProcurementRequest`
+  (`item_description`/`quantity`/`unit`/`budget`/`location` — the real fields are
+  `title`/`description`/`budget_min`/`budget_max`) and filtered `SupplierApplication` on a
+  nonexistent `business` field (real pairing: `applicant`/`target_business`) — every call site
+  wraps these in a blanket `try/except`, so they've silently no-op'd on every call since written;
+  suppliers have never actually been notified of a new opportunity. Fixed all three.
+  `PurchaseOrder.status` was a directly user-editable form field offering all five
+  `STATUS_CHOICES` including `part_received`/`received`/`cancelled` — none of which are supposed
+  to be reachable except as a *consequence* of `receive_goods()` actually processing a delivery;
+  a PO could be hand-set to "received" with zero stock ever moving. `PurchaseOrderForm` now
+  restricts the field to `draft`/`ordered` only. Neither `ProcurementRequest` nor `PurchaseOrder`
+  had a cancel path despite both defining `cancelled` in `STATUS_CHOICES` — added
+  `cancel_purchase_order()` and `cancel_procurement()`, both idempotent, both wired into their
+  detail templates. Added `PurchaseOrder.awarded_bid` FK (migration 0108) — the only prior link
+  from an auto-created draft PO back to the bid/procurement that spawned it was a free-text
+  sentence in `notes`. Bid-completion (`confirm_delivery`/`confirm_payment`) and PO-receiving
+  (`receive_goods`) are two entirely separate state machines that could silently diverge — an
+  owner could confirm delivery and let the procurement close as "done" while the linked PO sat
+  unreceived forever with zero stock added; not auto-linking them (would silently move stock the
+  owner never reviewed) but `confirm_delivery` now uses the new FK to warn visibly when this has
+  happened. 12 new tests. **Theme 3 (access-control scoping):** **CRITICAL** —
+  `purchase_order_edit()`'s `item` field queryset was only ever restricted to the current
+  business in the GET/re-render path, never before `formset.save()` on a successful POST (unlike
+  `purchase_order_create()`, which has an explicit manual guard for exactly this) — an
+  authenticated user could inject a `PurchaseOrderLine` referencing ANY other business's `Item`,
+  which `receive_goods()` would then use to write a real stock-in `Transaction` against a
+  stranger's `Item`, corrupting their balance. Fixed by restricting the queryset before
+  validation in both views. `procurement_detail()` had zero business scoping at all — any
+  authenticated user could view any business's procurement request by guessing/incrementing
+  `pk`, leaking title/description/budget/deadline for closed/cancelled requests never meant to
+  be publicly browsable; fixed to allow the buyer always, plus any supplier that has actually bid
+  on it, redirecting everyone else to the properly-scoped browse page. Also found:
+  `procurement_views.py`/`marketplace_views.py` were the only two files in the app that never
+  received Sprint M1's `owner_or_manager_required` sweep — every operational action here was
+  still hard-gated to `profile.is_owner` only; replaced all 13 occurrences with
+  `profile.is_owner_or_manager`. 8 new tests including a direct cross-tenant regression lock (the
+  critical one) and a direct scoping-leak regression lock. Three commits (`1c3c799` Theme 1,
+  `81d0832` Theme 2, `305a973` Theme 3), 25 new tests total, 292 tests pass. **Supply chain/
+  procurement module audit complete** (all 3 themes). Next: resume remaining scope — debt
+  tracker, analytics.
