@@ -392,6 +392,28 @@ County model lives in core (not accounts). Customer.county FK to core.County, SE
 - Transaction history with Excel export
 - Quick Sell POS (cart-based, M-Pesa/cash/credit); preset modal for spirits/non-produce items
 
+### Reset Sales & Analytics (COMPLETE)
+- Owner-only, permanent wipe of a business's sales/transaction/analytics history for a genuine
+  clean slate, without deleting the business/staff/item catalog (/stock/reset-sales/)
+- Two-step: backup workbook download (required first) → type business name to confirm → atomic
+  delete across 24 models + zeroed item balances
+- Fresh Stock Count checklist (/stock/fresh-count/) guides a real physical recount afterward via
+  the existing ⚖️ Rekebisha tool — balances are never frozen from the pre-reset computed value
+- SalesResetLog audit trail; marketplace/cross-business models explicitly excluded from the wipe
+
+### Liquor/Spirits Catalogue (COMPLETE)
+- BAR_CATALOG enriched from ~60 to 894 entries using a real supplier price list (core/
+  liquor_pricelist_catalog.py), via a shared parsing engine (core/catalog_classify.py: column
+  detection, volume/category inference, price-tier reorder-level defaults)
+- Reusable per-business supplier price-list upload (/stock/catalog/upload/) — any owner can
+  upload their OWN Excel/CSV price list at any time; format-independent column detection,
+  idempotent re-upload
+- Bulk "Add from Catalogue" screen (/stock/catalog/bulk-add/) — search and create several items
+  at once (mixing static + uploaded catalog entries) with per-item cost-price confirm/edit and
+  an "add portion presets" toggle for pour-by-the-glass items
+- `enrich_liquor_catalog` management command for re-running the enrichment against a new price
+  list in future; PDF price-list support deferred (see Next Sprint Candidates)
+
 ### Kibanda Produce Module (COMPLETE — see full section above)
 All features built and deployed including:
 - ProduceBunch revenue-envelope model (greens AND sack goods)
@@ -521,6 +543,15 @@ app.
    - Prerequisite: business must have daraja_consumer_key + daraja_secret + daraja_passkey
      saved in Payment Settings (Business.daraja_* fields, migration 0029). Already stored.
    - Reminder: remind Roy to start this sprint when a business requests STK-at-checkout
+6. **PDF supplier price-list upload** — extend `catalog_upload_process` (core/catalog_views.py)
+   to accept a PDF supplier price list, not just Excel/CSV, feeding the same
+   `core.catalog_classify` engine (`detect_name_price_columns`/`classify_row`) once the raw
+   name/price pairs are extracted. Deliberately deferred out of the 2026-07-21 Liquor Catalogue
+   sprint — PDF layouts are far less structured than spreadsheet columns (no reliable cell
+   grid to read), needing either a table-extraction library (e.g. `pdfplumber`/`camelot`) or an
+   AI-vision-based parse of a scanned/photographed price list, and deserves its own QA pass
+   rather than a rushed bolt-on. Start this when a business owner specifically has only a PDF
+   price list and no Excel/CSV alternative.
 
 ---
 
@@ -1159,3 +1190,55 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   tests pass. Next: Liquor/Spirits Catalogue (Feature 2 of this sprint — one-time price-list
   enrichment of the existing static BAR_CATALOG plus a reusable per-business supplier-list
   upload feature).
+- Sprint Reset, Feature 2 (2026-07-21): Liquor/Spirits Catalogue. Roy uploaded a real supplier
+  price list (846 raw SKU lines) and wanted it turned into a proper bar catalogue — both a
+  one-time enrichment of the app's existing catalog AND a reusable "upload your own supplier
+  list" feature for any business, going forward. **Shared engine** (`core/catalog_classify.py`,
+  pure functions, no Django dependency): `detect_name_price_columns()` scores each column by
+  text-ratio vs numeric-ratio rather than assuming a fixed layout, so a re-labelled/re-ordered
+  sheet still parses; `extract_volume_ml()` handles the confirmed messy real cases (750ML, 70CL,
+  1LT/LTR/LITRE, 1.5LT, `700ML(BMC)` distributor tags, `1/4`·`1/2`·`3/4` fraction notation, a
+  confirmed `750M` typo); `classify_category()` is a Python port of `BAR_CAT_CONFIG` from
+  item_form.html — **caught a real bug during testing**: naive substring matching misclassified
+  "BAILEYS ORIGINAL" as a gin, because "gin" is literally a substring of "original" — fixed to
+  word-boundary regex matching; `infer_reorder_defaults()` implements Roy's own judgment call
+  (cheap/high-turnover items like Dallas/Blue Ice/Chrome quarters get bigger reorder buffers than
+  slow-moving premium bottles); `classify_row()` builds its result via the *existing*
+  `_spirit()`/`_beer()`/`_soda()`/`_cig()` helpers so every generated entry is schema-identical to
+  the hand-curated catalog. **One-time enrichment**: `enrich_liquor_catalog` management command
+  (preview-first, mirrors `import_products.py`'s convention — never writes directly to
+  business_profiles.py or the DB) parsed the real file, deduped 12 matches against the existing
+  BAR_CATALOG, and produced 834 new entries — spot-checked against Roy's own named examples
+  (Dallas, Blue Ice, Chrome all correctly classified as spirits with size-appropriate reorder
+  tiers) before commit. Result lives in its own file, `core/liquor_pricelist_catalog.py` (kept
+  separate from business_profiles.py purely for size — 800+ literal dict entries would make that
+  file unwieldy), imported and appended onto `BAR_CATALOG` (60 → 894 entries, `LIQUOR_CATALOG`'s
+  existing filter-derivation needed no code change). ~78% of rows fall back to a generic 'other'
+  category (no literal type keyword in the raw brand name) — expected and documented, not a bug;
+  still valid sellable entries, just without spirit-specific pour presets. Uploaded spreadsheet
+  deleted once consumed. **Reusable per-business upload** (`core/catalog_views.py`): new
+  `CatalogUploadBatch` (job/audit header, business-scoped — distinct from the internal admin-only
+  `ImportJob`) and `SupplierCatalogEntry` (one parsed entry per business, schema mirrors the
+  static catalog's dict shape) models, migration 0107. `catalog_upload_process()` reuses the same
+  classification engine and is idempotent (`update_or_create` keyed on business+raw_name — re-
+  uploading updates in place, never duplicates); unparseable rows are counted with a capped
+  sample kept on the batch, never silently dropped. **Bulk "Add from Catalogue" screen**
+  (`catalog_bulk_add`, at `/stock/catalog/bulk-add/`) — `add_item` only ever creates one Item per
+  POST, so this is a genuinely new bulk-create path: search/pick several catalogue entries at
+  once (merging static + a business's own uploaded entries), confirm or edit the suggested cost
+  price per item, optionally toggle "add portion presets" per item, submit once, all created
+  atomically. Server re-resolves every selection against the same merged catalog rather than
+  trusting client-supplied data; reuses `add_item`'s own `_resolve_category()` and sequential
+  `MAT-####` material_no scheme (one counter across the whole batch, to avoid collisions); copies
+  preset `qty` values straight through since the catalog entries already bake in the correct
+  fraction-of-bottle math for their own size — no separate fraction-math port needed. **Two more
+  real bugs caught by the test suite before ship**: an empty/missing `store_id` crashed with a
+  bare 500 (`ValueError` from the ORM) instead of a graceful 400 — fixed to validate as an integer
+  first; and `ItemPortionPreset.price` has no null option, unlike the catalog's own `'price':
+  None` convention — `add_item` itself silently *skips* a preset row with a blank price rather
+  than saving one, and dropping every generated preset would have defeated the whole point of the
+  toggle, so this now creates them at an explicit `KES 0` placeholder (surfaced in the success
+  message) for the owner to fill in via Edit Item. PDF price-list support explicitly deferred —
+  logged as Next Sprint Candidate #6, not built now. 4 commits (`bacf39a` classify engine,
+  `a8a2c9b` enrichment, `f62151a` upload, `c509a74` bulk-add), 23 new tests across the whole
+  feature. 267 tests pass.
