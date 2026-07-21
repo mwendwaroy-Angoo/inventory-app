@@ -244,6 +244,12 @@ from core.reset_views import (
     fresh_stock_count_checklist,
     mark_item_recounted,
 )
+from core.catalog_views import (
+    catalog_upload_form,
+    catalog_upload_process,
+    catalog_upload_batch_detail,
+    catalog_entry_deactivate,
+)
 from core.stock_take_views import (
     start_stock_take,
     stock_take_detail,
@@ -308,6 +314,10 @@ urlpatterns = [
     path("stock/reset-sales/complete/", reset_sales_complete, name="reset_sales_complete"),
     path("stock/fresh-count/", fresh_stock_count_checklist, name="fresh_stock_count_checklist"),
     path("stock/fresh-count/<int:item_id>/recounted/", mark_item_recounted, name="mark_item_recounted"),
+    path("stock/catalog/upload/", catalog_upload_form, name="catalog_upload_form"),
+    path("stock/catalog/upload/process/", catalog_upload_process, name="catalog_upload_process"),
+    path("stock/catalog/upload/<int:batch_id>/", catalog_upload_batch_detail, name="catalog_upload_batch_detail"),
+    path("stock/catalog/entries/<int:entry_id>/deactivate/", catalog_entry_deactivate, name="catalog_entry_deactivate"),
     path("stock/manage/", manage_items, name="manage_items"),
     path("stock/add/", add_item, name="add_item"),
     path("stock/edit/<int:item_id>/", edit_item, name="edit_item"),

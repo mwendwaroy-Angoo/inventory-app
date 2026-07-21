@@ -3292,3 +3292,60 @@ class SalesResetLog(models.Model):
 
     def __str__(self):
         return f"{self.business_name_cache} reset by {self.performed_by_username_cache} — {self.created_at:%Y-%m-%d}"
+
+
+class CatalogUploadBatch(models.Model):
+    """Job/audit header for one supplier price-list upload — business-scoped
+    and owner-facing, distinct from the internal admin-only ImportJob used
+    by import_products.py/import_taxonomy.py (which isn't business-scoped).
+    Uses the shared core.catalog_classify engine, same as the one-time
+    BAR_CATALOG enrichment (enrich_liquor_catalog management command)."""
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='catalog_upload_batches'
+    )
+    uploaded_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, related_name='catalog_uploads'
+    )
+    original_filename = models.CharField(max_length=255, blank=True)
+    rows_total = models.IntegerField(default=0)
+    rows_parsed = models.IntegerField(default=0)
+    rows_skipped = models.IntegerField(default=0)
+    skipped_examples = models.JSONField(default=list, help_text='Capped sample of unparseable raw row text')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.business.name} — {self.original_filename} ({self.rows_parsed}/{self.rows_total})"
+
+
+class SupplierCatalogEntry(models.Model):
+    """One parsed catalog entry from a business's own uploaded supplier
+    price list — coexists with the static business_profiles.py catalog;
+    the 'Add from Catalogue' bulk-add screen merges both. Schema mirrors
+    the static catalog's dict shape (name/unit/volume_ml/category/
+    cost_price/presets) so both sources render identically in the UI."""
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='supplier_catalog_entries'
+    )
+    source_upload = models.ForeignKey(
+        CatalogUploadBatch, on_delete=models.CASCADE, null=True, blank=True, related_name='entries'
+    )
+    name = models.CharField(max_length=200)
+    raw_name = models.CharField(max_length=200, blank=True)
+    unit = models.CharField(max_length=20, blank=True)
+    volume_ml = models.PositiveIntegerField(null=True, blank=True)
+    category = models.CharField(max_length=30, blank=True)
+    cost_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    default_reorder_level = models.IntegerField(default=0)
+    default_reorder_quantity = models.IntegerField(default=0)
+    presets_json = models.JSONField(default=list, help_text='Same shape as the static catalog entries’ "presets" key')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.business.name} — {self.name}"

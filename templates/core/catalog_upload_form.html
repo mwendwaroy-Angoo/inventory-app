@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}Upload Price List — Duka Mwecheche{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:750px;">
+    <h2 class="page-title">📋 {% trans 'Upload Supplier Price List' %}</h2>
+    <p style="color:var(--muted); font-size:0.88rem; margin-bottom:1.2rem;">
+        {% trans "Upload your supplier's Excel or CSV price list — the system will read the product names and prices automatically, regardless of the exact column layout, and add them to your own catalogue for quick item creation." %}
+    </p>
+
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
+        <form method="post" action="{% url 'catalog_upload_process' %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            <label class="form-label" style="color:var(--pearl);">{% trans "Price list file (.xlsx, .xls, or .csv)" %}</label>
+            <input type="file" name="price_list" accept=".xlsx,.xls,.csv" class="form-control mb-3" required>
+            <button type="submit" class="btn btn-gold">⬆️ {% trans "Upload & Parse" %}</button>
+        </form>
+    </div>
+
+    {% if batches %}
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
+        <h6 style="color:var(--gold-light); margin-bottom:0.8rem;">{% trans "Upload history" %}</h6>
+        <div class="table-responsive">
+            <table class="table table-sm" style="color:var(--pearl);">
+                <thead><tr><th>{% trans "File" %}</th><th>{% trans "Date" %}</th><th>{% trans "Parsed" %}</th><th>{% trans "Skipped" %}</th><th></th></tr></thead>
+                <tbody>
+                {% for b in batches %}
+                    <tr>
+                        <td>{{ b.original_filename }}</td>
+                        <td>{{ b.created_at|date:"d M Y H:i" }}</td>
+                        <td>{{ b.rows_parsed }}</td>
+                        <td>{{ b.rows_skipped }}</td>
+                        <td><a href="{% url 'catalog_upload_batch_detail' b.id %}" style="color:var(--gold);">{% trans "View" %} →</a></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if entries %}
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem;">
+        <h6 style="color:var(--gold-light); margin-bottom:0.8rem;">{% trans "Your catalogue" %} ({{ entries|length }})</h6>
+        <div class="table-responsive" style="max-height:400px; overflow-y:auto;">
+            <table class="table table-sm" style="color:var(--pearl);">
+                <thead><tr><th>{% trans "Name" %}</th><th>{% trans "Category" %}</th><th>{% trans "Cost" %}</th><th></th></tr></thead>
+                <tbody>
+                {% for e in entries %}
+                    <tr>
+                        <td>{{ e.name }}</td>
+                        <td style="color:var(--muted);">{{ e.category }}</td>
+                        <td>{% if e.cost_price %}KES {{ e.cost_price }}{% else %}—{% endif %}</td>
+                        <td>
+                            <form method="post" action="{% url 'catalog_entry_deactivate' e.id %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">{% trans "Remove" %}</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="mt-3">
+        <a href="{% url 'manage_items' %}" class="btn btn-outline-secondary btn-sm">← {% trans 'Back to Manage Items' %}</a>
+    </div>
+</div>
+{% endblock %}

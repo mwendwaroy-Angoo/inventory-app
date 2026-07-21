@@ -5369,3 +5369,84 @@ class ClassifyRowTest(TestCase):
         cheap = classify_row('Dallas Brandy 250ml', 120)
         expensive = classify_row('KWV 20yrs', 10000)
         self.assertGreater(cheap['default_reorder_level'], expensive['default_reorder_level'])
+
+
+# ── Liquor Catalogue — reusable per-business upload (2026-07-21) ─────────────
+
+class CatalogUploadProcessTest(TestCase):
+    """Any business owner can upload their OWN supplier price list — entries
+    are scoped per business, and re-uploading the same file is idempotent
+    (updates in place, no duplicates)."""
+
+    def setUp(self):
+        from core.models import CatalogUploadBatch, SupplierCatalogEntry
+        self.CatalogUploadBatch = CatalogUploadBatch
+        self.SupplierCatalogEntry = SupplierCatalogEntry
+
+        self.biz = Business.objects.create(name='Upload Test Biz')
+        self.owner = User.objects.create_user(username='catupload_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.other_biz = Business.objects.create(name='Upload Other Biz')
+        self.other_owner = User.objects.create_user(username='catupload_other', password='x')
+        UserProfile.objects.create(user=self.other_owner, business=self.other_biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def _make_xlsx(self):
+        import openpyxl
+        from io import BytesIO
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(['Product Name', 'Selling Price'])
+        ws.append(['Chrome Vodka 750ml', 575])
+        ws.append(['Dallas Brandy 250ml', 120])
+        ws.append(['Bad Row With No Price', None])
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return SimpleUploadedFile(
+            'test_pricelist.xlsx', buf.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+    def test_upload_creates_scoped_entries(self):
+        resp = self.client.post('/stock/catalog/upload/process/', {'price_list': self._make_xlsx()})
+        self.assertEqual(resp.status_code, 302)
+        entries = self.SupplierCatalogEntry.objects.filter(business=self.biz)
+        self.assertEqual(entries.count(), 2)
+        names = set(entries.values_list('raw_name', flat=True))
+        self.assertIn('Chrome Vodka 750ml', names)
+        self.assertIn('Dallas Brandy 250ml', names)
+
+    def test_upload_not_visible_to_another_business(self):
+        self.client.post('/stock/catalog/upload/process/', {'price_list': self._make_xlsx()})
+        self.client.force_login(self.other_owner)
+        resp = self.client.get('/stock/catalog/upload/')
+        self.assertEqual(len(resp.context['entries']), 0)
+
+    def test_reupload_same_file_is_idempotent(self):
+        self.client.post('/stock/catalog/upload/process/', {'price_list': self._make_xlsx()})
+        self.client.post('/stock/catalog/upload/process/', {'price_list': self._make_xlsx()})
+        entries = self.SupplierCatalogEntry.objects.filter(business=self.biz)
+        self.assertEqual(entries.count(), 2, 'Re-uploading the same file must update in place, not duplicate')
+
+    def test_staff_cannot_upload(self):
+        staff = User.objects.create_user(username='catupload_staff', password='x')
+        UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        self.client.force_login(staff)
+        self.client.post('/stock/catalog/upload/process/', {'price_list': self._make_xlsx()})
+        self.assertEqual(self.SupplierCatalogEntry.objects.filter(business=self.biz).count(), 0)
+
+    def test_batch_records_skipped_row(self):
+        self.client.post('/stock/catalog/upload/process/', {'price_list': self._make_xlsx()})
+        batch = self.CatalogUploadBatch.objects.filter(business=self.biz).first()
+        self.assertIsNotNone(batch)
+        self.assertEqual(batch.rows_parsed, 2)
+        self.assertEqual(batch.rows_skipped, 1)
+
+    def test_deactivate_entry(self):
+        self.client.post('/stock/catalog/upload/process/', {'price_list': self._make_xlsx()})
+        entry = self.SupplierCatalogEntry.objects.filter(business=self.biz).first()
+        self.client.post(f'/stock/catalog/entries/{entry.id}/deactivate/')
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_active)
