@@ -615,6 +615,16 @@ def receipt_pay(request, token):
     if not phone:
         return JsonResponse({'error': 'phone_required'}, status=400)
 
+    # Server-side double-submit backstop — see core/idempotency.py. This is a
+    # public/unauthenticated endpoint (the customer's own phone triggers the
+    # STK prompt); the client already disables its button on click, but that
+    # only guards a second click on the same live page, not a genuine
+    # duplicate request reaching the server.
+    from core.idempotency import claim_checkout_token
+    idem_token = (data.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'error': 'STK Push hii tayari imetumwa.', 'duplicate': True}, status=409)
+
     try:
         from .mpesa import initiate_stk_push, format_phone_ke
         from .models import Payment

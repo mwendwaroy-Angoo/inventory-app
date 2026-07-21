@@ -1000,6 +1000,14 @@ class Payment(models.Model):
         default=False,
         help_text='True once qs_cart has been processed (by callback or JS poll).',
     )
+    debt_settled = models.BooleanField(
+        default=False,
+        help_text=(
+            'True once this payment\'s debt/receipt settlement (entry-selection mode, '
+            'debt-block mode, or staff-initiated debt STK) has been processed (by '
+            'callback or JS poll).'
+        ),
+    )
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='payments')
     store = models.ForeignKey(
         'Store', on_delete=models.SET_NULL, null=True, blank=True, related_name='payments',

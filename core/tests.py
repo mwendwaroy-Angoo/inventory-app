@@ -6039,3 +6039,454 @@ class ProcurementManagerAccessTest(TestCase):
     def test_manager_can_access_supplier_list(self):
         resp = self.client.get('/suppliers/')
         self.assertEqual(resp.status_code, 200)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Debt Tracker Module Audit — Theme 1 (money-path idempotency), 2026-07-21
+# ══════════════════════════════════════════════════════════════════════════════
+
+class RecordDebtPaymentIdempotencyTest(TestCase):
+    """record_debt_payment is a real <form> POST/redirect with no prior server-side
+    duplicate-submission guard — a double-click on "Record Payment" or a back-button
+    resubmission could create a second, real CustomerDebtPayment for the same cash/
+    mpesa payment. Locks in the core.idempotency.claim_checkout_token backstop."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='debtidem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Debt Idem Item',
+            material_no='DEBTIDEM-01', selling_price=Decimal('50'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Debt Idem Patron', credit_approved=True,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-4'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('400'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_duplicate_token_does_not_double_record_payment(self):
+        from core.models import CustomerDebtPayment
+        payload = {
+            'amount_paid': '100', 'payment_method': 'cash', 'debt_source': 'bar',
+            'idempotency_token': 'debt-pay-same-token',
+        }
+        self.client.post(f'/debt/{self.customer.id}/payment/', payload)
+        self.client.post(f'/debt/{self.customer.id}/payment/', payload)
+        self.assertEqual(
+            CustomerDebtPayment.objects.filter(customer=self.customer).count(), 1,
+            'Duplicate token must not create a second CustomerDebtPayment',
+        )
+
+    def test_different_tokens_both_go_through(self):
+        from core.models import CustomerDebtPayment
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '100', 'payment_method': 'cash', 'debt_source': 'bar',
+            'idempotency_token': 'debt-pay-token-a',
+        })
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '100', 'payment_method': 'cash', 'debt_source': 'bar',
+            'idempotency_token': 'debt-pay-token-b',
+        })
+        self.assertEqual(
+            CustomerDebtPayment.objects.filter(customer=self.customer).count(), 2,
+            'Two distinct tokens must both be processed as real, separate payments',
+        )
+
+    def test_blank_token_still_works(self):
+        """Backward compat: claim_checkout_token treats a blank token as unprotected,
+        not blocked — existing callers with no token must not break."""
+        from core.models import CustomerDebtPayment
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '100', 'payment_method': 'cash', 'debt_source': 'bar',
+        })
+        self.assertEqual(CustomerDebtPayment.objects.filter(customer=self.customer).count(), 1)
+        self.assertNotEqual(resp.status_code, 400)
+
+
+class DebtStkPushIdempotencyTest(TestCase):
+    """debt_stk_push had no client-side button-disable AND no server-side guard at
+    all — a rapid double-tap on "Send STK" could fire two separate STK Push prompts
+    to the customer's phone for the same debt; if the customer approved both, that's
+    a real double-charge, not just a duplicate record. Locks in the
+    core.idempotency.claim_checkout_token backstop added to debt_stk_push."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='Debt STK Idem Biz', mpesa_till='555444',
+            daraja_consumer_key='key', daraja_consumer_secret='secret', daraja_passkey='pass',
+        )
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='debtstkidem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Debt STK Idem Item',
+            material_no='DEBTSTKIDEM-01', selling_price=Decimal('50'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Debt STK Patron', phone='0712345678', credit_approved=True,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-10'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('1000'),
+        )
+        self.client.force_login(self.owner)
+
+    def _mock_stk_ok(self, mock_requests, checkout_id):
+        token_resp = MagicMock()
+        token_resp.json.return_value = {'access_token': 'tok'}
+        token_resp.raise_for_status.return_value = None
+        mock_requests.get.return_value = token_resp
+
+        push_resp = MagicMock()
+        push_resp.json.return_value = {'ResponseCode': '0', 'CheckoutRequestID': checkout_id}
+        push_resp.raise_for_status.return_value = None
+        mock_requests.post.return_value = push_resp
+
+    @patch('core.mpesa.requests')
+    def test_duplicate_token_sends_only_one_stk_push(self, mock_requests):
+        self._mock_stk_ok(mock_requests, 'ws_debt_dup')
+        payload = {
+            'amount': '100', 'phone': '0712345678', 'source': 'bar',
+            'idempotency_token': 'debt-stk-same-token',
+        }
+        r1 = self.client.post(f'/debt/{self.customer.id}/stk-push/', payload)
+        r2 = self.client.post(f'/debt/{self.customer.id}/stk-push/', payload)
+        self.assertEqual(r1.json().get('ok'), True)
+        self.assertEqual(r2.status_code, 409)
+        self.assertEqual(Payment.objects.filter(business=self.biz, debt_customer=self.customer).count(), 1)
+        self.assertEqual(mock_requests.post.call_count, 1)
+
+    @patch('core.mpesa.requests')
+    def test_different_tokens_both_send_stk_push(self, mock_requests):
+        self._mock_stk_ok(mock_requests, 'ws_debt_a')
+        r1 = self.client.post(f'/debt/{self.customer.id}/stk-push/', {
+            'amount': '100', 'phone': '0712345678', 'source': 'bar',
+            'idempotency_token': 'debt-stk-token-a',
+        })
+        self._mock_stk_ok(mock_requests, 'ws_debt_b')
+        r2 = self.client.post(f'/debt/{self.customer.id}/stk-push/', {
+            'amount': '100', 'phone': '0712345678', 'source': 'bar',
+            'idempotency_token': 'debt-stk-token-b',
+        })
+        self.assertEqual(r1.json().get('ok'), True)
+        self.assertEqual(r2.json().get('ok'), True)
+        self.assertEqual(Payment.objects.filter(business=self.biz, debt_customer=self.customer).count(), 2)
+
+
+class DebtSettlementFromPaymentIdempotencyTest(TestCase):
+    """The three debt-adjacent STK settlement functions in mpesa_views.py
+    (_create_debt_payment_from_receipt, _settle_debt_customer_from_payment,
+    _settle_receipt_entries_from_payment) are each called from BOTH the Daraja
+    webhook (mpesa_callback) and the JS status poll (payment_status) — a realistic
+    race, not just a double-tap. Their prior guard (skip if a CustomerDebtPayment
+    already exists with this mpesa_ref in its notes) was skipped entirely when
+    mpesa_ref was blank. Payment.debt_settled + select_for_update, mirroring
+    kitchen_settled/qs_settled, closes this for all three."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Settle Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='debtsettleidem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Debt Settle Idem Item',
+            material_no='DEBTSETTLEIDEM-01', selling_price=Decimal('50'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Debt Settle Patron', credit_approved=True,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-10'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('1000'),
+        )
+
+    def test_settle_debt_customer_from_payment_runs_once(self):
+        from core.mpesa_views import _settle_debt_customer_from_payment
+        from core.models import CustomerDebtPayment
+        payment = Payment.objects.create(
+            business=self.biz, source='bar', amount=Decimal('300'), method='mpesa',
+            status='completed', debt_customer=self.customer,
+        )
+        _settle_debt_customer_from_payment(payment)
+        _settle_debt_customer_from_payment(payment)  # simulated callback/poll race
+        self.assertEqual(CustomerDebtPayment.objects.filter(customer=self.customer).count(), 1)
+        payment.refresh_from_db()
+        self.assertTrue(payment.debt_settled)
+
+    def test_create_debt_payment_from_receipt_runs_once(self):
+        from core.mpesa_views import _create_debt_payment_from_receipt
+        from core.models import CustomerDebtPayment, BarTab
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=self.customer.name,
+            customer=self.customer, status='SETTLED',
+        )
+        receipt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Debt Settle Idem Item', 'qty': 10, 'subtotal': 1000}],
+            payment_method='credit', customer_name=self.customer.name,
+            meta={'tab_id': tab.id},
+        )
+        payment = Payment.objects.create(
+            business=self.biz, source='bar', amount=Decimal('300'), method='mpesa',
+            status='completed', receipt_token=receipt.token,
+        )
+        _create_debt_payment_from_receipt(payment)
+        _create_debt_payment_from_receipt(payment)  # simulated callback/poll race
+        self.assertEqual(CustomerDebtPayment.objects.filter(customer=self.customer).count(), 1)
+        payment.refresh_from_db()
+        self.assertTrue(payment.debt_settled)
+
+    def test_settle_receipt_entries_from_payment_runs_once(self):
+        from core.mpesa_views import _settle_receipt_entries_from_payment
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=self.customer.name,
+            customer=self.customer, status='OPEN', served_by=self.owner,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('200'),
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Debt Settle Idem Item', amount=Decimal('200'),
+        )
+        payment = Payment.objects.create(
+            business=self.biz, source='bar', amount=Decimal('200'), method='mpesa',
+            status='completed', tab_entry_ids=[entry.id],
+        )
+        _settle_receipt_entries_from_payment(payment)
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        # Reset is_paid to simulate a race where both calls started before either
+        # committed — the flag alone (not the is_paid filter) must block the retry.
+        entry.is_paid = False
+        entry.payment_method = 'credit'
+        entry.save(update_fields=['is_paid', 'payment_method'])
+        _settle_receipt_entries_from_payment(payment)  # simulated callback/poll race
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_paid, 'debt_settled flag must block reprocessing on the second call')
+        payment.refresh_from_db()
+        self.assertTrue(payment.debt_settled)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Debt Tracker Module Audit — Theme 2 (state-transition completeness), 2026-07-21
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ConvertTabToDebtCreditApprovedTest(TestCase):
+    """convert_tab_to_debt's auto-created Customer was missing credit_approved=True,
+    unlike its two sibling tab-to-debt conversion sites (bulk_convert_tabs_to_debt,
+    shift_views._convert_open_tabs_to_debt_for_shift) — an inconsistency for the
+    exact same kind of action (an unpaid tab becoming a debt-tracker balance)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Convert Debt Approved Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='convdebt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Convert Debt Item',
+            material_no='CONVDEBT-01', selling_price=Decimal('100'),
+        )
+        self.tab = BarTab.objects.create(business=self.biz, customer_name='New Tab Patron', status='OPEN')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='tab',
+        )
+        BarTabEntry.objects.create(tab=self.tab, transaction=txn, description='Convert Debt Item', amount=Decimal('100'))
+        self.client.force_login(self.owner)
+
+    def test_auto_created_customer_is_credit_approved(self):
+        self.client.post(f'/bar/tabs/{self.tab.id}/debt/', {'customer_name': 'New Tab Patron'})
+        cust = Customer.objects.filter(business=self.biz, name='New Tab Patron').first()
+        self.assertIsNotNone(cust)
+        self.assertTrue(cust.credit_approved)
+
+
+class TabToDebtConversionCreditRiskNotificationTest(TestCase):
+    """New: a tab-to-debt conversion that adds MORE debt for an already
+    credit-risky customer (revoked/permanent defaulter/etc.) now fires a
+    non-blocking heads-up Notification to owners/managers — previously this
+    was completely invisible, at all three conversion sites (single tab,
+    bulk, and shift-close auto-convert)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='Convert Debt Risk Biz', credit_policy_enabled=True, defaulter_permanent=True,
+        )
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='convrisk_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Convert Risk Item',
+            material_no='CONVRISK-01', selling_price=Decimal('100'),
+        )
+        self.risky = Customer.objects.create(
+            business=self.biz, name='Risky Patron', credit_approved=True, is_defaulter=True,
+        )
+        self.client.force_login(self.owner)
+
+    def _make_tab(self, customer_name):
+        tab = BarTab.objects.create(business=self.biz, customer_name=customer_name, status='OPEN')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='tab',
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='Convert Risk Item', amount=Decimal('100'))
+        return tab
+
+    def test_single_tab_conversion_notifies_owner_for_risky_customer(self):
+        tab = self._make_tab('Risky Patron')
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Risky Patron'})
+        self.assertTrue(
+            Notification.objects.filter(user=self.owner, title__icontains='Hatari ya mkopo').exists()
+        )
+
+    def test_bulk_conversion_notifies_owner_for_risky_customer(self):
+        import json
+        tab = self._make_tab('Risky Patron')
+        self.client.post('/bar/tabs/bulk-convert-to-debt/', {'tab_ids': json.dumps([tab.id])})
+        self.assertTrue(
+            Notification.objects.filter(user=self.owner, title__icontains='Hatari ya mkopo').exists()
+        )
+
+    def test_shift_close_auto_convert_notifies_owner_for_risky_customer(self):
+        from core.shift_views import _convert_open_tabs_to_debt_for_shift
+        tab = self._make_tab('Risky Patron')
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+        _convert_open_tabs_to_debt_for_shift(shift, self.biz, True)
+        self.assertTrue(
+            Notification.objects.filter(user=self.owner, title__icontains='Hatari ya mkopo').exists()
+        )
+
+    def test_no_notification_for_clean_customer(self):
+        clean = Customer.objects.create(business=self.biz, name='Clean Patron', credit_approved=True)
+        tab = self._make_tab('Clean Patron')
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Clean Patron'})
+        self.assertFalse(
+            Notification.objects.filter(user=self.owner, title__icontains='Hatari ya mkopo').exists()
+        )
+
+
+class ApproveWriteOffSetsDefaulterTest(TestCase):
+    """approve_write_off (an unrecoverable, uncollectable credit loss — the
+    business eats it) never set Customer.is_defaulter=True, unlike the
+    equally-final void_tab path. Both mean the same thing for the customer's
+    future credit standing: this debt was never repaid."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WO Defaulter Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='wodef_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='WO Defaulter Item',
+            material_no='WODEF-01', selling_price=Decimal('100'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='WO Patron', credit_approved=True)
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), recipient='WO Patron',
+            payment_method='credit', sale_amount=Decimal('100'),
+        )
+        from core.models import WriteOffRequest
+        self.wo = WriteOffRequest.objects.create(
+            transaction=self.txn, requested_by=self.owner, reason='test',
+            customer_name_cache='WO Patron',
+        )
+        self.client.force_login(self.owner)
+
+    def test_approval_marks_customer_as_defaulter(self):
+        self.client.post(f'/debt/write-off/{self.wo.id}/approve/')
+        self.customer.refresh_from_db()
+        self.assertTrue(self.customer.is_defaulter)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Debt Tracker Module Audit — Theme 3 (access-control scoping), 2026-07-21
+# ══════════════════════════════════════════════════════════════════════════════
+
+class RequestWriteOffStationScopingTest(TestCase):
+    """request_write_off had no station gate at all — a bar-only staffer could
+    pass any txn_id and both see (item name, amount, customer) AND act on a
+    kitchen credit transaction, and vice versa. Owner/manager always see both."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WO Station Scope Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+        self.owner = User.objects.create_user(username='wostation_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_staff = User.objects.create_user(username='wostation_barstaff', password='x')
+        UserProfile.objects.create(
+            user=self.bar_staff, business=self.biz, role='staff',
+            can_access_bar=True, can_access_kitchen=False,
+        )
+        self.kitchen_staff = User.objects.create_user(username='wostation_kitchenstaff', password='x')
+        UserProfile.objects.create(
+            user=self.kitchen_staff, business=self.biz, role='kitchen',
+            can_access_bar=False, can_access_kitchen=False,
+        )
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='WO Station Bar Item',
+            material_no='WOSTATIONBAR-01', selling_price=Decimal('100'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='WO Station Kitchen Item',
+            material_no='WOSTATIONKITCHEN-01', selling_price=Decimal('100'),
+        )
+        self.bar_txn = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), recipient='Bar Patron',
+            payment_method='credit', sale_amount=Decimal('100'),
+        )
+        self.kitchen_txn = Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), recipient='Kitchen Patron',
+            payment_method='credit', sale_amount=Decimal('100'),
+        )
+
+    def test_bar_only_staff_cannot_write_off_kitchen_transaction(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(
+            f'/debt/write-off/request/{self.kitchen_txn.id}/', {'reason': 'test'},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_kitchen_only_staff_cannot_write_off_bar_transaction(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(
+            f'/debt/write-off/request/{self.bar_txn.id}/', {'reason': 'test'},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_bar_only_staff_can_write_off_bar_transaction(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(
+            f'/debt/write-off/request/{self.bar_txn.id}/', {'reason': 'test'},
+        )
+        self.assertEqual(resp.json().get('ok'), True)
+
+    def test_owner_can_write_off_either_station(self):
+        self.client.force_login(self.owner)
+        resp1 = self.client.post(
+            f'/debt/write-off/request/{self.bar_txn.id}/', {'reason': 'test'},
+        )
+        resp2 = self.client.post(
+            f'/debt/write-off/request/{self.kitchen_txn.id}/', {'reason': 'test'},
+        )
+        self.assertEqual(resp1.json().get('ok'), True)
+        self.assertEqual(resp2.json().get('ok'), True)

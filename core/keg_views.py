@@ -1599,8 +1599,15 @@ def convert_tab_to_debt(request, tab_id):
             business=up.business, name__iexact=customer_name,
         ).first()
     if customer is None:
+        # credit_approved=True — matches bulk_convert_tabs_to_debt and
+        # shift_views._convert_open_tabs_to_debt_for_shift (the other two
+        # tab-to-debt conversion sites). Without this, evaluate_credit()'s
+        # check #1 (credit_approved) would trivially "block" every brand-new
+        # customer created here, which is meaningless noise — they were never
+        # asked to pre-approve credit, they just have an unpaid tab.
         customer = Customer.objects.create(
             business=up.business, name=customer_name, phone=phone,
+            credit_approved=True,
         )
 
     unpaid_total = float(tab.unpaid_total())
@@ -1618,6 +1625,16 @@ def convert_tab_to_debt(request, tab_id):
     tab.settled_at = timezone.now()
     tab.cash_requested_at = None
     tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
+
+    # Heads-up (not a block — goods already served) if this customer is
+    # already credit-risky per the K3 policy gate.
+    try:
+        from core.credit_policy import notify_owners_of_conversion_risk
+        notify_owners_of_conversion_risk(
+            up.business, customer, 'kitchen' if tab.source == 'kitchen' else 'bar', unpaid_total,
+        )
+    except Exception:
+        logger.exception('convert_tab_to_debt credit-risk notify failed (customer=%s)', customer.id)
 
     # SMS to customer confirming the debt (mirrors Quick Sell credit flow)
     if customer.phone:
@@ -1699,6 +1716,8 @@ def bulk_convert_tabs_to_debt(request):
                 credit_approved=True,
             )
 
+        unpaid_total = float(tab.unpaid_total())
+
         for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
             txn = entry.transaction
             txn.recipient = customer.name
@@ -1711,6 +1730,14 @@ def bulk_convert_tabs_to_debt(request):
         tab.cash_requested_at = None
         tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
         converted += 1
+
+        try:
+            from core.credit_policy import notify_owners_of_conversion_risk
+            notify_owners_of_conversion_risk(
+                up.business, customer, 'kitchen' if tab.source == 'kitchen' else 'bar', unpaid_total,
+            )
+        except Exception:
+            logger.exception('bulk_convert_tabs_to_debt credit-risk notify failed (customer=%s)', customer.id)
 
     return JsonResponse({'ok': True, 'converted': converted})
 

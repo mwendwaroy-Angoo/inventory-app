@@ -19,7 +19,7 @@ from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 from core.models import Customer, CustomerDebtPayment, SalaryDeduction, Transaction, WriteOffRequest
-from core.views import get_user_profile, owner_required, owner_or_manager_required
+from core.views import get_user_profile, owner_required, owner_or_manager_required, _station_scope
 
 
 # ── Scope helper ─────────────────────────────────────────────────────────────
@@ -483,6 +483,16 @@ def record_debt_payment(request, customer_id):
     method     = request.POST.get('payment_method', 'cash')
     notes      = request.POST.get('notes', '').strip()
 
+    # Server-side double-submit backstop — see core/idempotency.py. This is a
+    # real <form> POST/redirect (no AJAX guard), so a double-click on "Record
+    # Payment" or a back-button resubmission would otherwise create a second,
+    # real CustomerDebtPayment for the same cash/mpesa payment.
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        messages.info(request, _('Malipo haya tayari yamerekodiwa.'))
+        return redirect('customer_debt_profile', customer_id=customer_id)
+
     if scope == 'all':
         debt_source = request.POST.get('debt_source', 'bar')
         if debt_source not in ('bar', 'kitchen'):
@@ -569,6 +579,17 @@ def debt_stk_push(request, customer_id):
 
     if not phone:
         return JsonResponse({'error': 'Weka nambari ya simu ya M-Pesa ya mteja.'}, status=400)
+
+    # Server-side double-submit backstop — see core/idempotency.py. This is the
+    # one STK-initiation entry point in the app with no prior client-side
+    # button-disable guard at all; without this, a rapid double-tap on "Send
+    # STK" fires two separate STK Push prompts to the customer's phone for the
+    # same debt, and if the customer approves both, that's a real double-charge
+    # — not just a duplicate record.
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'error': 'STK Push hii tayari imetumwa.', 'duplicate': True}, status=409)
 
     data = _get_customer_debt_data(customer, business, payment_scope)
     if amount > float(data['outstanding']):
@@ -935,6 +956,17 @@ def request_write_off(request, txn_id):
         type='Issue',
     )
 
+    # Station Scoping Principle: the write-off button is only ever rendered in
+    # the UI for a customer's own-station credit lines, but the endpoint itself
+    # had no matching gate — a bar-only staffer could pass any txn_id and both
+    # act on AND see (item_name, amount, customer) a kitchen transaction, and
+    # vice versa. Owner/manager always see both (matches every other station
+    # gate in this app).
+    show_bar, show_kitchen = _station_scope(up)
+    txn_is_kitchen = bool(txn.item_id and getattr(txn.item.store, 'is_kitchen', False))
+    if (txn_is_kitchen and not show_kitchen) or (not txn_is_kitchen and not show_bar):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kiingilio hiki.'}, status=403)
+
     # Check for an existing pending request on this transaction
     existing = WriteOffRequest.objects.filter(transaction=txn).first()
     if existing:
@@ -1098,6 +1130,15 @@ def approve_write_off(request, req_id):
     wo.reviewed_by = request.user
     wo.reviewed_at = timezone.now()
     wo.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
+
+    # Same signal as void_tab: this credit is unrecoverable and the business
+    # is eating the loss, so flag the customer the same way a voided debt tab
+    # does — was previously only done for void_tab, leaving this equally-final
+    # "written off, uncollectable" path invisible to future credit decisions.
+    if customer_name and customer_name != '—':
+        cust_obj = Customer.objects.filter(business=up.business, name=customer_name).first()
+        if cust_obj:
+            Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
 
     # Remove any Haki deduction the manager may have already created (owner overrides)
     SalaryDeduction.objects.filter(write_off=wo).delete()

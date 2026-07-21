@@ -573,8 +573,9 @@
                 </h6>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
-            <form method="post" action="{% url 'record_debt_payment' customer.id %}">
+            <form method="post" action="{% url 'record_debt_payment' customer.id %}" id="recordDebtPaymentForm">
                 {% csrf_token %}
+                <input type="hidden" name="idempotency_token" id="recordDebtPaymentToken" value="">
                 <div class="modal-body pt-1">
 
                     {% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
@@ -642,7 +643,7 @@
                             <div style="display:flex; gap:0.5rem; margin-bottom:0.45rem; flex-wrap:wrap;">
                                 <input type="tel" id="stkPhone" class="form-control form-control-sm" style="min-width:140px; flex:1;"
                                        placeholder="07XX XXX XXX" value="{{ customer.phone }}">
-                                <button type="button" class="btn btn-gold btn-sm px-3" onclick="window._sendDebtStk()">
+                                <button type="button" class="btn btn-gold btn-sm px-3" id="sendDebtStkBtn" onclick="window._sendDebtStk()">
                                     📲 {% trans 'Send STK' %}
                                 </button>
                             </div>
@@ -677,7 +678,7 @@
                     <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">
                         {% trans 'Cancel' %}
                     </button>
-                    <button type="submit" class="btn btn-gold px-4 btn-sm font-weight-600">
+                    <button type="submit" class="btn btn-gold px-4 btn-sm font-weight-600" id="recordDebtPaymentBtn">
                         ✅ {% trans 'Record Payment' %}
                     </button>
                 </div>
@@ -734,6 +735,31 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 {% endif %}
 
+/* ── Record Payment form: fresh idempotency token per modal open + submit guard ── */
+(function () {
+    var paymentModalEl = document.getElementById('paymentModal');
+    var tokenInput = document.getElementById('recordDebtPaymentToken');
+    function _freshToken() {
+        return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+    }
+    if (paymentModalEl && tokenInput) {
+        paymentModalEl.addEventListener('show.bs.modal', function () {
+            tokenInput.value = _freshToken();
+        });
+    }
+    var recordForm = document.getElementById('recordDebtPaymentForm');
+    var recordBtn = document.getElementById('recordDebtPaymentBtn');
+    if (recordForm && recordBtn) {
+        var _recordSubmitted = false;
+        recordForm.addEventListener('submit', function (e) {
+            if (_recordSubmitted) { e.preventDefault(); return; }
+            _recordSubmitted = true;
+            recordBtn.disabled = true;
+            recordBtn.textContent = '⏳ Inarekodiwa...';
+        });
+    }
+})();
+
 /* ── STK Push in payment modal ── */
 window._debtPmChange = function() {
     var mpesaRadio = document.getElementById('pm_mpesa2');
@@ -743,7 +769,10 @@ window._debtPmChange = function() {
     }
 };
 
+window._debtStkInFlight = false;
 window._sendDebtStk = function() {
+    if (window._debtStkInFlight) return;
+
     var phone  = (document.getElementById('stkPhone') || {}).value || '';
     var amount = (document.getElementById('amountInput') || {}).value || '';
     var source = 'bar';
@@ -763,10 +792,16 @@ window._sendDebtStk = function() {
 
     setStatus('Inatuma STK Push...', '#6ee7b7');
 
+    var btn = document.getElementById('sendDebtStkBtn');
+    window._debtStkInFlight = true;
+    if (btn) btn.disabled = true;
+
+    var idemToken = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
     var csrf = document.querySelector('[name=csrfmiddlewaretoken]');
     var body = 'amount=' + encodeURIComponent(amount)
              + '&phone=' + encodeURIComponent(phone)
              + '&source=' + encodeURIComponent(source)
+             + '&idempotency_token=' + encodeURIComponent(idemToken)
              + '&csrfmiddlewaretoken=' + encodeURIComponent(csrf ? csrf.value : '');
 
     fetch('{% url "debt_stk_push" customer.id %}', {
@@ -776,11 +811,17 @@ window._sendDebtStk = function() {
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
+        window._debtStkInFlight = false;
+        if (btn) btn.disabled = false;
         if (!d.ok) { setStatus('Hitilafu: ' + (d.error || 'Jaribu tena.'), '#f87171'); return; }
         setStatus('📱 Angalia simu ya mteja — anaingiza PIN ya M-Pesa...', '#6ee7b7');
         _pollDebtStkPayment(d.payment_id, 0);
     })
-    .catch(function() { setStatus('Hitilafu ya mtandao. Jaribu tena.', '#f87171'); });
+    .catch(function() {
+        window._debtStkInFlight = false;
+        if (btn) btn.disabled = false;
+        setStatus('Hitilafu ya mtandao. Jaribu tena.', '#f87171');
+    });
 };
 
 function _pollDebtStkPayment(paymentId, attempt) {

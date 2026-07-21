@@ -238,6 +238,54 @@ def _count_late_repayments(customer, business, scope, window, threshold):
     return late_count
 
 
+def notify_owners_of_conversion_risk(business, customer, scope, unpaid_total, context_label=''):
+    """Warn owners/managers when a tab-to-debt conversion adds MORE debt for a
+    customer who is already credit-risky per evaluate_credit() — blocked
+    (revoked/permanent defaulter/overdue/strikes/limit/cutoff) or warn-tier
+    (approaching a limit or overdue window).
+
+    NON-BLOCKING by design: unlike the hard gate at new-credit-issuance points
+    (Quick Sell/Add Transaction/Kitchen direct credit — see module docstring),
+    a tab-to-debt conversion happens AFTER the goods were already served — the
+    tab already exists with an unpaid balance by the time this runs, so there
+    is nothing left to block. This is purely a heads-up so the owner can act
+    (restrict further tabs for this customer, chase payment) instead of the
+    risk being invisible. Called from convert_tab_to_debt, bulk_convert_tabs_to_debt
+    (core/keg_views.py) and _convert_open_tabs_to_debt_for_shift (core/shift_views.py)
+    — the three places an open tab becomes a debt-tracker balance.
+    """
+    try:
+        decision = evaluate_credit(business, customer, scope=scope)
+    except Exception:
+        return
+    if decision.tier == 'ok':
+        return
+
+    from core.models import Notification
+    from accounts.models import UserProfile as _UP
+    from core.notifications import normalize_ke_phone, send_sms_notification
+
+    icon = '🚫' if decision.tier == 'blocked' else '⚠️'
+    msg = (
+        f"{icon} {customer.name}: {context_label}deni la KES {unpaid_total:,.0f} "
+        f"limeandikwa — {decision.reason}"
+    )
+    for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
+        try:
+            Notification.objects.create(
+                user=up.user,
+                title=f"{icon} Hatari ya mkopo — {customer.name}",
+                message=msg,
+                notification_type='warning',
+            )
+            if up.phone:
+                normalized = normalize_ke_phone(up.phone)
+                if normalized:
+                    send_sms_notification(msg, normalized)
+        except Exception:
+            pass
+
+
 def get_credit_standing(business, customer, scope='all'):
     """
     Return a dict with the customer's current credit standing for display.

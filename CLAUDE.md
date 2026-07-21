@@ -774,7 +774,7 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
 - Sprint K1 (2026-06-26): Source-scoped debt — CustomerDebtPayment.source CharField ('bar'|'kitchen', default='bar', migration 0067 + 0068 backfill); _debt_scope(profile, business) helper returns 'bar'/'kitchen'/'all' based on staff role + business.has_kitchen; debt_views.py rewritten: all list/payment queries scoped by _debt_scope; owner sees dual sub-ledger tabs on customer profile; kitchen staff only see kitchen debts; Payment modal sets hidden debt_source field per ledger. 51 tests pass.
 - Sprint K2a (2026-06-26): Per-counter M-Pesa — Store-level M-Pesa override fields (migration 0069: has_own_mpesa, till/paybill/pochi, daraja creds); Payment.store FK + source (migration 0069); resolve_mpesa_config(business, store) single resolver (store override wins if has_own_mpesa=True, else business fallback); resolve_account_by_shortcode(shortcode) checks Store overrides first for C2B attribution; mpesa_views.py updated: stk_push_view + payment_status + c2b_confirmation + mpesa_qr_view all use resolver; payment_settings.html gains Kitchen M-Pesa section. 51 tests pass.
 - Sprint H1-H4 (2026-06-26): Haki module — Business.haki_enabled (accounts migration 0040); SalaryPayment model (migration 0070, unique_together business+staff+period, days_overdue property); haki_views.py: staff_contribution_report /staff/contribution/ (H1), record_salary_payment /staff/<id>/salary/ with SMS to employee (H2), my_work_and_pay /me/ staff self-service (H3), haki_recognition_statement /staff/<id>/statement/ with print + SMS (H4), _check_and_fire_recognition() deduplicated milestone nudge to owner; Haki nav links added to all staff role sections (mobile + desktop) gated on haki_enabled; 18 new tests (K1/K2a/H), 51 total. All pass.
-- Sprint K3 (2026-06-26): Credit Discipline Gate — (A) Kitchen staff now in expense/salary lists (STAFF_PAY_ROLES constant covers staff/waitress/kitchen); (B) staff can generate/share their own Haki statement (privacy gate: owner_required lifted, self-only guard added), Kazi Yangu "🌟 Taarifa Yangu" button added; (C) evaluate_credit() in core/credit_policy.py — non-bypassable system gate checks: policy on/off, credit_approved, is_defaulter+permanent block, overdue window, late-repayment strikes+cooldown, credit_limit, monthly cutoff; gates wired at Quick Sell, Add Transaction, Bar Board tab creation, Kitchen Board food_tab/credit; void_tab stamps is_defaulter=True; record_debt_payment stamps last_cleared_at on full clearance; credit standing card on customer profile; Payment Settings "Sera ya Deni" form with _section discriminator in accounts/views.py to avoid M-Pesa fields being erased; migrations 0041 (9 credit policy fields on Business), 0071 (is_defaulter+last_cleared_at on Customer), 0072 (backfill credit_approved=True for existing customers). 61 tests pass.
+- Sprint K3 (2026-06-26): Credit Discipline Gate — (A) Kitchen staff now in expense/salary lists (STAFF_PAY_ROLES constant covers staff/waitress/kitchen); (B) staff can generate/share their own Haki statement (privacy gate: owner_required lifted, self-only guard added), Kazi Yangu "🌟 Taarifa Yangu" button added; (C) evaluate_credit() in core/credit_policy.py — non-bypassable system gate checks: policy on/off, credit_approved, is_defaulter+permanent block, overdue window, late-repayment strikes+cooldown, credit_limit, monthly cutoff; gates wired at Quick Sell, Add Transaction, Kitchen Board food_tab/credit; void_tab stamps is_defaulter=True; record_debt_payment stamps last_cleared_at on full clearance; credit standing card on customer profile; Payment Settings "Sera ya Deni" form with _section discriminator in accounts/views.py to avoid M-Pesa fields being erased; migrations 0041 (9 credit policy fields on Business), 0071 (is_defaulter+last_cleared_at on Customer), 0072 (backfill credit_approved=True for existing customers). 61 tests pass. **Correction (Debt Tracker Module Audit, 2026-07-21): this entry's original wording claimed the gate was wired at "Bar Board tab creation" — it never was. evaluate_credit() has never been called anywhere in keg_views.py or shift_views.py; a tab is opened without a credit check, and converting that tab to debt (convert_tab_to_debt/bulk_convert_tabs_to_debt/shift-close auto-convert) is likewise ungated. This is by design, not a gap to close the same way — see that sprint's entry for the reasoning (a WARNING, not a hard block, since by conversion time the goods are already served).**
 - Sprint K4 (2026-06-26): Customer-Facing Accountability Receipts — (1) Receipt.meta JSONField (migration 0073) added to Receipt model; Receipt.issue() gains meta= param; (2) _build_credit_receipt_meta() helper in debt_views.py computes score/outstanding/due_date/warn from _get_customer_debt_data after txns written; (3) meta populated on: Quick Sell deni receipts (bar scope), bar settle_tab credit receipts (source scope), kitchen direct credit receipts (kitchen scope), debt payment receipts (post-payment score+remaining); (4) receipt_public.html: credit standing badge (green=reliable, amber=new/moderate, red=high_risk) after total; running total+due_date block for credit receipts; warn-bar amber alert for K3 warn-tier; statement header with aged-bucket chips when meta.is_statement; (5) customer_debt_statement view at /debt/<id>/statement/ (POST, scope-aware, _debt_scope gates kitchen-only staff); issues statement Receipt (payment_method='statement', lines=FIFO unpaid txns, meta with aged buckets) and redirects to /r/<token>/; "📄 Taarifa" button on customer_debt_profile.html; privacy: score/outstanding only appears on that customer's own receipt/statement token. Migration 0073. 72 tests pass.
 - Sprint SG (2026-06-26): Universal shift gate enforcement — get_active_staff_shift(user_profile, business) helper in shift_views.py (None=owner bypass, Shift=proceed, False=block); gates applied to: Quick Sell POST, Add Transaction POST, kitchen_checkout, kitchen_receive, bar tick_entry/settle_tab/convert_tab_to_debt/record_breakage; kitchen_board.html seeds `_myShiftOpen` from server-side has_my_shift context so tiles blocked immediately without waiting for async fetch; addToCart() shows toast + shift banner when `_myShiftOpen`=false; owner always bypasses all gates. Bug fix: debt payment receipt remaining_balance now uses post_data['outstanding'] (recomputed after payment) instead of stale pre-payment data['outstanding']. SPRINT_TEST_GUIDE.md updated with K1/K2a/H1-H4/SG manual smoke test sections. 51 tests pass.
 - Fix K3/K4 (2026-06-27): Pre-test audit fixes — (1) keg_views: init linked_customer=None before tab block; in merge-tab path set linked_customer=active_tab.customer so cross-counter merge-tab receipts are issued correctly (NameError was caught by outer try/except but silently skipped receipt issuance); (2) credit_policy: rewrote _count_late_repayments with FIFO simulation using cumulative_paid so already-paid txns don't generate unfair strikes on subsequent payments; (3) accounts/views: removed unused Store import in credit_policy POST branch. 72 tests pass.
@@ -1302,3 +1302,61 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `81d0832` Theme 2, `305a973` Theme 3), 25 new tests total, 292 tests pass. **Supply chain/
   procurement module audit complete** (all 3 themes). Next: resume remaining scope — debt
   tracker, analytics.
+- Debt Tracker Module Audit (2026-07-21). Next module in the systemic-audit queue after supply
+  chain/procurement. Same three-theme structure against `debt_views.py`, `mpesa_views.py`,
+  `keg_views.py`, `shift_views.py`, and `credit_policy.py`. **Theme 1 (money-path idempotency):**
+  the three debt-settlement functions in `mpesa_views.py` that create a `CustomerDebtPayment`
+  from an STK Push (`_create_debt_payment_from_receipt`, `_settle_debt_customer_from_payment`,
+  `_settle_receipt_entries_from_payment`) are each called from BOTH `mpesa_callback` (the Daraja
+  webhook) and `payment_status` (the JS poll) — a realistic race (Safaricom retries, or the poll
+  landing moments before the callback), not just a double-tap. Their only guard was "skip if a
+  `CustomerDebtPayment` already exists with this mpesa_ref in its notes" — silently skipped
+  entirely whenever `mpesa_ref` was blank, which is exactly the callback/poll race window before
+  the receipt number has been captured. New `Payment.debt_settled` BooleanField (migration 0109)
+  + `select_for_update()`, mirroring `kitchen_settled`/`qs_settled` exactly, closes this for all
+  three — they're mutually exclusive per Payment row (routed by `if payment.receipt_token: ...
+  elif payment.bar_tab_id: ... elif payment.debt_customer_id: ...`), so one shared flag is
+  correct. Also found two STK-*initiation* gaps with no protection at all against a rapid
+  double-tap firing two separate M-Pesa prompts to the same phone (a real double-charge risk if
+  the customer approves both, not just a duplicate record): `debt_stk_push` (staff-initiated, the
+  debt tracker page's "Send STK" button) had neither a client-side button-disable NOR a
+  server-side guard — fixed with `core.idempotency.claim_checkout_token` plus a client-side
+  in-flight flag; `receipt_pay`'s STK branch (customer-initiated from the public receipt/BillScan
+  page, both debt-block and entry-selection modes) already disabled its button client-side but
+  had no server-side backstop — added `claim_checkout_token` there too for parity with every
+  other checkout surface in the app. `record_debt_payment` (the plain `<form>` "Record Payment"
+  button) had no submit guard at all — a double-click or back-button resubmission would create a
+  second real `CustomerDebtPayment`; fixed with a hidden `idempotency_token` field (refreshed on
+  each modal open) plus a submit-time button-disable, matching the write-off request form's
+  existing `_woSubmitted` pattern. 8 new tests. **Theme 2 (state-transition completeness):** none
+  of the three tab-to-debt conversion sites (`convert_tab_to_debt`, `bulk_convert_tabs_to_debt` in
+  `keg_views.py`, `_convert_open_tabs_to_debt_for_shift` in `shift_views.py`) ever called
+  `evaluate_credit()` — confirmed this is by design, not a gap to close the same way the K3 hard
+  gate closes new-credit-issuance points: by the time a tab exists to convert, the goods are
+  already served, so blocking the conversion would only make the debt invisible, not undo the
+  sale (same non-blocking reasoning as the procurement audit's `confirm_delivery` warning). New
+  `notify_owners_of_conversion_risk()` in `credit_policy.py` calls `evaluate_credit()` post-hoc and
+  fires a non-blocking in-app + SMS heads-up to owners/managers when the customer is already
+  blocked-tier (revoked/permanent defaulter/overdue/strikes/limit/cutoff) or warn-tier — wired
+  into all three conversion sites, so a compounding risk that was previously invisible now
+  surfaces without changing the conversion's outcome. Also fixed a real inconsistency:
+  `convert_tab_to_debt`'s auto-created `Customer` was missing `credit_approved=True`, unlike its
+  two sibling sites — meaningless noise otherwise, since a brand-new customer would trivially
+  "fail" `evaluate_credit()`'s check #1 for never having been asked to pre-approve credit in the
+  first place. Separately: `approve_write_off` (an unrecoverable, uncollectable credit loss — the
+  business eats it) never set `Customer.is_defaulter=True`, unlike the equally-final `void_tab`
+  path recording the exact same real-world fact ("this debt was never repaid"); fixed to match.
+  Also corrected this file's own Sprint K3 entry, which incorrectly claimed the credit gate was
+  wired at "Bar Board tab creation" — it never was; annotated in place rather than rewritten, so
+  the historical record stays intact. 6 new tests. **Theme 3 (access-control scoping):**
+  `request_write_off` had no station gate at all — a bar-only staffer could pass any `txn_id` and
+  both see (item name, amount, customer name) AND act on a kitchen credit transaction, and vice
+  versa, even though the write-off button in the UI only ever renders for same-station lines.
+  Fixed using the existing `_station_scope(up)` helper (`core/views.py`), same discriminator
+  (`item.store.is_kitchen`) already used everywhere else in the app; owner/manager unaffected
+  (always see both). Everything else audited and found already correct: `_debt_scope()`,
+  `customer_debt_statement`, `clear_defaulter`, `toggle_credit_approval`,
+  `update_customer_credit_settings` (intentionally all-staff per this file's own conventions),
+  `manager_review_write_off`/`reject_write_off`. 4 new tests. 22 new tests total across all three
+  themes, 314 tests pass. **Debt tracker module audit complete** (all 3 themes). Next: resume
+  remaining scope — analytics (the final module in this audit series).

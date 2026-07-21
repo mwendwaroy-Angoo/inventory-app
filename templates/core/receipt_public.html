@@ -814,10 +814,11 @@
         if (!phone) { debtStkStatus(source, 'Weka nambari ya simu yako ya M-Pesa.', '#fbbf24'); return; }
         if (btn) { btn.disabled = true; btn.textContent = '...'; }
         debtStkStatus(source, 'Inasubiri — angalia simu yako...', '#6ee7b7');
+        var idemToken = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
         fetch('/r/' + TOKEN + '/pay/', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({type: 'stk', source: source, debt_amount: amt, phone: phone}),
+            body: JSON.stringify({type: 'stk', source: source, debt_amount: amt, phone: phone, idempotency_token: idemToken}),
         })
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -962,9 +963,10 @@
         var btn = document.getElementById('btnPayStk');
         if (btn) { btn.disabled = true; btn.textContent = '...'; }
         stkStatus('Inasubiri — angalia simu yako...', '#6ee7b7');
+        var idemToken = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
         fetch('/r/' + TOKEN + '/pay/', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({type: 'stk', entry_ids: ids, phone: phone}),
+            body: JSON.stringify({type: 'stk', entry_ids: ids, phone: phone, idempotency_token: idemToken}),
         })
         .then(function(r) { return r.json(); })
         .then(function(d) {

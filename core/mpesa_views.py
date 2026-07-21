@@ -196,8 +196,25 @@ def _create_debt_payment_from_receipt(payment):
     to be initiated in the first place (core.receipt_views._receipt_all_tab_ids)
     — using only meta.tab_id here would silently drop every completed debt
     payment for a receipt reached via linked_tab_ids.
+
+    Idempotent: select_for_update + payment.debt_settled flag, same pattern as
+    _settle_kitchen_order_from_payment/_settle_qs_from_payment, so only one of
+    (Daraja callback, JS poll path) creates the CustomerDebtPayment. The prior
+    guard (skip if a CustomerDebtPayment already exists with this mpesa_ref in
+    its notes) is kept as a secondary check but is skipped entirely when
+    mpesa_ref is blank — not sufficient alone to close the callback/poll race.
     """
+    from django.db import transaction as db_txn
+
     try:
+        with db_txn.atomic():
+            pmt = Payment.objects.select_for_update().get(id=payment.id)
+            if pmt.debt_settled:
+                logger.info("Debt receipt payment already settled: payment_id=%s", payment.id)
+                return
+            pmt.debt_settled = True
+            pmt.save(update_fields=['debt_settled'])
+
         from .models import Receipt as _Receipt, BarTab as _BarTab, Customer as _Customer
         from .models import CustomerDebtPayment as _CDP, BarTabEntry as _BTE
         from .debt_views import _get_customer_debt_data
@@ -288,9 +305,25 @@ def _settle_debt_customer_from_payment(payment):
 
     Called when payment.debt_customer_id is set. Delegates to _do_settle_debt_payment
     which creates CustomerDebtPayment, runs FIFO reconciliation, issues receipt, SMS.
-    Idempotent: guarded by mpesa_receipt in CustomerDebtPayment.notes.
+
+    Idempotent: select_for_update + payment.debt_settled flag, same pattern as
+    _settle_kitchen_order_from_payment/_settle_qs_from_payment, so only one of
+    (Daraja callback, JS poll path) creates the CustomerDebtPayment. The prior
+    guard (skip if a CustomerDebtPayment already exists with this mpesa_ref in
+    its notes) is kept as a secondary check but is skipped entirely when
+    mpesa_ref is blank — not sufficient alone to close the callback/poll race.
     """
+    from django.db import transaction as db_txn
+
     try:
+        with db_txn.atomic():
+            pmt = Payment.objects.select_for_update().get(id=payment.id)
+            if pmt.debt_settled:
+                logger.info("Debt STK already settled: payment_id=%s", payment.id)
+                return
+            pmt.debt_settled = True
+            pmt.save(update_fields=['debt_settled'])
+
         from .models import Customer as _Customer, CustomerDebtPayment as _CDP
         from .debt_views import _do_settle_debt_payment
 
@@ -337,8 +370,24 @@ def _settle_receipt_entries_from_payment(payment):
     Used for customer-initiated STK push from the public receipt page
     (/r/<token>/pay/). Handles entries from multiple tabs (bar + kitchen)
     in one payment. Closes any tab whose remaining unpaid balance reaches 0.
+
+    Idempotent: select_for_update + payment.debt_settled flag, same pattern as
+    _settle_kitchen_order_from_payment/_settle_qs_from_payment — the is_paid=False
+    filter alone made the entry writes themselves nearly idempotent, but without
+    this flag a callback/poll race could still double-fire the SMS/notification
+    fan-out below on the same payment.
     """
+    from django.db import transaction as db_txn
+
     try:
+        with db_txn.atomic():
+            pmt = Payment.objects.select_for_update().get(id=payment.id)
+            if pmt.debt_settled:
+                logger.info("Receipt entries already settled: payment_id=%s", payment.id)
+                return
+            pmt.debt_settled = True
+            pmt.save(update_fields=['debt_settled'])
+
         from .models import BarTabEntry, BarTab, Receipt as _Receipt
         entry_ids = payment.tab_entry_ids
         if not entry_ids:

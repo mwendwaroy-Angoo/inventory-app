@@ -198,6 +198,8 @@ def _convert_open_tabs_to_debt_for_shift(shift, business, should_convert):
                     credit_approved=True,
                 )
 
+            unpaid_total = float(tab.unpaid_total())
+
             for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
                 txn = entry.transaction
                 txn.recipient = cust.name
@@ -211,6 +213,16 @@ def _convert_open_tabs_to_debt_for_shift(shift, business, should_convert):
             tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
             auto_converted += 1
             auto_converted_names.append(customer_name)
+
+            try:
+                from core.credit_policy import notify_owners_of_conversion_risk
+                notify_owners_of_conversion_risk(
+                    business, cust, _tab_source, unpaid_total,
+                )
+            except Exception:
+                logger.exception(
+                    'shift close: credit-risk notify failed for tab %s in shift %s', tab.id, shift.id,
+                )
         except Exception:
             logger.exception('shift close: auto-convert failed for tab %s in shift %s', tab.id, shift.id)
 
