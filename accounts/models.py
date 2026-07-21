@@ -143,6 +143,11 @@ class Business(models.Model):
         null=True, blank=True,
         help_text='Timestamp of last transaction SMS sent. Used for 10-minute bundling window.'
     )
+    last_daily_summary_sent_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Timestamp of the last daily summary SMS/email sent. Prevents a duplicate '
+                   'cron fire or retry from re-sending the same day\'s summary.'
+    )
 
     # ── Keg Bar Settings ──────────────────────────────────────────────────
     keg_variance_tolerance_pct = models.DecimalField(

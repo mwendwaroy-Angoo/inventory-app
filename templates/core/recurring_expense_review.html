@@ -44,8 +44,9 @@
     The system will automatically record them in your expense register for {{ today|date:"F Y" }}.
 </div>
 
-<form method="post" action="{% url 'recurring_expense_confirm' %}">
+<form method="post" action="{% url 'recurring_expense_confirm' %}" id="recurringExpenseConfirmForm">
     {% csrf_token %}
+    <input type="hidden" name="idempotency_token" value="">
 
     {% if monthly %}
     <div class="rc-card">
@@ -118,10 +119,26 @@
     {% endif %}
 
     <div class="d-flex gap-3 align-items-center mt-2">
-        <button type="submit" class="btn btn-gold">✓ Confirm & Post to {{ today|date:"F Y" }}</button>
+        <button type="submit" class="btn btn-gold" id="recurringExpenseConfirmBtn">✓ Confirm & Post to {{ today|date:"F Y" }}</button>
         <a href="{% url 'home' %}" style="color:#b0b0b0; font-size:0.85rem;">Review later</a>
     </div>
 </form>
+<script>
+(function () {
+    var form = document.getElementById('recurringExpenseConfirmForm');
+    var btn = document.getElementById('recurringExpenseConfirmBtn');
+    if (!form || !btn) return;
+    var tokenInput = form.querySelector('[name="idempotency_token"]');
+    var submitted = false;
+    form.addEventListener('submit', function (e) {
+        if (submitted) { e.preventDefault(); return; }
+        submitted = true;
+        tokenInput.value = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+        btn.disabled = true;
+        btn.textContent = '⏳ Inatuma...';
+    });
+})();
+</script>
 {% endif %}
 
 {% endblock %}

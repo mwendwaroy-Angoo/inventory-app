@@ -3240,6 +3240,16 @@ def forecast_api(request):
     """
     import json as _json
 
+    profile = getattr(request.user, 'userprofile', None)
+    if not profile or not profile.is_owner_or_manager:
+        # Not a redirect (owner_or_manager_required's usual behavior) — this
+        # is a JSON endpoint. The page that calls it (analytics.html's "Run
+        # Forecast" button) is already owner/manager-gated, but the endpoint
+        # itself had no gate of its own, so any staff member who knew/guessed
+        # the URL could POST directly and pull a full revenue+profit history
+        # and forecast, unfiltered by station.
+        return JsonResponse({"error": "Owner or manager only"}, status=403)
+
     try:
         if request.content_type == "application/json":
             body = _json.loads(request.body)

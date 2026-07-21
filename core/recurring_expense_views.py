@@ -18,6 +18,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from django.db import transaction as db_transaction
+
 from .models import BusinessExpense, RecurringExpense
 from .views import get_user_profile, owner_required
 
@@ -248,46 +250,66 @@ def recurring_expense_confirm(request):
       - Apply any updated amounts
       - Auto-create BusinessExpense for current period (idempotent)
     Then update business.last_expense_review_date and send notifications.
+
+    Idempotent against a double-submit (double-click, back-button resubmit of
+    this real <form>, slow-network retry) two ways: (1) claim_checkout_token —
+    this app's standard server-side backstop for exactly this shape of form,
+    and (2) select_for_update() on each RecurringExpense row before the
+    already_posted_this_period() check — the check-then-create was previously
+    unlocked, so two near-simultaneous confirms could both pass the check
+    before either BusinessExpense.objects.create() committed, double-posting
+    a recurring line (often a salary or rent — this module's biggest cost
+    lines) straight into net_profit on the analytics dashboard.
     """
     up = get_user_profile(request)
     business = up.business
     today = timezone.localdate()
+
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return redirect('recurring_expense_review')
 
     due = _expenses_due_for_review(business)
     total_kes = Decimal('0')
     created_count = 0
 
     for expense in due:
-        # Apply updated amount if owner changed it
-        new_amount_raw = request.POST.get(f'amount_{expense.id}')
-        if new_amount_raw:
-            try:
-                new_amount = Decimal(str(new_amount_raw))
-                if new_amount != expense.amount:
-                    expense.amount = new_amount
-            except Exception:
-                pass
+        with db_transaction.atomic():
+            expense = RecurringExpense.objects.select_for_update().get(pk=expense.pk)
 
-        expense.last_confirmed_at = timezone.now()
-        expense.save(update_fields=['amount', 'last_confirmed_at'])
+            # Apply updated amount if owner changed it
+            new_amount_raw = request.POST.get(f'amount_{expense.id}')
+            if new_amount_raw:
+                try:
+                    new_amount = Decimal(str(new_amount_raw))
+                    if new_amount != expense.amount:
+                        expense.amount = new_amount
+                except Exception:
+                    pass
 
-        # Auto-create BusinessExpense if not already posted this period
-        if not expense.already_posted_this_period(today):
-            period_start = expense.period_start(today)
-            desc = expense.description
-            if expense.staff_profile:
-                staff_name = expense.staff_profile.user.get_full_name() or expense.staff_profile.user.username
-                desc = f'Salary — {staff_name}'
+            expense.last_confirmed_at = timezone.now()
+            expense.save(update_fields=['amount', 'last_confirmed_at'])
 
-            BusinessExpense.objects.create(
-                business=business,
-                description=desc,
-                amount=expense.amount,
-                category=expense.category,
-                date=period_start,
-                notes=f'[recurring] Auto-posted for {period_start.strftime("%B %Y")}',
-            )
-            created_count += 1
+            # Auto-create BusinessExpense if not already posted this period —
+            # re-checked under the lock so a concurrent confirm can't slip
+            # through between the check and the create.
+            if not expense.already_posted_this_period(today):
+                period_start = expense.period_start(today)
+                desc = expense.description
+                if expense.staff_profile:
+                    staff_name = expense.staff_profile.user.get_full_name() or expense.staff_profile.user.username
+                    desc = f'Salary — {staff_name}'
+
+                BusinessExpense.objects.create(
+                    business=business,
+                    description=desc,
+                    amount=expense.amount,
+                    category=expense.category,
+                    date=period_start,
+                    notes=f'[recurring] Auto-posted for {period_start.strftime("%B %Y")}',
+                )
+                created_count += 1
 
         total_kes += expense.amount
 

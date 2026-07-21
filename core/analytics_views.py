@@ -628,6 +628,16 @@ def analytics_dashboard(request):
             received_on__gte=start_date,
             received_on__lte=today,
         )
+        # Discriminator consistency: the Staff Pouring League section below
+        # (over the same conceptual "this business's keg barrels this
+        # period" data) already excludes kitchen via
+        # item__store__is_kitchen — this query fed the Bar/Keg Analytics
+        # table and Per-barrel P&L table without the same exclusion, so a
+        # barrel under a kitchen store (nothing prevents Item.is_keg=True
+        # there) would silently double-count into both the "Bar Performance"
+        # section here and the separately-computed Kitchen Performance
+        # section, corrupting the owner's own Bar-vs-Kitchen split.
+        .exclude(item__store__is_kitchen=True)
         .select_related('item')
         .prefetch_related('cup_logs', 'weight_readings')
     )
@@ -979,6 +989,13 @@ def analytics_api(request):
     user_profile = get_user_profile(request)
     if not user_profile:
         return JsonResponse({'error': 'No profile'}, status=403)
+
+    # The page this data class belongs to (analytics_dashboard) requires
+    # owner_or_manager_required; this JSON sibling had no gate of its own —
+    # any staff member could pull full revenue+profit trends, unscoped by
+    # station, for the whole business.
+    if not user_profile.is_owner_or_manager:
+        return JsonResponse({'error': 'Owner or manager only'}, status=403)
 
     business = user_profile.business
     today = date.today()

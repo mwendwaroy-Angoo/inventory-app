@@ -269,9 +269,11 @@
 <div class="ds-card" style="border-left:3px solid #c0395a;">
     <div class="ds-card-header">
         <h6 style="color:#c0395a;">⚠️ {% trans 'Wastage' %}</h6>
+        {% if is_owner %}
         <span style="color:#c0395a; font-size:0.78rem; font-weight:600;">
             KES {{ wastage_value|floatformat:0 }} {% trans 'cost lost' %}
         </span>
+        {% endif %}
     </div>
     <div class="table-responsive">
         <table class="table mb-0 ds-table">

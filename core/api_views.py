@@ -44,6 +44,20 @@ class HasBusiness(permissions.BasePermission):
         return profile and profile.business is not None
 
 
+class IsOwnerOrManager(permissions.BasePermission):
+    """Owner or manager only — for endpoints exposing revenue/profit figures.
+
+    Matches the Django-view convention (`owner_or_manager_required` in
+    core/views.py) for the same class of data; DRF endpoints need their own
+    permission class since they can't use that decorator (it redirects on
+    failure, which doesn't make sense for a JSON API response).
+    """
+
+    def has_permission(self, request, view):
+        profile = getattr(request.user, "userprofile", None)
+        return bool(profile and profile.is_owner_or_manager)
+
+
 # ── HELPER ───────────────────────────────────────────────────────────────────
 
 
@@ -165,7 +179,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
 
 
 @api_view(["GET"])
-@permission_classes([permissions.IsAuthenticated, HasBusiness])
+@permission_classes([permissions.IsAuthenticated, HasBusiness, IsOwnerOrManager])
 def business_summary(request):
     """Dashboard summary for the user's business."""
     business = get_business(request)

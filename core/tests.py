@@ -3678,13 +3678,23 @@ class AutoCloseShiftConvertsOpenTabsTest(TestCase):
             business=self.biz, store=self.store, description='Autoclose Beer',
             material_no='AUTOCLOSE-01', unit='Pcs', selling_price=Decimal('100'),
         )
-        # Started well over a day ago so the shift's scheduled close (yesterday's
-        # closing_time) is unambiguously past the 2h grace window regardless of
-        # what real wall-clock time this test happens to run at.
+        # Anchored to yesterday at a fixed, safely-mid-hours time (10:00, well
+        # before closing_time=20:00) rather than "timezone.now() - 1 day" —
+        # that relative offset preserves today's time-of-day on yesterday's
+        # date, so a suite run late in the evening (after 20:00 local) placed
+        # started_at itself after its own day's closing_time, tripping the
+        # "shift opened in an unusual window, skip" branch in
+        # _auto_close_expired_shifts and making this test fail purely
+        # depending on what time of day it happened to run — found via direct
+        # diagnosis while auditing the analytics module (2026-07-21, ran at
+        # ~20:58 EAT). Anchoring to a fixed early hour makes this robust
+        # regardless of what real wall-clock time the suite runs at.
+        from datetime import datetime as _datetime
+        yesterday = timezone.localdate() - timedelta(days=1)
         self.shift = Shift.objects.create(
             business=self.biz, store=self.store, staff=self.staff,
             status='OPEN', opening_float=Decimal('0'),
-            started_at=timezone.now() - timedelta(days=1),
+            started_at=timezone.make_aware(_datetime.combine(yesterday, _time(10, 0))),
         )
 
     def test_open_tab_converted_to_debt_when_shift_auto_closes(self):
@@ -6490,3 +6500,228 @@ class RequestWriteOffStationScopingTest(TestCase):
         )
         self.assertEqual(resp1.json().get('ok'), True)
         self.assertEqual(resp2.json().get('ok'), True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Analytics Module Audit — Theme 1 (money-path idempotency), 2026-07-21
+# ══════════════════════════════════════════════════════════════════════════════
+
+class RecurringExpenseConfirmIdempotencyTest(TestCase):
+    """recurring_expense_confirm's only guard against double-posting a
+    recurring line (often a salary or rent — the module's biggest cost
+    lines) was a plain check-then-create with no lock — two near-simultaneous
+    confirms could both pass already_posted_this_period() before either
+    BusinessExpense.objects.create() committed. claim_checkout_token +
+    select_for_update() close this."""
+
+    def setUp(self):
+        from core.models import RecurringExpense
+        self.biz = Business.objects.create(name='RE Confirm Idem Biz')
+        self.owner = User.objects.create_user(username='reconfirm_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.re = RecurringExpense.objects.create(
+            business=self.biz, description='Rent', category='rent',
+            amount=Decimal('10000'), period='MONTHLY',
+        )
+        self.client.force_login(self.owner)
+
+    def test_duplicate_token_does_not_double_post(self):
+        from core.models import BusinessExpense
+        payload = {f'amount_{self.re.id}': '10000', 'idempotency_token': 'reconfirm-same-token'}
+        self.client.post('/analytics/recurring/confirm/', payload)
+        self.client.post('/analytics/recurring/confirm/', payload)
+        self.assertEqual(
+            BusinessExpense.objects.filter(business=self.biz, notes__startswith='[recurring]').count(), 1,
+        )
+
+    def test_second_sequential_confirm_does_not_double_post(self):
+        """Even without a duplicate token (two genuinely separate visits to
+        the review page), the underlying already_posted_this_period state
+        check must still prevent a real double-post."""
+        from core.models import BusinessExpense
+        self.client.post('/analytics/recurring/confirm/', {
+            f'amount_{self.re.id}': '10000', 'idempotency_token': 'reconfirm-token-a',
+        })
+        self.client.post('/analytics/recurring/confirm/', {
+            f'amount_{self.re.id}': '10000', 'idempotency_token': 'reconfirm-token-b',
+        })
+        self.assertEqual(
+            BusinessExpense.objects.filter(business=self.biz, notes__startswith='[recurring]').count(), 1,
+        )
+
+
+class DailySummaryIdempotencyTest(TestCase):
+    """daily_summary_webhook / send_daily_summary had no dedup state at
+    all — a duplicate cron fire, a manual retry, or anyone hitting the
+    webhook with the (documented, hardcoded-fallback) CRON_SECRET would
+    re-send today's summary SMS+email to every business's owner.
+    Business.last_daily_summary_sent_at (same convention as
+    last_txn_sms_at's bundling window) now blocks a same-day resend."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Daily Summary Idem Biz')
+        self.owner = User.objects.create_user(username='dsidem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner', phone='0712345678')
+
+    @patch('core.notifications.send_email_notification')
+    @patch('core.notifications.send_sms_notification')
+    def test_second_call_same_day_does_not_resend(self, mock_sms, mock_email):
+        from core.notifications import send_daily_summary
+        send_daily_summary(self.biz)
+        send_daily_summary(self.biz)
+        self.assertEqual(mock_email.call_count, 1)
+
+    @patch('core.notifications.send_email_notification')
+    @patch('core.notifications.send_sms_notification')
+    def test_sets_last_daily_summary_sent_at(self, mock_sms, mock_email):
+        from core.notifications import send_daily_summary
+        send_daily_summary(self.biz)
+        self.biz.refresh_from_db()
+        self.assertIsNotNone(self.biz.last_daily_summary_sent_at)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Analytics Module Audit — Theme 3 (access-control scoping), 2026-07-21
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AnalyticsApiRoleGateTest(TestCase):
+    """analytics_api and forecast_api are the JSON siblings of
+    analytics_dashboard, which requires owner_or_manager_required — neither
+    JSON endpoint had a role gate of its own, so any authenticated staff
+    member could pull full revenue+profit history directly."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Analytics API Role Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='anaapi_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='anaapi_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def test_staff_cannot_access_analytics_api(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/api/v1/analytics/trends/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_owner_can_access_analytics_api(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/api/v1/analytics/trends/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_staff_cannot_access_forecast_api(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/analytics/forecast/', {
+            'start_date': '2026-01-01', 'end_date': '2026-01-31',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_owner_can_access_forecast_api(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/analytics/forecast/', {
+            'start_date': '2026-01-01', 'end_date': '2026-01-31',
+        })
+        self.assertEqual(resp.status_code, 200)
+
+
+class BusinessSummaryApiRoleGateTest(TestCase):
+    """business_summary (DRF) returns today_profit — the most sensitive
+    single figure by this app's own convention — with no role gate at all
+    beyond being authenticated with a business."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Business Summary Role Biz')
+        self.owner = User.objects.create_user(username='bizsum_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='bizsum_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def test_staff_cannot_access_business_summary(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/api/v1/summary/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_owner_can_access_business_summary(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/api/v1/summary/')
+        self.assertEqual(resp.status_code, 200)
+
+
+class DailySalesWastageCostGateTest(TestCase):
+    """daily_sales (/daily/) is intentionally open to all staff and
+    correctly station-scopes its data, but rendered the aggregate wastage
+    cost-lost KES figure to everyone — cost price is treated as sensitive
+    everywhere else in this app (UserProfile.can_input_cost_price staff
+    never see the previous cost price)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Daily Sales Wastage Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='dswaste_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='dswaste_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Wastage Item',
+            material_no='DSWASTE-01', selling_price=Decimal('100'), cost_price=Decimal('60'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Wastage',
+            qty=Decimal('-2'), date=timezone.localdate(),
+        )
+
+    def test_staff_does_not_see_wastage_cost_figure(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/daily/')
+        self.assertNotIn(b'cost lost', resp.content)
+
+    def test_owner_sees_wastage_cost_figure(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/daily/')
+        self.assertIn(b'cost lost', resp.content)
+
+
+class KegBarrelsPeriodStationScopingTest(TestCase):
+    """keg_barrels_period (feeding the Bar/Keg Analytics + Per-barrel P&L
+    tables) had no item__store__is_kitchen exclusion, unlike the sibling
+    Staff Pouring League section computed over the same conceptual data a
+    few lines later — a keg barrel under a kitchen store would silently
+    double-count into both the Bar Performance and Kitchen Performance
+    sections."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Keg Barrels Station Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbstation_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Bar Keg Item',
+            material_no='KBSTATIONBAR-01', is_keg=True, selling_price=Decimal('50'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kitchen Keg Item',
+            material_no='KBSTATIONKITCHEN-01', is_keg=True, selling_price=Decimal('50'),
+        )
+        KegBarrel.objects.create(
+            business=self.biz, store=self.bar_store, item=self.bar_item,
+            cost_price=Decimal('1000'), target_revenue=Decimal('2000'), status='TAPPED',
+        )
+        KegBarrel.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.kitchen_item,
+            cost_price=Decimal('1000'), target_revenue=Decimal('2000'), status='TAPPED',
+        )
+        self.client.force_login(self.owner)
+
+    def test_kitchen_barrel_excluded_from_bar_keg_table(self):
+        # Check the actual template context feeding the Bar/Keg Analytics +
+        # Per-barrel P&L tables, not raw page content — the page also has an
+        # unrelated forecast product-filter <select> that legitimately lists
+        # every item (including kitchen ones) regardless of this fix.
+        resp = self.client.get('/analytics/')
+        keg_names = [r['name'] for r in resp.context['keg_item_rows']]
+        barrel_items = [b['item'] for b in resp.context['barrel_rows']]
+        self.assertIn('Bar Keg Item', keg_names)
+        self.assertNotIn('Kitchen Keg Item', keg_names)
+        self.assertIn('Bar Keg Item', barrel_items)
+        self.assertNotIn('Kitchen Keg Item', barrel_items)

@@ -1360,3 +1360,55 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `manager_review_write_off`/`reject_write_off`. 4 new tests. 18 new tests total across all three
   themes, 310 tests pass. **Debt tracker module audit complete** (all 3 themes). Next: resume
   remaining scope — analytics (the final module in this audit series).
+- Analytics Module Audit (2026-07-21) — **final module of the systemic Cause-and-Effect audit
+  series.** Against `core/analytics_views.py`, `core/views.py` (analytics-adjacent), `core/
+  recurring_expense_views.py`, `core/notifications.py`, `core/api_views.py`. Research done via a
+  full Explore-agent pass (1922-line analytics_views.py + adjacent files read in full) then
+  independently verified before fixing. **Theme 1 (money-path idempotency):**
+  `recurring_expense_confirm` — the only real "write" in the whole analytics surface — had a
+  check-then-create race with no lock: `already_posted_this_period()` was a plain `.exists()`
+  query, so two near-simultaneous "Confirm & Post" submits could both pass it before either
+  `BusinessExpense.objects.create()` committed, double-posting a recurring line (often a salary or
+  rent — this module's biggest cost lines) straight into `net_profit`. Fixed with
+  `claim_checkout_token` (this app's standard form-double-submit backstop) plus
+  `select_for_update()` on each `RecurringExpense` row, re-checking the state under the lock.
+  Separately: `daily_summary_webhook`/`send_daily_summary` (the module's one scheduled/cron job)
+  had zero dedup state — a duplicate cron fire, a manual retry, or anyone hitting the webhook with
+  the documented hardcoded-fallback `CRON_SECRET` would re-send today's summary SMS+email to every
+  business's owner. New `Business.last_daily_summary_sent_at` (accounts migration 0048, same
+  convention as `last_txn_sms_at`'s bundling window) now blocks a same-day resend. 4 new tests.
+  **Theme 2 (state-transition completeness):** the `Forecast` model is fully orphaned — `git log`
+  confirms its populating management commands were deliberately deleted in commit `ad99715`
+  ("purge: delete old pandas/matplotlib forecast infrastructure"); the live "Run Forecast" button
+  now calls `forecast_api` → `forecast_engine.run_ets/run_regression`, which compute on demand and
+  never persist. Nothing in the codebase creates a `Forecast` row. Not a "cause without effect" bug
+  in the usual sense (nothing is left dangling — it's simply 100% dead code), so left in place
+  rather than deleted (a future caching layer may revive it) but annotated in the model docstring
+  so a future reader doesn't re-walk the same investigation. Everything else in this theme —
+  `RecurringExpense`'s review→confirm cycle, `RevenueTarget` as persistent config rather than a
+  period job — checked out already complete. **Theme 3 (access-control scoping):** three read
+  endpoints were JSON/API siblings of pages that ARE correctly gated, but had no gate of their
+  own — the exact "read-only sibling has weaker gating than its page" shape this audit series
+  already caught once before (`kitchen_consumable_pool_api`, 2026-07-19 Kitchen audit):
+  `analytics_api` (JSON trends, sibling of `analytics_dashboard`) and `forecast_api` (the literal
+  endpoint `analytics.html`'s owner/manager-gated "Run Forecast" button POSTs to) both gained an
+  inline `is_owner_or_manager` check — not `owner_or_manager_required`, which redirects on failure
+  and is wrong for a JSON endpoint (see the Known Issues entry on `@login_required` + AJAX); DRF's
+  `business_summary` (returns `today_profit`, the single most sensitive figure by this app's own
+  convention) gained a new `IsOwnerOrManager` DRF permission class alongside the existing `IsOwner`/
+  `HasBusiness`. Also found: `daily_sales` (`/daily/`, intentionally open to all staff, already
+  correctly station-scoped) rendered its aggregate wastage cost-lost KES figure to every role with
+  no gate — inconsistent with `UserProfile.can_input_cost_price`'s own convention that non-owner
+  staff never see cost price; fixed by wrapping just that KES span in `{% if is_owner %}` in
+  `daily_summary.html` (the wastage list itself — item/qty/notes — stays visible to staff, who
+  already log it themselves). And a station-scoping inconsistency inside `analytics_dashboard`
+  itself: `keg_barrels_period` (feeding both the Bar/Keg Analytics table and Per-barrel P&L table)
+  had no `item__store__is_kitchen` exclusion, while the Staff Pouring League section a few lines
+  later — over the same conceptual "this business's keg barrels this period" — already excludes
+  kitchen explicitly. Nothing currently prevents `Item.is_keg=True` under a kitchen store, so a
+  future kitchen-side keg feature (or a data-entry mistake) would have silently double-counted that
+  barrel's revenue into both the Bar Performance and Kitchen Performance sections, corrupting the
+  owner's own Bar-vs-Kitchen split; fixed by adding the same exclusion. 9 new tests. 13 new tests
+  total, 323 tests pass. **Analytics module audit complete (all 3 themes) — this closes out the
+  full systemic Cause-and-Effect audit series** covering bar/keg, kitchen, Quick Sell, supply
+  chain/procurement, debt tracker, and analytics (2026-07-19 through 2026-07-21).

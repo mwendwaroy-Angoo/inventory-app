@@ -725,6 +725,16 @@ class Forecast(models.Model):
 
     Stores the input history and produced forecast as JSON so the UI can
     display precomputed forecasts quickly.
+
+    Currently ORPHANED (found in the analytics module audit, 2026-07-21):
+    the management commands that used to populate this (forecast.py,
+    precompute_forecasts.py) were deleted in commit ad99715 ("purge: delete
+    old pandas/matplotlib forecast infrastructure completely"). The live
+    "Run Forecast" button on the analytics dashboard now calls forecast_api
+    (core/views.py) -> core/forecast_engine.py, which computes on demand and
+    never persists a Forecast row. Nothing in the codebase currently creates
+    one. Kept (not deleted) in case a future caching/snapshot layer revives
+    it — do not assume rows exist here.
     """
     SOURCE_CHOICES = [
         ('transaction', 'Transaction'),

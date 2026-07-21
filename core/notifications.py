@@ -474,6 +474,19 @@ def send_daily_summary(business):
     from collections import defaultdict
     from core.models import Transaction
 
+    # Idempotency: a duplicate cron fire, a manual retry, or anyone hitting
+    # daily_summary_webhook with the fallback token would otherwise re-send
+    # today's summary SMS+email to every business's owner with no guard at
+    # all. Same convention as Business.last_txn_sms_at's bundling window —
+    # set unconditionally after attempting the send, not gated on individual
+    # channel delivery confirmation (SMS/email failures are already handled,
+    # non-fatally, by their own senders below).
+    now = _tz.now()
+    if business.last_daily_summary_sent_at:
+        last_local_date = _tz.localtime(business.last_daily_summary_sent_at).date()
+        if last_local_date >= _tz.localdate():
+            return
+
     owner_profile = business.users.select_related("user").filter(role="owner").first()
     if not owner_profile:
         return
@@ -539,6 +552,9 @@ def send_daily_summary(business):
     message += "— Duka Mwecheche"
 
     send_email_notification(owner_email, subject, None, text_message=message)
+
+    business.last_daily_summary_sent_at = now
+    business.save(update_fields=['last_daily_summary_sent_at'])
 
     # SMS nudge after daily summary email
     try:
