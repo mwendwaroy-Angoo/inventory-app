@@ -1357,6 +1357,6 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (always see both). Everything else audited and found already correct: `_debt_scope()`,
   `customer_debt_statement`, `clear_defaulter`, `toggle_credit_approval`,
   `update_customer_credit_settings` (intentionally all-staff per this file's own conventions),
-  `manager_review_write_off`/`reject_write_off`. 4 new tests. 22 new tests total across all three
-  themes, 314 tests pass. **Debt tracker module audit complete** (all 3 themes). Next: resume
+  `manager_review_write_off`/`reject_write_off`. 4 new tests. 18 new tests total across all three
+  themes, 310 tests pass. **Debt tracker module audit complete** (all 3 themes). Next: resume
   remaining scope — analytics (the final module in this audit series).
