@@ -362,15 +362,29 @@ def award_bid(request, bid_id):
     )
 
     if request.method == "POST":
-        bid.status = "accepted"
-        bid.save(update_fields=["status"])
+        # Lock + re-check before writing — a double-click or slow-network
+        # retry on this button used to be able to run this whole block
+        # twice, creating a second draft PurchaseOrder (with duplicated
+        # lines) and re-firing supplier award notifications/emails, since
+        # nothing here checked whether the bid was already accepted.
+        from django.db import transaction as db_transaction
+        with db_transaction.atomic():
+            bid = SupplierBid.objects.select_for_update().get(pk=bid.pk)
+            if bid.status == "accepted":
+                django_messages.info(
+                    request, "This bid has already been awarded."
+                )
+                return redirect("procurement_detail", pk=bid.procurement.pk)
 
-        # Reject other bids
-        bid.procurement.bids.exclude(pk=bid.pk).update(status="rejected")
+            bid.status = "accepted"
+            bid.save(update_fields=["status"])
 
-        # Mark procurement as awarded
-        bid.procurement.status = "awarded"
-        bid.procurement.save(update_fields=["status"])
+            # Reject other bids
+            bid.procurement.bids.exclude(pk=bid.pk).update(status="rejected")
+
+            # Mark procurement as awarded
+            bid.procurement.status = "awarded"
+            bid.procurement.save(update_fields=["status"])
 
         # Notify the supplier that their bid was awarded
         try:

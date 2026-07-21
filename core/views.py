@@ -1407,6 +1407,12 @@ def purchase_order_create(request):
         return redirect("home")
 
     if request.method == "POST":
+        from core.idempotency import claim_checkout_token
+        idem_token = (request.POST.get("idempotency_token") or "").strip()
+        if not claim_checkout_token(user_profile.business_id, idem_token):
+            messages.info(request, _("Hii tayari imehifadhiwa."))
+            return redirect("purchase_orders_list")
+
         form = PurchaseOrderForm(request.POST)
         temp_po = PurchaseOrder(business=user_profile.business)
         formset = PurchaseOrderLineFormSet(request.POST, instance=temp_po)
@@ -1537,6 +1543,12 @@ def purchase_order_edit(request, po_id):
     po = get_object_or_404(PurchaseOrder, id=po_id, business=user_profile.business)
 
     if request.method == "POST":
+        from core.idempotency import claim_checkout_token
+        idem_token = (request.POST.get("idempotency_token") or "").strip()
+        if not claim_checkout_token(user_profile.business_id, idem_token):
+            messages.info(request, _("Hii tayari imehifadhiwa."))
+            return redirect("purchase_order_detail", po.id)
+
         form = PurchaseOrderForm(request.POST, instance=po)
         formset = PurchaseOrderLineFormSet(request.POST, instance=po)
         if form.is_valid() and formset.is_valid():
@@ -1598,66 +1610,93 @@ def receive_goods(request, po_id):
         return redirect("purchase_order_detail", po.id)
 
     if request.method == "POST":
+        # Server-side double-submit backstop — see core/idempotency.py. A
+        # double-click or slow-network retry on this form would otherwise
+        # double-count the physical delivery: two GoodsReceiptLines, two
+        # increments of quantity_received, two stock-in Transactions.
+        from core.idempotency import claim_checkout_token
+        idem_token = (request.POST.get("idempotency_token") or "").strip()
+        if not claim_checkout_token(user_profile.business_id, idem_token):
+            messages.info(request, _("Hii tayari imehifadhiwa."))
+            return redirect("purchase_order_detail", po.id)
+
         receipt_form = GoodsReceiptForm(request.POST)
         line_formset = GoodsReceiptLineFormSet(request.POST)
 
         if receipt_form.is_valid() and line_formset.is_valid():
-            receipt = receipt_form.save(commit=False)
-            receipt.po = po
-            receipt.received_by = request.user
-            receipt.save()
+            from django.db import transaction as db_transaction
 
-            items_received = 0
-            for form in line_formset.forms:
-                data = form.cleaned_data
-                qty = data.get("quantity_received", 0)
-                if not qty:
-                    continue
+            with db_transaction.atomic():
+                # Re-fetch and lock the PO inside the transaction — the
+                # status check above ran before this request took the lock,
+                # so two near-simultaneous submissions could otherwise both
+                # pass it and both write a full receipt for the same
+                # delivery. Re-check status under the lock and bail out if
+                # another request already finished receiving this PO.
+                locked_po = PurchaseOrder.objects.select_for_update().get(id=po.id)
+                if locked_po.status in ("received", "cancelled"):
+                    messages.info(
+                        request, _("This PO was already received (by another request).")
+                    )
+                    return redirect("purchase_order_detail", po.id)
 
-                po_line = get_object_or_404(
-                    PurchaseOrderLine, id=data["po_line_id"], po=po
-                )
+                receipt = receipt_form.save(commit=False)
+                receipt.po = locked_po
+                receipt.received_by = request.user
+                receipt.save()
 
-                qty = min(qty, po_line.quantity_remaining())
-                if qty <= 0:
-                    continue
+                items_received = 0
+                for form in line_formset.forms:
+                    data = form.cleaned_data
+                    qty = data.get("quantity_received", 0)
+                    if not qty:
+                        continue
 
-                GoodsReceiptLine.objects.create(
-                    receipt=receipt,
-                    po_line=po_line,
-                    quantity_received=qty,
-                    actual_unit_price=data["actual_unit_price"],
-                    update_cost_price=data.get("update_cost_price", False),
-                    notes=data.get("notes", ""),
-                )
+                    po_line = get_object_or_404(
+                        PurchaseOrderLine.objects.select_for_update(),
+                        id=data["po_line_id"], po=locked_po,
+                    )
 
-                po_line.quantity_received += qty
-                po_line.save()
+                    qty = min(qty, po_line.quantity_remaining())
+                    if qty <= 0:
+                        continue
 
-                if data.get("update_cost_price") and data.get("actual_unit_price"):
-                    item = po_line.item
-                    item.cost_price = data["actual_unit_price"]
-                    item.save()
+                    GoodsReceiptLine.objects.create(
+                        receipt=receipt,
+                        po_line=po_line,
+                        quantity_received=qty,
+                        actual_unit_price=data["actual_unit_price"],
+                        update_cost_price=data.get("update_cost_price", False),
+                        notes=data.get("notes", ""),
+                    )
 
-                invoice_ref = receipt.delivery_note_no or f"GR-{receipt.id}"
-                Transaction.objects.create(
-                    business=po.business,
-                    item=po_line.item,
-                    date=receipt.received_date,
-                    invoice_no=invoice_ref,
-                    type="Receipt",
-                    qty=qty,
-                    recipient=f"PO-{po.id}",
-                )
-                items_received += 1
+                    po_line.quantity_received += qty
+                    po_line.save()
 
-            po.refresh_from_db()
-            all_lines = list(po.lines.all())
-            if all_lines and all(ln.quantity_remaining() == 0 for ln in all_lines):
-                po.status = "received"
-            else:
-                po.status = "part_received"
-            po.save()
+                    if data.get("update_cost_price") and data.get("actual_unit_price"):
+                        item = po_line.item
+                        item.cost_price = data["actual_unit_price"]
+                        item.save()
+
+                    invoice_ref = receipt.delivery_note_no or f"GR-{receipt.id}"
+                    Transaction.objects.create(
+                        business=locked_po.business,
+                        item=po_line.item,
+                        date=receipt.received_date,
+                        invoice_no=invoice_ref,
+                        type="Receipt",
+                        qty=qty,
+                        recipient=f"PO-{locked_po.id}",
+                    )
+                    items_received += 1
+
+                locked_po.refresh_from_db()
+                all_lines = list(locked_po.lines.all())
+                if all_lines and all(ln.quantity_remaining() == 0 for ln in all_lines):
+                    locked_po.status = "received"
+                else:
+                    locked_po.status = "part_received"
+                locked_po.save()
 
             if items_received:
                 messages.success(

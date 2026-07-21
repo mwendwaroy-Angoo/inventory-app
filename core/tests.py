@@ -5570,3 +5570,150 @@ class CatalogBulkAddTest(TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(Item.objects.filter(business=self.biz).count(), 0)
+
+
+# ── Supply Chain / Procurement audit, Theme 1 (money-path idempotency), 2026-07-21 ──
+
+class ReceiveGoodsIdempotencyTest(TestCase):
+    """Double-click / network retry on the Confirm Receipt button used to be
+    able to double-count a physical delivery: two GoodsReceiptLines, two
+    increments of quantity_received, two stock-in Transactions."""
+
+    def setUp(self):
+        from core.models import PurchaseOrder, PurchaseOrderLine
+        self.PurchaseOrder = PurchaseOrder
+        self.PurchaseOrderLine = PurchaseOrderLine
+
+        self.biz = Business.objects.create(name='Receive Goods Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='recvgoods_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Receive Test Item',
+            material_no='RECVGOODS-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        self.po = PurchaseOrder.objects.create(business=self.biz, status='ordered')
+        self.po_line = PurchaseOrderLine.objects.create(
+            po=self.po, item=self.item, quantity_ordered=10, unit_price=Decimal('50'),
+        )
+        self.client.force_login(self.owner)
+
+    def _payload(self, token):
+        return {
+            'received_date': '2026-07-21',
+            'delivery_note_no': 'DN-TEST-1',
+            'notes': '',
+            'form-TOTAL_FORMS': '1',
+            'form-INITIAL_FORMS': '0',
+            'form-MIN_NUM_FORMS': '0',
+            'form-MAX_NUM_FORMS': '1000',
+            'form-0-po_line_id': str(self.po_line.id),
+            'form-0-quantity_received': '10',
+            'form-0-actual_unit_price': '50',
+            'idempotency_token': token,
+        }
+
+    def test_duplicate_token_does_not_double_count_receipt(self):
+        payload = self._payload('recv-dup-1')
+        self.client.post(f'/purchase-orders/{self.po.id}/receive/', payload)
+        self.client.post(f'/purchase-orders/{self.po.id}/receive/', payload)
+
+        self.po_line.refresh_from_db()
+        self.assertEqual(self.po_line.quantity_received, 10, 'Duplicate submission must not double quantity_received')
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').count(), 1,
+            'Duplicate submission must not create a second stock-in Transaction',
+        )
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, 'received')
+
+    def test_different_tokens_are_independent_real_receipts(self):
+        # Two separate partial deliveries against the same PO must both go through.
+        self.po_line.quantity_ordered = 20
+        self.po_line.save(update_fields=['quantity_ordered'])
+        payload_a = self._payload('recv-a')
+        payload_a['form-0-quantity_received'] = '5'
+        self.client.post(f'/purchase-orders/{self.po.id}/receive/', payload_a)
+        payload_b = self._payload('recv-b')
+        payload_b['form-0-quantity_received'] = '5'
+        self.client.post(f'/purchase-orders/{self.po.id}/receive/', payload_b)
+
+        self.po_line.refresh_from_db()
+        self.assertEqual(self.po_line.quantity_received, 10)
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').count(), 2,
+        )
+
+
+class AwardBidIdempotencyTest(TestCase):
+    """A double-click on Award used to be able to create a second draft
+    PurchaseOrder (with duplicated lines) and re-fire supplier notifications,
+    since nothing checked whether the bid was already accepted."""
+
+    def setUp(self):
+        from core.models import ProcurementRequest, SupplierBid, PurchaseOrder
+        self.PurchaseOrder = PurchaseOrder
+
+        self.buyer = Business.objects.create(name='Award Buyer Biz')
+        self.supplier_biz = Business.objects.create(name='Award Supplier Biz')
+        self.owner = User.objects.create_user(username='award_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.buyer, role='owner')
+
+        self.procurement = ProcurementRequest.objects.create(
+            business=self.buyer, title='Need Sodas', description='Bulk sodas',
+            deadline=timezone.localdate() + timedelta(days=7),
+        )
+        self.bid = SupplierBid.objects.create(
+            procurement=self.procurement, supplier=self.supplier_biz,
+            amount=Decimal('5000'), delivery_timeline='3 days', proposal='Best price',
+        )
+        self.client.force_login(self.owner)
+
+    def test_duplicate_award_post_does_not_create_second_po(self):
+        self.client.post(f'/procurement/bid/{self.bid.id}/award/')
+        self.client.post(f'/procurement/bid/{self.bid.id}/award/')
+
+        self.bid.refresh_from_db()
+        self.assertEqual(self.bid.status, 'accepted')
+        self.assertEqual(
+            self.PurchaseOrder.objects.filter(business=self.buyer, supplier=self.supplier_biz).count(), 1,
+            'Duplicate award POST must not create a second draft PurchaseOrder',
+        )
+
+    def test_award_creates_supplier_relationship_and_draft_po(self):
+        from core.models import SupplierRelationship
+        self.client.post(f'/procurement/bid/{self.bid.id}/award/')
+        self.assertTrue(
+            SupplierRelationship.objects.filter(business=self.buyer, supplier=self.supplier_biz).exists()
+        )
+        po = self.PurchaseOrder.objects.filter(business=self.buyer, supplier=self.supplier_biz).first()
+        self.assertIsNotNone(po)
+        self.assertEqual(po.status, 'draft')
+        self.procurement.refresh_from_db()
+        self.assertEqual(self.procurement.status, 'awarded')
+
+
+class PurchaseOrderCreateIdempotencyTest(TestCase):
+    def setUp(self):
+        from core.models import PurchaseOrder
+        self.PurchaseOrder = PurchaseOrder
+        self.biz = Business.objects.create(name='PO Create Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='pocreate_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_duplicate_token_does_not_double_create_po(self):
+        # PurchaseOrderLineFormSet is an inline formset whose management-form
+        # prefix defaults to the related_name ('lines'), not the generic 'form'.
+        payload = {
+            'status': 'draft',
+            'lines-TOTAL_FORMS': '0',
+            'lines-INITIAL_FORMS': '0',
+            'lines-MIN_NUM_FORMS': '0',
+            'lines-MAX_NUM_FORMS': '1000',
+            'idempotency_token': 'pocreate-dup-1',
+        }
+        self.client.post('/purchase-orders/create/', payload)
+        self.client.post('/purchase-orders/create/', payload)
+        self.assertEqual(self.PurchaseOrder.objects.filter(business=self.biz).count(), 1)

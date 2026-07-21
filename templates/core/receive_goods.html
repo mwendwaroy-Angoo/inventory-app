@@ -66,6 +66,7 @@
 
 <form method="post" id="receipt-form">
     {% csrf_token %}
+    <input type="hidden" name="idempotency_token" id="receiptIdemToken" value="">
     {{ line_formset.management_form }}
 
     {# ── Header card ── #}
@@ -160,7 +161,7 @@
         </div>
         <div class="d-flex gap-2">
             <a href="{% url 'purchase_order_detail' po.id %}" class="btn btn-secondary">{% trans 'Cancel' %}</a>
-            <button type="submit" class="btn btn-gold">
+            <button type="submit" class="btn btn-gold" id="receipt-submit-btn">
                 &#10003; {% trans 'Confirm Receipt' %}
             </button>
         </div>
@@ -171,6 +172,16 @@
 {% block extra_js %}
 <script>
 (function () {
+    const receiptForm = document.getElementById('receipt-form');
+    if (receiptForm) {
+        receiptForm.addEventListener('submit', function () {
+            document.getElementById('receiptIdemToken').value =
+                (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+            var btn = document.getElementById('receipt-submit-btn');
+            if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+        });
+    }
+
     const rows = document.querySelectorAll('#receipt-form tbody tr');
 
     function formatKES(n) {
