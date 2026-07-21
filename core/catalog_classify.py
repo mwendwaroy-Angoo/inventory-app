@@ -279,3 +279,96 @@ def classify_row(raw_name, raw_price):
     entry['default_reorder_quantity'] = reorder_qty
     entry['raw_name'] = name
     return entry
+
+
+# ── Item ↔ catalogue name matching (price-variance report) ──────────────────
+#
+# Used when a live Item has no source_catalog_entry FK (created manually, or
+# before this linking existed) — deliberately tolerant of the human-error
+# cases a real supplier list and a real item form produce independently of
+# each other: case ("SUKUMA WIKI" vs "Sukuma Wiki"), punctuation/spacing
+# ("Blue-Ice 250ml" vs "Blue Ice 250 ML"), word order ("Gin Chrome 750ml" vs
+# "Chrome Gin 750ml"), and small typos. This is NOT semantic/ML matching —
+# it's normalization + volume-token stripping (reusing extract_volume_ml so
+# "250ml" doesn't count as a word mismatch) + token-set overlap + a
+# character-level fuzzy ratio as a second signal. It never auto-applies a
+# match: find_catalog_match_candidates only ever returns ranked suggestions
+# for a human (the owner) to confirm on the price-variance screen.
+import difflib
+
+_MATCH_PUNCT_RE = re.compile(r'[^a-z0-9\s]')
+_MATCH_SPACE_RE = re.compile(r'\s+')
+
+
+def normalize_for_match(name):
+    """Lowercase, strip the volume/size token (reusing extract_volume_ml so
+    "750ml" / "750 ML" / "75CL" all disappear the same way), strip
+    punctuation, collapse whitespace. Returns '' for a blank/None name."""
+    if not name:
+        return ''
+    text = str(name)
+    vol = extract_volume_ml(text)
+    if vol is not None:
+        for pattern, _extractor in _VOLUME_PATTERNS:
+            text = pattern.sub(' ', text)
+    text = text.lower()
+    text = _MATCH_PUNCT_RE.sub(' ', text)
+    text = _MATCH_SPACE_RE.sub(' ', text).strip()
+    return text
+
+
+def match_confidence(name_a, name_b):
+    """0.0–1.0 similarity between two product names, tolerant of case,
+    punctuation, volume notation, word order, and minor typos.
+
+    Combines two independent signals and takes the max — either one being
+    confident is enough evidence for a candidate suggestion (a human still
+    confirms it):
+      - token-set overlap (Jaccard) — order-independent, forgiving of a
+        reordered brand/type ("Gin Chrome" vs "Chrome Gin")
+      - difflib.SequenceMatcher ratio on the normalized strings —
+        character-level, catches typos and near-identical strings token
+        overlap alone would score too low (e.g. one word split differently)
+
+    The text comparison above deliberately strips volume notation so
+    formatting differences ("750ml" vs "750 ML") don't count as a mismatch —
+    but two genuinely different bottle sizes of the same brand ARE different
+    products with different costs ("Chrome Gin 750ml" vs "Chrome Gin
+    250ml"), so a separate volume check penalizes a text-identical match
+    when both names carry an extractable, differing volume.
+    """
+    a = normalize_for_match(name_a)
+    b = normalize_for_match(name_b)
+    if not a or not b:
+        return 0.0
+
+    if a == b:
+        base = 1.0
+    else:
+        tokens_a = set(a.split())
+        tokens_b = set(b.split())
+        union = tokens_a | tokens_b
+        jaccard = (len(tokens_a & tokens_b) / len(union)) if union else 0.0
+        seq_ratio = difflib.SequenceMatcher(None, a, b).ratio()
+        base = max(jaccard, seq_ratio)
+
+    vol_a = extract_volume_ml(name_a)
+    vol_b = extract_volume_ml(name_b)
+    if vol_a is not None and vol_b is not None and vol_a != vol_b:
+        base *= 0.3
+
+    return base
+
+
+def find_catalog_match_candidates(item_name, candidates, threshold=0.6, top_n=3):
+    """Rank candidates (list of (id, name) tuples) against item_name by
+    match_confidence, keeping only those at/above threshold. Returns a list
+    of (id, name, score) sorted best-first, capped at top_n. Never picks a
+    match automatically — this is suggestions for a human to review."""
+    scored = []
+    for cand_id, cand_name in candidates:
+        score = match_confidence(item_name, cand_name)
+        if score >= threshold:
+            scored.append((cand_id, cand_name, round(score, 3)))
+    scored.sort(key=lambda x: -x[2])
+    return scored[:top_n]

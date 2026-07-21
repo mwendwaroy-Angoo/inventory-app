@@ -584,6 +584,24 @@ Never use `{% widthratio %}` — unreliable in Django templates.
 ---
 
 ## Known Issues / Watch Points
+- **`Item.cost_price` has exactly ONE designed writer: Add Transaction's Receipt flow
+  (`core/views.py:add_transaction`, the "COST PRICE UPDATE (Receipt only)" block).** It
+  computes landed cost (unit price + delivery fee ÷ qty), creates a real stock-in
+  `Transaction`, notifies the owner, and already shows its own live variance pill/note
+  comparing the entered price against the item's previous cost
+  (`templates/core/add_transaction.html`, `updateVariancePill()`). No other feature may
+  write `item.cost_price` directly — Roy's explicit correction (2026-07-21, building the
+  price-variance/reconciliation report): "the add transaction section supersedes
+  everything when it comes to receipt info regarding new stock and old stock, just as we
+  designed it." A silent field write from anywhere else is an orphaned cost change with
+  no stock movement behind it, and risks fighting a real receipt recorded through the
+  normal flow. The correct pattern for any feature that *detects* a cost signal (e.g. a
+  re-uploaded supplier price list, `core/catalog_views.py:catalog_variance_apply`) is to
+  hand off to Add Transaction — pre-fill the item + a suggested "Delivered Unit Price" via
+  query params (`?item=<id>&suggested_cost=<price>`, read by an additive, opt-in-only
+  block in `add_transaction.html`'s item-typeahead IIFE) — and let the owner complete the
+  actual update themselves through the one real mechanism. Never add a second code path
+  that writes this field.
 - `Customer` has NO `unique_together` on `(business, name)`. Never use `get_or_create(business=x, name=y)` — if duplicate Customer rows exist, Django raises `MultipleObjectsReturned`. Always use `filter(business=x, name=y).first()` and create only if None. ROOT CAUSE of the production 500 on keg tab sales (2026-06-19): bar_board used get_or_create, production DB had two Customer rows with same business+name from earlier test sessions.
 - `Store.__str__` must handle null business gracefully
 - `Notification` uses `related_name='app_notifications'` — always use this

@@ -35,6 +35,77 @@
     </div>
     {% endif %}
 
+    {% if variance_rows %}
+    <div style="background:var(--onyx-card); border:1px solid rgba(201,168,76,0.3); border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;" id="variance-card">
+        <h6 style="color:var(--gold-light); margin-bottom:0.3rem;">💰 {% trans "Price Changes Detected" %}</h6>
+        <p style="color: #b0b0b0; font-size:0.8rem; margin-bottom:1rem;">
+            {% trans "This supplier's listed price changed for these products since your last upload. This is a reference only — it never changes your recorded cost by itself. Go record a Receipt for the real update, or dismiss it if you'd rather keep what you have." %}
+        </p>
+        {% csrf_token %}
+        <div id="variance-rows">
+            {% for row in variance_rows %}
+            <div class="variance-row" data-log-id="{{ row.log.id }}" style="border-bottom:1px solid #2a2a2a; padding:0.9rem 0;">
+                <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                    <div>
+                        <div style="color:var(--pearl); font-weight:500;">{{ row.log.entry.name }}</div>
+                        <div style="font-size:0.82rem; margin-top:2px;">
+                            <span style="color: #b0b0b0;">KES {{ row.log.previous_cost_price|floatformat:0 }}</span>
+                            <span style="color: #b0b0b0;"> → </span>
+                            <span style="color:{% if row.log.delta_pct > 0 %}var(--raspberry){% else %}#6ee7b7{% endif %}; font-weight:600;">
+                                KES {{ row.log.cost_price|floatformat:0 }}
+                            </span>
+                            {% if row.log.delta_pct %}
+                            <span style="color: #b0b0b0;">
+                                ({% if row.log.delta_pct > 0 %}+{% endif %}{{ row.log.delta_pct }}%)
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-outline-secondary btn-sm variance-dismiss-btn">
+                        {% trans "Puuza" %}
+                    </button>
+                </div>
+
+                {% if row.matched_items %}
+                <div class="mt-2">
+                    {% for item in row.matched_items %}
+                    <div style="font-size:0.82rem; color: #b0b0b0; margin-bottom:4px;">
+                        {% trans "Item" %}: <span style="color:var(--pearl);">{{ item.description }}</span>
+                        ({% trans "currently recorded at" %} KES {{ item.cost_price|floatformat:0|default:"—" }})
+                    </div>
+                    {% endfor %}
+                    <button type="button" class="btn btn-gold btn-sm variance-apply-btn" data-item-id="">
+                        📥 {% trans "Nenda Rekodi Risiti" %}
+                    </button>
+                </div>
+                {% elif row.candidates %}
+                <div class="mt-2">
+                    <div style="font-size:0.78rem; color: #b0b0b0; margin-bottom:0.4rem;">
+                        {% trans "No exact match on record — which of your items is this?" %}
+                    </div>
+                    {% for cand in row.candidates %}
+                    <div class="d-flex justify-content-between align-items-center" style="font-size:0.82rem; padding:0.3rem 0;">
+                        <span style="color:var(--pearl);">
+                            {{ cand.item.description }}
+                            <span style="color: #b0b0b0;"> — {{ cand.score }}% {% trans "match" %}</span>
+                        </span>
+                        <button type="button" class="btn btn-outline-warning btn-sm variance-apply-btn" data-item-id="{{ cand.item.id }}">
+                            {% trans "Hii Ndiyo — Rekodi Risiti" %}
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="mt-2" style="font-size:0.8rem; color: #b0b0b0;">
+                    {% trans "No matching item found on your shelf for this product." %}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
     <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem;">
         <h6 style="color:var(--gold-light); margin-bottom:0.8rem;">{% trans "Items added from this upload" %}</h6>
         <div class="table-responsive" style="max-height:400px; overflow-y:auto;">
@@ -53,4 +124,65 @@
         <a href="{% url 'catalog_upload_form' %}" class="btn btn-outline-secondary btn-sm">← {% trans 'Back to Upload' %}</a>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var card = document.getElementById('variance-card');
+    if (!card) return;
+    var csrf = card.querySelector('[name=csrfmiddlewaretoken]');
+
+    function post(url, body) {
+        return fetch(url, {
+            method: 'POST',
+            headers: {'X-CSRFToken': csrf ? csrf.value : '', 'Content-Type': 'application/x-www-form-urlencoded'},
+            body: body || '',
+        }).then(function (r) { return r.json(); });
+    }
+
+    function removeRow(btn) {
+        var row = btn.closest('.variance-row');
+        if (row) row.remove();
+        var remaining = document.querySelectorAll('.variance-row').length;
+        if (!remaining) {
+            var wrap = document.getElementById('variance-card');
+            if (wrap) wrap.style.display = 'none';
+        }
+    }
+
+    card.addEventListener('click', function (e) {
+        var applyBtn = e.target.closest('.variance-apply-btn');
+        var dismissBtn = e.target.closest('.variance-dismiss-btn');
+        if (!applyBtn && !dismissBtn) return;
+
+        var btn = applyBtn || dismissBtn;
+        var row = btn.closest('.variance-row');
+        var logId = row.getAttribute('data-log-id');
+        btn.disabled = true;
+
+        if (applyBtn) {
+            var itemId = applyBtn.getAttribute('data-item-id') || '';
+            var body = itemId ? ('item_id=' + encodeURIComponent(itemId)) : '';
+            post('/stock/catalog/variance/' + logId + '/apply/', body)
+                .then(function (d) {
+                    if (!d.ok) { alert(d.error || 'Hitilafu.'); btn.disabled = false; return; }
+                    // Hands off to Add Transaction's own Receipt flow — this
+                    // never writes the item's cost price itself (see
+                    // catalog_variance_apply docstring).
+                    if (d.redirect_url) { window.location.href = d.redirect_url; }
+                    else { removeRow(btn); }
+                })
+                .catch(function () { alert('Hitilafu ya mtandao.'); btn.disabled = false; });
+        } else {
+            post('/stock/catalog/variance/' + logId + '/dismiss/')
+                .then(function (d) {
+                    if (!d.ok) { alert(d.error || 'Hitilafu.'); btn.disabled = false; return; }
+                    removeRow(btn);
+                })
+                .catch(function () { alert('Hitilafu ya mtandao.'); btn.disabled = false; });
+        }
+    });
+})();
+</script>
 {% endblock %}

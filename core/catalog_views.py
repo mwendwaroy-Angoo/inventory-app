@@ -20,12 +20,18 @@ from django.contrib import messages
 from django.db import transaction as db_transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 from .business_profiles import get_profile
-from .catalog_classify import detect_name_price_columns, classify_row
-from .models import CatalogUploadBatch, Item, ItemPortionPreset, Store, SupplierCatalogEntry
+from .catalog_classify import (
+    detect_name_price_columns, classify_row, find_catalog_match_candidates,
+)
+from .models import (
+    CatalogUploadBatch, Item, ItemPortionPreset, Store, SupplierCatalogEntry,
+    SupplierCatalogEntryPriceLog,
+)
 from .views import get_user_profile, owner_or_manager_required, _resolve_category
 
 logger = logging.getLogger(__name__)
@@ -95,6 +101,7 @@ def catalog_upload_process(request):
 
     parsed = 0
     skipped = 0
+    price_changes = 0
     skipped_examples = []
 
     for row in data_rows:
@@ -109,9 +116,19 @@ def catalog_upload_process(request):
                 skipped_examples.append(str(raw_name) if raw_name is not None else '')
             continue
 
+        # Look up the OLD cost_price before update_or_create overwrites it —
+        # otherwise a re-upload silently loses the previous price with no
+        # record it ever changed. Only existing (not created) entries are
+        # candidates for a price-change log — a brand-new entry has nothing
+        # to compare against.
+        existing = SupplierCatalogEntry.objects.filter(
+            business=business, raw_name=entry['raw_name'],
+        ).first()
+        old_cost_price = existing.cost_price if existing else None
+
         # Idempotent — re-uploading the same file updates entries in place
         # instead of creating duplicates.
-        SupplierCatalogEntry.objects.update_or_create(
+        catalog_entry, created = SupplierCatalogEntry.objects.update_or_create(
             business=business, raw_name=entry['raw_name'],
             defaults={
                 'source_upload': batch,
@@ -128,27 +145,160 @@ def catalog_upload_process(request):
         )
         parsed += 1
 
+        new_cost_price = catalog_entry.cost_price
+        if (
+            not created and old_cost_price is not None and new_cost_price is not None
+            and old_cost_price != new_cost_price
+        ):
+            SupplierCatalogEntryPriceLog.objects.create(
+                entry=catalog_entry, business=business, source_upload=batch,
+                previous_cost_price=old_cost_price, cost_price=new_cost_price,
+            )
+            price_changes += 1
+
     batch.rows_parsed = parsed
     batch.rows_skipped = skipped
     batch.skipped_examples = skipped_examples
     batch.save(update_fields=['rows_parsed', 'rows_skipped', 'skipped_examples'])
 
-    messages.success(
-        request,
-        _('Uploaded: %(parsed)s item(s) added, %(skipped)s skipped.')
-        % {'parsed': parsed, 'skipped': skipped},
-    )
+    if price_changes:
+        messages.success(
+            request,
+            _('Uploaded: %(parsed)s item(s) added, %(skipped)s skipped, '
+              '%(changes)s price change(s) detected.')
+            % {'parsed': parsed, 'skipped': skipped, 'changes': price_changes},
+        )
+    else:
+        messages.success(
+            request,
+            _('Uploaded: %(parsed)s item(s) added, %(skipped)s skipped.')
+            % {'parsed': parsed, 'skipped': skipped},
+        )
     return redirect('catalog_upload_batch_detail', batch_id=batch.id)
+
+
+def _variance_rows_for_batch(business, batch):
+    """Unresolved price-change log rows from this batch, each paired with
+    its matched Item(s) — exact via Item.source_catalog_entry when
+    available, else ranked fuzzy-name suggestions (core.catalog_classify)
+    for the owner to confirm. Never auto-picks a fuzzy match."""
+    logs = (
+        SupplierCatalogEntryPriceLog.objects
+        .filter(source_upload=batch, applied=False, dismissed=False)
+        .select_related('entry')
+        .order_by('entry__name')
+    )
+    if not logs:
+        return []
+
+    unlinked_by_id = {
+        i.id: i for i in Item.objects.filter(business=business, source_catalog_entry__isnull=True)
+    }
+    name_pairs = [(iid, i.description) for iid, i in unlinked_by_id.items()]
+
+    rows = []
+    for log in logs:
+        matched_items = list(
+            Item.objects.filter(business=business, source_catalog_entry=log.entry)
+        )
+        candidates = []
+        if not matched_items and name_pairs:
+            ranked = find_catalog_match_candidates(log.entry.name, name_pairs)
+            candidates = [
+                {'item': unlinked_by_id[iid], 'score': int(round(score * 100))}
+                for iid, _name, score in ranked
+            ]
+        rows.append({
+            'log': log,
+            'matched_items': matched_items,
+            'candidates': candidates,
+        })
+    return rows
 
 
 @owner_or_manager_required
 def catalog_upload_batch_detail(request, batch_id):
     up = get_user_profile(request)
-    batch = get_object_or_404(CatalogUploadBatch, id=batch_id, business=up.business)
+    business = up.business
+    batch = get_object_or_404(CatalogUploadBatch, id=batch_id, business=business)
     return render(request, 'core/catalog_upload_batch_detail.html', {
         'batch': batch,
         'entries': batch.entries.filter(is_active=True).order_by('name'),
+        'variance_rows': _variance_rows_for_batch(business, batch),
     })
+
+
+@owner_or_manager_required
+@require_POST
+def catalog_variance_apply(request, log_id):
+    """Hand a detected supplier price change off to Add Transaction —
+    the resolve half of the detected-variance cause, WITHOUT writing
+    Item.cost_price directly.
+
+    Add Transaction's Receipt flow is the one designed, audited place a
+    cost price actually changes: it computes landed cost (unit price +
+    delivery fee), creates a real stock-in Transaction, notifies the owner,
+    and already shows its own variance pill comparing the entered price
+    against the item's previous cost. This view must never bypass that —
+    a silent field write here would be an orphaned cost change with no
+    stock movement behind it, and could fight a real receipt recorded
+    through the normal flow. So this only ever: (a) resolves which Item
+    the catalogue entry refers to (linking source_catalog_entry so a fuzzy
+    match becomes exact for next time), and (b) returns a URL to Add
+    Transaction with that item + the new price pre-filled as a starting
+    point — the owner still completes the actual update themselves, through
+    the same Receipt flow used for every other cost change in this app.
+    """
+    up = get_user_profile(request)
+    business = up.business
+    log = get_object_or_404(SupplierCatalogEntryPriceLog, id=log_id, business=business)
+    if log.is_resolved:
+        return JsonResponse({'ok': False, 'error': 'Bei hii tayari imeshughulikiwa.'}, status=400)
+
+    item_id = request.POST.get('item_id')
+    if item_id:
+        item = get_object_or_404(Item, id=item_id, business=business, source_catalog_entry__isnull=True)
+        # Owner confirmed this fuzzy candidate is the right item — link it
+        # going forward so future uploads get an exact match instead of
+        # another fuzzy suggestion. Never touches cost_price.
+        item.source_catalog_entry = log.entry
+        item.save(update_fields=['source_catalog_entry'])
+    else:
+        item = Item.objects.filter(business=business, source_catalog_entry=log.entry).first()
+        if not item:
+            return JsonResponse({'ok': False, 'error': 'Chagua bidhaa kwanza.'}, status=400)
+
+    log.applied = True
+    log.applied_at = timezone.now()
+    log.applied_by = request.user
+    log.save(update_fields=['applied', 'applied_at', 'applied_by'])
+
+    from django.urls import reverse
+    redirect_url = (
+        reverse('add_transaction')
+        + f'?item={item.id}&suggested_cost={log.cost_price}'
+    )
+    return JsonResponse({'ok': True, 'redirect_url': redirect_url})
+
+
+@owner_or_manager_required
+@require_POST
+def catalog_variance_dismiss(request, log_id):
+    """Acknowledge a detected price change without updating the item's
+    recorded cost — the other half of the resolve path (see
+    catalog_variance_apply)."""
+    up = get_user_profile(request)
+    business = up.business
+    log = get_object_or_404(SupplierCatalogEntryPriceLog, id=log_id, business=business)
+    if log.is_resolved:
+        return JsonResponse({'ok': False, 'error': 'Bei hii tayari imeshughulikiwa.'}, status=400)
+
+    log.dismissed = True
+    log.dismissed_at = timezone.now()
+    log.dismissed_by = request.user
+    log.save(update_fields=['dismissed', 'dismissed_at', 'dismissed_by'])
+
+    return JsonResponse({'ok': True})
 
 
 @owner_or_manager_required
@@ -253,6 +403,17 @@ def catalog_bulk_add(request):
                 if cost_price is None and entry.get('cost_price') is not None:
                     cost_price = Decimal(str(entry['cost_price']))
 
+                # Capture the exact catalogue entry this item came from — an
+                # uploaded key looks like "uploaded:<SupplierCatalogEntry.id>".
+                # Gives the price-variance report an exact FK match instead
+                # of relying on fuzzy name matching for items created here.
+                source_catalog_entry_id = None
+                if entry['source'] == 'uploaded':
+                    try:
+                        source_catalog_entry_id = int(key.split(':', 1)[1])
+                    except (ValueError, IndexError):
+                        source_catalog_entry_id = None
+
                 item = Item.objects.create(
                     business=business, store=store,
                     material_no=f"MAT-{next_id:04d}",
@@ -266,6 +427,7 @@ def catalog_bulk_add(request):
                     volume_ml=entry.get('volume_ml'),
                     reorder_level=entry.get('default_reorder_level', 0),
                     reorder_quantity=entry.get('default_reorder_quantity', 0),
+                    source_catalog_entry_id=source_catalog_entry_id,
                 )
                 next_id += 1
                 created_count += 1

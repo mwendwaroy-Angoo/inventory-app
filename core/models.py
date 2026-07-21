@@ -387,6 +387,17 @@ class Item(models.Model):
                   'Used to convert unit variance to expected KES loss.'
     )
 
+    # ── Catalogue price-variance tracking ──────────────────────────────────
+    source_catalog_entry = models.ForeignKey(
+        'SupplierCatalogEntry', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='items',
+        help_text='Set when this item was created via the "Add from Catalogue" bulk-add '
+                  'screen from an uploaded supplier entry. Gives the price-variance report '
+                  'an exact match instead of relying on fuzzy name matching. Items created '
+                  'any other way (manually, or from the static catalogue) are matched by '
+                  'name at report time instead.'
+    )
+
     def bottle_expected_revenue_per_unit(self):
         """KES expected per bottle = tots_per_unit × avg preset price. Falls back to selling_price."""
         tpu = float(self.tots_per_unit or 0)
@@ -3373,3 +3384,64 @@ class SupplierCatalogEntry(models.Model):
 
     def __str__(self):
         return f"{self.business.name} — {self.name}"
+
+
+class SupplierCatalogEntryPriceLog(models.Model):
+    """One observed price point for a SupplierCatalogEntry, recorded whenever
+    a re-upload changes its cost_price (catalog_upload_process overwrites
+    the entry's own cost_price in place, so without this the previous value
+    would just be gone — no way to see "this went from KES 800 to 950").
+
+    Also carries the resolve workflow for the price-variance report
+    (catalog_upload_batch_detail): a detected change is a CAUSE that needs
+    an EFFECT — the owner must either Apply (push the new price onto the
+    live Item(s) this catalogue entry represents) or Dismiss (acknowledge,
+    keep the item's recorded cost as-is). Tracking that state directly on
+    the log row that represents the event — rather than a separate join
+    table — mirrors how WriteOffRequest carries its own review state."""
+    entry = models.ForeignKey(
+        SupplierCatalogEntry, on_delete=models.CASCADE, related_name='price_logs'
+    )
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='catalog_price_logs'
+    )
+    source_upload = models.ForeignKey(
+        CatalogUploadBatch, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='price_changes',
+    )
+    previous_cost_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    cost_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    applied = models.BooleanField(default=False)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    applied_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    dismissed = models.BooleanField(default=False)
+    dismissed_at = models.DateTimeField(null=True, blank=True)
+    dismissed_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+
+    class Meta:
+        ordering = ['-recorded_at']
+
+    def __str__(self):
+        return f"{self.entry.name}: {self.previous_cost_price} → {self.cost_price}"
+
+    @property
+    def is_resolved(self):
+        return self.applied or self.dismissed
+
+    @property
+    def delta_pct(self):
+        if not self.previous_cost_price or self.cost_price is None:
+            return None
+        try:
+            return round(
+                (float(self.cost_price) - float(self.previous_cost_price))
+                / float(self.previous_cost_price) * 100, 1
+            )
+        except ZeroDivisionError:
+            return None

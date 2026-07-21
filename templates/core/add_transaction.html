@@ -755,6 +755,34 @@ $(document).ready(function () {
             var sel = Array.from(hs.options).find(function (o) { return o.value === hs.value; });
             if (sel) { si.value = sel.text.trim(); clr.style.display = 'inline'; }
         }
+
+        // Pre-fill from a "go record a receipt" link, e.g. the price-variance
+        // report (?item=<id>&suggested_cost=<price>). Purely additive — does
+        // nothing unless both query params are present, and does not change
+        // how cost price is entered/saved: it only selects the item and
+        // types a starting number into the same Delivered Unit Price field
+        // the owner would type into by hand. Add Transaction's own Receipt
+        // flow (landed cost, variance pill, notifications) still runs
+        // exactly as it always does — this never writes Item.cost_price on
+        // its own.
+        var qp = new URLSearchParams(window.location.search);
+        var qpItem = qp.get('item');
+        var qpCost = qp.get('suggested_cost');
+        if (qpItem) {
+            var preselect = allItems.find(function (it) { return it.id === qpItem; });
+            if (preselect) {
+                pickItem(preselect);
+                if (qpCost) {
+                    setTimeout(function () {
+                        var costInput = document.getElementById('newCostPrice');
+                        if (costInput && window.jQuery) {
+                            costInput.value = parseFloat(qpCost).toFixed(2);
+                            jQuery(costInput).trigger('input');
+                        }
+                    }, 600);
+                }
+            }
+        }
     }());
 
     // ── Toggle Receipt / Issue UI ──────────────────────────────────────────

@@ -5302,6 +5302,63 @@ class CatalogClassifyReorderTierTest(TestCase):
         self.assertEqual(infer_reorder_defaults(43000), (1, 2))
 
 
+class CatalogMatchConfidenceTest(TestCase):
+    """Price-variance report matching (2026-07-21): when an Item has no
+    source_catalog_entry FK (created manually, or before the FK existed),
+    matching falls back to this tolerant name comparison — case, punctuation,
+    volume-notation formatting, and word order must not cause a false
+    negative, but two genuinely different bottle sizes of the same brand
+    must not score as identical."""
+
+    def test_tolerant_matches(self):
+        from core.catalog_classify import match_confidence
+        cases = [
+            ('SUKUMA WIKI', 'Sukuma Wiki', 0.9),
+            ('Blue-Ice 250ml', 'Blue Ice 250 ML', 0.9),
+            ('Gin Chrome 750ml', 'Chrome Gin 750ml', 0.9),
+            ('Chrome Gin', 'Chrom Gin', 0.85),
+            ('County Gin 750ml', 'County Gin 750ML(BMC)', 0.7),
+        ]
+        for a, b, min_score in cases:
+            with self.subTest(a=a, b=b):
+                self.assertGreaterEqual(match_confidence(a, b), min_score)
+
+    def test_different_volume_of_same_brand_scores_low(self):
+        from core.catalog_classify import match_confidence
+        self.assertLess(match_confidence('Chrome Gin 750ml', 'Chrome Gin 250ml'), 0.5)
+
+    def test_unrelated_products_score_low(self):
+        from core.catalog_classify import match_confidence
+        self.assertLess(match_confidence('Tusker Lager 500ml', 'Guinness 500ml'), 0.5)
+
+    def test_blank_names_score_zero(self):
+        from core.catalog_classify import match_confidence
+        self.assertEqual(match_confidence('', 'Chrome Gin'), 0.0)
+        self.assertEqual(match_confidence('Chrome Gin', None), 0.0)
+
+
+class FindCatalogMatchCandidatesTest(TestCase):
+    def test_volume_disambiguates_candidates(self):
+        from core.catalog_classify import find_catalog_match_candidates
+        candidates = [
+            (1, 'Chrome Gin 750ml'), (2, 'Chrome Gin 250ml'),
+            (3, 'Dallas Vodka 250ml'), (4, 'Blue Ice 250ml'),
+        ]
+        result = find_catalog_match_candidates('Gin Chrome 750 ML', candidates)
+        self.assertEqual([r[0] for r in result], [1])
+
+    def test_below_threshold_returns_empty(self):
+        from core.catalog_classify import find_catalog_match_candidates
+        candidates = [(1, 'Guinness 500ml')]
+        self.assertEqual(find_catalog_match_candidates('Tusker Lager 500ml', candidates), [])
+
+    def test_capped_at_top_n(self):
+        from core.catalog_classify import find_catalog_match_candidates
+        candidates = [(i, 'Chrome Gin 750ml') for i in range(10)]
+        result = find_catalog_match_candidates('Chrome Gin 750ml', candidates, top_n=3)
+        self.assertEqual(len(result), 3)
+
+
 class DetectNameColumnTest(TestCase):
     """The key regression proving column-position independence — the
     reusable upload feature must not assume a fixed layout."""
@@ -5580,6 +5637,236 @@ class CatalogBulkAddTest(TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(Item.objects.filter(business=self.biz).count(), 0)
+
+
+# ── Price-Variance / Reconciliation Report (2026-07-21) ──────────────────────
+# When a re-uploaded supplier price list changes a cost the owner already
+# has recorded on a live Item, this surfaces it for review instead of the
+# old silent overwrite-with-no-history behavior.
+
+class CatalogBulkAddSourceLinkTest(TestCase):
+    """catalog_bulk_add must link Item.source_catalog_entry back to the
+    SupplierCatalogEntry it was created from — this is what gives the
+    price-variance report an exact match instead of relying on fuzzy name
+    matching. Items created from the static catalogue have no DB row to
+    link to, so they stay unlinked."""
+
+    def setUp(self):
+        from core.models import SupplierCatalogEntry
+        self.SupplierCatalogEntry = SupplierCatalogEntry
+        self.biz = Business.objects.create(name='Source Link Biz')
+        from core.models import BusinessType
+        bar_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz.business_type = bar_type
+        self.biz.save(update_fields=['business_type'])
+        self.store = Store.objects.create(business=self.biz, name='Main Bar')
+        self.owner = User.objects.create_user(username='srclink_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.uploaded_entry = SupplierCatalogEntry.objects.create(
+            business=self.biz, name='Link Test Whisky 750ml', raw_name='Link Test Whisky 750ml',
+            unit='Btl', volume_ml=750, category='spirit', cost_price=Decimal('900'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_uploaded_item_gets_source_link(self):
+        import json
+        payload = {
+            'store_id': self.store.id,
+            'items': [{'key': f'uploaded:{self.uploaded_entry.id}', 'cost_price': None, 'add_presets': False}],
+        }
+        self.client.post('/stock/catalog/bulk-add/', data=json.dumps(payload), content_type='application/json')
+        item = Item.objects.get(business=self.biz, description='Link Test Whisky 750ml')
+        self.assertEqual(item.source_catalog_entry_id, self.uploaded_entry.id)
+
+    def test_static_item_has_no_source_link(self):
+        import json
+        resp = self.client.get('/stock/catalog/bulk-add/')
+        catalog = json.loads(resp.context['catalog_json'])
+        static_entry = next(e for e in catalog if e['source'] == 'static')
+        payload = {
+            'store_id': self.store.id,
+            'items': [{'key': static_entry['key'], 'cost_price': '50', 'add_presets': False}],
+        }
+        self.client.post('/stock/catalog/bulk-add/', data=json.dumps(payload), content_type='application/json')
+        item = Item.objects.get(business=self.biz, description=static_entry['name'])
+        self.assertIsNone(item.source_catalog_entry_id)
+
+
+class CatalogPriceVarianceUploadTest(TestCase):
+    """catalog_upload_process must record a SupplierCatalogEntryPriceLog
+    whenever a re-upload changes an existing entry's cost_price — the old
+    behavior silently overwrote it with no record it ever changed."""
+
+    def setUp(self):
+        from core.models import SupplierCatalogEntry, SupplierCatalogEntryPriceLog
+        self.SupplierCatalogEntry = SupplierCatalogEntry
+        self.SupplierCatalogEntryPriceLog = SupplierCatalogEntryPriceLog
+        self.biz = Business.objects.create(name='Variance Upload Biz')
+        self.owner = User.objects.create_user(username='varupload_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def _upload(self, name, price):
+        import openpyxl
+        from io import BytesIO
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(['Product Name', 'Selling Price'])
+        ws.append([name, price])
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        f = SimpleUploadedFile(
+            'pricelist.xlsx', buf.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        return self.client.post('/stock/catalog/upload/process/', {'price_list': f})
+
+    def test_first_upload_creates_no_price_log(self):
+        self._upload('Variance Gin 750ml', 500)
+        self.assertEqual(self.SupplierCatalogEntryPriceLog.objects.filter(business=self.biz).count(), 0)
+
+    def test_reupload_with_changed_price_creates_log(self):
+        self._upload('Variance Gin 750ml', 500)
+        self._upload('Variance Gin 750ml', 650)
+        log = self.SupplierCatalogEntryPriceLog.objects.get(business=self.biz)
+        self.assertEqual(log.previous_cost_price, Decimal('500'))
+        self.assertEqual(log.cost_price, Decimal('650'))
+        self.assertEqual(log.delta_pct, 30.0)
+
+    def test_reupload_with_unchanged_price_creates_no_log(self):
+        self._upload('Variance Gin 750ml', 500)
+        self._upload('Variance Gin 750ml', 500)
+        self.assertEqual(self.SupplierCatalogEntryPriceLog.objects.filter(business=self.biz).count(), 0)
+
+    def test_second_reupload_only_logs_the_latest_change(self):
+        self._upload('Variance Gin 750ml', 500)
+        self._upload('Variance Gin 750ml', 650)
+        self._upload('Variance Gin 750ml', 700)
+        self.assertEqual(self.SupplierCatalogEntryPriceLog.objects.filter(business=self.biz).count(), 2)
+        latest = self.SupplierCatalogEntryPriceLog.objects.filter(business=self.biz).order_by('-recorded_at').first()
+        self.assertEqual(latest.previous_cost_price, Decimal('650'))
+        self.assertEqual(latest.cost_price, Decimal('700'))
+
+
+class CatalogVarianceApplyDismissTest(TestCase):
+    """The resolve half of a detected price change. Apply deliberately does
+    NOT write Item.cost_price — that field only ever changes through Add
+    Transaction's Receipt flow (landed cost, real stock-in Transaction,
+    owner notification, its own variance pill), per Roy's explicit
+    correction: catalogue-detected variance is a reference signal, never a
+    bypass around the designed cost-update path. Apply only (a) resolves/
+    links which Item this catalogue entry refers to, and (b) hands back a
+    URL to Add Transaction with that item + suggested price pre-filled, for
+    the owner to complete themselves. Dismiss acknowledges without touching
+    anything. Owner/manager only, business-scoped, and a resolved log can't
+    be re-resolved."""
+
+    def setUp(self):
+        from core.models import SupplierCatalogEntry, SupplierCatalogEntryPriceLog, CatalogUploadBatch
+        self.biz = Business.objects.create(name='Variance Resolve Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='varresolve_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='varresolve_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+        self.other_biz = Business.objects.create(name='Variance Resolve Other Biz')
+        self.other_owner = User.objects.create_user(username='varresolve_other', password='x')
+        UserProfile.objects.create(user=self.other_owner, business=self.other_biz, role='owner')
+
+        self.entry = SupplierCatalogEntry.objects.create(
+            business=self.biz, name='Resolve Gin 750ml', raw_name='Resolve Gin 750ml',
+            cost_price=Decimal('650'),
+        )
+        self.batch = CatalogUploadBatch.objects.create(business=self.biz)
+        self.log = SupplierCatalogEntryPriceLog.objects.create(
+            entry=self.entry, business=self.biz, source_upload=self.batch,
+            previous_cost_price=Decimal('500'), cost_price=Decimal('650'),
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Resolve Gin 750ml',
+            material_no='VARRESOLVE-01', selling_price=Decimal('1000'),
+            cost_price=Decimal('500'), source_catalog_entry=self.entry,
+        )
+        self.client.force_login(self.owner)
+
+    def test_apply_with_exact_match_never_writes_item_cost(self):
+        resp = self.client.post(f'/stock/catalog/variance/{self.log.id}/apply/')
+        data = resp.json()
+        self.assertEqual(data.get('ok'), True)
+        self.item.refresh_from_db()
+        self.assertEqual(
+            self.item.cost_price, Decimal('500'),
+            'Apply must never write Item.cost_price directly — only Add Transaction does that',
+        )
+        self.log.refresh_from_db()
+        self.assertTrue(self.log.applied)
+        self.assertEqual(self.log.applied_by, self.owner)
+
+    def test_apply_redirects_to_add_transaction_with_suggested_cost(self):
+        resp = self.client.post(f'/stock/catalog/variance/{self.log.id}/apply/')
+        data = resp.json()
+        self.assertIn('redirect_url', data)
+        self.assertIn(f'item={self.item.id}', data['redirect_url'])
+        self.assertIn('suggested_cost=650', data['redirect_url'])
+        self.assertTrue(data['redirect_url'].startswith('/add-transaction/') or 'add-transaction' in data['redirect_url'])
+
+    def test_dismiss_does_not_touch_item_cost(self):
+        resp = self.client.post(f'/stock/catalog/variance/{self.log.id}/dismiss/')
+        self.assertEqual(resp.json().get('ok'), True)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('500'))
+        self.log.refresh_from_db()
+        self.assertTrue(self.log.dismissed)
+
+    def test_apply_with_fuzzy_item_id_links_but_never_writes_cost(self):
+        from core.models import SupplierCatalogEntry, SupplierCatalogEntryPriceLog
+        unlinked_entry = SupplierCatalogEntry.objects.create(
+            business=self.biz, name='Fuzzy Gin 750ml', raw_name='Fuzzy Gin 750ml',
+            cost_price=Decimal('720'),
+        )
+        fuzzy_log = SupplierCatalogEntryPriceLog.objects.create(
+            entry=unlinked_entry, business=self.biz, source_upload=self.batch,
+            previous_cost_price=Decimal('600'), cost_price=Decimal('720'),
+        )
+        unlinked_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Gin Fuzzy 750ml',
+            material_no='VARRESOLVE-02', selling_price=Decimal('1000'), cost_price=Decimal('600'),
+        )
+        resp = self.client.post(
+            f'/stock/catalog/variance/{fuzzy_log.id}/apply/', {'item_id': unlinked_item.id},
+        )
+        data = resp.json()
+        self.assertEqual(data.get('ok'), True)
+        unlinked_item.refresh_from_db()
+        self.assertEqual(
+            unlinked_item.cost_price, Decimal('600'),
+            'Confirming a fuzzy candidate must still never write cost_price directly',
+        )
+        self.assertEqual(unlinked_item.source_catalog_entry_id, unlinked_entry.id)
+        self.assertIn(f'item={unlinked_item.id}', data['redirect_url'])
+        self.assertIn('suggested_cost=720', data['redirect_url'])
+
+    def test_already_resolved_log_cannot_be_reapplied(self):
+        self.client.post(f'/stock/catalog/variance/{self.log.id}/apply/')
+        resp = self.client.post(f'/stock/catalog/variance/{self.log.id}/dismiss/')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_staff_cannot_apply(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/stock/catalog/variance/{self.log.id}/apply/')
+        self.assertNotEqual(resp.status_code, 200)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('500'))
+
+    def test_cannot_apply_another_businesss_log(self):
+        self.client.force_login(self.other_owner)
+        resp = self.client.post(f'/stock/catalog/variance/{self.log.id}/apply/')
+        self.assertEqual(resp.status_code, 404)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('500'))
 
 
 # ── Supply Chain / Procurement audit, Theme 1 (money-path idempotency), 2026-07-21 ──
