@@ -2728,6 +2728,32 @@ def _resolve_tab_public_url(tab):
     return None
 
 
+def _findable_tabs_qs(business):
+    """OPEN tabs, plus SETTLED tabs that were converted to debt (shift-close
+    auto-convert, or manual "Geuza Deni") and still carry an unpaid balance.
+
+    Bug found while auditing BillScan end-to-end (2026-07-22): this used to
+    be a plain status='OPEN' filter — the exact same status a tab keeps its
+    PIN under is meaningless once conversion flips it to SETTLED, so a
+    customer whose tab was auto-converted at shift close (precisely the
+    "abandoned tab" scenario this whole conversion path exists to catch)
+    could no longer find their own bill by scanning the wall QR and typing
+    the still-valid PIN they were given — "PIN not found" despite a real,
+    payable balance. Mirrors the same "effective status" reasoning
+    receipt_views._get_live_tab_state already uses when a tab is reached
+    via its receipt token instead of a fresh PIN/name lookup — VOID tabs
+    and fully-paid SETTLED tabs correctly stay excluded either way."""
+    from django.db.models import Exists, OuterRef, Q
+    unpaid_exists = BarTabEntry.objects.filter(
+        tab=OuterRef('pk'), is_paid=False,
+    ).exclude(payment_method='void')
+    return (
+        BarTab.objects.filter(business=business)
+        .annotate(_has_unpaid=Exists(unpaid_exists))
+        .filter(Q(status='OPEN') | Q(status='SETTLED', _has_unpaid=True))
+    )
+
+
 def find_tab_search(request, business_id):
     """Public AJAX name-or-PIN lookup for find_tab_public — no login required.
 
@@ -2755,17 +2781,14 @@ def find_tab_search(request, business_id):
 
     # PIN lookup: exactly 4 digits → direct redirect
     if q.isdigit() and len(q) == 4:
-        tab = BarTab.objects.filter(
-            business=business, status='OPEN', tab_pin=q,
-        ).first()
+        tab = _findable_tabs_qs(business).filter(tab_pin=q).first()
         url = _resolve_tab_public_url(tab) if tab else None
         if url:
             return JsonResponse({'tabs': [], 'redirect': url})
         return JsonResponse({'tabs': [], 'pin_not_found': True})
 
     # Name search: case-insensitive substring match
-    tabs = BarTab.objects.filter(
-        business=business, status='OPEN',
+    tabs = _findable_tabs_qs(business).filter(
         customer_name__icontains=q,
     ).order_by('-opened_at')[:10]
 

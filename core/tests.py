@@ -2546,6 +2546,13 @@ class CashPaymentRequestTest(TestCase):
     tab until staff actually settles it at the counter through the normal flow."""
 
     def setUp(self):
+        # find_tab_search's rate-limit cache key is business_id:ip, and the
+        # test cache backend isn't reset between tests — only the DB rolls
+        # back. SQLite reuses the lowest free rowid after a rollback, so
+        # another test class's Business can easily land on the same id this
+        # one gets, silently inheriting its leftover rate-limit count.
+        from django.core.cache import cache as _cache
+        _cache.clear()
         self.biz = Business.objects.create(name='Cash Request Biz')
         self.store = Store.objects.create(business=self.biz, name='Bar')
         self.owner = User.objects.create_user(username='cashreq_owner', password='x')
@@ -2615,6 +2622,114 @@ class CashPaymentRequestTest(TestCase):
         resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '4321'})
         data = resp.json()
         self.assertEqual(data.get('redirect'), f'/r/{self.receipt.token}/')
+
+
+class FindTabDebtStateTest(TestCase):
+    """Bug found auditing BillScan end-to-end (2026-07-22): find_tab_search
+    only ever matched status='OPEN' tabs. A tab converted to debt (shift-
+    close auto-convert, or manual "Geuza Deni") flips to status='SETTLED'
+    but keeps its PIN and its unpaid balance — the customer could no longer
+    find their own bill by scanning the wall QR and typing that same still-
+    valid-looking PIN. A fully-paid SETTLED tab, or a VOID tab, must stay
+    unfindable — nothing left to view or pay."""
+
+    def setUp(self):
+        # See CashPaymentRequestTest.setUp for why this matters — the
+        # rate-limit cache for find_tab_search isn't reset between tests.
+        from django.core.cache import cache as _cache
+        _cache.clear()
+        self.biz = Business.objects.create(name='Find Tab Debt Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='findtabdebt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Find Tab Debt Beer',
+            material_no='FINDTABDEBT-01', unit='pcs', selling_price=Decimal('200'),
+        )
+
+    def _make_tab(self, name, pin, paid):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='SETTLED',
+            tab_pin=pin, tab_receipt_token=f'token-{pin}', served_by=self.owner,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'),
+            payment_method='credit' if not paid else 'cash', recipient=name,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Find Tab Debt Beer',
+            amount=Decimal('200'), is_paid=paid,
+        )
+        Receipt.issue(
+            business=self.biz, lines=[{'name': 'Find Tab Debt Beer', 'qty': 1, 'subtotal': 200}],
+            payment_method='tab', customer_name=name, meta={'tab_id': tab.id},
+        )
+        return tab
+
+    def test_debt_converted_tab_still_found_by_pin(self):
+        tab = self._make_tab('Debt Patron', '7711', paid=False)
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '7711'})
+        data = resp.json()
+        rcpt = Receipt.objects.get(meta__tab_id=tab.id)
+        self.assertEqual(data.get('redirect'), f'/r/{rcpt.token}/')
+
+    def test_debt_converted_tab_still_found_by_name(self):
+        self._make_tab('Debt Patron Two', '7722', paid=False)
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Debt Patron Two'})
+        data = resp.json()
+        self.assertEqual(len(data.get('tabs', [])), 1)
+        self.assertEqual(data['tabs'][0]['name'], 'Debt Patron Two')
+
+    def test_fully_paid_settled_tab_not_found(self):
+        self._make_tab('Paid Patron', '7733', paid=True)
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '7733'})
+        data = resp.json()
+        self.assertTrue(data.get('pin_not_found'))
+
+    def test_void_tab_not_found(self):
+        tab = self._make_tab('Void Patron', '7744', paid=False)
+        tab.status = 'VOID'
+        tab.save(update_fields=['status'])
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '7744'})
+        data = resp.json()
+        self.assertTrue(data.get('pin_not_found'))
+
+    def test_open_tab_still_found(self):
+        tab = self._make_tab('Open Patron', '7755', paid=False)
+        tab.status = 'OPEN'
+        tab.save(update_fields=['status'])
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '7755'})
+        data = resp.json()
+        self.assertIn('redirect', data)
+        self.assertNotIn('pin_not_found', data)
+
+
+class WallTabQrVisibilityTest(TestCase):
+    """The Wall Tab QR card in Payment Settings was gated on
+    biz_profile.modules.keg only — a kitchen-only business (has_kitchen=True,
+    no bar/keg business type) can generate real BarTab rows via kitchen
+    board's "Food Tab" checkout (source='kitchen') just like a bar can, but
+    had no way to print the matching wall QR for their own counter."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Only Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='kitchenonlyqr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_kitchen_only_business_sees_wall_qr_card(self):
+        # id="wallQrBox" only renders inside the gated card — unlike the
+        # literal text "Wall Tab QR", which also appears in an unconditional
+        # JS comment in extra_js and would false-positive either way.
+        resp = self.client.get('/business/payment-settings/')
+        self.assertIn(b'id="wallQrBox"', resp.content)
+
+    def test_business_with_neither_module_does_not_see_wall_qr_card(self):
+        self.biz.has_kitchen = False
+        self.biz.save(update_fields=['has_kitchen'])
+        resp = self.client.get('/business/payment-settings/')
+        self.assertNotIn(b'id="wallQrBox"', resp.content)
 
 
 class CrossCounterReceiptLinkingTest(TestCase):
