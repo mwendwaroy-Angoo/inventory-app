@@ -835,8 +835,21 @@
 </script>
 <style>
 @media print {
-  body > *:not(#wallQrBox) { display: none !important; }
-  #wallQrBox { display: block !important; margin: 60px auto; }
+  /* body > *:not(#wallQrBox) only hides direct children of <body> — but
+     #wallQrBox is nested several layers deep inside the normal page layout
+     (navbar, container, card), not a direct child, so that rule hid an
+     ANCESTOR of the QR box instead. display:none on a parent can't be
+     overridden by a descendant's own display value, so the box printed
+     blank. visibility works differently: it's inherited by descendants but
+     a descendant can explicitly reset its own visibility back to visible
+     regardless of nesting depth, which is what actually fixes this
+     (2026-07-22, reported live — "QR wall print comes up blank"). */
+  body * { visibility: hidden !important; }
+  #wallQrBox, #wallQrBox * { visibility: visible !important; }
+  #wallQrBox {
+    position: absolute; left: 0; top: 0; right: 0;
+    margin: 60px auto; display: block !important;
+  }
 }
 </style>
 {% endblock %}
