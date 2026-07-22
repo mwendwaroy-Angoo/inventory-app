@@ -12,7 +12,7 @@ Blocked for:
 """
 import json
 import logging
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Prefetch
@@ -225,6 +225,7 @@ def kitchen_board(request):
                         item=item, business=business, status='OPEN'
                     ).order_by('received_on')
                 )
+                raw_src = item.raw_material_source
                 kitchen_batches.append({
                     'id': item.id,
                     'name': item.description,
@@ -232,6 +233,15 @@ def kitchen_board(request):
                     'presets': presets,
                     'open_batches': [_batch_to_dict(b) for b in open_batches],
                     'has_open_batch': bool(open_batches),
+                    # Raw-material sack tracking (2026-07-22) — when set, the
+                    # receive modal switches from a typed cost to "kg drawn",
+                    # and the tile shows the sack's own remaining balance,
+                    # separate from whether today's batch is done.
+                    'raw_source_id': raw_src.id if raw_src else None,
+                    'raw_source_name': raw_src.description if raw_src else '',
+                    'raw_source_unit': raw_src.unit if raw_src else '',
+                    'raw_source_balance': float(raw_src.current_balance()) if raw_src else None,
+                    'raw_source_cost_price': float(raw_src.cost_price or 0) if raw_src else None,
                 })
             elif item.is_produce and item.produce_mode == 'BUNCH':
                 # Grill batch item (nyama choma, mutura) — ProduceBunch envelope
@@ -384,6 +394,8 @@ def _batch_to_dict(batch):
         'received_on': str(batch.received_on),
         'days_open': batch.days_open,
         'cost_note': batch.cost_note or '',
+        'from_draw': batch.source_item_id is not None,
+        'source_qty_drawn': float(batch.source_qty_drawn) if batch.source_qty_drawn is not None else None,
     }
 
 
@@ -865,27 +877,28 @@ def kitchen_receive(request):
             return JsonResponse({'ok': False, 'error': 'Bidhaa haikupatikana'}, status=404)
         except (ValueError, TypeError):
             return JsonResponse({'ok': False, 'error': 'item_id batili'}, status=400)
+        cost_note = (request.POST.get('cost_note') or '').strip()[:200]
+        note      = (request.POST.get('note') or '').strip()[:200]
         try:
-            cost_total = Decimal(str(request.POST.get('cost_total', '0') or '0'))
-            cost_note  = (request.POST.get('cost_note') or '').strip()[:200]
-            note       = (request.POST.get('note') or '').strip()[:200]
-        except Exception:
-            return JsonResponse({'ok': False, 'error': 'Nambari batili'}, status=400)
-        if cost_total <= 0:
-            return JsonResponse({'ok': False, 'error': 'Gharama lazima iwe zaidi ya 0'}, status=400)
-        batch = KitchenBatch.objects.create(
-            business=business, store=kitchen_store, item=item,
-            cost_total=cost_total, cost_note=cost_note, note=note,
-            recorded_by=request.user,
-        )
-        # Unlike the 'portion'/'batch' modes below, this never updated
-        # item.cost_price — meaning KitchenBatch.discard()'s wastage Transaction
-        # (qty = unrecovered fraction of cost_total) would always price out to
-        # KES 0 in analytics' wastage_loss (qty * item.cost_price), since
-        # cost_price was never set. One batch = one unit here, so cost_total IS
-        # the per-unit cost (kitchen-module audit finding, 2026-07-19).
-        item.cost_price = cost_total
-        item.save(update_fields=['cost_price'])
+            # Raw-material sack tracking (2026-07-22): if this item has a
+            # raw_material_source configured, cost is derived from "kg drawn
+            # today" instead of a typed guess — see KitchenBatch.open_batch().
+            if item.raw_material_source_id:
+                draw_qty = Decimal(str(request.POST.get('draw_qty', '0') or '0'))
+                batch = KitchenBatch.open_batch(
+                    business=business, store=kitchen_store, item=item,
+                    recorded_by=request.user, cost_note=cost_note, note=note,
+                    draw_qty=draw_qty,
+                )
+            else:
+                cost_total = Decimal(str(request.POST.get('cost_total', '0') or '0'))
+                batch = KitchenBatch.open_batch(
+                    business=business, store=kitchen_store, item=item,
+                    recorded_by=request.user, cost_note=cost_note, note=note,
+                    cost_total=cost_total,
+                )
+        except (InvalidOperation, ValueError) as e:
+            return JsonResponse({'ok': False, 'error': str(e) or 'Nambari batili'}, status=400)
         return JsonResponse({'ok': True, 'mode': 'kitchen_batch', 'batch': _batch_to_dict(batch),
                              'item_id': item.id, 'item_name': item.description})
 
@@ -1258,34 +1271,35 @@ def kitchen_batch_receive(request):
     except (ValueError, TypeError):
         return JsonResponse({'ok': False, 'error': 'item_id batili'}, status=400)
 
-    try:
-        cost_total = Decimal(str(request.POST.get('cost_total', '0') or '0'))
-        cost_note  = (request.POST.get('cost_note') or '').strip()[:200]
-        note       = (request.POST.get('note') or '').strip()[:200]
-    except Exception:
-        return JsonResponse({'ok': False, 'error': 'Nambari batili'}, status=400)
-
-    if cost_total <= 0:
-        return JsonResponse({'ok': False, 'error': 'Gharama lazima iwe zaidi ya 0'}, status=400)
+    cost_note = (request.POST.get('cost_note') or '').strip()[:200]
+    note      = (request.POST.get('note') or '').strip()[:200]
 
     # Warn if a batch is already open for this item — allow anyway (multi-pot)
     already_open = KitchenBatch.objects.filter(
         item=item, business=business, status='OPEN'
     ).exists()
 
-    batch = KitchenBatch.objects.create(
-        business=business,
-        store=kitchen_store,
-        item=item,
-        cost_total=cost_total,
-        cost_note=cost_note,
-        note=note,
-        recorded_by=request.user,
-    )
-    # See the matching comment in kitchen_receive()'s kitchen_batch branch —
-    # KitchenBatch.discard()'s wastage Transaction relies on item.cost_price.
-    item.cost_price = cost_total
-    item.save(update_fields=['cost_price'])
+    try:
+        # See the matching comment in kitchen_receive()'s kitchen_batch branch —
+        # open_batch() handles both the raw-material-draw and manual-cost paths,
+        # and always sets item.cost_price = cost_total (discard() relies on it).
+        if item.raw_material_source_id:
+            draw_qty = Decimal(str(request.POST.get('draw_qty', '0') or '0'))
+            batch = KitchenBatch.open_batch(
+                business=business, store=kitchen_store, item=item,
+                recorded_by=request.user, cost_note=cost_note, note=note,
+                draw_qty=draw_qty,
+            )
+        else:
+            cost_total = Decimal(str(request.POST.get('cost_total', '0') or '0'))
+            batch = KitchenBatch.open_batch(
+                business=business, store=kitchen_store, item=item,
+                recorded_by=request.user, cost_note=cost_note, note=note,
+                cost_total=cost_total,
+            )
+    except (InvalidOperation, ValueError) as e:
+        return JsonResponse({'ok': False, 'error': str(e) or 'Nambari batili'}, status=400)
+
     return JsonResponse({
         'ok': True,
         'batch': _batch_to_dict(batch),

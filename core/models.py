@@ -359,6 +359,16 @@ class Item(models.Model):
                   'Used for chips, stew, ugali and other cooked-to-batch food. '
                   'Stock is NOT counted by unit; the batch tracks cost vs revenue.'
     )
+    raw_material_source = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='derived_batch_items',
+        help_text='Kitchen batch items only: the raw-material Item this batch is drawn '
+                  'from (e.g. Chipo → Potatoes (Raw)). When set, opening a new KitchenBatch '
+                  'draws kg from this item\'s own tracked balance instead of a typed cost '
+                  'guess — cost_total is derived automatically and the sack\'s remaining '
+                  'balance stays visible on Kitchen Board, separate from whether today\'s '
+                  'batch is done. Leave unset to keep the original manual cost-entry flow.'
+    )
 
     # ── Bar / Keg Module fields (migration 0043) ───────────────────────────
     is_keg = models.BooleanField(
@@ -439,9 +449,16 @@ class Item(models.Model):
 
     # --- Demand & reorder helpers (basic demand-driven heuristics) ---
     def avg_daily_issues(self, window_days=30):
-        """Average daily issues (sales) over the past `window_days` days."""
+        """Average daily issues (sales) over the past `window_days` days.
+
+        Includes 'Draw' transactions too — for a raw-material item feeding a
+        KitchenBatch (Item.raw_material_source), a kitchen draw IS the real
+        depletion demand, even though it isn't a customer sale (type='Issue').
+        Without this, reorder recommendations for the sack would never reflect
+        how fast it's actually being used.
+        """
         since = timezone.now().date() - datetime.timedelta(days=window_days)
-        total = self.transactions.filter(type='Issue', date__gte=since).aggregate(models.Sum('qty'))['qty__sum'] or 0
+        total = self.transactions.filter(type__in=['Issue', 'Draw'], date__gte=since).aggregate(models.Sum('qty'))['qty__sum'] or 0
         total = abs(total)
         try:
             return float(total) / float(window_days) if window_days else 0.0
@@ -565,6 +582,7 @@ class Transaction(models.Model):
         ('Issue', _('Issue')),
         ('Wastage', _('Wastage')),
         ('OwnerConsumption', _('Owner Consumption')),
+        ('Draw', _('Kitchen Batch Draw')),
     ]
 
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='transactions')
@@ -655,6 +673,21 @@ class Transaction(models.Model):
         # Bunch sales carry their cost on the bunch, not the item.
         if self.produce_bunch_id and self.produce_bunch and self.produce_bunch.cost_price:
             return abs(float(self.qty)) * float(self.produce_bunch.cost_price)
+        # Kitchen batch sales: qty is a constant -1 per sale (not a real unit count),
+        # so falling through to abs(qty) * item.cost_price would return the WHOLE
+        # batch's cost_total on every single sale (item.cost_price is deliberately
+        # set to cost_total, not a per-unit price — discard()'s wastage math relies
+        # on that). Use the same proportional-share approach as keg_barrel above,
+        # but against revenue_collected (actual) since KitchenBatch has no fixed
+        # target: sum of cost() across every sale from one batch then equals
+        # cost_total exactly, instead of N × cost_total. Found 2026-07-22 while
+        # designing raw-material sack tracking — a real, pre-existing overcounting
+        # bug in Kitchen Performance / overall COGS for any batch sold more than once.
+        if self.kitchen_batch_id and self.kitchen_batch:
+            batch = self.kitchen_batch
+            if float(batch.revenue_collected or 0) > 0 and self.sale_amount is not None:
+                return float(self.sale_amount) * float(batch.cost_total) / float(batch.revenue_collected)
+            return 0
         if self.item.cost_price:
             return abs(float(self.qty)) * float(self.item.cost_price)
         return 0
@@ -2713,6 +2746,17 @@ class KitchenBatch(models.Model):
         'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='kitchen_batches_recorded',
     )
+    source_item       = models.ForeignKey(
+        'Item', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='kitchen_batches_drawn',
+        help_text='Raw-material item this batch\'s cost was drawn from, if opened via '
+                  'the sack-tracking flow (item.raw_material_source set). Null for '
+                  'batches opened with a manually typed cost.',
+    )
+    source_qty_drawn  = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True,
+        help_text='Quantity drawn from source_item to open this batch, if applicable.',
+    )
 
     class Meta:
         ordering = ['-received_on', '-id']
@@ -2762,6 +2806,73 @@ class KitchenBatch(models.Model):
                 self.khaki_large_used = (self.khaki_large_used or 0) + 1
         self.save(update_fields=['revenue_collected', 'khaki_small_used', 'khaki_large_used'])
         return txn
+
+    @classmethod
+    def open_batch(cls, business, store, item, recorded_by, cost_total=None,
+                    cost_note='', note='', draw_qty=None):
+        """
+        Single entry point for opening a new KitchenBatch — used by both
+        kitchen_receive()'s kitchen_batch mode and kitchen_batch_receive()
+        (kitchen-module raw-material sack-tracking feature, 2026-07-22).
+
+        Two mutually exclusive cost paths:
+          - item.raw_material_source is set: draw_qty (kg/etc used today) is
+            required. Locks the raw item, validates it has enough balance,
+            creates a 'Draw' Transaction on it (an internal stock movement,
+            NOT a sale — Transaction.cost() returns 0 for type='Draw', so this
+            never double-counts against the batch's own cost below), and
+            derives cost_total = draw_qty * raw_item.cost_price.
+          - Otherwise: cost_total must be supplied directly — the original
+            manual-entry flow, unchanged.
+
+        Always sets item.cost_price = cost_total afterwards — discard()'s
+        wastage Transaction relies on that (see its own docstring).
+
+        Raises ValueError (caller renders as a JSON error) on any validation
+        failure — insufficient raw balance, non-positive cost/qty, etc.
+        """
+        from django.db import transaction as _txn
+        source_item = None
+        source_qty = None
+        with _txn.atomic():
+            if item.raw_material_source_id:
+                if draw_qty is None:
+                    raise ValueError('Weka kiasi ulichotumia (kg).')
+                draw_qty = Decimal(str(draw_qty))
+                if draw_qty <= 0:
+                    raise ValueError('Kiasi kilichotumika lazima kiwe zaidi ya 0.')
+                source_item = Item.objects.select_for_update().get(id=item.raw_material_source_id)
+                available = source_item.current_balance()
+                if draw_qty > available:
+                    raise ValueError(
+                        f'{source_item.description} ina {available:g}{source_item.unit} pekee '
+                        f'iliyobaki — huwezi kutumia {draw_qty:g}{source_item.unit}.'
+                    )
+                cost_total = (draw_qty * (source_item.cost_price or Decimal('0'))).quantize(Decimal('0.01'))
+                Transaction.objects.create(
+                    item=source_item, business=business, type='Draw',
+                    qty=-draw_qty,
+                    recipient=f'Kitchen batch: {item.description}'[:200],
+                    recorded_by=recorded_by,
+                )
+                source_qty = draw_qty
+            else:
+                cost_total = Decimal(str(cost_total if cost_total is not None else '0'))
+
+            if cost_total <= 0:
+                raise ValueError('Gharama lazima iwe zaidi ya 0.')
+
+            batch = cls.objects.create(
+                business=business, store=store, item=item,
+                cost_total=cost_total, cost_note=cost_note, note=note,
+                recorded_by=recorded_by,
+                source_item=source_item, source_qty_drawn=source_qty,
+            )
+            # See the matching comment in discard() — its wastage math relies
+            # on item.cost_price == cost_total (one batch = one unit here).
+            item.cost_price = cost_total
+            item.save(update_fields=['cost_price'])
+        return batch
 
     def deplete(self):
         """Mark batch as sold out."""

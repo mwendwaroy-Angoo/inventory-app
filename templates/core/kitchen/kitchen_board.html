@@ -812,12 +812,25 @@
         <!-- Kitchen batch fields — for is_kitchen_batch items (chips, stew, ugali) -->
         <div id="kr-kitchen-batch-fields" style="display:none;">
           <div style="background:rgba(76,175,80,0.08);border:1px solid rgba(76,175,80,0.25);border-radius:6px;padding:.5rem .6rem;margin-bottom:.6rem;font-size:.77rem;color:#a5d6a7;line-height:1.4;">
-            🍳 <strong style="color:#4caf50;">Batch Mpya</strong> — Weka kiasi ulichotumia kununua malighafi (viazi, nyama, nk.). Mfumo utafuatilia faida ya batch hiyo.
+            🍳 <strong style="color:#4caf50;">Batch Mpya (LEO)</strong> — Weka kiasi ulichotumia kununua malighafi (viazi, nyama, nk.). Mfumo utafuatilia faida ya batch ya LEO peke yake.
           </div>
-          <div style="margin-bottom:.5rem;">
-            <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Gharama ya Malighafi (KES) <span style="color:#c0395a;">*</span></label>
-            <input type="number" id="kr-kb-cost-total" min="1" placeholder="e.g. 1500 kwa gunia la viazi"
-                   style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+          <!-- Manual cost path — items with no raw_material_source -->
+          <div id="kr-kb-manual-fields">
+            <div style="margin-bottom:.5rem;">
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Gharama ya Malighafi (KES) <span style="color:#c0395a;">*</span></label>
+              <input type="number" id="kr-kb-cost-total" min="1" placeholder="e.g. 1500 kwa gunia la viazi"
+                     style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+            </div>
+          </div>
+          <!-- Sack-draw path — items with raw_material_source set -->
+          <div id="kr-kb-draw-fields" style="display:none;">
+            <div id="kr-kb-draw-balance" style="font-size:.77rem;color:#9fcaa0;margin-bottom:.4rem;"></div>
+            <div style="margin-bottom:.5rem;">
+              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Kiasi Ulichotumia Leo <span style="color:#c0395a;">*</span></label>
+              <input type="number" id="kr-kb-draw-qty" min="0.01" step="0.01" placeholder="e.g. 5"
+                     style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+              <div id="kr-kb-draw-cost-preview" style="font-size:.73rem;color:#c9a84c;margin-top:.25rem;"></div>
+            </div>
           </div>
           <div>
             <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Maelezo (hiari)</label>
@@ -1336,12 +1349,26 @@
       }
 
       var statusHtml = hasOpen
-        ? '<span style="color:#4caf50; font-size:.7rem;">● Iko wazi</span>'
-        : '<span style="color:#b0b0b0; font-size:.7rem;">Hakuna batch — bonyeza + Pata Stok</span>';
+        ? '<span style="color:#4caf50; font-size:.7rem;">● Iko wazi (LEO)</span>'
+        : '<span style="color:#b0b0b0; font-size:.7rem;">Hakuna batch ya leo — bonyeza + Pata Stok</span>';
+
+      // Raw-material sack balance — separate from whether TODAY's batch is
+      // open/done. Shown on every batch tile that has a raw_material_source
+      // configured, regardless of hasOpen, so "sack empty" is never confused
+      // with "today's batch done" (the exact distinction Roy asked to fix).
+      var sackHtml = '';
+      if (item.raw_source_id) {
+        var sackOut = item.raw_source_balance <= 0;
+        sackHtml = '<div style="font-size:.68rem;margin-top:.15rem;color:' + (sackOut ? '#c0395a' : '#9fcaa0') + ';">' +
+          '🥔 ' + item.raw_source_name + ': ' +
+          (sackOut ? 'Imeisha' : fmt(item.raw_source_balance) + item.raw_source_unit + ' iliyobaki') +
+          '</div>';
+      }
 
       html += '<div class="kb-tile kb-tile-kb" data-item-id="' + item.id + '">' +
         '<div class="kb-tile-name">' + item.name + '</div>' +
         statusHtml +
+        sackHtml +
         (hasOpen ? '<div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.4rem;">' + priceTiles + '</div>' : '') +
         plHtml;
 
@@ -3020,7 +3047,7 @@
   };
 
   window.kbDepleteBatch = function(batchId, itemName) {
-    if (!confirm(itemName + ' — thibitisha kwamba chakula kimekwisha (Imekwisha)?')) return;
+    if (!confirm(itemName + ' — thibitisha kwamba BATCH YA LEO imekwisha (sio gunia/malighafi nzima)?')) return;
     var body = new URLSearchParams();
     body.append('csrfmiddlewaretoken', CSRF);
     fetch('/kitchen/batch/' + batchId + '/deplete/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
@@ -3117,8 +3144,31 @@
         opt.setAttribute('data-batch', '0');
         opt.setAttribute('data-kb', '1');
         opt.setAttribute('data-mix-group', '');
+        // Raw-material sack tracking — carried on the option so onchange can
+        // switch the modal into draw mode without a second lookup.
+        opt.setAttribute('data-raw-id', item.raw_source_id || '');
+        opt.setAttribute('data-raw-name', item.raw_source_name || '');
+        opt.setAttribute('data-raw-unit', item.raw_source_unit || '');
+        opt.setAttribute('data-raw-balance', item.raw_source_balance != null ? item.raw_source_balance : '');
+        opt.setAttribute('data-raw-cost', item.raw_source_cost_price != null ? item.raw_source_cost_price : '');
         sel.appendChild(opt);
       });
+
+      function _kbUpdateDrawPreview() {
+        var qtyEl = document.getElementById('kr-kb-draw-qty');
+        var prevEl = document.getElementById('kr-kb-draw-cost-preview');
+        var opt = sel.options[sel.selectedIndex];
+        if (!qtyEl || !prevEl || !opt) return;
+        var qty = parseFloat(qtyEl.value) || 0;
+        var costPer = parseFloat(opt.getAttribute('data-raw-cost')) || 0;
+        prevEl.textContent = qty > 0 ? ('≈ Gharama: KES ' + fmt(qty * costPer)) : '';
+      }
+      var _drawQtyEl = document.getElementById('kr-kb-draw-qty');
+      if (_drawQtyEl && !_drawQtyEl.dataset.previewBound) {
+        _drawQtyEl.addEventListener('input', _kbUpdateDrawPreview);
+        _drawQtyEl.dataset.previewBound = '1';
+      }
+
       // Extend sel.onchange to handle kitchen batch mode
       var prevOnChange = sel.onchange;
       sel.onchange = function() {
@@ -3132,10 +3182,33 @@
           var kbFields = document.getElementById('kr-kitchen-batch-fields');
           if (kbFields) {
             kbFields.style.display = 'block';
-            var costEl = document.getElementById('kr-kb-cost-total');
             var noteEl = document.getElementById('kr-kb-cost-note');
-            if (costEl) costEl.value = '';
             if (noteEl) noteEl.value = '';
+            var rawId = opt.getAttribute('data-raw-id');
+            var manualEl = document.getElementById('kr-kb-manual-fields');
+            var drawEl   = document.getElementById('kr-kb-draw-fields');
+            if (rawId) {
+              // Sack-draw mode
+              if (manualEl) manualEl.style.display = 'none';
+              if (drawEl)   drawEl.style.display   = 'block';
+              var balEl = document.getElementById('kr-kb-draw-balance');
+              var qtyEl = document.getElementById('kr-kb-draw-qty');
+              var prevEl = document.getElementById('kr-kb-draw-cost-preview');
+              var bal = parseFloat(opt.getAttribute('data-raw-balance'));
+              if (balEl) {
+                balEl.textContent = '🥔 ' + opt.getAttribute('data-raw-name') + ' iliyobaki: ' +
+                  (isNaN(bal) ? '—' : fmt(bal)) + opt.getAttribute('data-raw-unit');
+                balEl.style.color = (bal <= 0) ? '#c0395a' : '#9fcaa0';
+              }
+              if (qtyEl) qtyEl.value = '';
+              if (prevEl) prevEl.textContent = '';
+            } else {
+              // Manual cost mode (unchanged)
+              if (manualEl) manualEl.style.display = 'block';
+              if (drawEl)   drawEl.style.display   = 'none';
+              var costEl = document.getElementById('kr-kb-cost-total');
+              if (costEl) costEl.value = '';
+            }
           }
           document.getElementById('kr-error').style.display = 'none';
           return;
@@ -3156,24 +3229,46 @@
       var isKb   = opt && opt.getAttribute('data-kb') === '1';
       if (!isKb) { origSubmit && origSubmit(); return; }
 
-      var costEl = document.getElementById('kr-kb-cost-total');
       var noteEl = document.getElementById('kr-kb-cost-note');
       var errEl  = document.getElementById('kr-error');
       var btn    = document.getElementById('kr-submit-btn');
-      var cost   = parseFloat((costEl||{}).value||'0') || 0;
-      if (cost <= 0) {
-        errEl.textContent = 'Weka gharama ya batch (viazi, nyama, etc.).';
-        errEl.style.display = 'block'; return;
-      }
-      btn.disabled = true; btn.textContent = 'Inaanzisha...';
+      var rawId  = opt.getAttribute('data-raw-id');
+
       var body = new URLSearchParams();
       body.append('csrfmiddlewaretoken', CSRF);
       body.append('item_id', itemId);
       body.append('mode', 'kitchen_batch');
-      body.append('cost_total', cost);
       body.append('cost_note', (noteEl||{}).value||'');
       body.append('idempotency_token',
         (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
+
+      var toastCost;
+      if (rawId) {
+        // Sack-draw mode — server derives cost_total from draw_qty × raw item's cost_price.
+        var qty = parseFloat((document.getElementById('kr-kb-draw-qty')||{}).value || '0') || 0;
+        if (qty <= 0) {
+          errEl.textContent = 'Weka kiasi ulichotumia leo.';
+          errEl.style.display = 'block'; return;
+        }
+        var bal = parseFloat(opt.getAttribute('data-raw-balance'));
+        if (!isNaN(bal) && qty > bal) {
+          errEl.textContent = opt.getAttribute('data-raw-name') + ' ina ' + fmt(bal) +
+            opt.getAttribute('data-raw-unit') + ' pekee iliyobaki.';
+          errEl.style.display = 'block'; return;
+        }
+        body.append('draw_qty', qty);
+        toastCost = qty * (parseFloat(opt.getAttribute('data-raw-cost')) || 0);
+      } else {
+        var cost = parseFloat((document.getElementById('kr-kb-cost-total')||{}).value || '0') || 0;
+        if (cost <= 0) {
+          errEl.textContent = 'Weka gharama ya batch (viazi, nyama, etc.).';
+          errEl.style.display = 'block'; return;
+        }
+        body.append('cost_total', cost);
+        toastCost = cost;
+      }
+
+      btn.disabled = true; btn.textContent = 'Inaanzisha...';
       fetch('/kitchen/receive/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
         .then(function(r){ return r.json().then(function(d){ return {ok:r.ok,data:d}; }); })
         .then(function(res){
@@ -3182,7 +3277,7 @@
           if (d.ok) {
             var m = bootstrap.Modal.getInstance(document.getElementById('kbReceiveModal'));
             if (m) m.hide();
-            showToast('✓ Batch imeanzishwa: ' + d.item_name + ' (KES ' + fmt(cost) + ')');
+            showToast('✓ Batch imeanzishwa: ' + d.item_name + ' (KES ' + fmt(toastCost) + ')');
             setTimeout(function(){ location.reload(); }, 1500);
           } else {
             errEl.textContent = d.error || 'Hitilafu ya seva'; errEl.style.display = 'block';

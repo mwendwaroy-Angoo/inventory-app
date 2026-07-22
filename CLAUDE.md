@@ -431,6 +431,30 @@ All features built and deployed including:
 - Daily bar report: cups/pints/jugs/revenue per barrel, waitress performance, staff/shift performance
 - Shift history, active waitress on-duty panel
 
+### Kitchen Batch Module — Raw Material Sack Tracking (COMPLETE)
+Two-level tracking for cooked-to-batch items (chips, stew) so "the sack/gunia is empty" is never
+confused with "today's batch is done" — the exact gap Roy flagged after a real Meatco chicken
+delivery and an ongoing potato sack. `Item.raw_material_source` (self-FK, optional) points a
+batch item (e.g. Chipo) at a real, ordinary trackable Item (e.g. "Potatoes (Raw)", unit=Kg) —
+received/tracked via the completely normal Receipt/Issue flow, reusing `current_balance()`,
+reorder-level restock alerts, and Rekebisha correction with zero new mechanism. Opening a new
+KitchenBatch for such an item asks for "kg used today" instead of a typed cost guess:
+`KitchenBatch.open_batch()` (single locked entry point, used by both `kitchen_receive` and
+the sibling `kitchen_batch_receive` endpoint) validates the sack has enough balance, creates a
+new `Draw`-type Transaction on the raw item (an internal stock movement, NOT a sale — excluded
+by construction from every `type='Issue'`-filtered report in the app, no per-report exclusion
+list to maintain), and derives `cost_total = kg_drawn × raw_item.cost_price`. Items without
+`raw_material_source` set keep the original manual cost-entry flow unchanged — fully opt-in.
+Kitchen Board shows the sack's remaining balance directly on the batch tile, independent of
+whether today's batch is open; the "Imekwisha" confirm now explicitly says "BATCH YA LEO" to
+avoid the same confusion in the confirmation dialog itself. Also fixed while building this: a
+real, pre-existing bug in `Transaction.cost()` — no branch existed for `kitchen_batch_id` (only
+`keg_barrel_id`/`produce_bunch_id` did), so every sale from a batch returned the batch's WHOLE
+`cost_total` instead of a proportional share, overcounting Kitchen Performance / overall COGS by
+N× for any batch sold more than once (the normal case). Fixed with the same proportional-share
+approach as `keg_barrel_id`, using `revenue_collected` (actual) instead of a fixed target since
+KitchenBatch has none. See the Known Issues entry below for the full mechanism.
+
 ### Recurring Expenses & Expense Intelligence
 - RecurringExpense model (MONTHLY/QUARTERLY/ANNUAL, per-staff salary lines)
 - Period review flow (confirm + auto-post BusinessExpense idempotently)
@@ -602,6 +626,12 @@ Never use `{% widthratio %}` — unreliable in Django templates.
   block in `add_transaction.html`'s item-typeahead IIFE) — and let the owner complete the
   actual update themselves through the one real mechanism. Never add a second code path
   that writes this field.
+  **Pre-existing, deliberate exception**: `KitchenBatch.open_batch()` (formerly inlined in
+  `kitchen_receive`) sets `item.cost_price = cost_total` for kitchen batch items specifically
+  — one batch IS the per-unit cost here (see `KitchenBatch.discard()`'s docstring, which relies
+  on this to price its wastage Transaction correctly). This predates and is unrelated to the
+  rule above — batch items never go through Add Transaction's Receipt flow at all. Do not
+  "fix" this to match the rule; it would break `discard()`'s wastage math.
 - `Customer` has NO `unique_together` on `(business, name)`. Never use `get_or_create(business=x, name=y)` — if duplicate Customer rows exist, Django raises `MultipleObjectsReturned`. Always use `filter(business=x, name=y).first()` and create only if None. ROOT CAUSE of the production 500 on keg tab sales (2026-06-19): bar_board used get_or_create, production DB had two Customer rows with same business+name from earlier test sessions.
 - `Store.__str__` must handle null business gracefully
 - `Notification` uses `related_name='app_notifications'` — always use this
@@ -613,6 +643,21 @@ Never use `{% widthratio %}` — unreliable in Django templates.
 - `float * Decimal` raises TypeError — always cast: `float(x) * float(y)`
 - `_units()` uses `produce_bunch_id` (not `sale_amount`) to identify batch sales.
   Both bunch AND portion preset sales have `sale_amount` set (since commit fbff5b4).
+- **`Transaction.cost()` — kitchen_batch_id must use a proportional formula, never
+  `abs(qty) * item.cost_price` (found 2026-07-22, fixed same day, while designing
+  raw-material sack tracking).** `KitchenBatch.record_sale()` writes a constant `qty=-1`
+  on every sale, and `item.cost_price` is deliberately set to the batch's WHOLE
+  `cost_total` (not a per-unit price — `discard()`'s wastage math relies on this). Before
+  the fix, `cost()` had no `kitchen_batch_id` branch and fell through to the generic
+  `abs(qty) * item.cost_price` path, so EVERY sale from a batch reported cost =
+  the entire `cost_total`, repeated per sale — Kitchen Performance and overall COGS were
+  overcounting by N× for any batch sold more than once (the normal case), corrupting
+  `net_profit` on any business using the Kitchen Batch module. Fixed with the same
+  proportional-share pattern already used for `keg_barrel_id`
+  (`sale_amount * cost_total / revenue_collected` — using `revenue_collected`, not a
+  fixed target, since KitchenBatch has none). `type='Draw'` transactions (raw material
+  moved into a batch, not sold) already return 0 from the very first line of `cost()`
+  (`if self.type != 'Issue': return 0`) — no special case needed there.
 - `analytics_dashboard` decorators (`@login_required`, `@owner_required`) must be
   DIRECTLY above the view function — never insert helpers between them.
 - `produce_board()` must include `unit` in the greens dict for the receive modal to
@@ -1430,3 +1475,64 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   total, 323 tests pass. **Analytics module audit complete (all 3 themes) — this closes out the
   full systemic Cause-and-Effect audit series** covering bar/keg, kitchen, Quick Sell, supply
   chain/procurement, debt tracker, and analytics (2026-07-19 through 2026-07-21).
+- Post-audit live fixes (2026-07-22, commits `19fe724`→`79a4191`, log entries backfilled
+  2026-07-22): five live production reports from Roy, each fixed and pushed same-day.
+  `reconcile_kitchen_stores` hardened to check activity beyond just `Item` count (a Monsoon
+  Inn store pair with zero items each on both sides was reported AMBIGUOUS by the original
+  command). Fresh Stock Count checklist fixed to never include items created after the
+  reset (new `Item.created_at`, migration 0111, null for pre-existing items and treated as
+  "old enough"); Rekebisha's `?adjust_item=` deep-link and `mark_item_recounted`'s zero-count
+  path both confirmed already correct. Tab-name blocking bug fixed at all three counters
+  (bar board, kitchen board, Quick Sell) — anonymous tab creation (Sprint "anonymous tab
+  creation," 2026-07-19) was implemented backend-only; the frontend JS in each counter's
+  `completeSale()`/`doCheckout()` still separately blocked submission on a blank name,
+  never actually reaching the backend path built to handle it — a frontend/backend split
+  invisible to the backend test suite. Wall QR scan-to-view-bill fixed for two gaps: debt-
+  converted tabs (status flipped to SETTLED with unpaid entries remaining) weren't found by
+  `find_tab_search`'s plain `status='OPEN'` filter — new `_findable_tabs_qs()` helper
+  (mirrors `receipt_views._get_live_tab_state`'s "effective status" reasoning) used by both
+  PIN and name lookup; kitchen-only businesses' Wall Tab QR card was gated on
+  `biz_profile.modules.keg` alone, hidden from a business with `has_kitchen` but no keg
+  module — widened to `modules.keg or modules.kitchen`. Wall Tab QR print-to-PDF fixed —
+  the CSS used `body > *:not(#wallQrBox) { display:none }`, which only hides DIRECT children
+  of `<body>`; since the QR box is nested several levels deep, this hid an ancestor wrapper
+  whose own `display:none` no descendant `display:block` can override — switched to a
+  `visibility`-based isolation pattern (inherited but explicitly resettable at any nesting
+  depth), the same class of fix already used elsewhere for print isolation. Kitchen Board
+  quick-receive gained a "Muuzaji / Order No" field (reuses `Transaction.invoice_no`, the
+  same field Add Transaction's Receipt flow already uses for this) after Roy shared a real
+  Meatco chicken-pieces delivery receipt with no way to record the supplier — portion-mode
+  receive only; staff already had `can_receive_kitchen_stock` from Sprint 20, confirmed
+  functional, no new permission needed.
+- Kitchen Batch raw-material sack tracking (2026-07-22 — 2026-07-23). Roy's own recurring
+  complaint, escalated to "map it out properly": an ongoing sack of potatoes and "Imekwisha"
+  (today's batch done) were being conflated — no visibility into how much of the SACK itself
+  remained, separate from whether today's cooked batch was sold out. Cause-and-Effect map
+  produced and reviewed before any code, per this file's own protocol; Roy's call was the
+  full version, not the smaller MVP alternative also offered. `Item.raw_material_source`
+  (self-FK, opt-in, migration 0112) lets a batch item (Chipo) point at a real trackable Item
+  (Potatoes (Raw), unit=Kg) — received via the completely ordinary Receipt flow, so
+  `current_balance()`, reorder-level restock alerts, and Rekebisha correction all apply with
+  zero new mechanism. `KitchenBatch.open_batch()` (single locked classmethod, replaces
+  duplicated inline logic in both `kitchen_receive` and the sibling `kitchen_batch_receive`
+  endpoint) is the one entry point for opening a batch: if `raw_material_source` is set, it
+  locks the raw item, validates enough balance exists, derives
+  `cost_total = kg_drawn × raw_item.cost_price`, and logs the draw as a NEW Transaction type
+  (`'Draw'`) rather than `'Issue'` — deliberately, so it's excluded BY CONSTRUCTION from
+  every existing `type='Issue'`-filtered report across the app (Sales & P&L, Kitchen
+  Performance, monthly COGS, `avg_daily_issues()`) with no per-report exclusion list to find
+  and maintain — the `[ADJ]`/`[KBDRAW]`-tag pattern used elsewhere was considered and
+  rejected here specifically because the blast radius (~40 call sites) made "audit every
+  filter" far riskier than a type the ORM can't accidentally match. `avg_daily_issues()`
+  broadened to `type__in=['Issue','Draw']` so raw-material reorder recommendations reflect
+  real kitchen depletion. Items without `raw_material_source` keep the original manual
+  cost-entry flow completely unchanged. **Found and fixed in the same effort — a real,
+  pre-existing bug, not part of the original ask**: `Transaction.cost()` had no
+  `kitchen_batch_id` branch, so every sale from a batch reported cost = the WHOLE
+  `cost_total`, not a proportional share (see the Known Issues entry above for the full
+  mechanism) — this was corrupting Kitchen Performance and `net_profit` for any business
+  selling a batch more than once, independent of whether the sack-tracking feature is
+  adopted. Kitchen Board: sack balance shown directly on the batch tile regardless of
+  today's batch state; "Imekwisha" confirm reworded to say "BATCH YA LEO" explicitly.
+  18 new tests (`KitchenBatchOpenBatchDrawTest`, `TransactionCostKitchenBatchProportionalTest`,
+  `RawMaterialSackTrackingViewTest`, `ItemFormRawMaterialSourceTest`). 387 tests pass.

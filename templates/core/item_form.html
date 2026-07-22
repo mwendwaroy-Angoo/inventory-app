@@ -554,6 +554,22 @@
                                 {% trans 'Lengo la mapato = gharama × multiplier. 1.70 → gharama 1000 itapendekeza lengo la 1700.' %}
                             </div>
                         </div>
+                        <!-- Raw material sack tracking — optional, kitchen batch items only -->
+                        <div style="border-top:1px solid rgba(120,180,90,0.18); padding-top:0.5rem; margin-top:0.5rem;">
+                            <label style="color:#9fcaa0; font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">
+                                {% trans 'Malighafi Yenyewe (Sack Tracking)' %} <span style="font-weight:400; color:#888;">({% trans 'hiari' %})</span>
+                            </label>
+                            <select id="km-raw-source-select" name="km_raw_source" class="form-select form-select-sm"
+                                    style="background:#1a1a1a; border-color:#444; color:#f0ece4; max-width:280px;">
+                                <option value="">{% trans '— Hakuna (weka gharama kwa mkono kila siku)' %}</option>
+                                {% for cand in raw_material_candidates %}
+                                <option value="{{ cand.id }}" {% if form.instance.raw_material_source_id == cand.id %}selected{% endif %}>{{ cand.description }} ({{ cand.unit }})</option>
+                                {% endfor %}
+                            </select>
+                            <div style="color:#b0b0b0; font-size:0.73rem; line-height:1.4; margin-top:0.3rem;">
+                                {% trans 'Chagua bidhaa ya malighafi ghafi (mf. "Viazi Ghafi") ikiwa gunia lake linafuatiliwa peke yake. Ukichagua, utaweka "kg ulizotumia" badala ya gharama — mfumo utahesabu gharama moja kwa moja na kuonyesha gunia lilobaki.' %}
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

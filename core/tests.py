@@ -7423,3 +7423,281 @@ class ReconcileKitchenStoresCommandTest(TestCase):
         self._call('--business', 'Reconcile Cmd Biz', '--apply')
 
         self.assertEqual(Store.objects.filter(business=other).count(), 2)
+
+
+# ── Raw-material sack tracking (two-level Kitchen Batch cost derivation), 2026-07-22 ──
+# Item.raw_material_source (self-FK) + KitchenBatch.open_batch() classmethod let a
+# batch item (e.g. Chipo) draw its daily cost from a real, trackable raw-material
+# Item (e.g. "Potatoes (Raw)") instead of a typed guess. Also fixes a real,
+# pre-existing bug found while designing this: Transaction.cost() had no
+# kitchen_batch_id branch, so every sale from a batch reported cost = the WHOLE
+# batch's cost_total instead of a proportional share.
+
+class KitchenBatchOpenBatchDrawTest(TestCase):
+    """KitchenBatch.open_batch() — draw-from-sack path (model layer)."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='draw')
+        self.raw_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Potatoes (Raw)',
+            unit='Kg', material_no='RAW-DRAW-01', cost_price=Decimal('50'),
+            opening_bin_balance=100,
+        )
+        self.item.raw_material_source = self.raw_item
+        self.item.save(update_fields=['raw_material_source'])
+
+    def test_draw_derives_cost_and_decrements_raw_balance(self):
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, draw_qty=Decimal('10'),
+        )
+        self.assertEqual(batch.cost_total, Decimal('500.00'))
+        self.assertEqual(batch.source_item_id, self.raw_item.id)
+        self.assertEqual(batch.source_qty_drawn, Decimal('10'))
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.current_balance(), 90)
+
+    def test_draw_creates_draw_type_transaction_not_issue(self):
+        KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, draw_qty=Decimal('5'),
+        )
+        txn = Transaction.objects.filter(item=self.raw_item).latest('id')
+        self.assertEqual(txn.type, 'Draw')
+        self.assertEqual(txn.qty, Decimal('-5'))
+
+    def test_draw_sets_item_cost_price_to_cost_total(self):
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, draw_qty=Decimal('4'),
+        )
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, batch.cost_total)
+
+    def test_insufficient_balance_raises_and_creates_nothing(self):
+        with self.assertRaises(ValueError):
+            KitchenBatch.open_batch(
+                business=self.biz, store=self.store, item=self.item,
+                recorded_by=self.owner_user, draw_qty=Decimal('999'),
+            )
+        self.assertEqual(KitchenBatch.objects.filter(item=self.item).count(), 0)
+        self.assertEqual(Transaction.objects.filter(item=self.raw_item).count(), 0)
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.current_balance(), 100)
+
+    def test_zero_draw_qty_rejected(self):
+        with self.assertRaises(ValueError):
+            KitchenBatch.open_batch(
+                business=self.biz, store=self.store, item=self.item,
+                recorded_by=self.owner_user, draw_qty=Decimal('0'),
+            )
+
+    def test_manual_cost_path_unaffected_when_no_raw_source(self):
+        """Items without raw_material_source keep the original manual-cost
+        flow, completely unchanged — this feature is opt-in only."""
+        self.item.raw_material_source = None
+        self.item.save(update_fields=['raw_material_source'])
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, cost_total=Decimal('1500'),
+        )
+        self.assertEqual(batch.cost_total, Decimal('1500'))
+        self.assertIsNone(batch.source_item_id)
+        self.assertEqual(Transaction.objects.filter(type='Draw').count(), 0)
+
+    def test_sequential_draws_deduct_balance_correctly(self):
+        """Mirrors KitchenEnvelopeSaleLockTest's convention — locks in that
+        repeated draws (select_for_update) accumulate/deduct correctly rather
+        than losing an update, the multi-pot case being explicitly allowed."""
+        for _i in range(3):
+            KitchenBatch.open_batch(
+                business=self.biz, store=self.store, item=self.item,
+                recorded_by=self.owner_user, draw_qty=Decimal('10'),
+            )
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.current_balance(), 70)
+        self.assertEqual(
+            Transaction.objects.filter(item=self.raw_item, type='Draw').count(), 3
+        )
+
+
+class TransactionCostKitchenBatchProportionalTest(TestCase):
+    """Transaction.cost() must return a PROPORTIONAL share of the batch's
+    cost_total per sale, not the whole cost_total on every sale. Found
+    2026-07-22 while designing raw-material sack tracking: item.cost_price is
+    deliberately set to the batch's WHOLE cost_total (discard()'s wastage math
+    relies on this), but qty on every kitchen batch sale is a constant -1 —
+    so falling through to abs(qty) * item.cost_price returned cost_total on
+    EVERY sale, a real overcounting bug in Kitchen Performance / overall COGS
+    for any batch sold more than once."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='costfix')
+        self.batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_total=Decimal('1000'),
+        )
+        self.item.cost_price = Decimal('1000')
+        self.item.save(update_fields=['cost_price'])
+
+    def test_single_sale_cost_equals_full_cost_total(self):
+        txn = self.batch.record_sale(Decimal('1000'), preset=self.preset)
+        self.assertAlmostEqual(txn.cost(), 1000.0)
+
+    def test_multiple_sales_sum_to_cost_total_not_multiple(self):
+        txns = [self.batch.record_sale(amount, preset=self.preset)
+                for amount in (Decimal('200'), Decimal('300'), Decimal('500'))]
+        total_cost = sum(t.cost() for t in txns)
+        self.assertAlmostEqual(total_cost, 1000.0)
+        # Without the fix this would be 3 x 1000 = 3000 (the pre-existing bug).
+        self.assertNotAlmostEqual(total_cost, 3000.0)
+
+    def test_draw_transaction_cost_is_always_zero(self):
+        """A Draw is an internal stock movement, not a sale — its cost is
+        recognized once, when the cooked product is later sold (above), not
+        here. Otherwise the same KES would be double-counted."""
+        raw_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Draw Cost Test',
+            unit='Kg', material_no='RAWCOST-01', cost_price=Decimal('50'),
+            opening_bin_balance=50,
+        )
+        txn = Transaction.objects.create(
+            item=raw_item, business=self.biz, type='Draw', qty=Decimal('-5'),
+        )
+        self.assertEqual(txn.cost(), 0)
+
+
+class RawMaterialSackTrackingViewTest(TestCase):
+    """/kitchen/receive/ and /kitchen/batch/receive/ mode=kitchen_batch draw
+    path (view layer) — both call sites must stay in sync."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='sackview')
+        self.raw_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Potatoes (Raw)',
+            unit='Kg', material_no='RAWVIEW-01', cost_price=Decimal('50'),
+            opening_bin_balance=100,
+        )
+        self.item.raw_material_source = self.raw_item
+        self.item.save(update_fields=['raw_material_source'])
+        self.client.force_login(self.owner_user)
+
+    def test_kitchen_receive_draw_mode_creates_batch_with_derived_cost(self):
+        resp = self.client.post('/kitchen/receive/', {
+            'mode': 'kitchen_batch',
+            'item_id': self.item.id,
+            'draw_qty': '10',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        batch = KitchenBatch.objects.get(id=data['batch']['id'])
+        self.assertEqual(batch.cost_total, Decimal('500.00'))
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.current_balance(), 90)
+
+    def test_kitchen_receive_draw_exceeding_balance_errors_with_no_side_effects(self):
+        resp = self.client.post('/kitchen/receive/', {
+            'mode': 'kitchen_batch',
+            'item_id': self.item.id,
+            'draw_qty': '500',
+        })
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.assertEqual(KitchenBatch.objects.filter(item=self.item).count(), 0)
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.current_balance(), 100)
+
+    def test_kitchen_receive_item_without_raw_source_still_uses_manual_cost(self):
+        self.item.raw_material_source = None
+        self.item.save(update_fields=['raw_material_source'])
+        resp = self.client.post('/kitchen/receive/', {
+            'mode': 'kitchen_batch',
+            'item_id': self.item.id,
+            'cost_total': '1500',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        batch = KitchenBatch.objects.get(id=data['batch']['id'])
+        self.assertEqual(batch.cost_total, Decimal('1500'))
+        self.assertIsNone(batch.source_item_id)
+
+    def test_kitchen_batch_receive_duplicate_endpoint_supports_draw_mode(self):
+        """kitchen_batch_receive is a second, UI-dead-but-live URL that must
+        stay in parity with kitchen_receive's kitchen_batch mode."""
+        resp = self.client.post('/kitchen/batch/receive/', {
+            'item_id': self.item.id,
+            'draw_qty': '8',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        batch = KitchenBatch.objects.get(id=data['batch']['id'])
+        self.assertEqual(batch.cost_total, Decimal('400.00'))
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.current_balance(), 92)
+
+
+class ItemFormRawMaterialSourceTest(TestCase):
+    """add_item / edit_item — km_raw_source POST field sets/clears
+    Item.raw_material_source."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='RawSrc Form Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner_user = User.objects.create_user(username='rawsrc_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.raw_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Potatoes (Raw)',
+            unit='Kg', material_no='RAWFORM-01', is_kitchen_batch=False,
+        )
+        self.client.force_login(self.owner_user)
+
+    def test_add_item_sets_raw_material_source(self):
+        resp = self.client.post('/stock/add/', {
+            'description': 'Chipo Form Test', 'store': self.store.id,
+            'is_kitchen_batch': 'on', 'km_raw_source': self.raw_item.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        item = Item.objects.get(description='Chipo Form Test', business=self.biz)
+        self.assertTrue(item.is_kitchen_batch)
+        self.assertEqual(item.raw_material_source_id, self.raw_item.id)
+
+    def test_add_item_leaves_raw_material_source_null_when_not_selected(self):
+        resp = self.client.post('/stock/add/', {
+            'description': 'Mchuzi Form Test', 'store': self.store.id,
+            'is_kitchen_batch': 'on',
+        })
+        self.assertEqual(resp.status_code, 302)
+        item = Item.objects.get(description='Mchuzi Form Test', business=self.biz)
+        self.assertIsNone(item.raw_material_source_id)
+
+    def test_edit_item_can_clear_raw_material_source(self):
+        batch_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo Edit Test',
+            unit='Batch', material_no='CHIPOEDIT-01', is_kitchen_batch=True,
+            raw_material_source=self.raw_item,
+        )
+        resp = self.client.post(f'/stock/edit/{batch_item.id}/', {
+            'description': 'Chipo Edit Test', 'store': self.store.id,
+            'is_kitchen_batch': 'on',
+            # km_raw_source omitted → should clear the FK
+        })
+        self.assertEqual(resp.status_code, 302)
+        batch_item.refresh_from_db()
+        self.assertIsNone(batch_item.raw_material_source_id)
+
+    def test_edit_item_cannot_self_reference(self):
+        """A batch item can't be picked as its own raw material source —
+        the queryset for the picker already excludes it server-side; this
+        locks in that a spoofed self-id POST is also rejected, not just
+        hidden from the dropdown."""
+        batch_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo Self Test',
+            unit='Batch', material_no='CHIPOSELF-01', is_kitchen_batch=True,
+        )
+        resp = self.client.post(f'/stock/edit/{batch_item.id}/', {
+            'description': 'Chipo Self Test', 'store': self.store.id,
+            'is_kitchen_batch': 'on', 'km_raw_source': batch_item.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        batch_item.refresh_from_db()
+        self.assertIsNone(batch_item.raw_material_source_id)

@@ -1976,6 +1976,14 @@ def add_item(request):
                     item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')
                 except (ValueError, InvalidOperation):
                     item.revenue_multiplier = Decimal('1.70')
+                # Raw-material sack tracking (2026-07-22) — kitchen batch items only.
+                raw_src_id = (request.POST.get('km_raw_source') or '').strip()
+                if item.is_kitchen_batch and raw_src_id:
+                    item.raw_material_source = Item.objects.filter(
+                        id=raw_src_id, business=user_profile.business,
+                    ).exclude(id=item.id).first()
+                else:
+                    item.raw_material_source = None
                 item.is_keg = request.POST.get('is_keg') == 'on'
                 item.bottle_envelope = request.POST.get('bottle_envelope') == 'on'
                 try:
@@ -1992,7 +2000,7 @@ def add_item(request):
                     item.tots_per_unit = None
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
                                          'is_kitchen_batch', 'is_produce', 'produce_mode', 'mix_group',
-                                         'revenue_multiplier', 'is_keg', 'bottle_envelope',
+                                         'revenue_multiplier', 'raw_material_source', 'is_keg', 'bottle_envelope',
                                          'volume_ml', 'tot_ml', 'tots_per_unit'])
 
                 # ── PRODUCE / KITCHEN BATCH PORTION PRESETS ──────────────────
@@ -2068,6 +2076,9 @@ def add_item(request):
         "is_add": True,
         "catalog_json": _json.dumps(_catalog),
         "kitchen_store_ids_json": _json.dumps(_kitchen_store_ids),
+        "raw_material_candidates": Item.objects.filter(
+            business=user_profile.business, is_kitchen_batch=False, is_keg=False,
+        ).order_by('description'),
     }
     return render(request, "core/item_form.html", context)
 
@@ -2126,6 +2137,14 @@ def edit_item(request, item_id):
                     item.revenue_multiplier = rm if rm > 0 else Decimal('1.70')
                 except (ValueError, InvalidOperation):
                     item.revenue_multiplier = Decimal('1.70')
+                # Raw-material sack tracking (2026-07-22) — kitchen batch items only.
+                raw_src_id = (request.POST.get('km_raw_source') or '').strip()
+                if item.is_kitchen_batch and raw_src_id:
+                    item.raw_material_source = Item.objects.filter(
+                        id=raw_src_id, business=user_profile.business,
+                    ).exclude(id=item.id).first()
+                else:
+                    item.raw_material_source = None
                 item.is_keg = request.POST.get('is_keg') == 'on'
                 item.bottle_envelope = request.POST.get('bottle_envelope') == 'on'
                 try:
@@ -2142,7 +2161,7 @@ def edit_item(request, item_id):
                     item.tots_per_unit = None
                 item.save(update_fields=['is_restricted', 'restriction_notes', 'restricted_quantity',
                                          'is_kitchen_batch', 'is_produce', 'produce_mode', 'mix_group',
-                                         'revenue_multiplier', 'is_keg', 'bottle_envelope',
+                                         'revenue_multiplier', 'raw_material_source', 'is_keg', 'bottle_envelope',
                                          'volume_ml', 'tot_ml', 'tots_per_unit'])
 
                 # ── PRODUCE / KITCHEN BATCH PORTION PRESETS ──────────────────
@@ -2221,6 +2240,9 @@ def edit_item(request, item_id):
         "is_add": False,
         "catalog_json": _json.dumps(_catalog),
         "kitchen_store_ids_json": _json.dumps(_kitchen_store_ids),
+        "raw_material_candidates": Item.objects.filter(
+            business=user_profile.business, is_kitchen_batch=False, is_keg=False,
+        ).exclude(id=item.id).order_by('description'),
     }
     return render(request, "core/item_form.html", context)
 

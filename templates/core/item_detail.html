@@ -84,6 +84,11 @@
         color: #60a5fa;
         border: 1px solid rgba(96,165,250,0.25);
     }
+    .type-draw {
+        background: rgba(159,202,160,0.1);
+        color: #9fcaa0;
+        border: 1px solid rgba(159,202,160,0.3);
+    }
 </style>
 {% endblock %}
 
@@ -197,6 +202,10 @@
                     {% if trans.invoice_no == '[ADJ]' %}
                     <span class="type-pill type-adjustment" title="{% trans 'Stock-count correction, not a real delivery/loss' %}">
                         🔧 {% trans 'Rekebisho' %}
+                    </span>
+                    {% elif trans.type == 'Draw' %}
+                    <span class="type-pill type-draw" title="{% trans 'Raw material drawn into a kitchen batch — not a sale' %}">
+                        🥔 {% trans 'Batch Draw' %}
                     </span>
                     {% else %}
                     <span class="type-pill
