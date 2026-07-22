@@ -13,11 +13,20 @@ class Command(BaseCommand):
     Toggling the kitchen module on then created a second, empty store
     flagged is_kitchen=True instead of adopting the existing one.
 
-    Safe by default: dry run unless --apply is passed. Only acts when
-    exactly one of the candidate stores has real items under it — that one
-    is unambiguously "the real store". Anything else (both empty, both
-    have items, more than two candidates) is reported and skipped rather
-    than guessed.
+    Safe by default: dry run unless --apply is passed. "Activity" on a
+    store is Items + Shifts + KegBarrels + BarTabs + StockTakes — every
+    model that CASCADEs on Store deletion — not just Items, so a store
+    can't be misjudged "empty" just because it happens to have no items
+    right now but real shift/tab history. Two outcomes are safe to act on
+    automatically:
+      - exactly one candidate has any activity → that one is unambiguously
+        the real store;
+      - NONE of the candidates have any activity at all → there is nothing
+        to lose either way, so the one already flagged is_kitchen=True is
+        kept (it's what the live app is already using) and the rest are
+        deleted.
+    Anything else (more than one candidate has real activity) is reported
+    and skipped rather than guessed.
 
     Usage:
         python manage.py reconcile_kitchen_stores                    # dry run, all businesses
@@ -34,6 +43,19 @@ class Command(BaseCommand):
         parser.add_argument(
             '--apply', action='store_true',
             help='Actually flag the real store and delete the empty duplicate. Omit to only report.',
+        )
+
+    def _activity_count(self, store):
+        # None of Shift.store / KegBarrel.store / BarTab.store set an
+        # explicit related_name, so Django's default reverse accessors
+        # apply (shift_set / kegbarrel_set / bartab_set) — verified
+        # directly against core/models.py, not guessed.
+        return (
+            store.items.count()
+            + store.shift_set.count()
+            + store.kegbarrel_set.count()
+            + store.bartab_set.count()
+            + store.stock_takes.count()
         )
 
     def handle(self, *args, **options):
@@ -55,25 +77,34 @@ class Command(BaseCommand):
 
             found_any = True
             self.stdout.write(self.style.WARNING(f'\n=== {biz.name} (business id={biz.id}) ==='))
+            counts = {}
             for s in candidates:
-                item_count = s.items.count()
+                counts[s.id] = self._activity_count(s)
                 self.stdout.write(
-                    f'  Store #{s.id}: "{s.name}" is_kitchen={s.is_kitchen} items={item_count}'
+                    f'  Store #{s.id}: "{s.name}" is_kitchen={s.is_kitchen} '
+                    f'items={s.items.count()} total_activity={counts[s.id]}'
                 )
 
-            with_items = [s for s in candidates if s.items.count() > 0]
-            empty = [s for s in candidates if s.items.count() == 0]
+            with_activity = [s for s in candidates if counts[s.id] > 0]
+            empty = [s for s in candidates if counts[s.id] == 0]
 
-            if len(with_items) != 1:
+            if len(with_activity) > 1:
                 self.stdout.write(self.style.ERROR(
-                    '  -> AMBIGUOUS (expected exactly one store with items) — skipping, needs manual review.'
+                    '  -> AMBIGUOUS (more than one store has real activity) — skipping, needs manual review.'
                 ))
                 continue
 
-            real = with_items[0]
+            if len(with_activity) == 1:
+                real = with_activity[0]
+            else:
+                # Nothing anywhere — keep whichever is already flagged as the
+                # live kitchen store (or the oldest, if somehow neither is).
+                flagged = [s for s in candidates if s.is_kitchen]
+                real = flagged[0] if flagged else min(candidates, key=lambda s: s.id)
+
             duplicates = [s for s in empty if s.id != real.id]
             if not duplicates:
-                self.stdout.write('  -> Nothing to merge (only one store has items, no empty duplicates).')
+                self.stdout.write('  -> Nothing to merge (no empty duplicates alongside the real store).')
                 continue
 
             if not real.is_kitchen:

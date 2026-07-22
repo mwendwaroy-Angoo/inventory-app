@@ -7186,6 +7186,40 @@ class ReconcileKitchenStoresCommandTest(TestCase):
         self.assertIn('AMBIGUOUS', output)
         self.assertEqual(Store.objects.filter(business=self.biz).count(), 2)
 
+    def test_apply_handles_both_stores_completely_empty(self):
+        """Real-world case reported by Roy for Monsoon Inn: neither store had
+        any items at all (the business had just enabled the kitchen module,
+        no items added yet). Nothing to lose either way, so the already-
+        flagged store is kept and the unflagged duplicate is deleted."""
+        unflagged = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=False)
+        flagged = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+        output = self._call('--business', 'Reconcile Cmd Biz', '--apply')
+
+        self.assertIn('Would DELETE', output)
+        self.assertFalse(Store.objects.filter(id=unflagged.id).exists())
+        flagged.refresh_from_db()
+        self.assertTrue(Store.objects.filter(id=flagged.id).exists())
+        self.assertTrue(flagged.is_kitchen)
+
+    def test_shift_on_one_store_counts_as_activity_not_just_items(self):
+        """A store can have real history (shifts, tabs, barrels) with zero
+        Items currently attached — activity must be checked broadly, not
+        just via item_count, or a store with real shift history could be
+        misjudged 'empty' and deleted."""
+        from core.models import Shift
+        with_shift = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=False)
+        empty = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        staff = User.objects.create_user(username='rkcmd_shift_staff', password='x')
+        UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, store=with_shift, staff=staff, opening_float=Decimal('0'))
+
+        self._call('--business', 'Reconcile Cmd Biz', '--apply')
+
+        with_shift.refresh_from_db()
+        self.assertTrue(with_shift.is_kitchen)
+        self.assertFalse(Store.objects.filter(id=empty.id).exists())
+
     def test_other_business_unaffected(self):
         other = Business.objects.create(name='Reconcile Cmd Other Biz')
         Store.objects.create(business=other, name='Kitchen', is_kitchen=False)
