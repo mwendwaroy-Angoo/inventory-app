@@ -280,6 +280,14 @@ class Item(models.Model):
     material_no = models.CharField(max_length=20, unique=True)
     description = models.CharField(max_length=200)
     unit = models.CharField(max_length=20)
+    created_at = models.DateTimeField(
+        null=True, blank=True, auto_now_add=True,
+        help_text='Null for items that existed before this field was added (2026-07-22) — '
+                  'treated as "old enough" wherever this is used for that reason. Added '
+                  'specifically so fresh_stock_count_checklist can tell a pre-reset item '
+                  '(needs recounting) apart from one created after the reset (never had '
+                  'anything to reconcile in the first place).'
+    )
     category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, blank=True, related_name='items')
     tags = models.JSONField(default=list, blank=True)
     opening_bin_balance = models.IntegerField(default=0)

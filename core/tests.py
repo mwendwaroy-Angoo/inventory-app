@@ -5221,6 +5221,49 @@ class FreshStockCountChecklistTest(TestCase):
         self.assertIsNotNone(txn)
         self.assertEqual(txn.qty, 0)
 
+    def test_item_created_after_reset_never_appears_on_checklist(self):
+        """Bug reported live by Roy: he added 4 new items after a reset, and
+        they showed up on the Fresh Stock Count checklist demanding a
+        recount — but they were never part of the reset (never zeroed,
+        nothing to reconcile), they just trivially matched "no transaction
+        since reset" by virtue of being brand new with zero transactions at
+        all."""
+        new_item = Item.objects.create(
+            business=self.biz, store=self.store, description='New Post-Reset Item',
+            material_no='FRESH-NEW', unit='pcs', selling_price=Decimal('50'),
+        )
+        resp = self.client.get('/stock/fresh-count/')
+        item_ids = [i.id for i in resp.context['pending_items']]
+        self.assertNotIn(new_item.id, item_ids)
+        self.assertIn(self.item_a.id, item_ids)
+
+    def test_legacy_item_with_null_created_at_still_appears(self):
+        """Items that predate the created_at field (2026-07-22) have
+        created_at=NULL — must be treated as "old enough", not silently
+        excluded, or every pre-existing business's checklist would empty
+        out overnight."""
+        Item.objects.filter(id=self.item_a.id).update(created_at=None)
+        resp = self.client.get('/stock/fresh-count/')
+        item_ids = [i.id for i in resp.context['pending_items']]
+        self.assertIn(self.item_a.id, item_ids)
+
+    def test_home_and_stock_list_banners_match_checklist_count(self):
+        """The pending count is duplicated on home() and stock_list() (both
+        just show a badge, not the list) — same bug, same fix required on
+        all three surfaces per this app's own convention."""
+        Item.objects.create(
+            business=self.biz, store=self.store, description='New Post-Reset Item 2',
+            material_no='FRESH-NEW2', unit='pcs', selling_price=Decimal('50'),
+        )
+        checklist_resp = self.client.get('/stock/fresh-count/')
+        expected = checklist_resp.context['pending_count']
+
+        home_resp = self.client.get('/')
+        self.assertEqual(home_resp.context['fresh_count_pending'], expected)
+
+        stock_list_resp = self.client.get('/stock/')
+        self.assertEqual(stock_list_resp.context['fresh_count_pending'], expected)
+
 
 # ── Liquor Catalogue — core/catalog_classify.py (2026-07-21) ─────────────────
 

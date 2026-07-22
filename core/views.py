@@ -291,8 +291,14 @@ def home(request):
                         _counted_ids = Transaction.objects.filter(
                             business=business, date__gte=_latest_reset.created_at.date(),
                         ).values_list('item_id', flat=True)
+                        # Only items that existed at reset time ever had anything to
+                        # reconcile — see reset_views.py:fresh_stock_count_checklist
+                        # for the full rationale (duplicated count, same fix required
+                        # here per this app's own "audit every surface" rule).
                         context['fresh_count_pending'] = Item.objects.filter(
                             business=business, is_keg=False, is_produce=False,
+                        ).filter(
+                            Q(created_at__isnull=True) | Q(created_at__lte=_latest_reset.created_at)
                         ).exclude(id__in=_counted_ids).count()
                     else:
                         context['fresh_count_pending'] = 0
@@ -701,8 +707,14 @@ def stock_list(request):
             _counted_ids = Transaction.objects.filter(
                 business=user_profile.business, date__gte=_latest_reset.created_at.date(),
             ).values_list('item_id', flat=True)
+            # Same fix as the home() banner and fresh_stock_count_checklist —
+            # only items that existed at reset time ever had anything to
+            # reconcile; a brand-new item trivially matches "no transaction
+            # since reset" purely because it's new.
             fresh_count_pending = Item.objects.filter(
                 business=user_profile.business, is_keg=False, is_produce=False,
+            ).filter(
+                Q(created_at__isnull=True) | Q(created_at__lte=_latest_reset.created_at)
             ).exclude(id__in=_counted_ids).count()
 
     context = {

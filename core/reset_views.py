@@ -229,8 +229,19 @@ def fresh_stock_count_checklist(request):
         business=business, date__gte=latest_reset.created_at.date(),
     ).values_list('item_id', flat=True)
 
+    from django.db.models import Q
+
+    # Only items that existed AT the time of the reset ever had anything to
+    # reconcile — Item.created_at is null for items that predate this field
+    # (2026-07-22), treated as "old enough" rather than excluded. Without
+    # this, an item added well after the reset (never zeroed, never part of
+    # the wiped history) trivially matches "no transaction since reset"
+    # purely because it's brand new, and gets swept onto the checklist —
+    # confirmed live: Roy added 4 new items and they showed up here needing
+    # a "fresh count" that was never applicable to them.
     pending_items = (
         Item.objects.filter(business=business, is_keg=False, is_produce=False)
+        .filter(Q(created_at__isnull=True) | Q(created_at__lte=latest_reset.created_at))
         .exclude(id__in=counted_item_ids)
         .order_by('description')
     )

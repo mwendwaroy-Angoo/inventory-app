@@ -1534,9 +1534,14 @@
         var pm = selectedMethod ? selectedMethod.value : 'cash';
         if (pm === 'credit' || pm === 'tab') {
             var customerName = (document.getElementById('qsCreditCustomerName') || {}).value || '';
-            if (!customerName.trim()) {
-                var lbl = pm === 'tab' ? 'Weka jina la mteja au meza kwa Tab.' : 'Weka jina la mteja kwa deni.';
-                alert(lbl);
+            // Credit/Deni still requires a name — an unnamed debt has no one
+            // to collect from. Tab deliberately does NOT: busy-counter staff
+            // often have no time to type a name, and the wall-QR + PIN
+            // system exists specifically so the customer can identify
+            // themselves later — the backend already creates the tab with a
+            // "Tab #<id>" placeholder name when this is left blank.
+            if (pm === 'credit' && !customerName.trim()) {
+                alert('Weka jina la mteja kwa deni.');
                 document.getElementById('qsCreditCustomerName').focus();
                 return;
             }

@@ -2106,12 +2106,13 @@
     var method = document.querySelector('input[name="keg_payment"]:checked').value;
 
     if (method === 'tab') {
+      // Deliberately no blank-name block here — busy-counter staff often
+      // have no time to type a name, and the wall-QR + PIN system exists
+      // specifically so the customer can identify themselves later. The
+      // backend already creates the tab with a "Tab #<id>" placeholder name
+      // when this is left blank.
       var custName = (document.getElementById('tab-customer-input').value || '').trim();
-      if (!custName) {
-        document.getElementById('tab-customer-input').focus();
-        document.getElementById('tab-customer-input').style.borderColor = '#c0395a';
-        return;
-      }
+      document.getElementById('tab-customer-input').style.borderColor = '#444';
       if (window._barTabBlocked) {
         showToast('Siwezi kuendelea — angalia onyo la deni.', true);
         return;
