@@ -947,6 +947,13 @@ def kitchen_receive(request):
         else:
             qty_raw = request.POST.get('qty', '0') or '0'
             cost_raw = request.POST.get('cost_price', '0') or '0'
+            # Supplier / order reference — reuses Transaction.invoice_no, the
+            # same field Add Transaction's Receipt flow already uses for this
+            # (labelled "Invoice No / Receipt No" there). Kitchen Board's
+            # quick-receive modal never captured this at all before, so a
+            # real supplier delivery (e.g. Meatco order #A25533) had no
+            # record of who it came from once entered.
+            invoice_no = (request.POST.get('note') or '').strip()[:50]
             qty = Decimal(str(qty_raw))
             cost = Decimal(str(cost_raw))
             if qty <= 0:
@@ -957,6 +964,7 @@ def kitchen_receive(request):
                 type='Receipt',
                 qty=qty,
                 payment_method='cash',
+                invoice_no=invoice_no,
             )
             if cost > 0:
                 item.cost_price = cost / qty

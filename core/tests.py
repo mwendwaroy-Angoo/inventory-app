@@ -4248,6 +4248,43 @@ class KitchenReceiveAndConsumableIdempotencyTest(TestCase):
         )
 
 
+class KitchenReceivePortionSupplierNoteTest(TestCase):
+    """Roy reported live: a real supplier delivery (Meatco chicken pieces,
+    with an order number on the receipt) had no way to be recorded — Kitchen
+    Board's portion-mode quick-receive modal captured qty and cost but no
+    reference at all. Reuses Transaction.invoice_no, the same field Add
+    Transaction's own Receipt flow already uses for this ("Invoice No /
+    Receipt No")."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Supplier Note Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kitchensup_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chicken Wings',
+            unit='Kg', material_no='KSUP-01', selling_price=Decimal('50'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_supplier_note_saved_as_invoice_no(self):
+        self.client.post('/kitchen/receive/', {
+            'mode': 'portion', 'item_id': self.item.id, 'qty': '4',
+            'cost_price': '490', 'note': 'Meatco #A25533',
+        })
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.invoice_no, 'Meatco #A25533')
+
+    def test_blank_note_still_works(self):
+        resp = self.client.post('/kitchen/receive/', {
+            'mode': 'portion', 'item_id': self.item.id, 'qty': '4', 'cost_price': '490',
+        })
+        self.assertEqual(resp.json().get('ok'), True)
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').first()
+        self.assertEqual(txn.invoice_no, '')
+
+
 class KitchenBatchDiscardRecordsWastageTest(TestCase):
     """Kitchen-module audit, Theme 2 (state-transition completeness), 2026-07-19:
     KitchenBatch.discard() used to only flip status — unlike ProduceBunch.discard()

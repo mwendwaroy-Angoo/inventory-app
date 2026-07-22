@@ -763,6 +763,11 @@
               <div style="font-size:.7rem;color:#666;margin-top:.2rem;">Acha tupu kama hujui — sasishe baadaye</div>
             </div>
           </div>
+          <div style="margin-bottom:.5rem;">
+            <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Muuzaji / Order No <span style="color:#888;font-style:italic;">(hiari)</span></label>
+            <input type="text" id="kr-portion-note" placeholder="e.g. Meatco #A25533"
+                   style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+          </div>
         </div>
         <div id="kr-batch-fields" style="display:none;">
           <div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:6px;padding:.5rem .6rem;margin-bottom:.6rem;font-size:.77rem;color:#b0b0b0;line-height:1.4;">
@@ -2391,6 +2396,7 @@
       body.append('mode', 'portion');
       body.append('qty', qty);
       body.append('cost_price', document.getElementById('kr-cost').value||'0');
+      body.append('note', document.getElementById('kr-portion-note').value||'');
     }
 
     body.append('idempotency_token',
