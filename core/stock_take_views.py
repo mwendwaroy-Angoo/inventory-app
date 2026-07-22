@@ -532,6 +532,13 @@ def adjust_stock_balance(request, item_id):
 
     if variance < 0:
         # Wastage must be negative so current_balance() decreases to the actual count.
+        # invoice_no='[ADJ]' — same convention as the surplus branch below —
+        # so transaction_history can show this as a count correction rather
+        # than plain "Wastage" (which reads as spoilage/loss, not "I
+        # recounted and the book was wrong"). Previously only the surplus
+        # branch was tagged, an inconsistency found while fixing the
+        # display (Roy's report: a surplus correction showed as a plain
+        # "Receipt" with no visible distinction from a real delivery).
         Transaction.objects.create(
             business=business,
             item=item,
@@ -540,6 +547,7 @@ def adjust_stock_balance(request, item_id):
             date=timezone.localdate(),
             recorded_by=request.user,
             recipient=txn_note,
+            invoice_no='[ADJ]',
             payment_method='',
         )
         direction_label = f'Punguzo la {abs(variance):g} {item.unit}'

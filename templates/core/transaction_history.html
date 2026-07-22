@@ -176,9 +176,15 @@
                 </td>
                 <td>{{ trans.item.store.name }}</td>
                 <td>
+                    {% if trans.invoice_no == '[ADJ]' %}
+                    <span class="type-pill type-adjustment" title="{% trans 'Stock-count correction, not a real delivery/loss' %}">
+                        🔧 {% trans 'Rekebisho' %}
+                    </span>
+                    {% else %}
                     <span class="type-pill {% if trans.type == 'Receipt' %}type-receipt{% elif trans.type == 'Issue' %}type-issue{% elif trans.type == 'Wastage' %}type-wastage{% elif trans.type == 'OwnerConsumption' %}type-owner{% else %}type-adjustment{% endif %}">
                         {{ trans.get_type_display }}
                     </span>
+                    {% endif %}
                 </td>
                 <td>
                     <strong style="color:{% if trans.qty < 0 %}var(--raspberry){% else %}var(--success){% endif %}">

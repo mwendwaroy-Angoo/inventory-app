@@ -44,11 +44,35 @@ def _kitchen_store(business):
 
 
 def _ensure_kitchen_store(business):
-    """Return or create the kitchen store for this business."""
+    """Return or create the kitchen store for this business.
+
+    Root-cause fix (2026-07-22): manage_stores lets an owner create a plain
+    Store just by typing a name — with no is_kitchen checkbox — so a
+    business can easily already have a store literally named "Kitchen"
+    with is_kitchen=False (created before ever enabling this module, or
+    before this field existed). The old version here only ever looked for
+    is_kitchen=True and unconditionally created a brand-new store when it
+    found none, producing two "Kitchen" stores — the real one (with the
+    business's actual items/history) left unflagged, and an empty duplicate
+    now flagged. If exactly one unflagged store's name matches "kitchen"
+    (case-insensitive), adopt it instead of creating a new one; only create
+    fresh when that match is absent or ambiguous — never guess between two
+    candidates.
+    """
     store = _kitchen_store(business)
-    if not store:
-        store = Store.objects.create(business=business, name='Kitchen', is_kitchen=True)
-    return store
+    if store:
+        return store
+
+    candidates = list(
+        Store.objects.filter(business=business, is_kitchen=False, name__iexact='Kitchen')
+    )
+    if len(candidates) == 1:
+        store = candidates[0]
+        store.is_kitchen = True
+        store.save(update_fields=['is_kitchen'])
+        return store
+
+    return Store.objects.create(business=business, name='Kitchen', is_kitchen=True)
 
 
 # ── Toggle kitchen module (owner only, AJAX POST) ──────────────────────────────
@@ -62,6 +86,17 @@ def toggle_kitchen(request):
 
     business = up.business
     enable = request.POST.get('enable') == '1'
+
+    # Server-side double-submit backstop — a double-click/double-tap on the
+    # Business Settings toggle is exactly the "two near-simultaneous
+    # requests both pass the same check-then-create" shape that has caused
+    # duplicate records everywhere else in this app; _ensure_kitchen_store's
+    # own check-then-create was unlocked.
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': True, 'has_kitchen': business.has_kitchen, 'duplicate': True})
+
     business.has_kitchen = enable
     business.save(update_fields=['has_kitchen'])
 

@@ -24,8 +24,8 @@ from .models import Shift, KegBarrel, KegWeightReading, BarTab, BarTabEntry
 
 @admin.register(Store)
 class StoreAdmin(admin.ModelAdmin):
-    list_display = ('name', 'business', 'item_count')
-    list_filter = ('business',)
+    list_display = ('name', 'business', 'is_kitchen', 'item_count')
+    list_filter = ('business', 'is_kitchen')
     search_fields = ('name', 'business__name')
 
     def item_count(self, obj):

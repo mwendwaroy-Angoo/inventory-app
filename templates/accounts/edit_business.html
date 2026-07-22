@@ -445,7 +445,8 @@
         var cur  = btn.getAttribute('data-enabled') === '1';
         var enable = cur ? '0' : '1';
         btn.disabled = true;
-        var body = new URLSearchParams({enable: enable, csrfmiddlewaretoken: '{{ csrf_token }}'});
+        var idemToken = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+        var body = new URLSearchParams({enable: enable, csrfmiddlewaretoken: '{{ csrf_token }}', idempotency_token: idemToken});
         fetch("{% url 'toggle_kitchen' %}", {method:'POST', body:body, headers:{'X-CSRFToken':'{{ csrf_token }}'}})
             .then(function(r){ return r.json(); })
             .then(function(d){

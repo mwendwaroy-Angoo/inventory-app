@@ -79,6 +79,11 @@
         color: var(--raspberry);
         border: 1px solid var(--raspberry);
     }
+    .type-adjustment {
+        background: rgba(96,165,250,0.1);
+        color: #60a5fa;
+        border: 1px solid rgba(96,165,250,0.25);
+    }
 </style>
 {% endblock %}
 
@@ -189,10 +194,16 @@
             <tr>
                 <td>{{ trans.date }}</td>
                 <td>
+                    {% if trans.invoice_no == '[ADJ]' %}
+                    <span class="type-pill type-adjustment" title="{% trans 'Stock-count correction, not a real delivery/loss' %}">
+                        🔧 {% trans 'Rekebisho' %}
+                    </span>
+                    {% else %}
                     <span class="type-pill
                         {% if trans.type == 'Receipt' %}type-receipt{% else %}type-issue{% endif %}">
                         {{ trans.get_type_display }}
                     </span>
+                    {% endif %}
                 </td>
                 <td>
                     <strong

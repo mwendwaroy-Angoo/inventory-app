@@ -7012,3 +7012,109 @@ class KegBarrelsPeriodStationScopingTest(TestCase):
         self.assertNotIn('Kitchen Keg Item', keg_names)
         self.assertIn('Bar Keg Item', barrel_items)
         self.assertNotIn('Kitchen Keg Item', barrel_items)
+
+
+# ── Fix: duplicate Kitchen store on toggle (2026-07-22) ───────────────────────
+# Root cause reported live by Roy for Monsoon Inn: manage_stores lets an
+# owner create a plain Store just by typing a name, with no is_kitchen
+# checkbox — so a business can already have a store literally named
+# "Kitchen" with is_kitchen=False. _ensure_kitchen_store only ever looked
+# for is_kitchen=True and created a brand-new store when it found none,
+# producing two "Kitchen" stores instead of adopting the existing one.
+
+class EnsureKitchenStoreAdoptsExistingTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Dup Biz')
+
+    def test_adopts_unflagged_kitchen_named_store(self):
+        from core.kitchen_views import _ensure_kitchen_store
+        existing = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=False)
+        item = Item.objects.create(
+            business=self.biz, store=existing, description='Old Kitchen Item',
+            material_no='KDUP-01', selling_price=Decimal('50'),
+        )
+        result = _ensure_kitchen_store(self.biz)
+        self.assertEqual(result.id, existing.id)
+        self.assertTrue(Store.objects.get(id=existing.id).is_kitchen)
+        self.assertEqual(Store.objects.filter(business=self.biz).count(), 1)
+        item.refresh_from_db()
+        self.assertEqual(item.store_id, existing.id)
+
+    def test_creates_new_store_when_none_named_kitchen(self):
+        from core.kitchen_views import _ensure_kitchen_store
+        result = _ensure_kitchen_store(self.biz)
+        self.assertTrue(result.is_kitchen)
+        self.assertEqual(Store.objects.filter(business=self.biz).count(), 1)
+
+    def test_does_not_guess_between_two_ambiguous_candidates(self):
+        from core.kitchen_views import _ensure_kitchen_store
+        Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=False)
+        Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=False)
+        result = _ensure_kitchen_store(self.biz)
+        # A third, freshly-flagged store — the two ambiguous candidates are
+        # left untouched rather than guessing which one is "the" kitchen.
+        self.assertTrue(result.is_kitchen)
+        self.assertEqual(Store.objects.filter(business=self.biz, is_kitchen=False).count(), 2)
+        self.assertEqual(Store.objects.filter(business=self.biz, is_kitchen=True).count(), 1)
+
+    def test_reuses_already_flagged_store(self):
+        from core.kitchen_views import _ensure_kitchen_store
+        existing = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        result = _ensure_kitchen_store(self.biz)
+        self.assertEqual(result.id, existing.id)
+        self.assertEqual(Store.objects.filter(business=self.biz).count(), 1)
+
+
+class ToggleKitchenIdempotencyTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Toggle Kitchen Idem Biz')
+        self.owner = User.objects.create_user(username='togglekitchen_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_duplicate_token_does_not_double_create_store(self):
+        payload = {'enable': '1', 'idempotency_token': 'togglekitchen-same-token'}
+        self.client.post('/kitchen/toggle/', payload)
+        self.client.post('/kitchen/toggle/', payload)
+        self.assertEqual(Store.objects.filter(business=self.biz, is_kitchen=True).count(), 1)
+
+
+# ── Fix: stock-count correction mislabeled as plain Receipt (2026-07-22) ──────
+# Roy reported live: he mistyped a stock take (4 instead of 5), corrected it by
+# recounting to 5, and the resulting +1 correction showed in Transaction
+# History as an unmarked "Receipt" — indistinguishable from a real supplier
+# delivery. invoice_no='[ADJ]' was already set on the surplus branch (to
+# suppress the "missing cost price" alert) but the UI never used it to show
+# anything different, and the shortage branch didn't set it at all.
+
+class AdjustStockBalanceCorrectionTaggingTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='ADJ Tag Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='adjtag_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='ADJ Tag Item',
+            material_no='ADJTAG-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('4'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_surplus_correction_tagged_adj(self):
+        self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '5'})
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt', qty=Decimal('1')).first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.invoice_no, '[ADJ]')
+
+    def test_shortage_correction_now_also_tagged_adj(self):
+        self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '2'})
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='Wastage').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.invoice_no, '[ADJ]')
+
+    def test_transaction_history_shows_rekebisho_not_receipt(self):
+        self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '5'})
+        resp = self.client.get('/history/')
+        self.assertIn(b'Rekebisho', resp.content)
