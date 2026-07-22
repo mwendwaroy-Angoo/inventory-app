@@ -7118,3 +7118,79 @@ class AdjustStockBalanceCorrectionTaggingTest(TestCase):
         self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '5'})
         resp = self.client.get('/history/')
         self.assertIn(b'Rekebisho', resp.content)
+
+
+# ── reconcile_kitchen_stores management command (2026-07-22) ─────────────────
+# One-time cleanup tool for the duplicate-kitchen-store bug fixed the same
+# day (commit 0228411) — Roy needed a way to fix it on live production
+# without direct DB access, so this is a safe, dry-run-by-default command
+# rather than a direct data fix.
+
+class ReconcileKitchenStoresCommandTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Reconcile Cmd Biz')
+
+    def _call(self, *args):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('reconcile_kitchen_stores', *args, stdout=out)
+        return out.getvalue()
+
+    def test_dry_run_does_not_change_anything(self):
+        real = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=False)
+        Item.objects.create(
+            business=self.biz, store=real, description='Cmd Item',
+            material_no='RKCMD-01', selling_price=Decimal('50'),
+        )
+        dup = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+        output = self._call('--business', 'Reconcile Cmd Biz')
+
+        self.assertIn('Would flag', output)
+        self.assertIn('Would DELETE', output)
+        real.refresh_from_db()
+        self.assertFalse(real.is_kitchen)
+        self.assertTrue(Store.objects.filter(id=dup.id).exists())
+
+    def test_apply_flags_real_store_and_deletes_empty_duplicate(self):
+        real = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=False)
+        item = Item.objects.create(
+            business=self.biz, store=real, description='Cmd Item',
+            material_no='RKCMD-02', selling_price=Decimal('50'),
+        )
+        dup = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+        self._call('--business', 'Reconcile Cmd Biz', '--apply')
+
+        real.refresh_from_db()
+        self.assertTrue(real.is_kitchen)
+        self.assertFalse(Store.objects.filter(id=dup.id).exists())
+        item.refresh_from_db()
+        self.assertEqual(item.store_id, real.id)
+
+    def test_apply_skips_ambiguous_case_with_items_on_both(self):
+        s1 = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=False)
+        Item.objects.create(
+            business=self.biz, store=s1, description='Item A',
+            material_no='RKCMD-A', selling_price=Decimal('50'),
+        )
+        s2 = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        Item.objects.create(
+            business=self.biz, store=s2, description='Item B',
+            material_no='RKCMD-B', selling_price=Decimal('50'),
+        )
+
+        output = self._call('--business', 'Reconcile Cmd Biz', '--apply')
+
+        self.assertIn('AMBIGUOUS', output)
+        self.assertEqual(Store.objects.filter(business=self.biz).count(), 2)
+
+    def test_other_business_unaffected(self):
+        other = Business.objects.create(name='Reconcile Cmd Other Biz')
+        Store.objects.create(business=other, name='Kitchen', is_kitchen=False)
+        Store.objects.create(business=other, name='Kitchen', is_kitchen=True)
+
+        self._call('--business', 'Reconcile Cmd Biz', '--apply')
+
+        self.assertEqual(Store.objects.filter(business=other).count(), 2)
