@@ -1127,12 +1127,13 @@ def kitchen_tabs_list(request):
         ).select_related('source_tab', 'dest_tab'):
             if _t.source_tab_id in _food_tab_ids_all:
                 _pending_out_by_entry[_t.entry_id] = {
-                    'id': _t.id, 'amount': float(_t.amount), 'dest_customer': _t.dest_tab.customer_name,
+                    'id': _t.id, 'amount': float(_t.amount), 'paid_amount': float(_t.paid_amount),
+                    'dest_customer': _t.dest_tab.customer_name,
                 }
             if _t.dest_tab_id in _food_tab_ids_all:
                 _pending_in_by_tab.setdefault(_t.dest_tab_id, []).append({
-                    'id': _t.id, 'amount': float(_t.amount), 'note': _t.note,
-                    'source_customer': _t.source_tab.customer_name,
+                    'id': _t.id, 'amount': float(_t.amount), 'paid_amount': float(_t.paid_amount),
+                    'note': _t.note, 'source_customer': _t.source_tab.customer_name,
                 })
 
     result = []
@@ -1155,6 +1156,7 @@ def kitchen_tabs_list(request):
             {
                 'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid,
                 'pending_transfer_out': _pending_out_by_entry.get(e.id),
+                'transfer_note': ('' if e.id in _pending_out_by_entry else e.transfer_reason_note()),
             }
             for e in kitchen_entries
         ]

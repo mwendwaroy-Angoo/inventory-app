@@ -8184,3 +8184,111 @@ class SplitAndTransferEntryTest(TestCase):
             data=_json.dumps({'action': 'accept'}), content_type='application/json',
         )
         self.assertEqual(resp2.status_code, 404)
+
+    # ── Debt-reasoning trail (2026-07-24 live request): "when Roy later comes
+    # on and he is told there is a debt... the receipt shows him how the debt
+    # occurred" — BarTabEntry.transfer_reason_note() + customer_debt_statement.
+
+    def test_reject_sets_transfer_reason_note(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.reject()
+        new_entry.refresh_from_db()
+        note = new_entry.transfer_reason_note()
+        self.assertIn('Bosco', note)
+        self.assertIn('alikataa', note)
+        self.assertIn('400', note)
+
+    def test_cancel_sets_transfer_reason_note(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.cancel()
+        new_entry.refresh_from_db()
+        note = new_entry.transfer_reason_note()
+        self.assertIn('Bosco', note)
+        self.assertIn('hakujibu', note)
+
+    def test_pending_transfer_gives_no_reason_note_yet(self):
+        """While still PENDING (nothing decided), there's nothing to explain yet
+        — the note only appears once the transfer has actually gone one way
+        or the other (REJECTED/CANCELLED)."""
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        new_entry, _tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        self.assertEqual(new_entry.transfer_reason_note(), '')
+
+    def test_no_history_returns_empty_note(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        self.assertEqual(entry.transfer_reason_note(), '')
+
+    def test_debt_statement_shows_transfer_reason_after_rejected_split(self):
+        roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.reject()
+        # Roy never pays the remaining 200 himself -> staff converts his tab to debt.
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{roy_tab.id}/debt/', {'customer_name': 'Roy'})
+        self.assertEqual(resp.status_code, 200)
+
+        from core.models import Customer
+        customer = Customer.objects.get(business=self.biz, name__iexact='Roy')
+        resp2 = self.client.post(f'/debt/{customer.id}/statement/')
+        self.assertEqual(resp2.status_code, 302)
+
+        rcpt = Receipt.objects.filter(
+            business=self.biz, customer_name__iexact='Roy', payment_method='statement',
+        ).latest('id')
+        joined = ' '.join(line['name'] for line in rcpt.lines)
+        self.assertIn('Bosco', joined)
+        self.assertIn('alikataa', joined)
+
+    def test_pending_banner_json_includes_paid_amount(self):
+        """tabs_list() must surface paid_amount so the destination customer's
+        banner can say "Roy already paid 400 himself", not just the bare
+        remainder (2026-07-24 live request)."""
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/')
+        data = resp.json()
+        bosco_json = next(t for t in data['tabs'] if t['id'] == bosco_tab.id)
+        self.assertEqual(len(bosco_json['incoming_transfers']), 1)
+        self.assertEqual(bosco_json['incoming_transfers'][0]['paid_amount'], 400.0)
+
+    def test_entry_json_shows_transfer_note_after_rejection(self):
+        """tabs_list() must surface the reason note on the entry itself once a
+        transfer has been rejected, so staff see WHY it's still sitting
+        there unpaid without leaving the drawer."""
+        roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.reject()
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/')
+        data = resp.json()
+        roy_json = next(t for t in data['tabs'] if t['id'] == roy_tab.id)
+        remainder_entry = next(e for e in roy_json['entries'] if e['amount'] == 200.0)
+        self.assertIn('Bosco', remainder_entry['transfer_note'])
+        self.assertIn('alikataa', remainder_entry['transfer_note'])

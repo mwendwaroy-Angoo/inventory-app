@@ -276,6 +276,7 @@ def _pending_transfers_for_tabs(business, tab_ids):
         {
             'id': t.id,
             'amount': float(t.amount),
+            'paid_amount': float(t.paid_amount),
             'note': t.note or 'kiingilio',
             'from_customer': t.source_tab.customer_name,
         }

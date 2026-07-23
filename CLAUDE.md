@@ -1701,3 +1701,35 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   bug; just a reminder this project's own end-of-sprint ritual should include it going
   forward for local dev, same as CI/Render already require via their own deploy-time
   `migrate` step.
+- Debt-reasoning trail for split-transfers (2026-07-24), same-day follow-up to a live
+  clarifying question: Roy pushed back on "what is Bosco's tab even FOR" and specifically
+  asked that if the remainder is never resolved and becomes Roy's own debt, the system
+  should explain WHY — "so when Roy later comes on... the receipt shows him how the debt
+  occurred" — not just a bare "Kikombe — KES 30" line with no context. Root design
+  question: `_get_customer_debt_data`/`customer_debt_statement`/`customer_debt_profile.html`
+  all read `txn.item.description` (the item's fixed catalog name) for line items, NOT
+  `BarTabEntry.description` — so an earlier idea of mutating the entry's description text
+  on reject/cancel would have been invisible on every debt-facing surface; verified this by
+  reading the actual template code before writing any fix, not assumed. Instead:
+  `BarTabEntry.transfer_reason_note()` (`core/models.py`) reads the entry's own
+  `transfer_requests` relation live (never bakes anything into stored text, so it can't go
+  stale and every surface gives the same answer) and returns a short Swahili explanation
+  — "Ilikuwa itafunikwa na Bosco, alikataa kulipa (ulishalipa KES 400 mwenyewe)" — for any
+  entry whose most recent terminal-status `TabTransferRequest` was REJECTED or CANCELLED;
+  empty string for the ordinary case for an entry with no such history, and — deliberately
+  — also empty while still PENDING (nothing to explain yet). New `TabTransferRequest.
+  paid_amount` field snapshots what the source customer paid at split time (Roy's 400 of
+  an original 600) purely for display — avoids a fragile join back to the sibling entry
+  that was reduced in place at split time — used both in this reason note and to enrich
+  every "someone wants to add money to your bill" banner across all three tabs drawers,
+  `receipt_public.html`, `tab_live.html`, and the request SMS with "X alishalipa KES Y
+  mwenyewe" context, matching Roy's own example dialogue almost verbatim. Wired into
+  `customer_debt_statement` (the line text customers actually see when they scan their own
+  QR) and `customer_debt_profile.html` (the owner-facing ledger, same reasoning, so staff
+  aren't left guessing either). Also surfaced live in the tabs drawer itself on any entry
+  with a resolved-but-unaccepted transfer history (a `🔀` amber note next to the entry, extending the same
+  JSON already used for the live pending badge) — deliberately reusing the model method at
+  read time rather than duplicating its wording inline in the query-building code, so the
+  Swahili phrasing only ever needs to be right in one place. 7 new tests. Migration adds
+  only the one new field (`paid_amount`) to the existing `TabTransferRequest` table. 426
+  tests pass.

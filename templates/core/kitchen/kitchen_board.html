@@ -2014,7 +2014,9 @@
           ? '<div style="width:100%;font-size:.66rem;color:#c9a84c;background:rgba(201,168,76,.07);border:1px solid rgba(201,168,76,.2);border-radius:5px;padding:.1rem .35rem;margin:0 0 .25rem;">' +
             '⏳ Inasubiri idhini ya ' + e.pending_transfer_out.dest_customer + ' — KES ' + fmt(e.pending_transfer_out.amount) +
             '</div>'
-          : '';
+          : (e.transfer_note
+              ? '<div style="width:100%;font-size:.66rem;color:#fbbf24;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;padding:.1rem .35rem;margin:0 0 .25rem;">🔀 ' + e.transfer_note + '</div>'
+              : '');
         return '<div style="display:flex;align-items:center;gap:.4rem;font-size:.8rem;padding:.2rem 0;flex-wrap:wrap;">' +
                (e.is_paid
                  ? '<input type="checkbox" checked disabled style="accent-color:#c9a84c;flex-shrink:0;">'
@@ -2064,10 +2066,13 @@
 
       var incomingHtml = '';
       (tab.incoming_transfers || []).forEach(function (t) {
+        var paidBit = t.paid_amount > 0
+          ? ' — ' + t.source_customer + ' alishalipa KES ' + fmt(t.paid_amount) + ' mwenyewe'
+          : '';
         incomingHtml +=
           '<div style="background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.3);border-radius:6px;' +
           'padding:.3rem .55rem;margin-bottom:.35rem;font-size:.75rem;color:#a5d6a7;">' +
-          '🔔 ' + t.source_customer + ' anataka kuongeza <strong style="color:#4caf50;">KES ' + fmt(t.amount) + '</strong> (' + t.note + ')' +
+          '🔔 ' + t.source_customer + ' anataka kuongeza <strong style="color:#4caf50;">KES ' + fmt(t.amount) + '</strong> (' + t.note + ')' + paidBit +
           '<div style="display:flex;gap:.4rem;margin-top:.3rem;">' +
           '<button onclick="window.kbRespondTabTransfer(' + t.id + ',\'accept\')" ' +
           'style="flex:1;padding:.2rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.4);border-radius:5px;color:#4caf50;font-size:.72rem;cursor:pointer;">Kubali</button>' +

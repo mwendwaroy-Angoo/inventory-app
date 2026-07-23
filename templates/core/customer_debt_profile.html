@@ -379,7 +379,14 @@
                 {% for entry in unpaid_transactions %}
                 <tr class="txn-row {% if entry.is_overdue %}overdue-row{% endif %}" id="debt-txn-row-{{ entry.txn.id }}">
                     <td class="ps-4">{{ entry.txn.date|date:"d M Y" }}</td>
-                    <td>{{ entry.txn.item.description }}</td>
+                    <td>
+                        {{ entry.txn.item.description }}
+                        {% if entry.transfer_note %}
+                        <div style="color:#fbbf24; font-size:0.72rem; margin-top:0.15rem;" title="Historia ya uhamisho wa bili">
+                            🔀 {{ entry.transfer_note }}
+                        </div>
+                        {% endif %}
+                    </td>
                     <td class="text-end" style="color:{% if entry.is_overdue %}#f87171{% else %}#fbbf24{% endif %}; font-weight:600;">
                         KES {{ entry.amount|floatformat:2 }}
                     </td>

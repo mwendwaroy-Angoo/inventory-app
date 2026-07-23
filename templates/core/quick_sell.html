@@ -2435,10 +2435,13 @@
             var entries = '';
             var incomingHtml = '';
             (tab.incoming_transfers || []).forEach(function (t) {
+                var paidBit = t.paid_amount > 0
+                    ? ' — ' + t.source_customer + ' alishalipa KES ' + qsFmt(t.paid_amount) + ' mwenyewe'
+                    : '';
                 incomingHtml +=
                     '<div style="background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.3);border-radius:6px;' +
                     'padding:.3rem .55rem;margin-bottom:.35rem;font-size:.75rem;color:#a5d6a7;">' +
-                    '🔔 ' + t.source_customer + ' anataka kuongeza <strong style="color:#4caf50;">KES ' + qsFmt(t.amount) + '</strong> (' + t.note + ')' +
+                    '🔔 ' + t.source_customer + ' anataka kuongeza <strong style="color:#4caf50;">KES ' + qsFmt(t.amount) + '</strong> (' + t.note + ')' + paidBit +
                     '<div style="display:flex;gap:.4rem;margin-top:.3rem;">' +
                     '<button onclick="qsRespondTabTransfer(' + t.id + ',\'accept\')" ' +
                     'style="flex:1;padding:.2rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.4);border-radius:5px;color:#4caf50;font-size:.72rem;cursor:pointer;">Kubali</button>' +
@@ -2464,7 +2467,9 @@
                     ? '<div style="width:100%;font-size:.68rem;color:#c9a84c;background:rgba(201,168,76,.07);border:1px solid rgba(201,168,76,.2);border-radius:5px;padding:.15rem .4rem;margin:.15rem 0 .3rem;">' +
                       '⏳ Inasubiri idhini ya ' + e.pending_transfer_out.dest_customer + ' — KES ' + qsFmt(e.pending_transfer_out.amount) +
                       '</div>'
-                    : '';
+                    : (e.transfer_note
+                        ? '<div style="width:100%;font-size:.68rem;color:#fbbf24;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;padding:.15rem .4rem;margin:.15rem 0 .3rem;">🔀 ' + e.transfer_note + '</div>'
+                        : '');
                 entries +=
                     '<div class="qs-tab-entry' + (e.is_paid ? ' paid' : '') + '" style="flex-wrap:wrap;">' +
                     '<input type="checkbox" class="qs-entry-cb"' +

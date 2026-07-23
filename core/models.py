@@ -2611,9 +2611,37 @@ class BarTabEntry(models.Model):
             transfer = TabTransferRequest.objects.create(
                 business=business, entry=new_entry,
                 source_tab=entry.tab, dest_tab=dest_tab, amount=remainder,
-                requested_by=staff_user, note=entry.description,
+                paid_amount=paid_amount, requested_by=staff_user, note=entry.description,
             )
         return new_entry, transfer
+
+    def transfer_reason_note(self):
+        """If this entry's balance was ever proposed as a split-bill transfer
+        to a different customer's tab and that didn't go through — rejected,
+        or cancelled because the source tab was converted to debt/voided
+        before anyone responded — return a short explanation of why. Used
+        wherever this entry later needs to explain itself with no other
+        context on hand: a debt statement line, the owner-facing debt
+        ledger, or a tabs-drawer note (2026-07-24 live request: "so when Roy
+        later comes on... the receipt shows him how the debt occurred").
+        Computed fresh from the permanent TabTransferRequest audit trail each
+        time, never baked into `description` — so it can't go stale and
+        every surface reads the same live answer. Returns '' when this entry
+        has no such history (the ordinary case).
+        """
+        tfr = self.transfer_requests.filter(
+            status__in=['REJECTED', 'CANCELLED']
+        ).order_by('-resolved_at').first()
+        if not tfr:
+            return ''
+        who = tfr.dest_tab.customer_name
+        if tfr.paid_amount:
+            paid_bit = f' (ulishalipa KES {tfr.paid_amount:,.0f} mwenyewe)'
+        else:
+            paid_bit = ''
+        if tfr.status == 'REJECTED':
+            return f'Ilikuwa itafunikwa na {who}, alikataa kulipa{paid_bit}'
+        return f'Ilikuwa itafunikwa na {who}, hakujibu kwa wakati{paid_bit}'
 
 
 class TabTransferRequest(models.Model):
@@ -2635,6 +2663,14 @@ class TabTransferRequest(models.Model):
     source_tab   = models.ForeignKey(BarTab, on_delete=models.CASCADE, related_name='transfer_requests_out')
     dest_tab     = models.ForeignKey(BarTab, on_delete=models.CASCADE, related_name='transfer_requests_in')
     amount       = models.DecimalField(max_digits=10, decimal_places=2)
+    paid_amount  = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0'),
+        help_text='Snapshot of what the source customer paid themselves at split '
+                  'time (e.g. Roy\'s 50 of an 80 KES cup) — captured here so the '
+                  'pending banner and any later debt-reasoning note can say "X '
+                  'already paid Y himself" without a fragile join back to the '
+                  'sibling entry that was reduced at split time.',
+    )
     status       = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
     requested_by = models.ForeignKey('auth.User', null=True, blank=True, on_delete=models.SET_NULL,
                                       related_name='tab_transfer_requests_made')

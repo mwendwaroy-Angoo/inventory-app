@@ -110,7 +110,8 @@
 <div class="pending-transfer-card" data-transfer-id="{{ t.id }}">
     <div>🔔 <strong>{{ t.from_customer }}</strong> anataka kuongeza
         <strong style="color:var(--green);">KES {{ t.amount|floatformat:"0" }}</strong>
-        ({{ t.note }}) kwenye bili yako.</div>
+        ({{ t.note }}) kwenye bili yako.
+        {% if t.paid_amount %}<br>{{ t.from_customer }} alishalipa KES {{ t.paid_amount|floatformat:"0" }} mwenyewe.{% endif %}</div>
     <div class="pending-transfer-actions">
         <button class="pt-accept" onclick="respondPendingTransfer({{ t.id }}, 'accept', this)">Kubali</button>
         <button class="pt-reject" onclick="respondPendingTransfer({{ t.id }}, 'reject', this)">Kataa</button>

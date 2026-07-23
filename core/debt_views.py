@@ -44,6 +44,23 @@ def _debt_scope(profile, business):
 
 # ── Core data helper ──────────────────────────────────────────────────────────
 
+def _txn_transfer_note(txn):
+    """Reason-note for a debt transaction that traces back to a rejected/
+    cancelled split-bill transfer (BarTabEntry.transfer_reason_note(), core/
+    models.py) — e.g. "Ilikuwa itafunikwa na Bosco, alikataa kulipa" so a
+    customer scanning their own QR (or the owner reading the debt ledger)
+    can see WHY this specific amount became debt, not just a bare line item
+    (2026-07-24 live request). Returns '' for a transaction with no
+    BarTabEntry at all (e.g. a direct Quick Sell credit sale, never on a
+    tab) or with no such history — the ordinary case.
+    """
+    try:
+        entry = txn.tab_entry
+    except Exception:
+        return ''
+    return entry.transfer_reason_note()
+
+
 def _get_customer_debt_data(customer, business, scope='all'):
     """Compute debt data for one customer, optionally filtered to a sub-ledger.
 
@@ -99,6 +116,7 @@ def _get_customer_debt_data(customer, business, scope='all'):
                 'amount': round(partial_unpaid, 2),
                 'days_outstanding': (today - txn.date).days,
                 'is_overdue': (today - txn.date).days > window,
+                'transfer_note': _txn_transfer_note(txn),
             })
         else:
             unpaid_transactions.append({
@@ -106,6 +124,7 @@ def _get_customer_debt_data(customer, business, scope='all'):
                 'amount': round(txn_amount, 2),
                 'days_outstanding': (today - txn.date).days,
                 'is_overdue': (today - txn.date).days > window,
+                'transfer_note': _txn_transfer_note(txn),
             })
 
     aged = {'current': 0.0, 'overdue_30': 0.0, 'overdue_60': 0.0, 'overdue_90': 0.0}
@@ -802,10 +821,15 @@ def customer_debt_statement(request, customer_id):
     for entry in data['unpaid_transactions']:
         txn = entry['txn']
         overdue_tag = ' ✗' if entry['is_overdue'] else ''
+        # If this amount only became debt because a split-bill transfer to a
+        # different customer's tab was rejected or never resolved, say so —
+        # a bare "Kikombe — KES 30" line gives Roy no way to recognise why
+        # he's being asked to pay it (2026-07-24 live request).
+        note_bit = f" — {entry['transfer_note']}" if entry.get('transfer_note') else ''
         lines.append({
             'name': (
                 f"{txn.item.description} — {txn.date.strftime('%d %b %Y')}"
-                f" · siku {entry['days_outstanding']}{overdue_tag}"
+                f" · siku {entry['days_outstanding']}{overdue_tag}{note_bit}"
             ),
             'qty': 1,
             'subtotal': entry['amount'],

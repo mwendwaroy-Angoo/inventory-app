@@ -1051,12 +1051,13 @@ def tabs_list(request):
         ):
             if _t.source_tab_id in _tab_ids:
                 _pending_out_by_entry[_t.entry_id] = {
-                    'id': _t.id, 'amount': float(_t.amount), 'dest_customer': _t.dest_tab.customer_name,
+                    'id': _t.id, 'amount': float(_t.amount), 'paid_amount': float(_t.paid_amount),
+                    'dest_customer': _t.dest_tab.customer_name,
                 }
             if _t.dest_tab_id in _tab_ids:
                 _pending_in_by_tab.setdefault(_t.dest_tab_id, []).append({
-                    'id': _t.id, 'amount': float(_t.amount), 'note': _t.note,
-                    'source_customer': _t.source_tab.customer_name,
+                    'id': _t.id, 'amount': float(_t.amount), 'paid_amount': float(_t.paid_amount),
+                    'note': _t.note, 'source_customer': _t.source_tab.customer_name,
                 })
 
     def _entry_dict(e):
@@ -1075,6 +1076,12 @@ def tabs_list(request):
             'payment_method': e.payment_method,
             'is_kitchen_item': _is_kitchen_item,
             'pending_transfer_out': _pending_out_by_entry.get(e.id),
+            # Only computed when there's no LIVE pending request (that badge
+            # already explains itself) — a REJECTED/CANCELLED one is a small
+            # extra query per entry (core.models.BarTabEntry.transfer_reason_
+            # note, single source of truth for this wording), acceptable
+            # here since a tabs drawer is a handful of tabs, not a hot path.
+            'transfer_note': ('' if e.id in _pending_out_by_entry else e.transfer_reason_note()),
         }
 
     result = []
@@ -1440,10 +1447,14 @@ def split_and_transfer_entry(request, entry_id):
             if normalized:
                 rcpt, _ = resolve_master_receipt(up.business, dest_tab)
                 link = request.build_absolute_uri(f'/r/{rcpt.token}/') if rcpt else ''
+                paid_bit = (
+                    f" {entry.tab.customer_name} alishalipa KES {tfr.paid_amount:,.0f} mwenyewe."
+                    if tfr.paid_amount else ""
+                )
                 msg = (
                     f"Habari {dest_tab.customer_name},\n"
                     f"{up.business.name}: {entry.tab.customer_name} anataka kuongeza "
-                    f"KES {tfr.amount:,.0f} kwenye tab yako ({tfr.note}).\n"
+                    f"KES {tfr.amount:,.0f} kwenye tab yako ({tfr.note}).{paid_bit}\n"
                     + (f"Kubali au kataa kwenye risiti yako: {link}" if link else
                        "Muulize mhudumu kukubali au kukataa.")
                 )
