@@ -29,8 +29,8 @@ def _get_up(request):
 
 
 def _allowed_tab_sources(up):
-    """Set of BarTab.source values ('bar'/'kitchen') this staffer may act on,
-    per the Station Scoping Principle (CLAUDE.md).
+    """Set of BarTab.source values this staffer may act on, per the Station
+    Scoping Principle (CLAUDE.md).
 
     tabs_list() (the read/GET side) already scopes correctly via this same
     _station_scope() helper — bar-audit finding, 2026-07-19: every WRITE
@@ -41,12 +41,26 @@ def _allowed_tab_sources(up):
     settle it, void it, convert it to debt — even though the UI never shows
     them a bar tab, because "the template doesn't render the button" is not
     the same as "the endpoint is gated." Owner/manager/cross-access staff see
-    both. 'qs' (Quick Sell) tabs are intentionally excluded — they aren't
-    part of either counter's shift lifecycle and have no station concept.
+    both.
+
+    'qs' (Quick Sell) is ALWAYS included, unconditionally — found 2026-07-23
+    from a live report ("Geuza Deni gives a network error"): tabs_list()'s
+    qs context branch already returns 'qs' tabs completely unrestricted (no
+    bar/kitchen station filtering applied — qs tabs have no station concept
+    at all), but this helper originally excluded 'qs' from the allowed set
+    entirely rather than granting it unconditionally. Since convert_tab_to_
+    debt, update_tab_name, update_tab_phone, and tick_entry all filter their
+    object lookup directly on tab.source (not per-entry, unlike settle_tab)
+    against this set, excluding 'qs' meant EVERY Quick Sell tab 404'd on
+    every one of those endpoints, for every user including the owner — not
+    an edge case, a universal failure of "→ Deni" / rename / save-phone for
+    every Quick Sell tab. The original comment's reasoning ("no station
+    concept") was right, but the conclusion should have been "always allow",
+    not "always deny".
     """
     from .views import _station_scope
     show_bar, show_kitchen = _station_scope(up)
-    allowed = set()
+    allowed = {'qs'}
     if show_bar:
         allowed.add('bar')
     if show_kitchen:

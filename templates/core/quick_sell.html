@@ -1774,7 +1774,7 @@
             }
             document.getElementById('bunchModalBody').innerHTML = body;
         }
-        new bootstrap.Modal(document.getElementById('bunchModal')).show();
+        qsShowModal(document.getElementById('bunchModal'));
     });
 
     function customRow() {
@@ -2004,7 +2004,7 @@
         var hint = document.getElementById('rcvCostPerUnit');
         if (hint) hint.textContent = '';
         onRcvItemChange();  // show correct fields for pre-selected item
-        new bootstrap.Modal(document.getElementById('receiveModal')).show();
+        qsShowModal(document.getElementById('receiveModal'));
     }
 
     if (sokoBtn) {
@@ -2201,7 +2201,7 @@
             var btn = document.getElementById('qs-stk-co-btn');
             if (btn) { btn.disabled = false; btn.textContent = '📲 Tuma Ombi'; }
             var m = document.getElementById('qsStkCheckoutModal');
-            if (m) new bootstrap.Modal(m).show();
+            qsShowModal(m);
         });
     }
 
@@ -2302,6 +2302,21 @@
     }
 
     function qsFmt(n) { return Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0}); }
+
+    /* Safe modal singleton — reuse the existing bootstrap.Modal instance for an
+       element instead of always constructing a fresh one. Mirrors bar_board.html's
+       showModal() helper (already correct). Roy-reported bug, 2026-07-23: this file
+       previously called `new bootstrap.Modal(el).show()` unconditionally at every
+       call site; calling that a second time on the same element before the first
+       instance's hide() has finished (a realistic double-tap or quick re-open across
+       different tabs in a busy till) leaves the FIRST instance's `.modal-backdrop`
+       orphaned in the DOM forever — nothing ever calls hide() on it again — so
+       repeated opens stack up increasingly dark, stuck overlay layers behind the
+       modal that's actually interactive ("a stain... but they are down there"). */
+    function qsShowModal(el) {
+        if (!el) return;
+        (bootstrap.Modal.getInstance(el) || new bootstrap.Modal(el)).show();
+    }
 
     function qsShowToast(msg) {
         /* Reuse the qs success title briefly or fall back to alert */
@@ -2449,10 +2464,21 @@
                 '<button id="qs-partial-mpesa-' + tab.id + '" class="qs-tab-btn qs-tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;flex:0;" disabled onclick="qsSettleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
                 '<button id="qs-partial-stk-' + tab.id + '" class="qs-tab-btn" style="font-size:.72rem;padding:.18rem .45rem;flex:0;background:rgba(46,204,113,0.08);color:#2ecc71;border:1px solid rgba(46,204,113,0.3);" disabled onclick="qsSettleTabPartialStk(' + tab.id + ',\'' + sc + '\')">📲 STK</button>' +
                 '</div>' +
-                '<div class="qs-tab-actions">' +
+                /* Full-tab "Lipa Yote" payment actions — hidden while a partial
+                   selection is active (id="qs-tab-full-pay-<id>") so there is no
+                   way to mis-tap "pay everything" while intending to pay only the
+                   checked item(s). Roy-reported bug, 2026-07-23: with both rows
+                   always visible and stacked directly on top of each other, a tap
+                   meant for the partial "💰 Cash" button could land on "Lipa Yote —
+                   Cash" instead, settling entries that were never selected. Deni/
+                   Void stay outside this group — they are not payment actions and
+                   have no partial equivalent to confuse them with. */
+                '<div id="qs-tab-full-pay-' + tab.id + '" class="qs-tab-actions">' +
                 '<button class="qs-tab-btn qs-tab-btn-cash" onclick="qsSettleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
                 '<button class="qs-tab-btn qs-tab-btn-mpesa" onclick="qsSettleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
                 '<button class="qs-tab-btn" style="background:rgba(76,175,80,0.08);color:#4caf50;border:1px solid rgba(76,175,80,0.3);" onclick="qsOpenTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + tab.customer_name.replace(/'/g,"\\'") + '\',\'' + (tab.customer_phone||'').replace(/'/g,"\\'") + '\')">📲 STK Push</button>' +
+                '</div>' +
+                '<div class="qs-tab-actions" style="margin-top:0.3rem;">' +
                 '<button class="qs-tab-btn" style="background:rgba(201,168,76,0.08);color:#c9a84c;border:1px solid rgba(201,168,76,0.25);" onclick="qsOpenTabDebt(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">→ Deni</button>' +
                 (QS_IS_OWNER ? '<button class="qs-tab-btn" style="background:rgba(192,57,90,0.1);color:#c0395a;border:1px solid rgba(192,57,90,0.3);" onclick="qsOpenTabVoid(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">Void</button>' : '') +
                 '</div>' +
@@ -2480,10 +2506,12 @@
         document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = true; });
         _qsTabsJustSettled = true;
         qsPost('/bar/tabs/' + tabId + '/settle/', {payment_method: payMethod})
-            .then(function (r) {
-                if (!r.ok) return r.text().then(function () { throw new Error('HTTP ' + r.status); });
-                return r.json();
-            })
+            /* Parse JSON regardless of status — a non-2xx response (403 shift-required,
+               404 not-found, etc.) still carries a real {ok:false, error:'...'} body that
+               must reach the user instead of being thrown away as a generic network error
+               (found 2026-07-23: this was the ONLY one of the three tabs drawers that threw
+               before parsing on !r.ok, masking every real error behind "Hitilafu ya mtandao"). */
+            .then(function (r) { return r.json(); })
             .then(function (d) {
                 document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
                 if (d.ok) {
@@ -2519,11 +2547,15 @@
         var btnCash  = document.getElementById('qs-partial-cash-' + tabId);
         var btnMpesa = document.getElementById('qs-partial-mpesa-'+ tabId);
         var btnStk   = document.getElementById('qs-partial-stk-'  + tabId);
+        var fullPay  = document.getElementById('qs-tab-full-pay-' + tabId);
         if (selRow)   selRow.style.display = checked.length > 0 ? 'flex' : 'none';
         if (selTotal) selTotal.textContent = 'KES ' + qsFmt(total);
         if (btnCash)  btnCash.disabled     = checked.length === 0;
         if (btnMpesa) btnMpesa.disabled    = checked.length === 0;
         if (btnStk)   btnStk.disabled      = checked.length === 0;
+        /* Hide "Lipa Yote" while a partial selection is active — see the comment
+           on qs-tab-full-pay-<id> in qsRenderTabs for why. */
+        if (fullPay)  fullPay.style.display = checked.length > 0 ? 'none' : 'flex';
     };
 
     window.qsSettleTabPartial = function (tabId, payMethod) {
@@ -2540,7 +2572,7 @@
             body: body,
             credentials: 'same-origin',
         })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (r) { return r.json(); })
         .then(function (d) {
             document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
             if (d.ok) {
@@ -2582,7 +2614,7 @@
         document.getElementById('qs-tab-stk-result').style.display = 'none';
         var btn = document.getElementById('qs-tab-stk-btn');
         if (btn) { btn.disabled = false; btn.textContent = '📲 Tuma Ombi'; }
-        new bootstrap.Modal(stkM).show();
+        qsShowModal(stkM);
     };
 
     /* ── Save phone on existing QS tab ─────────────────────── */
@@ -2636,7 +2668,7 @@
         var btn = document.getElementById('qs-tab-stk-btn');
         if (btn) { btn.disabled = false; btn.textContent = '📲 Tuma Ombi'; }
         var m = document.getElementById('qsTabStkModal');
-        if (m) new bootstrap.Modal(m).show();
+        qsShowModal(m);
     };
 
     window.qsSendTabStk = function () {
@@ -2730,7 +2762,7 @@
         var btn = document.getElementById('qs-tab-debt-btn');
         if (btn) { btn.disabled = false; btn.textContent = 'Hamisha → Deni'; }
         var m = document.getElementById('qsTabDebtModal');
-        if (m) new bootstrap.Modal(m).show();
+        qsShowModal(m);
     };
 
     window.qsDoTabDebt = function () {
@@ -2742,7 +2774,7 @@
         if (!name) { eEl.textContent = 'Ingiza jina la mteja.'; eEl.style.display = 'block'; return; }
         btn.disabled = true; btn.textContent = 'Inahamisha...';
         qsPost('/bar/tabs/' + _qsPendingDebtTabId + '/debt/', {customer_name: name, phone: phone})
-            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (r) { return r.json(); })
             .then(function (d) {
                 btn.disabled = false; btn.textContent = 'Hamisha → Deni';
                 if (d.ok) {
@@ -2769,7 +2801,7 @@
         if (desc) desc.textContent = 'Tab ya ' + custName + ' itatupwa. Pesa hazitarudishwa.';
         var rEl = document.getElementById('qs-tab-void-reason'); if (rEl) rEl.value = '';
         var m = document.getElementById('qsTabVoidModal');
-        if (m) new bootstrap.Modal(m).show();
+        qsShowModal(m);
     };
 
     window.qsDoTabVoid = function () {
@@ -2779,7 +2811,7 @@
         var m = document.getElementById('qsTabVoidModal');
         if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
         qsPost('/bar/tabs/' + id + '/void/', {reason: reason})
-            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (r) { return r.json(); })
             .then(function (d) {
                 if (d.ok) {
                     qsShowToast('Tab imetupwa.');

@@ -4018,6 +4018,63 @@ class TabStationScopingTest(TestCase):
             self.assertEqual(resp.status_code, 200)
             self.assertTrue(resp.json()['ok'])
 
+    # ── 'qs' (Quick Sell) tabs have no station — _allowed_tab_sources() must
+    # always include 'qs', for every role, regression-locking the 2026-07-23 fix
+    # (live report: "Geuza Deni gives a network error"). Before the fix,
+    # _allowed_tab_sources() never returned 'qs' at all, so every write endpoint
+    # that filters its object lookup directly on tab.source (convert_tab_to_debt,
+    # update_tab_name, update_tab_phone, tick_entry) 404'd on EVERY Quick Sell
+    # tab, for every user including the owner — not a station-scoping edge case,
+    # a universal failure of the qs tab's debt/rename/phone actions.
+
+    def test_qs_tab_can_be_converted_to_debt_by_bar_staff(self):
+        tab = self._make_tab('QS Debt Patron', 'qs', [(self.bar_item, Decimal('100'))])
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'QS Debt Patron'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+
+    def test_qs_tab_can_be_converted_to_debt_by_kitchen_staff(self):
+        tab = self._make_tab('QS Debt Patron 2', 'qs', [(self.bar_item, Decimal('100'))])
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'QS Debt Patron 2'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_qs_tab_can_be_renamed_by_any_staff(self):
+        tab = self._make_tab('QS Rename Patron', 'qs', [(self.bar_item, Decimal('100'))])
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/rename/', {'name': 'New QS Name'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        tab.refresh_from_db()
+        self.assertEqual(tab.customer_name, 'New QS Name')
+
+    def test_qs_tab_phone_can_be_updated_by_any_staff(self):
+        tab = self._make_tab('QS Phone Patron', 'qs', [(self.bar_item, Decimal('100'))])
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/phone/', {'phone': '0712345678'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_qs_tab_entry_can_be_ticked_by_any_staff(self):
+        tab = self._make_tab('QS Tick Patron', 'qs', [(self.bar_item, Decimal('100'))])
+        entry = tab.entries.first()
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/entry/{entry.id}/tick/', {'payment_method': 'cash'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_cross_station_blocking_unaffected_by_qs_always_allowed(self):
+        """Regression guard: always-allowing 'qs' must not loosen the bar/kitchen
+        station wall this whole test class exists to enforce."""
+        tab = self._make_tab('Still Blocked Patron', 'bar', [(self.bar_item, Decimal('100'))])
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/rename/', {'name': 'Hacked'})
+        self.assertEqual(resp.status_code, 404)
+
 
 class KitchenWastageStationScopingTest(TestCase):
     """Bar-module audit follow-up (kitchen_wastage gap folded in as promised),

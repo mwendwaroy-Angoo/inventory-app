@@ -1536,3 +1536,51 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   today's batch state; "Imekwisha" confirm reworded to say "BATCH YA LEO" explicitly.
   18 new tests (`KitchenBatchOpenBatchDrawTest`, `TransactionCostKitchenBatchProportionalTest`,
   `RawMaterialSackTrackingViewTest`, `ItemFormRawMaterialSourceTest`). 387 tests pass.
+- Tabs drawer bug fixes (2026-07-23), from a live Roy report: two symptoms — visual
+  "overlap/stain" when selecting one item to pay on a multi-item tab (with payment then
+  applying to more than the selected item), and "Geuza Deni" (convert to debt) failing
+  with "Hitilafu ya mtandao" — investigated across all three tabs drawers per this file's
+  parity rule. **Root cause of the debt-conversion error, confirmed and fixed**:
+  `_allowed_tab_sources(up)` (`core/keg_views.py`) never returned `'qs'` — by original
+  design, meant to exclude Quick Sell tabs from the bar/kitchen station wall entirely, but
+  the exclusion was implemented as "not in the allowed set" rather than "always allowed".
+  `convert_tab_to_debt`, `update_tab_name`, `update_tab_phone`, and `tick_entry` all filter
+  their object lookup directly on `tab.source` against this set (unlike `settle_tab`, which
+  checks per-entry station instead and was unaffected) — meaning **every** Quick Sell tab
+  404'd on "→ Deni" / rename / save-phone, for every user including the owner, since the
+  feature shipped. Fixed by changing the set to always start with `{'qs'}` before adding
+  `'bar'`/`'kitchen'` per station — matches how `tabs_list()`'s read side already treats
+  'qs' tabs as unrestricted. 6 new tests (`TabStationScopingTest`), including a regression
+  guard that the bar/kitchen station wall itself is unaffected. **Contributing/adjacent
+  finding, also fixed**: `quick_sell.html`'s `qsSettleTab`/`qsSettleTabPartial`/
+  `qsDoTabDebt`/`qsDoTabVoid` were the only tab-action handlers of the three drawers that
+  threw away the response body on a non-2xx status before parsing JSON — masking every
+  real `{ok:false, error:'...'}` response (shift-required, station-scope 403s, etc.) behind
+  a generic "Hitilafu ya mtandao", unlike `bar_board.html`/`kitchen_board.html` which
+  already parse JSON regardless of status. Fixed to match. **Root cause of the visual
+  "overlap/stain", best available explanation** (JS/CSS rendering issues aren't directly
+  testable by this suite — reasoned from code, not reproduced live): two compounding
+  issues. (1) `quick_sell.html` and `kitchen_board.html` scattered `new bootstrap.Modal(el)
+  .show()` calls at every modal-open site instead of reusing an existing instance, unlike
+  `bar_board.html`'s already-correct `showModal(id)`/`hideModal(id)` singleton helper —
+  calling `new bootstrap.Modal()` a second time on an element whose first instance hasn't
+  finished `hide()`-ing (a realistic double-tap, or reopening the shared STK/settle/debt
+  modal for a different tab in the same drawer session) leaks the first instance's
+  `.modal-backdrop` permanently, since nothing ever calls `hide()` on it again — repeated
+  opens stack up increasingly dark, stuck overlay layers behind whichever modal is actually
+  interactive. Added the same singleton helper to both files and converted all 14 remaining
+  raw `new bootstrap.Modal()` call sites (7 each) to use it; also fixed `kitchen_board.html`'s
+  `submitKitchenTabDeni` unconditionally hiding its modal before checking `d.ok`, which
+  buried its own error message on failure. (2) In both `bar_board.html` and
+  `quick_sell.html` (not `kitchen_board.html`, which uses a different, modal-mediated
+  settle flow that doesn't have this shape), the inline partial-selection row ("💰 Cash /
+  📱 M-Pesa / 📲 STK" for checked items) sits directly above the full-tab "Lipa Yote — Cash /
+  Lipa Yote — M-Pesa / STK Push" row, both always visible at once with similarly-labelled
+  buttons — the most direct explanation found for "payment goes for both the selected and
+  the unselected item": the backend's entry-filtering logic was re-traced twice and is
+  correct, so a mis-tap on the wrong (but correctly-functioning) button is the more
+  plausible mechanism than a hidden logic bug. Fixed by hiding the "Lipa Yote" row entirely
+  whenever the partial-selection row is showing (`qs-tab-full-pay-<id>` / `tab-full-pay-
+  <id>`, toggled in `updateQsSelectionUI`/`updateTabSelectionUI`) — Deni/Void stay outside
+  this group since they aren't payment actions and have no partial equivalent to confuse
+  them with. No migrations. 393 tests pass.

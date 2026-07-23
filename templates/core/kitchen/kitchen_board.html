@@ -1612,7 +1612,7 @@
              '<span class="kb-preset-price">KES ' + fmt(p.price) + '</span>' +
              '</div>';
     }).join('');
-    new bootstrap.Modal(document.getElementById('kbPresetModal')).show();
+    showModal('kbPresetModal');
   }
 
   window.addPreset = function(itemId, presetIdx) {
@@ -1644,7 +1644,7 @@
         }).join('')
       : '';
     document.getElementById('kb-batch-custom-amount').value = '';
-    new bootstrap.Modal(document.getElementById('kbBatchModal')).show();
+    showModal('kbBatchModal');
   }
 
   window.addBatchPreset = function(bunchId, presetIdx) {
@@ -1809,7 +1809,7 @@
       document.getElementById('kb-stk-result').style.display = 'none';
       var stkBtn = document.getElementById('kb-stk-send-btn');
       stkBtn.disabled = false; stkBtn.textContent = '📲 Tuma Ombi';
-      new bootstrap.Modal(document.getElementById('kbStkModal')).show();
+      showModal('kbStkModal');
       return;
     }
     _submitCheckout();
@@ -2144,7 +2144,7 @@
     if (stkRes) stkRes.style.display = 'none';
     var stkBtn = document.getElementById('kb-settle-stk-btn');
     if (stkBtn) { stkBtn.disabled = false; stkBtn.textContent = '📲 STK Push'; }
-    new bootstrap.Modal(document.getElementById('kbSettleModal')).show();
+    showModal('kbSettleModal');
   };
 
   window.settleKitchenTab = function(pm) {
@@ -2269,8 +2269,7 @@
     document.getElementById('kb-deni-name').value  = customerName || '';
     document.getElementById('kb-deni-phone').value = '';
     document.getElementById('kb-deni-error').style.display = 'none';
-    var modal = new bootstrap.Modal(document.getElementById('kbDeniModal'));
-    modal.show();
+    showModal('kbDeniModal');
   };
   window.submitKitchenTabDeni = function() {
     if (!_deniTabId) return;
@@ -2282,15 +2281,17 @@
     fetch('/bar/tabs/' + _deniTabId + '/debt/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
       .then(function(r){ return r.json(); })
       .then(function(d){
-        bootstrap.Modal.getInstance(document.getElementById('kbDeniModal')).hide();
         if (d.ok) {
+          hideModal('kbDeniModal');
           showToast('🤝 Deni ya KES ' + fmt(d.unpaid_total) + ' imewekwa kwa ' + d.customer_name + '.');
           loadFoodTabs();
         } else {
-          showToast('❌ ' + (d.error||'Hitilafu.'));
+          /* Keep the modal open on failure — hiding it unconditionally used to
+             bury the real error (e.g. shift-required) the moment it appeared. */
+          errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block';
         }
       })
-      .catch(function(){ showToast('❌ Hitilafu ya mtandao.'); });
+      .catch(function(){ errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; });
   };
 
   {% if can_receive_stock %}
@@ -2378,7 +2379,7 @@
       }
     };
     document.getElementById('kr-error').style.display = 'none';
-    new bootstrap.Modal(document.getElementById('kbReceiveModal')).show();
+    showModal('kbReceiveModal');
   };
 
   window.submitReceive = function() {
@@ -3085,7 +3086,7 @@
     document.getElementById('khakiConsumeNote').value  = '';
     document.getElementById('khaki-error').style.display = 'none';
     document.getElementById('khaki-submit-btn').disabled = false;
-    new bootstrap.Modal(document.getElementById('kbKhakiModal')).show();
+    showModal('kbKhakiModal');
   };
   window.submitKhakiConsumable = function() {
     var ctype  = document.getElementById('khakiConsumeType').value;

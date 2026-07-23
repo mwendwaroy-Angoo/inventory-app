@@ -2571,10 +2571,20 @@
           '<button id="tab-partial-mpesa-' + tab.id + '" class="tab-action-btn tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
           '<button id="tab-partial-stk-' + tab.id + '" class="tab-action-btn tab-btn-stk" style="font-size:.72rem;padding:.18rem .45rem;" disabled onclick="window.settleTabPartialStk(' + tab.id + ',\'' + safeCust + '\')">📲 STK</button>' +
           '</div>' +
-          '<div class="tab-actions-row">' +
+          /* Full-tab "Lipa Yote" payment actions — hidden while a partial
+             selection is active (id="tab-full-pay-<id>") so there is no way to
+             mis-tap "pay everything" while intending to pay only the checked
+             item(s). Roy-reported bug, 2026-07-23: with both rows always
+             visible and stacked directly on top of each other, a tap meant for
+             the partial "💰 Cash" button could land on "Lipa Yote — Cash"
+             instead. Deni/Void stay outside this group — not payment actions,
+             no partial equivalent to confuse them with. */
+          '<div id="tab-full-pay-' + tab.id + '" class="tab-actions-row">' +
           '<button class="tab-action-btn tab-btn-cash" onclick="window.settleTab(' + tab.id + ',\'cash\')">Lipa Yote — Cash</button>' +
           '<button class="tab-action-btn tab-btn-mpesa" onclick="window.settleTab(' + tab.id + ',\'mpesa\')">Lipa Yote — M-Pesa</button>' +
           '<button class="tab-action-btn tab-btn-stk" onclick="window.openTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + safeCust + '\',false,\'' + (tab.customer_phone||'').replace(/'/g,"\\'") + '\')">📲 STK Push</button>' +
+          '</div>' +
+          '<div class="tab-actions-row" style="margin-top:0.3rem;">' +
           '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>' +
           (QS_IS_OWNER
             ? '<button class="tab-action-btn tab-btn-void" onclick="window.openVoidModal(' + tab.id + ',\'' + safeCust + '\')">Void</button>'
@@ -2706,11 +2716,15 @@
     var btnCash  = document.getElementById('tab-partial-cash-' + tabId);
     var btnMpesa = document.getElementById('tab-partial-mpesa-' + tabId);
     var btnStk   = document.getElementById('tab-partial-stk-' + tabId);
+    var fullPay  = document.getElementById('tab-full-pay-' + tabId);
     if (selRow)   selRow.style.display   = checked.length > 0 ? 'flex' : 'none';
     if (selTotal) selTotal.textContent   = 'KES ' + fmt(total);
     if (btnCash)  btnCash.disabled       = checked.length === 0;
     if (btnMpesa) btnMpesa.disabled      = checked.length === 0;
     if (btnStk)   btnStk.disabled        = checked.length === 0;
+    /* Hide "Lipa Yote" while a partial selection is active — see the comment
+       on tab-full-pay-<id> in renderTabs for why. */
+    if (fullPay)  fullPay.style.display  = checked.length > 0 ? 'none' : 'flex';
   };
 
   window.settleTabPartialStk = function (tabId, custName) {
