@@ -1367,6 +1367,14 @@ def split_and_transfer_entry(request, entry_id):
     live request). Any staff with an open shift may do this (confirmed with
     Roy — not owner/manager-only, needs to work mid-shift without the owner
     present). See BarTabEntry.split_and_transfer_locked() for the mechanism.
+
+    dest_tab_id (existing open tab) or dest_customer_name (no tab yet — e.g.
+    Bosco is in the premises but isn't drinking right now, so there's nothing
+    to pick from the list) must be given. A name is first checked against any
+    already-open tab under that exact name (same auto-detect-by-name pattern
+    already used by the cross-counter merge feature, core/keg_views.py and
+    core/kitchen_views.py) before opening a brand-new one, so this can never
+    silently create a second, duplicate tab for someone who already has one.
     """
     up = _get_up(request)
     if not up:
@@ -1385,11 +1393,26 @@ def split_and_transfer_entry(request, entry_id):
         id=entry_id, tab__business=up.business,
         tab__source__in=_allowed_tab_sources(up),
     )
-    dest_tab_id = request.POST.get('dest_tab_id')
-    dest_tab = get_object_or_404(
-        BarTab, id=dest_tab_id, business=up.business,
-        source__in=_allowed_tab_sources(up),
-    )
+
+    dest_tab_id = (request.POST.get('dest_tab_id') or '').strip()
+    dest_customer_name = (request.POST.get('dest_customer_name') or '').strip()
+    if dest_tab_id:
+        dest_tab = get_object_or_404(
+            BarTab, id=dest_tab_id, business=up.business,
+            source__in=_allowed_tab_sources(up),
+        )
+    elif dest_customer_name:
+        dest_tab = BarTab.objects.filter(
+            business=up.business, status='OPEN', customer_name__iexact=dest_customer_name,
+            source__in=_allowed_tab_sources(up),
+        ).first()
+        if not dest_tab:
+            dest_tab = BarTab.create_with_credentials(
+                business=up.business, store=entry.tab.store, customer_name=dest_customer_name,
+                source=entry.tab.source, served_by=request.user,
+            )
+    else:
+        return JsonResponse({'ok': False, 'error': 'Chagua tab au weka jina la mteja.'}, status=400)
 
     try:
         new_entry, tfr = BarTabEntry.split_and_transfer_locked(

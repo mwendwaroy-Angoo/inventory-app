@@ -8084,3 +8084,103 @@ class SplitAndTransferEntryTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn(b'pending-transfers-block', resp.content)
         self.assertIn(b'Roy', resp.content)
+
+    # ── dest_customer_name — the destination customer has no tab at all
+    # (2026-07-24 live request: "Bosco is in the premises but isn't drinking
+    # right now, so he has no tab to pick from the list") ────────────────────
+
+    def test_split_opens_a_new_tab_when_dest_customer_has_none(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('80'))
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '50', 'paid_method': 'cash', 'dest_customer_name': 'Bosco',
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        bosco_tab = BarTab.objects.get(business=self.biz, customer_name__iexact='Bosco', status='OPEN')
+        self.assertEqual(bosco_tab.source, 'bar')  # matches the source tab's own station
+        transfer = TabTransferRequest.objects.get(id=data['transfer_id'])
+        self.assertEqual(transfer.dest_tab_id, bosco_tab.id)
+        self.assertEqual(transfer.amount, Decimal('30'))
+
+    def test_split_reuses_existing_tab_by_name_instead_of_duplicating(self):
+        """If Bosco already has an open tab under that exact name, split-by-name
+        must find and reuse it — never silently create a second, duplicate tab
+        for someone who already has one (matches the established cross-counter-
+        merge auto-detect-by-name pattern)."""
+        _roy_tab, entry = self._make_tab('Roy', Decimal('80'))
+        bosco_tab, _bosco_entry = self._make_tab('Bosco', Decimal('20'))
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '50', 'paid_method': 'cash', 'dest_customer_name': 'bosco',
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(
+            BarTab.objects.filter(business=self.biz, customer_name__iexact='Bosco', status='OPEN').count(), 1,
+            'Must reuse the existing Bosco tab, not create a second one',
+        )
+        transfer = TabTransferRequest.objects.get(id=data['transfer_id'])
+        self.assertEqual(transfer.dest_tab_id, bosco_tab.id)
+
+    def test_split_requires_either_dest_tab_id_or_dest_customer_name(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('80'))
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '50', 'paid_method': 'cash',
+        })
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['ok'])
+
+    def test_pending_transfer_visible_on_bare_tab_live_view_for_new_tab(self):
+        """A brand-new destination tab has no receipt yet at all — the pending
+        request must still be visible via the bare tab_live_view page (reached
+        from the wall QR + the new tab's own PIN)."""
+        _roy_tab, entry = self._make_tab('Roy', Decimal('80'))
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '50', 'paid_method': 'cash', 'dest_customer_name': 'Bosco',
+        })
+        bosco_tab = BarTab.objects.get(business=self.biz, customer_name__iexact='Bosco', status='OPEN')
+        resp = self.client.get(f'/tab/{bosco_tab.tab_receipt_token}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b'pending-transfer-card', resp.content)
+        self.assertIn(b'Roy', resp.content)
+
+    def test_tab_token_respond_accept(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('80'))
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '50', 'paid_method': 'cash', 'dest_customer_name': 'Bosco',
+        })
+        data = resp.json()
+        bosco_tab = BarTab.objects.get(business=self.biz, customer_name__iexact='Bosco', status='OPEN')
+        self.client.logout()
+        import json as _json
+        resp2 = self.client.post(
+            f'/tab/{bosco_tab.tab_receipt_token}/tab-transfers/{data["transfer_id"]}/respond/',
+            data=_json.dumps({'action': 'accept'}), content_type='application/json',
+        )
+        self.assertEqual(resp2.status_code, 200)
+        self.assertTrue(resp2.json()['ok'])
+        transfer = TabTransferRequest.objects.get(id=data['transfer_id'])
+        self.assertEqual(transfer.status, 'ACCEPTED')
+
+    def test_tab_token_respond_rejects_transfer_for_a_different_tab(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('80'))
+        other_tab, _ = self._make_tab('Other', Decimal('10'))
+        other_tab.tab_receipt_token, other_tab.tab_pin = BarTab.new_credentials(self.biz)
+        other_tab.save(update_fields=['tab_receipt_token', 'tab_pin'])
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '50', 'paid_method': 'cash', 'dest_customer_name': 'Bosco',
+        })
+        data = resp.json()
+        import json as _json
+        resp2 = self.client.post(
+            f'/tab/{other_tab.tab_receipt_token}/tab-transfers/{data["transfer_id"]}/respond/',
+            data=_json.dumps({'action': 'accept'}), content_type='application/json',
+        )
+        self.assertEqual(resp2.status_code, 404)

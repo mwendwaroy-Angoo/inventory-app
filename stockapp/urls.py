@@ -206,7 +206,7 @@ from core.recurring_expense_views import (
     recurring_expense_review,
     recurring_expense_confirm,
 )
-from core.receipt_views import receipts_list, public_receipt, send_receipt, receipt_live_status, receipt_pay, tab_live_view, receipt_respond_tab_transfer
+from core.receipt_views import receipts_list, public_receipt, send_receipt, receipt_live_status, receipt_pay, tab_live_view, receipt_respond_tab_transfer, tab_respond_tab_transfer
 from core.onboarding_views import mark_section_seen
 from core.restricted_items_views import (
     request_sale_approval, pending_approvals,
@@ -662,6 +662,7 @@ urlpatterns = [
     path("receipts/<int:receipt_id>/send/", send_receipt, name="send_receipt"),
     # ── Scan to View Your Bill — wall QR ─────────────────────────────────────
     path("tab/<str:token>/", tab_live_view, name="tab_live_view"),
+    path("tab/<str:token>/tab-transfers/<int:transfer_id>/respond/", tab_respond_tab_transfer, name="tab_respond_tab_transfer"),
     path("bar/find-tab/<int:business_id>/", find_tab_public, name="find_tab_public"),
     path("bar/find-tab/<int:business_id>/search/", find_tab_search, name="find_tab_search"),
     path("stock/wall-qr/print/", wall_qr_print_page, name="wall_qr_print_page"),

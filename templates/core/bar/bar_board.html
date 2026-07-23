@@ -1596,8 +1596,14 @@
         </div>
         <div id="split-remainder-info" style="font-size:0.8rem; color:#9fcaa0; margin-bottom:0.5rem;"></div>
         <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.2rem;">Hamisha kiasi kilichobaki kwenda tab ya:</label>
-        <select id="split-dest-tab" class="form-select form-select-sm"
+        <select id="split-dest-tab" class="form-select form-select-sm mb-2" onchange="window._onSplitDestChange()"
                 style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;"></select>
+        <!-- Shown when "mtu bila tab" is picked — e.g. Bosco is in the premises
+             but isn't drinking right now, so he has no tab to pick from the
+             list (2026-07-24 live request). A brand-new tab opens for him. -->
+        <input type="text" id="split-dest-new-name" placeholder="Jina la mteja (mtu bila tab)"
+               style="display:none; width:100%; background:#1a1a1a; border:1px solid #3a3a3a; border-radius:6px;
+                      color:#f0ece4; padding:0.4rem 0.6rem; font-size:0.85rem; margin-bottom:0.4rem;">
         <div id="split-error" style="display:none; color:#c0395a; font-size:0.82rem; margin-top:6px;"></div>
       </div>
       <div class="modal-footer" style="border-top:1px solid #3a3a3a;">
@@ -2964,35 +2970,51 @@
 
     var sel = document.getElementById('split-dest-tab');
     sel.innerHTML = '';
+    // Always offer "someone with no tab yet" — e.g. Bosco is in the premises
+    // but isn't drinking right now (2026-07-24 live request).
+    var newOpt = document.createElement('option');
+    newOpt.value = '__new__';
+    newOpt.textContent = '➕ Mtu asiye na tab (fungua tab mpya)';
+    sel.appendChild(newOpt);
     var others = (window._lastTabsData || []).filter(function (t) { return t.id !== tabId; });
-    if (!others.length) {
-      sel.innerHTML = '<option value="">Hakuna tab nyingine iliyo wazi</option>';
-    } else {
-      others.forEach(function (t) {
-        var opt = document.createElement('option');
-        opt.value = t.id;
-        opt.textContent = t.customer_name + ' (KES ' + fmt(t.unpaid_total) + ')';
-        sel.appendChild(opt);
-      });
-    }
+    others.forEach(function (t) {
+      var opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.customer_name + ' (KES ' + fmt(t.unpaid_total) + ')';
+      sel.appendChild(opt);
+    });
+    document.getElementById('split-dest-new-name').style.display = 'none';
+    document.getElementById('split-dest-new-name').value = '';
 
     var btn = document.getElementById('split-confirm-btn');
     btn.disabled = false; btn.textContent = 'Gawanya na Hamisha';
     showModal('splitTransferModal');
   };
 
+  window._onSplitDestChange = function () {
+    var isNew = document.getElementById('split-dest-tab').value === '__new__';
+    document.getElementById('split-dest-new-name').style.display = isNew ? 'block' : 'none';
+  };
+
   window._doSplitTransfer = function () {
     if (!_splitEntryId) return;
     var paid = document.getElementById('split-paid-amount').value;
-    var destTabId = document.getElementById('split-dest-tab').value;
+    var destSel = document.getElementById('split-dest-tab').value;
+    var destNewName = document.getElementById('split-dest-new-name').value.trim();
     var errEl = document.getElementById('split-error');
     errEl.style.display = 'none';
-    if (!destTabId) { errEl.textContent = 'Chagua tab lengwa.'; errEl.style.display = 'block'; return; }
+    var body = {paid_amount: paid, paid_method: window._splitMethod};
+    if (destSel === '__new__') {
+      if (!destNewName) { errEl.textContent = 'Weka jina la mteja.'; errEl.style.display = 'block'; return; }
+      body.dest_customer_name = destNewName;
+    } else if (destSel) {
+      body.dest_tab_id = destSel;
+    } else {
+      errEl.textContent = 'Chagua tab lengwa.'; errEl.style.display = 'block'; return;
+    }
     var btn = document.getElementById('split-confirm-btn');
     btn.disabled = true; btn.textContent = 'Inagawanya...';
-    post('/bar/tabs/entries/' + _splitEntryId + '/split-transfer/', {
-      paid_amount: paid, paid_method: window._splitMethod, dest_tab_id: destTabId,
-    })
+    post('/bar/tabs/entries/' + _splitEntryId + '/split-transfer/', body)
       .then(function (r) { return r.json(); })
       .then(function (d) {
         btn.disabled = false; btn.textContent = 'Gawanya na Hamisha';

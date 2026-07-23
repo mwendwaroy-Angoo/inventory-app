@@ -1028,7 +1028,11 @@
         </div>
         <div id="kb-split-remainder-info" style="font-size:.8rem;color:#9fcaa0;margin-bottom:.5rem;"></div>
         <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Hamisha kiasi kilichobaki kwenda tab ya:</label>
-        <select id="kb-split-dest-tab" class="form-select form-select-sm"></select>
+        <select id="kb-split-dest-tab" class="form-select form-select-sm mb-2" onchange="kbOnSplitDestChange()"></select>
+        <!-- Shown when "mtu bila tab" is picked — e.g. Bosco is in the premises
+             but isn't drinking right now (2026-07-24 live request). -->
+        <input type="text" id="kb-split-dest-new-name" placeholder="Jina la mteja (mtu bila tab)"
+               class="form-control form-control-sm mb-2" style="display:none;">
         <div id="kb-split-error" style="display:none;color:#c0395a;font-size:.78rem;margin-top:6px;"></div>
       </div>
       <div class="modal-footer" style="border-top:1px solid #2a2a2a;padding:.6rem 1rem;gap:.5rem;">
@@ -2399,35 +2403,49 @@
 
     var sel = document.getElementById('kb-split-dest-tab');
     sel.innerHTML = '';
+    var newOpt = document.createElement('option');
+    newOpt.value = '__new__';
+    newOpt.textContent = '➕ Mtu asiye na tab (fungua tab mpya)';
+    sel.appendChild(newOpt);
     var others = (window._kbLastTabsData || []).filter(function (t) { return t.id !== tabId; });
-    if (!others.length) {
-      sel.innerHTML = '<option value="">Hakuna tab nyingine iliyo wazi</option>';
-    } else {
-      others.forEach(function (t) {
-        var opt = document.createElement('option');
-        opt.value = t.id;
-        opt.textContent = t.customer_name + ' (KES ' + fmt(t.unpaid_total) + ')';
-        sel.appendChild(opt);
-      });
-    }
+    others.forEach(function (t) {
+      var opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.customer_name + ' (KES ' + fmt(t.unpaid_total) + ')';
+      sel.appendChild(opt);
+    });
+    document.getElementById('kb-split-dest-new-name').style.display = 'none';
+    document.getElementById('kb-split-dest-new-name').value = '';
 
     var btn = document.getElementById('kb-split-confirm-btn');
     btn.disabled = false; btn.textContent = 'Gawanya na Hamisha';
     showModal('kbSplitTransferModal');
   };
 
+  window.kbOnSplitDestChange = function () {
+    var isNew = document.getElementById('kb-split-dest-tab').value === '__new__';
+    document.getElementById('kb-split-dest-new-name').style.display = isNew ? 'block' : 'none';
+  };
+
   window.kbDoSplitTransfer = function () {
     if (!_kbSplitEntryId) return;
     var paid = document.getElementById('kb-split-paid-amount').value;
-    var destTabId = document.getElementById('kb-split-dest-tab').value;
+    var destSel = document.getElementById('kb-split-dest-tab').value;
+    var destNewName = document.getElementById('kb-split-dest-new-name').value.trim();
     var errEl = document.getElementById('kb-split-error');
     errEl.style.display = 'none';
-    if (!destTabId) { errEl.textContent = 'Chagua tab lengwa.'; errEl.style.display = 'block'; return; }
+    var bodyObj = {paid_amount: paid, paid_method: window._kbSplitMethod, csrfmiddlewaretoken: CSRF};
+    if (destSel === '__new__') {
+      if (!destNewName) { errEl.textContent = 'Weka jina la mteja.'; errEl.style.display = 'block'; return; }
+      bodyObj.dest_customer_name = destNewName;
+    } else if (destSel) {
+      bodyObj.dest_tab_id = destSel;
+    } else {
+      errEl.textContent = 'Chagua tab lengwa.'; errEl.style.display = 'block'; return;
+    }
     var btn = document.getElementById('kb-split-confirm-btn');
     btn.disabled = true; btn.textContent = 'Inagawanya...';
-    var body = new URLSearchParams({
-      paid_amount: paid, paid_method: window._kbSplitMethod, dest_tab_id: destTabId, csrfmiddlewaretoken: CSRF,
-    });
+    var body = new URLSearchParams(bodyObj);
     fetch('/bar/tabs/entries/' + _kbSplitEntryId + '/split-transfer/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
       .then(function(r){ return r.json(); })
       .then(function(d){

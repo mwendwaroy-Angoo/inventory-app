@@ -74,6 +74,19 @@
     text-align: center; font-size: 0.72rem; color: var(--muted);
     margin-top: 0.9rem;
   }
+  .pending-transfer-card {
+    margin: 1rem 0.75rem 0; padding: 0.7rem 0.9rem;
+    background: rgba(76,175,80,0.09); border: 1px solid rgba(76,175,80,0.3);
+    border-radius: 10px; font-size: 0.85rem; color: #a5d6a7;
+  }
+  .pending-transfer-actions { display: flex; gap: 0.5rem; margin-top: 0.55rem; }
+  .pending-transfer-actions button {
+    flex: 1; padding: 0.5rem; border-radius: 8px; font-weight: 600;
+    font-size: 0.85rem; cursor: pointer; border: 1px solid;
+  }
+  .pt-accept { background: rgba(76,175,80,0.18); border-color: rgba(76,175,80,0.45); color: var(--green); }
+  .pt-reject { background: rgba(192,57,90,0.12); border-color: rgba(192,57,90,0.35); color: var(--rasp); }
+  .pending-transfer-error { display: none; color: var(--rasp); font-size: 0.75rem; margin-top: 0.4rem; }
 </style>
 </head>
 <body>
@@ -89,6 +102,22 @@
 {% if is_settled %}
 <div class="settled-banner">✓ Tab hii imelipwa — asante!</div>
 {% endif %}
+
+<!-- ── Incoming split-bill transfer(s) — a different customer wants part of
+     their bill added to this tab. See TabTransferRequest / BarTabEntry.
+     split_and_transfer_locked() (2026-07-23/24). ────────────────────────── -->
+{% for t in pending_transfers_in %}
+<div class="pending-transfer-card" data-transfer-id="{{ t.id }}">
+    <div>🔔 <strong>{{ t.from_customer }}</strong> anataka kuongeza
+        <strong style="color:var(--green);">KES {{ t.amount|floatformat:"0" }}</strong>
+        ({{ t.note }}) kwenye bili yako.</div>
+    <div class="pending-transfer-actions">
+        <button class="pt-accept" onclick="respondPendingTransfer({{ t.id }}, 'accept', this)">Kubali</button>
+        <button class="pt-reject" onclick="respondPendingTransfer({{ t.id }}, 'reject', this)">Kataa</button>
+    </div>
+    <div class="pending-transfer-error"></div>
+</div>
+{% endfor %}
 
 <div class="items-list">
   {% if lines %}
@@ -130,6 +159,38 @@
 {% if not is_settled %}
 <script>setTimeout(function(){ location.reload(); }, 20000);</script>
 {% endif %}
+
+<script>
+function respondPendingTransfer(transferId, action, btnEl) {
+    var card = btnEl.closest('.pending-transfer-card');
+    var errEl = card.querySelector('.pending-transfer-error');
+    var buttons = card.querySelectorAll('button');
+    buttons.forEach(function (b) { b.disabled = true; });
+    fetch('/tab/{{ tab.tab_receipt_token }}/tab-transfers/' + transferId + '/respond/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: action}),
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.ok) {
+                card.style.background = action === 'accept' ? 'rgba(46,204,113,0.09)' : 'rgba(192,57,90,0.09)';
+                card.innerHTML = action === 'accept'
+                    ? '✅ Umekubali — imeongezwa kwenye bili yako.'
+                    : '❌ Umekataa ombi hili.';
+            } else {
+                buttons.forEach(function (b) { b.disabled = false; });
+                errEl.textContent = (d && d.error) || 'Hitilafu.';
+                errEl.style.display = 'block';
+            }
+        })
+        .catch(function () {
+            buttons.forEach(function (b) { b.disabled = false; });
+            errEl.textContent = 'Hitilafu ya mtandao.';
+            errEl.style.display = 'block';
+        });
+}
+</script>
 
 </body>
 </html>

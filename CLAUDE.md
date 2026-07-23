@@ -1670,3 +1670,34 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   sitting unresolved on the source customer's own tab and someone needs to go collect it
   from them directly. Migration `0113_tabtransferrequest`. 14 new tests
   (`SplitAndTransferEntryTest`). 413 tests pass.
+- Split-transfer to a customer with no tab yet (2026-07-24), same-day follow-up: "Roy
+  buys an 80 KES cup, pays 50, his friend Bosco — in the premises but not drinking right
+  now, so nothing to pick from the destination list — covers the remaining 30." The split
+  modal's destination picker (all three drawers) gained a "➕ Mtu asiye na tab" option that
+  reveals a plain name field instead of the tab dropdown; the backend
+  (`split_and_transfer_entry`, `core/keg_views.py`) now accepts `dest_customer_name` as an
+  alternative to `dest_tab_id` — first checked against any already-open tab under that
+  exact name (the SAME auto-detect-by-name pattern the cross-counter-merge feature already
+  uses, so this can never silently create a duplicate tab for someone who already has
+  one), and only opens a brand-new `BarTab` (via the existing
+  `BarTab.create_with_credentials()`, source matched to the SOURCE tab's own station) if
+  none is found. A brand-new destination tab has no `Receipt` yet at all, so
+  `receipt_respond_tab_transfer` (keyed off a Receipt token) doesn't apply to it — added a
+  parallel `tab_respond_tab_transfer` keyed off the tab's own `tab_receipt_token` instead,
+  reachable from the bare `tab_live_view` page (`/tab/<token>/`, the fallback BillScan
+  already uses for a tab with zero sales) via a new pending-transfer banner there, mirroring
+  `receipt_public.html`'s. Refactored `_pending_transfers_in(receipt)` into a shared
+  `_pending_transfers_for_tabs(business, tab_ids)` so both the receipt-based and bare-tab
+  pages read from one source of truth. 6 new tests. Migration-free (reuses `0113`'s model).
+  419 tests pass.
+- Local dev migration hygiene note (2026-07-24, live report: "3 unapplied migrations" seen
+  running the dev server): `python manage.py test` always creates and migrates its own
+  separate, temporary test database — it never touches the real `db.sqlite3` `runserver`
+  uses. Every session that ends with `makemigrations` + a green test run still needs an
+  explicit `python manage.py migrate` against the real local DB before `runserver` will see
+  the new tables/fields — this was skipped across a few sessions in a row (0111/0112/0113
+  all landed unapplied locally, though each was committed with its migration file and had
+  already been verified via the test suite's own isolated DB). Not a migration authoring
+  bug; just a reminder this project's own end-of-sprint ritual should include it going
+  forward for local dev, same as CI/Render already require via their own deploy-time
+  `migrate` step.

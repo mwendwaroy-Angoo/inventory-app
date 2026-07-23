@@ -1120,9 +1120,14 @@
         </div>
         <div id="qs-split-remainder-info" style="font-size:0.8rem; color:#9fcaa0; margin-bottom:0.5rem;"></div>
         <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.25rem;">Hamisha kiasi kilichobaki kwenda tab ya:</label>
-        <select id="qs-split-dest-tab"
+        <select id="qs-split-dest-tab" onchange="qsOnSplitDestChange()"
                 style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
-                       color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.88rem;"></select>
+                       color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.88rem; margin-bottom:0.5rem;"></select>
+        <!-- Shown when "mtu bila tab" is picked — e.g. Bosco is in the premises
+             but isn't drinking right now (2026-07-24 live request). -->
+        <input type="text" id="qs-split-dest-new-name" placeholder="Jina la mteja (mtu bila tab)"
+               style="display:none; width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                      color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.88rem;">
         <div id="qs-split-error" style="display:none; color:#c0395a; font-size:0.8rem; margin-top:6px;"></div>
       </div>
       <div class="modal-footer flex-column gap-2" style="border-top:1px solid #3a3a3a; padding:0.75rem;">
@@ -2903,35 +2908,49 @@
 
         var sel = document.getElementById('qs-split-dest-tab');
         sel.innerHTML = '';
+        var newOpt = document.createElement('option');
+        newOpt.value = '__new__';
+        newOpt.textContent = '➕ Mtu asiye na tab (fungua tab mpya)';
+        sel.appendChild(newOpt);
         var others = (window._qsLastTabsData || []).filter(function (t) { return t.id !== tabId; });
-        if (!others.length) {
-            sel.innerHTML = '<option value="">Hakuna tab nyingine iliyo wazi</option>';
-        } else {
-            others.forEach(function (t) {
-                var opt = document.createElement('option');
-                opt.value = t.id;
-                opt.textContent = t.customer_name + ' (KES ' + qsFmt(t.unpaid_total) + ')';
-                sel.appendChild(opt);
-            });
-        }
+        others.forEach(function (t) {
+            var opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.customer_name + ' (KES ' + qsFmt(t.unpaid_total) + ')';
+            sel.appendChild(opt);
+        });
+        document.getElementById('qs-split-dest-new-name').style.display = 'none';
+        document.getElementById('qs-split-dest-new-name').value = '';
 
         var btn = document.getElementById('qs-split-confirm-btn');
         btn.disabled = false; btn.textContent = 'Gawanya na Hamisha';
         qsShowModal(document.getElementById('qsSplitTransferModal'));
     };
 
+    window.qsOnSplitDestChange = function () {
+        var isNew = document.getElementById('qs-split-dest-tab').value === '__new__';
+        document.getElementById('qs-split-dest-new-name').style.display = isNew ? 'block' : 'none';
+    };
+
     window.qsDoSplitTransfer = function () {
         if (!_qsSplitEntryId) return;
         var paid = document.getElementById('qs-split-paid-amount').value;
-        var destTabId = document.getElementById('qs-split-dest-tab').value;
+        var destSel = document.getElementById('qs-split-dest-tab').value;
+        var destNewName = document.getElementById('qs-split-dest-new-name').value.trim();
         var errEl = document.getElementById('qs-split-error');
         errEl.style.display = 'none';
-        if (!destTabId) { errEl.textContent = 'Chagua tab lengwa.'; errEl.style.display = 'block'; return; }
+        var body = {paid_amount: paid, paid_method: window._qsSplitMethod};
+        if (destSel === '__new__') {
+            if (!destNewName) { errEl.textContent = 'Weka jina la mteja.'; errEl.style.display = 'block'; return; }
+            body.dest_customer_name = destNewName;
+        } else if (destSel) {
+            body.dest_tab_id = destSel;
+        } else {
+            errEl.textContent = 'Chagua tab lengwa.'; errEl.style.display = 'block'; return;
+        }
         var btn = document.getElementById('qs-split-confirm-btn');
         btn.disabled = true; btn.textContent = 'Inagawanya...';
-        qsPost('/bar/tabs/entries/' + _qsSplitEntryId + '/split-transfer/', {
-            paid_amount: paid, paid_method: window._qsSplitMethod, dest_tab_id: destTabId,
-        })
+        qsPost('/bar/tabs/entries/' + _qsSplitEntryId + '/split-transfer/', body)
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 btn.disabled = false; btn.textContent = 'Gawanya na Hamisha';

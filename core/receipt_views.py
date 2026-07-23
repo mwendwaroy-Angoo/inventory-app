@@ -254,19 +254,22 @@ def _get_station_debt_data(receipt, live_lines):
     return result
 
 
-def _pending_transfers_in(receipt):
-    """Pending TabTransferRequests proposing to add money to one of THIS
-    receipt's live tabs — i.e. incoming split-bill requests this customer
-    needs to accept or reject (e.g. "Roy wants to add KES 200 to your tab for
-    his Smirnoff"). See BarTabEntry.split_and_transfer_locked() / core/models.py.
+def _pending_transfers_for_tabs(business, tab_ids):
+    """Pending TabTransferRequests proposing to add money onto any of these
+    tabs — i.e. incoming split-bill requests the customer needs to accept or
+    reject (e.g. "Roy wants to add KES 200 to your tab for his Smirnoff").
+    Shared by the receipt-based live view (_pending_transfers_in below) and
+    tab_live_view — the fallback page for a tab that has no receipt yet at
+    all, e.g. a brand-new tab just opened for a friend who wasn't already
+    drinking (2026-07-24 live request). See BarTabEntry.split_and_transfer_
+    locked() / TabTransferRequest in core/models.py.
     """
     from .models import TabTransferRequest as _Transfer
-    tab_ids = _receipt_all_tab_ids(receipt)
     if not tab_ids:
         return []
     rows = list(
         _Transfer.objects.filter(
-            dest_tab_id__in=tab_ids, status='PENDING', business=receipt.business,
+            dest_tab_id__in=tab_ids, status='PENDING', business=business,
         ).select_related('source_tab')
     )
     return [
@@ -278,6 +281,11 @@ def _pending_transfers_in(receipt):
         }
         for t in rows
     ]
+
+
+def _pending_transfers_in(receipt):
+    """Pending transfers targeting any of THIS receipt's live tabs."""
+    return _pending_transfers_for_tabs(receipt.business, _receipt_all_tab_ids(receipt))
 
 
 def public_receipt(request, token):
@@ -848,4 +856,45 @@ def tab_live_view(request, token):
         'outstanding': float(outstanding),
         'total': float(total_val),
         'is_settled': tab.status in ('SETTLED', 'VOID'),
+        'pending_transfers_in': _pending_transfers_for_tabs(tab.business, [tab.id]),
     })
+
+
+@csrf_exempt
+def tab_respond_tab_transfer(request, token, transfer_id):
+    """Customer-initiated accept/reject of a pending split-bill transfer, from
+    the bare tab_live_view page — used when the destination tab has no
+    receipt yet at all (e.g. a brand-new tab just opened for a friend who
+    wasn't already drinking, 2026-07-24 live request), so
+    receipt_respond_tab_transfer (keyed off a Receipt token) doesn't apply.
+    Same security model — the tab's own token is the customer's proof this
+    concerns them. POST { "action": "accept"|"reject" }
+    """
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'error': 'POST required'}, status=405)
+
+    from .models import BarTab as _BarTab, TabTransferRequest as _Transfer
+    tab = get_object_or_404(_BarTab, tab_receipt_token=token)
+
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        data = request.POST
+
+    action = (data.get('action') or '').strip()
+    if action not in ('accept', 'reject'):
+        return JsonResponse({'ok': False, 'error': 'action lazima iwe accept au reject'}, status=400)
+
+    transfer = get_object_or_404(_Transfer, id=transfer_id, business=tab.business, dest_tab_id=tab.id)
+
+    try:
+        if action == 'accept':
+            transfer.accept()
+        else:
+            transfer.reject()
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    _notify_tab_transfer_resolved(transfer)
+
+    return JsonResponse({'ok': True, 'status': transfer.status})
