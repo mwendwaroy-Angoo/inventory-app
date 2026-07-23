@@ -2628,6 +2628,15 @@ class BarTabEntry(models.Model):
         time, never baked into `description` — so it can't go stale and
         every surface reads the same live answer. Returns '' when this entry
         has no such history (the ordinary case).
+
+        Wording note (2026-07-24, live correction): "itafunikwa" (lit. "will
+        be covered/capped", as in a lid on a pot) is wrong for a payment
+        obligation — this is a financial transaction, not a physical object
+        being covered. Uses "inafaa kulipwa" (ought to be paid) instead. Also
+        addresses the reader directly ("wewe mwenyewe", not just "mwenyewe")
+        since this note is read BY the debtor on THEIR OWN statement — a
+        second-person "you paid it yourself", not a third-person aside — and
+        includes exactly when that payment happened, not just how much.
         """
         tfr = self.transfer_requests.filter(
             status__in=['REJECTED', 'CANCELLED']
@@ -2636,12 +2645,16 @@ class BarTabEntry(models.Model):
             return ''
         who = tfr.dest_tab.customer_name
         if tfr.paid_amount:
-            paid_bit = f' (ulishalipa KES {tfr.paid_amount:,.0f} mwenyewe)'
+            when = timezone.localtime(tfr.requested_at)
+            paid_bit = (
+                f' (ulishalipa KES {tfr.paid_amount:,.0f} wewe mwenyewe'
+                f' tarehe {when.strftime("%d %b %Y")} saa {when.strftime("%H:%M")})'
+            )
         else:
             paid_bit = ''
         if tfr.status == 'REJECTED':
-            return f'Ilikuwa itafunikwa na {who}, alikataa kulipa{paid_bit}'
-        return f'Ilikuwa itafunikwa na {who}, hakujibu kwa wakati{paid_bit}'
+            return f'Ilikuwa inafaa kulipwa na {who}, alikataa kulipa{paid_bit}'
+        return f'Ilikuwa inafaa kulipwa na {who}, hakujibu kwa wakati{paid_bit}'
 
 
 class TabTransferRequest(models.Model):
