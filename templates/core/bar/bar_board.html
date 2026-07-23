@@ -1572,6 +1572,44 @@
   </div>
 </div>
 
+<!-- ── Split & Transfer modal (2026-07-23 — split a bill between two customers' tabs) ── -->
+<div class="modal fade bar-modal" id="splitTransferModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content">
+      <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
+        <h6 class="modal-title" style="color:#c9a84c;">🔀 Gawanya Malipo</h6>
+      </div>
+      <div class="modal-body">
+        <p id="split-tab-info" style="color:#b0b0b0; font-size:0.83rem; margin-bottom:0.65rem;"></p>
+        <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.2rem;">Kiasi kinacholipwa sasa (KES)</label>
+        <input type="number" id="split-paid-amount" min="0" step="1"
+               class="form-control form-control-sm mb-2"
+               style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;"
+               oninput="window._updateSplitRemainder()">
+        <div style="display:flex; gap:0.4rem; margin-bottom:0.55rem;">
+          <button type="button" class="btn btn-sm flex-fill" id="split-method-cash"
+                  style="background:rgba(201,168,76,.15); border:1px solid #c9a84c; color:#c9a84c;"
+                  onclick="window._setSplitMethod('cash')">💵 Cash</button>
+          <button type="button" class="btn btn-sm flex-fill" id="split-method-mpesa"
+                  style="background:transparent; border:1px solid #444; color:#b0b0b0;"
+                  onclick="window._setSplitMethod('mpesa')">📱 M-Pesa</button>
+        </div>
+        <div id="split-remainder-info" style="font-size:0.8rem; color:#9fcaa0; margin-bottom:0.5rem;"></div>
+        <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.2rem;">Hamisha kiasi kilichobaki kwenda tab ya:</label>
+        <select id="split-dest-tab" class="form-select form-select-sm"
+                style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;"></select>
+        <div id="split-error" style="display:none; color:#c0395a; font-size:0.82rem; margin-top:6px;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #3a3a3a;">
+        <button class="btn btn-sm" style="background:#333; border-color:#444; color:#b0b0b0;"
+                onclick="window.hideModal('splitTransferModal')">Acha</button>
+        <button id="split-confirm-btn" class="btn btn-gold btn-sm"
+                onclick="window._doSplitTransfer()">Gawanya na Hamisha</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Petty Cash modal -->
 {% include "core/petty_cash_modal.html" %}
 
@@ -2353,6 +2391,7 @@
   }
 
   window.renderTabs = function (tabs) {
+    window._lastTabsData = tabs;  // used by the split-transfer destination-tab picker
     var body = document.getElementById('tabs-drawer-body');
     var hdr  = document.getElementById('tabs-drawer-unpaid');
     if (!body) return;
@@ -2504,8 +2543,22 @@
               'style="background:none;border:none;color:#c0395a;cursor:pointer;font-size:0.78rem;padding:0 2px;flex-shrink:0;" ' +
               'title="Futa kiingilio hiki">✕</button>'
             : '';
+          // Split & transfer — available to any staff (not owner-gated, Roy's
+          // explicit call: must work mid-shift without the owner present).
+          // Hidden once this entry already has an outgoing pending transfer —
+          // it can't be split a second time until that one resolves.
+          var splitBtn = !e.pending_transfer_out
+            ? '<button onclick="window.openSplitTransferModal(' + e.id + ',' + tab.id + ',\'' + safeDesc.replace(/'/g, "\\'") + '\',' + e.amount + ')" ' +
+              'style="background:none;border:none;color:#c9a84c;cursor:pointer;font-size:0.78rem;padding:0 2px;flex-shrink:0;" ' +
+              'title="Gawanya malipo na uhamishe sehemu kwa tab nyingine">🔀</button>'
+            : '';
+          var pendingBadge = e.pending_transfer_out
+            ? '<div style="width:100%;font-size:.68rem;color:#c9a84c;background:rgba(201,168,76,.07);border:1px solid rgba(201,168,76,.2);border-radius:5px;padding:.15rem .4rem;margin:.15rem 0 .3rem;">' +
+              '⏳ Inasubiri idhini ya ' + e.pending_transfer_out.dest_customer + ' — KES ' + fmt(e.pending_transfer_out.amount) +
+              '</div>'
+            : '';
           entriesHtml +=
-            '<div class="tab-entry-row" id="tab-entry-' + e.id + '">' +
+            '<div class="tab-entry-row" id="tab-entry-' + e.id + '" style="flex-wrap:wrap;">' +
             '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0;">' +
             '<input type="checkbox" class="tab-entry-cb"' +
             ' data-entry-id="' + e.id + '" data-amount="' + e.amount + '"' +
@@ -2514,7 +2567,9 @@
             '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">' + entryIcon + ' ' + safeDesc + '</span>' +
             '</label>' +
             '<span class="tab-entry-amt">KES ' + fmt(e.amount) + '</span>' +
+            splitBtn +
             removeBtn +
+            pendingBadge +
             '</div>';
         });
 
@@ -2528,6 +2583,20 @@
             '<button onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')" style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>' +
             '</div>'
           : '';
+
+        var incomingHtml = '';
+        (tab.incoming_transfers || []).forEach(function (t) {
+          incomingHtml +=
+            '<div style="background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.3);border-radius:6px;' +
+            'padding:.3rem .55rem;margin-bottom:.35rem;font-size:.75rem;color:#a5d6a7;">' +
+            '🔔 ' + t.source_customer + ' anataka kuongeza <strong style="color:#4caf50;">KES ' + fmt(t.amount) + '</strong> (' + t.note + ')' +
+            '<div style="display:flex;gap:.4rem;margin-top:.3rem;">' +
+            '<button onclick="window.respondTabTransfer(' + t.id + ',\'accept\')" ' +
+            'style="flex:1;padding:.2rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.4);border-radius:5px;color:#4caf50;font-size:.72rem;cursor:pointer;">Kubali</button>' +
+            '<button onclick="window.respondTabTransfer(' + t.id + ',\'reject\')" ' +
+            'style="flex:1;padding:.2rem;background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;font-size:.72rem;cursor:pointer;">Kataa</button>' +
+            '</div></div>';
+        });
 
         var receiptLinkHtml = tab.receipt_url
           ? '<a href="' + tab.receipt_url + '" target="_blank" rel="noopener" ' +
@@ -2545,6 +2614,7 @@
             ? '<div class="tab-server-label">via ' + tab.server_name + ' · ' + tab.opened_at + '</div>'
             : '<div class="tab-server-label">' + tab.opened_at + '</div>') +
           staleHtml +
+          incomingHtml +
           (tab.cross_notice ? '<div style="font-size:.72rem;color:#f39c12;background:rgba(243,156,18,.07);border:1px solid rgba(243,156,18,.2);border-radius:5px;padding:.15rem .5rem;margin-bottom:.3rem;">🔀 ' + tab.cross_notice + '</div>' : '') +
           receiptLinkHtml +
           '<div style="display:flex;gap:.3rem;align-items:center;margin:.3rem 0 .15rem;">' +
@@ -2847,6 +2917,111 @@
         btn.disabled = false; btn.textContent = 'Hamisha → Deni';
         errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block';
       });
+  };
+
+  /* ── Split & Transfer — split one entry between a real payment and a
+     transfer onto a DIFFERENT customer's own tab (2026-07-23 live request:
+     "Roy pays 400 of his 600 Smirnoff, Bosco's tab picks up the remaining
+     200"). Any staff with an open shift may do this — not owner-gated. ── */
+  var _splitEntryId = null, _splitTabId = null, _splitAmount = 0;
+  window._splitMethod = 'cash';
+
+  window._setSplitMethod = function (method) {
+    window._splitMethod = method;
+    var cashBtn = document.getElementById('split-method-cash');
+    var mpesaBtn = document.getElementById('split-method-mpesa');
+    [cashBtn, mpesaBtn].forEach(function (b) {
+      b.style.background = 'transparent'; b.style.borderColor = '#444'; b.style.color = '#b0b0b0';
+    });
+    var active = method === 'mpesa' ? mpesaBtn : cashBtn;
+    active.style.background = 'rgba(201,168,76,.15)'; active.style.borderColor = '#c9a84c'; active.style.color = '#c9a84c';
+  };
+
+  window._updateSplitRemainder = function () {
+    var paid = parseFloat(document.getElementById('split-paid-amount').value || '0') || 0;
+    var remainder = _splitAmount - paid;
+    var el = document.getElementById('split-remainder-info');
+    if (remainder > 0) {
+      el.textContent = 'Kiasi kitakachohamishwa: KES ' + fmt(remainder);
+      el.style.color = '#9fcaa0';
+    } else {
+      el.textContent = paid > _splitAmount
+        ? 'Kiasi kilicholipwa hakiwezi kuzidi jumla ya kiingilio.'
+        : 'Weka kiasi pungufu ya jumla ili kubaki na salio la kuhamisha.';
+      el.style.color = '#c0395a';
+    }
+  };
+
+  window.openSplitTransferModal = function (entryId, tabId, desc, amount) {
+    _splitEntryId = entryId; _splitTabId = tabId; _splitAmount = amount;
+    window._splitMethod = 'cash';
+    document.getElementById('split-tab-info').textContent =
+      desc + ' — jumla KES ' + fmt(amount) + '. Weka kiasi mteja anacholipa sasa; salio litahamishiwa tab nyingine.';
+    document.getElementById('split-paid-amount').value = '';
+    document.getElementById('split-remainder-info').textContent = '';
+    document.getElementById('split-error').style.display = 'none';
+    window._setSplitMethod('cash');
+
+    var sel = document.getElementById('split-dest-tab');
+    sel.innerHTML = '';
+    var others = (window._lastTabsData || []).filter(function (t) { return t.id !== tabId; });
+    if (!others.length) {
+      sel.innerHTML = '<option value="">Hakuna tab nyingine iliyo wazi</option>';
+    } else {
+      others.forEach(function (t) {
+        var opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.customer_name + ' (KES ' + fmt(t.unpaid_total) + ')';
+        sel.appendChild(opt);
+      });
+    }
+
+    var btn = document.getElementById('split-confirm-btn');
+    btn.disabled = false; btn.textContent = 'Gawanya na Hamisha';
+    showModal('splitTransferModal');
+  };
+
+  window._doSplitTransfer = function () {
+    if (!_splitEntryId) return;
+    var paid = document.getElementById('split-paid-amount').value;
+    var destTabId = document.getElementById('split-dest-tab').value;
+    var errEl = document.getElementById('split-error');
+    errEl.style.display = 'none';
+    if (!destTabId) { errEl.textContent = 'Chagua tab lengwa.'; errEl.style.display = 'block'; return; }
+    var btn = document.getElementById('split-confirm-btn');
+    btn.disabled = true; btn.textContent = 'Inagawanya...';
+    post('/bar/tabs/entries/' + _splitEntryId + '/split-transfer/', {
+      paid_amount: paid, paid_method: window._splitMethod, dest_tab_id: destTabId,
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false; btn.textContent = 'Gawanya na Hamisha';
+        if (d.ok) {
+          hideModal('splitTransferModal');
+          showToast('✓ Imegawanywa — inasubiri idhini ya mteja mwingine.');
+          window.loadTabs();
+        } else {
+          errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block';
+        }
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Gawanya na Hamisha';
+        errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block';
+      });
+  };
+
+  window.respondTabTransfer = function (transferId, action) {
+    post('/bar/tab-transfers/' + transferId + '/respond/', {action: action})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          showToast(action === 'accept' ? '✓ Umekubali uhamisho.' : 'Umekataa uhamisho.');
+          window.loadTabs();
+        } else {
+          showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+        }
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao.'); });
   };
 
   /* ── Tab STK Push ──────────────────────────────────────── */

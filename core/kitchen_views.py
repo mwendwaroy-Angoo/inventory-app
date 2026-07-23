@@ -15,7 +15,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -1115,6 +1115,26 @@ def kitchen_tabs_list(request):
                     if _ltid in _kb_unmapped and _ltid not in _kb_receipt_map:
                         _kb_receipt_map[_ltid] = _r.token
 
+    # Pending split-bill transfers touching these food tabs — same mechanism
+    # as tabs_list() in core/keg_views.py; see BarTabEntry.split_and_transfer_
+    # locked() / TabTransferRequest in core/models.py.
+    from .models import TabTransferRequest as _KbTransfer
+    _pending_out_by_entry = {}
+    _pending_in_by_tab = {}
+    if _food_tab_ids_all:
+        for _t in _KbTransfer.objects.filter(status='PENDING').filter(
+            Q(source_tab_id__in=_food_tab_ids_all) | Q(dest_tab_id__in=_food_tab_ids_all)
+        ).select_related('source_tab', 'dest_tab'):
+            if _t.source_tab_id in _food_tab_ids_all:
+                _pending_out_by_entry[_t.entry_id] = {
+                    'id': _t.id, 'amount': float(_t.amount), 'dest_customer': _t.dest_tab.customer_name,
+                }
+            if _t.dest_tab_id in _food_tab_ids_all:
+                _pending_in_by_tab.setdefault(_t.dest_tab_id, []).append({
+                    'id': _t.id, 'amount': float(_t.amount), 'note': _t.note,
+                    'source_customer': _t.source_tab.customer_name,
+                })
+
     result = []
     for tab in food_tabs:
         all_entries = list(tab.entries.all())
@@ -1132,7 +1152,10 @@ def kitchen_tabs_list(request):
         ]
         bar_count = len(all_entries) - len(kitchen_entries)
         entries = [
-            {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
+            {
+                'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid,
+                'pending_transfer_out': _pending_out_by_entry.get(e.id),
+            }
             for e in kitchen_entries
         ]
         if bar_count:
@@ -1160,6 +1183,7 @@ def kitchen_tabs_list(request):
             'cross_notice': cross_notice,
             'receipt_url': _rcpt_url,
             'cash_requested': bool(tab.cash_requested_at),
+            'incoming_transfers': _pending_in_by_tab.get(tab.id, []),
         })
 
     # Bar tabs that have kitchen entries — show read-only (kitchen items only).

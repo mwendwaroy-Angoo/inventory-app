@@ -65,6 +65,8 @@ from core.keg_views import (
     bulk_convert_tabs_to_debt,
     tick_entry,
     remove_tab_entry,
+    split_and_transfer_entry,
+    respond_tab_transfer,
     settle_tab,
     void_tab,
     convert_tab_to_debt,
@@ -204,7 +206,7 @@ from core.recurring_expense_views import (
     recurring_expense_review,
     recurring_expense_confirm,
 )
-from core.receipt_views import receipts_list, public_receipt, send_receipt, receipt_live_status, receipt_pay, tab_live_view
+from core.receipt_views import receipts_list, public_receipt, send_receipt, receipt_live_status, receipt_pay, tab_live_view, receipt_respond_tab_transfer
 from core.onboarding_views import mark_section_seen
 from core.restricted_items_views import (
     request_sale_approval, pending_approvals,
@@ -367,6 +369,8 @@ urlpatterns = [
     path("bar/tabs/<int:tab_id>/debt/", convert_tab_to_debt, name="convert_tab_to_debt"),
     path("bar/tabs/entry/<int:entry_id>/tick/", tick_entry, name="tick_entry"),
     path("bar/tabs/<int:tab_id>/entries/<int:entry_id>/remove/", remove_tab_entry, name="remove_tab_entry"),
+    path("bar/tabs/entries/<int:entry_id>/split-transfer/", split_and_transfer_entry, name="split_and_transfer_entry"),
+    path("bar/tab-transfers/<int:transfer_id>/respond/", respond_tab_transfer, name="respond_tab_transfer"),
     # ── Shift Handover Module (Sprint 4) ─────────────────────────────────────
     path("bar/shift/open/",                   open_shift,             name="open_shift"),
     path("bar/shift/<int:shift_id>/close/",   close_shift,            name="close_shift"),
@@ -654,6 +658,7 @@ urlpatterns = [
     path("r/<str:token>/", public_receipt, name="public_receipt"),
     path("r/<str:token>/live/", receipt_live_status, name="receipt_live_status"),
     path("r/<str:token>/pay/", receipt_pay, name="receipt_pay"),
+    path("r/<str:token>/tab-transfers/<int:transfer_id>/respond/", receipt_respond_tab_transfer, name="receipt_respond_tab_transfer"),
     path("receipts/<int:receipt_id>/send/", send_receipt, name="send_receipt"),
     # ── Scan to View Your Bill — wall QR ─────────────────────────────────────
     path("tab/<str:token>/", tab_live_view, name="tab_live_view"),

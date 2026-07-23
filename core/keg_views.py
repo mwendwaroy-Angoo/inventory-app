@@ -8,7 +8,7 @@ Sprint 4: shift handover.
 import json
 import logging
 from datetime import date as date_type, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Prefetch, Q, Sum
@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from . import keg_metrics
-from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Payment, PettyCash, Receipt, Shift, Transaction
+from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Payment, PettyCash, Receipt, Shift, TabTransferRequest, Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,19 @@ def _allowed_tab_sources(up):
     if show_kitchen:
         allowed.add('kitchen')
     return allowed
+
+
+def _cancel_pending_transfers_for_tab(tab):
+    """Auto-cancel any PENDING TabTransferRequest whose entry lives on `tab`,
+    when that tab is about to leave the ordinary open-tab lifecycle (voided
+    or converted to debt) — a pending split-bill request against an entry
+    that's no longer sitting on a normal open tab doesn't make sense anymore.
+    Inverse-action safeguard for BarTabEntry.split_and_transfer_locked()."""
+    for tfr in TabTransferRequest.objects.filter(source_tab=tab, status='PENDING'):
+        try:
+            tfr.cancel()
+        except Exception:
+            logger.exception('Failed to auto-cancel TabTransferRequest %s', tfr.id)
 
 
 # ── Board API ─────────────────────────────────────────────────────────────────
@@ -1024,6 +1037,28 @@ def tabs_list(request):
                     if _ltid in _unmapped and _ltid not in _receipt_token_map:
                         _receipt_token_map[_ltid] = _r.token
 
+    # Pending split-bill transfers touching these tabs — outgoing (an entry on
+    # this tab is awaiting a DIFFERENT customer's accept/reject) and incoming
+    # (a different tab's entry is proposed to land here). See
+    # BarTabEntry.split_and_transfer_locked() / TabTransferRequest.
+    _pending_out_by_entry = {}
+    _pending_in_by_tab = {}
+    if _tab_ids:
+        for _t in TabTransferRequest.objects.filter(
+            status='PENDING',
+        ).filter(Q(source_tab_id__in=_tab_ids) | Q(dest_tab_id__in=_tab_ids)).select_related(
+            'source_tab', 'dest_tab',
+        ):
+            if _t.source_tab_id in _tab_ids:
+                _pending_out_by_entry[_t.entry_id] = {
+                    'id': _t.id, 'amount': float(_t.amount), 'dest_customer': _t.dest_tab.customer_name,
+                }
+            if _t.dest_tab_id in _tab_ids:
+                _pending_in_by_tab.setdefault(_t.dest_tab_id, []).append({
+                    'id': _t.id, 'amount': float(_t.amount), 'note': _t.note,
+                    'source_customer': _t.source_tab.customer_name,
+                })
+
     def _entry_dict(e):
         """Serialise one BarTabEntry, including whether its item is a kitchen (food) item."""
         _is_kitchen_item = bool(
@@ -1039,6 +1074,7 @@ def tabs_list(request):
             'is_paid': e.is_paid,
             'payment_method': e.payment_method,
             'is_kitchen_item': _is_kitchen_item,
+            'pending_transfer_out': _pending_out_by_entry.get(e.id),
         }
 
     result = []
@@ -1075,6 +1111,7 @@ def tabs_list(request):
                 'receipt_url': _rcpt_url,
                 'tab_pin': tab.tab_pin,
                 'cash_requested': bool(tab.cash_requested_at),
+                'incoming_transfers': _pending_in_by_tab.get(tab.id, []),
             })
         else:
             # Bar-only staff: see only bar (non-kitchen) entries
@@ -1112,6 +1149,7 @@ def tabs_list(request):
                 'receipt_url': _rcpt_url,
                 'tab_pin': tab.tab_pin,
                 'cash_requested': bool(tab.cash_requested_at),
+                'incoming_transfers': _pending_in_by_tab.get(tab.id, []),
             })
 
     return JsonResponse({'tabs': result, 'bar_only_view': not _see_all})
@@ -1317,6 +1355,119 @@ def remove_tab_entry(request, tab_id, entry_id):
 
     new_total = float(entry.tab.entries.filter(is_paid=False).aggregate(t=Sum('amount'))['t'] or 0)
     return JsonResponse({'ok': True, 'new_total': new_total})
+
+
+@login_required
+@require_POST
+def split_and_transfer_entry(request, entry_id):
+    """Split one tab entry between a real payment (kept on the source
+    customer's own tab) and an unpaid remainder proposed as a transfer onto a
+    DIFFERENT customer's open tab — e.g. Roy pays 400 of his 600 Smirnoff
+    himself, his friend Bosco's tab picks up the remaining 200 (2026-07-23
+    live request). Any staff with an open shift may do this (confirmed with
+    Roy — not owner/manager-only, needs to work mid-shift without the owner
+    present). See BarTabEntry.split_and_transfer_locked() for the mechanism.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    entry = get_object_or_404(
+        BarTabEntry.objects.select_related('tab'),
+        id=entry_id, tab__business=up.business,
+        tab__source__in=_allowed_tab_sources(up),
+    )
+    dest_tab_id = request.POST.get('dest_tab_id')
+    dest_tab = get_object_or_404(
+        BarTab, id=dest_tab_id, business=up.business,
+        source__in=_allowed_tab_sources(up),
+    )
+
+    try:
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id,
+            business=up.business,
+            paid_amount=request.POST.get('paid_amount', '0'),
+            paid_method=(request.POST.get('paid_method') or 'cash').strip(),
+            dest_tab_id=dest_tab.id,
+            staff_user=request.user,
+        )
+    except (InvalidOperation, ValueError) as e:
+        return JsonResponse({'ok': False, 'error': str(e) or 'Nambari batili'}, status=400)
+
+    # Notify the destination customer — SMS if a phone is on file (optional,
+    # never required per Roy), and always visible on their own live receipt
+    # regardless (see _pending_transfers_in in core/receipt_views.py). No
+    # in-app fan-out at request time — that fires when the customer responds
+    # (_notify_tab_transfer_resolved), not before, since nothing is decided yet.
+    try:
+        phone = dest_tab.customer.phone if dest_tab.customer else ''
+        if phone:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            from core.tab_receipts import resolve_master_receipt
+            normalized = normalize_ke_phone(phone)
+            if normalized:
+                rcpt, _ = resolve_master_receipt(up.business, dest_tab)
+                link = request.build_absolute_uri(f'/r/{rcpt.token}/') if rcpt else ''
+                msg = (
+                    f"Habari {dest_tab.customer_name},\n"
+                    f"{up.business.name}: {entry.tab.customer_name} anataka kuongeza "
+                    f"KES {tfr.amount:,.0f} kwenye tab yako ({tfr.note}).\n"
+                    + (f"Kubali au kataa kwenye risiti yako: {link}" if link else
+                       "Muulize mhudumu kukubali au kukataa.")
+                )
+                send_sms_notification(msg, normalized)
+    except Exception:
+        logger.exception('split_and_transfer_entry SMS failed (business=%s)', up.business.id)
+
+    return JsonResponse({
+        'ok': True,
+        'transfer_id': tfr.id,
+        'source_unpaid_total': float(entry.tab.unpaid_total()),
+        'new_entry_id': new_entry.id,
+    })
+
+
+@login_required
+@require_POST
+def respond_tab_transfer(request, transfer_id):
+    """Staff-side accept/reject of a pending split-bill transfer — for when
+    the destination customer confirms verbally rather than via SMS/receipt
+    link (phone is optional, so this must work without one). Any staff with
+    permission on the destination tab's station may respond on the
+    customer's behalf."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    transfer = get_object_or_404(
+        TabTransferRequest, id=transfer_id, business=up.business,
+        dest_tab__source__in=_allowed_tab_sources(up),
+    )
+    action = (request.POST.get('action') or '').strip()
+    if action not in ('accept', 'reject'):
+        return JsonResponse({'ok': False, 'error': 'action lazima iwe accept au reject'}, status=400)
+
+    try:
+        if action == 'accept':
+            transfer.accept()
+        else:
+            transfer.reject()
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    from core.receipt_views import _notify_tab_transfer_resolved
+    _notify_tab_transfer_resolved(transfer)
+
+    return JsonResponse({'ok': True, 'status': transfer.status})
 
 
 @login_required
@@ -1566,6 +1717,7 @@ def void_tab(request, tab_id):
     tab.void_reason = reason[:120]
     tab.cash_requested_at = None
     tab.save(update_fields=['status', 'settled_at', 'void_reason', 'cash_requested_at'])
+    _cancel_pending_transfers_for_tab(tab)
 
     # Only mark defaulter when the voided tab actually carried converted credit transactions
     if had_credit and tab.customer_name:
@@ -1639,6 +1791,7 @@ def convert_tab_to_debt(request, tab_id):
     tab.settled_at = timezone.now()
     tab.cash_requested_at = None
     tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
+    _cancel_pending_transfers_for_tab(tab)
 
     # Heads-up (not a block — goods already served) if this customer is
     # already credit-risky per the K3 policy gate.
@@ -1743,6 +1896,7 @@ def bulk_convert_tabs_to_debt(request):
         tab.settled_at = timezone.now()
         tab.cash_requested_at = None
         tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
+        _cancel_pending_transfers_for_tab(tab)
         converted += 1
 
         try:

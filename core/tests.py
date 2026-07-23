@@ -10,7 +10,7 @@ from accounts.models import Business, UserProfile
 from core.models import (
     BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
     KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
-    Notification, Payment, Receipt, Shift, Store, Transaction,
+    Notification, Payment, Receipt, Shift, Store, TabTransferRequest, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -7811,3 +7811,276 @@ class ItemFormRawMaterialSourceTest(TestCase):
         self.assertEqual(resp.status_code, 302)
         batch_item.refresh_from_db()
         self.assertIsNone(batch_item.raw_material_source_id)
+
+
+# ── Split bill across two customers' tabs (2026-07-23 live request) ──────────
+# "Roy pays 400 of his 600 Smirnoff, his friend Bosco's tab picks up the
+# remaining 200." See BarTabEntry.split_and_transfer_locked() / TabTransferRequest
+# in core/models.py, and core/keg_views.py's split_and_transfer_entry /
+# respond_tab_transfer, and core/receipt_views.py's receipt_respond_tab_transfer.
+
+class SplitAndTransferEntryTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Split Transfer Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='split_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='split_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Smirnoff',
+            material_no='SPLIT-01', unit='Pcs', selling_price=Decimal('600'),
+            cost_price=Decimal('300'),
+        )
+
+    def _make_tab(self, name, amount, desc='Smirnoff'):
+        tab = BarTab.objects.create(business=self.biz, customer_name=name, status='OPEN', source='bar')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=desc, amount=amount, is_paid=False,
+        )
+        return tab, entry
+
+    def test_split_creates_correct_paid_and_unpaid_amounts(self):
+        roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _bosco_entry = self._make_tab('Bosco', Decimal('50'))
+
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount, Decimal('400'))
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(entry.payment_method, 'cash')
+        self.assertEqual(new_entry.amount, Decimal('200'))
+        self.assertFalse(new_entry.is_paid)
+        self.assertEqual(
+            new_entry.tab_id, roy_tab.id,
+            'The remainder stays on the SOURCE tab until accepted — never on the destination yet',
+        )
+        self.assertEqual(tfr.status, 'PENDING')
+        self.assertEqual(tfr.dest_tab_id, bosco_tab.id)
+
+        # Total revenue for the Smirnoff sale must still be exactly 600 (400 + 200)
+        # — no double count from the split.
+        smirnoff_revenue = entry.transaction.revenue() + new_entry.transaction.revenue()
+        self.assertEqual(smirnoff_revenue, 600.0)
+
+    def test_split_rejects_paid_amount_equal_to_full_entry(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        with self.assertRaises(ValueError):
+            BarTabEntry.split_and_transfer_locked(
+                entry_id=entry.id, business=self.biz, paid_amount=Decimal('600'),
+                paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+            )
+
+    def test_accept_moves_entry_without_creating_new_transaction(self):
+        roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        txn_count_before = Transaction.objects.filter(item=self.item).count()
+        tfr.accept()
+        new_entry.refresh_from_db()
+        tfr.refresh_from_db()
+        self.assertEqual(new_entry.tab_id, bosco_tab.id)
+        self.assertEqual(tfr.status, 'ACCEPTED')
+        self.assertEqual(
+            Transaction.objects.filter(item=self.item).count(), txn_count_before,
+            'accept() must be a pure tab_id reassignment — no new Transaction created',
+        )
+        entry.refresh_from_db()
+        total_revenue = entry.transaction.revenue() + new_entry.transaction.revenue()
+        self.assertEqual(total_revenue, 600.0)
+
+    def test_reject_leaves_source_tab_completely_unchanged(self):
+        roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.reject()
+        new_entry.refresh_from_db()
+        tfr.refresh_from_db()
+        self.assertEqual(new_entry.tab_id, roy_tab.id, 'Never moved — nothing to reverse')
+        self.assertFalse(new_entry.is_paid)
+        self.assertEqual(tfr.status, 'REJECTED')
+        self.assertEqual(roy_tab.unpaid_total(), Decimal('200'))
+
+    def test_keg_item_split_does_not_double_increment_revenue_collected(self):
+        barrel = KegBarrel.objects.create(
+            business=self.biz, item=self.item, cost_price=Decimal('3000'),
+            target_revenue=Decimal('6000'), revenue_collected=Decimal('600'),
+        )
+        roy_tab = BarTab.objects.create(business=self.biz, customer_name='Roy', status='OPEN', source='bar')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-500'),
+            sale_amount=Decimal('600'), keg_barrel=barrel, payment_method='',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=roy_tab, transaction=txn, description='Tusker', amount=Decimal('600'), is_paid=False,
+        )
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        barrel.refresh_from_db()
+        self.assertEqual(
+            barrel.revenue_collected, Decimal('600'),
+            'record_sale() must NOT be called again — revenue_collected was already correct',
+        )
+        entry.refresh_from_db()
+        # Proportional cost across both halves must sum to the cost of the ORIGINAL
+        # full 600 sale (sale_amount * cost_price / target_revenue), not more, not less.
+        total_cost = entry.transaction.cost() + new_entry.transaction.cost()
+        self.assertAlmostEqual(total_cost, 600 * 3000 / 6000, places=2)
+
+    def test_station_scope_blocks_staff_without_access_to_source_tab(self):
+        Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        kitchen_staff = User.objects.create_user(username='split_kstaff', password='x')
+        UserProfile.objects.create(user=kitchen_staff, business=self.biz, role='kitchen', can_access_bar=False)
+        Shift.objects.create(business=self.biz, staff=kitchen_staff, status='OPEN')
+
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        self.client.force_login(kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '400', 'paid_method': 'cash', 'dest_tab_id': bosco_tab.id,
+        })
+        self.assertEqual(resp.status_code, 404)
+
+    def test_auto_cancel_pending_transfer_when_source_tab_voided(self):
+        roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{roy_tab.id}/void/', {'reason': 'test'})
+        self.assertEqual(resp.status_code, 200)
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.status, 'CANCELLED')
+
+    def test_auto_cancel_pending_transfer_when_source_tab_converted_to_debt(self):
+        roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{roy_tab.id}/debt/', {'customer_name': 'Roy'})
+        self.assertEqual(resp.status_code, 200)
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.status, 'CANCELLED')
+
+    def test_any_staff_with_open_shift_can_split(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '400', 'paid_method': 'cash', 'dest_tab_id': bosco_tab.id,
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_staff_without_open_shift_blocked(self):
+        no_shift_staff = User.objects.create_user(username='split_noshift', password='x')
+        UserProfile.objects.create(user=no_shift_staff, business=self.biz, role='staff')
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        self.client.force_login(no_shift_staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '400', 'paid_method': 'cash', 'dest_tab_id': bosco_tab.id,
+        })
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json().get('shift_required'))
+
+    def test_staff_side_respond_accept(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tab-transfers/{tfr.id}/respond/', {'action': 'accept'})
+        self.assertEqual(resp.status_code, 200)
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.status, 'ACCEPTED')
+
+    def test_public_accept_via_receipt_token(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Bosco tab', 'subtotal': 50}],
+            payment_method='cash', user=self.owner, customer_name='Bosco',
+            meta={'tab_id': bosco_tab.id},
+        )
+        import json as _json
+        resp = self.client.post(
+            f'/r/{rcpt.token}/tab-transfers/{tfr.id}/respond/',
+            data=_json.dumps({'action': 'accept'}), content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.status, 'ACCEPTED')
+
+    def test_public_respond_rejects_transfer_not_belonging_to_receipt(self):
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        other_tab, _ = self._make_tab('Other', Decimal('20'))
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Other tab', 'subtotal': 20}],
+            payment_method='cash', user=self.owner, customer_name='Other',
+            meta={'tab_id': other_tab.id},
+        )
+        import json as _json
+        resp = self.client.post(
+            f'/r/{rcpt.token}/tab-transfers/{tfr.id}/respond/',
+            data=_json.dumps({'action': 'accept'}), content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 403)
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.status, 'PENDING')
+
+    def test_pending_transfer_visible_on_destination_receipt(self):
+        """_pending_transfers_in() surfaces the incoming request on Bosco's
+        own live receipt page, regardless of whether he has a phone on file."""
+        _roy_tab, entry = self._make_tab('Roy', Decimal('600'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Bosco tab', 'subtotal': 50}],
+            payment_method='cash', user=self.owner, customer_name='Bosco',
+            meta={'tab_id': bosco_tab.id},
+        )
+        resp = self.client.get(f'/r/{rcpt.token}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b'pending-transfers-block', resp.content)
+        self.assertIn(b'Roy', resp.content)

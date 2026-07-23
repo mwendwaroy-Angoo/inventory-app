@@ -2513,6 +2513,190 @@ class BarTabEntry(models.Model):
         status = 'paid' if self.is_paid else 'open'
         return f"{self.tab.customer_name} — {self.description} KES {self.amount} ({status})"
 
+    @classmethod
+    def split_and_transfer_locked(cls, entry_id, business, paid_amount, paid_method,
+                                   dest_tab_id, staff_user):
+        """
+        Split one entry into a paid portion (settled here, on its own tab) and an
+        unpaid remainder proposed as a transfer onto a DIFFERENT customer's tab —
+        e.g. Roy's 600 Smirnoff: he pays 400 now, his friend Bosco's tab picks up
+        the remaining 200 (2026-07-23 live request).
+
+        The remainder is created as an ORDINARY unpaid BarTabEntry on the SOURCE
+        tab (not the destination) plus a TabTransferRequest tracking row — it
+        only actually moves to the destination tab when that request is
+        accepted (TabTransferRequest.accept()). This is deliberate: a rejection
+        then needs zero reversal logic, since the entry never left the source
+        tab in the first place; every existing surface (receipts, analytics,
+        debt conversion, Z-reports) sees a completely ordinary unpaid entry the
+        whole time it's pending, because that's exactly what it is.
+
+        The new Transaction for the remainder carries qty=0 (no additional
+        stock left the shelf — this re-bills an already-sold item, it isn't a
+        new sale) and copies the original's keg_barrel/produce_bunch/
+        kitchen_batch FK (if any) so Transaction.cost()'s existing proportional
+        formula correctly attributes the remaining cost share. It must NOT be
+        created via KegBarrel.record_sale()/KitchenBatch.record_sale()/
+        ProduceBunch.record_sale_locked() — those increment the envelope's
+        revenue_collected, which was already correctly incremented once, at
+        the original sale; incrementing it again here would inflate that
+        envelope's apparent revenue and understate cost() for every OTHER sale
+        drawn from the same barrel/batch, not just this one.
+
+        Raises ValueError on any validation failure (caller renders as a JSON
+        error) — insufficient/invalid amount, tab not open, same tab picked
+        twice, or an in-flight STK payment already referencing this entry.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            entry = cls.objects.select_for_update().select_related('transaction', 'tab').get(
+                id=entry_id, tab__business=business,
+            )
+            if entry.is_paid:
+                raise ValueError('Kiingilio hiki tayari kimelipwa.')
+            if entry.tab.status != 'OPEN':
+                raise ValueError('Tab ya kiingilio hiki haiko wazi.')
+
+            paid_amount = Decimal(str(paid_amount))
+            if paid_amount <= 0 or paid_amount >= entry.amount:
+                raise ValueError(
+                    'Kiasi cha kulipa lazima kiwe zaidi ya 0 na pungufu ya jumla ya kiingilio.'
+                )
+            if paid_method not in ('cash', 'mpesa'):
+                raise ValueError('Njia ya malipo si sahihi.')
+
+            dest_tab = BarTab.objects.select_for_update().get(id=dest_tab_id, business=business)
+            if dest_tab.status != 'OPEN':
+                raise ValueError('Tab lengwa haiko wazi.')
+            if dest_tab.id == entry.tab_id:
+                raise ValueError('Huwezi kuhamisha kwenye tab iyo hiyo.')
+
+            # In-flight STK guard: an entry mid-settlement via a pending Payment must
+            # not be split — the eventual callback would resolve entry_id -> tab using
+            # stale linkage once part of it has moved. tab_entry_ids is a JSONField
+            # list; checked in Python rather than a __contains ORM lookup because that
+            # lookup is unsupported on SQLite (see core/tab_receipts.py's
+            # _safe_linked_query for the same class of guard, same reason).
+            _pending = Payment.objects.filter(
+                bar_tab__business=business, status='pending', tab_entry_ids__isnull=False,
+            )
+            for _p in _pending:
+                if entry.id in (_p.tab_entry_ids or []):
+                    raise ValueError('Malipo ya STK yanaendelea kwa kiingilio hiki — subiri kwanza.')
+
+            remainder = entry.amount - paid_amount
+            orig_txn = Transaction.objects.select_for_update().get(pk=entry.transaction_id)
+
+            orig_txn.sale_amount = paid_amount
+            orig_txn.save(update_fields=['sale_amount'])
+
+            entry.amount = paid_amount
+            entry.is_paid = True
+            entry.payment_method = paid_method
+            entry.paid_at = timezone.now()
+            entry.save(update_fields=['amount', 'is_paid', 'payment_method', 'paid_at'])
+
+            new_txn = Transaction.objects.create(
+                item=orig_txn.item, business=orig_txn.business, type='Issue',
+                qty=Decimal('0'), sale_amount=remainder,
+                keg_barrel=orig_txn.keg_barrel, produce_bunch=orig_txn.produce_bunch,
+                kitchen_batch=orig_txn.kitchen_batch,
+                date=orig_txn.date, created_at=orig_txn.created_at,
+                recorded_by=staff_user,
+            )
+            new_entry = cls.objects.create(
+                tab=entry.tab, transaction=new_txn,
+                description=entry.description, amount=remainder, is_paid=False,
+            )
+            transfer = TabTransferRequest.objects.create(
+                business=business, entry=new_entry,
+                source_tab=entry.tab, dest_tab=dest_tab, amount=remainder,
+                requested_by=staff_user, note=entry.description,
+            )
+        return new_entry, transfer
+
+
+class TabTransferRequest(models.Model):
+    """
+    Tracks a proposed move of one BarTabEntry's balance from the tab it's
+    currently (ordinarily) sitting on, onto a DIFFERENT customer's open tab —
+    created by BarTabEntry.split_and_transfer_locked(). See that method's
+    docstring for why accept() is a one-field mutation and reject() needs no
+    reversal at all.
+    """
+    STATUS_CHOICES = [
+        ('PENDING',   'Pending'),
+        ('ACCEPTED',  'Accepted'),
+        ('REJECTED',  'Rejected'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+    business     = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='tab_transfer_requests')
+    entry        = models.ForeignKey(BarTabEntry, on_delete=models.CASCADE, related_name='transfer_requests')
+    source_tab   = models.ForeignKey(BarTab, on_delete=models.CASCADE, related_name='transfer_requests_out')
+    dest_tab     = models.ForeignKey(BarTab, on_delete=models.CASCADE, related_name='transfer_requests_in')
+    amount       = models.DecimalField(max_digits=10, decimal_places=2)
+    status       = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    requested_by = models.ForeignKey('auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+                                      related_name='tab_transfer_requests_made')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    resolved_at  = models.DateTimeField(null=True, blank=True)
+    note         = models.CharField(max_length=80, blank=True)
+
+    class Meta:
+        ordering = ['-requested_at']
+
+    def __str__(self):
+        return f"Transfer #{self.id}: {self.source_tab.customer_name} -> {self.dest_tab.customer_name} (KES {self.amount}, {self.status})"
+
+    def accept(self):
+        """Move the entry onto the destination tab. A single-field reassignment —
+        no new Transaction, no envelope revenue_collected change, nothing else
+        touched — see split_and_transfer_locked()'s docstring for why."""
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            fresh = TabTransferRequest.objects.select_for_update().get(pk=self.pk)
+            if fresh.status != 'PENDING':
+                raise ValueError('Ombi hili tayari limeshughulikiwa.')
+            dest_tab = BarTab.objects.select_for_update().get(pk=fresh.dest_tab_id)
+            if dest_tab.status != 'OPEN':
+                raise ValueError('Tab lengwa haiko wazi tena.')
+            entry = BarTabEntry.objects.select_for_update().get(pk=fresh.entry_id)
+            entry.tab = dest_tab
+            entry.save(update_fields=['tab'])
+            fresh.status = 'ACCEPTED'
+            fresh.resolved_at = timezone.now()
+            fresh.save(update_fields=['status', 'resolved_at'])
+        return fresh
+
+    def reject(self):
+        """Decline the transfer. The entry never left the source tab, so there is
+        nothing to reverse — it just stays there, ordinary and unpaid, exactly
+        as it already was."""
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            fresh = TabTransferRequest.objects.select_for_update().get(pk=self.pk)
+            if fresh.status != 'PENDING':
+                raise ValueError('Ombi hili tayari limeshughulikiwa.')
+            fresh.status = 'REJECTED'
+            fresh.resolved_at = timezone.now()
+            fresh.save(update_fields=['status', 'resolved_at'])
+        return fresh
+
+    def cancel(self):
+        """Used by the inverse-action safeguard when the source tab is voided or
+        converted to debt while this request is still pending — the entry it
+        refers to is about to leave the open-tab lifecycle, so a pending
+        request against it no longer makes sense. No-op if already resolved."""
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            fresh = TabTransferRequest.objects.select_for_update().get(pk=self.pk)
+            if fresh.status != 'PENDING':
+                return fresh
+            fresh.status = 'CANCELLED'
+            fresh.resolved_at = timezone.now()
+            fresh.save(update_fields=['status', 'resolved_at'])
+        return fresh
+
 
 class BarCupLog(models.Model):
     """Records one batch of disposable cups purchased for the business's shared cup pool.

@@ -567,6 +567,36 @@
         </div>
         {% endif %}
 
+        <!-- ── Incoming split-bill transfer(s) — a different customer wants
+             part of their bill added to this tab. See TabTransferRequest /
+             BarTabEntry.split_and_transfer_locked() (2026-07-23). Wrapper is
+             always present (even if empty) so the live poll can append a
+             newly-arrived request without a page reload — see
+             renderPendingTransfers() below. ────────────────────────────── -->
+        <div id="pending-transfers-block">
+        {% for t in pending_transfers_in %}
+        <div class="pending-transfer-card" data-transfer-id="{{ t.id }}"
+             style="margin:0.6rem 1.2rem 0.2rem; padding:0.6rem 0.8rem;
+             background:rgba(76,175,80,0.09); border:1px solid rgba(76,175,80,0.3);
+             border-radius:8px; font-size:0.82rem; color:#a5d6a7;">
+            <div>🔔 <strong>{{ t.from_customer }}</strong> anataka kuongeza
+                <strong style="color:#4caf50;">KES {{ t.amount|floatformat:"0" }}</strong>
+                ({{ t.note }}) kwenye bili yako.</div>
+            <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+                <button onclick="respondPendingTransfer({{ t.id }}, 'accept', this)"
+                        style="flex:1; padding:0.4rem; background:rgba(76,175,80,0.18);
+                        border:1px solid rgba(76,175,80,0.45); border-radius:6px;
+                        color:#4caf50; font-weight:600; font-size:0.82rem; cursor:pointer;">Kubali</button>
+                <button onclick="respondPendingTransfer({{ t.id }}, 'reject', this)"
+                        style="flex:1; padding:0.4rem; background:rgba(192,57,90,0.12);
+                        border:1px solid rgba(192,57,90,0.35); border-radius:6px;
+                        color:#c0395a; font-weight:600; font-size:0.82rem; cursor:pointer;">Kataa</button>
+            </div>
+            <div class="pending-transfer-error" style="display:none; color:#c0395a; font-size:0.75rem; margin-top:0.4rem;"></div>
+        </div>
+        {% endfor %}
+        </div>
+
         {% if is_live_tab and tab_status == 'DEBT' and station_debt %}
         <!-- ── Two-block DEBT payment UI ─────────────────────────── -->
         <div class="debt-blocks" id="debt-pay-section">
@@ -1127,11 +1157,36 @@
         if (countEl) countEl.textContent = countdown + 's';
     }
 
+    function renderPendingTransfers(list) {
+        var wrap = document.getElementById('pending-transfers-block');
+        if (!wrap) return;
+        var known = {};
+        wrap.querySelectorAll('.pending-transfer-card').forEach(function (el) {
+            known[el.getAttribute('data-transfer-id')] = true;
+        });
+        (list || []).forEach(function (t) {
+            if (known[t.id]) return;  // already shown (or already resolved client-side)
+            var card = document.createElement('div');
+            card.className = 'pending-transfer-card';
+            card.setAttribute('data-transfer-id', t.id);
+            card.style.cssText = 'margin:0.6rem 1.2rem 0.2rem; padding:0.6rem 0.8rem; background:rgba(76,175,80,0.09); border:1px solid rgba(76,175,80,0.3); border-radius:8px; font-size:0.82rem; color:#a5d6a7;';
+            card.innerHTML =
+                '<div>🔔 <strong>' + t.from_customer + '</strong> anataka kuongeza ' +
+                '<strong style="color:#4caf50;">' + fmt(t.amount) + '</strong> (' + t.note + ') kwenye bili yako.</div>' +
+                '<div style="display:flex; gap:0.5rem; margin-top:0.5rem;">' +
+                '<button onclick="respondPendingTransfer(' + t.id + ', \'accept\', this)" style="flex:1; padding:0.4rem; background:rgba(76,175,80,0.18); border:1px solid rgba(76,175,80,0.45); border-radius:6px; color:#4caf50; font-weight:600; font-size:0.82rem; cursor:pointer;">Kubali</button>' +
+                '<button onclick="respondPendingTransfer(' + t.id + ', \'reject\', this)" style="flex:1; padding:0.4rem; background:rgba(192,57,90,0.12); border:1px solid rgba(192,57,90,0.35); border-radius:6px; color:#c0395a; font-weight:600; font-size:0.82rem; cursor:pointer;">Kataa</button>' +
+                '</div><div class="pending-transfer-error" style="display:none; color:#c0395a; font-size:0.75rem; margin-top:0.4rem;"></div>';
+            wrap.appendChild(card);
+        });
+    }
+
     function poll() {
         fetch('/r/' + TOKEN + '/live/')
         .then(function (r) { return r.json(); })
         .then(function (d) {
             if (d.lines) renderLines(d.lines);
+            if (d.pending_transfers_in) renderPendingTransfers(d.pending_transfers_in);
             if (IS_DEBT && d.bar_outstanding !== undefined) updateDebtGauges(d);
             if (!d.is_live) {
                 clearInterval(tickIv);
@@ -1176,6 +1231,38 @@
     var pollIv = setInterval(poll, pollSecs * 1000);
 }());
 {% endif %}
+
+/* ── Pending split-bill transfer accept/reject (2026-07-23) ──
+   Self-contained: removes its own card from the DOM on success rather than
+   depending on the is_live_tab poll machinery, so it works the same whether
+   or not that block is active. */
+window.respondPendingTransfer = function (transferId, action, btnEl) {
+    var card = btnEl ? btnEl.closest('.pending-transfer-card') : null;
+    var errEl = card ? card.querySelector('.pending-transfer-error') : null;
+    var buttons = card ? card.querySelectorAll('button') : [];
+    buttons.forEach(function (b) { b.disabled = true; });
+    fetch('/r/{{ receipt.token|escapejs }}/tab-transfers/' + transferId + '/respond/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: action}),
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.ok && card) {
+                card.style.background = action === 'accept' ? 'rgba(46,204,113,0.09)' : 'rgba(192,57,90,0.09)';
+                card.innerHTML = action === 'accept'
+                    ? '✅ Umekubali — imeongezwa kwenye bili yako.'
+                    : '❌ Umekataa ombi hili.';
+            } else {
+                buttons.forEach(function (b) { b.disabled = false; });
+                if (errEl) { errEl.textContent = (d && d.error) || 'Hitilafu.'; errEl.style.display = 'block'; }
+            }
+        })
+        .catch(function () {
+            buttons.forEach(function (b) { b.disabled = false; });
+            if (errEl) { errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block'; }
+        });
+};
 
 /* ── Write-off line suppression ── */
 (function() {

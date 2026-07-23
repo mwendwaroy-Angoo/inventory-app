@@ -211,6 +211,8 @@ def _convert_open_tabs_to_debt_for_shift(shift, business, should_convert):
             tab.settled_at = timezone.now()
             tab.cash_requested_at = None
             tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
+            from core.keg_views import _cancel_pending_transfers_for_tab
+            _cancel_pending_transfers_for_tab(tab)
             auto_converted += 1
             auto_converted_names.append(customer_name)
 

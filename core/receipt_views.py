@@ -254,6 +254,32 @@ def _get_station_debt_data(receipt, live_lines):
     return result
 
 
+def _pending_transfers_in(receipt):
+    """Pending TabTransferRequests proposing to add money to one of THIS
+    receipt's live tabs — i.e. incoming split-bill requests this customer
+    needs to accept or reject (e.g. "Roy wants to add KES 200 to your tab for
+    his Smirnoff"). See BarTabEntry.split_and_transfer_locked() / core/models.py.
+    """
+    from .models import TabTransferRequest as _Transfer
+    tab_ids = _receipt_all_tab_ids(receipt)
+    if not tab_ids:
+        return []
+    rows = list(
+        _Transfer.objects.filter(
+            dest_tab_id__in=tab_ids, status='PENDING', business=receipt.business,
+        ).select_related('source_tab')
+    )
+    return [
+        {
+            'id': t.id,
+            'amount': float(t.amount),
+            'note': t.note or 'kiingilio',
+            'from_customer': t.source_tab.customer_name,
+        }
+        for t in rows
+    ]
+
+
 def public_receipt(request, token):
     receipt = get_object_or_404(Receipt, token=token)
     receipt_url = request.build_absolute_uri(request.path)
@@ -270,12 +296,15 @@ def public_receipt(request, token):
     if tab_status == 'DEBT':
         station_debt = _get_station_debt_data(receipt, live_lines)
 
+    pending_transfers_in = _pending_transfers_in(receipt) if is_live_tab else []
+
     return render(request, 'core/receipt_public.html', {
         'receipt':      receipt,
         'receipt_url':  receipt_url,
         'is_live_tab':  is_live_tab,
         'tab_status':   tab_status,
         'station_debt': station_debt,
+        'pending_transfers_in': pending_transfers_in,
     })
 
 
@@ -297,6 +326,7 @@ def receipt_live_status(request, token):
         'tab_status': tab_status,
         'lines':      lines,
         'total':      total,
+        'pending_transfers_in': _pending_transfers_in(receipt) if is_live else [],
     }
 
     if tab_status == 'DEBT' or (not is_live and tab_status == 'SETTLED'):
@@ -309,6 +339,53 @@ def receipt_live_status(request, token):
         response['kitchen_has_debt']    = sd['kitchen']['has_debt']
 
     return JsonResponse(response)
+
+
+@csrf_exempt
+def receipt_respond_tab_transfer(request, token, transfer_id):
+    """Customer-initiated accept/reject of a pending split-bill transfer, from
+    their own public receipt page. No auth required — the receipt token is
+    the customer's proof they're the one whose tab this concerns, same
+    security model as receipt_pay(). See BarTabEntry.split_and_transfer_locked
+    / TabTransferRequest in core/models.py for the full mechanism.
+
+    POST { "action": "accept"|"reject" }
+    """
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'error': 'POST required'}, status=405)
+
+    receipt = get_object_or_404(Receipt, token=token)
+
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        data = request.POST
+
+    action = (data.get('action') or '').strip()
+    if action not in ('accept', 'reject'):
+        return JsonResponse({'ok': False, 'error': 'action lazima iwe accept au reject'}, status=400)
+
+    from .models import TabTransferRequest as _Transfer
+    transfer = get_object_or_404(_Transfer, id=transfer_id, business=receipt.business)
+
+    # This receipt must actually be the destination tab's own receipt — a
+    # transfer for a tab this token has no claim over must not be actionable
+    # from here (mirrors the tab-ownership check every other public receipt
+    # action in this file does via _receipt_all_tab_ids).
+    if transfer.dest_tab_id not in _receipt_all_tab_ids(receipt):
+        return JsonResponse({'ok': False, 'error': 'Ombi hili si la risiti hii.'}, status=403)
+
+    try:
+        if action == 'accept':
+            transfer.accept()
+        else:
+            transfer.reject()
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    _notify_tab_transfer_resolved(transfer)
+
+    return JsonResponse({'ok': True, 'status': transfer.status})
 
 
 @login_required
@@ -447,6 +524,56 @@ def _fire_cash_payment_request(business, tab_ids, customer_name, amount, sources
             user=up.user, title='💵 Mteja anataka kulipa Cash',
             message=msg, notification_type='warning',
         )
+        phone = (up.phone or '').strip()
+        if phone:
+            phone_n = normalize_ke_phone(phone)
+            if phone_n:
+                send_sms_notification(msg, phone_n)
+
+
+def _notify_tab_transfer_resolved(transfer):
+    """Notify staff once a customer accepts or rejects a pending split-bill
+    transfer (BarTabEntry.split_and_transfer_locked / TabTransferRequest).
+    Same recipient pattern as _fire_cash_payment_request above: the staff
+    member who requested the transfer, everyone currently on shift, and
+    owners/managers — via in-app + SMS. A REJECTED transfer especially needs
+    this: the money is still sitting on the source customer's own tab
+    unresolved, and someone needs to know to go collect it from them
+    directly."""
+    from .models import Notification as _Notif
+    from accounts.models import UserProfile as _UP
+
+    business = transfer.business
+    if transfer.status == 'ACCEPTED':
+        msg = (
+            f"✅ {transfer.dest_tab.customer_name} amekubali KES {transfer.amount:,.0f} "
+            f"({transfer.note}) — imehamishiwa tab yake."
+        )
+        title = '✅ Uhamisho wa Bili Umekubaliwa'
+    else:
+        msg = (
+            f"❌ {transfer.dest_tab.customer_name} amekataa KES {transfer.amount:,.0f} "
+            f"({transfer.note}) — deni limerudi kwa {transfer.source_tab.customer_name}."
+        )
+        title = '❌ Uhamisho wa Bili Umekataliwa'
+
+    notify_targets = {}
+    if transfer.requested_by_id:
+        up = _UP.objects.filter(user_id=transfer.requested_by_id, business=business).first()
+        if up:
+            notify_targets[transfer.requested_by_id] = up
+
+    from .models import Shift as _Shift
+    for sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
+        up = _UP.objects.filter(user_id=sh.staff_id, business=business).first()
+        if up:
+            notify_targets[sh.staff_id] = up
+
+    for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
+        notify_targets[up.user_id] = up
+
+    for up in notify_targets.values():
+        _Notif.objects.create(user=up.user, title=title, message=msg, notification_type='info')
         phone = (up.phone or '').strip()
         if phone:
             phone_n = normalize_ke_phone(phone)

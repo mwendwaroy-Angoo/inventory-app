@@ -1612,3 +1612,61 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   as dead code — the small `#wallQrBox` preview there stays, unchanged, for an on-screen
   confirmation the QR looks right before printing. 6 new tests
   (`WallQrPrintPageTest`). No migrations. 399 tests pass.
+- Split bill across two customers' tabs (2026-07-23), live request: Roy buys a 600 KES
+  Smirnoff on his own tab, pays 400 himself, and his friend Bosco — who has his own,
+  separate, already-open tab — agrees to cover the remaining 200 on his own tab instead.
+  Nothing in the app could split one entry's amount or move any part of a bill onto a
+  DIFFERENT customer's tab before this. Confirmed with Roy: any staff with an open shift
+  can do this (not owner/manager-only — needs to work mid-shift without the owner
+  present); the customer picking up the extra charge must be able to accept or reject it,
+  either via SMS (phone kept optional) or on his own running tab/receipt; if rejected, the
+  amount must revert to whoever proposed the transfer, with no extra work.
+  **Design — why this needed no "reversal" logic and no double-counting risk**: split the
+  entry immediately (paid portion settled on the source tab; unpaid remainder created as
+  an ORDINARY unpaid `BarTabEntry` — new model `TabTransferRequest`,
+  `PENDING`/`ACCEPTED`/`REJECTED`/`CANCELLED`) but keep the remainder sitting on the
+  SOURCE customer's own tab (Roy's) until the destination customer (Bosco) actually
+  accepts. Rejecting then needs zero reversal — the 200 never left Roy's tab in the first
+  place, so nothing about the entry changes; existing surfaces (receipts, analytics, debt
+  conversion, Z-reports) see a completely ordinary unpaid entry the whole time it's
+  pending, because that's exactly what it is. Accepting is a single-field mutation
+  (`entry.tab_id` reassignment, `BarTabEntry.transferred` → `TabTransferRequest.accept()`)
+  — no new `Transaction` at accept time, so zero risk of double-counting revenue or
+  re-incrementing a keg/produce/kitchen-batch envelope's `revenue_collected`. The ONLY
+  new `Transaction`/`BarTabEntry` pair is created once, at split time, on the source tab:
+  `qty=Decimal('0')` (re-billing an already-sold item, not a new sale — no additional
+  stock left the shelf) and, if the original had a `keg_barrel`/`produce_bunch`/
+  `kitchen_batch` FK, that FK is copied onto the new transaction too so
+  `Transaction.cost()`'s EXISTING proportional-share formula correctly attributes the
+  remaining cost share, without ever calling `record_sale()` again — a real gap a design-
+  review pass caught: those three envelope models track revenue via a stored running
+  counter incremented exactly ONCE at sale time; re-selling through the normal path would
+  have inflated that counter and understated `cost()` for every OTHER sale drawn from the
+  same barrel/batch, not just this one. `BarTabEntry.split_and_transfer_locked()` (single
+  locked classmethod, `core/models.py`) is the one entry point; `TabTransferRequest.
+  accept()`/`reject()`/`cancel()` complete the lifecycle. Inverse-action safeguard: if the
+  source tab is voided or converted to debt while a transfer is still pending (added to
+  `void_tab`, `convert_tab_to_debt`, `bulk_convert_tabs_to_debt`, and shift-close/auto-
+  close's `_convert_open_tabs_to_debt_for_shift`), the pending request auto-cancels — the
+  entry it refers to is leaving the ordinary open-tab lifecycle, so a pending request
+  against it no longer makes sense. New endpoints in `core/keg_views.py`
+  (`split_and_transfer_entry`, `respond_tab_transfer` — staff-side accept/reject, for when
+  the customer confirms verbally without a phone) and `core/receipt_views.py`
+  (`receipt_respond_tab_transfer` — public, token-authenticated, same security model
+  `receipt_pay` already uses, no new token system needed); both station-scope-check
+  `_allowed_tab_sources` against **both** the source and destination tab, matching the
+  class of gap fixed earlier the same day (2026-07-23) in `tick_entry`/`settle_tab`/
+  `convert_tab_to_debt`, which only ever checked one side. Pending requests surface in all
+  three tabs drawers (`bar_board.html`, `quick_sell.html`, `kitchen_board.html` — a new
+  🔀 "Gawanya" icon per unpaid entry, plus a Kubali/Kataa banner on the destination tab
+  card) per the tabs-drawer-parity rule, and on the destination customer's own live
+  receipt page (`receipt_public.html`, self-contained accept/reject that also picks up a
+  newly-arrived request via the existing 20s live poll without a page reload).
+  Notifications reuse established patterns exactly: SMS to the destination customer if a
+  phone is on file (optional, never required) mirroring the cross-counter-merge SMS
+  shape; in-app + SMS fan-out to the requesting staff member, everyone currently on
+  shift, and owners/managers on accept/reject, mirroring `_fire_cash_payment_request`'s
+  recipient pattern — a REJECTED transfer especially needs this, since the money is still
+  sitting unresolved on the source customer's own tab and someone needs to go collect it
+  from them directly. Migration `0113_tabtransferrequest`. 14 new tests
+  (`SplitAndTransferEntryTest`). 413 tests pass.
