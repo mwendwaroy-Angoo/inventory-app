@@ -2706,6 +2706,42 @@ def voided_tabs_list(request):
     })
 
 
+@login_required
+def wall_qr_print_page(request):
+    """Standalone, single-page print view for the Wall Tab QR poster — owner-only.
+
+    Separated from payment_settings.html (2026-07-23, live report: "print shows
+    4 blank pages then a tiny QR on the 5th") because trying to print just one
+    small section out of that very long settings page was unreliable: the fix
+    used `visibility:hidden` on the rest of the page (needed so the box could
+    reset its own visibility regardless of nesting depth — see the CLAUDE.md
+    Known Issues entry on this) and `position:absolute` to pull the QR box to
+    the top — but `position:absolute` places an element relative to its
+    nearest POSITIONED ancestor, not the page, and any Bootstrap card/container
+    with its own `position:relative` between <body> and the QR box anchors it
+    there instead. Since `visibility:hidden` (unlike `display:none`) still
+    reserves layout space, the page's full height (every other settings
+    section) survives into the print output, so the browser paginates across
+    however many pages that height spans — and the QR box, anchored to
+    whichever ancestor it landed near (deep in the page, close to where the
+    Wall Tab QR card itself sits), printed small on a late page instead of
+    large on page one. A standalone page with nothing else on it sidesteps the
+    whole class of problem — same pattern already proven working for
+    session_promo_page.html's poster print.
+    """
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner', False):
+        return redirect('home')
+    business = up.business
+    find_tab_url = request.build_absolute_uri(f'/bar/find-tab/{business.id}/')
+    auto_print = request.GET.get('print') == '1'
+    return render(request, 'core/wall_qr_print.html', {
+        'business': business,
+        'find_tab_url': find_tab_url,
+        'auto_print': auto_print,
+    })
+
+
 def find_tab_public(request, business_id):
     """Public landing page for the wall-mounted bar QR — no login required.
 

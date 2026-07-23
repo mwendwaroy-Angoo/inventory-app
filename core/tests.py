@@ -2732,6 +2732,59 @@ class WallTabQrVisibilityTest(TestCase):
         self.assertNotIn(b'id="wallQrBox"', resp.content)
 
 
+class WallQrPrintPageTest(TestCase):
+    """Standalone /stock/wall-qr/print/ page (2026-07-23, live report: printing
+    the QR straight from payment_settings.html produced 4 blank pages then a
+    tiny QR on the 5th — the visibility/absolute-position trick used there
+    anchored the QR box to a positioned ancestor deep in a very long page
+    instead of the page's top). The standalone page must render one clean
+    page with nothing else on it."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Wall QR Print Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='wallqrprint_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='wallqrprint_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def test_owner_can_view_print_page(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/wall-qr/print/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b'Scan To View Your Bill', resp.content)
+        # escapejs renders '-' as the unicode escape - inside the JS string.
+        self.assertIn(f'/bar/find\\u002Dtab/{self.biz.id}/'.encode(), resp.content)
+
+    def test_header_and_footer_both_present(self):
+        """User's explicit ask: bold text at both the top AND bottom of the page."""
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/wall-qr/print/')
+        self.assertEqual(resp.content.count(b'Scan To View Your Bill'), 2)
+
+    def test_print_param_triggers_auto_print(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/wall-qr/print/?print=1')
+        self.assertIn(b'window.print()', resp.content)
+        # Without ?print=1, no auto-print call should be emitted.
+        resp2 = self.client.get('/stock/wall-qr/print/')
+        self.assertNotIn(b'setTimeout(function () { window.print(); }, 500);', resp2.content)
+
+    def test_staff_redirected_away(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/stock/wall-qr/print/')
+        self.assertEqual(resp.status_code, 302)
+
+    def test_unauthenticated_redirected_to_login(self):
+        resp = self.client.get('/stock/wall-qr/print/')
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/login', resp.url)
+
+    def test_payment_settings_links_to_print_page(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/business/payment-settings/')
+        self.assertIn(b'/stock/wall-qr/print/?print=1', resp.content)
+
+
 class CrossCounterReceiptLinkingTest(TestCase):
     """Fix (2026-07-16): a customer's running tab must resolve to ONE shared receipt/PIN
     regardless of which counter (Bar, Kitchen, Quick Sell) rings up their next item.

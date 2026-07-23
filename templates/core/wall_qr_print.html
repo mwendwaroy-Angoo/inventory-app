@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🪧 Wall Tab QR — {{ business.name }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #1a1a1a;
+  color: #f0ece4;
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+}
+.btn-print, .btn-back {
+  padding: 0.55rem 1.1rem;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+.btn-print { background: #c9a84c; color: #1a1a1a; border: none; }
+.btn-back  { background: transparent; color: #b0b0b0; border: 1px solid #444; }
+
+.poster {
+  background: #fff;
+  color: #111;
+  border-radius: 10px;
+  padding: 2rem 1.75rem;
+  width: 100%;
+  max-width: 560px;
+  text-align: center;
+}
+
+.poster-header {
+  font-family: 'Playfair Display', serif;
+  font-weight: 900;
+  font-size: 1.9rem;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  color: #111;
+  text-transform: uppercase;
+  margin-bottom: 0.35rem;
+}
+.poster-business {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 1.5rem;
+}
+
+.qr-wrap {
+  display: inline-block;
+  padding: 14px;
+  background: #fff;
+  border: 3px solid #111;
+  border-radius: 12px;
+  margin-bottom: 1.5rem;
+}
+#wallQr { width: 500px; height: 500px; max-width: 100%; }
+#wallQr img, #wallQr canvas, #wallQr table { width: 100% !important; height: auto !important; }
+
+.poster-hint {
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 1.5rem;
+  line-height: 1.4;
+}
+
+.poster-footer {
+  font-family: 'Playfair Display', serif;
+  font-weight: 900;
+  font-size: 1.9rem;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  color: #111;
+  text-transform: uppercase;
+}
+
+.poster-brand {
+  margin-top: 1.25rem;
+  font-size: 0.7rem;
+  color: #999;
+}
+
+/* ── Print layout — must always be exactly one page ── */
+@media print {
+  @page { size: A4 portrait; margin: 10mm; }
+  body {
+    background: #fff;
+    display: block;
+    padding: 0;
+    min-height: 0;
+  }
+  .actions { display: none; }
+  .poster {
+    max-width: 100%;
+    padding: 0;
+    margin: 0 auto;
+    page-break-inside: avoid;
+  }
+  .poster-header, .poster-footer { font-size: 2.1rem; }
+  #wallQr { width: 480px; height: 480px; }
+}
+</style>
+</head>
+<body>
+
+<div class="actions">
+  <button class="btn-print" onclick="window.print()">🖨️ Print (1 page)</button>
+  <a class="btn-back" href="{% url 'payment_settings' %}">← Rudi Payment Settings</a>
+</div>
+
+<div class="poster">
+  <div class="poster-header">Scan To View Your Bill</div>
+  <div class="poster-business">{{ business.name }}</div>
+
+  <div class="qr-wrap">
+    <div id="wallQr"></div>
+  </div>
+
+  <div class="poster-hint">
+    Piga picha kwa kamera ya simu yako, weka jina lako au PIN ya tarakimu 4 uliyopewa
+    na mhudumu, uone deni lako moja kwa moja.
+  </div>
+
+  <div class="poster-footer">Scan To View Your Bill</div>
+
+  <div class="poster-brand">Powered by Duka Mwecheche</div>
+</div>
+
+<script>
+(function () {
+  function _genWallQr() {
+    new QRCode(document.getElementById('wallQr'), {
+      text: "{{ find_tab_url|escapejs }}",
+      width: 500, height: 500,
+      colorDark: '#111111', colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+    {% if auto_print %}
+    setTimeout(function () { window.print(); }, 500);
+    {% endif %}
+  }
+  if (typeof QRCode !== 'undefined') {
+    _genWallQr();
+  } else {
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    s.onload = _genWallQr;
+    document.head.appendChild(s);
+  }
+})();
+</script>
+</body>
+</html>

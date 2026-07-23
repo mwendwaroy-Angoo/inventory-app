@@ -79,6 +79,7 @@ from core.keg_views import (
     voided_tabs_list,
     find_tab_public,
     find_tab_search,
+    wall_qr_print_page,
 )
 from core.shift_views import (
     open_shift,
@@ -658,6 +659,7 @@ urlpatterns = [
     path("tab/<str:token>/", tab_live_view, name="tab_live_view"),
     path("bar/find-tab/<int:business_id>/", find_tab_public, name="find_tab_public"),
     path("bar/find-tab/<int:business_id>/search/", find_tab_search, name="find_tab_search"),
+    path("stock/wall-qr/print/", wall_qr_print_page, name="wall_qr_print_page"),
     # ── Compliance & Licensing ──
     path("analytics/compliance/", compliance_checklist, name="compliance_checklist"),
     # ── Analytics ──

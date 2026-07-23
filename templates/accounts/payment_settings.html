@@ -753,9 +753,10 @@
         </p>
         <div id="wallQrBox" style="width:180px; height:180px; background:#f0ece4; padding:8px; border-radius:10px; display:inline-block;"></div>
         <div class="mt-3">
-          <button onclick="window.print()" class="btn btn-sm" style="color:var(--gold); border:1px solid rgba(201,168,76,0.5);">
-            🖨️ {% trans 'Print QR' %}
-          </button>
+          <a href="{% url 'wall_qr_print_page' %}?print=1" target="_blank" rel="noopener"
+             class="btn btn-sm" style="color:var(--gold); border:1px solid rgba(201,168,76,0.5); text-decoration:none;">
+            🖨️ {% trans 'Print QR (1 page)' %}
+          </a>
         </div>
       </div>
     </div>
@@ -833,23 +834,4 @@
   }
 })();
 </script>
-<style>
-@media print {
-  /* body > *:not(#wallQrBox) only hides direct children of <body> — but
-     #wallQrBox is nested several layers deep inside the normal page layout
-     (navbar, container, card), not a direct child, so that rule hid an
-     ANCESTOR of the QR box instead. display:none on a parent can't be
-     overridden by a descendant's own display value, so the box printed
-     blank. visibility works differently: it's inherited by descendants but
-     a descendant can explicitly reset its own visibility back to visible
-     regardless of nesting depth, which is what actually fixes this
-     (2026-07-22, reported live — "QR wall print comes up blank"). */
-  body * { visibility: hidden !important; }
-  #wallQrBox, #wallQrBox * { visibility: visible !important; }
-  #wallQrBox {
-    position: absolute; left: 0; top: 0; right: 0;
-    margin: 60px auto; display: block !important;
-  }
-}
-</style>
 {% endblock %}

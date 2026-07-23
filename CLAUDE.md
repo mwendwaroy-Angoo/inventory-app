@@ -1584,3 +1584,31 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   <id>`, toggled in `updateQsSelectionUI`/`updateTabSelectionUI`) — Deni/Void stay outside
   this group since they aren't payment actions and have no partial equivalent to confuse
   them with. No migrations. 393 tests pass.
+- Wall Tab QR standalone print page (2026-07-23), from a live Roy report: printing the QR
+  from `payment_settings.html` produced 4 blank pages then a tiny QR on page 5, instead of
+  one page with a large, centered QR. **Root cause**: the 2026-07-22 fix (documented in
+  Known Issues below) correctly made the QR box itself printable via `visibility` instead
+  of `display`, but `visibility:hidden` — unlike `display:none` — still reserves layout
+  space, so the full height of the (very long) Payment Settings page survived into the
+  print output and the browser paginated across however many pages that height spans. The
+  box was then pulled to "the top" via `position:absolute`, but `absolute` positions an
+  element relative to its nearest POSITIONED ancestor, not the page — some Bootstrap
+  card/container between `<body>` and the QR box has its own `position:relative`, so the
+  box anchored there instead, landing wherever that ancestor sits in the long page (near
+  the bottom, since the Wall Tab QR card is one of the last sections) — hence a tiny QR on
+  a late page rather than a large one on page one. **Fix**: new standalone page at
+  `/stock/wall-qr/print/` (`wall_qr_print_page` in `core/keg_views.py`, owner-only,
+  `templates/core/wall_qr_print.html` — no `{% extends "base.html" %}`, same proven
+  standalone-page pattern already used by `session_promo_page.html`'s poster print) with
+  nothing else on the page to interfere with pagination or positioning: bold "SCAN TO VIEW
+  YOUR BILL" header at both the top and bottom (Roy's explicit ask), a single large QR
+  (500px on screen, 480px in print — comfortably fits one A4 page with `@page { size: A4;
+  margin: 10mm; }` and `page-break-inside: avoid` on the poster), and the same PIN-lookup
+  hint text. `?print=1` triggers `window.print()` automatically 500ms after load (same
+  convention as `session_promo_page`'s `?print=1`), giving QR generation time to finish
+  first. Payment Settings' "🖨️ Print QR" button now opens this page in a new tab with
+  `?print=1` instead of calling `window.print()` on itself; the old broken
+  `visibility`/`position:absolute` print CSS block in `payment_settings.html` was removed
+  as dead code — the small `#wallQrBox` preview there stays, unchanged, for an on-screen
+  confirmation the QR looks right before printing. 6 new tests
+  (`WallQrPrintPageTest`). No migrations. 399 tests pass.
