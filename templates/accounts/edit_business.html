@@ -260,6 +260,32 @@
                 </div>
             </div>
 
+            <!-- ── Haki (Staff Fairness) Module ── -->
+            <div style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:10px;padding:1rem;margin:1.5rem 0 0;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+                    <div>
+                        <div style="color:#f0ece4;font-weight:600;font-size:.95rem;">🌟 Haki — Malipo na Utendaji wa Wafanyakazi</div>
+                        <div style="color:#b0b0b0;font-size:.8rem;margin-top:.2rem;">
+                            Inaonyesha mchango wa kila mfanyakazi (mauzo, madeni yaliyokusanywa) na historia ya mishahara — kwa wewe na kwa wafanyakazi wenyewe (Kazi Yangu).
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:.75rem;">
+                        <span id="haki-status-label" style="font-size:.82rem;color:{% if business.haki_enabled %}#4caf50{% else %}#555{% endif %};">
+                            {% if business.haki_enabled %}Imewashwa{% else %}Imezimwa{% endif %}
+                        </span>
+                        <button id="haki-toggle-btn" class="btn btn-sm"
+                                data-enabled="{% if business.haki_enabled %}1{% else %}0{% endif %}"
+                                style="background:{% if business.haki_enabled %}rgba(192,57,90,.15){% else %}rgba(76,175,80,.12){% endif %};border:1px solid {% if business.haki_enabled %}rgba(192,57,90,.4){% else %}rgba(76,175,80,.3){% endif %};color:{% if business.haki_enabled %}#c0395a{% else %}#4caf50{% endif %};"
+                                onclick="toggleHaki()">
+                            {% if business.haki_enabled %}Zima Haki{% else %}Washa Haki{% endif %}
+                        </button>
+                        {% if business.haki_enabled %}
+                        <a href="{% url 'staff_contribution_report' %}" class="btn btn-sm btn-gold">Nenda Haki →</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
             <!-- KRA / eTIMS section -->
             <div class="section-divider mt-3"><span>&#127981; {% trans 'KRA / eTIMS' %}</span></div>
             <div class="mb-3">
@@ -448,6 +474,24 @@
         var idemToken = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
         var body = new URLSearchParams({enable: enable, csrfmiddlewaretoken: '{{ csrf_token }}', idempotency_token: idemToken});
         fetch("{% url 'toggle_kitchen' %}", {method:'POST', body:body, headers:{'X-CSRFToken':'{{ csrf_token }}'}})
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+                btn.disabled = false;
+                if (d.ok) { location.reload(); }
+                else { alert(d.error||'Hitilafu.'); }
+            })
+            .catch(function(){ btn.disabled=false; alert('Hitilafu ya mtandao.'); });
+    };
+
+    /* ── Haki toggle ── */
+    window.toggleHaki = function() {
+        var btn  = document.getElementById('haki-toggle-btn');
+        var cur  = btn.getAttribute('data-enabled') === '1';
+        var enable = cur ? '0' : '1';
+        btn.disabled = true;
+        var idemToken = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+        var body = new URLSearchParams({enable: enable, csrfmiddlewaretoken: '{{ csrf_token }}', idempotency_token: idemToken});
+        fetch("{% url 'toggle_haki' %}", {method:'POST', body:body, headers:{'X-CSRFToken':'{{ csrf_token }}'}})
             .then(function(r){ return r.json(); })
             .then(function(d){
                 btn.disabled = false;

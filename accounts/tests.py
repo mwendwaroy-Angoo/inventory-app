@@ -140,3 +140,45 @@ class EditStaffUsernameTest(TestCase):
         self.staff.refresh_from_db()
         self.assertEqual(self.staff.username, 'dush')
         self.assertEqual(self.staff.last_name, 'Renamed')
+
+
+class ToggleHakiTest(TestCase):
+    """2026-07-25 live report: Roy could no longer see Haki anywhere in the app
+    (staff or owner side). Business.haki_enabled defaults to True and no
+    application code ever wrote to it — there was no owner-facing toggle to see
+    or correct its state if it were ever False. Mirrors core.tests.
+    ToggleKitchenIdempotencyTest's pattern for the equivalent has_kitchen toggle."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Toggle Haki Biz')
+        self.owner = User.objects.create_user(username='togglehaki_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='togglehaki_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.client.force_login(self.owner)
+
+    def test_defaults_to_enabled(self):
+        self.assertTrue(self.biz.haki_enabled)
+
+    def test_owner_can_disable_and_reenable(self):
+        resp = self.client.post('/business/toggle-haki/', {'enable': '0'})
+        self.assertTrue(resp.json()['ok'])
+        self.biz.refresh_from_db()
+        self.assertFalse(self.biz.haki_enabled)
+
+        resp2 = self.client.post('/business/toggle-haki/', {'enable': '1'})
+        self.assertTrue(resp2.json()['ok'])
+        self.biz.refresh_from_db()
+        self.assertTrue(self.biz.haki_enabled)
+
+    def test_staff_cannot_toggle(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/business/toggle-haki/', {'enable': '0'})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_duplicate_token_is_idempotent(self):
+        payload = {'enable': '0', 'idempotency_token': 'togglehaki-same-token'}
+        r1 = self.client.post('/business/toggle-haki/', payload)
+        r2 = self.client.post('/business/toggle-haki/', payload)
+        self.assertTrue(r1.json()['ok'])
+        self.assertTrue(r2.json().get('duplicate'))

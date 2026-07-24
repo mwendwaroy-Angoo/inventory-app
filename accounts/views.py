@@ -466,6 +466,40 @@ def edit_business(request):
     })
 
 
+@login_required
+@require_POST
+def toggle_haki(request):
+    """Enable/disable the Haki (staff fairness) module for this business.
+
+    2026-07-25 live report: Roy could no longer see Haki anywhere in the app
+    (staff or owner side). Traced Business.haki_enabled (accounts/models.py) —
+    it defaults to True and no application code anywhere ever writes to it, so
+    the only way it becomes False is a direct DB/admin change; there was no
+    owner-facing toggle to see or correct its state. Mirrors toggle_kitchen's
+    exact pattern (core/kitchen_views.py) so Haki has the same self-serve
+    on/off control every other optional module already has.
+    """
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not user_profile.is_owner:
+        return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
+
+    business = user_profile.business
+    enable = request.POST.get('enable') == '1'
+
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': True, 'haki_enabled': business.haki_enabled, 'duplicate': True})
+
+    business.haki_enabled = enable
+    business.save(update_fields=['haki_enabled'])
+    return JsonResponse({'ok': True, 'haki_enabled': enable})
+
+
 def _save_delivery_tiers(request, business):
     """Process delivery tier inline forms from POST data."""
     from .models import DeliveryTier

@@ -14,6 +14,7 @@ urlpatterns = [
     path('supplier/dashboard/', views.supplier_dashboard, name='supplier_dashboard'),
     path('supplier/clients/', views.supplier_clients, name='supplier_clients'),
     path('edit/', views.edit_business, name='edit_business'),
+    path('toggle-haki/', views.toggle_haki, name='toggle_haki'),
     path('payment-settings/', views.payment_settings, name='payment_settings'),
     path('staff/', views.staff_list, name='staff_list'),
     path('staff/add/', views.add_staff, name='add_staff'),
