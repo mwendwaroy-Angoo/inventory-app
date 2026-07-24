@@ -2085,3 +2085,41 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   not a reason captured under mid-service time pressure. 9 new tests
   (`EditKitchenBatchTargetTest`, `KitchenNavbarOwnerVisibilityTest`). No migrations. 510
   tests pass.
+- Fix: tab rename created a duplicate instead of reconciling (2026-07-25), live report.
+  Real scenario: staff opens a tab for "Roy"; later, during a busy moment, opens a SECOND
+  order for him without typing a name — the anonymous-tab path (2026-07-19) deliberately
+  always creates a brand-new tab in that case rather than guessing a name match, so this
+  correctly produces a second tab named "Tab #47". When she later corrects that name to
+  "Roy" via the tabs drawer's rename field, `update_tab_name()` (`core/keg_views.py`) used
+  to just blindly overwrite `customer_name` with zero check for a collision — leaving TWO
+  open "Roy" tabs side by side that never reconciled, exactly what Roy saw. Fixed:
+  `update_tab_name()` now searches for another OPEN tab with the same name (case-
+  insensitive, scoped to `_allowed_tab_sources(up)` — the same station-visibility scope
+  already used to fetch the tab being renamed, so a bar-only staffer's rename can never
+  silently pull in kitchen-only revenue they aren't allowed to see) and, if found, calls
+  new `_merge_tab_into(source_tab, target_tab)` instead of renaming in place. The merge is
+  a plain `BarTabEntry.tab_id` reassignment for every entry (same mechanism
+  `split_and_transfer_locked()` already uses) — no new `Transaction`, no envelope
+  `revenue_collected` touched, so total revenue and stock balances are provably unaffected
+  (locked in by a test summing entry amounts before/after). The now-empty source tab closes
+  as `VOID` with an explanatory `void_reason` ("Imeunganishwa na tab ya X (#N) — majina
+  yalifanana") — deliberately reusing the existing VOID status rather than a new one (no
+  schema change, and every existing `status='VOID'` reader already treats an empty-entries
+  tab as inert) while making clear in the reason text this was a reconciliation, not a real
+  cancellation, matching this app's wording/accountability standard. Any `PENDING`
+  `TabTransferRequest` referencing the tab being merged away — as EITHER `source_tab` or
+  `dest_tab` (the existing inverse-action safeguard, `_cancel_pending_transfers_for_tab`,
+  only ever covered `source_tab`, since void/convert-to-debt can't be a transfer
+  destination in practice; a merge target search can) — is auto-cancelled so no pending
+  split-bill request is left pointing at an entry that has silently moved tabs. An
+  unresolved "customer wants to pay cash" flag (`cash_requested_at`) carries across to the
+  target tab if it doesn't already have one — no money moved either way, so nothing to
+  reconcile there beyond keeping the flag visible. Tabs-drawer parity rule: all three
+  rename handlers (`saveTabName` bar_board.html, `qsSaveTabName` quick_sell.html,
+  `saveKbTabName` kitchen_board.html — all three POST the same shared
+  `/bar/tabs/<id>/rename/` endpoint) now show the merge confirmation message
+  (`d.message`) instead of the generic "✓ Jina limebadilishwa" when `d.merged` is true, so
+  staff isn't left wondering why an entry they just renamed vanished from the drawer under
+  its own card. 7 new tests (`TabRenameMergeTest`) — merge-vs-plain-rename, revenue
+  preservation, both transfer-cancellation directions, `cash_requested_at` carry-over, and
+  station-scoping. No migrations. 517 tests pass.

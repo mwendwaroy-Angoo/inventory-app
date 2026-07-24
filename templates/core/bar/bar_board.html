@@ -2785,7 +2785,9 @@
     post('/bar/tabs/' + tabId + '/rename/', {name: name})
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        if (d.ok) { showToast('✓ Jina limebadilishwa.'); window.loadTabs(); }
+        // A rename that collides with the customer's own existing open tab
+        // merges into it instead of leaving two duplicates — say so plainly.
+        if (d.ok) { showToast(d.merged ? d.message : '✓ Jina limebadilishwa.'); window.loadTabs(); }
         else showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
       })
       .catch(function () { showToast('Hitilafu ya mtandao.'); });

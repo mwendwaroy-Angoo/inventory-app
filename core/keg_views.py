@@ -81,6 +81,66 @@ def _cancel_pending_transfers_for_tab(tab):
             logger.exception('Failed to auto-cancel TabTransferRequest %s', tfr.id)
 
 
+def _merge_tab_into(source_tab, target_tab):
+    """Fold `source_tab`'s entries into `target_tab` and close the now-empty
+    source tab, instead of leaving two separately-open tabs for the same
+    customer.
+
+    2026-07-25 live report: a staffer opens a tab for "Roy", then later opens
+    a SECOND order for the same customer without typing a name (the busy-
+    counter anonymous-tab path, which always creates a brand-new tab rather
+    than guessing a name match) — producing a "Tab #47". When she later edits
+    that tab's name to "Roy" to correct it, the old rename logic just
+    overwrote the name in place, leaving two open "Roy" tabs side by side
+    that never reconciled. This is the fix: reassign every entry's tab_id
+    (same mechanism as BarTabEntry.split_and_transfer_locked() — a plain FK
+    move, no new Transaction, no envelope revenue_collected touched, so
+    total revenue and stock balances are unaffected) and close the empty
+    shell as VOID with an explanatory reason, not a real cancellation.
+    """
+    from django.db import transaction as _txn
+    with _txn.atomic():
+        source_tab = BarTab.objects.select_for_update().get(pk=source_tab.pk)
+        target_tab = BarTab.objects.select_for_update().get(pk=target_tab.pk)
+
+        # A pending split-transfer referencing an entry on the tab being
+        # merged away no longer makes sense once it closes — whether this
+        # tab was the source of a proposed transfer OR the destination of
+        # one (accept() would otherwise fail with a generic "tab lengwa
+        # haiko wazi tena" once this tab is VOID; cancelling here instead
+        # gives a clearer, immediate reason and no dangling pending badge).
+        for tfr in TabTransferRequest.objects.filter(
+            Q(source_tab=source_tab) | Q(dest_tab=source_tab), status='PENDING',
+        ):
+            try:
+                tfr.cancel()
+            except Exception:
+                logger.exception('Failed to auto-cancel TabTransferRequest %s during tab merge', tfr.id)
+
+        for entry in source_tab.entries.select_related('transaction'):
+            entry.tab = target_tab
+            entry.save(update_fields=['tab'])
+            if entry.transaction_id:
+                entry.transaction.recipient = target_tab.customer_name
+                entry.transaction.save(update_fields=['recipient'])
+
+        # No money has moved either way — carry an unresolved "customer wants
+        # to pay cash" flag across if the target tab doesn't already have one.
+        if source_tab.cash_requested_at and not target_tab.cash_requested_at:
+            target_tab.cash_requested_at = source_tab.cash_requested_at
+            target_tab.save(update_fields=['cash_requested_at'])
+
+        source_tab.status = 'VOID'
+        source_tab.settled_at = timezone.now()
+        source_tab.void_reason = (
+            f'Imeunganishwa na tab ya {target_tab.customer_name} (#{target_tab.id}) — majina yalifanana'
+        )[:120]
+        source_tab.cash_requested_at = None
+        source_tab.save(update_fields=['status', 'settled_at', 'void_reason', 'cash_requested_at'])
+
+    return target_tab
+
+
 # ── Board API ─────────────────────────────────────────────────────────────────
 
 @login_required
@@ -1168,7 +1228,15 @@ def tabs_list(request):
 @login_required
 @require_POST
 def update_tab_name(request, tab_id):
-    """Allow staff to rename the customer on an open tab (also updates linked Customer + Transaction.recipient)."""
+    """Allow staff to rename the customer on an open tab (also updates linked Customer + Transaction.recipient).
+
+    2026-07-25 live report: renaming a tab (e.g. correcting an anonymous
+    "Tab #47" fallback name to the real customer name) used to blindly
+    overwrite customer_name with no check for a collision — if that customer
+    already had a SEPARATE open tab, the drawer ended up showing two open
+    tabs for the same person that never reconciled. Now merges into the
+    pre-existing tab instead (see _merge_tab_into()).
+    """
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
@@ -1182,6 +1250,27 @@ def update_tab_name(request, tab_id):
         return JsonResponse({'ok': False, 'error': 'Jina haliwezi kuwa tupu.'}, status=400)
 
     old_name = tab.customer_name
+
+    # Search scoped to the same stations this staffer can already see (not a
+    # blanket cross-counter search) — a silent merge must never pull in
+    # revenue from a station this staffer isn't allowed to view.
+    existing = BarTab.objects.filter(
+        business=up.business, customer_name__iexact=new_name, status='OPEN',
+        source__in=_allowed_tab_sources(up),
+    ).exclude(id=tab.id).first()
+    if existing:
+        merged = _merge_tab_into(tab, existing)
+        return JsonResponse({
+            'ok': True,
+            'merged': True,
+            'customer_name': merged.customer_name,
+            'merged_into_tab_id': merged.id,
+            'message': (
+                f'{new_name} tayari alikuwa na tab wazi (#{merged.id}) — vitu vyote '
+                f'vimewekwa pamoja kwenye tab hiyo hiyo.'
+            ),
+        })
+
     tab.customer_name = new_name
     tab.save(update_fields=['customer_name'])
 

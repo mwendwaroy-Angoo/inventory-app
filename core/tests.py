@@ -4924,6 +4924,164 @@ class AnonymousBarTabTest(TestCase):
         self.assertEqual(len(names), 2, 'Each anonymous tab must get its own distinct fallback name')
 
 
+class TabRenameMergeTest(TestCase):
+    """2026-07-25 live report: renaming a tab (e.g. correcting an anonymous
+    "Tab #47" fallback name to "Roy") used to blindly overwrite
+    customer_name even when Roy already had a SEPARATE open tab — the
+    drawer then showed two open "Roy" tabs that never reconciled.
+    update_tab_name() now merges into the pre-existing tab instead."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Tab Rename Merge Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='trm_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_staff = User.objects.create_user(username='trm_barstaff', password='x')
+        UserProfile.objects.create(
+            user=self.bar_staff, business=self.biz, role='staff', can_access_kitchen=False,
+        )
+        Shift.objects.create(business=self.biz, staff=self.bar_staff, status='OPEN')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='TRM-01', unit='Pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('150'),
+        )
+
+    def _make_tab(self, name, amount, source='bar', store=None):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source=source,
+            store=store or self.store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Tusker', amount=amount, is_paid=False,
+        )
+        return tab, entry
+
+    def test_rename_to_existing_customer_name_merges_instead_of_duplicating(self):
+        roy_tab, roy_entry = self._make_tab('Roy', Decimal('250'))
+        anon_tab, anon_entry = self._make_tab(f'Tab #placeholder', Decimal('80'))
+        anon_tab.customer_name = f'Tab #{anon_tab.id}'
+        anon_tab.save(update_fields=['customer_name'])
+
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/tabs/{anon_tab.id}/rename/', {'name': 'Roy'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertTrue(data['merged'])
+        self.assertEqual(data['merged_into_tab_id'], roy_tab.id)
+
+        # Only ONE open tab named Roy must remain — the whole point of the fix.
+        open_roy_tabs = BarTab.objects.filter(business=self.biz, customer_name='Roy', status='OPEN')
+        self.assertEqual(open_roy_tabs.count(), 1)
+
+        anon_tab.refresh_from_db()
+        self.assertEqual(anon_tab.status, 'VOID')
+        self.assertIn('Roy', anon_tab.void_reason)
+        self.assertEqual(anon_tab.entries.count(), 0, 'All entries must have moved to the target tab')
+
+        anon_entry.refresh_from_db()
+        self.assertEqual(anon_entry.tab_id, roy_tab.id)
+        self.assertEqual(anon_entry.transaction.recipient, 'Roy')
+
+    def test_merge_preserves_total_revenue_no_double_count_no_loss(self):
+        roy_tab, roy_entry = self._make_tab('Roy', Decimal('250'))
+        anon_tab, anon_entry = self._make_tab('Tab #x', Decimal('80'))
+
+        self.client.force_login(self.bar_staff)
+        self.client.post(f'/bar/tabs/{anon_tab.id}/rename/', {'name': 'Roy'})
+
+        roy_tab.refresh_from_db()
+        total = sum(e.amount for e in roy_tab.entries.all())
+        self.assertEqual(total, Decimal('330'))
+
+    def test_rename_with_no_collision_still_works_as_plain_rename(self):
+        _tab, entry = self._make_tab('Tab #x', Decimal('80'))
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/tabs/{_tab.id}/rename/', {'name': 'Wanjiku'})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertNotIn('merged', data)
+        _tab.refresh_from_db()
+        self.assertEqual(_tab.customer_name, 'Wanjiku')
+        self.assertEqual(_tab.status, 'OPEN')
+
+    def test_merge_cancels_pending_transfer_where_merged_tab_was_source(self):
+        roy_tab, _roy_entry = self._make_tab('Roy', Decimal('250'))
+        anon_tab, anon_entry = self._make_tab('Tab #x', Decimal('200'))
+        other_tab, _other_entry = self._make_tab('Bosco', Decimal('50'))
+
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=anon_entry.id, business=self.biz, paid_amount=Decimal('100'),
+            paid_method='cash', dest_tab_id=other_tab.id, staff_user=self.bar_staff,
+        )
+        self.assertEqual(tfr.status, 'PENDING')
+
+        self.client.force_login(self.bar_staff)
+        self.client.post(f'/bar/tabs/{anon_tab.id}/rename/', {'name': 'Roy'})
+
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.status, 'CANCELLED')
+
+    def test_merge_cancels_pending_transfer_where_merged_tab_was_destination(self):
+        roy_tab, _roy_entry = self._make_tab('Roy', Decimal('250'))
+        anon_tab, _anon_entry = self._make_tab('Tab #x', Decimal('80'))
+        source_tab, source_entry = self._make_tab('Bosco', Decimal('600'))
+
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=source_entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=anon_tab.id, staff_user=self.bar_staff,
+        )
+        self.assertEqual(tfr.status, 'PENDING')
+        self.assertEqual(tfr.dest_tab_id, anon_tab.id)
+
+        self.client.force_login(self.bar_staff)
+        self.client.post(f'/bar/tabs/{anon_tab.id}/rename/', {'name': 'Roy'})
+
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.status, 'CANCELLED')
+
+    def test_cash_requested_flag_carries_over_if_target_has_none(self):
+        roy_tab, _roy_entry = self._make_tab('Roy', Decimal('250'))
+        anon_tab, _anon_entry = self._make_tab('Tab #x', Decimal('80'))
+        requested_at = timezone.now()
+        anon_tab.cash_requested_at = requested_at
+        anon_tab.save(update_fields=['cash_requested_at'])
+
+        self.client.force_login(self.bar_staff)
+        self.client.post(f'/bar/tabs/{anon_tab.id}/rename/', {'name': 'Roy'})
+
+        roy_tab.refresh_from_db()
+        self.assertIsNotNone(roy_tab.cash_requested_at)
+
+    def test_merge_search_respects_station_scoping(self):
+        # A bar-only staffer (no can_access_kitchen) must not have a rename
+        # silently merge into a kitchen-only tab they can't even see —
+        # _allowed_tab_sources() already scopes which tab they can fetch;
+        # the merge-target search must use the same scope.
+        kitchen_roy_tab, _kentry = self._make_tab('Roy', Decimal('300'), source='kitchen', store=self.kitchen_store)
+        anon_tab, _anon_entry = self._make_tab('Tab #x', Decimal('80'), source='bar')
+
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/tabs/{anon_tab.id}/rename/', {'name': 'Roy'})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertNotIn('merged', data, 'Bar-only staff must not silently merge into a kitchen-only tab')
+        anon_tab.refresh_from_db()
+        self.assertEqual(anon_tab.customer_name, 'Roy')
+        self.assertEqual(anon_tab.status, 'OPEN')
+        # The kitchen tab is untouched — still its own separate open tab.
+        kitchen_roy_tab.refresh_from_db()
+        self.assertEqual(kitchen_roy_tab.status, 'OPEN')
+
+
 class AnonymousKitchenTabTest(TestCase):
     def setUp(self):
         self.biz = Business.objects.create(name='Anon Kitchen Biz', has_kitchen=True)

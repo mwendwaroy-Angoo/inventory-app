@@ -2801,7 +2801,9 @@
         fetch('/bar/tabs/' + tabId + '/rename/', {method: 'POST', credentials: 'same-origin', body: fd})
             .then(function (r) { return r.json(); })
             .then(function (d) {
-                if (d.ok) { qsShowToast('✓ Jina limebadilishwa.'); qsLoadTabs(); }
+                // A rename that collides with the customer's own existing open
+                // tab merges into it instead of leaving two duplicates — say so.
+                if (d.ok) { qsShowToast(d.merged ? d.message : '✓ Jina limebadilishwa.'); qsLoadTabs(); }
                 else qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
             })
             .catch(function () { qsShowToast('Hitilafu ya mtandao.'); });
