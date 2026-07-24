@@ -102,6 +102,20 @@ def review_petty_cash(request, entry_id):
     if action not in ('approve', 'reject'):
         return JsonResponse({'ok': False, 'error': 'Invalid action'}, status=400)
 
+    # 2026-07-25 (live report — Roy rejected an entry by mistake and had no way
+    # to undo it): re-reviewing an already-reviewed entry is allowed on purpose
+    # — this is the fix. bar_z_report's shift reconciliation reads
+    # PettyCash.status='approved' LIVE on every render (core/keg_views.py) and
+    # nothing else in the app stores/caches an approved-petty-cash total
+    # anywhere, so flipping the status back is the entire correction — no
+    # separate reconciliation step is needed once this save commits.
+    previous_status = entry.status
+    previous_reviewer = entry.reviewed_by
+    previous_when = entry.reviewed_at
+    is_reversal = previous_status in ('approved', 'rejected') and previous_status != (
+        'approved' if action == 'approve' else 'rejected'
+    )
+
     entry.status = 'approved' if action == 'approve' else 'rejected'
     entry.reviewed_by = request.user
     entry.reviewed_at = timezone.now()
@@ -114,14 +128,22 @@ def review_petty_cash(request, entry_id):
     # was approved or rejected except by checking the list themselves.
     reviewer_label = request.user.get_full_name() or request.user.username
     when = timezone.localtime(entry.reviewed_at).strftime('%d %b %Y, %H:%M')
-    if action == 'approve':
+    verb = 'imekubaliwa' if action == 'approve' else 'imekataliwa'
+
+    if is_reversal:
+        prev_verb = 'ilikubaliwa' if previous_status == 'approved' else 'ilikataliwa'
+        prev_reviewer_label = (
+            previous_reviewer.get_full_name() or previous_reviewer.username
+        ) if previous_reviewer else 'mtu asiyejulikana'
+        prev_when = timezone.localtime(previous_when).strftime('%d %b %Y, %H:%M') if previous_when else '—'
         message = (
-            f'KES {entry.amount:,.0f} ({entry.get_reason_display()}) imekubaliwa na '
+            f'MAREKEBISHO: KES {entry.amount:,.0f} ({entry.get_reason_display()}) '
+            f'{prev_verb} na {prev_reviewer_label} tarehe {prev_when} — sasa {verb} na '
             f'{reviewer_label} tarehe {when}.'
         )
     else:
         message = (
-            f'KES {entry.amount:,.0f} ({entry.get_reason_display()}) imekataliwa na '
+            f'KES {entry.amount:,.0f} ({entry.get_reason_display()}) {verb} na '
             f'{reviewer_label} tarehe {when}.'
         )
     if review_note:
@@ -129,11 +151,17 @@ def review_petty_cash(request, entry_id):
 
     if entry.recorded_by_id and entry.recorded_by_id != request.user.id:
         from .models import Notification
+        if is_reversal:
+            title = '↺ Petty Cash — Uamuzi Umebadilishwa'
+        else:
+            title = '✅ Petty Cash Imekubaliwa' if action == 'approve' else '❌ Petty Cash Imekataliwa'
         Notification.objects.create(
             user=entry.recorded_by,
-            title=('✅ Petty Cash Imekubaliwa' if action == 'approve' else '❌ Petty Cash Imekataliwa'),
+            title=title,
             message=message,
             notification_type=('info' if action == 'approve' else 'warning'),
         )
 
-    return JsonResponse({'ok': True, 'new_status': entry.status, 'message': message})
+    return JsonResponse({
+        'ok': True, 'new_status': entry.status, 'message': message, 'is_reversal': is_reversal,
+    })

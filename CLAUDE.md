@@ -2021,3 +2021,30 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   Slice 4 — backfill affordances for existing blank-reason records + reason-breakdown
   additions to `voided_tabs_list`, `daily_summary.html`, Expense Intelligence,
   `performer_list.html`, `bar_shrinkage_report`.
+- Fix: petty cash review had no undo (2026-07-25), live report: Roy tapped "Kataa" on a
+  petty cash entry by mistake and had no way to reverse it. Root cause was UI-only —
+  `review_petty_cash()` (`core/petty_cash_views.py`) never actually blocked re-reviewing an
+  already-reviewed entry, but `petty_cash_list.html` only ever rendered the Kubali/Kataa
+  buttons `{% if entry.status == 'pending' %}` and JS's `_pcApplyResult` permanently
+  `.remove()`d the actions div after the first review — the undo path existed server-side
+  and was simply never exposed. Fix is UI-only plus a wording upgrade, no schema change:
+  `.pc-actions` now always renders (hidden via inline `style="display:none"` when not
+  pending) instead of being conditionally rendered/removed; a "↺ Badilisha uamuzi"
+  (reconsider) toggle appears on any reviewed entry — owner-only, since the whole page
+  already is — revealing the same Kubali/Kataa buttons to correct a decision, any number
+  of times, not just once. `review_petty_cash()` now detects when a re-review actually
+  flips the decision (`is_reversal`) vs. just edits the note on an unchanged decision, and
+  the flipped case gets an explicit "MAREKEBISHO: ... ilikataliwa na X tarehe Y — sasa
+  imekubaliwa na Z tarehe W" message (naming both the original AND the corrected decision,
+  per this app's wording/accountability standard) instead of reading like a fresh,
+  unrelated approval; the recorder's notification title changes to "↺ Uamuzi Umebadilishwa"
+  for a reversal so they don't mistake it for a second independent review. Confirmed via a
+  live-query trace (not assumed) that no separate reconciliation step is needed once the
+  status flips back: `bar_z_report`'s shift reconciliation (`core/keg_views.py`) is the only
+  other consumer of `PettyCash.status` anywhere in the app, reads `status='approved'` live
+  on every render with nothing cached/frozen, and `shift_views.py`'s shift-close/reconcile
+  path doesn't reference `PettyCash` at all — so correcting the status is the entire fix,
+  which a new end-to-end test locks in by walking approve → mistaken-reject → re-approve
+  and asserting the Z-report's petty-cash deduction for that shift disappears and reappears
+  live at each step with no other action taken. 5 new tests (`PettyCashReviewUndoTest`). No
+  migrations. 501 tests pass.

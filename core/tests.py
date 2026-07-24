@@ -8772,6 +8772,103 @@ class PettyCashReviewMessageTest(TestCase):
         self.assertEqual(before, after)
 
 
+class PettyCashReviewUndoTest(TestCase):
+    """2026-07-25 live report: Roy rejected a petty cash entry by mistake and had
+    no way to reverse it. review_petty_cash() never actually blocked re-review —
+    the UI just never exposed it after the first decision. Locks in that a
+    mistaken decision can be corrected, is clearly flagged as a correction
+    ("MAREKEBISHO"), and that the Z-report reconciliation — which reads
+    PettyCash.status='approved' live, with nothing cached anywhere — reflects
+    the corrected status automatically with no separate reconciliation step."""
+
+    def setUp(self):
+        from core.models import PettyCash
+        self.PettyCash = PettyCash
+
+        self.biz = Business.objects.create(name='PC Undo Biz')
+        self.owner = User.objects.create_user(username='pcundo_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='pcundo_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+        self.entry = PettyCash.objects.create(
+            business=self.biz, amount=Decimal('300'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner)
+
+    def test_mistaken_reject_can_be_reversed_to_approve(self):
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'reject'})
+        self.entry.refresh_from_db()
+        self.assertEqual(self.entry.status, 'rejected')
+
+        resp = self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertTrue(data['is_reversal'])
+        self.assertIn('MAREKEBISHO', data['message'])
+        self.entry.refresh_from_db()
+        self.assertEqual(self.entry.status, 'approved')
+
+    def test_reversal_notifies_recorder_with_correction_title(self):
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'reject'})
+        Notification.objects.filter(user=self.staff).delete()  # isolate the reversal notification
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Umebadilishwa').first()
+        self.assertIsNotNone(notif, 'Recorder must be told their entry\'s decision was corrected, not just re-approved')
+
+    def test_re_review_with_same_action_is_not_flagged_a_reversal(self):
+        # Editing the note on an already-rejected entry (without flipping the
+        # decision) is not a correction — must not say MAREKEBISHO.
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'reject', 'review_note': 'Hakuna risiti'})
+        resp = self.client.post(f'/petty-cash/{self.entry.id}/review/', {
+            'action': 'reject', 'review_note': 'Kiasi hakiendani na madai',
+        })
+        data = resp.json()
+        self.assertFalse(data['is_reversal'])
+        self.assertNotIn('MAREKEBISHO', data['message'])
+
+    def test_first_time_review_is_not_flagged_a_reversal(self):
+        resp = self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+        self.assertFalse(resp.json()['is_reversal'])
+
+    def test_zreport_reconciliation_self_corrects_after_reversal(self):
+        # This is the exact real-world consequence of a mistaken reject: an
+        # approved petty-cash amount is subtracted from expected drawer cash
+        # in the Z-report; a wrongly-rejected entry silently drops that
+        # deduction, making the shift look short by that amount.
+        from core.models import Shift
+        store = Store.objects.create(business=self.biz, name='Bar')
+        shift = Shift.objects.create(
+            business=self.biz, staff=self.owner, store=store,
+            started_at=timezone.now() - timezone.timedelta(hours=2),
+            opening_float=Decimal('1000'), status='OPEN',
+        )
+        self.entry.created_at = shift.started_at + timezone.timedelta(minutes=5)
+        self.entry.save(update_fields=['created_at'])
+
+        def _petty_total_for_shift():
+            resp = self.client.get('/bar/z-report/')
+            for row in resp.context['shift_rows']:
+                if row['shift'].id == shift.id:
+                    return row['petty_cash']
+            return None
+
+        # Not yet reviewed — not counted.
+        self.assertEqual(_petty_total_for_shift(), 0.0)
+
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+        self.assertEqual(_petty_total_for_shift(), 300.0)
+
+        # Mistaken reject — the report immediately stops counting it, live.
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'reject'})
+        self.assertEqual(_petty_total_for_shift(), 0.0)
+
+        # Correction — re-approve; the report picks it back up with no other action needed.
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+        self.assertEqual(_petty_total_for_shift(), 300.0)
+
+
 class StockVarianceReviewWordingTest(TestCase):
     """2026-07-24 wording/accountability audit: review_variance()'s accept/dismiss
     messages named neither who acted nor when, and 'accept' — unlike 'dismiss' —

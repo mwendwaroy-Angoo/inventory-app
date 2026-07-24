@@ -102,13 +102,19 @@
     <span class="pc-badge {{ entry.status }}">
       {% if entry.status == 'pending' %}⏳ Inasubiri{% elif entry.status == 'approved' %}✓ Imekubaliwa{% else %}✕ Imekataliwa{% endif %}
     </span>
-    {% if entry.status == 'pending' %}
-    <div class="pc-actions">
+    <div class="pc-actions"{% if entry.status != 'pending' %} style="display:none;"{% endif %}>
       <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
               onclick="reviewEntry({{ entry.id }}, 'approve')">✓ Kubali</button>
       <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
               onclick="reviewEntry({{ entry.id }}, 'reject', this)">✕ Kataa</button>
     </div>
+    {% if entry.status != 'pending' %}
+    <!-- 2026-07-25: undo affordance — Roy tapped Kataa by mistake with no way
+         to reverse it. review_petty_cash() has always allowed re-review of an
+         already-reviewed entry; this just exposes it in the UI. -->
+    <button type="button" class="btn btn-sm pc-reconsider-btn"
+            style="background:transparent;border:1px dashed #555;color:#999;font-size:.7rem;padding:.15rem .5rem;"
+            onclick="toggleReconsider(this)">↺ Badilisha uamuzi</button>
     {% endif %}
   </div>
 </div>
@@ -242,8 +248,18 @@ window.reviewEntry = function(entryId, action, anchorEl) {
   new bootstrap.Modal(document.getElementById('pcReviewModal')).show();
 };
 
+window.toggleReconsider = function(btn) {
+  var actions = btn.parentElement.querySelector('.pc-actions');
+  if (!actions) return;
+  var showing = actions.style.display !== 'none';
+  actions.style.display = showing ? 'none' : 'flex';
+  btn.textContent = showing ? '↺ Badilisha uamuzi' : '✕ Ghairi';
+};
+
 function _pcApplyResult(entryId, d) {
-  // Update badge + reviewed-by line in page without reload
+  // Update badge + reviewed-by line in page without reload. Actions are
+  // hidden (not removed) and a "↺ Badilisha uamuzi" toggle is kept/added so
+  // a mistaken decision can always be corrected again, not just once.
   var card = document.getElementById('pc-entry-' + entryId);
   if (card) {
     var badge = card.querySelector('.pc-badge');
@@ -252,14 +268,32 @@ function _pcApplyResult(entryId, d) {
       badge.className = 'pc-badge ' + d.new_status;
       badge.textContent = d.new_status === 'approved' ? '✓ Imekubaliwa' : '✕ Imekataliwa';
     }
-    if (actions) actions.remove();
+    if (actions) {
+      actions.style.display = 'none';
+      var col = actions.parentElement;
+      var reconsiderBtn = col.querySelector('.pc-reconsider-btn');
+      if (!reconsiderBtn) {
+        reconsiderBtn = document.createElement('button');
+        reconsiderBtn.type = 'button';
+        reconsiderBtn.className = 'btn btn-sm pc-reconsider-btn';
+        reconsiderBtn.style.cssText = 'background:transparent;border:1px dashed #555;color:#999;font-size:.7rem;padding:.15rem .5rem;';
+        reconsiderBtn.onclick = function () { toggleReconsider(reconsiderBtn); };
+        col.appendChild(reconsiderBtn);
+      }
+      reconsiderBtn.textContent = '↺ Badilisha uamuzi';
+    }
     var infoBlock = card.querySelector('div[style*="min-width:160px"]');
-    if (infoBlock && !infoBlock.querySelector('.pc-reviewed-line')) {
-      var line = document.createElement('div');
-      line.className = 'pc-reviewed-line';
-      line.style.cssText = 'color:#555; font-size:.75rem; margin-top:.15rem;';
+    if (infoBlock) {
+      var line = infoBlock.querySelector('.pc-reviewed-line');
+      if (!line) {
+        line = document.createElement('div');
+        line.className = 'pc-reviewed-line';
+        line.style.cssText = 'color:#555; font-size:.75rem; margin-top:.15rem;';
+        infoBlock.appendChild(line);
+      }
+      // Always overwrite (not just set-once) — a correction must replace the
+      // stale "who reviewed it" line, not leave the original decision showing.
       line.textContent = d.message;
-      infoBlock.appendChild(line);
     }
   }
   // Confirmation of exactly what was recorded, per the accountability
