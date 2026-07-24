@@ -1992,3 +1992,32 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`KitchenWastageExplainsItselfTest`). No migrations — every flow's `reason`/`note`
   field already existed; this sprint is a frontend UX change plus the two backend fixes
   above. 491 tests pass.
+- Quick-reason chips, remaining flows (2026-07-25): stock variance dismiss + petty cash
+  reject. `StockVarianceQuery.owner_note` (migration 0117, additive) — `review_variance()`
+  (`core/stock_take_views.py`) already read `owner_response_note` from POST on the accept
+  branch for the corrective-transaction `recipient` text, but never persisted it as its
+  own field for later display; dismiss never captured a note at all. Both branches now
+  save it to `owner_note` and echo it back in the JSON `message`; `dismiss` specifically
+  gets a 2-chip set (`'Hesabu ya awali ilikuwa sahihi'`, `'Maelezo hayakubaliki'`) via
+  `openReasonChips` in `stock_variances_pending.html`, wired through a new
+  `_submitReviewVariance(varId, action, note)` helper — `accept` keeps its existing
+  owner-response-type flow untouched, only `dismiss` was blocking on free text before.
+  `stock_variances_pending.html` gained its own copy of the `openReasonChips` component
+  (this app's established per-template copy-paste convention, no shared JS bundle) and a
+  `{% if v.owner_note %}` display line in the resolved-variances list. Petty cash reject
+  (`petty_cash_list.html`) — same pattern: `reviewEntry()` now branches on `action`;
+  `'approve'` keeps the existing shared `pcReviewModal` free-text flow unchanged,
+  `'reject'` bypasses the modal entirely and opens `openReasonChips` with
+  (`'Hakuna risiti'`, `'Kiasi hakiendani na madai'`), submitting via a new
+  `_submitPettyCashReview()` helper straight to the same `/petty-cash/<id>/review/`
+  endpoint — no backend change needed there, since it already accepted `review_note` from
+  any POST regardless of which UI produced it. Both templates' reject/dismiss buttons now
+  pass `this` as the popover's anchor element. 6 new tests
+  (`StockVarianceReviewWordingTest` +3, `PettyCashReviewMessageTest` +2 — including a
+  skip-leaves-note-blank case for each, matching this feature's never-block contract). No
+  new migrations beyond 0117. This completes Feature 1's originally-scoped flow list —
+  every reject/cancel/discard/dismiss surface identified now offers reason chips over a
+  blocking free-text prompt. 496 tests pass. Next (deferred, not started this session):
+  Slice 4 — backfill affordances for existing blank-reason records + reason-breakdown
+  additions to `voided_tabs_list`, `daily_summary.html`, Expense Intelligence,
+  `performer_list.html`, `bar_shrinkage_report`.

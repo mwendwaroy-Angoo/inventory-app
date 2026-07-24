@@ -3655,6 +3655,11 @@ class StockVarianceQuery(models.Model):
     owner_action_by   = models.ForeignKey('auth.User', on_delete=models.SET_NULL,
                                            null=True, blank=True, related_name='variance_reviews')
     owner_acted_at    = models.DateTimeField(null=True, blank=True)
+    # 2026-07-25 (reason-chips redesign): the owner's OWN note at review time —
+    # distinct from response_note (the staffer's explanation). Previously only
+    # baked into the corrective Transaction.recipient on 'accept' (and lost
+    # entirely on 'dismiss', which had no note capture in either JS or backend).
+    owner_note        = models.CharField(max_length=300, blank=True)
 
     corrective_txn    = models.ForeignKey('Transaction', on_delete=models.SET_NULL,
                                            null=True, blank=True, related_name='variance_correction')

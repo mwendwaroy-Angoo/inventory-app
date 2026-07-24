@@ -450,10 +450,11 @@ def review_variance(request, var_id):
         svq.owner_action_by = request.user
         svq.owner_acted_at  = timezone.now()
         svq.corrective_txn  = corrective_txn
+        svq.owner_note      = _owner_note
         svq.status          = StockVarianceQuery.RESOLVED
         svq.save(update_fields=[
             'owner_accepted', 'owner_action_by', 'owner_acted_at',
-            'corrective_txn', 'status',
+            'corrective_txn', 'owner_note', 'status',
         ])
 
         # 2026-07-24 wording/accountability audit: neither branch named who acted
@@ -480,14 +481,17 @@ def review_variance(request, var_id):
         return JsonResponse({'ok': True, 'message': msg})
 
     elif action == 'dismiss':
+        _dismiss_note = request.POST.get('owner_response_note', '').strip()
+
         svq.owner_accepted   = False
         svq.owner_action_by  = request.user
         svq.owner_acted_at   = timezone.now()
         svq.compliance_noted = True
+        svq.owner_note       = _dismiss_note
         svq.status           = StockVarianceQuery.RESOLVED
         svq.save(update_fields=[
             'owner_accepted', 'owner_action_by', 'owner_acted_at',
-            'compliance_noted', 'status',
+            'compliance_noted', 'owner_note', 'status',
         ])
 
         reviewer_name = request.user.get_full_name() or request.user.username
@@ -495,18 +499,23 @@ def review_variance(request, var_id):
 
         # Notify staff
         if svq.queried_staff:
+            staff_msg = (
+                f"Mmiliki {reviewer_name} amekataa maelezo yako ya tofauti ya "
+                f"{svq.item_name_cache} tarehe {when}. Imerekodiwa kwenye rekodi yako ya utendaji."
+            )
+            if _dismiss_note:
+                staff_msg += f' Sababu: {_dismiss_note}'
             create_in_app_notification(
                 svq.queried_staff.user,
                 f"⚠️ Tofauti Imekataliwa: {svq.item_name_cache}",
-                f"Mmiliki {reviewer_name} amekataa maelezo yako ya tofauti ya "
-                f"{svq.item_name_cache} tarehe {when}. Imerekodiwa kwenye rekodi yako ya utendaji.",
+                staff_msg,
                 notification_type='warning',
             )
 
-        return JsonResponse({
-            'ok': True,
-            'message': f'Imekataliwa na {reviewer_name} tarehe {when} — imerekodiwa kwenye rekodi ya utendaji.',
-        })
+        dismiss_msg = f'Imekataliwa na {reviewer_name} tarehe {when} — imerekodiwa kwenye rekodi ya utendaji.'
+        if _dismiss_note:
+            dismiss_msg += f' Sababu: {_dismiss_note}'
+        return JsonResponse({'ok': True, 'message': dismiss_msg})
 
     return JsonResponse({'ok': False, 'error': 'Invalid action.'})
 

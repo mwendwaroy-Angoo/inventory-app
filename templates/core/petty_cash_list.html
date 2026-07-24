@@ -26,6 +26,29 @@
   transition:transform .25s ease; text-align:center;
 }
 #pc-toast.show { transform:translateX(-50%) translateY(0); }
+
+/* ── Reason Chips popover (2026-07-25) ── */
+.rc-popover {
+  position: absolute; z-index: 3000; background: #222; border: 1px solid #444;
+  border-radius: 10px; padding: .6rem; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+  max-width: 280px; font-size: .8rem;
+}
+.rc-title { color: #c9a84c; font-weight: 600; margin-bottom: .4rem; }
+.rc-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .5rem; }
+.rc-chip {
+  background: rgba(201,168,76,.1); border: 1px solid rgba(201,168,76,.3); color: #e2c36e;
+  border-radius: 20px; padding: .35rem .7rem; font-size: .78rem; cursor: pointer; white-space: nowrap;
+}
+.rc-chip:hover { background: rgba(201,168,76,.2); }
+.rc-chip-other { background: rgba(255,255,255,.05); border-color: #555; color: #ccc; }
+.rc-other-row { display: flex; gap: .3rem; margin-bottom: .5rem; }
+.rc-other-input {
+  flex: 1; min-width: 0; background: #111; border: 1px solid #444; border-radius: 6px;
+  color: #f0ece4; padding: .3rem .5rem; font-size: .78rem;
+}
+.rc-other-send { background: #c9a84c; border: none; border-radius: 6px; color: #111; padding: .3rem .6rem; font-size: .78rem; cursor: pointer; }
+.rc-skip { display: block; width: 100%; background: transparent; border: 1px dashed #444; color: #888; border-radius: 6px; padding: .3rem; font-size: .74rem; cursor: pointer; }
+.rc-skip:hover { color: #aaa; border-color: #666; }
 </style>
 {% endblock %}
 
@@ -84,7 +107,7 @@
       <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
               onclick="reviewEntry({{ entry.id }}, 'approve')">✓ Kubali</button>
       <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
-              onclick="reviewEntry({{ entry.id }}, 'reject')">✕ Kataa</button>
+              onclick="reviewEntry({{ entry.id }}, 'reject', this)">✕ Kataa</button>
     </div>
     {% endif %}
   </div>
@@ -120,6 +143,77 @@
 var _pendingAction = null;
 var _pendingId = null;
 
+/* ── Reason Chips popover (2026-07-25) — shared non-blocking reason-capture
+   component, copy-pasted per template since there's no shared JS bundle in
+   this app — same convention as showModal/hideModal above). */
+(function () {
+  var _rcPopover = null, _rcOnSelect = null;
+  function _rcClose() {
+    if (_rcPopover) { _rcPopover.remove(); _rcPopover = null; }
+    document.removeEventListener('mousedown', _rcOutsideClick, true);
+  }
+  function _rcOutsideClick(e) {
+    if (_rcPopover && !_rcPopover.contains(e.target)) {
+      var cb = _rcOnSelect; _rcClose();
+      if (cb) cb('');
+    }
+  }
+  window.openReasonChips = function (opts) {
+    _rcClose();
+    _rcOnSelect = opts.onSelect || function () {};
+    var chips = opts.chips || [];
+    var pop = document.createElement('div');
+    pop.className = 'rc-popover';
+    var html = '<div class="rc-title">' + (opts.title || 'Sababu') + '</div><div class="rc-chips">';
+    chips.forEach(function (c, i) {
+      html += '<button type="button" class="rc-chip" data-i="' + i + '">' + c + '</button>';
+    });
+    html += '<button type="button" class="rc-chip rc-chip-other">' + (opts.otherLabel || 'Nyingine…') + '</button></div>' +
+      '<div class="rc-other-row" style="display:none;">' +
+      '<input type="text" class="rc-other-input" maxlength="200">' +
+      '<button type="button" class="rc-other-send">Tuma</button></div>' +
+      '<button type="button" class="rc-skip">' + (opts.skipLabel || 'Ruka — bila sababu') + '</button>';
+    pop.innerHTML = html;
+    document.body.appendChild(pop);
+    _rcPopover = pop;
+
+    if (opts.anchorEl) {
+      var r = opts.anchorEl.getBoundingClientRect();
+      var top = r.bottom + window.scrollY + 6;
+      var left = r.left + window.scrollX;
+      var maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 10;
+      pop.style.top = top + 'px';
+      pop.style.left = Math.max(10, Math.min(left, maxLeft)) + 'px';
+    } else {
+      pop.style.top = '40%';
+      pop.style.left = '50%';
+      pop.style.transform = 'translate(-50%, -50%)';
+    }
+
+    pop.querySelectorAll('.rc-chip:not(.rc-chip-other)').forEach(function (btn) {
+      btn.onclick = function () {
+        var text = chips[parseInt(btn.dataset.i, 10)];
+        var cb = _rcOnSelect; _rcClose(); cb(text);
+      };
+    });
+    pop.querySelector('.rc-chip-other').onclick = function () {
+      pop.querySelector('.rc-other-row').style.display = 'flex';
+      pop.querySelector('.rc-other-input').focus();
+    };
+    pop.querySelector('.rc-other-send').onclick = function () {
+      var text = pop.querySelector('.rc-other-input').value.trim();
+      var cb = _rcOnSelect; _rcClose(); cb(text);
+    };
+    pop.querySelector('.rc-other-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); pop.querySelector('.rc-other-send').click(); }
+    });
+    pop.querySelector('.rc-skip').onclick = function () {
+      var cb = _rcOnSelect; _rcClose(); cb('');
+    };
+    setTimeout(function () { document.addEventListener('mousedown', _rcOutsideClick, true); }, 0);
+  };
+})();
+
 function pcShowToast(msg) {
   var el = document.getElementById('pc-toast');
   if (!el) { alert(msg); return; }
@@ -129,14 +223,68 @@ function pcShowToast(msg) {
   window._pcToastTimer = setTimeout(function () { el.classList.remove('show'); }, 5000);
 }
 
-window.reviewEntry = function(entryId, action) {
+window.reviewEntry = function(entryId, action, anchorEl) {
+  if (action === 'reject') {
+    // Reject is the counter-slowing case this whole component exists for —
+    // a quick tap instead of typing a free-text reason mid-service.
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kwa nini umekataa?',
+      chips: ['Hakuna risiti', 'Kiasi hakiendani na madai'],
+      onSelect: function (reason) { _submitPettyCashReview(entryId, 'reject', reason); },
+    });
+    return;
+  }
   _pendingAction = action;
   _pendingId = entryId;
-  var title = action === 'approve' ? '✓ Kubali' : '✕ Kataa';
-  document.getElementById('pcReviewTitle').textContent = title;
+  document.getElementById('pcReviewTitle').textContent = '✓ Kubali';
   document.getElementById('pc-review-note').value = '';
   new bootstrap.Modal(document.getElementById('pcReviewModal')).show();
 };
+
+function _pcApplyResult(entryId, d) {
+  // Update badge + reviewed-by line in page without reload
+  var card = document.getElementById('pc-entry-' + entryId);
+  if (card) {
+    var badge = card.querySelector('.pc-badge');
+    var actions = card.querySelector('.pc-actions');
+    if (badge) {
+      badge.className = 'pc-badge ' + d.new_status;
+      badge.textContent = d.new_status === 'approved' ? '✓ Imekubaliwa' : '✕ Imekataliwa';
+    }
+    if (actions) actions.remove();
+    var infoBlock = card.querySelector('div[style*="min-width:160px"]');
+    if (infoBlock && !infoBlock.querySelector('.pc-reviewed-line')) {
+      var line = document.createElement('div');
+      line.className = 'pc-reviewed-line';
+      line.style.cssText = 'color:#555; font-size:.75rem; margin-top:.15rem;';
+      line.textContent = d.message;
+      infoBlock.appendChild(line);
+    }
+  }
+  // Confirmation of exactly what was recorded, per the accountability
+  // standard — the reviewer should see the same reasoning trail that
+  // just got sent to the staffer who logged the entry.
+  pcShowToast(d.message || 'Imehifadhiwa.');
+}
+
+function _submitPettyCashReview(entryId, action, note) {
+  var body = new URLSearchParams({
+    action: action,
+    review_note: note || '',
+    csrfmiddlewaretoken: '{{ csrf_token }}',
+  });
+  fetch('/petty-cash/' + entryId + '/review/', {
+    method: 'POST', body: body,
+    headers: {'X-CSRFToken': '{{ csrf_token }}'}
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) { _pcApplyResult(entryId, d); }
+      else { alert(d.error || 'Hitilafu.'); }
+    })
+    .catch(function(){ alert('Hitilafu ya mtandao.'); });
+}
 
 document.getElementById('pc-review-confirm-btn').addEventListener('click', function() {
   if (!_pendingId || !_pendingAction) return;
@@ -159,29 +307,7 @@ document.getElementById('pc-review-confirm-btn').addEventListener('click', funct
       if (d.ok) {
         var m = bootstrap.Modal.getInstance(document.getElementById('pcReviewModal'));
         if (m) m.hide();
-        // Update badge + reviewed-by line in page without reload
-        var card = document.getElementById('pc-entry-' + _pendingId);
-        if (card) {
-          var badge = card.querySelector('.pc-badge');
-          var actions = card.querySelector('.pc-actions');
-          if (badge) {
-            badge.className = 'pc-badge ' + d.new_status;
-            badge.textContent = d.new_status === 'approved' ? '✓ Imekubaliwa' : '✕ Imekataliwa';
-          }
-          if (actions) actions.remove();
-          var infoBlock = card.querySelector('div[style*="min-width:160px"]');
-          if (infoBlock && !infoBlock.querySelector('.pc-reviewed-line')) {
-            var line = document.createElement('div');
-            line.className = 'pc-reviewed-line';
-            line.style.cssText = 'color:#555; font-size:.75rem; margin-top:.15rem;';
-            line.textContent = d.message;
-            infoBlock.appendChild(line);
-          }
-        }
-        // Confirmation of exactly what was recorded, per the accountability
-        // standard — the reviewer should see the same reasoning trail that
-        // just got sent to the staffer who logged the entry.
-        pcShowToast(d.message || 'Imehifadhiwa.');
+        _pcApplyResult(_pendingId, d);
       } else {
         alert(d.error || 'Hitilafu.');
       }

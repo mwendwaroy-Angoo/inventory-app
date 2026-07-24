@@ -8727,6 +8727,34 @@ class PettyCashReviewMessageTest(TestCase):
         self.assertIn('imekataliwa', data['message'])
         self.assertIn('Hakuna risiti', data['message'])
 
+    def test_reject_via_reason_chip_text_saves_and_notifies(self):
+        # 2026-07-25: petty_cash_list.html's reject button now opens the shared
+        # openReasonChips popover instead of the shared free-text modal — the
+        # chosen chip text is posted as review_note exactly like the old modal did,
+        # so the endpoint itself needs no change; this locks in that the chip-origin
+        # text still reaches the entry and the recorder's notification.
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/petty-cash/{self.entry.id}/review/', {
+            'action': 'reject', 'review_note': 'Kiasi hakiendani na madai',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.entry.refresh_from_db()
+        self.assertEqual(self.entry.review_note, 'Kiasi hakiendani na madai')
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Imekataliwa').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('Kiasi hakiendani na madai', notif.message)
+
+    def test_reject_skip_leaves_review_note_blank_and_still_completes(self):
+        # The chips popover's "Ruka — bila sababu" path must never block reject.
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'reject'})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.entry.refresh_from_db()
+        self.assertEqual(self.entry.status, 'rejected')
+        self.assertEqual(self.entry.review_note, '')
+
     def test_staffer_who_recorded_entry_is_notified(self):
         self.client.force_login(self.owner)
         self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
@@ -8809,6 +8837,40 @@ class StockVarianceReviewWordingTest(TestCase):
         svq.refresh_from_db()
         when = timezone.localtime(svq.owner_acted_at).strftime('%d %b %Y, %H:%M')
         self.assertIn(when, data['message'])
+
+    def test_dismiss_with_reason_chip_saves_owner_note_and_includes_it_in_message(self):
+        # 2026-07-25: dismiss now offers reason chips (stock_variances_pending.html)
+        # instead of a bare "Kataa" with no explanation; the chosen reason text is
+        # posted as owner_response_note, same field name the accept branch already used.
+        svq = self._make_variance()
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'dismiss', 'owner_response_note': 'Maelezo hayakubaliki',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('Maelezo hayakubaliki', data['message'])
+        svq.refresh_from_db()
+        self.assertEqual(svq.owner_note, 'Maelezo hayakubaliki')
+
+    def test_dismiss_skip_leaves_owner_note_blank_and_still_resolves(self):
+        # The reason-chips "Ruka — bila sababu" path must never block the action —
+        # dismiss must complete with an empty note exactly like before this change.
+        svq = self._make_variance()
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'dismiss'})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        svq.refresh_from_db()
+        self.assertEqual(svq.owner_note, '')
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+
+    def test_accept_owner_note_persists_for_display(self):
+        svq = self._make_variance()
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'cash', 'owner_response_note': 'Mteja wa kawaida',
+        })
+        self.assertTrue(resp.json()['ok'])
+        svq.refresh_from_db()
+        self.assertEqual(svq.owner_note, 'Mteja wa kawaida')
 
 
 class TableOrderCancelReasonTest(TestCase):
