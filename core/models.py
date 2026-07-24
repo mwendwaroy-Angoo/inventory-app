@@ -2731,6 +2731,74 @@ class BarTabEntry(models.Model):
             description=entry.description, amount=remainder, is_paid=False,
         )
 
+    @classmethod
+    def revoke_payment_locked(cls, entry_id, business, reason, staff_user):
+        """Revert a mistakenly-settled entry back to unpaid — e.g. staff
+        tapped M-Pesa when the customer actually paid cash, marked something
+        paid that hasn't been paid at all yet, or settled the wrong
+        customer's tab entirely (2026-07-25 live request). Staff then just
+        re-settles correctly through the ordinary settle flow — this method
+        only ever undoes the payment flags, it never re-settles anything
+        itself.
+
+        Deliberately does NOT touch Transaction.qty or sale_amount — the
+        item was genuinely served and stock genuinely left the shelf at ADD-
+        TO-TAB time, completely independent of whether/how it was paid for;
+        only payment_method/is_paid/paid_at are reverted. Revenue totals
+        (which read sale_amount, never touched here) and stock counts (which
+        read qty, also never touched here) are therefore unaffected by a
+        revoke — this is a payment-record correction, not a sale reversal
+        (that's what remove_tab_entry / void_tab are for, a different
+        action for a different mistake — the item was wrong, not the
+        payment). Reopens the tab if this was its last paid entry, so the
+        customer's receipt goes live again immediately.
+
+        Blocked on a 'void' entry (that's a permanent removal, a different
+        lifecycle — see remove_tab_entry) and on an already-unpaid entry
+        (nothing to revoke). Raises ValueError on any validation failure.
+        Returns the reverted BarTabEntry.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            entry = cls.objects.select_for_update().select_related(
+                'transaction', 'tab',
+            ).get(id=entry_id, tab__business=business)
+            if not entry.is_paid:
+                raise ValueError('Kiingilio hiki bado hakijalipwa.')
+            if entry.payment_method == 'void':
+                raise ValueError('Kiingilio hiki kimefutwa — hakiwezi kurudishwa hivi.')
+
+            previous_method = entry.payment_method
+            tab = entry.tab
+
+            was_stk_confirmed = Payment.objects.filter(
+                bar_tab=tab, status='completed', method='mpesa',
+            ).exists()
+
+            entry.is_paid = False
+            entry.payment_method = ''
+            entry.paid_at = None
+            entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
+            if entry.transaction_id:
+                entry.transaction.payment_method = ''
+                entry.transaction.save(update_fields=['payment_method'])
+
+            # Reopen the tab if reverting this entry means it's no longer
+            # fully settled — the receipt/wall-QR page must see it live again.
+            if tab.status == 'SETTLED':
+                tab.status = 'OPEN'
+                tab.settled_at = None
+                tab.save(update_fields=['status', 'settled_at'])
+
+            TabPaymentRevocation.objects.create(
+                business=business, tab=tab, entry=entry,
+                item_description=entry.description, amount=entry.amount,
+                previous_payment_method=previous_method,
+                was_stk_confirmed=was_stk_confirmed,
+                reason=(reason or '').strip(), revoked_by=staff_user,
+            )
+        return entry
+
     def transfer_reason_note(self):
         """If this entry's balance was ever proposed as a split-bill transfer
         to a different customer's tab and that didn't go through — rejected,
@@ -2989,6 +3057,39 @@ class TabTransferRequest(models.Model):
                 )
                 requests.append(tfr)
         return batch_id, requests
+
+
+class TabPaymentRevocation(models.Model):
+    """Audit trail row for BarTabEntry.revoke_payment_locked() (2026-07-25 live
+    request): "Roy has a bill of 200, staff selected M-Pesa when it was cash,
+    or it wasn't paid yet, or staff confused the tab for another customer" —
+    every one of these needs the SAME fix: flip the entry back to unpaid so
+    it can be corrected. Kept as its own row (not just overwritten fields on
+    the entry) so a business owner can later see WHO reverted WHAT, WHEN, and
+    WHY — the entry itself only ever shows its current state, not its
+    history, same reasoning as StaffNameChangeLog/SalesResetLog."""
+    business           = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='tab_payment_revocations')
+    tab                = models.ForeignKey(BarTab, on_delete=models.CASCADE, related_name='payment_revocations')
+    entry              = models.ForeignKey(BarTabEntry, on_delete=models.CASCADE, related_name='payment_revocations')
+    item_description   = models.CharField(max_length=80)
+    amount             = models.DecimalField(max_digits=10, decimal_places=2)
+    previous_payment_method = models.CharField(max_length=10, blank=True)
+    was_stk_confirmed  = models.BooleanField(
+        default=False,
+        help_text='True if a completed Payment (Safaricom-confirmed STK) record was found '
+                  'for this tab at revoke time — a hint to whoever re-settles that real '
+                  'M-Pesa money may already be involved, shown so they check before assuming '
+                  'nothing was actually paid.',
+    )
+    reason      = models.CharField(max_length=200, blank=True)
+    revoked_by  = models.ForeignKey('auth.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='tab_payment_revocations')
+    revoked_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-revoked_at']
+
+    def __str__(self):
+        return f"Revoked payment: {self.item_description} KES {self.amount} ({self.previous_payment_method})"
 
 
 class BarCupLog(models.Model):

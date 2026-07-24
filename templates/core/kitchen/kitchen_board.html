@@ -1285,6 +1285,16 @@
     <h6 class="offcanvas-title" style="color:#c9a84c;">🍽 Food Tabs</h6>
     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
   </div>
+  <!-- Recent Payments — find and undo a mistaken settlement even after the
+       tab has fully closed (2026-07-25 live request). -->
+  <div style="margin:0.5rem 0.75rem 0;">
+    <button onclick="window.kbToggleRecentPayments()" id="kb-recent-payments-toggle"
+            style="width:100%;text-align:left;background:rgba(255,255,255,.03);border:1px solid #333;
+                   border-radius:8px;padding:.4rem .6rem;color:#b0b0b0;font-size:.78rem;cursor:pointer;">
+      🕐 Malipo ya Hivi Karibuni <span id="kb-recent-payments-caret">▾</span>
+    </button>
+    <div id="kb-recent-payments-panel" style="display:none;margin-top:.35rem;max-height:220px;overflow-y:auto;"></div>
+  </div>
   <div class="offcanvas-body" style="padding:.75rem;" id="kb-tabs-body">
     <div class="text-center py-4" style="color:#b0b0b0;">Inapakia...</div>
   </div>
@@ -2133,8 +2143,10 @@
                  '<span style="flex:1;color:#b0b0b0;">🍽 ' + e.description + '</span>' +
                  '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span></div>';
         }
-        var removeBtn = (IS_OWNER && !e.is_paid)
-          ? '<button onclick="window.kbRemoveEntry(' + e.id + ',' + tab.id + ',\'' + e.description.replace(/'/g,"\\'") + '\')" ' +
+        // 2026-07-25: widened from owner-only — the exact reported gap was
+        // kitchen staff having no way to erase a mistaken tab placement.
+        var removeBtn = !e.is_paid
+          ? '<button onclick="window.kbRemoveEntry(' + e.id + ',' + tab.id + ',\'' + e.description.replace(/'/g,"\\'") + '\', this)" ' +
             'style="background:none;border:none;color:#c0395a;cursor:pointer;font-size:0.75rem;padding:0 2px;flex-shrink:0;" ' +
             'title="Futa kiingilio hiki">✕</button>'
           : '';
@@ -2266,19 +2278,94 @@
     }).join('');
   }
 
-  window.kbRemoveEntry = function (entryId, tabId, desc) {
+  window.kbRemoveEntry = function (entryId, tabId, desc, anchorEl) {
     if (!confirm('Futa "' + desc + '" kutoka kwa tab hii?\nKiingilio hiki kitafutwa kabisa.')) return;
-    var fd = new URLSearchParams();
-    fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
-    fetch('/bar/tabs/' + tabId + '/entries/' + entryId + '/remove/', {
-      method: 'POST', credentials: 'same-origin', body: fd
-    })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d.ok) { showToast('✓ Kiingilio kimefutwa'); loadFoodTabs(); }
-        else showToast('Hitilafu: ' + (d.error || 'Jaribu tena'));
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kwa nini unafuta "' + desc + '"?',
+      chips: ['Bidhaa isiyo sahihi', 'Kiasi kibaya', 'Iliwekwa kwenye tab isiyo sahihi'],
+      onSelect: function (reason) {
+        var fd = new URLSearchParams();
+        fd.append('reason', reason || '');
+        fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+        fetch('/bar/tabs/' + tabId + '/entries/' + entryId + '/remove/', {
+          method: 'POST', credentials: 'same-origin', body: fd
+        })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d.ok) { showToast(d.message || '✓ Kiingilio kimefutwa'); loadFoodTabs(); }
+            else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
+            else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
+          })
+          .catch(function(){ showToast('Hitilafu ya mtandao'); });
+      },
+    });
+  };
+
+  /* ── Recent Payments — undo a mistaken settlement even after the tab
+     has closed (2026-07-25) ───────────────────────────────────────── */
+  window.kbToggleRecentPayments = function () {
+    var panel = document.getElementById('kb-recent-payments-panel');
+    var caret = document.getElementById('kb-recent-payments-caret');
+    var showing = panel.style.display !== 'none';
+    panel.style.display = showing ? 'none' : 'block';
+    caret.textContent = showing ? '▾' : '▴';
+    if (!showing) window.kbLoadRecentPayments();
+  };
+
+  window.kbLoadRecentPayments = function () {
+    var panel = document.getElementById('kb-recent-payments-panel');
+    panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Inapakia...</div>';
+    fetch('/bar/tabs/recent-settled/', {credentials: 'same-origin'})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var tabs = d.tabs || [];
+        if (!tabs.length) {
+          panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Hakuna malipo ya hivi karibuni.</div>';
+          return;
+        }
+        var html = '';
+        tabs.forEach(function (t) {
+          html += '<div style="background:#222;border:1px solid #333;border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem;">' +
+            '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at + '</div>';
+          t.entries.forEach(function (e) {
+            html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
+              '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ')</span>' +
+              '<button onclick="window.kbRevokeEntryPayment(' + e.id + ',' + t.tab_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+              'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">↺ Tengua</button>' +
+              '</div>';
+          });
+          html += '</div>';
+        });
+        panel.innerHTML = html;
       })
-      .catch(function(){ showToast('Hitilafu ya mtandao'); });
+      .catch(function () { panel.innerHTML = '<div style="color:#c0395a;font-size:.75rem;padding:.4rem;">Hitilafu ya mtandao.</div>'; });
+  };
+
+  window.kbRevokeEntryPayment = function (entryId, tabId, desc, anchorEl) {
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kwa nini unarudisha malipo ya "' + desc + '"?',
+      chips: ['Njia ya malipo si sahihi (mfano: mpesa badala ya cash)', 'Halijalipwa bado', 'Tab isiyo sahihi'],
+      onSelect: function (reason) {
+        var fd = new URLSearchParams();
+        fd.append('reason', reason || '');
+        fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+        fetch('/bar/tabs/' + tabId + '/entries/' + entryId + '/revoke-payment/', {
+          method: 'POST', credentials: 'same-origin', body: fd
+        })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d.ok) {
+              showToast(d.message || '✓ Malipo yamerudishwa');
+              window.kbLoadRecentPayments();
+              loadFoodTabs();
+            } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
+            else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
+          })
+          .catch(function(){ showToast('Hitilafu ya mtandao'); });
+      },
+    });
   };
 
   window.saveKbTabName = function(tabId) {

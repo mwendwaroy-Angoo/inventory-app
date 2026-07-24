@@ -663,7 +663,8 @@ def staff_journey(request, profile_id):
         first_txn.date if first_txn else None,
     ] if d]
     tenure_start = min(candidates) if candidates else timezone.localdate()
-    tenure_end = staff_profile.departed_at.date() if staff_profile.departed_at else timezone.localdate()
+    tenure_end = (timezone.localtime(staff_profile.departed_at).date()
+                  if staff_profile.departed_at else timezone.localdate())
 
     contrib = _staff_contribution(staff_profile, business, tenure_start, tenure_end)
 

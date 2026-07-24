@@ -1299,6 +1299,66 @@ def transferable_tabs_api(request):
 
 
 @login_required
+def recent_settled_tabs_api(request):
+    """JSON: tabs settled in the last few hours, with ALL their entries
+    (including paid ones) — powers a "🕐 Malipo ya Hivi Karibuni" (Recent
+    Payments) panel so staff/owner can find and undo a mistaken settlement
+    even after the tab has fully closed and dropped out of the ordinary
+    open-tabs drawer entirely (2026-07-25 live request: "confused the tab
+    payment for another customer" — by the time that's noticed, the
+    wrongly-settled tab may already be gone from the normal OPEN-tabs
+    view). Station-scoped like every other tabs endpoint. Voided entries
+    are excluded — they're a different, already-final correction
+    (remove_tab_entry), not a payment to revoke.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'tabs': []})
+
+    since = timezone.now() - timezone.timedelta(hours=6)
+    allowed = _allowed_tab_sources(up)
+    tabs = (
+        BarTab.objects.filter(
+            business=up.business, status='SETTLED', settled_at__gte=since,
+            source__in=allowed,
+        )
+        .prefetch_related(
+            Prefetch('entries', queryset=BarTabEntry.objects.select_related('transaction__item__store').order_by('id'))
+        )
+        .order_by('-settled_at')[:20]
+    )
+
+    result = []
+    for tab in tabs:
+        entries = []
+        for e in tab.entries.all():
+            if e.payment_method == 'void':
+                continue
+            try:
+                is_kitchen = bool(e.transaction.item.store.is_kitchen)
+            except Exception:
+                is_kitchen = False
+            if ('kitchen' if is_kitchen else 'bar') not in allowed:
+                continue
+            entries.append({
+                'id': e.id,
+                'description': e.description,
+                'amount': float(e.amount),
+                'payment_method': e.payment_method,
+                'is_kitchen': is_kitchen,
+            })
+        if not entries:
+            continue
+        result.append({
+            'tab_id': tab.id,
+            'customer_name': tab.customer_name,
+            'settled_at': timezone.localtime(tab.settled_at).strftime('%H:%M') if tab.settled_at else '',
+            'entries': entries,
+        })
+    return JsonResponse({'tabs': result})
+
+
+@login_required
 @require_POST
 def update_tab_name(request, tab_id):
     """Allow staff to rename the customer on an open tab (also updates linked Customer + Transaction.recipient).
@@ -1489,23 +1549,82 @@ def tick_entry(request, entry_id):
     })
 
 
+def _entry_station(entry):
+    """Which station (bar/kitchen) an entry's underlying item actually
+    belongs to — the Station Scoping Principle discriminator used
+    throughout this file (settle_tab, tick_entry, etc.), not the tab's
+    overall source, so a bar-only staffer can correctly act on just the bar
+    entries within a mixed/cross-counter-merged tab."""
+    try:
+        return 'kitchen' if entry.transaction.item.store.is_kitchen else 'bar'
+    except Exception:
+        return entry.tab.source or 'bar'
+
+
+def _notify_tab_correction(tab, title, message, actor):
+    """Shared fan-out for tab-correction actions any staff can now trigger
+    (remove_tab_entry, revoke_entry_payment — both widened from owner/
+    manager-only, 2026-07-25) — owners/managers plus everyone else
+    currently on shift, via in-app + SMS, so a correction one staff member
+    makes is visible to whoever else is running the till. Same recipient
+    pattern as _notify_tab_transfer_resolved (core/receipt_views.py)."""
+    from .models import Notification as _Notif, Shift as _Shift
+    from accounts.models import UserProfile as _UP
+    from .notifications import normalize_ke_phone, send_sms_notification
+
+    notify_targets = {}
+    for _sh in _Shift.objects.filter(business=tab.business, status='OPEN').select_related('staff'):
+        _up = _UP.objects.filter(user_id=_sh.staff_id, business=tab.business).first()
+        if _up:
+            notify_targets[_sh.staff_id] = _up
+    for _up in _UP.objects.filter(business=tab.business, role__in=['owner', 'manager']):
+        notify_targets[_up.user_id] = _up
+
+    for _up in notify_targets.values():
+        if _up.user_id == actor.id:
+            continue  # no self-notification
+        _Notif.objects.create(user=_up.user, title=title, message=message, notification_type='warning')
+        _phone = (_up.phone or '').strip()
+        if _phone:
+            _n = normalize_ke_phone(_phone)
+            if _n:
+                send_sms_notification(message, _n)
+
+
 @login_required
 @require_POST
 def remove_tab_entry(request, tab_id, entry_id):
-    """Owner/manager only: void a single BarTabEntry (correction for mis-added entries).
+    """Void a single BarTabEntry (correction for a mis-added entry — wrong
+    item, wrong quantity, or added to the wrong customer's tab entirely).
+
+    2026-07-25 live request: widened from owner/manager-only — kitchen
+    staff specifically had no way to erase a mistaken tab placement, and
+    Roy's explicit ask covers every counter, matching how every other
+    staff-facing tab correction in this app already works (settle,
+    split-transfer, revoke payment). Any staff with an open shift may now
+    do this, station-scoped to the entry's own counter.
 
     Marks the entry and its underlying Transaction as 'void' so revenue and
-    analytics exclude it. Only works on OPEN tabs with unpaid entries.
-    Returns the updated unpaid total for the tab.
+    analytics exclude it, and zeroes the Transaction's qty to restore stock
+    — the item was never actually given to the customer. Only works on
+    OPEN tabs with unpaid entries; a PAID entry must be reverted first (see
+    revoke_entry_payment) before it can be removed this way. Returns the
+    updated unpaid total for the tab.
     """
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
     if not getattr(up, 'is_owner_or_manager', False):
-        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
 
     try:
-        entry = BarTabEntry.objects.select_related('tab', 'transaction').get(
+        entry = BarTabEntry.objects.select_related('tab', 'transaction__item__store').get(
             id=entry_id,
             tab__id=tab_id,
             tab__business=up.business,
@@ -1514,6 +1633,11 @@ def remove_tab_entry(request, tab_id, entry_id):
         )
     except BarTabEntry.DoesNotExist:
         return JsonResponse({'ok': False, 'error': 'not_found'}, status=404)
+
+    if _entry_station(entry) not in _allowed_tab_sources(up):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kufuta kiingilio hiki.'}, status=403)
+
+    reason = (request.POST.get('reason') or '').strip()
 
     now = timezone.now()
     entry.is_paid = True
@@ -1525,8 +1649,87 @@ def remove_tab_entry(request, tab_id, entry_id):
     entry.transaction.qty = Decimal('0')  # nullify stock effect — item was never given to customer
     entry.transaction.save(update_fields=['payment_method', 'qty'])
 
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(now).strftime('%d %b %Y, %H:%M')
+    message = (
+        f'✕ {who} amefuta "{entry.description}" (KES {entry.amount:,.0f}) '
+        f'kutoka tab ya {entry.tab.customer_name} — tarehe {when}.'
+        + (f' Sababu: {reason}' if reason else '')
+    )
+    _notify_tab_correction(entry.tab, '✕ Kiingilio Kimefutwa', message, request.user)
+
     new_total = float(entry.tab.entries.filter(is_paid=False).aggregate(t=Sum('amount'))['t'] or 0)
-    return JsonResponse({'ok': True, 'new_total': new_total})
+    return JsonResponse({'ok': True, 'new_total': new_total, 'message': message})
+
+
+@login_required
+@require_POST
+def revoke_entry_payment(request, tab_id, entry_id):
+    """Revert a mistakenly-settled entry back to unpaid (2026-07-25 live
+    request) — staff selected M-Pesa when the customer actually paid cash,
+    marked something paid that hasn't been paid at all yet, or settled the
+    wrong customer's tab entirely. Any staff with an open shift may do this
+    (Roy's explicit call — must work across all counters without the owner
+    present), station-scoped to the entry's own counter. Staff then just
+    re-settles correctly through the ordinary settle flow.
+
+    Deliberately does NOT touch stock or revenue totals — see
+    BarTabEntry.revoke_payment_locked()'s docstring for the full reasoning
+    (the item was genuinely served; only the payment record is wrong).
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    entry = get_object_or_404(
+        BarTabEntry.objects.select_related('tab', 'transaction__item__store'),
+        id=entry_id, tab_id=tab_id, tab__business=up.business,
+    )
+    if _entry_station(entry) not in _allowed_tab_sources(up):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kurudisha malipo haya.'}, status=403)
+
+    reason = (request.POST.get('reason') or '').strip()
+
+    try:
+        entry = BarTabEntry.revoke_payment_locked(
+            entry_id=entry.id, business=up.business, reason=reason, staff_user=request.user,
+        )
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    revocation = entry.payment_revocations.order_by('-revoked_at').first()
+    was_stk = bool(revocation and revocation.was_stk_confirmed)
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    prev_method = revocation.previous_payment_method if revocation else ''
+    stk_note = (
+        ' ⚠️ Malipo ya STK (M-Pesa) yalithibitishwa kwenye tab hii — hakikisha kabla ya kudai tena.'
+        if was_stk else ''
+    )
+    message = (
+        f'↺ {who} amerudisha malipo ya "{entry.description}" (KES {entry.amount:,.0f}) '
+        f'ya tab ya {entry.tab.customer_name} — ilikuwa {prev_method or "haijalipwa"}, '
+        f'sasa haijalipwa tena — tarehe {when}.'
+        + (f' Sababu: {reason}' if reason else '') + stk_note
+    )
+    _notify_tab_correction(entry.tab, '↺ Malipo Yamerudishwa', message, request.user)
+
+    return JsonResponse({
+        'ok': True,
+        'message': message,
+        'was_stk_confirmed': was_stk,
+        'tab_status': entry.tab.status,
+        'unpaid_total': float(entry.tab.unpaid_total()),
+    })
 
 
 def _resolve_transfer_dest_tab(request, up, source_tab):

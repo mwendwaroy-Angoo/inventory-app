@@ -2230,3 +2230,68 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`PartialAmountSettleTest`, `SettleTabFromPaymentPartialAmountTest`,
   `FindTabSearchDedupTest`) including the critical regression lock proving a confirmed
   STK charge is never silently dropped. No migrations. 557 tests pass.
+- Revoke mistaken tab payments + kitchen "Futa" widened to staff (2026-07-25), live
+  request: a customer's mpesa/cash tap can be mis-tapped, or a settlement can be applied
+  to the wrong customer's tab entirely, with no way to undo it; separately, kitchen staff
+  had no way at all to erase a tab entry placed by mistake (`✕ Futa` was owner/manager-
+  only, unlike bar/Quick Sell where the same gate already blocked ordinary staff too).
+  **Revoke**: new `BarTabEntry.revoke_payment_locked()` (`core/models.py`) — locked,
+  reverts a paid entry back to `is_paid=False`/`payment_method=''`/`paid_at=None`,
+  clears the mirrored `Transaction.payment_method`, and reopens the tab
+  (`status='OPEN'`) if the entry being revoked was the one that had closed it as
+  SETTLED — the live receipt/wall-QR page (`_get_live_tab_state`) picks this up for
+  free with zero receipt-side changes, since it already reads tab status live. New
+  `TabPaymentRevocation` audit model (migration 0119) records what changed, who did it,
+  why, and whether the entry had a real Safaricom-confirmed `Payment` behind it
+  (`was_stk_confirmed`) — surfaced back to staff in the response as an explicit warning,
+  since reversing a genuinely-paid STK entry needs the money physically returned outside
+  the app, unlike reversing a mis-tapped cash/mpesa label. Deliberately does NOT touch
+  `Transaction.qty` (stock) or create/delete any Transaction — verified by direct trace
+  and a dedicated test that a payment-only correction leaves stock balance and revenue
+  totals completely unaffected at every step, satisfying Roy's explicit "stock counts,
+  payment data and overall transactional metrics respond accordingly" requirement (the
+  correct response for stock/revenue here is "no change," since the sale itself was
+  real — only which payment record it's tagged with was wrong). **The "settled to the
+  wrong customer" case** (the tab can fully close and vanish from the open-tabs view)
+  is handled by a new read-only `recent_settled_tabs_api` — tabs `SETTLED` in the last 6
+  hours, station-scoped via `_allowed_tab_sources` — powering a "🕐 Malipo ya Hivi
+  Karibuni" collapsible panel added to all three tabs-drawer offcanvas headers, so staff
+  can find and revoke a settlement even after its tab has disappeared from the normal
+  view. **Permission model**: both `revoke_entry_payment` and the widened
+  `remove_tab_entry` use the same shift-gated + station-scoped pattern already
+  established by `settle_tab`/`tick_entry`/`split_and_transfer_entry` — ANY staff with
+  an open shift, not owner/manager-only (confirmed against this app's own precedent:
+  correcting an in-progress mistake needs to work mid-shift without the owner present,
+  same reasoning already applied to split-transfer). New shared `_entry_station(entry)`
+  helper (station discriminator, `item.store.is_kitchen`) and `_notify_tab_correction()`
+  fan-out helper (in-app + SMS to owner/manager + on-shift staff, excluding the actor)
+  mirror this file's established notification-recipient pattern
+  (`_fire_cash_payment_request`, etc.) — both reject and revoke actions now explain
+  themselves to everyone else who needs to know, per the wording/accountability
+  standard. **Kitchen Futa gap**: `kitchen_board.html`'s `removeBtn` was gated
+  `IS_OWNER && !e.is_paid`; widened to `!e.is_paid` to match the same shift+station
+  backend gate — this was the literal reported bug, a UI-only gap (the backend endpoint
+  was never owner-restricted in the first place for kitchen's own remove path, only the
+  button was hidden). Reason capture for both remove and revoke uses the existing
+  `openReasonChips` popover (never blocks on a skipped reason) in all three drawers per
+  the tabs-drawer-parity rule. **Test-suite fragility found and fixed while running the
+  full suite before push** (unrelated to this feature, pre-existing bugs from earlier
+  sessions, surfaced only because real wall-clock time crossed midnight mid-session):
+  (1) `core.haki_views.staff_journey` computed `tenure_end =
+  staff_profile.departed_at.date()` — calling `.date()` directly on a timezone-AWARE
+  datetime returns the date in whatever timezone the datetime is internally stored in
+  (UTC, under `USE_TZ=True`), not the project's local timezone; for a departure logged
+  between 00:00-03:00 Nairobi time (UTC+3) this silently returns YESTERDAY's date,
+  excluding that final day's revenue/shifts from the whole journey report — a real bug
+  for a bar-hours business where staff can plausibly be deactivated in the small hours.
+  Fixed to `timezone.localtime(staff_profile.departed_at).date()`, matching the
+  project's own convention everywhere else (`timezone.localdate()` for "today").
+  Regression-swept: this was the only `.date()`-on-an-aware-field call site in the app.
+  (2) `PettyCashReviewUndoTest.test_zreport_reconciliation_self_corrects_after_reversal`
+  hardcoded `started_at=timezone.now() - timedelta(hours=2)` to mean "earlier today" —
+  false in the first 2 hours after local midnight, when that lands on yesterday and
+  falls outside `bar_z_report`'s (correctly timezone-aware) "today" window; this is a
+  test-authoring bug, not an application bug — fixed by anchoring to
+  `timezone.localtime().replace(hour=0, minute=1, ...)` (start of today), which is
+  always within-today regardless of when the suite happens to run. 27 new tests
+  (`RevokePaymentAndRemoveEntryTest`). One migration (0119, additive). 584 tests pass.

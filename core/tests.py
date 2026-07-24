@@ -5396,6 +5396,347 @@ class TabRenameMergeTest(TestCase):
         self.assertEqual(kitchen_roy_tab.status, 'OPEN')
 
 
+class RevokePaymentAndRemoveEntryTest(TestCase):
+    """2026-07-25 live request: "Roy has a bill of 200 and by mistake the
+    staff selected lipa na mpesa when it was paid cash, or it was not paid
+    yet, or confused the tab payment for another customer" — needs a way to
+    revert a mistaken payment, across all counters, for both owner and
+    staff. Separately: "kitchen staff are not able to futa or erase
+    mistaken tab placements" — remove_tab_entry was owner/manager-only;
+    widened to match every other staff-facing tab correction in this app.
+
+    Covers BarTabEntry.revoke_payment_locked(), the widened remove_tab_
+    entry() permission, station scoping for both, notification fan-out, and
+    direct verification that stock counts and revenue are unaffected by a
+    payment-only correction (they were already correctly set at ADD-TO-TAB
+    time, independent of how/whether the item was later paid for)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Revoke Payment Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='rp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.staff = User.objects.create_user(username='rp_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+
+        self.kitchen_staff = User.objects.create_user(username='rp_kstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=self.kitchen_staff, status='OPEN')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Tusker',
+            material_no='RP-BAR-01', unit='Pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('120'), opening_bin_balance=Decimal('50'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chapati',
+            material_no='RP-KIT-01', unit='Pcs', selling_price=Decimal('50'),
+            cost_price=Decimal('20'), opening_bin_balance=Decimal('30'),
+        )
+
+    def _make_tab_with_entry(self, item, amount=Decimal('200'), is_paid=False, payment_method='', source='bar'):
+        store = self.kitchen_store if item is self.kitchen_item else self.bar_store
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source=source, store=store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method=payment_method,
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=item.description, amount=amount,
+            is_paid=is_paid, payment_method=payment_method,
+            paid_at=timezone.now() if is_paid else None,
+        )
+        return tab, entry
+
+    # ── Model-level: revoke_payment_locked ──────────────────────────────
+
+    def test_revoke_reverts_paid_entry_to_unpaid(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='mpesa')
+        reverted = BarTabEntry.revoke_payment_locked(
+            entry_id=entry.id, business=self.biz, reason='Ilikuwa cash', staff_user=self.staff,
+        )
+        self.assertFalse(reverted.is_paid)
+        self.assertEqual(reverted.payment_method, '')
+        self.assertIsNone(reverted.paid_at)
+        reverted.transaction.refresh_from_db()
+        self.assertEqual(reverted.transaction.payment_method, '')
+
+    def test_revoke_reopens_a_settled_tab(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='mpesa')
+        tab.status = 'SETTLED'
+        tab.settled_at = timezone.now()
+        tab.save(update_fields=['status', 'settled_at'])
+        BarTabEntry.revoke_payment_locked(
+            entry_id=entry.id, business=self.biz, reason='', staff_user=self.staff,
+        )
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+        self.assertIsNone(tab.settled_at)
+
+    def test_revoke_leaves_already_open_tab_open(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='cash')
+        BarTabEntry.revoke_payment_locked(
+            entry_id=entry.id, business=self.biz, reason='', staff_user=self.staff,
+        )
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+
+    def test_revoke_rejects_already_unpaid_entry(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=False)
+        with self.assertRaises(ValueError):
+            BarTabEntry.revoke_payment_locked(
+                entry_id=entry.id, business=self.biz, reason='', staff_user=self.staff,
+            )
+
+    def test_revoke_rejects_void_entry(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='void')
+        with self.assertRaises(ValueError):
+            BarTabEntry.revoke_payment_locked(
+                entry_id=entry.id, business=self.biz, reason='', staff_user=self.staff,
+            )
+
+    def test_revoke_creates_audit_trail_row(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, amount=Decimal('200'), is_paid=True, payment_method='mpesa')
+        BarTabEntry.revoke_payment_locked(
+            entry_id=entry.id, business=self.biz, reason='Ilikuwa cash sio mpesa', staff_user=self.staff,
+        )
+        from core.models import TabPaymentRevocation
+        rec = TabPaymentRevocation.objects.filter(entry=entry).first()
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.previous_payment_method, 'mpesa')
+        self.assertEqual(rec.amount, Decimal('200'))
+        self.assertEqual(rec.reason, 'Ilikuwa cash sio mpesa')
+        self.assertEqual(rec.revoked_by, self.staff)
+
+    def test_revoke_does_not_touch_stock_or_revenue(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, amount=Decimal('200'), is_paid=True, payment_method='mpesa')
+        balance_before = self.bar_item.current_balance()
+        revenue_before = entry.transaction.revenue()
+        BarTabEntry.revoke_payment_locked(
+            entry_id=entry.id, business=self.biz, reason='', staff_user=self.staff,
+        )
+        self.assertEqual(self.bar_item.current_balance(), balance_before, 'Stock must be unaffected by a payment-only correction')
+        entry.transaction.refresh_from_db()
+        self.assertEqual(entry.transaction.revenue(), revenue_before, 'Revenue must be unaffected by a payment-only correction')
+        self.assertEqual(entry.transaction.qty, Decimal('-1'), 'qty must never change on a revoke')
+
+    def test_was_stk_confirmed_detected_when_real_mpesa_payment_exists(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='mpesa')
+        Payment.objects.create(
+            business=self.biz, amount=Decimal('200'), method='mpesa', status='completed', bar_tab=tab,
+        )
+        BarTabEntry.revoke_payment_locked(
+            entry_id=entry.id, business=self.biz, reason='', staff_user=self.staff,
+        )
+        from core.models import TabPaymentRevocation
+        rec = TabPaymentRevocation.objects.filter(entry=entry).first()
+        self.assertTrue(rec.was_stk_confirmed)
+
+    def test_was_stk_confirmed_false_when_no_real_payment_record(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='cash')
+        BarTabEntry.revoke_payment_locked(
+            entry_id=entry.id, business=self.biz, reason='', staff_user=self.staff,
+        )
+        from core.models import TabPaymentRevocation
+        rec = TabPaymentRevocation.objects.filter(entry=entry).first()
+        self.assertFalse(rec.was_stk_confirmed)
+
+    # ── View-level: revoke_entry_payment ─────────────────────────────────
+
+    def test_revoke_view_staff_with_shift_can_revoke(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='mpesa')
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/revoke-payment/', {'reason': 'Ilikuwa cash'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_paid)
+
+    def test_revoke_view_requires_shift_for_staff(self):
+        no_shift_staff = User.objects.create_user(username='rp_noshift', password='x')
+        UserProfile.objects.create(user=no_shift_staff, business=self.biz, role='staff')
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='mpesa')
+        self.client.force_login(no_shift_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/revoke-payment/', {})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json()['shift_required'])
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid, 'Blocked request must not mutate the entry')
+
+    def test_revoke_view_owner_bypasses_shift_requirement(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='cash')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/revoke-payment/', {})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_revoke_view_kitchen_staff_can_revoke_kitchen_entry(self):
+        tab, entry = self._make_tab_with_entry(self.kitchen_item, is_paid=True, payment_method='cash', source='kitchen')
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/revoke-payment/', {})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_revoke_view_bar_only_staff_blocked_from_kitchen_entry(self):
+        tab, entry = self._make_tab_with_entry(self.kitchen_item, is_paid=True, payment_method='cash', source='kitchen')
+        self.client.force_login(self.staff)  # role=staff, can_access_kitchen defaults False
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/revoke-payment/', {})
+        self.assertEqual(resp.status_code, 403)
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+
+    def test_revoke_view_notifies_owner_but_not_the_actor(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='mpesa')
+        self.client.force_login(self.staff)
+        self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/revoke-payment/', {'reason': 'Kosa'})
+        owner_notif = Notification.objects.filter(user=self.owner, title__icontains='Malipo Yamerudishwa').first()
+        self.assertIsNotNone(owner_notif)
+        self.assertIn('Kosa', owner_notif.message)
+        actor_notif = Notification.objects.filter(user=self.staff, title__icontains='Malipo Yamerudishwa').first()
+        self.assertIsNone(actor_notif, 'The staff member who performed the revoke should not self-notify')
+
+    def test_revoke_view_response_flags_stk_confirmed_payment(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='mpesa')
+        Payment.objects.create(
+            business=self.biz, amount=Decimal('200'), method='mpesa', status='completed', bar_tab=tab,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/revoke-payment/', {})
+        data = resp.json()
+        self.assertTrue(data['was_stk_confirmed'])
+        self.assertIn('STK', data['message'])
+
+    # ── View-level: remove_tab_entry widened permission ──────────────────
+
+    def test_remove_entry_now_allowed_for_staff_with_shift(self):
+        # Regression lock for the widening: this was owner/manager-only before.
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=False)
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {'reason': 'Bidhaa isiyo sahihi'},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        entry.refresh_from_db()
+        self.assertEqual(entry.payment_method, 'void')
+
+    def test_remove_entry_kitchen_staff_can_erase_kitchen_placement(self):
+        # The exact reported gap: kitchen staff could not futa a mistaken
+        # tab placement before this fix.
+        tab, entry = self._make_tab_with_entry(self.kitchen_item, is_paid=False, source='kitchen')
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_remove_entry_still_requires_shift_for_staff(self):
+        no_shift_staff = User.objects.create_user(username='rp_noshift2', password='x')
+        UserProfile.objects.create(user=no_shift_staff, business=self.biz, role='staff')
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=False)
+        self.client.force_login(no_shift_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json()['shift_required'])
+
+    def test_remove_entry_station_scoping_still_enforced(self):
+        tab, entry = self._make_tab_with_entry(self.kitchen_item, is_paid=False, source='kitchen')
+        self.client.force_login(self.staff)  # bar-only
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_remove_entry_restores_stock(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=False)
+        balance_before = self.bar_item.current_balance()  # qty=-1 already applied
+        self.client.force_login(self.staff)
+        self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {})
+        self.assertEqual(
+            self.bar_item.current_balance(), balance_before + 1,
+            'Removing a mistaken entry must restore the stock it had deducted',
+        )
+
+    def test_remove_entry_notifies_owner_but_not_the_actor(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=False)
+        self.client.force_login(self.staff)
+        self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {'reason': 'Kosa la kuweka bidhaa'})
+        owner_notif = Notification.objects.filter(user=self.owner, title__icontains='Kimefutwa').first()
+        self.assertIsNotNone(owner_notif)
+        self.assertIn('Kosa la kuweka bidhaa', owner_notif.message)
+        actor_notif = Notification.objects.filter(user=self.staff, title__icontains='Kimefutwa').first()
+        self.assertIsNone(actor_notif)
+
+    def test_remove_entry_owner_still_works_without_shift(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=False)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    # ── recent_settled_tabs_api + undo-after-close flow ──────────────────
+
+    def test_recent_settled_tabs_api_lists_a_just_settled_tab(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='mpesa')
+        tab.status = 'SETTLED'
+        tab.settled_at = timezone.now()
+        tab.save(update_fields=['status', 'settled_at'])
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        data = resp.json()
+        found = next((t for t in data['tabs'] if t['tab_id'] == tab.id), None)
+        self.assertIsNotNone(found, 'A tab settled minutes ago must appear in the recent-settled list')
+        self.assertEqual(found['entries'][0]['id'], entry.id)
+        self.assertEqual(found['entries'][0]['payment_method'], 'mpesa')
+
+    def test_recent_settled_tabs_api_excludes_old_settlements(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='cash')
+        tab.status = 'SETTLED'
+        tab.settled_at = timezone.now() - timezone.timedelta(hours=12)
+        tab.save(update_fields=['status', 'settled_at'])
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        data = resp.json()
+        found = next((t for t in data['tabs'] if t['tab_id'] == tab.id), None)
+        self.assertIsNone(found, 'Settlements from many hours ago should not clutter the recent list')
+
+    def test_recent_settled_tabs_api_station_scoped(self):
+        tab, entry = self._make_tab_with_entry(self.kitchen_item, is_paid=True, payment_method='cash', source='kitchen')
+        tab.status = 'SETTLED'
+        tab.settled_at = timezone.now()
+        tab.save(update_fields=['status', 'settled_at'])
+        self.client.force_login(self.staff)  # bar-only
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        data = resp.json()
+        found = next((t for t in data['tabs'] if t['tab_id'] == tab.id), None)
+        self.assertIsNone(found, 'Bar-only staff must not see a kitchen-only settled tab')
+
+    def test_undo_a_just_settled_tab_reopens_it_and_reappears_in_open_list(self):
+        # The full "confused the tab for another customer" flow: settle by
+        # mistake, find it via recent-settled, revoke — the tab must reopen
+        # and become findable again as an ordinary open tab.
+        tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='mpesa')
+        tab.status = 'SETTLED'
+        tab.settled_at = timezone.now()
+        tab.save(update_fields=['status', 'settled_at'])
+        self.client.force_login(self.staff)
+
+        listing = self.client.get('/bar/tabs/recent-settled/').json()
+        found_entry_id = next(t for t in listing['tabs'] if t['tab_id'] == tab.id)['entries'][0]['id']
+        self.assertEqual(found_entry_id, entry.id)
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/revoke-payment/', {'reason': 'Tab isiyo sahihi'})
+        self.assertTrue(resp.json()['ok'])
+
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+        open_tabs = self.client.get('/bar/tabs/').json()
+        self.assertTrue(any(t['id'] == tab.id for t in open_tabs['tabs']), 'Reverted tab must reappear in the ordinary open-tabs drawer')
+
+
 class AnonymousKitchenTabTest(TestCase):
     def setUp(self):
         self.biz = Business.objects.create(name='Anon Kitchen Biz', has_kitchen=True)
@@ -9892,7 +10233,7 @@ class PettyCashReviewUndoTest(TestCase):
         store = Store.objects.create(business=self.biz, name='Bar')
         shift = Shift.objects.create(
             business=self.biz, staff=self.owner, store=store,
-            started_at=timezone.now() - timezone.timedelta(hours=2),
+            started_at=timezone.localtime().replace(hour=0, minute=1, second=0, microsecond=0),
             opening_float=Decimal('1000'), status='OPEN',
         )
         self.entry.created_at = shift.started_at + timezone.timedelta(minutes=5)
