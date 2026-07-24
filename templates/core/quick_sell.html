@@ -5,6 +5,29 @@
 
 {% block extra_css %}
 <style>
+    /* ── Reason Chips popover (2026-07-25) ── */
+    .rc-popover {
+      position: absolute; z-index: 3000; background: #222; border: 1px solid #444;
+      border-radius: 10px; padding: .6rem; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+      max-width: 280px; font-size: .8rem;
+    }
+    .rc-title { color: #c9a84c; font-weight: 600; margin-bottom: .4rem; }
+    .rc-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .5rem; }
+    .rc-chip {
+      background: rgba(201,168,76,.1); border: 1px solid rgba(201,168,76,.3); color: #e2c36e;
+      border-radius: 20px; padding: .35rem .7rem; font-size: .78rem; cursor: pointer; white-space: nowrap;
+    }
+    .rc-chip:hover { background: rgba(201,168,76,.2); }
+    .rc-chip-other { background: rgba(255,255,255,.05); border-color: #555; color: #ccc; }
+    .rc-other-row { display: flex; gap: .3rem; margin-bottom: .5rem; }
+    .rc-other-input {
+      flex: 1; min-width: 0; background: #111; border: 1px solid #444; border-radius: 6px;
+      color: #f0ece4; padding: .3rem .5rem; font-size: .78rem;
+    }
+    .rc-other-send { background: #c9a84c; border: none; border-radius: 6px; color: #111; padding: .3rem .6rem; font-size: .78rem; cursor: pointer; }
+    .rc-skip { display: block; width: 100%; background: transparent; border: 1px dashed #444; color: #888; border-radius: 6px; padding: .3rem; font-size: .74rem; cursor: pointer; }
+    .rc-skip:hover { color: #aaa; border-color: #666; }
+
     /* ── LAYOUT ── */
     .qs-page { max-width: 800px; margin: 0 auto; }
 
@@ -1154,31 +1177,6 @@
   </div>
 </div>
 
-<!-- ── QS Tab Void Modal (owner only) ────────────────────────── -->
-<div class="modal fade" id="qsTabVoidModal" tabindex="-1" style="z-index:1060;">
-  <div class="modal-dialog modal-dialog-centered modal-sm">
-    <div class="modal-content" style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:12px;">
-      <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
-        <h6 class="modal-title" style="color:#c0395a;">Tupa Tab</h6>
-      </div>
-      <div class="modal-body" style="padding:0.75rem 1rem;">
-        <p id="qs-tab-void-desc" style="color:#f0ece4; font-size:0.85rem; margin:0 0 0.75rem;"></p>
-        <label style="color:#b0b0b0; font-size:0.78rem; display:block; margin-bottom:0.25rem;">Sababu (hiari)</label>
-        <input type="text" id="qs-tab-void-reason" placeholder="e.g. Mteja ameondoka"
-               style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
-                      color:#f0ece4; padding:0.45rem 0.7rem; font-size:0.88rem;">
-      </div>
-      <div class="modal-footer flex-column gap-2" style="border-top:1px solid #3a3a3a; padding:0.75rem;">
-        <button class="btn w-100"
-                style="background:rgba(192,57,90,0.15); border:1px solid rgba(192,57,90,0.4); color:#c0395a;"
-                onclick="qsDoTabVoid()">Tupa Tab</button>
-        <button class="btn btn-sm w-100"
-                style="background:transparent; border:1px solid #333; color:#b0b0b0;"
-                data-bs-dismiss="modal">Acha</button>
-      </div>
-    </div>
-  </div>
-</div>
 {% endif %}
 
 <!-- Petty Cash modal -->
@@ -1922,27 +1920,33 @@
             addGreensLine(document.getElementById('bunchCustomAmt').value); return;
         }
         var disc = e.target.closest('[data-discard]');
-        if (disc) { discardBunch(disc.dataset.discard); }
+        if (disc) { discardBunch(disc.dataset.discard, disc); }
     });
 
-    function discardBunch(bunchId) {
+    function discardBunch(bunchId, anchorEl) {
         if (!confirm('Tupa mzigo huu kama hasara (umenyauka/haujauzika)?')) return;
-        var reason = prompt('Sababu (mf. "Imenyauka", "Imeharibika", "Haikuuzika kabla ya kufunga"):', '') || '';
-        fetch('/stock/produce/bunch/' + bunchId + '/discard/', {
-            method: 'POST',
-            headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'reason=' + encodeURIComponent(reason || 'Haikuuzika kabla ya kufunga')
-        }).then(function(r) { return r.json(); })
-          .then(function(d) {
-              var inst = bootstrap.Modal.getInstance(document.getElementById('bunchModal'));
-              if (inst) inst.hide();
-              if (d.ok) {
-                  qsShowToast('🗑️ Imetupwa kama hasara.' + (reason ? ' Sababu: ' + reason : ''));
-              } else {
-                  qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena'), true);
-              }
-              loadGreensBoard();
-          });
+        openReasonChips({
+            anchorEl: anchorEl,
+            title: 'Sababu ya kutupa',
+            chips: ['Imenyauka', 'Imeharibika', 'Haikuuzika kabla ya kufunga'],
+            onSelect: function (reason) {
+                fetch('/stock/produce/bunch/' + bunchId + '/discard/', {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'reason=' + encodeURIComponent(reason || 'Haikuuzika kabla ya kufunga')
+                }).then(function(r) { return r.json(); })
+                  .then(function(d) {
+                      var inst = bootstrap.Modal.getInstance(document.getElementById('bunchModal'));
+                      if (inst) inst.hide();
+                      if (d.ok) {
+                          qsShowToast('🗑️ Imetupwa kama hasara.' + (reason ? ' Sababu: ' + reason : ''));
+                      } else {
+                          qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena'), true);
+                      }
+                      loadGreensBoard();
+                  });
+            },
+        });
     }
 
     // ── RECEIVE BUNCHES (owner) ──
@@ -2381,6 +2385,76 @@
         (bootstrap.Modal.getInstance(el) || new bootstrap.Modal(el)).show();
     }
 
+    /* ── Reason Chips (2026-07-25) — see bar_board.html for the full comment.
+       Copied verbatim; no shared JS bundle in this app. ── */
+    (function () {
+      var _rcPopover = null, _rcOnSelect = null;
+      function _rcClose() {
+        if (_rcPopover) { _rcPopover.remove(); _rcPopover = null; }
+        document.removeEventListener('mousedown', _rcOutsideClick, true);
+      }
+      function _rcOutsideClick(e) {
+        if (_rcPopover && !_rcPopover.contains(e.target)) {
+          var cb = _rcOnSelect; _rcClose();
+          if (cb) cb('');
+        }
+      }
+      window.openReasonChips = function (opts) {
+        _rcClose();
+        _rcOnSelect = opts.onSelect || function () {};
+        var chips = opts.chips || [];
+        var pop = document.createElement('div');
+        pop.className = 'rc-popover';
+        var html = '<div class="rc-title">' + (opts.title || 'Sababu') + '</div><div class="rc-chips">';
+        chips.forEach(function (c, i) {
+          html += '<button type="button" class="rc-chip" data-i="' + i + '">' + c + '</button>';
+        });
+        html += '<button type="button" class="rc-chip rc-chip-other">' + (opts.otherLabel || 'Nyingine…') + '</button></div>' +
+          '<div class="rc-other-row" style="display:none;">' +
+          '<input type="text" class="rc-other-input" maxlength="200">' +
+          '<button type="button" class="rc-other-send">Tuma</button></div>' +
+          '<button type="button" class="rc-skip">' + (opts.skipLabel || 'Ruka — bila sababu') + '</button>';
+        pop.innerHTML = html;
+        document.body.appendChild(pop);
+        _rcPopover = pop;
+
+        if (opts.anchorEl) {
+          var r = opts.anchorEl.getBoundingClientRect();
+          var top = r.bottom + window.scrollY + 6;
+          var left = r.left + window.scrollX;
+          var maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 10;
+          pop.style.top = top + 'px';
+          pop.style.left = Math.max(10, Math.min(left, maxLeft)) + 'px';
+        } else {
+          pop.style.top = '40%';
+          pop.style.left = '50%';
+          pop.style.transform = 'translate(-50%, -50%)';
+        }
+
+        pop.querySelectorAll('.rc-chip:not(.rc-chip-other)').forEach(function (btn) {
+          btn.onclick = function () {
+            var text = chips[parseInt(btn.dataset.i, 10)];
+            var cb = _rcOnSelect; _rcClose(); cb(text);
+          };
+        });
+        pop.querySelector('.rc-chip-other').onclick = function () {
+          pop.querySelector('.rc-other-row').style.display = 'flex';
+          pop.querySelector('.rc-other-input').focus();
+        };
+        pop.querySelector('.rc-other-send').onclick = function () {
+          var text = pop.querySelector('.rc-other-input').value.trim();
+          var cb = _rcOnSelect; _rcClose(); cb(text);
+        };
+        pop.querySelector('.rc-other-input').addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); pop.querySelector('.rc-other-send').click(); }
+        });
+        pop.querySelector('.rc-skip').onclick = function () {
+          var cb = _rcOnSelect; _rcClose(); cb('');
+        };
+        setTimeout(function () { document.addEventListener('mousedown', _rcOutsideClick, true); }, 0);
+      };
+    })();
+
     function qsShowToast(msg) {
         /* Reuse the qs success title briefly or fall back to alert */
         var t = document.getElementById('qsSuccessTitle');
@@ -2577,7 +2651,7 @@
                 '</div>' +
                 '<div class="qs-tab-actions" style="margin-top:0.3rem;">' +
                 '<button class="qs-tab-btn" style="background:rgba(201,168,76,0.08);color:#c9a84c;border:1px solid rgba(201,168,76,0.25);" onclick="qsOpenTabDebt(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">→ Deni</button>' +
-                (QS_IS_OWNER ? '<button class="qs-tab-btn" style="background:rgba(192,57,90,0.1);color:#c0395a;border:1px solid rgba(192,57,90,0.3);" onclick="qsOpenTabVoid(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">Futa</button>' : '') +
+                (QS_IS_OWNER ? '<button class="qs-tab-btn" style="background:rgba(192,57,90,0.1);color:#c0395a;border:1px solid rgba(192,57,90,0.3);" onclick="qsOpenTabVoid(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\', this)">Futa</button>' : '') +
                 '</div>' +
                 '</div>';
         });
@@ -3009,24 +3083,18 @@
     };
 
     /* ── Void tab (owner only) ─────────────────────────────── */
-    var _qsPendingVoidTabId = null;
-
-    window.qsOpenTabVoid = function (tabId, custName) {
-        _qsPendingVoidTabId = tabId;
-        var desc = document.getElementById('qs-tab-void-desc');
-        if (desc) desc.textContent = 'Tab ya ' + custName + ' itafutwa. Pesa hazitarudishwa.';
-        var rEl = document.getElementById('qs-tab-void-reason'); if (rEl) rEl.value = '';
-        var m = document.getElementById('qsTabVoidModal');
-        qsShowModal(m);
+    window.qsOpenTabVoid = function (tabId, custName, anchorEl) {
+        if (!confirm('Futa tab ya ' + custName + '? Pesa hazitarudishwa.')) return;
+        openReasonChips({
+            anchorEl: anchorEl,
+            title: 'Sababu ya kufuta tab',
+            chips: ['Mteja ameondoka bila kulipa', 'Tab ya makosa / nakala'],
+            onSelect: function (reason) { _qsDoTabVoid(tabId, reason); },
+        });
     };
 
-    window.qsDoTabVoid = function () {
-        if (!_qsPendingVoidTabId) return;
-        var reason = (document.getElementById('qs-tab-void-reason').value || '').trim() || 'Imefutwa — sababu haikuelezwa';
-        var id = _qsPendingVoidTabId; _qsPendingVoidTabId = null;
-        var m = document.getElementById('qsTabVoidModal');
-        if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
-        qsPost('/bar/tabs/' + id + '/void/', {reason: reason})
+    function _qsDoTabVoid(tabId, reason) {
+        qsPost('/bar/tabs/' + tabId + '/void/', {reason: reason || 'Imefutwa — sababu haikuelezwa'})
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 if (d.ok) {
@@ -3037,7 +3105,7 @@
                 }
             })
             .catch(function () { qsShowToast('Hitilafu ya mtandao. Jaribu tena.'); });
-    };
+    }
 
     /* Refresh tab badge count on page load */
     fetch('/bar/tabs/?ctx=qs', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})

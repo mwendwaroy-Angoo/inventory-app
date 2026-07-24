@@ -114,7 +114,7 @@ def kitchen_wastage(request):
     """Record food spoilage / drops as a Wastage transaction on a kitchen item."""
     up = _get_up(request)
     if not up:
-        return JsonResponse({"ok": False, "error": "Auth required"}, status=403)
+        return JsonResponse({"ok": False, "error": "Unaruhusiwa kuingia kwanza"}, status=403)
 
     business = up.business
     is_owner = bool(getattr(up, 'is_owner_or_manager', False))
@@ -140,21 +140,21 @@ def kitchen_wastage(request):
 
     kitchen_store = _kitchen_store(business)
     if not kitchen_store:
-        return JsonResponse({"ok": False, "error": "Kitchen not configured"}, status=400)
+        return JsonResponse({"ok": False, "error": "Kitchen haijawekwa"}, status=400)
 
     item = Item.objects.filter(
         id=request.POST.get("item_id"),
         store=kitchen_store,
     ).first()
     if not item:
-        return JsonResponse({"ok": False, "error": "Item not found"}, status=404)
+        return JsonResponse({"ok": False, "error": "Bidhaa haikupatikana"}, status=404)
 
     try:
         qty = Decimal(str(request.POST.get("qty", "1")))
         if qty <= 0:
             raise ValueError
     except (ValueError, Exception):
-        return JsonResponse({"ok": False, "error": "Invalid quantity"}, status=400)
+        return JsonResponse({"ok": False, "error": "Kiasi si sahihi"}, status=400)
 
     note = request.POST.get("note", "").strip()
 
@@ -163,10 +163,40 @@ def kitchen_wastage(request):
         item=item,
         type="Wastage",
         qty=-qty,
-        recipient=note or "Food wastage",
+        recipient=note or "Chakula kimepotea",
         payment_method="cash",
     )
-    return JsonResponse({"ok": True})
+
+    # 2026-07-25: mirrors record_breakage() (core/keg_views.py) — a real
+    # stock/money loss event should explain itself, not just return {"ok": True}.
+    reporter_name = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    loss_kes = float(qty) * float(item.cost_price or 0)
+    message = (
+        f"{item.description} × {qty:g} imerekodiwa na {reporter_name} tarehe {when}"
+        f"{(' — KES ' + format(loss_kes, ',.0f') + ' hasara') if loss_kes else ''}."
+    )
+    if note:
+        message += f' Sababu: {note}'
+
+    from .models import Notification
+    from accounts.models import UserProfile as _UP
+    from core.notifications import normalize_ke_phone, send_sms_notification
+    for om in _UP.objects.filter(
+        business=business, role__in=['owner', 'manager']
+    ).exclude(user=request.user).select_related('user'):
+        Notification.objects.create(
+            user=om.user,
+            title='🧯 Upotezaji wa Chakula Umerekodiwa',
+            message=message,
+            notification_type='warning',
+        )
+        if om.phone:
+            normalized = normalize_ke_phone(om.phone)
+            if normalized:
+                send_sms_notification(f"{business.name}: {message}", normalized)
+
+    return JsonResponse({"ok": True, "message": message})
 
 
 # ── Kitchen Board (GET = render, POST = checkout) ─────────────────────────────

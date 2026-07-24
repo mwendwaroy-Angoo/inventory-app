@@ -3,6 +3,29 @@
 
 {% block extra_css %}
 <style>
+/* ── Reason Chips popover (2026-07-25) ────────────────────────────────── */
+.rc-popover {
+  position: absolute; z-index: 3000; background: #222; border: 1px solid #444;
+  border-radius: 10px; padding: .6rem; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+  max-width: 280px; font-size: .8rem;
+}
+.rc-title { color: #c9a84c; font-weight: 600; margin-bottom: .4rem; }
+.rc-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .5rem; }
+.rc-chip {
+  background: rgba(201,168,76,.1); border: 1px solid rgba(201,168,76,.3); color: #e2c36e;
+  border-radius: 20px; padding: .35rem .7rem; font-size: .78rem; cursor: pointer; white-space: nowrap;
+}
+.rc-chip:hover { background: rgba(201,168,76,.2); }
+.rc-chip-other { background: rgba(255,255,255,.05); border-color: #555; color: #ccc; }
+.rc-other-row { display: flex; gap: .3rem; margin-bottom: .5rem; }
+.rc-other-input {
+  flex: 1; min-width: 0; background: #111; border: 1px solid #444; border-radius: 6px;
+  color: #f0ece4; padding: .3rem .5rem; font-size: .78rem;
+}
+.rc-other-send { background: #c9a84c; border: none; border-radius: 6px; color: #111; padding: .3rem .6rem; font-size: .78rem; cursor: pointer; }
+.rc-skip { display: block; width: 100%; background: transparent; border: 1px dashed #444; color: #888; border-radius: 6px; padding: .3rem; font-size: .74rem; cursor: pointer; }
+.rc-skip:hover { color: #aaa; border-color: #666; }
+
 /* ── Keg tiles ─────────────────────────────────────── */
 .keg-tile {
   background: #2a2a2a;
@@ -732,38 +755,40 @@
 <div id="breakageModalBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1200; align-items:center; justify-content:center;">
   <div style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:16px; width:100%; max-width:400px; margin:1rem; padding:1.25rem;">
     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
-      <div style="font-family:'Playfair Display',serif; color:#e2c36e; font-size:1.05rem; font-weight:600;">🍾 Record Breakage</div>
+      <div style="font-family:'Playfair Display',serif; color:#e2c36e; font-size:1.05rem; font-weight:600;">🍾 Uharibifu wa Bidhaa</div>
       <button onclick="window.closeBreakageModal()" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; cursor:pointer; line-height:1;">×</button>
     </div>
-    <div style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">A bottle or stock item was damaged/broken and not sold. This records it as wastage.</div>
+    <div style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">Chupa au bidhaa imevunjika/imeharibika na haikuuzwa. Hii itarekodiwa kama hasara.</div>
     <div class="mb-3">
-      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Item</label>
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Bidhaa</label>
       <select id="breakageItemSel" class="form-select" style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
-        <option value="">-- Select item --</option>
+        <option value="">-- Chagua bidhaa --</option>
         {% for item in non_keg_items %}
         <option value="{{ item.id }}">{{ item.description }} {% if item.unit %}({{ item.unit }}){% endif %}</option>
         {% endfor %}
       </select>
     </div>
     <div class="mb-3">
-      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Quantity</label>
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Kiasi</label>
       <input type="number" id="breakageQty" class="form-control" min="0.001" step="0.001" value="1"
              style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
     </div>
     <div class="mb-3">
-      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Note <span style="color:#555;">(optional)</span></label>
-      <input type="text" id="breakageNote" class="form-control" placeholder="e.g. Dropped during service"
-             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Sababu <span style="color:#555;">(hiari)</span></label>
+      <button type="button" id="breakageReasonBtn" onclick="window._openBreakageReasonChips()"
+              style="width:100%; text-align:left; background:#1a1a1a; border:1px solid #3a3a3a; border-radius:6px; color:#b0b0b0; padding:.45rem .6rem; font-size:.85rem; cursor:pointer;">
+        🏷 Chagua sababu…
+      </button>
     </div>
     <div id="breakageStatus" style="display:none; font-size:0.82rem; margin-bottom:0.75rem;"></div>
     <div style="display:flex; gap:0.6rem;">
       <button id="breakageSubmitBtn" onclick="window.submitBreakage()"
               style="flex:1; padding:0.6rem; background:#c0395a; border:none; border-radius:8px; color:#fff; font-weight:700; font-size:0.9rem; cursor:pointer;">
-        Record Wastage
+        Rekodi Hasara
       </button>
       <button onclick="window.closeBreakageModal()"
               style="padding:0.6rem 1rem; background:rgba(255,255,255,0.06); border:1px solid #333; border-radius:8px; color:#b0b0b0; cursor:pointer; font-size:0.9rem;">
-        Cancel
+        Acha
       </button>
     </div>
   </div>
@@ -1506,29 +1531,6 @@
   </div>
 </div>
 
-<!-- Void tab modal -->
-<div class="modal fade bar-modal" id="voidModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-sm">
-    <div class="modal-content">
-      <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
-        <h6 class="modal-title" style="color:#c0395a;">Futa Tab</h6>
-      </div>
-      <div class="modal-body">
-        <p id="void-tab-desc" style="color:#b0b0b0; font-size:0.85rem;"></p>
-        <input type="text" id="void-reason-input" placeholder="Sababu (optional)"
-               class="form-control form-control-sm mt-2"
-               style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
-      </div>
-      <div class="modal-footer" style="border-top:1px solid #3a3a3a;">
-        <button class="btn btn-sm" style="background:#333; border-color:#444; color:#b0b0b0;"
-                onclick="window.hideModal('voidModal')">Acha</button>
-        <button class="btn btn-sm" style="background:#c0395a; border:none; color:#fff;"
-                onclick="window._doVoid()">Futa</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- Tab STK Push modal -->
 <div class="modal fade bar-modal" id="tabStkModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered modal-sm">
@@ -1686,6 +1688,84 @@
     if (m) m.hide();
   }
 
+  /* ── Reason Chips (2026-07-25) ─────────────────────────────────────────
+     Quick-tap reason picker, replaces prompt()/free-text-only inputs across
+     cancel/void/discard flows. Never blocks the action: tapping a chip (or
+     "Ruka") fires onSelect(text) immediately — no second "submit" tap. The
+     "Nyingine" chip is the only path that reveals a text input, and it's
+     opt-in. Dismissing the popover (tap outside) is treated as skip, never
+     an abort — the flow this replaces used to let a dismissed prompt() cancel
+     the whole action, which fights "never block real-time operations."
+     Copied verbatim into every template that needs it (no shared JS bundle
+     in this app — same convention as showModal/hideModal above). */
+  (function () {
+    var _rcPopover = null, _rcOnSelect = null;
+    function _rcClose() {
+      if (_rcPopover) { _rcPopover.remove(); _rcPopover = null; }
+      document.removeEventListener('mousedown', _rcOutsideClick, true);
+    }
+    function _rcOutsideClick(e) {
+      if (_rcPopover && !_rcPopover.contains(e.target)) {
+        var cb = _rcOnSelect; _rcClose();
+        if (cb) cb('');
+      }
+    }
+    window.openReasonChips = function (opts) {
+      _rcClose();
+      _rcOnSelect = opts.onSelect || function () {};
+      var chips = opts.chips || [];
+      var pop = document.createElement('div');
+      pop.className = 'rc-popover';
+      var html = '<div class="rc-title">' + (opts.title || 'Sababu') + '</div><div class="rc-chips">';
+      chips.forEach(function (c, i) {
+        html += '<button type="button" class="rc-chip" data-i="' + i + '">' + c + '</button>';
+      });
+      html += '<button type="button" class="rc-chip rc-chip-other">' + (opts.otherLabel || 'Nyingine…') + '</button></div>' +
+        '<div class="rc-other-row" style="display:none;">' +
+        '<input type="text" class="rc-other-input" maxlength="200">' +
+        '<button type="button" class="rc-other-send">Tuma</button></div>' +
+        '<button type="button" class="rc-skip">' + (opts.skipLabel || 'Ruka — bila sababu') + '</button>';
+      pop.innerHTML = html;
+      document.body.appendChild(pop);
+      _rcPopover = pop;
+
+      if (opts.anchorEl) {
+        var r = opts.anchorEl.getBoundingClientRect();
+        var top = r.bottom + window.scrollY + 6;
+        var left = r.left + window.scrollX;
+        var maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 10;
+        pop.style.top = top + 'px';
+        pop.style.left = Math.max(10, Math.min(left, maxLeft)) + 'px';
+      } else {
+        pop.style.top = '40%';
+        pop.style.left = '50%';
+        pop.style.transform = 'translate(-50%, -50%)';
+      }
+
+      pop.querySelectorAll('.rc-chip:not(.rc-chip-other)').forEach(function (btn) {
+        btn.onclick = function () {
+          var text = chips[parseInt(btn.dataset.i, 10)];
+          var cb = _rcOnSelect; _rcClose(); cb(text);
+        };
+      });
+      pop.querySelector('.rc-chip-other').onclick = function () {
+        pop.querySelector('.rc-other-row').style.display = 'flex';
+        pop.querySelector('.rc-other-input').focus();
+      };
+      pop.querySelector('.rc-other-send').onclick = function () {
+        var text = pop.querySelector('.rc-other-input').value.trim();
+        var cb = _rcOnSelect; _rcClose(); cb(text);
+      };
+      pop.querySelector('.rc-other-input').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); pop.querySelector('.rc-other-send').click(); }
+      });
+      pop.querySelector('.rc-skip').onclick = function () {
+        var cb = _rcOnSelect; _rcClose(); cb('');
+      };
+      setTimeout(function () { document.addEventListener('mousedown', _rcOutsideClick, true); }, 0);
+    };
+  })();
+
   /* ── AJAX POST helper ──────────────────────────────────── */
   function post(url, data) {
     var body = new URLSearchParams(data);
@@ -1835,7 +1915,7 @@
               kg.item_id + ',' + kg.next_sealed_barrel_id + ')">+ Barrel</button>';
           }
           actionHtml += '<button class="keg-owner-btn btn-rs" onclick="event.stopPropagation();window.openDiscardModal(' +
-            kg.item_id + ',' + kg.tapped_barrel_id + ')">Tupa</button>';
+            kg.item_id + ',' + kg.tapped_barrel_id + ',this)">Tupa</button>';
         }
         actionHtml += '</div>';
       } else if (kg.next_sealed_barrel_id && QS_IS_OWNER) {
@@ -2339,20 +2419,26 @@
   /* ════════════════════════════════════════════════════════
      DISCARD
   ════════════════════════════════════════════════════════ */
-  window.openDiscardModal = function (itemId, barrelId) {
-    var kg     = _boardData[itemId];
-    var name   = kg ? kg.name : 'barrel hii';
-    var reason = window.prompt('Sababu ya kutupa ' + name + ':', 'Imerudishwa kwa distributor');
-    if (reason === null) return;
-    post('/stock/bar/discard/' + barrelId + '/', {reason: reason || 'Sababu haikuelezwa'})
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (d.ok) {
-          loadBarBoard();
-        } else {
-          alert(d.error || 'Hitilafu ya kutupa barrel.');
-        }
-      });
+  window.openDiscardModal = function (itemId, barrelId, anchorEl) {
+    var kg   = _boardData[itemId];
+    var name = kg ? kg.name : 'barrel hii';
+    if (!confirm('Tupa ' + name + '?')) return;
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Sababu ya kutupa ' + name,
+      chips: ['Imerudishwa kwa distributor', 'Imeharibika', 'Delivery ya makosa'],
+      onSelect: function (reason) {
+        post('/stock/bar/discard/' + barrelId + '/', {reason: reason || 'Sababu haikuelezwa'})
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.ok) {
+              loadBarBoard();
+            } else {
+              alert(d.error || 'Hitilafu ya kutupa barrel.');
+            }
+          });
+      },
+    });
   };
 
   /* ════════════════════════════════════════════════════════
@@ -2681,7 +2767,7 @@
           '<div class="tab-actions-row" style="margin-top:0.3rem;">' +
           '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>' +
           (QS_IS_OWNER
-            ? '<button class="tab-action-btn tab-btn-void" onclick="window.openVoidModal(' + tab.id + ',\'' + safeCust + '\')">Futa</button>'
+            ? '<button class="tab-action-btn tab-btn-void" onclick="window.openVoidModal(' + tab.id + ',\'' + safeCust + '\', this)">Futa</button>'
             : '') +
           '</div>' +
           '</div>';
@@ -2878,18 +2964,21 @@
       });
   };
 
-  window.openVoidModal = function (tabId, custName) {
-    _pendingVoidId = tabId;
-    document.getElementById('void-tab-desc').textContent =
-      'Tab ya ' + custName + ' itafutwa. Pesa hazitarudishwa.';
-    document.getElementById('void-reason-input').value = '';
-    showModal('voidModal');
+  window.openVoidModal = function (tabId, custName, anchorEl) {
+    if (!confirm('Futa tab ya ' + custName + '? Pesa hazitarudishwa.')) return;
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Sababu ya kufuta tab',
+      chips: ['Mteja ameondoka bila kulipa', 'Tab ya makosa / nakala'],
+      onSelect: function (reason) {
+        _pendingVoidId = tabId;
+        window._doVoid(reason);
+      },
+    });
   };
 
-  window._doVoid = function () {
+  window._doVoid = function (reason) {
     if (!_pendingVoidId) return;
-    var reason = (document.getElementById('void-reason-input').value || '').trim();
-    hideModal('voidModal');
     post('/bar/tabs/' + _pendingVoidId + '/void/', {reason: reason || 'Imefutwa — sababu haikuelezwa'})
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -4347,10 +4436,10 @@
       var actions = '';
       if (o.status === 'PENDING') {
         actions = '<button class="oq-btn oq-btn-accept" onclick="window.oqUpdate(' + o.id + ',\'ACCEPTED\')">✓ Pokea</button>'
-                + '<button class="oq-btn oq-btn-cancel" onclick="window.oqUpdate(' + o.id + ',\'CANCELLED\')">✕</button>';
+                + '<button class="oq-btn oq-btn-cancel" onclick="window.oqUpdate(' + o.id + ',\'CANCELLED\', this)">✕</button>';
       } else if (o.status === 'ACCEPTED') {
         actions = '<button class="oq-btn oq-btn-ready" onclick="window.oqUpdate(' + o.id + ',\'READY\')">🔔 Tayari</button>'
-                + '<button class="oq-btn oq-btn-cancel" onclick="window.oqUpdate(' + o.id + ',\'CANCELLED\')">✕</button>';
+                + '<button class="oq-btn oq-btn-cancel" onclick="window.oqUpdate(' + o.id + ',\'CANCELLED\', this)">✕</button>';
       } else if (o.status === 'READY') {
         actions = '<button class="oq-btn oq-btn-serve" onclick="window.oqUpdate(' + o.id + ',\'SERVED\')">✓ Toa</button>';
       }
@@ -4374,12 +4463,21 @@
     body.innerHTML = html;
   }
 
-  window.oqUpdate = function (orderId, newStatus) {
-    var reason = '';
+  window.oqUpdate = function (orderId, newStatus, anchorEl) {
     if (newStatus === 'CANCELLED') {
       if (!confirm('Futa agizo hili?')) return;
-      reason = prompt('Sababu ya kufuta (mf. "Mteja ameondoka", "Bidhaa haipo"):', '') || '';
+      openReasonChips({
+        anchorEl: anchorEl,
+        title: 'Sababu ya kufuta agizo',
+        chips: ['Mteja amebadilisha mawazo', 'Kosa la kuweka agizo', 'Mteja ameondoka', 'Bidhaa haipo'],
+        onSelect: function (reason) { _oqSubmitUpdate(orderId, newStatus, reason); },
+      });
+      return;
     }
+    _oqSubmitUpdate(orderId, newStatus, '');
+  };
+
+  function _oqSubmitUpdate(orderId, newStatus, reason) {
     var card = document.getElementById('oq-card-' + orderId);
     if (card) card.style.opacity = '.4';
     var fd = new FormData();
@@ -4404,7 +4502,7 @@
         if (card) card.style.opacity = '1';
         showToast('Hitilafu ya mtandao.');
       });
-  };
+  }
 
   function escOq(s) {
     return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -4530,13 +4628,16 @@
 // ── Breakage modal ─────────────────────────────────────────────────────────
 (function () {
   var backdrop = document.getElementById('breakageModalBackdrop');
+  var _breakageReason = '';
 
   window.openBreakageModal = function () {
     backdrop.style.display = 'flex';
     document.getElementById('breakageStatus').style.display = 'none';
     document.getElementById('breakageItemSel').value = '';
     document.getElementById('breakageQty').value = '1';
-    document.getElementById('breakageNote').value = '';
+    _breakageReason = '';
+    var rBtn = document.getElementById('breakageReasonBtn');
+    if (rBtn) rBtn.textContent = '🏷 Chagua sababu…';
     document.getElementById('breakageSubmitBtn').disabled = false;
   };
 
@@ -4548,10 +4649,23 @@
     if (e.target === backdrop) window.closeBreakageModal();
   });
 
+  window._openBreakageReasonChips = function () {
+    openReasonChips({
+      anchorEl: document.getElementById('breakageReasonBtn'),
+      title: 'Sababu ya uharibifu',
+      chips: ['Imeanguka wakati wa kazi', 'Imevunjika ghafla', 'Muda umepita (imeharibika)'],
+      onSelect: function (reason) {
+        _breakageReason = reason;
+        var rBtn = document.getElementById('breakageReasonBtn');
+        if (rBtn) rBtn.textContent = reason ? ('✓ ' + reason) : '🏷 Chagua sababu…';
+      },
+    });
+  };
+
   window.submitBreakage = function () {
     var itemId = document.getElementById('breakageItemSel').value;
     var qty    = document.getElementById('breakageQty').value;
-    var note   = document.getElementById('breakageNote').value.trim();
+    var note   = _breakageReason;
     var status = document.getElementById('breakageStatus');
 
     if (!itemId) {
@@ -4812,7 +4926,7 @@ window.barDeclineMerge = function() {
         html += '<a href="' + promoUrl + '" target="_blank" rel="noopener" style="flex:1;text-align:center;padding:.35rem;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.2);border-radius:7px;color:#c9a84c;font-size:.75rem;text-decoration:none;">&#128202; Promo</a>';
         html += '<button onclick="window._djActivateSession(' + s.id + ')" style="flex:1;padding:.35rem;background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);border-radius:7px;color:#81c784;font-size:.75rem;cursor:pointer;">&#9654; Anza</button>';
         if (IS_OWNER) {
-          html += '<button onclick="window._djCancelSession(' + s.id + ')" style="padding:.35rem .55rem;background:transparent;border:1px solid #2a2a2a;border-radius:7px;color:#555;font-size:.75rem;cursor:pointer;">&#128465;</button>';
+          html += '<button onclick="window._djCancelSession(' + s.id + ', this)" style="padding:.35rem .55rem;background:transparent;border:1px solid #2a2a2a;border-radius:7px;color:#555;font-size:.75rem;cursor:pointer;">&#128465;</button>';
         }
         html += '</div>';
         html += '</div>';
@@ -4913,7 +5027,7 @@ window.barDeclineMerge = function() {
         html += '</div>';
         html += _distribSection(s);
         if (IS_OWNER) {
-          html += '<div style="text-align:right;margin-top:.3rem;"><button onclick="window._djCancelSession(' + s.id + ')" style="background:transparent;border:none;color:#555;font-size:.72rem;cursor:pointer;padding:.15rem .4rem;">&#128465; Futa sesheni hii</button></div>';
+          html += '<div style="text-align:right;margin-top:.3rem;"><button onclick="window._djCancelSession(' + s.id + ', this)" style="background:transparent;border:none;color:#555;font-size:.72rem;cursor:pointer;padding:.15rem .4rem;">&#128465; Futa sesheni hii</button></div>';
         }
       }
 
@@ -4935,7 +5049,7 @@ window.barDeclineMerge = function() {
           html += '<div style="color:#4caf50;font-size:.78rem;">&#10003; Amelipwa</div>';
         }
         if (IS_OWNER && s.payment_status !== 'PAID') {
-          html += '<div style="text-align:right;margin-top:.3rem;"><button onclick="window._djCancelSession(' + s.id + ')" style="background:transparent;border:none;color:#555;font-size:.72rem;cursor:pointer;padding:.15rem .4rem;">&#128465; Futa sesheni hii</button></div>';
+          html += '<div style="text-align:right;margin-top:.3rem;"><button onclick="window._djCancelSession(' + s.id + ', this)" style="background:transparent;border:none;color:#555;font-size:.72rem;cursor:pointer;padding:.15rem .4rem;">&#128465; Futa sesheni hii</button></div>';
         }
       }
 
@@ -4980,7 +5094,7 @@ window.barDeclineMerge = function() {
         html += '<div style="font-size:.8rem;color:#ffb74d;margin:.4rem 0;">&#8987; Inasubiri idhini yako</div>';
         html += '<div style="display:flex;gap:.5rem;">';
         html += '<button onclick="window._djApproveSession(' + s.id + ')" style="flex:1;padding:.45rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.3);border-radius:8px;color:#81c784;font-size:.82rem;cursor:pointer;">&#10003; Idhinisha</button>';
-        html += '<button onclick="window._djCancelSession(' + s.id + ')" style="flex:1;padding:.45rem;background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:8px;color:#e87090;font-size:.82rem;cursor:pointer;">&#10007; Futa</button>';
+        html += '<button onclick="window._djCancelSession(' + s.id + ', this)" style="flex:1;padding:.45rem;background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:8px;color:#e87090;font-size:.82rem;cursor:pointer;">&#10007; Futa</button>';
         html += '</div>';
       }
 
@@ -5219,11 +5333,17 @@ window.barDeclineMerge = function() {
     });
   };
 
-  window._djCancelSession = function (sessionId) {
+  window._djCancelSession = function (sessionId, anchorEl) {
     if (!confirm('Futa sesheni hii? Hatua hii haiwezi kutendeka tena.')) return;
-    var reason = prompt('Sababu ya kufuta (mf. "Msanii hakufika", "Mteja alighairi"):', '') || '';
-    _post('/bar/session/' + sessionId + '/update/', {action: 'cancel', reason: reason}, function (d) {
-      if (d.ok) { showToast(d.message || 'Sesheni imefutwa.'); _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Sababu ya kufuta sesheni',
+      chips: ['Msanii hakufika', 'Mteja alighairi'],
+      onSelect: function (reason) {
+        _post('/bar/session/' + sessionId + '/update/', {action: 'cancel', reason: reason}, function (d) {
+          if (d.ok) { showToast(d.message || 'Sesheni imefutwa.'); _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+        });
+      },
     });
   };
 

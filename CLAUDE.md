@@ -1948,3 +1948,47 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`DeactivateStaffSoftDeleteTest`, `ReactivateStaffTest`, `DepartedStaffListTest`,
   `StaffNameChangeLogTest`, `DeactivatedStaffMiddlewareTest`, `StaffJourneyTest`). Two
   migrations (0049, 0050), both additive. 488 tests pass.
+- Quick-reason chips (2026-07-25). Roy's follow-up to the wording/accountability audit:
+  during a busy shift there's no time to type free text into a `prompt()`, so most
+  reject/cancel/discard flows should offer 3-5 quick-tap PRESET reason chips (with a
+  "Nyingine" fallback to free text) instead, and the action must never be blocked
+  waiting on a reason. New `window.openReasonChips({anchorEl, title, chips, onSelect})`
+  — a small anchored popover, copy-pasted verbatim into `bar_board.html`,
+  `quick_sell.html`, `kitchen_board.html`, and `waitress_screen.html` (no shared JS
+  bundle in this app, same convention as the existing `showModal`/`hideModal`
+  duplication). Contract: tapping any chip fires `onSelect(text)` immediately — the tap
+  *is* the confirm, no second submit step; a "Ruka — bila sababu" (skip) chip is always
+  present and calls `onSelect('')`, letting each flow's existing backend default
+  ("sababu haikuelezwa" etc.) fill in server-side exactly as before; dismissing the
+  popover (tap outside) is treated as skip, never an abort. Where an existing
+  `confirm()` "are you sure" step already existed (discard/void/cancel), kept it as the
+  accidental-tap guard, then replaced the trailing `prompt()`/text-input with the chip
+  popover. Chip wording is drawn directly from each flow's own prior placeholder/example
+  text — not invented — except barrel discard, tab void, and breakage, which had only
+  1 grounded example each; Roy should sanity-check those three specifically.
+
+  Converted: DJ/MC session cancel (`_djCancelSession`); tab void — **replaced the
+  Bootstrap modal entirely** on both `bar_board.html` (`_doVoid`/`openVoidModal`) and
+  `quick_sell.html` (`qsDoTabVoid`/`qsOpenTabVoid`) with `confirm()` + chips, since a
+  modal-then-type flow is exactly the multi-tap friction this feature removes; table
+  order cancel — unified the two previously-inconsistent example sets from
+  `waitress_screen.html`'s `cancelOrder` and `bar_board.html`'s `oqUpdate` into one
+  shared 4-chip set; kitchen batch discard (`kbDiscardBatch`) — also fixed a real "never
+  block" bug where dismissing the old `prompt()` (`reason === null`) aborted the whole
+  discard action instead of proceeding with no reason; barrel discard
+  (`openDiscardModal`) — same dismiss-aborts bug fixed, plus the pre-filled prompt
+  default became the first chip; bunch discard (`discardBunch`); bottle/stock breakage
+  — the whole `breakageModalBackdrop` modal was still **entirely English**
+  ("Record Breakage", "Quantity", "Cancel" etc., missed by the earlier wording audit
+  since that pass only touched the JS-level messages, not this modal's static labels)
+  — translated throughout and the note field became a chip-trigger button; kitchen
+  wastage (`kitchen_wastage()`, core/kitchen_views.py) — same English-modal gap plus a
+  bare `{"ok": True}` response with an English `"Food wastage"` default and every error
+  string in English (`"Item not found"` etc.) — fixed to mirror `record_breakage()`
+  exactly: Swahili throughout, a reasoning message (item, qty, KES loss, reporter,
+  timestamp), and an owner/manager notification, closing the same gap class found and
+  fixed for the bar module's breakage flow in an earlier sprint but never carried over
+  to kitchen's sibling endpoint. 9 new tests
+  (`KitchenWastageExplainsItselfTest`). No migrations — every flow's `reason`/`note`
+  field already existed; this sprint is a frontend UX change plus the two backend fixes
+  above. 491 tests pass.

@@ -3,6 +3,29 @@
 
 {% block extra_css %}
 <style>
+/* ── Reason Chips popover (2026-07-25) ── */
+.rc-popover {
+  position: absolute; z-index: 3000; background: #222; border: 1px solid #444;
+  border-radius: 10px; padding: .6rem; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+  max-width: 280px; font-size: .8rem;
+}
+.rc-title { color: #c9a84c; font-weight: 600; margin-bottom: .4rem; }
+.rc-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .5rem; }
+.rc-chip {
+  background: rgba(201,168,76,.1); border: 1px solid rgba(201,168,76,.3); color: #e2c36e;
+  border-radius: 20px; padding: .35rem .7rem; font-size: .78rem; cursor: pointer; white-space: nowrap;
+}
+.rc-chip:hover { background: rgba(201,168,76,.2); }
+.rc-chip-other { background: rgba(255,255,255,.05); border-color: #555; color: #ccc; }
+.rc-other-row { display: flex; gap: .3rem; margin-bottom: .5rem; }
+.rc-other-input {
+  flex: 1; min-width: 0; background: #111; border: 1px solid #444; border-radius: 6px;
+  color: #f0ece4; padding: .3rem .5rem; font-size: .78rem;
+}
+.rc-other-send { background: #c9a84c; border: none; border-radius: 6px; color: #111; padding: .3rem .6rem; font-size: .78rem; cursor: pointer; }
+.rc-skip { display: block; width: 100%; background: transparent; border: 1px dashed #444; color: #888; border-radius: 6px; padding: .3rem; font-size: .74rem; cursor: pointer; }
+.rc-skip:hover { color: #aaa; border-color: #666; }
+
 /* ── Layout ── */
 .kb-wrap       { display:flex; gap:1rem; align-items:flex-start; padding:0 0.5rem 4rem; }
 .kb-menu       { flex:1; min-width:0; }
@@ -966,9 +989,11 @@
              style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
     </div>
     <div class="mb-3">
-      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Maelezo <span style="color:#555;">(optional)</span></label>
-      <input type="text" id="kbWastageNote" class="form-control" placeholder="Ilianguka, ilichomwa moto..."
-             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Sababu <span style="color:#555;">(hiari)</span></label>
+      <button type="button" id="kbWastageReasonBtn" onclick="window._openKbWastageReasonChips()"
+              style="width:100%; text-align:left; background:#1a1a1a; border:1px solid #3a3a3a; border-radius:6px; color:#b0b0b0; padding:.45rem .6rem; font-size:.85rem; cursor:pointer;">
+        🏷 Chagua sababu…
+      </button>
     </div>
     <div id="kbWastageStatus" style="display:none; font-size:0.82rem; margin-bottom:0.75rem;"></div>
     <div style="display:flex; gap:0.6rem;">
@@ -1244,6 +1269,76 @@
   var _mixSiblings     = {{ mix_siblings_json|safe }};
   var _barTabNames     = {{ bar_tab_names|safe }};
 
+  /* ── Reason Chips (2026-07-25) — see bar_board.html for the full comment.
+     Copied verbatim; no shared JS bundle in this app. ── */
+  (function () {
+    var _rcPopover = null, _rcOnSelect = null;
+    function _rcClose() {
+      if (_rcPopover) { _rcPopover.remove(); _rcPopover = null; }
+      document.removeEventListener('mousedown', _rcOutsideClick, true);
+    }
+    function _rcOutsideClick(e) {
+      if (_rcPopover && !_rcPopover.contains(e.target)) {
+        var cb = _rcOnSelect; _rcClose();
+        if (cb) cb('');
+      }
+    }
+    window.openReasonChips = function (opts) {
+      _rcClose();
+      _rcOnSelect = opts.onSelect || function () {};
+      var chips = opts.chips || [];
+      var pop = document.createElement('div');
+      pop.className = 'rc-popover';
+      var html = '<div class="rc-title">' + (opts.title || 'Sababu') + '</div><div class="rc-chips">';
+      chips.forEach(function (c, i) {
+        html += '<button type="button" class="rc-chip" data-i="' + i + '">' + c + '</button>';
+      });
+      html += '<button type="button" class="rc-chip rc-chip-other">' + (opts.otherLabel || 'Nyingine…') + '</button></div>' +
+        '<div class="rc-other-row" style="display:none;">' +
+        '<input type="text" class="rc-other-input" maxlength="200">' +
+        '<button type="button" class="rc-other-send">Tuma</button></div>' +
+        '<button type="button" class="rc-skip">' + (opts.skipLabel || 'Ruka — bila sababu') + '</button>';
+      pop.innerHTML = html;
+      document.body.appendChild(pop);
+      _rcPopover = pop;
+
+      if (opts.anchorEl) {
+        var r = opts.anchorEl.getBoundingClientRect();
+        var top = r.bottom + window.scrollY + 6;
+        var left = r.left + window.scrollX;
+        var maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 10;
+        pop.style.top = top + 'px';
+        pop.style.left = Math.max(10, Math.min(left, maxLeft)) + 'px';
+      } else {
+        pop.style.top = '40%';
+        pop.style.left = '50%';
+        pop.style.transform = 'translate(-50%, -50%)';
+      }
+
+      pop.querySelectorAll('.rc-chip:not(.rc-chip-other)').forEach(function (btn) {
+        btn.onclick = function () {
+          var text = chips[parseInt(btn.dataset.i, 10)];
+          var cb = _rcOnSelect; _rcClose(); cb(text);
+        };
+      });
+      pop.querySelector('.rc-chip-other').onclick = function () {
+        pop.querySelector('.rc-other-row').style.display = 'flex';
+        pop.querySelector('.rc-other-input').focus();
+      };
+      pop.querySelector('.rc-other-send').onclick = function () {
+        var text = pop.querySelector('.rc-other-input').value.trim();
+        var cb = _rcOnSelect; _rcClose(); cb(text);
+      };
+      pop.querySelector('.rc-other-input').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); pop.querySelector('.rc-other-send').click(); }
+      });
+      pop.querySelector('.rc-skip').onclick = function () {
+        var cb = _rcOnSelect; _rcClose(); cb('');
+      };
+      setTimeout(function () { document.addEventListener('mousedown', _rcOutsideClick, true); }, 0);
+    };
+  })();
+
   // Split ProduceBunch batch items: grilled meat vs legacy fry items
   var _GRILL_KEYS = ['nyama','choma','mutura','mishkaki','rib','bbq','barbecue','grill','suya','roast','smokehouse'];
   function _isGrill(item) {
@@ -1413,7 +1508,7 @@
         html += '<div style="display:flex;gap:.3rem;margin-top:.4rem;">' +
           '<button onclick="kbDepleteBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\'); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(255,255,255,.04);border:1px solid #555;border-radius:5px;color:#b0b0b0;cursor:pointer;">✓ Imekwisha</button>' +
-          '<button onclick="kbDiscardBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\'); event.stopPropagation();" ' +
+          '<button onclick="kbDiscardBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\', this); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;cursor:pointer;">🗑 Tupa</button>' +
           '</div>';
       }
@@ -3306,19 +3401,25 @@
       .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });
   };
 
-  window.kbDiscardBatch = function(batchId, itemName) {
-    var reason = prompt(itemName + ' — sababu ya kutupa (e.g. "Imechomeka", "Imepoa sana"):', '');
-    if (reason === null) return;
-    var body = new URLSearchParams();
-    body.append('csrfmiddlewaretoken', CSRF);
-    body.append('reason', reason || 'Sababu haikuelezwa');
-    fetch('/kitchen/batch/' + batchId + '/discard/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d.ok) { showToast('Batch imetupwa — ' + itemName); setTimeout(function(){ location.reload(); }, 1000); }
-        else       { showToast('❌ ' + (d.error || 'Hitilafu'), 3000); }
-      })
-      .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });
+  window.kbDiscardBatch = function(batchId, itemName, anchorEl) {
+    if (!confirm('Tupa batch ya ' + itemName + '?')) return;
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Sababu ya kutupa ' + itemName,
+      chips: ['Imechomeka', 'Imepoa sana'],
+      onSelect: function (reason) {
+        var body = new URLSearchParams();
+        body.append('csrfmiddlewaretoken', CSRF);
+        body.append('reason', reason || 'Sababu haikuelezwa');
+        fetch('/kitchen/batch/' + batchId + '/discard/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d.ok) { showToast('Batch imetupwa — ' + itemName); setTimeout(function(){ location.reload(); }, 1000); }
+            else       { showToast('❌ ' + (d.error || 'Hitilafu'), 3000); }
+          })
+          .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });
+      },
+    });
   };
 
   {% if can_receive_stock %}
@@ -3572,12 +3673,16 @@
     sel.appendChild(opt);
   });
 
+  var _kbWastageReason = '';
+
   window.openKbWastageModal = function () {
     backdrop.style.display = 'flex';
     document.getElementById('kbWastageStatus').style.display = 'none';
     sel.value = '';
     document.getElementById('kbWastageQty').value = '1';
-    document.getElementById('kbWastageNote').value = '';
+    _kbWastageReason = '';
+    var rBtn = document.getElementById('kbWastageReasonBtn');
+    if (rBtn) rBtn.textContent = '🏷 Chagua sababu…';
   };
 
   window.closeKbWastageModal = function () {
@@ -3587,6 +3692,19 @@
   backdrop.addEventListener('click', function (e) {
     if (e.target === backdrop) window.closeKbWastageModal();
   });
+
+  window._openKbWastageReasonChips = function () {
+    openReasonChips({
+      anchorEl: document.getElementById('kbWastageReasonBtn'),
+      title: 'Sababu ya upotezaji',
+      chips: ['Ilianguka', 'Imechomeka', 'Imepoa sana'],
+      onSelect: function (reason) {
+        _kbWastageReason = reason;
+        var rBtn = document.getElementById('kbWastageReasonBtn');
+        if (rBtn) rBtn.textContent = reason ? ('✓ ' + reason) : '🏷 Chagua sababu…';
+      },
+    });
+  };
 
   function _showWastageStatus(msg, color) {
     var el = document.getElementById('kbWastageStatus');
@@ -3598,7 +3716,7 @@
   window.submitKbWastage = function () {
     var itemId = sel.value;
     var qty    = document.getElementById('kbWastageQty').value;
-    var note   = document.getElementById('kbWastageNote').value.trim();
+    var note   = _kbWastageReason;
 
     if (!itemId) { _showWastageStatus('Chagua bidhaa kwanza.', '#e87090'); return; }
     if (!qty || parseFloat(qty) <= 0) { _showWastageStatus('Weka kiasi halisi.', '#e87090'); return; }
@@ -3613,8 +3731,8 @@
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (d.ok) {
-          _showWastageStatus('Imerekodiwa. ✓', '#4caf50');
-          setTimeout(function () { window.closeKbWastageModal(); }, 1200);
+          _showWastageStatus('✓ ' + (d.message || 'Imerekodiwa.'), '#4caf50');
+          setTimeout(function () { window.closeKbWastageModal(); }, 2200);
         } else if (d.shift_required) {
           _showWastageStatus('Fungua shift kwanza.', '#e87090');
         } else {

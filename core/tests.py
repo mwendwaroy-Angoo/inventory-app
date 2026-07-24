@@ -4268,6 +4268,51 @@ class KitchenWastageStationScopingTest(TestCase):
         self.assertTrue(resp.json()['ok'])
 
 
+class KitchenWastageExplainsItselfTest(TestCase):
+    """2026-07-25 (reason-chips redesign follow-up): kitchen_wastage() defaulted
+    to English "Food wastage" and returned bare {"ok": True} with no
+    notification — same gap class as record_breakage() (keg_views.py), fixed
+    the same way: Swahili default, reasoning message, owner/manager notice."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Wastage Explains Biz')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kwexpl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kitchen_staff = User.objects.create_user(username='kwexpl_staff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=self.kitchen_staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Wastage Explains Item',
+            material_no='KWEXPL-01', unit='Pcs', selling_price=Decimal('80'), cost_price=Decimal('40'),
+        )
+
+    def test_response_includes_reasoning_message(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post('/kitchen/wastage/', {
+            'item_id': self.item.id, 'qty': '2', 'note': 'Ilianguka',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('Wastage Explains Item', data['message'])
+        self.assertIn('80', data['message'])  # 2 x cost_price 40
+        self.assertIn('Ilianguka', data['message'])
+
+    def test_blank_note_uses_swahili_default_not_english(self):
+        self.client.force_login(self.kitchen_staff)
+        self.client.post('/kitchen/wastage/', {'item_id': self.item.id, 'qty': '1'})
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='Wastage').first()
+        self.assertIsNotNone(txn)
+        self.assertNotEqual(txn.recipient, 'Food wastage')
+        self.assertEqual(txn.recipient, 'Chakula kimepotea')
+
+    def test_owner_notified(self):
+        self.client.force_login(self.kitchen_staff)
+        self.client.post('/kitchen/wastage/', {'item_id': self.item.id, 'qty': '1', 'note': 'test'})
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Chakula').first()
+        self.assertIsNotNone(notif, 'Owner must be notified when kitchen wastage is logged')
+
+
 class KitchenEnvelopeSaleLockTest(TransactionTestCase):
     """Kitchen-module audit, Theme 1, 2026-07-19: KitchenBatch.record_sale() and
     ProduceBunch.record_sale() were fetched via a plain .get() inside
