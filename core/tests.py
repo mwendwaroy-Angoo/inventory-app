@@ -4623,6 +4623,128 @@ class KitchenBatchDiscardRecordsWastageTest(TestCase):
         self.assertAlmostEqual(loss_kes, 1500.0, places=2)
 
 
+class EditKitchenBatchTargetTest(TestCase):
+    """2026-07-25 live request: no way existed to correct a mistyped batch
+    cost after opening — only deplete/discard were available. edit_kitchen_
+    batch_target() is owner/manager-only (stricter than the shared _kb_gate
+    used by receive/deplete/discard) since cost_total drives profit(),
+    discard()'s wastage math, and mirrors into item.cost_price."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Edit Target Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+        self.owner = User.objects.create_user(username='kbedit_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.manager = User.objects.create_user(username='kbedit_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+
+        self.kitchen_staff = User.objects.create_user(username='kbedit_kstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=self.kitchen_staff, status='OPEN')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Edit Target Chips',
+            unit='Batch', material_no='KBEDIT-01', selling_price=Decimal('50'),
+            is_kitchen_batch=True, cost_price=Decimal('1500'),
+        )
+        self.batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.item, cost_total=Decimal('1500'),
+        )
+
+    def test_owner_can_correct_batch_cost(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/edit-target/', {'cost_total': '1200'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('1,500', data['message'])
+        self.assertIn('1,200', data['message'])
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.cost_total, Decimal('1200'))
+        self.assertIn('1,500', self.batch.note)
+        self.assertIn('1,200', self.batch.note)
+        self.assertIn('kbedit_owner', self.batch.note)
+
+    def test_correction_mirrors_into_item_cost_price(self):
+        # open_batch() sets item.cost_price = cost_total; a correction must
+        # keep them in sync or discard()'s wastage math and Transaction.cost()'s
+        # proportional-share formula would price against the stale figure.
+        self.client.force_login(self.owner)
+        self.client.post(f'/kitchen/batch/{self.batch.id}/edit-target/', {'cost_total': '900'})
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('900'))
+
+    def test_manager_can_correct_batch_cost(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/edit-target/', {'cost_total': '1300'})
+        self.assertTrue(resp.json()['ok'])
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.cost_total, Decimal('1300'))
+
+    def test_kitchen_staff_cannot_correct_batch_cost(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/edit-target/', {'cost_total': '1300'})
+        self.assertEqual(resp.status_code, 403)
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.cost_total, Decimal('1500'))
+
+    def test_cannot_edit_a_depleted_batch(self):
+        self.batch.deplete()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/edit-target/', {'cost_total': '1000'})
+        self.assertEqual(resp.status_code, 404)
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.cost_total, Decimal('1500'))
+
+    def test_rejects_non_positive_cost(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/edit-target/', {'cost_total': '0'})
+        self.assertEqual(resp.status_code, 400)
+        resp2 = self.client.post(f'/kitchen/batch/{self.batch.id}/edit-target/', {'cost_total': '-5'})
+        self.assertEqual(resp2.status_code, 400)
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.cost_total, Decimal('1500'))
+
+    def test_rejects_non_numeric_cost(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/edit-target/', {'cost_total': 'abc'})
+        self.assertEqual(resp.status_code, 400)
+
+
+class KitchenNavbarOwnerVisibilityTest(TestCase):
+    """2026-07-25 live report: Roy enabled has_kitchen but the 🍗 Kitchen link
+    never appeared in his own (owner) navbar — he had to go via Business
+    Settings' "Nenda Kitchen →" button every time. Root cause: base.html's
+    owner/manager navbar block wrongly also required can_access_kitchen, a
+    staff-only cross-access flag (default False, including for owners) that
+    kitchen_board() itself never requires for is_owner_or_manager."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Navbar Biz', has_kitchen=True)
+        Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbnav_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='kbnav_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+
+    def test_owner_navbar_contains_kitchen_board_url(self):
+        up = self.owner.userprofile
+        self.assertFalse(up.can_access_kitchen, 'Sanity check: owners do not get this staff-only flag set')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        from django.urls import reverse
+        self.assertIn(reverse('kitchen_board').encode(), resp.content)
+
+    def test_manager_navbar_contains_kitchen_board_url(self):
+        self.assertFalse(self.manager.userprofile.can_access_kitchen)
+        self.client.force_login(self.manager)
+        resp = self.client.get('/')
+        from django.urls import reverse
+        self.assertIn(reverse('kitchen_board').encode(), resp.content)
+
+
 class KitchenBatchGateStationScopingTest(TestCase):
     """Kitchen-module audit, Theme 3 (access-control scoping), 2026-07-19: _kb_gate()
     — the shared gate for kitchen_batch_receive, deplete_kitchen_batch,

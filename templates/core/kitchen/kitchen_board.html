@@ -1505,11 +1505,13 @@
         plHtml;
 
       if (hasOpen) {
-        html += '<div style="display:flex;gap:.3rem;margin-top:.4rem;">' +
+        html += '<div style="display:flex;gap:.3rem;margin-top:.4rem;flex-wrap:wrap;">' +
           '<button onclick="kbDepleteBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\'); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(255,255,255,.04);border:1px solid #555;border-radius:5px;color:#b0b0b0;cursor:pointer;">✓ Imekwisha</button>' +
           '<button onclick="kbDiscardBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\', this); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;cursor:pointer;">🗑 Tupa</button>' +
+          (IS_OWNER ? '<button onclick="kbEditBatchTarget(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\',' + batch.cost_total + '); event.stopPropagation();" ' +
+          'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.3);border-radius:5px;color:#c9a84c;cursor:pointer;">✏️ Hariri Gharama</button>' : '') +
           '</div>';
       }
 
@@ -3396,6 +3398,27 @@
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (d.ok) { showToast('✓ Batch imefungwa — ' + itemName); setTimeout(function(){ location.reload(); }, 1000); }
+        else       { showToast('❌ ' + (d.error || 'Hitilafu'), 3000); }
+      })
+      .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });
+  };
+
+  window.kbEditBatchTarget = function(batchId, itemName, currentCost) {
+    // 2026-07-25: owner/manager-only correction for a mistyped batch cost —
+    // deliberately simple (a single number, entered rarely, by the owner
+    // themselves) rather than a reason-chips flow, unlike the reject/discard
+    // flows above which are about quick-tap reasons under time pressure.
+    var val = prompt('Gharama mpya ya batch ya "' + itemName + '" (sasa: KES ' + fmt(currentCost) + ')', currentCost);
+    if (val === null) return;
+    val = val.trim();
+    if (!val) return;
+    var body = new URLSearchParams();
+    body.append('csrfmiddlewaretoken', CSRF);
+    body.append('cost_total', val);
+    fetch('/kitchen/batch/' + batchId + '/edit-target/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) { showToast(d.message || '✓ Imesasishwa'); setTimeout(function(){ location.reload(); }, 1000); }
         else       { showToast('❌ ' + (d.error || 'Hitilafu'), 3000); }
       })
       .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });

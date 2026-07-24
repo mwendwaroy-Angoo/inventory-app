@@ -2048,3 +2048,40 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   and asserting the Z-report's petty-cash deduction for that shift disappears and reappears
   live at each step with no other action taken. 5 new tests (`PettyCashReviewUndoTest`). No
   migrations. 501 tests pass.
+- Kitchen batch cost correction + owner navbar fix (2026-07-25), two live reports in one
+  message. (1) **Fix: owner/manager saw no 🍗 Kitchen link in their own navbar after
+  enabling `has_kitchen`.** Root cause: `base.html`'s owner/manager catch-all navbar block
+  (the `{% else %}` reached only by `is_owner`/`is_manager`, both mobile and desktop
+  duplicates) gated the Kitchen link on `biz_profile.modules.kitchen AND
+  user.userprofile.can_access_kitchen` — but `can_access_kitchen` is a staff-only
+  cross-access flag (`default=False`, "Bar/general staff may access the Kitchen Board")
+  that nothing ever sets for an owner or manager. `kitchen_board()` itself already bypasses
+  this exact check for `is_owner_or_manager` (`core/kitchen_views.py`), so the navbar and
+  the view had silently drifted apart — Roy could always reach the board via Business
+  Settings' "Nenda Kitchen →" button (gated only on `has_kitchen`), which is why the view
+  itself was never in question. Fixed the 2 owner/manager occurrences (of 4 total —
+  the other 2, inside the regular-staff `is_staff_member` block, correctly keep the
+  `can_access_kitchen` requirement) to `{% if biz_profile.modules.kitchen %}`, matching the
+  view's own bypass exactly. (2) **Kitchen Batch cost correction** — `KitchenBatch` had no
+  edit path for `cost_total` once opened; only ✓ Imekwisha (deplete) and 🗑 Tupa (discard)
+  existed, so a mistyped raw-material cost at receive time (e.g. Roy meant 1500, typed 800)
+  had no fix short of discarding the whole batch. New `edit_kitchen_batch_target`
+  (`core/kitchen_views.py`, `/kitchen/batch/<id>/edit-target/`) — deliberately
+  owner/manager-only, stricter than `_kb_gate`'s any-open-shift-staff gate used by
+  receive/deplete/discard, since `cost_total` drives `profit()`/`profit_pct`,
+  `discard()`'s wastage math, AND mirrors into `item.cost_price` (see `open_batch()`'s
+  docstring) — the same sensitivity tier as every other financial-figure correction in
+  this app (`adjust_stock_balance`, petty cash review, stock variance review, all
+  owner/manager-only). Locks the batch row with `select_for_update()`, rejects non-positive/
+  non-numeric input, re-mirrors the corrected figure into `item.cost_price` so
+  `discard()` and `Transaction.cost()`'s proportional-share formula never price against a
+  stale figure, and appends a system-generated audit line to `batch.note` ("Gharama
+  ilibadilishwa kutoka KES X kwenda KES Y na {who} — {when}") — only restricted to `OPEN`
+  batches, matching deplete/discard's own status guards. Kitchen board tile gains a
+  "✏️ Hariri Gharama" button next to the existing two actions, owner/manager-only
+  (`IS_OWNER` JS flag, already used for other owner-gated buttons on this board); uses a
+  plain `prompt()` — deliberately simpler than the reason-chips components elsewhere in
+  this file, since this is a single number entered rarely and intentionally by the owner,
+  not a reason captured under mid-service time pressure. 9 new tests
+  (`EditKitchenBatchTargetTest`, `KitchenNavbarOwnerVisibilityTest`). No migrations. 510
+  tests pass.

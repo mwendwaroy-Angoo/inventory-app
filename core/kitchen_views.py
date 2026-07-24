@@ -1405,6 +1405,75 @@ def discard_kitchen_batch(request, batch_id):
 
 @login_required
 @require_POST
+def edit_kitchen_batch_target(request, batch_id):
+    """Correct a KitchenBatch's cost_total ("target" gharama) after it was
+    opened — e.g. a mistyped raw-material cost at receive time.
+
+    2026-07-25 live request: no way existed to fix a typo'd batch cost once
+    a batch was open — deplete/discard were the only two actions available.
+    Owner/manager only (stricter than _kb_gate's any-open-shift-staff gate,
+    which covers receive/deplete/discard): cost_total drives profit()/
+    profit_pct, discard()'s wastage math, AND mirrors into item.cost_price
+    (see open_batch()'s docstring) — the same sensitivity level as any other
+    financial-figure correction in this app (adjust_stock_balance, petty
+    cash review, stock variance review, all owner/manager-only).
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
+    business = up.business
+    if not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya mmiliki/meneja pekee'}, status=403)
+
+    new_cost_raw = (request.POST.get('cost_total') or '').strip()
+    try:
+        new_cost = Decimal(new_cost_raw)
+    except InvalidOperation:
+        return JsonResponse({'ok': False, 'error': 'Nambari batili'}, status=400)
+    if new_cost <= 0:
+        return JsonResponse({'ok': False, 'error': 'Gharama lazima iwe zaidi ya 0'}, status=400)
+
+    from django.db import transaction as _db_txn
+    with _db_txn.atomic():
+        try:
+            batch = KitchenBatch.objects.select_for_update().get(
+                id=batch_id, business=business, status='OPEN',
+            )
+        except KitchenBatch.DoesNotExist:
+            return JsonResponse(
+                {'ok': False, 'error': 'Batch haikupatikana au tayari imefungwa'}, status=404,
+            )
+
+        old_cost = batch.cost_total
+        when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+        who = request.user.get_full_name() or request.user.username
+
+        batch.cost_total = new_cost
+        batch.note = (
+            (batch.note + ' | ' if batch.note else '')
+            + f'Gharama ilibadilishwa kutoka KES {old_cost:,.0f} kwenda KES {new_cost:,.0f} na {who} — {when}'
+        )
+        batch.save(update_fields=['cost_total', 'note'])
+
+        # item.cost_price mirrors cost_total for kitchen batch items — see
+        # open_batch()'s docstring; keep them in sync on correction too,
+        # otherwise discard()'s wastage math and Transaction.cost()'s
+        # proportional-share formula would price against the stale figure.
+        batch.item.cost_price = new_cost
+        batch.item.save(update_fields=['cost_price'])
+
+    return JsonResponse({
+        'ok': True,
+        'batch': _batch_to_dict(batch),
+        'message': (
+            f'Gharama ya batch ya {batch.item.description} imebadilishwa kutoka '
+            f'KES {old_cost:,.0f} kwenda KES {new_cost:,.0f}.'
+        ),
+    })
+
+
+@login_required
+@require_POST
 def kitchen_consumable_add(request):
     """Log a kitchen consumable purchase (khaki bags, tomato sauce, cooking oil)."""
     up, business, err = _kb_gate(request)

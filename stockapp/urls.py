@@ -103,6 +103,7 @@ from core.order_views import (
 from core.kitchen_views import (
     deplete_kitchen_batch,
     discard_kitchen_batch,
+    edit_kitchen_batch_target,
     kitchen_batch_receive,
     kitchen_board,
     kitchen_consumable_add,
@@ -399,6 +400,7 @@ urlpatterns = [
     path("kitchen/batch/receive/",                kitchen_batch_receive,        name="kitchen_batch_receive"),
     path("kitchen/batch/<int:batch_id>/deplete/", deplete_kitchen_batch,        name="deplete_kitchen_batch"),
     path("kitchen/batch/<int:batch_id>/discard/", discard_kitchen_batch,        name="discard_kitchen_batch"),
+    path("kitchen/batch/<int:batch_id>/edit-target/", edit_kitchen_batch_target, name="edit_kitchen_batch_target"),
     path("kitchen/consumable/add/",               kitchen_consumable_add,       name="kitchen_consumable_add"),
     path("kitchen/consumable/pool/",              kitchen_consumable_pool_api,  name="kitchen_consumable_pool_api"),
     path("kitchen/stats/",                        kitchen_stats_api,            name="kitchen_stats_api"),

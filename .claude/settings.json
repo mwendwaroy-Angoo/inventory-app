@@ -3,7 +3,9 @@
     "allow": [
       "PowerShell($env:SECRET_KEY = \"dev-test-key-local\"; cd \"c:\\\\Users\\\\Roy\\\\BUSINESS SITE\\\\Inventory App\"; python manage.py test core.tests.PerformerSessionTests 2>&1 | Select-Object -Last 15)",
       "PowerShell($env:SECRET_KEY = \"dev-test-key-local\"; cd \"c:\\\\Users\\\\Roy\\\\BUSINESS SITE\\\\Inventory App\"; python manage.py test core 2>&1 | Select-Object -Last 8)",
-      "PowerShell($env:SECRET_KEY = \"dev-test-key-local\"; cd \"c:\\\\Users\\\\Roy\\\\BUSINESS SITE\\\\Inventory App\"; python manage.py test core 2>&1 | Out-String | Select-Object -First 1 | ForEach-Object { $_ -split \"`n\" | Select-Object -First 150 })"
+      "PowerShell($env:SECRET_KEY = \"dev-test-key-local\"; cd \"c:\\\\Users\\\\Roy\\\\BUSINESS SITE\\\\Inventory App\"; python manage.py test core 2>&1 | Out-String | Select-Object -First 1 | ForEach-Object { $_ -split \"`n\" | Select-Object -First 150 })",
+      "Bash(export SECRET_KEY=\"local-dev-only-not-for-production\")",
+      "Bash(python -c ' *)"
     ]
   }
 }
