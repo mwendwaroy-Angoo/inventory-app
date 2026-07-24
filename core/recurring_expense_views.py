@@ -114,7 +114,12 @@ def recurring_expense_list(request):
 
     from accounts.models import UserProfile
     STAFF_PAY_ROLES = ['staff', 'waitress', 'kitchen']
-    staff_profiles = UserProfile.objects.filter(business=business, role__in=STAFF_PAY_ROLES).select_related('user')
+    # Departed staff should not be selectable for a NEW recurring salary rule —
+    # existing rules against them are left untouched (RecurringExpense.staff_profile
+    # is SET_NULL, not filtered here) so their pay history stays intact.
+    staff_profiles = UserProfile.objects.filter(
+        business=business, role__in=STAFF_PAY_ROLES, user__is_active=True,
+    ).select_related('user')
 
     return render(request, 'core/recurring_expense_list.html', {
         'expenses':       expenses,

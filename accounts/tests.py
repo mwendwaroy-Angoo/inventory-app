@@ -1,7 +1,10 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from .models import Business, UserProfile
 
@@ -182,3 +185,212 @@ class ToggleHakiTest(TestCase):
         r2 = self.client.post('/business/toggle-haki/', payload)
         self.assertTrue(r1.json()['ok'])
         self.assertTrue(r2.json().get('duplicate'))
+
+
+class DeactivateStaffSoftDeleteTest(TestCase):
+    """2026-07-25: delete_staff() used to hard-delete the User row, cascading
+    through Shift.staff/SalaryPayment.staff/SalaryDeduction.staff and
+    destroying exactly the history a "staff journey" report needs. Replaced
+    with deactivate_staff(): the User row is never destroyed, only
+    deactivated (is_active=False blocks login), so every historical record
+    survives and stays queryable."""
+
+    def setUp(self):
+        from core.models import Shift, RecurringExpense
+        self.Shift = Shift
+        self.RecurringExpense = RecurringExpense
+
+        self.biz = Business.objects.create(name='Deactivate Staff Biz')
+        self.owner = User.objects.create_user(username='deact_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='deact_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff_user, business=self.biz, role='staff',
+        )
+        self.shift = Shift.objects.create(business=self.biz, staff=self.staff_user, status='CLOSED')
+        self.client.force_login(self.owner)
+
+    def test_deactivate_does_not_delete_the_user_row(self):
+        self.client.post(f'/business/staff/deactivate/{self.staff_user.id}/', {
+            'departure_reason': 'resigned', 'departure_note': 'Alihama jiji',
+        })
+        self.assertTrue(User.objects.filter(id=self.staff_user.id).exists())
+        self.staff_user.refresh_from_db()
+        self.assertFalse(self.staff_user.is_active)
+
+    def test_deactivate_preserves_shift_history(self):
+        self.client.post(f'/business/staff/deactivate/{self.staff_user.id}/', {'departure_reason': 'resigned'})
+        self.assertTrue(self.Shift.objects.filter(id=self.shift.id).exists())
+
+    def test_deactivate_stamps_departure_metadata(self):
+        self.client.post(f'/business/staff/deactivate/{self.staff_user.id}/', {
+            'departure_reason': 'terminated', 'departure_note': 'Alichelewa mara nyingi',
+        })
+        self.staff_profile.refresh_from_db()
+        self.assertEqual(self.staff_profile.departure_reason, 'terminated')
+        self.assertEqual(self.staff_profile.departure_note, 'Alichelewa mara nyingi')
+        self.assertIsNotNone(self.staff_profile.departed_at)
+        self.assertEqual(self.staff_profile.departed_by_id, self.owner.id)
+
+    def test_deactivated_staff_disappears_from_staff_list(self):
+        self.client.post(f'/business/staff/deactivate/{self.staff_user.id}/', {'departure_reason': 'resigned'})
+        # A fresh GET (not following the POST's redirect) so the one-time flash
+        # success message — which legitimately names the deactivated staffer —
+        # isn't still queued; only the roster table itself should be checked.
+        self.client.get('/business/staff/')
+        resp = self.client.get('/business/staff/')
+        self.assertNotIn(b'@deact_staff', resp.content)
+
+    def test_deactivated_staff_cannot_log_in(self):
+        self.client.post(f'/business/staff/deactivate/{self.staff_user.id}/', {'departure_reason': 'resigned'})
+        self.client.logout()
+        logged_in = self.client.login(username='deact_staff', password='x')
+        self.assertFalse(logged_in)
+
+    def test_deactivate_pauses_active_recurring_salary(self):
+        salary_rule = self.RecurringExpense.objects.create(
+            business=self.biz, description='Mshahara', category='labor',
+            amount=Decimal('10000'), period='MONTHLY',
+            staff_profile=self.staff_profile, is_active=True,
+        )
+        self.client.post(f'/business/staff/deactivate/{self.staff_user.id}/', {'departure_reason': 'resigned'})
+        salary_rule.refresh_from_db()
+        self.assertFalse(salary_rule.is_active)
+
+    def test_staff_cannot_deactivate_colleague(self):
+        other_staff = User.objects.create_user(username='deact_other', password='x')
+        UserProfile.objects.create(user=other_staff, business=self.biz, role='staff')
+        self.client.force_login(other_staff)
+        resp = self.client.post(f'/business/staff/deactivate/{self.staff_user.id}/', {'departure_reason': 'resigned'})
+        self.assertEqual(resp.status_code, 302)  # redirected home, not authorized
+        self.staff_user.refresh_from_db()
+        self.assertTrue(self.staff_user.is_active)
+
+    def test_already_deactivated_staff_returns_404(self):
+        self.staff_user.is_active = False
+        self.staff_user.save(update_fields=['is_active'])
+        resp = self.client.post(f'/business/staff/deactivate/{self.staff_user.id}/', {'departure_reason': 'resigned'})
+        self.assertEqual(resp.status_code, 404)
+
+
+class ReactivateStaffTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Reactivate Staff Biz')
+        self.owner = User.objects.create_user(username='react_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='react_staff', password='x', is_active=False)
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff_user, business=self.biz, role='staff',
+            departed_at=timezone.now(), departure_reason='resigned',
+        )
+        self.client.force_login(self.owner)
+
+    def test_reactivate_restores_login_and_roster_visibility(self):
+        resp = self.client.post(f'/business/staff/reactivate/{self.staff_user.id}/')
+        self.assertEqual(resp.status_code, 302)
+        self.staff_user.refresh_from_db()
+        self.assertTrue(self.staff_user.is_active)
+        list_resp = self.client.get('/business/staff/')
+        self.assertIn(b'react_staff', list_resp.content)
+
+    def test_reactivate_stamps_metadata_without_erasing_departure_history(self):
+        self.client.post(f'/business/staff/reactivate/{self.staff_user.id}/')
+        self.staff_profile.refresh_from_db()
+        self.assertIsNotNone(self.staff_profile.reactivated_at)
+        self.assertEqual(self.staff_profile.reactivated_by_id, self.owner.id)
+        self.assertEqual(self.staff_profile.departure_reason, 'resigned')  # history preserved, not cleared
+
+    def test_manager_cannot_reactivate(self):
+        manager = User.objects.create_user(username='react_manager', password='x')
+        UserProfile.objects.create(user=manager, business=self.biz, role='manager')
+        self.client.force_login(manager)
+        self.client.post(f'/business/staff/reactivate/{self.staff_user.id}/')
+        self.staff_user.refresh_from_db()
+        self.assertFalse(self.staff_user.is_active)
+
+    def test_already_active_staff_returns_404_on_reactivate(self):
+        self.staff_user.is_active = True
+        self.staff_user.save(update_fields=['is_active'])
+        resp = self.client.post(f'/business/staff/reactivate/{self.staff_user.id}/')
+        self.assertEqual(resp.status_code, 404)
+
+
+class DepartedStaffListTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Departed List Biz')
+        self.owner = User.objects.create_user(username='dlist_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        active_user = User.objects.create_user(username='dlist_active', password='x')
+        UserProfile.objects.create(user=active_user, business=self.biz, role='staff')
+        departed_user = User.objects.create_user(username='dlist_departed', password='x', is_active=False)
+        UserProfile.objects.create(
+            user=departed_user, business=self.biz, role='staff',
+            departed_at=timezone.now(), departure_reason='resigned',
+        )
+        self.client.force_login(self.owner)
+
+    def test_only_departed_staff_appear(self):
+        resp = self.client.get('/business/staff/departed/')
+        self.assertIn(b'dlist_departed', resp.content)
+        self.assertNotIn(b'dlist_active', resp.content)
+
+
+class StaffNameChangeLogTest(TestCase):
+    """edit_staff() silently overwrote first_name/last_name/username with no
+    trace. Now logs every actual change to StaffNameChangeLog."""
+
+    def setUp(self):
+        from .models import StaffNameChangeLog
+        self.StaffNameChangeLog = StaffNameChangeLog
+        self.biz = Business.objects.create(name='Name Change Log Biz')
+        self.owner = User.objects.create_user(username='namelog_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(
+            username='oldname', password='x', first_name='Old', last_name='Name',
+        )
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff', phone='0700000000')
+        self.client.force_login(self.owner)
+
+    def test_rename_creates_a_log_entry(self):
+        self.client.post(f'/business/staff/edit/{self.staff.id}/', {
+            'username': 'newname', 'first_name': 'New', 'last_name': 'Name',
+            'email': '', 'phone': '0700000000', 'role': 'staff',
+        })
+        log = self.StaffNameChangeLog.objects.filter(staff=self.staff).first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.old_username, 'oldname')
+        self.assertEqual(log.new_username, 'newname')
+        self.assertEqual(log.old_display_name, 'Old Name')
+        self.assertEqual(log.new_display_name, 'New Name')
+        self.assertEqual(log.changed_by_id, self.owner.id)
+
+    def test_unrelated_field_change_does_not_log(self):
+        self.client.post(f'/business/staff/edit/{self.staff.id}/', {
+            'username': 'oldname', 'first_name': 'Old', 'last_name': 'Name',
+            'email': '', 'phone': '0711111111', 'role': 'staff',
+        })
+        self.assertFalse(self.StaffNameChangeLog.objects.filter(staff=self.staff).exists())
+
+
+class DeactivatedStaffMiddlewareTest(TestCase):
+    """A staffer deactivated mid-session must be logged out on their very
+    next request, not just blocked at their next login attempt — Django's
+    AuthenticationForm only checks is_active at login."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Middleware Deactivate Biz')
+        self.staff_user = User.objects.create_user(username='mw_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_deactivated_mid_session_is_logged_out_on_next_request(self):
+        self.client.force_login(self.staff_user)
+        # Confirm the session works before deactivation
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+
+        self.staff_user.is_active = False
+        self.staff_user.save(update_fields=['is_active'])
+
+        resp2 = self.client.get('/', follow=True)
+        # Session should no longer be authenticated — middleware must have logged them out
+        self.assertFalse(resp2.wsgi_request.user.is_authenticated)

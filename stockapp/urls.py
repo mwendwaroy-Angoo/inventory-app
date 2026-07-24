@@ -234,6 +234,7 @@ from core.haki_views import (
     my_work_and_pay,
     haki_recognition_statement,
     staff_duty_log,
+    staff_journey,
 )
 from core.restock_views import (
     request_restock,
@@ -494,6 +495,7 @@ urlpatterns = [
     path("staff/<int:profile_id>/salary/", record_salary_payment, name="record_salary_payment"),
     path("staff/<int:profile_id>/statement/", haki_recognition_statement, name="haki_recognition_statement"),
     path("staff/<int:profile_id>/duty-log/", staff_duty_log, name="staff_duty_log"),
+    path("staff/<int:profile_id>/journey/", staff_journey, name="staff_journey"),
     path("me/", my_work_and_pay, name="my_work_and_pay"),
     # ── DJ / MC Performer Module ──────────────────────────────────────────────
     path("bar/performers/",                     performer_list,        name="performer_list"),

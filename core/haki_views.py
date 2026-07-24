@@ -217,7 +217,7 @@ def staff_contribution_report(request):
         date_to   = today
 
     staff_profiles = UserProfile.objects.filter(
-        business=business,
+        business=business, user__is_active=True,
     ).exclude(role='owner').select_related('user').order_by('user__first_name')
 
     current_period = today.strftime('%Y-%m')
@@ -632,4 +632,77 @@ def staff_duty_log(request, profile_id):
         'tabs_opened': tabs_opened,
         'tabs_settled': tabs_settled,
         'is_manager': staff_profile.role == 'manager',
+    })
+
+
+# ── Staff Journey — full-tenure history, survives rename/departure ───────────
+
+@login_required
+@owner_or_manager_required
+def staff_journey(request, profile_id):
+    """The durable "story" of one staff member's time at this business —
+    revenue handled, hours worked, salary paid, and name/username history —
+    all still queryable after they've been renamed or removed from the active
+    roster (accounts.views.deactivate_staff soft-deletes rather than hard
+    deletes specifically so this stays possible). Deliberately looks up
+    UserProfile with NO active-state filter, unlike every roster-list view.
+    """
+    up = get_user_profile(request)
+    if not up:
+        return redirect('home')
+    business = up.business
+
+    staff_profile = get_object_or_404(UserProfile, id=profile_id, business=business)
+    staff_user = staff_profile.user
+
+    # ── Tenure window: earliest activity → now (or departure) ──────────────────
+    first_shift = Shift.objects.filter(business=business, staff=staff_user).order_by('started_at').first()
+    first_txn = Transaction.objects.filter(business=business, recorded_by=staff_user).order_by('date').first()
+    candidates = [d for d in [
+        first_shift.started_at.date() if first_shift else None,
+        first_txn.date if first_txn else None,
+    ] if d]
+    tenure_start = min(candidates) if candidates else timezone.localdate()
+    tenure_end = staff_profile.departed_at.date() if staff_profile.departed_at else timezone.localdate()
+
+    contrib = _staff_contribution(staff_profile, business, tenure_start, tenure_end)
+
+    # ── Full keg-handling detail (contrib only keeps a collapsed loss figure) ──
+    keg_detail = None
+    if getattr(business, 'has_keg', False):
+        try:
+            from core.keg_metrics import staff_shrinkage
+            for row in staff_shrinkage(business, tenure_start, tenure_end):
+                if row.staff_id == staff_user.id:
+                    keg_detail = row
+                    break
+        except Exception:
+            pass
+
+    # ── Full salary history (small per-staff table, no date filtering needed) ──
+    salary_payments = list(SalaryPayment.objects.filter(
+        business=business, staff=staff_profile,
+    ).order_by('-period'))
+    salary_deductions = list(SalaryDeduction.objects.filter(
+        business=business, staff=staff_profile,
+    ).order_by('-created_at'))
+    total_paid = sum(float(p.amount) for p in salary_payments if p.paid)
+    total_deducted = sum(float(d.amount) for d in salary_deductions)
+
+    # ── Name/username history ───────────────────────────────────────────────────
+    from accounts.models import StaffNameChangeLog
+    name_history = list(StaffNameChangeLog.objects.filter(staff=staff_user).order_by('-changed_at'))
+
+    return render(request, 'core/staff_journey.html', {
+        'staff_profile': staff_profile,
+        'tenure_start': tenure_start,
+        'tenure_end': tenure_end,
+        'contrib': contrib,
+        'keg_detail': keg_detail,
+        'salary_payments': salary_payments,
+        'salary_deductions': salary_deductions,
+        'total_paid': total_paid,
+        'total_deducted': total_deducted,
+        'name_history': name_history,
+        'is_departed': staff_profile.is_departed,
     })

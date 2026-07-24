@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Ondoa Mfanyakazi' %} — Duka Mwecheche{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'staff_list' %}" style="color:var(--gold)">{% trans 'Staff' %}</a>
+    <span class="mx-1">›</span>
+    <span>{% trans 'Ondoa Mfanyakazi' %}</span>
+</nav>
+
+<div class="row justify-content-center mt-4">
+    <div class="col-md-6">
+        <div class="card shadow border-0"
+             style="background:var(--onyx-card); border-top: 3px solid var(--danger) !important; border-radius:12px; overflow:hidden;">
+            <div class="card-header py-3"
+                 style="background: linear-gradient(135deg, #8b1a1a, var(--danger));">
+                <h4 class="mb-0" style="font-family:'Playfair Display',serif; color:white;">
+                    🚪 {% trans 'Ondoa Mfanyakazi' %}
+                </h4>
+            </div>
+            <div class="card-body p-4">
+                <p style="color:var(--pearl); text-align:center;">{% trans 'Unataka kumwondoa:' %}</p>
+                <h4 style="color:var(--danger); text-align:center;">
+                    {{ profile.user.get_full_name|default:profile.user.username }}
+                </h4>
+                <p style="color:var(--muted); text-align:center;">@{{ profile.user.username }}</p>
+
+                <div style="background:rgba(76,175,80,.08); border:1px solid rgba(76,175,80,.25); border-radius:8px; padding:.75rem 1rem; margin:1rem 0; font-size:.85rem; color:#9fcaa0;">
+                    ✓ Hataweza kuingia tena, na hataonekana kwenye orodha ya wafanyakazi.
+                    Lakini historia yake yote — mauzo, zamu, mishahara aliyolipwa — itaendelea
+                    kupatikana kwenye ripoti ya Safari yake wakati wowote.
+                </div>
+
+                {% if salary_status and not salary_status.paid %}
+                <div style="background:rgba(255,152,0,.1); border:1px solid rgba(255,152,0,.3); border-radius:8px; padding:.75rem 1rem; margin-bottom:1rem; font-size:.85rem; color:#ff9800;">
+                    ⚠️ Mshahara wa {{ salary_status.period }} (KES {{ salary_status.amount|floatformat:0 }})
+                    bado haujalipwa. Unaweza kuulipa baadaye kutoka kwenye ripoti ya Safari yake
+                    baada ya kumwondoa.
+                </div>
+                {% endif %}
+
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label" style="color:#b0b0b0; font-size:.85rem;">Sababu ya kuondoka</label>
+                        <select name="departure_reason" class="form-select" style="background:#1a1a1a; color:var(--pearl); border-color:#444;">
+                            {% for value, label in departure_reason_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" style="color:#b0b0b0; font-size:.85rem;">Maelezo ya ziada (si lazima)</label>
+                        <textarea name="departure_note" class="form-control" rows="2" maxlength="300"
+                                  style="background:#1a1a1a; color:var(--pearl); border-color:#444;"></textarea>
+                    </div>
+                    <div class="d-flex gap-2 justify-content-center mt-4">
+                        <button type="submit" class="btn btn-danger">{% trans 'Ndiyo, Mwondoe' %}</button>
+                        <a href="{% url 'staff_list' %}" class="btn btn-secondary">{% trans 'Cancel' %}</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

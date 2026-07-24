@@ -1863,3 +1863,88 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   SMS specifically because the whole point of the notice is they may not be able to log in
   to see an in-app one. 4 new tests (`EditStaffUsernameTest`), no migration needed
   (`User.username` already existed). 464 tests pass.
+- Fix: missing Haki module toggle (2026-07-24). Roy reported Haki (staff fairness/pay
+  module) had vanished from the navbar, both staff and owner side. Traced
+  `Business.haki_enabled` (accounts/models.py): defaults to `True`, and no application
+  code anywhere ever writes to it — the only way it becomes `False` is a direct DB
+  change, and there was no owner-facing toggle to see or correct its state, unlike
+  every other optional module (`Kitchen` has `toggle_kitchen`). Added the equivalent
+  `toggle_haki` view + Business Settings UI section, mirroring `toggle_kitchen`'s exact
+  pattern (idempotency guard via `claim_checkout_token`, owner-only). 4 new tests. No
+  migration (field already existed). 468 tests pass.
+- Staff journey / soft-delete (2026-07-25), planned via a dedicated research pass (2
+  Explore agents mapping every FK to User/UserProfile plus every existing per-staff
+  performance data source, then a Plan agent) after Roy asked: when a staff member is
+  fired or renamed, the owner should still be able to see their full tenure — duration
+  worked, revenue handled, salary paid, performance over time — as a report he can
+  actually interpret, not a raw log. Research confirmed this was **structurally
+  impossible** before this sprint: `delete_staff()` did `staff_profile.user.delete()`,
+  a true hard delete; `UserProfile.user` is `OneToOneField(CASCADE)`, which cascaded
+  through `Shift.staff`, `SalaryPayment.staff`, `SalaryDeduction.staff`, and
+  `ItemSaleApproval.requested_by` (all CASCADE) — destroying exactly the shift-hours,
+  salary-paid, and revenue-attribution data a journey report needs. Every other FK to
+  User/UserProfile (`Transaction.recorded_by`, `BarTab.served_by`, `Receipt.created_by`,
+  `CustomerDebtPayment.recorded_by`, `WriteOffRequest.requested_by`, etc. — a long
+  SET_NULL tail) survived as rows but lost staff attribution, since none of them have a
+  name-cache field (the only precedent anywhere in the codebase,
+  `SalesResetLog.performed_by_username_cache`, is for an unrelated feature). There was
+  also no soft-delete/`is_active` concept for staff at all, and no history of
+  first/last-name or username changes (`edit_staff`'s username fix from the previous
+  session silently overwrites with zero trace).
+
+  **Design decision — soft-delete instead of retrofitting the CASCADE/SET_NULL graph.**
+  Traced `_staff_contribution()` (haki_views.py) directly: it and
+  `keg_metrics.staff_shrinkage()` already query off the live `User`/`Shift` objects with
+  no "active roster" assumption baked in — meaning if the `User` row is simply never
+  destroyed, every existing revenue/hours/salary aggregator keeps working for a departed
+  staffer with zero code changes, for free. `deactivate_staff()` (renamed from
+  `delete_staff`) now flips `User.is_active=False` + stamps departure metadata instead of
+  deleting anything — Django's own `AuthenticationForm` already blocks `is_active=False`
+  at login with no extra code, and `SingleSessionMiddleware` (accounts/middleware.py)
+  gained a 4-line check so deactivation also takes effect on the very next request for an
+  already-logged-in session, not just the next login attempt. New `reactivate_staff`
+  (owner-only) reverses it; new `departed_staff_list` (owner/manager) is the roster for
+  who's gone. `UserProfile` gains `departed_at`/`departure_reason`/`departure_note`/
+  `departed_by`/`reactivated_at`/`reactivated_by` (migration 0049) — a single most-recent
+  departure slot, not a full multi-cycle append-only log (a real limitation for staff who
+  leave and come back more than once — noted as a future extension if boomerang re-hires
+  turn out to be common, not built now). Deactivating also auto-pauses (`is_active=False`,
+  never deletes) any of that staffer's active `RecurringExpense` salary rule so no new
+  pay-run expectations get generated for someone who's left, while their
+  `SalaryPayment`/`SalaryDeduction` history stays completely untouched. Every roster-LIST
+  query across the app (`staff_list`, `edit_staff`, `staff_permissions`,
+  `reset_staff_password`, `staff_contribution_report`'s loop, the `RecurringExpense`
+  staff-picker in `recurring_expense_list`) now filters `user__is_active=True`, so a
+  departed staffer genuinely disappears from every day-to-day management surface —
+  deliberately NOT applied to `staff_duty_log`/`record_salary_payment` (single-person
+  lookups by ID), which must keep working unmodified for a departed staffer, e.g. to
+  record their final salary payment after they've left.
+
+  **Rename history**: new `StaffNameChangeLog` (migration 0050) — unlike
+  `SalesResetLog`/`AccountDeletionLog`'s defensive `SET_NULL` + cache-field pattern (which
+  exists specifically to survive a REAL delete), this uses a plain `CASCADE` on `staff`
+  since under soft-delete the User row is never actually destroyed, so that defensive
+  complexity doesn't apply here. Wired into `edit_staff`: snapshots the old display name
+  before the overwrite (the view already captured `old_username` from the earlier
+  session's fix), creates one log row only when username or display name actually
+  changed (a role/phone-only edit doesn't log).
+
+  **New `staff_journey` report** (`core/haki_views.py`, `/staff/<id>/journey/`,
+  owner-or-manager, co-located with `staff_contribution_report`/`staff_duty_log`) —
+  the actual "readable story," reusing rather than rebuilding: calls
+  `_staff_contribution()` over the full tenure window (earliest `Shift`/`Transaction` →
+  now, or → `departed_at`) for revenue/hours/debts-recovered/milestones, pulls the
+  matching `keg_metrics.staff_shrinkage()` row for keg-handling detail, lists complete
+  `SalaryPayment`/`SalaryDeduction` history (small per-staff tables, no date filtering
+  needed), and shows `StaffNameChangeLog` entries. Deliberately looks up `UserProfile`
+  with **no** active-state filter (the one place in the app that intentionally reaches
+  past the "active roster only" filter added everywhere else), so it renders identically
+  for a current or departed staffer — locked in by a test asserting the exact same
+  revenue/shift numbers appear before and after deactivation. Linked from `staff_list.html`
+  (per active staffer), `departed_staff_list.html` (per departed staffer), and
+  `haki_contribution.html` (next to the existing Duty Log link). Bar/kitchen
+  station-split revenue breakdown (for staff with cross-station access) deliberately
+  deferred as a nice-to-have, not built this pass. 25 new tests across both apps
+  (`DeactivateStaffSoftDeleteTest`, `ReactivateStaffTest`, `DepartedStaffListTest`,
+  `StaffNameChangeLogTest`, `DeactivatedStaffMiddlewareTest`, `StaffJourneyTest`). Two
+  migrations (0049, 0050), both additive. 488 tests pass.

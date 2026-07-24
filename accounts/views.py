@@ -4,12 +4,12 @@ from django.contrib.auth import login, logout as auth_logout
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
-from django.utils import translation
+from django.utils import translation, timezone
 from django.utils.translation import gettext as _
 from django.conf import settings as django_settings
 from django.views.decorators.http import require_POST
 from .forms import BusinessSignupForm, AddStaffForm, BusinessEditForm, ResetStaffPasswordForm, RiderSignupForm, PaymentSettingsForm, SupplierSignupForm
-from .models import Business, UserProfile
+from .models import Business, UserProfile, StaffNameChangeLog
 from django.http import JsonResponse
 from core.models import SubCounty, Ward
 from django.shortcuts import get_object_or_404
@@ -205,7 +205,8 @@ def staff_list(request):
 
     staff = UserProfile.objects.filter(
         business=user_profile.business,
-        role__in=['staff', 'waitress', 'kitchen', 'manager']
+        role__in=['staff', 'waitress', 'kitchen', 'manager'],
+        user__is_active=True,
     ).select_related('user')
 
     return render(request, 'accounts/staff_list.html', {'staff': staff})
@@ -228,6 +229,7 @@ def staff_permissions(request, staff_id):
         id=staff_id,
         business=user_profile.business,
         role__in=['staff', 'waitress', 'kitchen', 'manager'],
+        user__is_active=True,
     )
 
     if request.method == 'POST':
@@ -297,6 +299,7 @@ def edit_staff(request, user_id):
         user__id=user_id,
         business=user_profile.business,
         role__in=['staff', 'waitress', 'kitchen', 'manager'],
+        user__is_active=True,
     )
 
     _role_choices = [
@@ -333,11 +336,23 @@ def edit_staff(request, user_id):
                 'pending_username': new_username,
             })
 
+        old_display_name = staff_profile.user.get_full_name()
+
         staff_profile.user.first_name = request.POST.get('first_name', '').strip()
         staff_profile.user.last_name = request.POST.get('last_name', '').strip()
         staff_profile.user.email = request.POST.get('email', '').strip()
         staff_profile.user.username = new_username
         staff_profile.user.save()
+
+        new_display_name = staff_profile.user.get_full_name()
+        if new_username != old_username or new_display_name != old_display_name:
+            StaffNameChangeLog.objects.create(
+                business=user_profile.business,
+                staff=staff_profile.user,
+                old_username=old_username, new_username=new_username,
+                old_display_name=old_display_name, new_display_name=new_display_name,
+                changed_by=request.user,
+            )
 
         new_role = request.POST.get('role', staff_profile.role)
         if new_role not in [r for r, _unused_label in _role_choices]:
@@ -394,14 +409,30 @@ def edit_staff(request, user_id):
 
 
 @login_required
-def delete_staff(request, user_id):
+def deactivate_staff(request, user_id):
+    """Remove a staffer from the active roster WITHOUT destroying their history.
+
+    2026-07-25: this used to be delete_staff(), a true hard delete of the User
+    row. UserProfile.user is OneToOneField(CASCADE), which cascaded through
+    Shift.staff / SalaryPayment.staff / SalaryDeduction.staff / ItemSaleApproval.
+    requested_by (all CASCADE) — destroying exactly the shift-hours,
+    salary-paid, and revenue-attribution data an owner would want to look back
+    on for a departed staffer. Every other FK to User/UserProfile is SET_NULL
+    with no name-cache field, so even surviving rows became unattributable.
+    Soft-delete instead: the User row is never destroyed, only deactivated
+    (user.is_active=False blocks login — Django's own AuthenticationForm
+    already checks this, and SingleSessionMiddleware enforces it mid-session
+    too) — so every existing revenue/hours/salary view keeps working for this
+    person unmodified, and a full "staff journey" report stays queryable
+    forever. See core.haki_views.staff_journey.
+    """
     try:
         user_profile = request.user.userprofile
     except Exception:
         return redirect('home')
 
     if not user_profile.is_owner:
-        messages.error(request, _("Only business owners can delete staff."))
+        messages.error(request, _("Only business owners can remove staff."))
         return redirect('home')
 
     staff_profile = get_object_or_404(
@@ -409,18 +440,107 @@ def delete_staff(request, user_id):
         user__id=user_id,
         business=user_profile.business,
         role__in=['staff', 'waitress', 'kitchen', 'manager'],
+        user__is_active=True,
     )
 
     if request.method == 'POST':
-        username = staff_profile.user.username
-        staff_profile.user.delete()
+        reason = request.POST.get('departure_reason', '').strip()
+        if reason not in [c for c, _unused_label in UserProfile.DEPARTURE_REASON_CHOICES]:
+            reason = 'other'
+        note = request.POST.get('departure_note', '').strip()[:300]
+
+        staff_profile.user.is_active = False
+        staff_profile.user.save(update_fields=['is_active'])
+        staff_profile.departed_at = timezone.now()
+        staff_profile.departure_reason = reason
+        staff_profile.departure_note = note
+        staff_profile.departed_by = request.user
+        staff_profile.save(update_fields=['departed_at', 'departure_reason', 'departure_note', 'departed_by'])
+
+        # Stop generating new pay-run expectations for someone who's left —
+        # their SalaryPayment/SalaryDeduction history is untouched, only the
+        # forward-looking recurring rule is paused.
+        from core.models import RecurringExpense
+        RecurringExpense.objects.filter(
+            business=user_profile.business, staff_profile=staff_profile, is_active=True,
+        ).update(is_active=False)
+
         messages.success(
             request,
-            _("'%(username)s' removed successfully.") % {'username': username},
+            _("'%(username)s' amewekwa nje ya orodha ya wafanyakazi. Historia yake yote (mauzo, mishahara, zamu) bado inapatikana kwenye ripoti ya Safari yake.")
+            % {'username': staff_profile.user.username},
         )
         return redirect('staff_list')
 
-    return render(request, 'accounts/delete_staff.html', {'profile': staff_profile})
+    from core.haki_views import _salary_status
+    salary_status = _salary_status(staff_profile, user_profile.business)
+
+    return render(request, 'accounts/deactivate_staff.html', {
+        'profile': staff_profile,
+        'salary_status': salary_status,
+        'departure_reason_choices': UserProfile.DEPARTURE_REASON_CHOICES,
+    })
+
+
+@login_required
+@require_POST
+def reactivate_staff(request, user_id):
+    """Owner-only: bring a departed staffer back onto the active roster."""
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        return redirect('home')
+
+    if not user_profile.is_owner:
+        messages.error(request, _("Only business owners can reactivate staff."))
+        return redirect('home')
+
+    staff_profile = get_object_or_404(
+        UserProfile,
+        user__id=user_id,
+        business=user_profile.business,
+        role__in=['staff', 'waitress', 'kitchen', 'manager'],
+        user__is_active=False,
+    )
+
+    staff_profile.user.is_active = True
+    staff_profile.user.save(update_fields=['is_active'])
+    staff_profile.reactivated_at = timezone.now()
+    staff_profile.reactivated_by = request.user
+    staff_profile.save(update_fields=['reactivated_at', 'reactivated_by'])
+
+    messages.success(
+        request,
+        _("'%(username)s' amerudishwa kwenye orodha ya wafanyakazi.")
+        % {'username': staff_profile.user.username},
+    )
+    return redirect('staff_list')
+
+
+@login_required
+def departed_staff_list(request):
+    """Owner/manager: staff who have been removed from the active roster —
+    their full history (shifts, revenue, salary) is never deleted, just
+    filtered out of every day-to-day staff-management surface."""
+    try:
+        user_profile = request.user.userprofile
+    except Exception:
+        return redirect('home')
+
+    if not user_profile.is_owner_or_manager:
+        messages.error(request, _("Only business owners and managers can view departed staff."))
+        return redirect('home')
+
+    departed = UserProfile.objects.filter(
+        business=user_profile.business,
+        role__in=['staff', 'waitress', 'kitchen', 'manager'],
+        user__is_active=False,
+    ).select_related('user').order_by('-departed_at')
+
+    return render(request, 'accounts/departed_staff_list.html', {
+        'departed': departed,
+        'is_owner': user_profile.is_owner,
+    })
 
 
 @login_required
@@ -553,6 +673,7 @@ def reset_staff_password(request, user_id):
         user__id=user_id,
         business=user_profile.business,
         role__in=['staff', 'waitress', 'kitchen', 'manager'],
+        user__is_active=True,
     )
 
     if request.method == 'POST':

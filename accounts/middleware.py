@@ -64,6 +64,19 @@ class SingleSessionMiddleware:
 
     def __call__(self, request):
         if request.user.is_authenticated and not request.user.is_superuser:
+            # 2026-07-25: Django's AuthenticationForm only checks User.is_active at
+            # LOGIN — a staffer deactivated (accounts.views.deactivate_staff) mid-session
+            # would otherwise keep working normally for up to SESSION_COOKIE_AGE (24h).
+            # This middleware already runs on every request for exactly this class of
+            # "kick them out now" enforcement (stale-session logout below), so it's the
+            # natural place to also enforce deactivation taking effect immediately.
+            if not request.user.is_active:
+                logout(request)
+                messages.warning(
+                    request,
+                    'Akaunti yako haipatikani tena. Wasiliana na mmiliki wa biashara.',
+                )
+                return redirect('login')
             profile = getattr(request.user, 'userprofile', None)
             if profile and not profile.allow_concurrent_sessions:
                 stored = profile.current_session_key

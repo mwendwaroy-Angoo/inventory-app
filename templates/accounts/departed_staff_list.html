@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans 'Wafanyakazi Waliohama' %} — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+    .staff-card {
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    .staff-card-header {
+        background: linear-gradient(135deg, #444, #666);
+        padding: 1rem 1.5rem;
+        font-family: 'Playfair Display', serif;
+        color: white;
+    }
+
+    .staff-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid #2e2e2e;
+    }
+
+    .staff-row:last-child { border-bottom: none; }
+
+    .staff-avatar {
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        background: #555;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Playfair Display', serif;
+        font-size: 1rem;
+        color: white;
+        margin-right: 1rem;
+        flex-shrink: 0;
+    }
+
+    .staff-name { font-weight: 500; color: var(--pearl); }
+    .staff-detail { font-size: 0.8rem; color: var(--muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'staff_list' %}" style="color:var(--gold)">{% trans 'Staff' %}</a>
+    <span class="mx-1">›</span>
+    <span>{% trans 'Wafanyakazi Waliohama' %}</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="page-title">🕰 {% trans 'Wafanyakazi Waliohama' %}</h2>
+    <a href="{% url 'staff_list' %}" class="btn btn-secondary btn-sm">← {% trans 'Wafanyakazi wa Sasa' %}</a>
+</div>
+
+<div class="staff-card">
+    {% with count=departed|length %}
+    <div class="staff-card-header">
+        {{ count }} {% if count == 1 %}amehama{% else %}wamehama{% endif %}
+    </div>
+    {% endwith %}
+    {% for profile in departed %}
+    <div class="staff-row">
+        <div class="d-flex align-items-center">
+            <div class="staff-avatar">
+                {{ profile.user.username|slice:":1"|upper }}
+            </div>
+            <div>
+                <div class="staff-name">
+                    {{ profile.user.get_full_name|default:profile.user.username }}
+                </div>
+                <div class="staff-detail">
+                    @{{ profile.user.username }}
+                    {% if profile.departed_at %} · Aliondoka {{ profile.departed_at|date:"d M Y" }}{% endif %}
+                    {% if profile.departure_reason %} · {{ profile.get_departure_reason_display }}{% endif %}
+                </div>
+                {% if profile.departure_note %}
+                <div class="staff-detail" style="font-style:italic;">"{{ profile.departure_note }}"</div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="d-flex flex-column flex-sm-row gap-2 align-items-stretch align-items-sm-center">
+            <a href="{% url 'staff_journey' profile.id %}"
+               class="btn btn-sm btn-outline-secondary text-center">📜 {% trans 'Safari Yake' %}</a>
+            {% if is_owner %}
+            <form method="post" action="{% url 'reactivate_staff' profile.user.id %}" class="d-inline">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-gold"
+                        onclick="return confirm('Mrudishe {{ profile.user.get_full_name|default:profile.user.username|escapejs }} kwenye orodha ya wafanyakazi?')">
+                    ↩️ {% trans 'Mrudishe' %}
+                </button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    {% empty %}
+    <div style="padding:2rem; text-align:center; color:var(--muted);">
+        Hakuna wafanyakazi waliohama.
+    </div>
+    {% endfor %}
+</div>
+
+{% endblock %}

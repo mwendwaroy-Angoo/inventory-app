@@ -538,6 +538,7 @@
                                 <li><a class="dropdown-item" href="{% url 'pending_approvals' %}">🔒 {% trans 'Pending Approvals' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'departed_staff_list' %}">🕰 {% trans 'Waliohama' %}</a></li>
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>
@@ -745,6 +746,7 @@
                                 <li><a class="dropdown-item" href="{% url 'pending_approvals' %}">🔒 {% trans 'Pending Approvals' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'departed_staff_list' %}">🕰 {% trans 'Waliohama' %}</a></li>
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>

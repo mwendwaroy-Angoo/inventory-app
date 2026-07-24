@@ -392,6 +392,43 @@ class UserProfile(models.Model):
         help_text='If True, this user may be logged in from multiple devices at once (e.g. for dev/testing).'
     )
 
+    # ── Staff Departure (soft-delete) ─────────────────────────────────────
+    # 2026-07-25: what was `delete_staff` used to hard-delete the User row —
+    # UserProfile.user is OneToOneField(CASCADE), which in turn cascaded
+    # through Shift.staff, SalaryPayment.staff, SalaryDeduction.staff, and
+    # ItemSaleApproval.requested_by (all CASCADE), destroying exactly the
+    # shift-hours/salary-paid/revenue history a "staff journey" report needs
+    # — and every other FK pointing at User/UserProfile is SET_NULL with no
+    # name-cache field, so even the rows that survived became unattributable.
+    # Soft-delete closes this without touching any of those FKs: the User row
+    # is never destroyed, just deactivated (login blocked via User.is_active,
+    # already respected by Django's own AuthenticationForm), so every existing
+    # revenue/hours/salary aggregator (_staff_contribution, staff_shrinkage,
+    # staff_duty_log) keeps working unmodified for a departed staffer.
+    DEPARTURE_REASON_CHOICES = [
+        ('resigned',        _('Alijiuzulu mwenyewe')),
+        ('terminated',      _('Aliachishwa kazi')),
+        ('transferred',     _('Alihamishiwa tawi lingine')),
+        ('end_of_contract', _('Mkataba uliisha')),
+        ('other',           _('Nyingine')),
+    ]
+    departed_at = models.DateTimeField(null=True, blank=True)
+    departure_reason = models.CharField(max_length=20, choices=DEPARTURE_REASON_CHOICES, blank=True)
+    departure_note = models.CharField(max_length=300, blank=True)
+    departed_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='staff_departures_recorded',
+    )
+    reactivated_at = models.DateTimeField(null=True, blank=True)
+    reactivated_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='staff_reactivations_recorded',
+    )
+
+    @property
+    def is_departed(self):
+        return not self.user.is_active
+
     def __str__(self):
         return f"{self.user.username} ({self.business.name if self.business else 'No Business'}) - {self.role}"
 
@@ -426,6 +463,33 @@ class UserProfile(models.Model):
     @property
     def is_kitchen_staff(self):
         return self.role == 'kitchen'
+
+
+class StaffNameChangeLog(models.Model):
+    """Records every display-name/username change made via edit_staff, since
+    that view otherwise silently overwrites first_name/last_name/username with
+    no trace. Kept simple (CASCADE on `staff`, unlike SalesResetLog/
+    AccountDeletionLog's defensive SET_NULL+cache pattern) because under the
+    soft-delete design (see UserProfile departure fields) the `staff` User row
+    is never actually destroyed — that defensive pattern exists specifically
+    to survive a real delete, which doesn't apply here."""
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='staff_name_changes')
+    staff = models.ForeignKey(User, on_delete=models.CASCADE, related_name='name_change_history')
+    old_username = models.CharField(max_length=150, blank=True)
+    new_username = models.CharField(max_length=150, blank=True)
+    old_display_name = models.CharField(max_length=200, blank=True)
+    new_display_name = models.CharField(max_length=200, blank=True)
+    changed_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='staff_name_changes_made',
+    )
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-changed_at']
+
+    def __str__(self):
+        return f"{self.old_display_name} → {self.new_display_name} ({self.changed_at:%Y-%m-%d})"
 
 
 class AccountDeletionLog(models.Model):

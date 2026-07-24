@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Safari — {{ staff_profile.user.get_full_name|default:staff_profile.user.username }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .sj-section { margin-bottom: 1.5rem; }
+  .sj-section-title {
+    font-family: 'Playfair Display', serif;
+    color: var(--gold);
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: .6rem;
+    padding-bottom: .3rem;
+    border-bottom: 1px solid rgba(201,168,76,.2);
+  }
+  .sj-card {
+    background: var(--onyx-card);
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: .8rem 1.1rem;
+    margin-bottom: .6rem;
+    font-size: .85rem;
+  }
+  .sj-stat-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: .5rem; }
+  .sj-stat { min-width: 120px; }
+  .sj-stat-label { font-size: .72rem; color: #888; text-transform: uppercase; letter-spacing: .03em; }
+  .sj-stat-val { font-size: 1.15rem; font-weight: 700; color: #f0ece4; }
+  .sj-empty { color: #b0b0b0; font-size: .83rem; padding: .4rem 0; font-style: italic; }
+  .sj-badge {
+    display: inline-block; font-size: .68rem; font-weight: 700;
+    padding: 2px 7px; border-radius: 4px; margin: 2px 3px 2px 0;
+  }
+  .badge-departed { background: rgba(192,57,90,.12); color: #c0395a; border: 1px solid rgba(192,57,90,.25); }
+  .badge-active   { background: rgba(46,204,113,.12); color: #2ecc71; border: 1px solid rgba(46,204,113,.25); }
+  .badge-milestone{ background: rgba(201,168,76,.12); color: #c9a84c; border: 1px solid rgba(201,168,76,.25); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">Dashboard</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'staff_list' %}" style="color:var(--gold)">Staff</a>
+    <span class="mx-1">›</span>
+    <span>Safari</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <div>
+        <h2 class="page-title" style="margin-bottom:.2rem;">
+            📜 {{ staff_profile.user.get_full_name|default:staff_profile.user.username }}
+        </h2>
+        <div style="color:#b0b0b0; font-size:.85rem;">
+            @{{ staff_profile.user.username }}
+            {% if is_departed %}
+            <span class="sj-badge badge-departed">Ameondoka</span>
+            {% else %}
+            <span class="sj-badge badge-active">Bado ni Mfanyakazi</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Tenure + departure -->
+<div class="sj-card">
+    <div class="sj-section-title" style="border:none; margin-bottom:.3rem;">🗓 Muda wa Kazi</div>
+    <div style="color:#b0b0b0;">
+        Tangu {{ tenure_start|date:"d M Y" }}
+        {% if is_departed %} hadi {{ tenure_end|date:"d M Y" }}{% else %} — bado anaendelea{% endif %}
+    </div>
+    {% if is_departed %}
+    <div style="margin-top:.5rem; padding-top:.5rem; border-top:1px solid #2a2a2a; font-size:.82rem; color:#b0b0b0;">
+        <strong style="color:#c0395a;">Aliondoka:</strong> {{ staff_profile.get_departure_reason_display }}
+        {% if staff_profile.departure_note %} — "{{ staff_profile.departure_note }}"{% endif %}
+        {% if staff_profile.departed_by %} (na {{ staff_profile.departed_by.get_full_name|default:staff_profile.departed_by.username }}){% endif %}
+        {% if staff_profile.reactivated_at %}
+        <br><strong style="color:#2ecc71;">Alirudishwa tarehe:</strong> {{ staff_profile.reactivated_at|date:"d M Y, H:i" }}
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Name history -->
+{% if name_history %}
+<div class="sj-card">
+    <div class="sj-section-title" style="border:none; margin-bottom:.3rem;">🏷 Historia ya Majina</div>
+    {% for h in name_history %}
+    <div style="color:#b0b0b0; font-size:.82rem; padding:.2rem 0;">
+        {{ h.changed_at|date:"d M Y" }}:
+        {% if h.old_display_name != h.new_display_name %}
+        "{{ h.old_display_name|default:"—" }}" → "{{ h.new_display_name|default:"—" }}"
+        {% endif %}
+        {% if h.old_username != h.new_username %}
+        (@{{ h.old_username }} → @{{ h.new_username }})
+        {% endif %}
+        {% if h.changed_by %} — na {{ h.changed_by.get_full_name|default:h.changed_by.username }}{% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Revenue / contribution summary -->
+<div class="sj-section">
+    <div class="sj-section-title">💼 Mchango Kazini (Muda Wote)</div>
+    <div class="sj-card">
+        <div class="sj-stat-row">
+            <div class="sj-stat">
+                <div class="sj-stat-label">Mauzo Yote</div>
+                <div class="sj-stat-val">KES {{ contrib.total_revenue|floatformat:0 }}</div>
+            </div>
+            <div class="sj-stat">
+                <div class="sj-stat-label">Zamu</div>
+                <div class="sj-stat-val">{{ contrib.shift_count }}</div>
+            </div>
+            <div class="sj-stat">
+                <div class="sj-stat-label">Masaa</div>
+                <div class="sj-stat-val">{{ contrib.hours }}</div>
+            </div>
+            <div class="sj-stat">
+                <div class="sj-stat-label">Madeni Aliyokusanya</div>
+                <div class="sj-stat-val">KES {{ contrib.debts_recovered_kes|floatformat:0 }}</div>
+            </div>
+        </div>
+        <div style="margin-top:.6rem; font-size:.8rem; color:#888;">
+            💵 Cash: KES {{ contrib.cash_revenue|floatformat:0 }}
+            &nbsp;·&nbsp; 📱 M-Pesa: KES {{ contrib.mpesa_revenue|floatformat:0 }}
+            &nbsp;·&nbsp; 📒 Deni: KES {{ contrib.credit_revenue|floatformat:0 }}
+        </div>
+        {% if contrib.milestones %}
+        <div style="margin-top:.6rem;">
+            {% for m in contrib.milestones %}<span class="sj-badge badge-milestone">{{ m }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if contrib.dismissed_variances %}
+        <div style="margin-top:.5rem; font-size:.78rem; color:#ff9800;">
+            ⚠️ Tofauti za hesabu zilizokataliwa: {{ contrib.dismissed_variances }}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Keg handling -->
+{% if keg_detail %}
+<div class="sj-section">
+    <div class="sj-section-title">🍺 Ushughulikiaji wa Mabepo</div>
+    <div class="sj-card">
+        <div class="sj-stat-row">
+            <div class="sj-stat">
+                <div class="sj-stat-label">Hasara (KES)</div>
+                <div class="sj-stat-val">{{ keg_detail.loss_kes|floatformat:0 }}</div>
+            </div>
+            <div class="sj-stat">
+                <div class="sj-stat-label">Tabs Zilizofutwa</div>
+                <div class="sj-stat-val">{{ keg_detail.void_count }}</div>
+            </div>
+            <div class="sj-stat">
+                <div class="sj-stat-label">Thamani ya Void (KES)</div>
+                <div class="sj-stat-val">{{ keg_detail.void_kes|floatformat:0 }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Salary history -->
+<div class="sj-section">
+    <div class="sj-section-title">💰 Historia ya Mishahara</div>
+    <div class="sj-card">
+        <div class="sj-stat-row">
+            <div class="sj-stat">
+                <div class="sj-stat-label">Jumla Alizolipwa</div>
+                <div class="sj-stat-val">KES {{ total_paid|floatformat:0 }}</div>
+            </div>
+            <div class="sj-stat">
+                <div class="sj-stat-label">Jumla ya Makato</div>
+                <div class="sj-stat-val">KES {{ total_deducted|floatformat:0 }}</div>
+            </div>
+        </div>
+    </div>
+    {% for p in salary_payments %}
+    <div class="sj-card" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+            <div style="color:#f0ece4; font-weight:600;">{{ p.period }}</div>
+            <div style="color:#888; font-size:.78rem;">{{ p.get_method_display|default:p.method }}{% if p.paid_at %} — {{ p.paid_at|date:"d M Y" }}{% endif %}</div>
+        </div>
+        <div style="text-align:right;">
+            <div style="color:var(--gold); font-weight:700;">KES {{ p.amount|floatformat:0 }}</div>
+            {% if p.paid %}<span class="sj-badge badge-active">Imelipwa</span>{% else %}<span class="sj-badge badge-departed">Bado</span>{% endif %}
+        </div>
+    </div>
+    {% empty %}
+    <div class="sj-empty">Hakuna rekodi za mishahara.</div>
+    {% endfor %}
+    {% if salary_deductions %}
+    <div style="margin-top:.6rem; font-size:.8rem; color:#888;">Makato:</div>
+    {% for d in salary_deductions %}
+    <div style="color:#c0395a; font-size:.8rem; padding:.15rem 0;">
+        {{ d.period }} — KES {{ d.amount|floatformat:0 }} ({{ d.reason }})
+    </div>
+    {% endfor %}
+    {% endif %}
+</div>
+
+<div class="d-flex gap-2 mt-3">
+    {% if is_departed %}
+    <a href="{% url 'departed_staff_list' %}" class="btn btn-sm btn-secondary">← Wafanyakazi Waliohama</a>
+    {% else %}
+    <a href="{% url 'staff_list' %}" class="btn btn-sm btn-secondary">← Wafanyakazi</a>
+    {% endif %}
+</div>
+
+{% endblock %}

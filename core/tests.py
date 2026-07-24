@@ -8819,3 +8819,62 @@ class TableOrderCancelReasonTest(TestCase):
         order = self._make_order(status='SERVED')
         resp2 = self.client.post(f'/bar/orders/{order.id}/cancel/', {})
         self.assertNotIn('cannot be cancelled', resp2.json().get('error', ''))
+
+
+class StaffJourneyTest(TestCase):
+    """2026-07-25: the durable "story" of a staff member's tenure — must keep
+    working (same revenue/shift numbers) whether the staffer is still active
+    or has been soft-deactivated, since that's the whole point of soft-delete
+    over the old hard-delete delete_staff()."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Staff Journey Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='journey_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='journey_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Journey Item',
+            material_no='JOURNEY-01', selling_price=Decimal('100'),
+        )
+        Shift.objects.create(business=self.biz, store=self.store, staff=self.staff_user, status='CLOSED')
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('200'), payment_method='cash', recorded_by=self.staff_user,
+            date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner)
+
+    def test_journey_shows_revenue_for_active_staff(self):
+        resp = self.client.get(f'/staff/{self.staff_profile.id}/journey/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['contrib']['total_revenue'], 200.0)
+        self.assertEqual(resp.context['contrib']['shift_count'], 1)
+        self.assertFalse(resp.context['is_departed'])
+
+    def test_journey_still_shows_same_revenue_after_deactivation(self):
+        self.staff_user.is_active = False
+        self.staff_user.save(update_fields=['is_active'])
+        self.staff_profile.departed_at = timezone.now()
+        self.staff_profile.save(update_fields=['departed_at'])
+
+        resp = self.client.get(f'/staff/{self.staff_profile.id}/journey/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['contrib']['total_revenue'], 200.0)
+        self.assertEqual(resp.context['contrib']['shift_count'], 1)
+        self.assertTrue(resp.context['is_departed'])
+
+    def test_manager_can_view_journey(self):
+        manager = User.objects.create_user(username='journey_manager', password='x')
+        UserProfile.objects.create(user=manager, business=self.biz, role='manager')
+        self.client.force_login(manager)
+        resp = self.client.get(f'/staff/{self.staff_profile.id}/journey/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_staff_cannot_view_colleague_journey(self):
+        other = User.objects.create_user(username='journey_other', password='x')
+        UserProfile.objects.create(user=other, business=self.biz, role='staff')
+        self.client.force_login(other)
+        resp = self.client.get(f'/staff/{self.staff_profile.id}/journey/')
+        self.assertEqual(resp.status_code, 302)
