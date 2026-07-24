@@ -1829,3 +1829,37 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `RecordBreakageExplainsItselfTest`, `DebtReasoningWordingTest`,
   `StockVarianceReviewWordingTest`, `TableOrderCancelReasonTest`, plus the reset-sales
   reason-display test). Two migrations (0115, 0116), both additive. 455 tests pass.
+- Live bug triage (2026-07-24), same day: three items Roy flagged before continuing to the
+  next feature. (1) Tabs drawer "stain" — the 3-button partial-selection payment row
+  ("💰 Cash / 📱 M-Pesa / 📲 STK" shown after checking one entry) borrowed
+  `.tab-action-btn`/`.qs-tab-btn` — classes designed for 2-3 buttons that EACH fill an even
+  share of a FULL-WIDTH row (`flex: 1 1 calc(50% - 6px)` / `flex:1; min-width:0`). Squeezed
+  into the small partial-selection row via fragile inline `flex:0` overrides with no
+  `white-space:nowrap` (quick_sell.html had none at all) or overflow guard, three buttons
+  fighting over width they don't have rendered as a cramped, visually overlapping blob
+  instead of clean separate pills. New dedicated `.tab-partial-btn` (bar_board.html) /
+  `.qs-partial-btn` (quick_sell.html) classes — sized to their own content
+  (`flex:0 0 auto; white-space:nowrap`), never force-grown or force-shrunk — replace the
+  borrowed classes on all 6 button instances (2 render paths × 3 buttons each); the
+  disable-during-submit `querySelectorAll` calls were updated to match both class names so
+  the existing "disable all tab buttons while a request is in flight" guard still covers
+  them. Not independently visually verified in a live browser (no browser tool available
+  in this environment) — root-caused from the actual CSS/JS, but Roy should confirm the fix
+  looks right. (2) Partial payment safety — verified, not a bug: traced `settle_tab()`
+  (`core/keg_views.py`) end to end — `entry_ids[]` sent by the frontend only ever contains
+  checked checkboxes' own distinct `data-entry-id` (confirmed each entry gets its OWN id,
+  not a shared one), and the backend's `entries_to_settle` list is filtered strictly to
+  `e.id in selected_ids`; unselected entries are never touched. Already locked in by an
+  existing passing test, `PartialTabSettleTest.test_partial_settle_marks_only_selected_entry_paid`.
+  No code change needed — reported back to Roy as verified-safe rather than assumed. (3)
+  Staff rename didn't change the login username — `edit_staff()` (`accounts/views.py`) only
+  ever wrote `first_name`/`last_name`/`email`/`phone`/`role`; `User.username` (what staff
+  actually type to log in, chosen once at `add_staff` time) was never editable after
+  creation — renaming "Dush Master" to "Jack Musau" changed the display name everywhere but
+  he still had to log in as "dush". `edit_staff.html` gains a username field (prefilled,
+  clearly labelled as separate from the display name); the view validates uniqueness
+  (case-insensitive, excluding self) and, on an actual change, updates `User.username` and
+  tells the affected staffer via SMS + in-app notification what their new login handle is —
+  SMS specifically because the whole point of the notice is they may not be able to log in
+  to see an in-app one. 4 new tests (`EditStaffUsernameTest`), no migration needed
+  (`User.username` already existed). 464 tests pass.

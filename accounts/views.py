@@ -307,9 +307,36 @@ def edit_staff(request, user_id):
     ]
 
     if request.method == 'POST':
+        # 2026-07-24 fix: the display name (first/last name, shown everywhere in the
+        # app) and the login username (User.username, what staff actually type to
+        # sign in) were two completely separate fields — this form only ever updated
+        # the former. Renaming "Dush Master" to "Jack Musau" here changed how his name
+        # displays throughout the app but left him logged in as "Dush" forever, with
+        # no way for the owner to fix it except direct DB access. Now both are
+        # editable, and changing the username is validated + the affected staffer is
+        # told their new login handle (SMS, since the whole point is they may not be
+        # able to log in to see an in-app notification about it).
+        old_username = staff_profile.user.username
+        new_username = request.POST.get('username', '').strip()
+        username_error = None
+        if not new_username:
+            username_error = 'Jina la kuingia (username) haliwezi kuwa tupu.'
+        elif new_username != old_username:
+            if User.objects.filter(username__iexact=new_username).exclude(pk=staff_profile.user_id).exists():
+                username_error = f"Jina la kuingia '{new_username}' tayari linatumika na mtu mwingine."
+
+        if username_error:
+            messages.error(request, username_error)
+            return render(request, 'accounts/edit_staff.html', {
+                'profile': staff_profile,
+                'role_choices': _role_choices,
+                'pending_username': new_username,
+            })
+
         staff_profile.user.first_name = request.POST.get('first_name', '').strip()
         staff_profile.user.last_name = request.POST.get('last_name', '').strip()
         staff_profile.user.email = request.POST.get('email', '').strip()
+        staff_profile.user.username = new_username
         staff_profile.user.save()
 
         new_role = request.POST.get('role', staff_profile.role)
@@ -326,11 +353,38 @@ def edit_staff(request, user_id):
             staff_profile.can_authorize_tab_accumulation = True
         staff_profile.save()
 
-        messages.success(
-            request,
-            _("'%(username)s' updated successfully.")
-            % {'username': staff_profile.user.username},
-        )
+        if new_username != old_username:
+            from core.notifications import normalize_ke_phone, send_sms_notification
+            from core.models import Notification
+            display_name = staff_profile.user.get_full_name() or new_username
+            sms = (
+                f"Habari {display_name}, jina lako la kuingia (username) limebadilishwa "
+                f"kutoka '{old_username}' kwenda '{new_username}'. Tumia jina jipya "
+                f"wakati ujao unapoingia."
+            )
+            Notification.objects.create(
+                user=staff_profile.user,
+                title='🔑 Jina la Kuingia Limebadilishwa',
+                message=sms,
+                notification_type='info',
+            )
+            if staff_profile.phone:
+                normalized = normalize_ke_phone(staff_profile.phone)
+                if normalized:
+                    try:
+                        send_sms_notification(sms, normalized)
+                    except Exception:
+                        pass
+            messages.success(
+                request,
+                f"'{old_username}' imesasishwa — sasa ni '{new_username}'. Staff ameelezwa.",
+            )
+        else:
+            messages.success(
+                request,
+                _("'%(username)s' updated successfully.")
+                % {'username': staff_profile.user.username},
+            )
         return redirect('staff_list')
 
     return render(request, 'accounts/edit_staff.html', {

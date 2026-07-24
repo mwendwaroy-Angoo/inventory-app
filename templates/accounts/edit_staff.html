@@ -72,6 +72,15 @@
             <div class="section-divider"><span>👤 {% trans 'Personal Details' %}</span></div>
 
             <div class="mb-3">
+                <label class="form-label">🔑 Jina la Kuingia (Username)</label>
+                <input type="text" name="username" class="form-control"
+                       value="{{ pending_username|default:profile.user.username }}">
+                <div style="font-size:0.78rem; color:#b0b0b0; margin-top:0.35rem;">
+                    Hii ndiyo staff anaandika akiingia kwenye app — si sawa na jina lake
+                    la kuonyeshwa hapa chini. Ukibadilisha, staff ataarifiwa jina jipya.
+                </div>
+            </div>
+            <div class="mb-3">
                 <label class="form-label">{% trans 'First Name' %}</label>
                 <input type="text" name="first_name" class="form-control"
                        value="{{ profile.user.first_name }}">

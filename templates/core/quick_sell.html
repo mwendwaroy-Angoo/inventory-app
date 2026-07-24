@@ -594,6 +594,20 @@
     .qs-tab-btn:disabled { opacity:0.5; cursor:not-allowed; }
     .qs-tab-btn-cash { background:rgba(201,168,76,0.15); color:#c9a84c; border:1px solid rgba(201,168,76,0.3); }
     .qs-tab-btn-mpesa { background:rgba(76,175,80,0.12); color:#4caf50; border:1px solid rgba(76,175,80,0.3); }
+    .qs-tab-btn-stk { background:rgba(46,204,113,0.08); color:#2ecc71; border:1px solid rgba(46,204,113,0.3); }
+    /* 2026-07-24 fix: the "Vilivyochaguliwa" partial-selection row (3 compact buttons
+       next to a label, all in one wrapping row) used to borrow .qs-tab-btn — a class
+       designed for 2-3 buttons that EACH fill an even share of a full-width row
+       (flex:1; min-width:0). Squeezed into the tiny partial row via inline flex:0
+       overrides with no white-space:nowrap or overflow guard, the buttons could be
+       compressed below their own emoji+text width, rendering as a cramped, visually
+       overlapping "stain" instead of clean separate pills — reported live by Roy.
+       Dedicated class: sized to its own content, never force-grown or force-shrunk. */
+    .qs-partial-btn {
+        flex:0 0 auto; white-space:nowrap; border-radius:6px; padding:4px 9px;
+        font-size:0.72rem; font-weight:600; cursor:pointer;
+    }
+    .qs-partial-btn:disabled { opacity:0.5; cursor:not-allowed; }
 </style>
 {% endblock %}
 
@@ -2543,9 +2557,9 @@
                 '<div id="qs-tab-entries-' + tab.id + '" style="margin-bottom:0.2rem;">' + entries + '</div>' +
                 '<div id="qs-sel-row-' + tab.id + '" style="display:none;background:rgba(201,168,76,0.07);border:1px solid rgba(201,168,76,0.2);border-radius:8px;padding:.3rem .5rem;margin:.3rem 0;align-items:center;gap:.35rem;flex-wrap:wrap;">' +
                 '<span style="color:#b0b0b0;font-size:.78rem;">Vilivyochaguliwa: <strong id="qs-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
-                '<button id="qs-partial-cash-' + tab.id + '" class="qs-tab-btn qs-tab-btn-cash" style="font-size:.72rem;padding:.18rem .45rem;flex:0;" disabled onclick="qsSettleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
-                '<button id="qs-partial-mpesa-' + tab.id + '" class="qs-tab-btn qs-tab-btn-mpesa" style="font-size:.72rem;padding:.18rem .45rem;flex:0;" disabled onclick="qsSettleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
-                '<button id="qs-partial-stk-' + tab.id + '" class="qs-tab-btn" style="font-size:.72rem;padding:.18rem .45rem;flex:0;background:rgba(46,204,113,0.08);color:#2ecc71;border:1px solid rgba(46,204,113,0.3);" disabled onclick="qsSettleTabPartialStk(' + tab.id + ',\'' + sc + '\')">📲 STK</button>' +
+                '<button id="qs-partial-cash-' + tab.id + '" class="qs-partial-btn qs-tab-btn-cash" disabled onclick="qsSettleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
+                '<button id="qs-partial-mpesa-' + tab.id + '" class="qs-partial-btn qs-tab-btn-mpesa" disabled onclick="qsSettleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
+                '<button id="qs-partial-stk-' + tab.id + '" class="qs-partial-btn qs-tab-btn-stk" disabled onclick="qsSettleTabPartialStk(' + tab.id + ',\'' + sc + '\')">📲 STK</button>' +
                 '</div>' +
                 /* Full-tab "Lipa Yote" payment actions — hidden while a partial
                    selection is active (id="qs-tab-full-pay-<id>") so there is no
@@ -2586,7 +2600,7 @@
     };
 
     window.qsSettleTab = function (tabId, payMethod) {
-        document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = true; });
+        document.querySelectorAll('.qs-tab-btn, .qs-partial-btn').forEach(function (b) { b.disabled = true; });
         _qsTabsJustSettled = true;
         qsPost('/bar/tabs/' + tabId + '/settle/', {payment_method: payMethod})
             /* Parse JSON regardless of status — a non-2xx response (403 shift-required,
@@ -2596,7 +2610,7 @@
                before parsing on !r.ok, masking every real error behind "Hitilafu ya mtandao"). */
             .then(function (r) { return r.json(); })
             .then(function (d) {
-                document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
+                document.querySelectorAll('.qs-tab-btn, .qs-partial-btn').forEach(function (b) { b.disabled = false; });
                 if (d.ok) {
                     if (!d.already_settled) qsShowToast('✓ Tab imelipwa! KES ' + qsFmt(d.total));
                     if (d.receipt_url) {
@@ -2610,7 +2624,7 @@
                 }
             })
             .catch(function () {
-                document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
+                document.querySelectorAll('.qs-tab-btn, .qs-partial-btn').forEach(function (b) { b.disabled = false; });
                 qsShowToast('Hitilafu ya mtandao. Jaribu tena.');
             });
     };
@@ -2648,7 +2662,7 @@
         if (!checked.length) return;
         var body = new URLSearchParams({payment_method: payMethod, csrfmiddlewaretoken: CSRF});
         checked.forEach(function (cb) { body.append('entry_ids', cb.dataset.entryId); });
-        document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = true; });
+        document.querySelectorAll('.qs-tab-btn, .qs-partial-btn').forEach(function (b) { b.disabled = true; });
         fetch('/bar/tabs/' + tabId + '/settle/', {
             method: 'POST',
             headers: {'X-CSRFToken': CSRF},
@@ -2657,7 +2671,7 @@
         })
         .then(function (r) { return r.json(); })
         .then(function (d) {
-            document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
+            document.querySelectorAll('.qs-tab-btn, .qs-partial-btn').forEach(function (b) { b.disabled = false; });
             if (d.ok) {
                 if (d.tab_settled) {
                     _qsTabsJustSettled = true;
@@ -2671,7 +2685,7 @@
             }
         })
         .catch(function () {
-            document.querySelectorAll('.qs-tab-btn').forEach(function (b) { b.disabled = false; });
+            document.querySelectorAll('.qs-tab-btn, .qs-partial-btn').forEach(function (b) { b.disabled = false; });
             qsShowToast('Hitilafu ya mtandao. Jaribu tena.', true);
         });
     };
