@@ -2543,6 +2543,12 @@ class BarTabEntry(models.Model):
         envelope's apparent revenue and understate cost() for every OTHER sale
         drawn from the same barrel/batch, not just this one.
 
+        paid_amount=0 (2026-07-25 live request) is a FULL-item transfer —
+        Bosco covers the whole item, Roy pays nothing towards it — handled as
+        its own short-circuit path below with no splitting at all, since
+        there's no "paid portion" to carve off; the original entry itself,
+        unmodified, is what the pending request points at.
+
         Raises ValueError on any validation failure (caller renders as a JSON
         error) — insufficient/invalid amount, tab not open, same tab picked
         twice, or an in-flight STK payment already referencing this entry.
@@ -2558,11 +2564,11 @@ class BarTabEntry(models.Model):
                 raise ValueError('Tab ya kiingilio hiki haiko wazi.')
 
             paid_amount = Decimal(str(paid_amount))
-            if paid_amount <= 0 or paid_amount >= entry.amount:
+            if paid_amount < 0 or paid_amount >= entry.amount:
                 raise ValueError(
-                    'Kiasi cha kulipa lazima kiwe zaidi ya 0 na pungufu ya jumla ya kiingilio.'
+                    'Kiasi cha kulipa lazima kiwe 0 au zaidi, na pungufu ya jumla ya kiingilio.'
                 )
-            if paid_method not in ('cash', 'mpesa'):
+            if paid_amount > 0 and paid_method not in ('cash', 'mpesa'):
                 raise ValueError('Njia ya malipo si sahihi.')
 
             dest_tab = BarTab.objects.select_for_update().get(id=dest_tab_id, business=business)
@@ -2583,6 +2589,21 @@ class BarTabEntry(models.Model):
             for _p in _pending:
                 if entry.id in (_p.tab_entry_ids or []):
                     raise ValueError('Malipo ya STK yanaendelea kwa kiingilio hiki — subiri kwanza.')
+
+            if paid_amount == 0:
+                # Full-item transfer (2026-07-25 live request): Bosco covers
+                # the WHOLE item, Roy pays nothing towards it at all. Unlike a
+                # partial split there is no "paid portion" to carve off and
+                # leave behind — the entry itself, unmodified, is what the
+                # pending request points at; it only actually moves tabs on
+                # accept(), exactly like the split-remainder case already
+                # does, so rejection still needs zero reversal.
+                transfer = TabTransferRequest.objects.create(
+                    business=business, entry=entry,
+                    source_tab=entry.tab, dest_tab=dest_tab, amount=entry.amount,
+                    paid_amount=Decimal('0'), requested_by=staff_user, note=entry.description,
+                )
+                return entry, transfer
 
             remainder = entry.amount - paid_amount
             orig_txn = Transaction.objects.select_for_update().get(pk=entry.transaction_id)
@@ -2690,6 +2711,14 @@ class TabTransferRequest(models.Model):
     requested_at = models.DateTimeField(auto_now_add=True)
     resolved_at  = models.DateTimeField(null=True, blank=True)
     note         = models.CharField(max_length=80, blank=True)
+    batch_id     = models.CharField(
+        max_length=32, blank=True, default='', db_index=True,
+        help_text='Shared by every row created by one "transfer whole tab" '
+                  'action (2026-07-25) — blank for an ordinary single-item '
+                  'transfer. accept()/reject() cascade to every PENDING '
+                  'sibling sharing this id so a whole-tab transfer resolves '
+                  'as ONE decision, not one per item.',
+    )
 
     class Meta:
         ordering = ['-requested_at']
@@ -2700,36 +2729,79 @@ class TabTransferRequest(models.Model):
     def accept(self):
         """Move the entry onto the destination tab. A single-field reassignment —
         no new Transaction, no envelope revenue_collected change, nothing else
-        touched — see split_and_transfer_locked()'s docstring for why."""
+        touched — see split_and_transfer_locked()'s docstring for why.
+
+        A whole-tab transfer (batch_id set — see propose_whole_tab_locked())
+        must resolve as ONE decision, not one per item: if this row belongs
+        to a batch, every PENDING sibling sharing batch_id is accepted in the
+        same atomic block, all-or-nothing (2026-07-25 live request).
+
+        Pre-existing bug found while adding batching: this used to mutate
+        only a separately-fetched `fresh` row, never `self` — every call
+        site (respond_tab_transfer, receipt_respond_tab_transfer,
+        tab_respond_tab_transfer) calls bare `transfer.accept()` without
+        capturing a return value, then reads `transfer.status` straight
+        after, which was always still the stale 'PENDING' it started with.
+        Now syncs `self` too so every existing call site reads correctly
+        with no call-site changes needed."""
         from django.db import transaction as _txn
         with _txn.atomic():
             fresh = TabTransferRequest.objects.select_for_update().get(pk=self.pk)
             if fresh.status != 'PENDING':
                 raise ValueError('Ombi hili tayari limeshughulikiwa.')
-            dest_tab = BarTab.objects.select_for_update().get(pk=fresh.dest_tab_id)
-            if dest_tab.status != 'OPEN':
-                raise ValueError('Tab lengwa haiko wazi tena.')
-            entry = BarTabEntry.objects.select_for_update().get(pk=fresh.entry_id)
-            entry.tab = dest_tab
-            entry.save(update_fields=['tab'])
-            fresh.status = 'ACCEPTED'
-            fresh.resolved_at = timezone.now()
-            fresh.save(update_fields=['status', 'resolved_at'])
-        return fresh
+            siblings = [fresh]
+            if fresh.batch_id:
+                siblings = list(
+                    TabTransferRequest.objects.select_for_update()
+                    .filter(batch_id=fresh.batch_id, business=fresh.business_id, status='PENDING')
+                    .order_by('id')
+                )
+            result = fresh
+            for row in siblings:
+                dest_tab = BarTab.objects.select_for_update().get(pk=row.dest_tab_id)
+                if dest_tab.status != 'OPEN':
+                    raise ValueError('Tab lengwa haiko wazi tena.')
+                entry = BarTabEntry.objects.select_for_update().get(pk=row.entry_id)
+                entry.tab = dest_tab
+                entry.save(update_fields=['tab'])
+                row.status = 'ACCEPTED'
+                row.resolved_at = timezone.now()
+                row.save(update_fields=['status', 'resolved_at'])
+                if row.pk == self.pk:
+                    result = row
+        self.status = result.status
+        self.resolved_at = result.resolved_at
+        return result
 
     def reject(self):
         """Decline the transfer. The entry never left the source tab, so there is
         nothing to reverse — it just stays there, ordinary and unpaid, exactly
-        as it already was."""
+        as it already was. Cascades to every PENDING sibling sharing batch_id,
+        same reasoning as accept() above — a whole-tab transfer is one decision.
+        Also syncs `self` — see accept()'s docstring for why."""
         from django.db import transaction as _txn
         with _txn.atomic():
             fresh = TabTransferRequest.objects.select_for_update().get(pk=self.pk)
             if fresh.status != 'PENDING':
                 raise ValueError('Ombi hili tayari limeshughulikiwa.')
-            fresh.status = 'REJECTED'
-            fresh.resolved_at = timezone.now()
-            fresh.save(update_fields=['status', 'resolved_at'])
-        return fresh
+            siblings = [fresh]
+            if fresh.batch_id:
+                siblings = list(
+                    TabTransferRequest.objects.select_for_update()
+                    .filter(batch_id=fresh.batch_id, business=fresh.business_id, status='PENDING')
+                    .order_by('id')
+                )
+            now = timezone.now()
+            result = fresh
+            for row in siblings:
+                row.status = 'REJECTED'
+                row.resolved_at = now
+                row.save(update_fields=['status', 'resolved_at'])
+                if row.pk == self.pk:
+                    result = row
+        self.status = result.status
+        self.resolved_at = result.resolved_at
+        return result
 
     def cancel(self):
         """Used by the inverse-action safeguard when the source tab is voided or
@@ -2745,6 +2817,83 @@ class TabTransferRequest(models.Model):
             fresh.resolved_at = timezone.now()
             fresh.save(update_fields=['status', 'resolved_at'])
         return fresh
+
+    @classmethod
+    def propose_whole_tab_locked(cls, source_tab_id, dest_tab_id, business, staff_user):
+        """Propose transferring EVERY currently-unpaid entry on source_tab
+        onto dest_tab, as ONE bundled accept/reject decision — e.g. Bosco
+        offers to cover Roy's whole tab, not just one item (2026-07-25 live
+        request: Bosco is on a bar keg tab, Roy's tab is on Quick Sell —
+        this works across all three counters, station-scoping is enforced
+        by the calling view, not here).
+
+        Each entry gets its own full-item TabTransferRequest row (the same
+        zero-paid-amount path split_and_transfer_locked() uses — no
+        splitting, no payment, entries move as-is on accept), all sharing
+        one batch_id so the destination customer sees and resolves ONE
+        request, not N separate ones. accept()/reject() already cascade
+        across every row sharing batch_id.
+
+        Snapshot semantics: only entries unpaid AT PROPOSAL TIME are
+        included. A new sale added to source_tab afterward is a completely
+        ordinary new entry, not silently swept into an already-pending
+        decision.
+
+        Raises ValueError on any validation failure — tab not open, same
+        tab picked twice, nothing to transfer, an entry already has a
+        pending transfer of its own, or an in-flight STK payment references
+        one of the entries.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            source_tab = BarTab.objects.select_for_update().get(id=source_tab_id, business=business)
+            dest_tab = BarTab.objects.select_for_update().get(id=dest_tab_id, business=business)
+            if source_tab.status != 'OPEN':
+                raise ValueError('Tab chanzo haiko wazi.')
+            if dest_tab.status != 'OPEN':
+                raise ValueError('Tab lengwa haiko wazi.')
+            if source_tab.id == dest_tab.id:
+                raise ValueError('Huwezi kuhamisha kwenye tab iyo hiyo.')
+
+            entries = list(
+                BarTabEntry.objects.select_for_update()
+                .filter(tab=source_tab, is_paid=False)
+                .order_by('id')
+            )
+            if not entries:
+                raise ValueError('Hakuna vitu vya kuhamisha kwenye tab hii.')
+
+            entry_ids = [e.id for e in entries]
+            if TabTransferRequest.objects.filter(entry_id__in=entry_ids, status='PENDING').exists():
+                raise ValueError(
+                    'Baadhi ya vitu kwenye tab hii tayari vina ombi la uhamisho '
+                    'linalosubiri — kamilisha hilo kwanza.'
+                )
+
+            # Same in-flight-STK guard as split_and_transfer_locked(), checked
+            # across every entry being bundled — see that method's docstring
+            # for why this matters (a callback resolving mid-transfer would
+            # use stale tab linkage once part of the tab has moved).
+            _stk_locked_ids = set()
+            for _p in Payment.objects.filter(
+                bar_tab=source_tab, status='pending', tab_entry_ids__isnull=False,
+            ):
+                _stk_locked_ids.update(_p.tab_entry_ids or [])
+            if _stk_locked_ids & set(entry_ids):
+                raise ValueError('Malipo ya STK yanaendelea kwa baadhi ya vitu — subiri kwanza.')
+
+            import uuid as _uuid
+            batch_id = _uuid.uuid4().hex
+            requests = []
+            for e in entries:
+                tfr = TabTransferRequest.objects.create(
+                    business=business, entry=e,
+                    source_tab=source_tab, dest_tab=dest_tab, amount=e.amount,
+                    paid_amount=Decimal('0'), requested_by=staff_user, note=e.description,
+                    batch_id=batch_id,
+                )
+                requests.append(tfr)
+        return batch_id, requests
 
 
 class BarCupLog(models.Model):

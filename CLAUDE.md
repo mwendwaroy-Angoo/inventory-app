@@ -2123,3 +2123,66 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   its own card. 7 new tests (`TabRenameMergeTest`) — merge-vs-plain-rename, revenue
   preservation, both transfer-cancellation directions, `cash_requested_at` carry-over, and
   station-scoping. No migrations. 517 tests pass.
+- Full-item + whole-tab transfer, cross-counter (2026-07-25), live request: the existing
+  split-bill transfer (2026-07-23) only let a destination customer cover PART of one item
+  (source customer pays some, remainder transfers) and could only pick a destination tab
+  native to the current drawer. Roy's exact scenario — Bosco offers to cover a whole item,
+  or Roy's ENTIRE tab, and Bosco's keg tab is on Bar Board while Roy's is on Quick Sell —
+  needed three things none of which existed: (1) a full-item transfer (destination pays
+  the WHOLE thing, source pays nothing), (2) a whole-TAB transfer (every unpaid entry at
+  once, as one accept/reject decision), (3) a destination picker that reaches every open
+  tab across all three counters, not just the current drawer's own list.
+  **Full-item**: `BarTabEntry.split_and_transfer_locked()`'s validation relaxed from
+  `paid_amount <= 0` to `paid_amount < 0` (0 now allowed) — when 0, a new short-circuit
+  path skips the split entirely (no new Transaction, no reduced original) and points the
+  `TabTransferRequest` straight at the existing, unmodified entry; `paid_method` becomes
+  irrelevant and optional in this branch since no real payment happens at split time.
+  Same view (`split_and_transfer_entry`), same URL — the caller just sends
+  `paid_amount=0`. **Whole-tab**: new `TabTransferRequest.propose_whole_tab_locked()`
+  creates one full-item `TabTransferRequest` PER currently-unpaid entry on the source
+  tab, all sharing a new `batch_id` field (migration 0118) — snapshot semantics, a sale
+  added to the source tab AFTER proposing is never silently swept in. New view
+  `transfer_whole_tab` (`/bar/tabs/<id>/transfer-whole/`), same permission tier as
+  split-transfer (any staff with an open shift). `TabTransferRequest.accept()`/`reject()`
+  now cascade to every PENDING sibling sharing `batch_id` inside one atomic block
+  (all-or-nothing) — meaning **zero new accept/reject URL routes were needed**: every
+  existing respond endpoint (`respond_tab_transfer`, `receipt_respond_tab_transfer`,
+  `tab_respond_tab_transfer`) already resolves a whole batch from any single row's id.
+  **Real bug found while adding the cascade** (pre-existing, unrelated to batching):
+  `accept()`/`reject()` mutated only a separately re-fetched `fresh` row, never `self` —
+  every one of those three respond endpoints calls bare `transfer.accept()` with no
+  captured return value, then reads `transfer.status` immediately after, which was
+  therefore always still the stale `'PENDING'` it started with. Fixed by syncing `self`'s
+  `status`/`resolved_at` from the resolved row before returning — every existing call
+  site now reads correctly with no call-site changes. **Cross-counter picker**: new
+  read-only `transferable_tabs_api` (`/bar/tabs/transferable/`) returns every OPEN tab
+  the requesting staffer can see across bar/kitchen/qs (via `_allowed_tab_sources`),
+  deliberately broader than each drawer's own `tabs_list()`/`kitchen_tabs_list()` (which
+  stay scoped to what that counter opened — unchanged); all three drawers' split-transfer
+  AND new whole-tab-transfer modals now populate their destination dropdown from this
+  endpoint instead of a cached local tab list, closing the exact gap the original
+  split-transfer plan flagged as a "v1 limit." Shared `_resolve_transfer_dest_tab()`
+  helper factored out of `split_and_transfer_entry` (unchanged behavior, just
+  de-duplicated) and reused by `transfer_whole_tab`. **Display**: `_pending_transfers_
+  for_tabs()` (customer-facing, `core/receipt_views.py`) and the equivalent server-side
+  grouping in `tabs_list()` (staff-facing, `core/keg_views.py`) both group rows by
+  `batch_id` into ONE bundled dict (`is_whole_tab`, aggregate `amount`, `transfer_ids`)
+  instead of rendering N separate confusing cards for one proposal — any single id in the
+  group resolves the whole thing. `receipt_public.html`, `tab_live.html` (customer wall-QR
+  pages), and all three tabs drawers render "Roy anataka kuhamisha tab yake yote (vitu N,
+  jumla KES X)" for a whole-tab proposal instead of the per-item "anataka kuongeza X
+  kwenye bili yako" wording. `_notify_tab_transfer_resolved` sums across the whole batch
+  for its staff notification instead of reporting only the first row's amount. Split
+  modal (all 3 drawers) gains a "Mteja mwingine analipa YOTE" checkbox that hides the
+  paid-amount/method inputs and submits `paid_amount=0`. New "🔀 Tab Yote" button added
+  next to Deni/Futa on every tab card with an unpaid balance, across all three drawers —
+  intentionally NOT added to bar_board's separate mixed (food+bar) tab-card branch,
+  matching that branch's existing precedent of excluding Deni/Futa too (kitchen items
+  settle at Kitchen Board, not here). 28 new tests
+  (`FullItemAndWholeTabTransferTest`) — full-item split/accept/reject, whole-tab
+  propose/accept-cascade/reject-cascade, revenue preservation, empty-tab and same-tab and
+  already-pending-entry rejection, the `accept()`/`reject()` self-sync regression lock,
+  notification aggregation, display grouping, cross-counter view-level and station-scoping
+  coverage, and one end-to-end HTTP test proving `respond_tab_transfer` resolves a whole
+  batch from any single row's id. No regressions in the 48 pre-existing split-transfer/
+  tab-rename/station-scoping tests. 545 tests pass.

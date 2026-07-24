@@ -108,10 +108,18 @@
      split_and_transfer_locked() (2026-07-23/24). ────────────────────────── -->
 {% for t in pending_transfers_in %}
 <div class="pending-transfer-card" data-transfer-id="{{ t.id }}">
+    {% if t.is_whole_tab %}
+    <div>🔔 <strong>{{ t.from_customer }}</strong> anataka kuhamisha
+        <strong style="color:var(--green);">tab yake yote</strong>
+        (vitu {{ t.transfer_ids|length }}, jumla
+        <strong style="color:var(--green);">KES {{ t.amount|floatformat:"0" }}</strong>)
+        kwenye tab yako.</div>
+    {% else %}
     <div>🔔 <strong>{{ t.from_customer }}</strong> anataka kuongeza
         <strong style="color:var(--green);">KES {{ t.amount|floatformat:"0" }}</strong>
         ({{ t.note }}) kwenye bili yako.
         {% if t.paid_amount %}<br>{{ t.from_customer }} alishalipa KES {{ t.paid_amount|floatformat:"0" }} mwenyewe.{% endif %}</div>
+    {% endif %}
     <div class="pending-transfer-actions">
         <button class="pt-accept" onclick="respondPendingTransfer({{ t.id }}, 'accept', this)">Kubali</button>
         <button class="pt-reject" onclick="respondPendingTransfer({{ t.id }}, 'reject', this)">Kataa</button>

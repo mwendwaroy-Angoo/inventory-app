@@ -1104,24 +1104,55 @@ def tabs_list(request):
     # this tab is awaiting a DIFFERENT customer's accept/reject) and incoming
     # (a different tab's entry is proposed to land here). See
     # BarTabEntry.split_and_transfer_locked() / TabTransferRequest.
+    #
+    # A "transfer whole tab" proposal (2026-07-25) creates one row PER unpaid
+    # entry, all sharing batch_id — grouped into ONE incoming card per batch
+    # (same reasoning as _pending_transfers_for_tabs in core/receipt_views.py,
+    # the customer-facing equivalent) so staff see "Roy wants to transfer his
+    # whole tab — 3 items" instead of 3 separate confusing cards.
     _pending_out_by_entry = {}
-    _pending_in_by_tab = {}
+    _pending_in_groups_by_tab = {}  # dest_tab_id -> {batch_key: {...}}
     if _tab_ids:
         for _t in TabTransferRequest.objects.filter(
             status='PENDING',
         ).filter(Q(source_tab_id__in=_tab_ids) | Q(dest_tab_id__in=_tab_ids)).select_related(
             'source_tab', 'dest_tab',
-        ):
+        ).order_by('id'):
             if _t.source_tab_id in _tab_ids:
                 _pending_out_by_entry[_t.entry_id] = {
                     'id': _t.id, 'amount': float(_t.amount), 'paid_amount': float(_t.paid_amount),
                     'dest_customer': _t.dest_tab.customer_name,
                 }
             if _t.dest_tab_id in _tab_ids:
-                _pending_in_by_tab.setdefault(_t.dest_tab_id, []).append({
-                    'id': _t.id, 'amount': float(_t.amount), 'paid_amount': float(_t.paid_amount),
-                    'note': _t.note, 'source_customer': _t.source_tab.customer_name,
-                })
+                _groups = _pending_in_groups_by_tab.setdefault(_t.dest_tab_id, {})
+                _key = _t.batch_id or f'single-{_t.id}'
+                if _key not in _groups:
+                    _groups[_key] = {
+                        'ids': [], 'amount': 0.0, 'paid_amount': 0.0,
+                        'items': [], 'source_customer': _t.source_tab.customer_name,
+                        'batch_id': _t.batch_id or None,
+                    }
+                _g = _groups[_key]
+                _g['ids'].append(_t.id)
+                _g['amount'] += float(_t.amount)
+                _g['paid_amount'] += float(_t.paid_amount)
+                _g['items'].append(_t.note or 'kiingilio')
+
+    _pending_in_by_tab = {}
+    for _dest_id, _groups in _pending_in_groups_by_tab.items():
+        _rows = []
+        for _g in _groups.values():
+            _is_whole = bool(_g['batch_id']) and len(_g['ids']) > 1
+            _rows.append({
+                'id': _g['ids'][0],
+                'transfer_ids': _g['ids'],
+                'amount': _g['amount'],
+                'paid_amount': _g['paid_amount'],
+                'note': (f"tab yote — vitu {len(_g['items'])}" if _is_whole else _g['items'][0]),
+                'source_customer': _g['source_customer'],
+                'is_whole_tab': _is_whole,
+            })
+        _pending_in_by_tab[_dest_id] = _rows
 
     def _entry_dict(e):
         """Serialise one BarTabEntry, including whether its item is a kitchen (food) item."""
@@ -1223,6 +1254,48 @@ def tabs_list(request):
             })
 
     return JsonResponse({'tabs': result, 'bar_only_view': not _see_all})
+
+
+@login_required
+def transferable_tabs_api(request):
+    """JSON: every OPEN tab this staffer can see, across ALL stations (bar,
+    kitchen, Quick Sell) — the destination-tab picker for split/full-item/
+    whole-tab transfers needs to reach across counters (2026-07-25 live
+    request: Bosco's keg tab lives on Bar Board, Roy's tab on Quick Sell).
+
+    Unlike tabs_list(), which is deliberately scoped per-drawer (bar board
+    shows bar+kitchen, kitchen board shows kitchen only, Quick Sell shows
+    'qs' only) so each drawer's OWN card list stays exactly what that
+    counter opened, this endpoint is deliberately broader — read-only,
+    used only to populate a transfer-destination picker, never to render a
+    drawer's own tab list.
+
+    ?exclude=<tab_id> optionally excludes one tab (the tab being transferred
+    FROM) from the results.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'tabs': []})
+
+    qs = BarTab.objects.filter(
+        business=up.business, status='OPEN', source__in=_allowed_tab_sources(up),
+    ).order_by('-opened_at')
+
+    exclude_id = (request.GET.get('exclude') or '').strip()
+    if exclude_id.isdigit():
+        qs = qs.exclude(id=int(exclude_id))
+
+    return JsonResponse({
+        'tabs': [
+            {
+                'id': t.id,
+                'customer_name': t.customer_name,
+                'source': t.source,
+                'unpaid_total': float(t.unpaid_total()),
+            }
+            for t in qs
+        ],
+    })
 
 
 @login_required
@@ -1456,6 +1529,43 @@ def remove_tab_entry(request, tab_id, entry_id):
     return JsonResponse({'ok': True, 'new_total': new_total})
 
 
+def _resolve_transfer_dest_tab(request, up, source_tab):
+    """Resolve the destination tab for a split/full/whole-tab transfer from
+    POST dest_tab_id (existing open tab — searched across EVERY station the
+    acting staffer can see, not just the source tab's own counter, since
+    Bosco's tab may live on a completely different counter — 2026-07-25 live
+    request) or dest_customer_name (no tab yet — e.g. Bosco is in the
+    premises but isn't drinking right now, so there's nothing to pick from
+    the list). A name is first checked against any already-open tab under
+    that exact name (same auto-detect-by-name pattern already used by the
+    cross-counter merge feature) before opening a brand-new one, so this can
+    never silently create a second, duplicate tab for someone who already
+    has one. Returns (dest_tab, error_response); error_response is non-None
+    on failure.
+    """
+    dest_tab_id = (request.POST.get('dest_tab_id') or '').strip()
+    dest_customer_name = (request.POST.get('dest_customer_name') or '').strip()
+    if dest_tab_id:
+        dest_tab = BarTab.objects.filter(
+            id=dest_tab_id, business=up.business, source__in=_allowed_tab_sources(up),
+        ).first()
+        if not dest_tab:
+            return None, JsonResponse({'ok': False, 'error': 'Tab lengwa haikupatikana.'}, status=404)
+        return dest_tab, None
+    if dest_customer_name:
+        dest_tab = BarTab.objects.filter(
+            business=up.business, status='OPEN', customer_name__iexact=dest_customer_name,
+            source__in=_allowed_tab_sources(up),
+        ).first()
+        if not dest_tab:
+            dest_tab = BarTab.create_with_credentials(
+                business=up.business, store=source_tab.store, customer_name=dest_customer_name,
+                source=source_tab.source, served_by=request.user,
+            )
+        return dest_tab, None
+    return None, JsonResponse({'ok': False, 'error': 'Chagua tab au weka jina la mteja.'}, status=400)
+
+
 @login_required
 @require_POST
 def split_and_transfer_entry(request, entry_id):
@@ -1467,13 +1577,11 @@ def split_and_transfer_entry(request, entry_id):
     Roy — not owner/manager-only, needs to work mid-shift without the owner
     present). See BarTabEntry.split_and_transfer_locked() for the mechanism.
 
-    dest_tab_id (existing open tab) or dest_customer_name (no tab yet — e.g.
-    Bosco is in the premises but isn't drinking right now, so there's nothing
-    to pick from the list) must be given. A name is first checked against any
-    already-open tab under that exact name (same auto-detect-by-name pattern
-    already used by the cross-counter merge feature, core/keg_views.py and
-    core/kitchen_views.py) before opening a brand-new one, so this can never
-    silently create a second, duplicate tab for someone who already has one.
+    paid_amount=0 (2026-07-25) proposes a FULL-item transfer — Bosco covers
+    the whole item, Roy pays nothing towards it — no different from the
+    caller's point of view, just a smaller number.
+
+    dest_tab_id / dest_customer_name resolution: see _resolve_transfer_dest_tab().
     """
     up = _get_up(request)
     if not up:
@@ -1493,25 +1601,9 @@ def split_and_transfer_entry(request, entry_id):
         tab__source__in=_allowed_tab_sources(up),
     )
 
-    dest_tab_id = (request.POST.get('dest_tab_id') or '').strip()
-    dest_customer_name = (request.POST.get('dest_customer_name') or '').strip()
-    if dest_tab_id:
-        dest_tab = get_object_or_404(
-            BarTab, id=dest_tab_id, business=up.business,
-            source__in=_allowed_tab_sources(up),
-        )
-    elif dest_customer_name:
-        dest_tab = BarTab.objects.filter(
-            business=up.business, status='OPEN', customer_name__iexact=dest_customer_name,
-            source__in=_allowed_tab_sources(up),
-        ).first()
-        if not dest_tab:
-            dest_tab = BarTab.create_with_credentials(
-                business=up.business, store=entry.tab.store, customer_name=dest_customer_name,
-                source=entry.tab.source, served_by=request.user,
-            )
-    else:
-        return JsonResponse({'ok': False, 'error': 'Chagua tab au weka jina la mteja.'}, status=400)
+    dest_tab, err = _resolve_transfer_dest_tab(request, up, entry.tab)
+    if err:
+        return err
 
     try:
         new_entry, tfr = BarTabEntry.split_and_transfer_locked(
@@ -1559,6 +1651,84 @@ def split_and_transfer_entry(request, entry_id):
         'transfer_id': tfr.id,
         'source_unpaid_total': float(entry.tab.unpaid_total()),
         'new_entry_id': new_entry.id,
+    })
+
+
+@login_required
+@require_POST
+def transfer_whole_tab(request, tab_id):
+    """Propose transferring an ENTIRE tab's unpaid balance onto a DIFFERENT
+    customer's open tab, as one bundled accept/reject decision — e.g. Bosco
+    offers to cover the whole of Roy's tab, not just one item (2026-07-25
+    live request). Works across all three counters: the destination tab can
+    be on any station this staffer can see (bar, kitchen, or Quick Sell) via
+    _resolve_transfer_dest_tab()'s cross-counter search — Bosco's keg tab on
+    Bar Board and Roy's tab on Quick Sell is exactly the motivating case.
+    Same permission level as split_and_transfer_entry (any staff with an
+    open shift, not owner/manager-only). See TabTransferRequest.
+    propose_whole_tab_locked() for the mechanism.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    source_tab = get_object_or_404(
+        BarTab, id=tab_id, business=up.business,
+        source__in=_allowed_tab_sources(up),
+    )
+
+    dest_tab, err = _resolve_transfer_dest_tab(request, up, source_tab)
+    if err:
+        return err
+
+    try:
+        batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=source_tab.id, dest_tab_id=dest_tab.id,
+            business=up.business, staff_user=request.user,
+        )
+    except (InvalidOperation, ValueError) as e:
+        return JsonResponse({'ok': False, 'error': str(e) or 'Hitilafu.'}, status=400)
+
+    total = sum((r.amount for r in requests), Decimal('0'))
+
+    # Same notify pattern as split_and_transfer_entry — SMS if a phone is on
+    # file (optional), always visible on the destination customer's own live
+    # receipt regardless.
+    try:
+        phone = dest_tab.customer.phone if dest_tab.customer else ''
+        if phone:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            from core.tab_receipts import resolve_master_receipt
+            normalized = normalize_ke_phone(phone)
+            if normalized:
+                rcpt, _ = resolve_master_receipt(up.business, dest_tab)
+                link = request.build_absolute_uri(f'/r/{rcpt.token}/') if rcpt else ''
+                msg = (
+                    f"Habari {dest_tab.customer_name},\n"
+                    f"{up.business.name}: {source_tab.customer_name} anataka kuhamisha "
+                    f"tab yake yote (vitu {len(requests)}, KES {total:,.0f}) kwenye tab yako.\n"
+                    + (f"Kubali au kataa kwenye risiti yako: {link}" if link else
+                       "Muulize mhudumu kukubali au kukataa.")
+                )
+                send_sms_notification(msg, normalized)
+    except Exception:
+        logger.exception('transfer_whole_tab SMS failed (business=%s)', up.business.id)
+
+    return JsonResponse({
+        'ok': True,
+        'batch_id': batch_id,
+        'transfer_id': requests[0].id,
+        'item_count': len(requests),
+        'total_amount': float(total),
+        'source_unpaid_total': float(source_tab.unpaid_total()),
     })
 
 

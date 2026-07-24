@@ -579,10 +579,18 @@
              style="margin:0.6rem 1.2rem 0.2rem; padding:0.6rem 0.8rem;
              background:rgba(76,175,80,0.09); border:1px solid rgba(76,175,80,0.3);
              border-radius:8px; font-size:0.82rem; color:#a5d6a7;">
+            {% if t.is_whole_tab %}
+            <div>🔔 <strong>{{ t.from_customer }}</strong> anataka kuhamisha
+                <strong style="color:#4caf50;">tab yake yote</strong>
+                (vitu {{ t.transfer_ids|length }}, jumla
+                <strong style="color:#4caf50;">KES {{ t.amount|floatformat:"0" }}</strong>)
+                kwenye tab yako.</div>
+            {% else %}
             <div>🔔 <strong>{{ t.from_customer }}</strong> anataka kuongeza
                 <strong style="color:#4caf50;">KES {{ t.amount|floatformat:"0" }}</strong>
                 ({{ t.note }}) kwenye bili yako.
                 {% if t.paid_amount %}<br>{{ t.from_customer }} alishalipa KES {{ t.paid_amount|floatformat:"0" }} mwenyewe.{% endif %}</div>
+            {% endif %}
             <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
                 <button onclick="respondPendingTransfer({{ t.id }}, 'accept', this)"
                         style="flex:1; padding:0.4rem; background:rgba(76,175,80,0.18);
@@ -1187,12 +1195,21 @@
             card.className = 'pending-transfer-card';
             card.setAttribute('data-transfer-id', t.id);
             card.style.cssText = 'margin:0.6rem 1.2rem 0.2rem; padding:0.6rem 0.8rem; background:rgba(76,175,80,0.09); border:1px solid rgba(76,175,80,0.3); border-radius:8px; font-size:0.82rem; color:#a5d6a7;';
-            var paidBit = t.paid_amount > 0
-                ? '<br>' + t.from_customer + ' alishalipa ' + fmt(t.paid_amount) + ' mwenyewe.'
-                : '';
-            card.innerHTML =
-                '<div>🔔 <strong>' + t.from_customer + '</strong> anataka kuongeza ' +
-                '<strong style="color:#4caf50;">' + fmt(t.amount) + '</strong> (' + t.note + ') kwenye bili yako.' + paidBit + '</div>' +
+            var bodyHtml;
+            if (t.is_whole_tab) {
+                bodyHtml =
+                    '<div>🔔 <strong>' + t.from_customer + '</strong> anataka kuhamisha ' +
+                    '<strong style="color:#4caf50;">tab yake yote</strong> (vitu ' + (t.transfer_ids ? t.transfer_ids.length : 1) +
+                    ', jumla <strong style="color:#4caf50;">' + fmt(t.amount) + '</strong>) kwenye tab yako.</div>';
+            } else {
+                var paidBit = t.paid_amount > 0
+                    ? '<br>' + t.from_customer + ' alishalipa ' + fmt(t.paid_amount) + ' mwenyewe.'
+                    : '';
+                bodyHtml =
+                    '<div>🔔 <strong>' + t.from_customer + '</strong> anataka kuongeza ' +
+                    '<strong style="color:#4caf50;">' + fmt(t.amount) + '</strong> (' + t.note + ') kwenye bili yako.' + paidBit + '</div>';
+            }
+            card.innerHTML = bodyHtml +
                 '<div style="display:flex; gap:0.5rem; margin-top:0.5rem;">' +
                 '<button onclick="respondPendingTransfer(' + t.id + ', \'accept\', this)" style="flex:1; padding:0.4rem; background:rgba(76,175,80,0.18); border:1px solid rgba(76,175,80,0.45); border-radius:6px; color:#4caf50; font-weight:600; font-size:0.82rem; cursor:pointer;">Kubali</button>' +
                 '<button onclick="respondPendingTransfer(' + t.id + ', \'reject\', this)" style="flex:1; padding:0.4rem; background:rgba(192,57,90,0.12); border:1px solid rgba(192,57,90,0.35); border-radius:6px; color:#c0395a; font-weight:600; font-size:0.82rem; cursor:pointer;">Kataa</button>' +

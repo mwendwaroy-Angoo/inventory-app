@@ -263,6 +263,14 @@ def _pending_transfers_for_tabs(business, tab_ids):
     all, e.g. a brand-new tab just opened for a friend who wasn't already
     drinking (2026-07-24 live request). See BarTabEntry.split_and_transfer_
     locked() / TabTransferRequest in core/models.py.
+
+    A "transfer whole tab" proposal (2026-07-25) creates one TabTransferRequest
+    PER unpaid entry, all sharing one batch_id — grouped here into a single
+    bundled dict so the customer sees and resolves ONE request ("Roy wants to
+    transfer his whole tab — 3 items, KES 850"), not N separate confusing
+    ones. Any one transfer_id in the group works to accept/reject the whole
+    batch (TabTransferRequest.accept()/reject() already cascade to every
+    sibling sharing batch_id), so the UI only needs the first id.
     """
     from .models import TabTransferRequest as _Transfer
     if not tab_ids:
@@ -270,18 +278,43 @@ def _pending_transfers_for_tabs(business, tab_ids):
     rows = list(
         _Transfer.objects.filter(
             dest_tab_id__in=tab_ids, status='PENDING', business=business,
-        ).select_related('source_tab')
+        ).select_related('source_tab').order_by('id')
     )
-    return [
-        {
-            'id': t.id,
-            'amount': float(t.amount),
-            'paid_amount': float(t.paid_amount),
-            'note': t.note or 'kiingilio',
-            'from_customer': t.source_tab.customer_name,
-        }
-        for t in rows
-    ]
+    grouped = {}
+    order = []
+    for t in rows:
+        key = t.batch_id or f'single-{t.id}'
+        if key not in grouped:
+            grouped[key] = {
+                'batch_id': t.batch_id or None,
+                'transfer_ids': [],
+                'amount': 0.0,
+                'paid_amount': 0.0,
+                'items': [],
+                'from_customer': t.source_tab.customer_name,
+            }
+            order.append(key)
+        g = grouped[key]
+        g['transfer_ids'].append(t.id)
+        g['amount'] += float(t.amount)
+        g['paid_amount'] += float(t.paid_amount)
+        g['items'].append(t.note or 'kiingilio')
+
+    result = []
+    for key in order:
+        g = grouped[key]
+        is_whole_tab = bool(g['batch_id']) and len(g['transfer_ids']) > 1
+        result.append({
+            'id': g['transfer_ids'][0],
+            'batch_id': g['batch_id'],
+            'transfer_ids': g['transfer_ids'],
+            'amount': g['amount'],
+            'paid_amount': g['paid_amount'],
+            'note': (f"tab yote — vitu {len(g['items'])}" if is_whole_tab else g['items'][0]),
+            'from_customer': g['from_customer'],
+            'is_whole_tab': is_whole_tab,
+        })
+    return result
 
 
 def _pending_transfers_in(receipt):
@@ -553,16 +586,32 @@ def _notify_tab_transfer_resolved(transfer):
     from accounts.models import UserProfile as _UP
 
     business = transfer.business
+
+    # A whole-tab transfer resolves as one bundled decision across every
+    # sibling row sharing batch_id (accept()/reject() already cascade them
+    # together) — summarize the aggregate here too, not just the one
+    # TabTransferRequest object the caller happened to pass in, otherwise
+    # this would only report ONE item's amount out of the whole tab.
+    if transfer.batch_id:
+        from .models import TabTransferRequest as _Transfer
+        siblings = list(_Transfer.objects.filter(batch_id=transfer.batch_id, business=business))
+        from decimal import Decimal as _Decimal
+        total_amount = sum((s.amount for s in siblings), _Decimal('0'))
+        item_desc = f'tab yote — vitu {len(siblings)}'
+    else:
+        total_amount = transfer.amount
+        item_desc = transfer.note
+
     if transfer.status == 'ACCEPTED':
         msg = (
-            f"✅ {transfer.dest_tab.customer_name} amekubali KES {transfer.amount:,.0f} "
-            f"({transfer.note}) — imehamishiwa tab yake."
+            f"✅ {transfer.dest_tab.customer_name} amekubali KES {total_amount:,.0f} "
+            f"({item_desc}) — imehamishiwa tab yake."
         )
         title = '✅ Uhamisho wa Bili Umekubaliwa'
     else:
         msg = (
-            f"❌ {transfer.dest_tab.customer_name} amekataa KES {transfer.amount:,.0f} "
-            f"({transfer.note}) — deni limerudi kwa {transfer.source_tab.customer_name}."
+            f"❌ {transfer.dest_tab.customer_name} amekataa KES {total_amount:,.0f} "
+            f"({item_desc}) — deni limerudi kwa {transfer.source_tab.customer_name}."
         )
         title = '❌ Uhamisho wa Bili Umekataliwa'
 

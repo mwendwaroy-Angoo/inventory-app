@@ -8868,6 +8868,463 @@ class SplitAndTransferEntryTest(TestCase):
         self.assertIn('alikataa', remainder_entry['transfer_note'])
 
 
+class FullItemAndWholeTabTransferTest(TestCase):
+    """2026-07-25 live request: Bosco offers to cover a specific item in
+    Roy's tab IN FULL (not a partial split — Roy pays nothing towards it),
+    or Bosco's WHOLE tab, and this must work across all three counters
+    (Bosco's keg tab on Bar Board, Roy's tab on Quick Sell). Covers:
+    - Full-item transfer: split_and_transfer_locked(paid_amount=0)
+    - Whole-tab transfer: TabTransferRequest.propose_whole_tab_locked()
+    - accept()/reject() cascading across every row sharing batch_id
+    - The accept()/reject() self-sync bug found while adding batching
+      (every existing call site reads transfer.status right after calling
+      transfer.accept()/reject() without capturing a return value)
+    - Cross-counter destination resolution via transferable_tabs_api /
+      _resolve_transfer_dest_tab
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Whole Tab Transfer Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='wtt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='wtt_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Tusker',
+            material_no='WTT-01', unit='Pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('150'),
+        )
+
+    def _make_tab(self, name, source='bar', store=None):
+        store = store or (self.bar_store if source != 'kitchen' else self.kitchen_store)
+        return BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source=source, store=store,
+        )
+
+    def _make_entry(self, tab, amount, desc='Tusker'):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='',
+        )
+        return BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=desc, amount=amount, is_paid=False,
+        )
+
+    # ── Full-item transfer (paid_amount=0) ──────────────────────────────
+
+    def test_full_item_transfer_creates_pending_request_entry_unchanged(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+
+        returned_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        self.assertEqual(returned_entry.id, entry.id, 'Full-item transfer must not split — same entry, not a new one')
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_paid)
+        self.assertEqual(entry.amount, Decimal('250'))
+        self.assertEqual(entry.tab_id, roy_tab.id, 'Still on the source tab until accepted')
+        self.assertEqual(tfr.amount, Decimal('250'))
+        self.assertEqual(tfr.paid_amount, Decimal('0'))
+        self.assertEqual(tfr.status, 'PENDING')
+
+    def test_full_item_transfer_accept_moves_entry(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.accept()
+        entry.refresh_from_db()
+        self.assertEqual(entry.tab_id, bosco_tab.id)
+        self.assertFalse(entry.is_paid, 'Moving tabs is not the same as being paid — still unpaid, now on Bosco\'s tab')
+
+    def test_full_item_transfer_reject_needs_no_reversal(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.reject()
+        entry.refresh_from_db()
+        self.assertEqual(entry.tab_id, roy_tab.id)
+        self.assertFalse(entry.is_paid)
+        self.assertEqual(entry.amount, Decimal('250'))
+
+    def test_paid_amount_equal_to_full_entry_still_rejected(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+        with self.assertRaises(ValueError):
+            BarTabEntry.split_and_transfer_locked(
+                entry_id=entry.id, business=self.biz, paid_amount=Decimal('250'),
+                paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+            )
+
+    def test_negative_paid_amount_rejected(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+        with self.assertRaises(ValueError):
+            BarTabEntry.split_and_transfer_locked(
+                entry_id=entry.id, business=self.biz, paid_amount=Decimal('-1'),
+                paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+            )
+
+    # ── accept()/reject() self-sync bug (found while adding batching) ──
+
+    def test_accept_updates_self_status_not_just_a_separate_copy(self):
+        # Pre-existing bug: accept()/reject() only mutated a separately
+        # re-fetched row, never `self` — every call site (respond_tab_
+        # transfer, receipt_respond_tab_transfer, tab_respond_tab_transfer)
+        # calls bare `transfer.accept()` then reads `transfer.status`
+        # straight after with no captured return value, so it always read
+        # the stale 'PENDING' it started with.
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.accept()  # bare call, no captured return — matches every real call site
+        self.assertEqual(tfr.status, 'ACCEPTED')
+        self.assertIsNotNone(tfr.resolved_at)
+
+    def test_reject_updates_self_status_not_just_a_separate_copy(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.reject()
+        self.assertEqual(tfr.status, 'REJECTED')
+
+    # ── Whole-tab transfer ───────────────────────────────────────────
+
+    def test_propose_whole_tab_creates_one_request_per_unpaid_entry(self):
+        roy_tab = self._make_tab('Roy')
+        e1 = self._make_entry(roy_tab, Decimal('250'), 'Tusker')
+        e2 = self._make_entry(roy_tab, Decimal('80'), 'Chapati')
+        bosco_tab = self._make_tab('Bosco')
+
+        batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(all(r.batch_id == batch_id for r in requests))
+        self.assertTrue(all(r.status == 'PENDING' for r in requests))
+        entry_ids = {r.entry_id for r in requests}
+        self.assertEqual(entry_ids, {e1.id, e2.id})
+        e1.refresh_from_db(); e2.refresh_from_db()
+        self.assertEqual(e1.tab_id, roy_tab.id, 'Still on source tab until accepted')
+        self.assertEqual(e2.tab_id, roy_tab.id)
+
+    def test_whole_tab_accept_cascades_moves_every_entry_atomically(self):
+        roy_tab = self._make_tab('Roy')
+        e1 = self._make_entry(roy_tab, Decimal('250'))
+        e2 = self._make_entry(roy_tab, Decimal('80'))
+        e3 = self._make_entry(roy_tab, Decimal('40'))
+        bosco_tab = self._make_tab('Bosco')
+
+        batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        # Accepting ANY ONE row in the batch resolves the WHOLE batch — one
+        # decision, not one per item.
+        requests[0].accept()
+
+        for e in (e1, e2, e3):
+            e.refresh_from_db()
+            self.assertEqual(e.tab_id, bosco_tab.id)
+        for r in requests:
+            r.refresh_from_db()
+            self.assertEqual(r.status, 'ACCEPTED')
+
+    def test_whole_tab_reject_cascades_leaves_everything_on_source(self):
+        roy_tab = self._make_tab('Roy')
+        e1 = self._make_entry(roy_tab, Decimal('250'))
+        e2 = self._make_entry(roy_tab, Decimal('80'))
+        bosco_tab = self._make_tab('Bosco')
+
+        batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        requests[1].reject()
+
+        for e in (e1, e2):
+            e.refresh_from_db()
+            self.assertEqual(e.tab_id, roy_tab.id)
+        for r in requests:
+            r.refresh_from_db()
+            self.assertEqual(r.status, 'REJECTED')
+
+    def test_whole_tab_transfer_preserves_total_revenue(self):
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('250'))
+        self._make_entry(roy_tab, Decimal('80'))
+        bosco_tab = self._make_tab('Bosco')
+        self._make_entry(bosco_tab, Decimal('600'))  # Bosco's own existing keg entry
+
+        _batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        requests[0].accept()
+
+        bosco_total = sum(e.amount for e in bosco_tab.entries.all())
+        self.assertEqual(bosco_total, Decimal('930'))  # 600 + 250 + 80
+
+    def test_whole_tab_transfer_rejects_no_unpaid_entries(self):
+        roy_tab = self._make_tab('Roy')
+        bosco_tab = self._make_tab('Bosco')
+        with self.assertRaises(ValueError):
+            TabTransferRequest.propose_whole_tab_locked(
+                source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+                business=self.biz, staff_user=self.staff,
+            )
+
+    def test_whole_tab_transfer_rejects_same_tab(self):
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('250'))
+        with self.assertRaises(ValueError):
+            TabTransferRequest.propose_whole_tab_locked(
+                source_tab_id=roy_tab.id, dest_tab_id=roy_tab.id,
+                business=self.biz, staff_user=self.staff,
+            )
+
+    def test_whole_tab_transfer_rejects_when_entry_already_has_pending_transfer(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        self._make_entry(roy_tab, Decimal('80'))
+        bosco_tab = self._make_tab('Bosco')
+        other_tab = self._make_tab('Otieno')
+        BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('100'),
+            paid_method='cash', dest_tab_id=other_tab.id, staff_user=self.staff,
+        )
+        with self.assertRaises(ValueError):
+            TabTransferRequest.propose_whole_tab_locked(
+                source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+                business=self.biz, staff_user=self.staff,
+            )
+
+    def test_whole_tab_transfer_works_cross_counter(self):
+        # Bosco's keg tab on Bar Board, Roy's tab on Quick Sell — the exact
+        # motivating scenario. Model layer has no station restriction of its
+        # own (enforced at the view via _allowed_tab_sources).
+        roy_qs_tab = self._make_tab('Roy', source='qs')
+        self._make_entry(roy_qs_tab, Decimal('250'))
+        bosco_bar_tab = self._make_tab('Bosco', source='bar')
+
+        batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_qs_tab.id, dest_tab_id=bosco_bar_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        requests[0].accept()
+        self.assertEqual(bosco_bar_tab.entries.count(), 1)
+
+    # ── Notification aggregation for a batch ────────────────────────────
+
+    def test_notify_batch_summarizes_aggregate_not_just_first_row(self):
+        from core.receipt_views import _notify_tab_transfer_resolved
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('250'))
+        self._make_entry(roy_tab, Decimal('80'))
+        bosco_tab = self._make_tab('Bosco')
+        _batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        requests[0].accept()
+        Notification.objects.filter(user=self.staff).delete()
+        _notify_tab_transfer_resolved(requests[0])
+        notif = Notification.objects.filter(user=self.staff).first()
+        self.assertIsNotNone(notif)
+        self.assertIn('330', notif.message)  # 250 + 80, not just 250
+
+    # ── Pending-transfer display grouping ───────────────────────────────
+
+    def test_pending_transfers_for_tabs_groups_batch_into_one_entry(self):
+        from core.receipt_views import _pending_transfers_for_tabs
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('250'))
+        self._make_entry(roy_tab, Decimal('80'))
+        bosco_tab = self._make_tab('Bosco')
+        TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        result = _pending_transfers_for_tabs(self.biz, [bosco_tab.id])
+        self.assertEqual(len(result), 1, 'Two rows sharing batch_id must render as ONE bundled item')
+        self.assertTrue(result[0]['is_whole_tab'])
+        self.assertEqual(result[0]['amount'], 330.0)
+        self.assertEqual(len(result[0]['transfer_ids']), 2)
+
+    def test_pending_transfers_single_item_not_flagged_whole_tab(self):
+        from core.receipt_views import _pending_transfers_for_tabs
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+        BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('100'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        result = _pending_transfers_for_tabs(self.biz, [bosco_tab.id])
+        self.assertEqual(len(result), 1)
+        self.assertFalse(result[0]['is_whole_tab'])
+
+    # ── View-level: transfer_whole_tab endpoint ─────────────────────────
+
+    def test_transfer_whole_tab_view_end_to_end(self):
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('250'))
+        self._make_entry(roy_tab, Decimal('80'))
+        bosco_tab = self._make_tab('Bosco')
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{roy_tab.id}/transfer-whole/', {'dest_tab_id': bosco_tab.id})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['item_count'], 2)
+        self.assertEqual(data['total_amount'], 330.0)
+        self.assertTrue(TabTransferRequest.objects.filter(batch_id=data['batch_id']).count() == 2)
+
+    def test_transfer_whole_tab_view_new_customer_name(self):
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('250'))
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{roy_tab.id}/transfer-whole/', {'dest_customer_name': 'Bosco'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        self.assertTrue(BarTab.objects.filter(business=self.biz, customer_name='Bosco', status='OPEN').exists())
+
+    def test_transfer_whole_tab_view_requires_shift_for_staff(self):
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+        no_shift_staff = User.objects.create_user(username='wtt_noshift', password='x')
+        UserProfile.objects.create(user=no_shift_staff, business=self.biz, role='staff')
+        self.client.force_login(no_shift_staff)
+        resp = self.client.post(f'/bar/tabs/{roy_tab.id}/transfer-whole/', {'dest_tab_id': bosco_tab.id})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json()['shift_required'])
+
+    def test_transfer_whole_tab_view_station_scoping_blocks_bar_only_staff_from_kitchen_dest(self):
+        bar_staff = User.objects.create_user(username='wtt_barstaff', password='x')
+        UserProfile.objects.create(user=bar_staff, business=self.biz, role='staff', can_access_kitchen=False)
+        Shift.objects.create(business=self.biz, staff=bar_staff, status='OPEN')
+
+        roy_bar_tab = self._make_tab('Roy', source='bar')
+        self._make_entry(roy_bar_tab, Decimal('250'))
+        kitchen_tab = self._make_tab('KitchenCustomer', source='kitchen')
+
+        self.client.force_login(bar_staff)
+        resp = self.client.post(f'/bar/tabs/{roy_bar_tab.id}/transfer-whole/', {'dest_tab_id': kitchen_tab.id})
+        self.assertEqual(resp.status_code, 404, 'Bar-only staff must not be able to target a kitchen-only tab')
+
+    def test_transfer_whole_tab_view_owner_can_transfer_cross_counter(self):
+        # The exact motivating scenario: owner initiates from Roy's Quick
+        # Sell tab, targeting Bosco's Bar Board tab.
+        roy_qs_tab = self._make_tab('Roy', source='qs')
+        self._make_entry(roy_qs_tab, Decimal('250'))
+        bosco_bar_tab = self._make_tab('Bosco', source='bar')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{roy_qs_tab.id}/transfer-whole/', {'dest_tab_id': bosco_bar_tab.id})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_split_transfer_view_accepts_zero_paid_amount_for_full_item(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('250'))
+        bosco_tab = self._make_tab('Bosco')
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '0', 'paid_method': 'cash', 'dest_tab_id': bosco_tab.id,
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount, Decimal('250'), 'Full-item transfer must not shrink the original entry')
+
+    def test_respond_tab_transfer_endpoint_cascades_whole_batch_via_any_row_id(self):
+        # The actual UI entry point: all three tabs drawers' Kubali/Kataa
+        # buttons POST to this one endpoint with whichever single transfer_id
+        # the pending-transfer card happens to carry (the first row in the
+        # batch, per _pending_transfers_for_tabs' grouping) — must resolve
+        # every sibling row too, not just that one.
+        roy_tab = self._make_tab('Roy')
+        e1 = self._make_entry(roy_tab, Decimal('250'))
+        e2 = self._make_entry(roy_tab, Decimal('80'))
+        bosco_tab = self._make_tab('Bosco')
+        _batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tab-transfers/{requests[0].id}/respond/', {'action': 'accept'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['status'], 'ACCEPTED')
+        for r in requests:
+            r.refresh_from_db()
+            self.assertEqual(r.status, 'ACCEPTED')
+        e1.refresh_from_db(); e2.refresh_from_db()
+        self.assertEqual(e1.tab_id, bosco_tab.id)
+        self.assertEqual(e2.tab_id, bosco_tab.id)
+
+    # ── View-level: transferable_tabs_api ────────────────────────────────
+
+    def test_transferable_tabs_api_returns_cross_counter_tabs(self):
+        self._make_tab('Roy', source='qs')
+        self._make_tab('Bosco', source='bar')
+        self._make_tab('Wanjiku', source='kitchen')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/transferable/')
+        data = resp.json()
+        names = {t['customer_name'] for t in data['tabs']}
+        self.assertEqual(names, {'Roy', 'Bosco', 'Wanjiku'})
+
+    def test_transferable_tabs_api_excludes_given_tab(self):
+        roy_tab = self._make_tab('Roy', source='qs')
+        self._make_tab('Bosco', source='bar')
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/bar/tabs/transferable/?exclude={roy_tab.id}')
+        data = resp.json()
+        ids = {t['id'] for t in data['tabs']}
+        self.assertNotIn(roy_tab.id, ids)
+        self.assertEqual(len(ids), 1)
+
+    def test_transferable_tabs_api_station_scoped_for_bar_only_staff(self):
+        bar_staff = User.objects.create_user(username='wtt_barstaff2', password='x')
+        UserProfile.objects.create(user=bar_staff, business=self.biz, role='staff', can_access_kitchen=False)
+        self._make_tab('Roy', source='bar')
+        self._make_tab('Wanjiku', source='kitchen')
+        self.client.force_login(bar_staff)
+        resp = self.client.get('/bar/tabs/transferable/')
+        data = resp.json()
+        names = {t['customer_name'] for t in data['tabs']}
+        self.assertNotIn('Wanjiku', names, 'Bar-only staff must not see a kitchen-only tab in the transfer picker')
+        self.assertIn('Roy', names)
+
+
 # ── Wording/accountability audit (2026-07-24): reject/approve flows must
 # capture a reason, notify the right people, and return a real confirmation
 # message — not a bare status flip. DJ/MC session cancel was the worst
