@@ -1766,81 +1766,14 @@ def respond_tab_transfer(request, transfer_id):
     return JsonResponse({'ok': True, 'status': transfer.status})
 
 
-@login_required
-@require_POST
-def settle_tab(request, tab_id):
-    """Settle unpaid entries on a tab and issue a receipt.
-
-    Partial settle: POST entry_ids[] to settle only specific entries and keep
-    the tab OPEN with remaining balance. Omit entry_ids to settle everything.
-    """
-    up = _get_up(request)
-    if not up:
-        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
-
-    if not getattr(up, 'is_owner_or_manager', False):
-        from core.shift_views import get_active_staff_shift
-        if get_active_staff_shift(up, up.business) is False:
-            return JsonResponse(
-                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza ili kulipa tab.'},
-                status=403,
-            )
-
-    tab = BarTab.objects.filter(id=tab_id, business=up.business).first()
-    if not tab:
-        return JsonResponse({'ok': False, 'error': 'Tab not found'}, status=404)
-    if tab.status != 'OPEN':
-        # Idempotent — already settled; return ok so the JS doesn't show an error on retry
-        return JsonResponse({'ok': True, 'already_settled': True, 'total': float(tab.total())})
-
-    pay = (request.POST.get('payment_method') or 'cash').strip()
-    if pay not in ('cash', 'mpesa'):
-        pay = 'cash'
-
-    # Partial settle: optional entry_ids[] selects which entries to settle now
-    raw_ids = request.POST.getlist('entry_ids')
-    selected_ids = None
-    if raw_ids:
-        try:
-            selected_ids = {int(i) for i in raw_ids if i.strip().isdigit()}
-        except (ValueError, TypeError):
-            selected_ids = None
-
-    now = timezone.now()
-    all_entries = list(tab.entries.all().select_related('transaction__item__store'))
-
-    entries_to_settle = (
-        [e for e in all_entries if not e.is_paid and e.id in selected_ids]
-        if selected_ids is not None else
-        [e for e in all_entries if not e.is_paid]
-    )
-
-    if not entries_to_settle:
-        return JsonResponse({'ok': False, 'error': 'Hakuna entries zilizochaguliwa.'}, status=400)
-
-    # Station Scoping Principle: check each entry's OWN station (item.store.is_kitchen),
-    # not the tab's overall source — a bar-only staffer may legitimately settle just the
-    # bar-item entries within a mixed/kitchen-sourced tab (the cross-counter merge
-    # feature), but must never settle a kitchen entry, and vice versa (bar-audit
-    # finding, 2026-07-19 — this endpoint had no station check at all before).
-    _allowed_sources = _allowed_tab_sources(up)
-    for _e in entries_to_settle:
-        try:
-            _entry_source = 'kitchen' if _e.transaction.item.store.is_kitchen else 'bar'
-        except Exception:
-            _entry_source = tab.source or 'bar'
-        if _entry_source not in _allowed_sources:
-            return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kulipa bidhaa hizi.'}, status=403)
-
-    for entry in entries_to_settle:
-        entry.is_paid = True
-        entry.paid_at = now
-        entry.payment_method = pay
-        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
-        entry.transaction.payment_method = pay
-        entry.transaction.save(update_fields=['payment_method'])
-
-    # Close the tab only when ALL entries are now paid
+def _finish_settle_tab(request, up, tab, pay, entries_to_settle, now):
+    """Shared tail of settle_tab(): close the tab if fully paid, auto-create/
+    update the Customer record, issue-or-reuse the master receipt, SMS it,
+    notify staff of other open tabs, and build the response. Shared by the
+    original full-settle path and the partial-AMOUNT settle path (2026-07-25
+    — see BarTab.settle_entries_amount_locked()) so both produce an
+    identical receipt/notification outcome, just from a different route to
+    "these entries are now paid"."""
     tab_fully_settled = not tab.entries.filter(is_paid=False).exists()
     if tab_fully_settled:
         tab.status = 'SETTLED'
@@ -1977,6 +1910,119 @@ def settle_tab(request, tab_id):
         'receipt_id': receipt_id,
         'other_open_tabs': other_open_tabs,
     })
+
+
+@login_required
+@require_POST
+def settle_tab(request, tab_id):
+    """Settle unpaid entries on a tab and issue a receipt.
+
+    Partial settle: POST entry_ids[] to settle only specific entries and keep
+    the tab OPEN with remaining balance. Omit entry_ids to settle everything.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza ili kulipa tab.'},
+                status=403,
+            )
+
+    tab = BarTab.objects.filter(id=tab_id, business=up.business).first()
+    if not tab:
+        return JsonResponse({'ok': False, 'error': 'Tab not found'}, status=404)
+    if tab.status != 'OPEN':
+        # Idempotent — already settled; return ok so the JS doesn't show an error on retry
+        return JsonResponse({'ok': True, 'already_settled': True, 'total': float(tab.total())})
+
+    pay = (request.POST.get('payment_method') or 'cash').strip()
+    if pay not in ('cash', 'mpesa'):
+        pay = 'cash'
+
+    # Partial settle: optional entry_ids[] selects which entries to settle now
+    raw_ids = request.POST.getlist('entry_ids')
+    selected_ids = None
+    if raw_ids:
+        try:
+            selected_ids = {int(i) for i in raw_ids if i.strip().isdigit()}
+        except (ValueError, TypeError):
+            selected_ids = None
+
+    now = timezone.now()
+    all_entries = list(tab.entries.all().select_related('transaction__item__store'))
+
+    entries_to_settle = (
+        [e for e in all_entries if not e.is_paid and e.id in selected_ids]
+        if selected_ids is not None else
+        [e for e in all_entries if not e.is_paid]
+    )
+
+    if not entries_to_settle:
+        return JsonResponse({'ok': False, 'error': 'Hakuna entries zilizochaguliwa.'}, status=400)
+
+    # Station Scoping Principle: check each entry's OWN station (item.store.is_kitchen),
+    # not the tab's overall source — a bar-only staffer may legitimately settle just the
+    # bar-item entries within a mixed/kitchen-sourced tab (the cross-counter merge
+    # feature), but must never settle a kitchen entry, and vice versa (bar-audit
+    # finding, 2026-07-19 — this endpoint had no station check at all before).
+    _allowed_sources = _allowed_tab_sources(up)
+    for _e in entries_to_settle:
+        try:
+            _entry_source = 'kitchen' if _e.transaction.item.store.is_kitchen else 'bar'
+        except Exception:
+            _entry_source = tab.source or 'bar'
+        if _entry_source not in _allowed_sources:
+            return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kulipa bidhaa hizi.'}, status=403)
+
+    # Partial AMOUNT settle (2026-07-25 live request — theft-prevention: a
+    # customer paying 70 of an 80 tab via M-Pesa had no correct way to be
+    # recorded before this). Optional POST amount — when given and less than
+    # the selected entries' total, only that much gets marked paid (the
+    # boundary entry splits via BarTab.settle_entries_amount_locked(), same
+    # mechanic as split_and_transfer_locked's remainder step, but the
+    # shortfall stays on THIS tab, not proposed to another customer) and the
+    # tab stays OPEN with the shortfall as an ordinary unpaid entry — never
+    # silently written off. Omitted/blank/>= total behaves exactly as
+    # before (full settle of every selected entry).
+    total_selected = sum((e.amount for e in entries_to_settle), Decimal('0'))
+    amount_raw = (request.POST.get('amount') or '').strip()
+    if amount_raw:
+        try:
+            requested_amount = Decimal(amount_raw)
+        except InvalidOperation:
+            return JsonResponse({'ok': False, 'error': 'Kiasi batili.'}, status=400)
+        if requested_amount <= 0:
+            return JsonResponse({'ok': False, 'error': 'Kiasi lazima kiwe zaidi ya 0.'}, status=400)
+        if requested_amount > total_selected:
+            return JsonResponse({'ok': False, 'error': 'Kiasi ni zaidi ya deni lililochaguliwa.'}, status=400)
+    else:
+        requested_amount = total_selected
+
+    if requested_amount < total_selected:
+        try:
+            entries_to_settle, _split_remainder = BarTab.settle_entries_amount_locked(
+                tab_id=tab.id, business=up.business,
+                entry_ids=[e.id for e in entries_to_settle],
+                amount=requested_amount, payment_method=pay, recorded_by=request.user,
+            )
+        except ValueError as e:
+            return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+        tab.refresh_from_db()
+        return _finish_settle_tab(request, up, tab, pay, entries_to_settle, now)
+
+    for entry in entries_to_settle:
+        entry.is_paid = True
+        entry.paid_at = now
+        entry.payment_method = pay
+        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+        entry.transaction.payment_method = pay
+        entry.transaction.save(update_fields=['payment_method'])
+
+    return _finish_settle_tab(request, up, tab, pay, entries_to_settle, now)
 
 
 @login_required
@@ -3328,11 +3374,24 @@ def find_tab_search(request, business_id):
         customer_name__icontains=q,
     ).order_by('-opened_at')[:10]
 
+    # 2026-07-25 live report: a customer with tabs open on more than one
+    # counter at once (e.g. Bar Board AND Bar Orders/Quick Sell) saw TWO
+    # search result rows for their own name, confusing — even when both
+    # tabs are already correctly cross-counter-linked into ONE shared
+    # receipt (resolve_master_receipt), each BarTab row still produced its
+    # own entry here since the loop never checked whether two rows resolved
+    # to the same place. Dedup by resolved URL so "everything looks like
+    # one" from the customer's side, matching how the receipt page itself
+    # already combines every linked tab's entries into a single bill.
+    seen_urls = set()
     results = []
     for t in tabs:
         url = _resolve_tab_public_url(t)
         if not url:
             continue  # pre-migration 0092 tabs have no token — skip silently
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
         results.append({
             'name': t.customer_name or '—',
             'url': url,

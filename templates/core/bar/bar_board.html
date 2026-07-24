@@ -2660,6 +2660,12 @@
             '<div class="tab-entries-list" id="tab-entries-' + tab.id + '">' + barHtml + '</div>' +
             '<div id="tab-sel-row-' + tab.id + '" style="display:none;background:rgba(201,168,76,0.07);border:1px solid rgba(201,168,76,0.2);border-radius:8px;padding:.35rem .55rem;margin:.35rem 0;align-items:center;gap:.4rem;flex-wrap:wrap;">' +
             '<span style="color:#b0b0b0;font-size:.78rem;">Vilivyochaguliwa: <strong id="tab-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
+            '<span style="display:flex;align-items:center;gap:.25rem;">' +
+            '<span style="color:#888;font-size:.72rem;">Kiasi:</span>' +
+            '<input type="number" id="tab-partial-amount-' + tab.id + '" min="0" step="1" ' +
+            'style="width:80px;background:#111;border:1px solid #444;border-radius:5px;color:#f0ece4;padding:.15rem .35rem;font-size:.75rem;" ' +
+            'title="Badilisha kama mteja analipa sehemu tu (mfano: mpesa 70 kati ya 80)">' +
+            '</span>' +
             '<button id="tab-partial-cash-' + tab.id + '" class="tab-partial-btn tab-btn-cash" disabled onclick="window.settleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
             '<button id="tab-partial-mpesa-' + tab.id + '" class="tab-partial-btn tab-btn-mpesa" disabled onclick="window.settleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
             '<button id="tab-partial-stk-' + tab.id + '" class="tab-partial-btn tab-btn-stk" disabled onclick="window.settleTabPartialStk(' + tab.id + ',\'' + safeCust + '\')">📲 STK</button>' +
@@ -2945,12 +2951,20 @@
     checked.forEach(function (cb) { total += parseFloat(cb.dataset.amount || 0); });
     var selRow   = document.getElementById('tab-sel-row-' + tabId);
     var selTotal = document.getElementById('tab-sel-total-' + tabId);
+    var amountEl = document.getElementById('tab-partial-amount-' + tabId);
     var btnCash  = document.getElementById('tab-partial-cash-' + tabId);
     var btnMpesa = document.getElementById('tab-partial-mpesa-' + tabId);
     var btnStk   = document.getElementById('tab-partial-stk-' + tabId);
     var fullPay  = document.getElementById('tab-full-pay-' + tabId);
     if (selRow)   selRow.style.display   = checked.length > 0 ? 'flex' : 'none';
     if (selTotal) selTotal.textContent   = 'KES ' + fmt(total);
+    // Default the amount input to "pay it all" on every selection change —
+    // staff edits it DOWN only when the customer is genuinely paying less
+    // than the selected items' total (2026-07-25 theft-prevention feature:
+    // e.g. mpesa 70 of an 80 selection). Reset (not preserved) on selection
+    // change so a stale partial amount from a previous selection can never
+    // silently carry over onto a different set of items.
+    if (amountEl) { amountEl.value = total > 0 ? Math.round(total) : ''; amountEl.max = total; }
     if (btnCash)  btnCash.disabled       = checked.length === 0;
     if (btnMpesa) btnMpesa.disabled      = checked.length === 0;
     if (btnStk)   btnStk.disabled        = checked.length === 0;
@@ -2970,9 +2984,14 @@
       total += parseFloat(cb.dataset.amount || 0);
       if (cb.dataset.entryId) ids.push(parseInt(cb.dataset.entryId, 10));
     });
+    // Staff-edited amount (2026-07-25) — request STK for exactly this much,
+    // e.g. the customer wants to pay 70 of an 80 selection via M-Pesa.
+    var amountEl = document.getElementById('tab-partial-amount-' + tabId);
+    var stkAmount = amountEl && amountEl.value ? parseFloat(amountEl.value) : total;
+    if (!stkAmount || stkAmount <= 0 || stkAmount > total) stkAmount = total;
     // Store selected entry IDs for sendTabStk to include in the body
     window._pendingStkEntryIds = ids;
-    window.openTabStk(tabId, Math.round(total), custName, true);
+    window.openTabStk(tabId, Math.round(stkAmount), custName, true);
   };
 
   window.settleTabPartial = function (tabId, payMethod) {
@@ -2980,7 +2999,16 @@
     if (!container) return;
     var checked = container.querySelectorAll('.tab-entry-cb:not(:disabled):checked');
     if (!checked.length) return;
-    var body = new URLSearchParams({payment_method: payMethod, csrfmiddlewaretoken: CSRF});
+    var total = 0;
+    checked.forEach(function (cb) { total += parseFloat(cb.dataset.amount || 0); });
+    var bodyObj = {payment_method: payMethod, csrfmiddlewaretoken: CSRF};
+    // Staff-edited amount (2026-07-25 theft-prevention): only sent when it
+    // differs from the full selected total, so an untouched input behaves
+    // exactly like before — a plain full settle of everything checked.
+    var amountEl = document.getElementById('tab-partial-amount-' + tabId);
+    var editedAmount = amountEl && amountEl.value ? parseFloat(amountEl.value) : total;
+    if (editedAmount > 0 && editedAmount < total) bodyObj.amount = editedAmount;
+    var body = new URLSearchParams(bodyObj);
     checked.forEach(function (cb) { body.append('entry_ids', cb.dataset.entryId); });
     document.querySelectorAll('.tab-action-btn, .tab-partial-btn').forEach(function (b) { b.disabled = true; });
     _tabsJustSettled = false;

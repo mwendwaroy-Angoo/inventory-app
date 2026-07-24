@@ -1995,6 +1995,241 @@ class PartialTabSettleTest(TestCase):
         self.assertEqual(resp.status_code, 400)
 
 
+class PartialAmountSettleTest(TestCase):
+    """2026-07-25 live request (theft-prevention): a customer paying 70 of an
+    80 KES tab via M-Pesa had no correct way to be recorded — staff could
+    only settle selected entries in FULL or not at all, so the shortfall
+    either got silently marked as fully paid (losing KES 10 with no trace)
+    or the payment had to be refused outright. Covers the new optional
+    `amount` param on settle_tab(), the shared BarTab.settle_entries_
+    amount_locked() model method, and the "part M-Pesa, part cash" two-call
+    flow."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Partial Amount Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='pas_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='PAS Item', unit='Pcs',
+            material_no='PAS-ITEM-01', selling_price=Decimal('80'),
+        )
+        self.client.force_login(self.owner)
+
+    def _make_single_entry_tab(self, amount=Decimal('80')):
+        tab = BarTab.objects.create(business=self.biz, customer_name='PAS Patron', status='OPEN')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='',
+        )
+        entry = BarTabEntry.objects.create(tab=tab, transaction=txn, description='PAS Item', amount=amount)
+        return tab, entry
+
+    def test_paying_70_of_80_via_mpesa_splits_entry_leaves_10_owing(self):
+        tab, entry = self._make_single_entry_tab(Decimal('80'))
+        resp = self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '70'},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertFalse(data['tab_settled'])
+        self.assertAlmostEqual(data['settled_amount'], 70.0, places=2)
+
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(entry.amount, Decimal('70'))
+        self.assertEqual(entry.payment_method, 'mpesa')
+
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+        remainder = tab.entries.filter(is_paid=False).first()
+        self.assertIsNotNone(remainder, 'The KES 10 shortfall must remain as an ordinary unpaid entry — never dropped')
+        self.assertEqual(remainder.amount, Decimal('10'))
+
+    def test_no_money_is_lost_total_still_sums_to_original(self):
+        tab, entry = self._make_single_entry_tab(Decimal('80'))
+        self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '70'},
+        )
+        tab.refresh_from_db()
+        self.assertEqual(tab.total(), Decimal('80'), 'Splitting must never change the tab\'s total owed')
+
+    def test_part_mpesa_part_cash_two_calls_fully_settles_with_correct_methods(self):
+        tab, entry = self._make_single_entry_tab(Decimal('80'))
+        # First: 50 via M-Pesa
+        self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '50'},
+        )
+        remainder = tab.entries.filter(is_paid=False).first()
+        self.assertEqual(remainder.amount, Decimal('30'))
+        # Second: remaining 30 via cash (no amount needed — full settle of what's left)
+        resp2 = self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [str(remainder.id)]},
+        )
+        data2 = resp2.json()
+        self.assertTrue(data2['tab_settled'])
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+
+        methods = sorted(tab.entries.values_list('payment_method', flat=True))
+        self.assertEqual(methods, ['cash', 'mpesa'])
+        amounts = sorted(tab.entries.values_list('amount', flat=True))
+        self.assertEqual(amounts, [Decimal('30'), Decimal('50')])
+
+    def test_amount_exceeding_selected_total_rejected(self):
+        tab, entry = self._make_single_entry_tab(Decimal('80'))
+        resp = self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '90'},
+        )
+        self.assertEqual(resp.status_code, 400)
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_paid, 'A rejected over-amount must not mutate the entry')
+
+    def test_zero_amount_rejected(self):
+        tab, entry = self._make_single_entry_tab(Decimal('80'))
+        resp = self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '0'},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_amount_equal_to_full_total_behaves_as_ordinary_full_settle(self):
+        tab, entry = self._make_single_entry_tab(Decimal('80'))
+        resp = self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '80'},
+        )
+        data = resp.json()
+        self.assertTrue(data['tab_settled'])
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(entry.amount, Decimal('80'), 'Full-amount settle must not split the entry')
+
+    def test_model_level_split_spans_multiple_entries_correctly(self):
+        tab = _make_tab_two_entries(self.biz, self.store)  # entries: 100, 150 (total 250)
+        entries = list(tab.entries.order_by('id'))
+        fully_paid, split_remainder = BarTab.settle_entries_amount_locked(
+            tab_id=tab.id, business=self.biz,
+            entry_ids=[e.id for e in entries], amount=Decimal('180'),
+            payment_method='cash', recorded_by=self.owner,
+        )
+        # 100 fully paid, then 80 of the 150 entry paid (split), 70 remains unpaid
+        entries[0].refresh_from_db()
+        entries[1].refresh_from_db()
+        self.assertTrue(entries[0].is_paid)
+        self.assertEqual(entries[0].amount, Decimal('100'))
+        self.assertTrue(entries[1].is_paid)
+        self.assertEqual(entries[1].amount, Decimal('80'))
+        self.assertIsNotNone(split_remainder)
+        self.assertEqual(split_remainder.amount, Decimal('70'))
+        self.assertFalse(split_remainder.is_paid)
+        self.assertEqual(split_remainder.tab_id, tab.id)
+
+        total = sum(e.amount for e in tab.entries.all())
+        self.assertEqual(total, Decimal('250'), 'Splitting must preserve the original total exactly')
+
+
+class SettleTabFromPaymentPartialAmountTest(TestCase):
+    """2026-07-25 live report — the more severe version of the same theft-
+    prevention gap, found while fixing PartialAmountSettleTest above: the STK
+    Push callback (_settle_tab_from_payment, core/mpesa_views.py) had its OWN
+    separate implementation of "settle up to this amount", and its full-tab-
+    FIFO branch `continue`d past any entry costing more than what was left of
+    payment.amount — silently DROPPING that money with zero record, not even
+    leaving it as an unpaid balance. A real Safaricom-confirmed charge could
+    vanish from the tab's tracking entirely. Now routes through the same
+    BarTab.settle_entries_amount_locked() used by the staff-facing endpoint."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='STK Partial Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='stkpartial_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='STK Item', unit='Pcs',
+            material_no='STKP-ITEM-01', selling_price=Decimal('80'),
+        )
+
+    def _make_tab_and_payment(self, entry_amount=Decimal('80'), paid_amount=Decimal('70'), entry_ids=None):
+        tab = BarTab.objects.create(business=self.biz, customer_name='STK Patron', status='OPEN')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=entry_amount, payment_method='',
+        )
+        entry = BarTabEntry.objects.create(tab=tab, transaction=txn, description='STK Item', amount=entry_amount)
+        payment = Payment.objects.create(
+            business=self.biz, amount=paid_amount, method='mpesa', status='completed',
+            bar_tab=tab, tab_entry_ids=entry_ids,
+        )
+        return tab, entry, payment
+
+    def test_stk_partial_payment_no_longer_silently_dropped(self):
+        # THE bug: old code `continue`d past the 80 entry (too big for the 70
+        # payment) and left it completely untouched — Safaricom had charged
+        # the customer 70, but the tab showed the full 80 still unpaid with
+        # no trace of the 70 anywhere.
+        from core.mpesa_views import _settle_tab_from_payment
+        tab, entry, payment = self._make_tab_and_payment(Decimal('80'), Decimal('70'))
+        _settle_tab_from_payment(payment)
+
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid, 'The confirmed KES 70 M-Pesa payment must be recorded, not dropped')
+        self.assertEqual(entry.amount, Decimal('70'))
+        self.assertEqual(entry.payment_method, 'mpesa')
+
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+        remainder = tab.entries.filter(is_paid=False).first()
+        self.assertIsNotNone(remainder, 'The KES 10 shortfall must survive as an ordinary unpaid entry')
+        self.assertEqual(remainder.amount, Decimal('10'))
+
+    def test_stk_full_payment_still_closes_tab_as_before(self):
+        from core.mpesa_views import _settle_tab_from_payment
+        tab, entry, payment = self._make_tab_and_payment(Decimal('80'), Decimal('80'))
+        _settle_tab_from_payment(payment)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(entry.amount, Decimal('80'))
+
+    def test_stk_partial_across_two_entries_fifo_split_no_money_lost(self):
+        from core.mpesa_views import _settle_tab_from_payment
+        tab = BarTab.objects.create(business=self.biz, customer_name='STK FIFO Patron', status='OPEN')
+        entries = []
+        for amt in (Decimal('50'), Decimal('30')):
+            txn = Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('-1'), sale_amount=amt, payment_method='',
+            )
+            entries.append(BarTabEntry.objects.create(tab=tab, transaction=txn, description='STK Item', amount=amt))
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('60'), method='mpesa', status='completed',
+            bar_tab=tab, tab_entry_ids=None,
+        )
+        _settle_tab_from_payment(payment)
+
+        entries[0].refresh_from_db(); entries[1].refresh_from_db()
+        self.assertTrue(entries[0].is_paid)
+        self.assertEqual(entries[0].amount, Decimal('50'))
+        self.assertTrue(entries[1].is_paid, 'Second entry must be split-paid for its 10 share, not skipped entirely')
+        self.assertEqual(entries[1].amount, Decimal('10'))
+
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+        remainder = tab.entries.filter(is_paid=False).first()
+        self.assertIsNotNone(remainder)
+        self.assertEqual(remainder.amount, Decimal('20'))
+        total = sum(e.amount for e in tab.entries.all())
+        self.assertEqual(total, Decimal('80'), 'Every shilling of the original 80 must still be accounted for')
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Sprint K6.C — Business-level cup pool
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2622,6 +2857,85 @@ class CashPaymentRequestTest(TestCase):
         resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '4321'})
         data = resp.json()
         self.assertEqual(data.get('redirect'), f'/r/{self.receipt.token}/')
+
+
+class FindTabSearchDedupTest(TestCase):
+    """2026-07-25 live report: Roy has orders on both Bar Board and Bar
+    Orders/Quick Sell under the same name — scanning the wall QR and
+    searching "Roy" showed TWO result rows, confusing, even though the
+    cross-counter receipt-linking system (resolve_master_receipt) already
+    consolidates both tabs into ONE shared receipt. Root cause: find_tab_
+    search's name-search loop added one result PER matching BarTab row with
+    no de-duplication, so two already-linked tabs still produced two
+    identical-destination rows."""
+
+    def setUp(self):
+        from django.core.cache import cache as _cache
+        _cache.clear()
+        self.biz = Business.objects.create(name='Find Tab Dedup Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.qs_store = Store.objects.create(business=self.biz, name='General')
+        self.owner = User.objects.create_user(username='ftd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+    def _make_tab_with_receipt(self, name, source, store, meta_tab_id=None, linked_ids=None):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source=source, store=store,
+        )
+        tab.tab_receipt_token = f'tok-{tab.id}'
+        tab.tab_pin = str(1000 + tab.id)
+        tab.save(update_fields=['tab_receipt_token', 'tab_pin'])
+        meta = {}
+        if meta_tab_id is not None:
+            meta['tab_id'] = meta_tab_id
+        if linked_ids is not None:
+            meta['linked_tab_ids'] = linked_ids
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Item', 'qty': 1, 'subtotal': 100}],
+            payment_method='tab', customer_name=name, meta=meta,
+        )
+        return tab, rcpt
+
+    def test_two_linked_tabs_same_customer_produce_one_search_result(self):
+        # Two real BarTab rows for the same customer, on different counters
+        # — the exact shape of Roy's report. _resolve_tab_public_url()'s own
+        # cross-counter lookup (via _safe_linked_query) is separately tested
+        # in CrossCounterReceiptLinkingTest and has a documented, accepted
+        # SQLite-only limitation (the linked_tab_ids `contains` lookup only
+        # works on Postgres — production is unaffected, see core/tab_
+        # receipts.py's Known Issues note); mocking it here isolates what
+        # THIS fix actually changed — the dedup-by-resolved-URL step in
+        # find_tab_search's name-search loop — from that unrelated,
+        # already-documented constraint.
+        from unittest.mock import patch
+        bar_tab, bar_rcpt = self._make_tab_with_receipt('Roy', 'bar', self.bar_store)
+        bar_rcpt.meta = {'tab_id': bar_tab.id}
+        bar_rcpt.save(update_fields=['meta'])
+        qs_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source='qs', store=self.qs_store,
+        )
+        same_url = f'/r/{bar_rcpt.token}/'
+        with patch('core.keg_views._resolve_tab_public_url', return_value=same_url):
+            resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Roy'})
+        data = resp.json()
+        self.assertEqual(len(data['tabs']), 1, 'Two tabs resolving to the same receipt must show as ONE result')
+        self.assertEqual(data['tabs'][0]['url'], same_url)
+
+    def test_two_genuinely_separate_receipts_both_still_shown(self):
+        # Sanity check: dedup must not over-collapse two customers whose
+        # names both match the search query but have real, separate bills.
+        _tab1, rcpt1 = self._make_tab_with_receipt('Roy', 'bar', self.bar_store)
+        rcpt1.meta = {'tab_id': _tab1.id}
+        rcpt1.save(update_fields=['meta'])
+        _tab2, rcpt2 = self._make_tab_with_receipt('Royce', 'qs', self.qs_store)
+        rcpt2.meta = {'tab_id': _tab2.id}
+        rcpt2.save(update_fields=['meta'])
+
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Roy'})
+        data = resp.json()
+        self.assertEqual(len(data['tabs']), 2)
+        urls = {t['url'] for t in data['tabs']}
+        self.assertEqual(urls, {f'/r/{rcpt1.token}/', f'/r/{rcpt2.token}/'})
 
 
 class FindTabDebtStateTest(TestCase):

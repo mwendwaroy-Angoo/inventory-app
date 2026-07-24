@@ -2186,3 +2186,47 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   coverage, and one end-to-end HTTP test proving `respond_tab_transfer` resolves a whole
   batch from any single row's id. No regressions in the 48 pre-existing split-transfer/
   tab-rename/station-scoping tests. 545 tests pass.
+- Wall-QR duplicate-receipt search fix + partial-amount tab payment (2026-07-25), two live
+  reports. **(1) Duplicate search results**: Roy has orders on both Bar Board and Bar
+  Orders/Quick Sell under the same name — scanning the wall QR and searching "Roy" showed
+  TWO result rows, confusing, even though cross-counter receipt-linking
+  (`resolve_master_receipt`, confirmed already wired into all three checkout views) already
+  consolidates both tabs into ONE shared receipt. Root cause: `find_tab_search`'s name-
+  search loop (`core/keg_views.py`) added one result PER matching `BarTab` row with no
+  de-duplication, so two already-linked tabs still produced two identical-destination rows.
+  Fixed by deduping on the resolved URL — two tabs that land on the same receipt now show as
+  ONE result; two genuinely separate customers still show as two (regression-locked by a
+  dedicated sanity-check test). **(2) Partial-amount tab payment — theft-prevention**: a
+  customer paying 70 of an 80 KES tab via M-Pesa had no correct way to be recorded — staff
+  could only settle selected entries in FULL or not at all, so the shortfall either got
+  silently marked as fully paid (losing KES 10 with no trace) or the payment had to be
+  refused outright. Traced further while fixing this and found the STK Push callback
+  (`_settle_tab_from_payment`, `core/mpesa_views.py`) had an even more severe version of
+  the SAME gap in its full-tab-FIFO branch: it `continue`d past any entry costing more than
+  what was left of `payment.amount`, silently DROPPING that leftover money with zero
+  record anywhere — a real, Safaricom-confirmed charge could vanish from the tab's
+  tracking entirely if it didn't land exactly on an entry boundary, the same class of bug
+  this app's own Known Issues already flags as critical for STK callbacks. Fixed both
+  through one shared mechanism: extracted `BarTabEntry.split_paid_unpaid_locked()` (the
+  split step `split_and_transfer_locked()` already used, now reusable) and built
+  `BarTab.settle_entries_amount_locked(tab_id, business, entry_ids, amount, payment_method,
+  recorded_by)` on top of it — walks selected entries in ascending-id order, fully pays as
+  many as fit, and splits the boundary entry (paid portion settled now, remainder stays as
+  an ORDINARY unpaid entry on the same tab — never silently written off, never auto-
+  converted to debt) when `amount` doesn't land exactly on an entry boundary. `settle_tab()`
+  gained an optional `amount` POST param routing through this when less than the selected
+  total (`_finish_settle_tab()` extracted as a shared tail so both paths issue an identical
+  receipt/notification); `_settle_tab_from_payment` now routes its full-tab-FIFO branch
+  through the same method instead of its own broken skip-based loop. "Part M-Pesa, part
+  cash" is just two calls: first settles 50 via mpesa (splits the entry, 30 left owing),
+  second settles the remaining 30 via cash — no debt ever created, both payment methods
+  correctly recorded on separate line items. Frontend: all three tabs drawers gained an
+  editable "Kiasi" amount field in their partial-settle UI (bar_board/quick_sell: inline
+  next to the selection total; kitchen_board: in the existing settle modal), defaulting to
+  the full selected total and only sent when edited down — untouched behaves exactly as
+  before. Quick Sell's STK modal already had an editable amount field wired to the STK
+  push amount; the backend fix alone makes that already-existing input correctly handle a
+  partial STK amount, no frontend change needed there. 12 new tests
+  (`PartialAmountSettleTest`, `SettleTabFromPaymentPartialAmountTest`,
+  `FindTabSearchDedupTest`) including the critical regression lock proving a confirmed
+  STK charge is never silently dropped. No migrations. 557 tests pass.

@@ -2674,6 +2674,12 @@
                 '<div id="qs-tab-entries-' + tab.id + '" style="margin-bottom:0.2rem;">' + entries + '</div>' +
                 '<div id="qs-sel-row-' + tab.id + '" style="display:none;background:rgba(201,168,76,0.07);border:1px solid rgba(201,168,76,0.2);border-radius:8px;padding:.3rem .5rem;margin:.3rem 0;align-items:center;gap:.35rem;flex-wrap:wrap;">' +
                 '<span style="color:#b0b0b0;font-size:.78rem;">Vilivyochaguliwa: <strong id="qs-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
+                '<span style="display:flex;align-items:center;gap:.25rem;">' +
+                '<span style="color:#888;font-size:.72rem;">Kiasi:</span>' +
+                '<input type="number" id="qs-partial-amount-' + tab.id + '" min="0" step="1" ' +
+                'style="width:80px;background:#111;border:1px solid #444;border-radius:5px;color:#f0ece4;padding:.15rem .35rem;font-size:.75rem;" ' +
+                'title="Badilisha kama mteja analipa sehemu tu (mfano: mpesa 70 kati ya 80)">' +
+                '</span>' +
                 '<button id="qs-partial-cash-' + tab.id + '" class="qs-partial-btn qs-tab-btn-cash" disabled onclick="qsSettleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
                 '<button id="qs-partial-mpesa-' + tab.id + '" class="qs-partial-btn qs-tab-btn-mpesa" disabled onclick="qsSettleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
                 '<button id="qs-partial-stk-' + tab.id + '" class="qs-partial-btn qs-tab-btn-stk" disabled onclick="qsSettleTabPartialStk(' + tab.id + ',\'' + sc + '\')">📲 STK</button>' +
@@ -2761,12 +2767,17 @@
         checked.forEach(function (cb) { total += parseFloat(cb.dataset.amount || 0); });
         var selRow   = document.getElementById('qs-sel-row-'      + tabId);
         var selTotal = document.getElementById('qs-sel-total-'    + tabId);
+        var amountEl = document.getElementById('qs-partial-amount-' + tabId);
         var btnCash  = document.getElementById('qs-partial-cash-' + tabId);
         var btnMpesa = document.getElementById('qs-partial-mpesa-'+ tabId);
         var btnStk   = document.getElementById('qs-partial-stk-'  + tabId);
         var fullPay  = document.getElementById('qs-tab-full-pay-' + tabId);
         if (selRow)   selRow.style.display = checked.length > 0 ? 'flex' : 'none';
         if (selTotal) selTotal.textContent = 'KES ' + qsFmt(total);
+        // Default to "pay it all" on every selection change (2026-07-25
+        // theft-prevention feature) — staff edits it DOWN only when the
+        // customer is genuinely paying less than the selected total.
+        if (amountEl) { amountEl.value = total > 0 ? Math.round(total) : ''; amountEl.max = total; }
         if (btnCash)  btnCash.disabled     = checked.length === 0;
         if (btnMpesa) btnMpesa.disabled    = checked.length === 0;
         if (btnStk)   btnStk.disabled      = checked.length === 0;
@@ -2780,7 +2791,16 @@
         if (!container) return;
         var checked = container.querySelectorAll('.qs-entry-cb:not(:disabled):checked');
         if (!checked.length) return;
-        var body = new URLSearchParams({payment_method: payMethod, csrfmiddlewaretoken: CSRF});
+        var total = 0;
+        checked.forEach(function (cb) { total += parseFloat(cb.dataset.amount || 0); });
+        var bodyObj = {payment_method: payMethod, csrfmiddlewaretoken: CSRF};
+        // Staff-edited amount (2026-07-25 theft-prevention) — only sent when
+        // it differs from the full selected total, so an untouched input
+        // behaves exactly like before (full settle of everything checked).
+        var amountEl = document.getElementById('qs-partial-amount-' + tabId);
+        var editedAmount = amountEl && amountEl.value ? parseFloat(amountEl.value) : total;
+        if (editedAmount > 0 && editedAmount < total) bodyObj.amount = editedAmount;
+        var body = new URLSearchParams(bodyObj);
         checked.forEach(function (cb) { body.append('entry_ids', cb.dataset.entryId); });
         document.querySelectorAll('.qs-tab-btn, .qs-partial-btn').forEach(function (b) { b.disabled = true; });
         fetch('/bar/tabs/' + tabId + '/settle/', {

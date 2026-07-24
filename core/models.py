@@ -2492,6 +2492,77 @@ class BarTab(models.Model):
         result = self.entries.filter(is_paid=False).aggregate(t=models.Sum('amount'))['t']
         return result or Decimal('0')
 
+    @classmethod
+    def settle_entries_amount_locked(cls, tab_id, business, entry_ids, amount, payment_method, recorded_by=None):
+        """Settle up to `amount` KES across the given entries (ascending id
+        order — oldest first), splitting the boundary entry via BarTabEntry.
+        split_paid_unpaid_locked() when `amount` doesn't land exactly on an
+        entry boundary. Any entries beyond what `amount` covers are left
+        completely untouched — still selectable in a later call (e.g. the
+        rest paid via a different method).
+
+        2026-07-25 live request (theft-prevention): a customer paying 70 of
+        an 80 tab via M-Pesa had no correct way to be recorded before this —
+        staff could only settle selected entries in full or not at all, so
+        the shortfall either got silently marked as fully paid (losing KES
+        10 with no trace) or the whole payment was refused. Every KES of
+        `amount` is now applied to some entry; the exact shortfall (if the
+        selected entries total more than `amount`) stays as an ordinary
+        unpaid balance on this same tab — never silently written off, never
+        auto-converted to debt (staff can still do that separately via the
+        existing → Deni action if that's what's actually happened).
+
+        Two calls with different payment_method values handle "part M-Pesa,
+        part cash" cleanly — the second call just selects whatever's left.
+
+        Raises ValueError if no matching unpaid entries, amount <= 0, or
+        amount exceeds the selected entries' total (can't "pay" more than
+        what's owed in one call — that's an overpayment, out of scope here).
+        Returns (fully_paid_entries, split_remainder_entry_or_None).
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            tab = cls.objects.select_for_update().get(id=tab_id, business=business)
+            entries = list(
+                BarTabEntry.objects.select_for_update().select_related('transaction')
+                .filter(tab=tab, id__in=entry_ids, is_paid=False)
+                .order_by('id')
+            )
+            if not entries:
+                raise ValueError('Hakuna kiingilio kilichochaguliwa.')
+
+            total_selected = sum((e.amount for e in entries), Decimal('0'))
+            amount = Decimal(str(amount))
+            if amount <= 0:
+                raise ValueError('Kiasi lazima kiwe zaidi ya 0.')
+            if amount > total_selected:
+                raise ValueError('Kiasi ni zaidi ya deni la vitu vilivyochaguliwa.')
+
+            remaining = amount
+            fully_paid = []
+            split_remainder = None
+            now = timezone.now()
+            for entry in entries:
+                if remaining <= 0:
+                    break
+                if remaining >= entry.amount:
+                    entry.is_paid = True
+                    entry.paid_at = now
+                    entry.payment_method = payment_method
+                    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+                    if entry.transaction_id:
+                        entry.transaction.payment_method = payment_method
+                        entry.transaction.save(update_fields=['payment_method'])
+                    fully_paid.append(entry)
+                    remaining -= entry.amount
+                else:
+                    split_remainder = BarTabEntry.split_paid_unpaid_locked(
+                        entry, remaining, payment_method, recorded_by,
+                    )
+                    fully_paid.append(entry)  # now IS the paid portion, amount reduced in place
+                    remaining = Decimal('0')
+        return fully_paid, split_remainder
+
 
 class BarTabEntry(models.Model):
     tab         = models.ForeignKey(BarTab, on_delete=models.CASCADE, related_name='entries')
@@ -2605,36 +2676,60 @@ class BarTabEntry(models.Model):
                 )
                 return entry, transfer
 
-            remainder = entry.amount - paid_amount
-            orig_txn = Transaction.objects.select_for_update().get(pk=entry.transaction_id)
-
-            orig_txn.sale_amount = paid_amount
-            orig_txn.save(update_fields=['sale_amount'])
-
-            entry.amount = paid_amount
-            entry.is_paid = True
-            entry.payment_method = paid_method
-            entry.paid_at = timezone.now()
-            entry.save(update_fields=['amount', 'is_paid', 'payment_method', 'paid_at'])
-
-            new_txn = Transaction.objects.create(
-                item=orig_txn.item, business=orig_txn.business, type='Issue',
-                qty=Decimal('0'), sale_amount=remainder,
-                keg_barrel=orig_txn.keg_barrel, produce_bunch=orig_txn.produce_bunch,
-                kitchen_batch=orig_txn.kitchen_batch,
-                date=orig_txn.date, created_at=orig_txn.created_at,
-                recorded_by=staff_user,
-            )
-            new_entry = cls.objects.create(
-                tab=entry.tab, transaction=new_txn,
-                description=entry.description, amount=remainder, is_paid=False,
-            )
+            new_entry = cls.split_paid_unpaid_locked(entry, paid_amount, paid_method, staff_user)
             transfer = TabTransferRequest.objects.create(
                 business=business, entry=new_entry,
-                source_tab=entry.tab, dest_tab=dest_tab, amount=remainder,
+                source_tab=entry.tab, dest_tab=dest_tab, amount=new_entry.amount,
                 paid_amount=paid_amount, requested_by=staff_user, note=entry.description,
             )
         return new_entry, transfer
+
+    @classmethod
+    def split_paid_unpaid_locked(cls, entry, paid_amount, paid_method, recorded_by=None):
+        """Split an entry into a paid portion (reduced in place to
+        paid_amount, marked paid via paid_method) and a NEW unpaid remainder
+        entry on the SAME tab. Caller must already hold the row lock
+        (select_for_update) and have validated 0 < paid_amount < entry.amount.
+
+        Shared building block: split_and_transfer_locked() (above) uses this
+        for its split step, then proposes the remainder to a DIFFERENT
+        customer's tab; BarTab.settle_entries_amount_locked() (2026-07-25 —
+        theft-prevention: a customer paying 70 of an 80 tab via M-Pesa had no
+        correct way to be recorded before this) uses it too, leaving the
+        remainder as an ordinary unpaid entry on THIS SAME tab instead —
+        same split mechanic, different destiny for the remainder.
+
+        The new Transaction carries qty=0 (no additional stock left the
+        shelf — this re-bills an already-sold item) and copies the
+        original's keg_barrel/produce_bunch/kitchen_batch FK so Transaction.
+        cost()'s proportional formula still attributes correctly — see
+        split_and_transfer_locked()'s docstring for the full reasoning.
+        Returns the new remainder BarTabEntry (unpaid, same tab).
+        """
+        remainder = entry.amount - paid_amount
+        orig_txn = Transaction.objects.select_for_update().get(pk=entry.transaction_id)
+
+        orig_txn.sale_amount = paid_amount
+        orig_txn.save(update_fields=['sale_amount'])
+
+        entry.amount = paid_amount
+        entry.is_paid = True
+        entry.payment_method = paid_method
+        entry.paid_at = timezone.now()
+        entry.save(update_fields=['amount', 'is_paid', 'payment_method', 'paid_at'])
+
+        new_txn = Transaction.objects.create(
+            item=orig_txn.item, business=orig_txn.business, type='Issue',
+            qty=Decimal('0'), sale_amount=remainder,
+            keg_barrel=orig_txn.keg_barrel, produce_bunch=orig_txn.produce_bunch,
+            kitchen_batch=orig_txn.kitchen_batch,
+            date=orig_txn.date, created_at=orig_txn.created_at,
+            recorded_by=recorded_by,
+        )
+        return cls.objects.create(
+            tab=entry.tab, transaction=new_txn,
+            description=entry.description, amount=remainder, is_paid=False,
+        )
 
     def transfer_reason_note(self):
         """If this entry's balance was ever proposed as a split-bill transfer

@@ -101,10 +101,24 @@ def _bridge_stk_to_prompt(payment):
 def _settle_tab_from_payment(payment):
     """Settle BarTabEntry rows for a completed STK Push.
 
-    If payment.tab_entry_ids is set, settle exactly those entries (partial
-    settlement path). Otherwise FIFO-settle unpaid entries up to the paid
-    amount (full-tab path). Issues a receipt only when the whole tab is
-    settled."""
+    If payment.tab_entry_ids is set, settle those entries (partial-by-
+    selection path) up to payment.amount. Otherwise settle unpaid entries
+    FIFO up to payment.amount (full-tab path). Issues a receipt only when
+    the whole tab is settled.
+
+    2026-07-25 live report (theft-prevention): the old logic here `continue`d
+    past any entry whose amount exceeded what was left of payment.amount,
+    silently DROPPING that leftover money with no record anywhere — a real,
+    Safaricom-confirmed M-Pesa charge (e.g. a customer paying 70 of an 80
+    tab) could vanish from the tab's tracking entirely if it didn't land
+    exactly on an entry boundary, the exact class of bug this app's own
+    Known Issues already flags as critical for STK callbacks (see
+    _create_debt_payment_from_receipt's docstring). Now routes through
+    BarTab.settle_entries_amount_locked(), the same split-based mechanism
+    settle_tab() uses for staff-entered partial amounts — every shilling of
+    payment.amount lands on some entry, either as a full payment or as the
+    paid portion of a split boundary entry; nothing is ever silently lost.
+    """
     try:
         tab = payment.bar_tab
         if not tab or tab.status != 'OPEN':
@@ -114,32 +128,38 @@ def _settle_tab_from_payment(payment):
         entry_ids = payment.tab_entry_ids  # list of int IDs, or None
 
         if entry_ids:
-            # Partial settlement: settle only the specified entries
-            unpaid_entries = list(
-                tab.entries.filter(id__in=entry_ids, is_paid=False)
-                .select_related('transaction')
+            target_ids = list(
+                tab.entries.filter(id__in=entry_ids, is_paid=False).values_list('id', flat=True)
             )
         else:
-            # Full-tab FIFO settlement
-            paid_amount = float(payment.amount)
-            unpaid_entries = list(tab.entries.filter(is_paid=False).order_by('id').select_related('transaction'))
+            target_ids = list(
+                tab.entries.filter(is_paid=False).order_by('id').values_list('id', flat=True)
+            )
 
-        for entry in unpaid_entries:
-            if not entry_ids:
-                if paid_amount <= 0:
-                    break
-                entry_amt = float(entry.amount)
-                if entry_amt > paid_amount:
-                    continue
-                paid_amount -= entry_amt
-            entry.is_paid = True
-            entry.payment_method = 'mpesa'
-            entry.paid_at = now
-            entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
-            if entry.transaction_id:
-                entry.transaction.payment_method = 'mpesa'
-                entry.transaction.save(update_fields=['payment_method'])
+        if not target_ids:
+            return
 
+        try:
+            BarTab.settle_entries_amount_locked(
+                tab_id=tab.id, business=payment.business,
+                entry_ids=target_ids, amount=payment.amount,
+                payment_method='mpesa', recorded_by=None,
+            )
+        except ValueError:
+            # amount exceeded the selected entries' total — shouldn't happen
+            # (the STK amount is set by us, never edited by the customer's
+            # phone), but settle everything selected in full rather than
+            # raising and losing an already-confirmed M-Pesa charge.
+            for entry in BarTabEntry.objects.filter(id__in=target_ids, is_paid=False).select_related('transaction'):
+                entry.is_paid = True
+                entry.payment_method = 'mpesa'
+                entry.paid_at = now
+                entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
+                if entry.transaction_id:
+                    entry.transaction.payment_method = 'mpesa'
+                    entry.transaction.save(update_fields=['payment_method'])
+
+        tab.refresh_from_db()
         if tab.cash_requested_at:
             tab.cash_requested_at = None
             tab.save(update_fields=['cash_requested_at'])
