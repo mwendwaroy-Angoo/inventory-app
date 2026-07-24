@@ -940,7 +940,10 @@ def discard_barrel(request, barrel_id):
     if barrel.status == 'DEPLETED':
         return JsonResponse({'ok': False, 'error': 'Barrel imekwisha'}, status=400)
 
-    reason = (request.POST.get('reason') or 'Imerudishwa / discarded').strip()
+    # A barrel really is a physical object being returned/thrown out, unlike a tab —
+    # 'Imerudishwa' (returned) is the correct verb here, kept fully in Swahili for
+    # consistency with the rest of the app's default reasons.
+    reason = (request.POST.get('reason') or 'Imerudishwa — sababu haikuelezwa').strip()
     barrel.close(reason=reason)
     return JsonResponse({'ok': True, 'status': barrel.status})
 
@@ -1726,7 +1729,12 @@ def void_tab(request, tab_id):
         return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
 
     tab = get_object_or_404(BarTab, id=tab_id, business=up.business, status='OPEN')
-    reason = (request.POST.get('reason') or 'Imetupwa').strip()
+    # 2026-07-24 wording/accountability audit: 'Imetupwa' ("thrown away", the verb for
+    # a physical object) was the default reason for voiding a TAB — a financial/
+    # transactional cancellation, not litter. A tab is annulled/cancelled ("-futa"),
+    # not discarded ("-tupa") — same class of fix as transfer_reason_note()'s
+    # 'itafunikwa' correction.
+    reason = (request.POST.get('reason') or 'Imefutwa — sababu haikuelezwa').strip()
 
     # Check BEFORE the loop: did any unpaid transactions carry credit (converted debt)?
     # After the loop all entries have payment_method='void' so checking then is always True.
@@ -2514,14 +2522,14 @@ def record_breakage(request):
         store__business=business,
     ).first()
     if not item:
-        return JsonResponse({"ok": False, "error": "Item not found"}, status=404)
+        return JsonResponse({"ok": False, "error": "Bidhaa haikupatikana"}, status=404)
 
     try:
         qty = Decimal(str(request.POST.get("qty", "1")))
         if qty <= 0:
             raise ValueError
     except (ValueError, Exception):
-        return JsonResponse({"ok": False, "error": "Invalid quantity"}, status=400)
+        return JsonResponse({"ok": False, "error": "Kiasi si sahihi"}, status=400)
 
     note = request.POST.get("note", "").strip()
 
@@ -2532,11 +2540,42 @@ def record_breakage(request):
         item=item,
         type="Wastage",
         qty=-qty,
-        recipient=note or "Breakage / damage",
+        recipient=note or "Imevunjika / imeharibika",
         payment_method="cash",
     )
 
-    return JsonResponse({"ok": True})
+    # 2026-07-24 wording/accountability audit: this used to return a bare {"ok":
+    # True} with no reasoning trail and no notification — a real stock/money loss
+    # event that only the recording staffer ever saw, unlike petty cash or a
+    # discarded batch/bunch, which both explain themselves to the owner.
+    reporter_name = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    loss_kes = float(qty) * float(item.cost_price or 0)
+    message = (
+        f"{item.description} × {qty:g} imerekodiwa na {reporter_name} tarehe {when}"
+        f"{(' — KES ' + format(loss_kes, ',.0f') + ' hasara') if loss_kes else ''}."
+    )
+    if note:
+        message += f' Sababu: {note}'
+
+    from .models import Notification
+    from accounts.models import UserProfile as _UP
+    from core.notifications import normalize_ke_phone, send_sms_notification
+    for om in _UP.objects.filter(
+        business=business, role__in=['owner', 'manager']
+    ).exclude(user=request.user).select_related('user'):
+        Notification.objects.create(
+            user=om.user,
+            title='🧯 Uharibifu Umerekodiwa',
+            message=message,
+            notification_type='warning',
+        )
+        if om.phone:
+            normalized = normalize_ke_phone(om.phone)
+            if normalized:
+                send_sms_notification(f"{business.name}: {message}", normalized)
+
+    return JsonResponse({"ok": True, "message": message})
 
 
 # ── F2 — Staff Shrinkage Leaderboard ────────────────────────────────────────

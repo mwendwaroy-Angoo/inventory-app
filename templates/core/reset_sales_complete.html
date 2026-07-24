@@ -8,8 +8,14 @@
         <p style="font-size:2rem; margin-bottom:0.5rem;">✅</p>
         <h4 style="color:var(--gold-light); font-family:'Playfair Display',serif; margin-bottom:0.5rem;">{% trans "Sales & Analytics Reset Complete" %}</h4>
         <p style="color:var(--muted); font-size:0.9rem; margin-bottom:0;">
-            {% if reset_log %}{% blocktrans with when=reset_log.created_at|date:"d M Y, H:i" %}Reset performed {{ when }}.{% endblocktrans %}{% endif %}
+            {% if reset_log %}{% blocktrans with when=reset_log.created_at|date:"d M Y, H:i" %}Reset performed {{ when }}.{% endblocktrans %}
+            {% blocktrans with who=reset_log.performed_by_username_cache %}by {{ who }}.{% endblocktrans %}{% endif %}
         </p>
+        {% if reset_log.reason %}
+        <p style="color:#b0b0b0; font-size:0.85rem; margin-top:0.5rem; margin-bottom:0; font-style:italic;">
+            "{{ reset_log.reason }}"
+        </p>
+        {% endif %}
     </div>
 
     <div style="background:rgba(243,156,18,0.1); border:1px solid var(--warning); border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">

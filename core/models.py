@@ -2870,6 +2870,16 @@ class TableOrder(models.Model):
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
     served_at      = models.DateTimeField(null=True, blank=True)
+    # Cancellation trail (2026-07-24 wording/accountability audit) — cancel used to be
+    # a bare status flip with no reason and no notification, on both cancel paths
+    # (the waitress-side cancel_table_order() and the bar-board oqUpdate(...,'CANCELLED')
+    # shortcut) — same gap already closed for PerformerSession the same day.
+    cancel_reason  = models.CharField(max_length=200, blank=True)
+    cancelled_by   = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='table_orders_cancelled',
+    )
+    cancelled_at   = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-created_at']
@@ -3395,6 +3405,13 @@ class PerformerSession(models.Model):
     created_by     = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,
                                        related_name='performer_sessions_created')
     created_at     = models.DateTimeField(auto_now_add=True)
+
+    # Cancellation trail (2026-07-24 wording/accountability audit) — cancel used to be a
+    # bare status flip with no reason, no notification, no confirmation message at all.
+    cancel_reason  = models.CharField(max_length=200, blank=True)
+    cancelled_by   = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name='performer_sessions_cancelled')
+    cancelled_at   = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-date', '-started_at']

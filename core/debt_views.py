@@ -888,15 +888,29 @@ def clear_defaulter(request, customer_id):
         last_cleared_at=timezone.now(),
     )
 
+    # 2026-07-24 wording/accountability audit: the old message ("amesamehewa deni la
+    # zamani" — "has been forgiven the old debt") overstated what this action does.
+    # This only lifts the defaulter block and re-approves credit; any actual
+    # outstanding balance is untouched and still owed — that's a separate, explicit
+    # write-off decision (approve_write_off), not a side effect of this one. Saying
+    # otherwise here would tell a customer or staff member their debt disappeared
+    # when it didn't.
+    reviewer_name = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    clear_message = (
+        f"{customer.name} amerejeshewa ruhusa ya kukopa na {reviewer_name} tarehe {when}. "
+        f"Deni la zamani (kama lipo) bado linahitaji kulipwa — hii haikufuta deni lolote."
+    )
+
     from .models import Notification
     Notification.objects.create(
         user=request.user,
         title=f"✅ {customer.name} — Ameruhusiwa Tena",
-        message=f"{customer.name} amesamehewa deni la zamani na anaweza kukopa tena.",
+        message=clear_message,
         notification_type='info',
     )
 
-    messages.success(request, f"{customer.name} amesafishwa — anaweza kukopa tena.")
+    messages.success(request, clear_message)
     return redirect('customer_debt_profile', customer_id=customer_id)
 
 
@@ -908,11 +922,16 @@ def toggle_credit_approval(request, customer_id):
     customer.credit_approved = not customer.credit_approved
     customer.save(update_fields=['credit_approved'])
 
-    status = _('approved') if customer.credit_approved else _('revoked')
+    # 2026-07-24 wording/accountability audit: was an English-only django-i18n
+    # string (_('Credit %(status)s for %(customer)s.')) in an otherwise all-Swahili
+    # flow, with no reviewer or timestamp — inconsistent with every other
+    # approve/reject message in this file.
+    reviewer_name = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    status_sw = 'imeruhusiwa' if customer.credit_approved else 'imezuiwa'
     messages.success(
         request,
-        _('Credit %(status)s for %(customer)s.')
-        % {'status': status, 'customer': customer.name}
+        f"Mkopo kwa {customer.name} {status_sw} na {reviewer_name} tarehe {when}.",
     )
     return redirect('customer_debt_profile', customer_id=customer_id)
 
@@ -1167,8 +1186,8 @@ def approve_write_off(request, req_id):
     # Remove any Haki deduction the manager may have already created (owner overrides)
     SalaryDeduction.objects.filter(write_off=wo).delete()
 
-    # Update recent receipts so the line is hidden on the public receipt page
-    _mark_receipt_write_off(up.business, customer_name, item_name, amount)
+    # Update recent receipts so the line explains itself on the public receipt page
+    _mark_receipt_write_off(up.business, customer_name, item_name, amount, when=wo.reviewed_at)
 
     from .models import Notification
     from core.notifications import normalize_ke_phone, send_sms_notification
@@ -1199,7 +1218,13 @@ def approve_write_off(request, req_id):
                     normalized,
                 )
 
-    return JsonResponse({'ok': True, 'status': 'approved', 'voided_amount': amount, 'customer': customer_name})
+    return JsonResponse({
+        'ok': True,
+        'status': 'approved',
+        'voided_amount': amount,
+        'customer': customer_name,
+        'message': f'Imeidhinishwa — KES {amount:,.0f} ({item_name}) imefutwa kutoka kwa deni la {customer_name}.',
+    })
 
 
 @login_required
@@ -1334,24 +1359,35 @@ def pending_write_offs(request):
     })
 
 
-def _mark_receipt_write_off(business, customer_name, item_name, amount):
+def _mark_receipt_write_off(business, customer_name, item_name, amount, when=None):
     """Add a write-off marker to the customer's recent receipts.
 
-    The receipt public page reads receipt.meta['write_offs'] and hides matching lines.
-    Matches by item name + amount. Handles the duplicate-entry case by consuming
-    one match per write-off entry (a list, not a set).
+    The receipt public page reads receipt.meta['write_offs'] and, per the
+    2026-07-24 wording/accountability audit, now marks the matching line as
+    written off WITH an explanation and a timestamp rather than silently
+    hiding it — a line that just vanishes from a customer's own bill with no
+    trace reads as a mistake or something to question, not as the business
+    telling them their debt for that item was cleared. Matches by item name +
+    amount. Handles the duplicate-entry case by consuming one match per
+    write-off entry (a list, not a set).
     """
     from .models import Receipt
     import datetime
+    when = when or timezone.now()
     since = timezone.localdate() - datetime.timedelta(days=14)
     receipts = (
         Receipt.objects
         .filter(business=business, customer_name=customer_name, created_at__date__gte=since)
         .exclude(payment_method='statement')
     )
+    when_local = timezone.localtime(when)
     for rcpt in receipts:
         meta = rcpt.meta or {}
         wo_list = meta.setdefault('write_offs', [])
-        wo_list.append({'name': item_name, 'amount': round(amount, 2)})
+        wo_list.append({
+            'name': item_name,
+            'amount': round(amount, 2),
+            'written_off_at': when_local.strftime('%d %b %Y, %H:%M'),
+        })
         rcpt.meta = meta
         rcpt.save(update_fields=['meta'])

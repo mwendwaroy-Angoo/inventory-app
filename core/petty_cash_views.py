@@ -108,4 +108,32 @@ def review_petty_cash(request, entry_id):
     entry.review_note = review_note
     entry.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'review_note'])
 
-    return JsonResponse({'ok': True, 'new_status': entry.status})
+    # 2026-07-24 wording/accountability audit finding: this used to return a
+    # bare {'new_status': ...} with no message and never notify the staffer
+    # who recorded the entry at all — they had no way to learn their KES X
+    # was approved or rejected except by checking the list themselves.
+    reviewer_label = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(entry.reviewed_at).strftime('%d %b %Y, %H:%M')
+    if action == 'approve':
+        message = (
+            f'KES {entry.amount:,.0f} ({entry.get_reason_display()}) imekubaliwa na '
+            f'{reviewer_label} tarehe {when}.'
+        )
+    else:
+        message = (
+            f'KES {entry.amount:,.0f} ({entry.get_reason_display()}) imekataliwa na '
+            f'{reviewer_label} tarehe {when}.'
+        )
+    if review_note:
+        message += f' Sababu: {review_note}'
+
+    if entry.recorded_by_id and entry.recorded_by_id != request.user.id:
+        from .models import Notification
+        Notification.objects.create(
+            user=entry.recorded_by,
+            title=('✅ Petty Cash Imekubaliwa' if action == 'approve' else '❌ Petty Cash Imekataliwa'),
+            message=message,
+            notification_type=('info' if action == 'approve' else 'warning'),
+        )
+
+    return JsonResponse({'ok': True, 'new_status': entry.status, 'message': message})

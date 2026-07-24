@@ -1073,23 +1073,39 @@
     function renderLines(lines) {
         if (!linesWrap || !lines) return;
         var html = '';
-        // Suppress written-off lines on dynamic re-renders
+        // Match a written-off line to its explanation instead of dropping it —
+        // same reasoning as the static-block treatment above (2026-07-24 audit):
+        // a line that just disappears from a live-polled receipt reads as a bug,
+        // not as "the business cleared this for you."
         var _woList = window._writeOffLines;
-        if (_woList && _woList.length) {
-            var _woRem = _woList.slice();
-            lines = lines.filter(function(l) {
-                for (var i = 0; i < _woRem.length; i++) {
-                    var wo = _woRem[i];
-                    if (wo.name === (l.name || '') && Math.abs(parseFloat(wo.amount || 0) - parseFloat(l.subtotal || 0)) < 0.01) {
-                        _woRem.splice(i, 1);
-                        return false;
-                    }
+        var _woRem = (_woList && _woList.length) ? _woList.slice() : [];
+        function _matchWriteOff(l) {
+            for (var i = 0; i < _woRem.length; i++) {
+                var wo = _woRem[i];
+                if (wo.name === (l.name || '') && Math.abs(parseFloat(wo.amount || 0) - parseFloat(l.subtotal || 0)) < 0.01) {
+                    _woRem.splice(i, 1);
+                    return wo;
                 }
-                return true;
-            });
+            }
+            return null;
         }
+        // Written-off lines are shown (struck through, explained) but are NOT
+        // payable and NOT owed — excluded from both the checkbox/pay list and
+        // the outstanding total below, same as they always were before this
+        // was reworded to explain rather than hide.
+        var payableLines = [];
         lines.forEach(function (l) {
-            if (l.is_paid) {
+            var wo = _woRem.length ? _matchWriteOff(l) : null;
+            if (!wo) payableLines.push(l);
+            if (wo) {
+                html += '<div class="receipt-line" style="opacity:0.6; flex-wrap:wrap;">' +
+                    '<span class="line-name" style="text-decoration:line-through;color:#888;">' + (l.name || '') + '</span>' +
+                    '<span style="color:#c9a84c;font-size:0.72rem;white-space:nowrap;margin:0 0.5rem;">✕ Imefutwa na biashara</span>' +
+                    '<span class="line-amount" style="text-decoration:line-through;color:#888;">KES ' +
+                    Number(l.subtotal || 0).toLocaleString('en-KE', {maximumFractionDigits: 0}) + '</span>' +
+                    (wo.written_off_at ? '<div style="width:100%;color:#777;font-size:0.68rem;margin-top:0.15rem;">Tarehe ' + wo.written_off_at + '</div>' : '') +
+                    '</div>';
+            } else if (l.is_paid) {
                 html += '<div class="receipt-line" style="opacity:0.6;">' +
                     '<span class="line-name" style="text-decoration:line-through;color:#888;">' + (l.name || '') + '</span>' +
                     '<span style="color:#6ee7b7;font-size:0.72rem;white-space:nowrap;margin:0 0.5rem;">✓ Imelipwa</span>' +
@@ -1103,11 +1119,11 @@
         });
         linesWrap.innerHTML = html;
         if (!IS_DEBT && typeof window._receiptPayRenderLines === 'function') {
-            window._receiptPayRenderLines(lines);
+            window._receiptPayRenderLines(payableLines);
         }
         // Update Jumla / Bado Kulipa total from outstanding sum (entry-based fallback)
         if (totalEl) {
-            var outstanding = lines.filter(function(l) { return !l.is_paid; })
+            var outstanding = payableLines.filter(function(l) { return !l.is_paid; })
                 .reduce(function(s, l) { return s + (parseFloat(l.subtotal) || 0); }, 0);
             totalEl.textContent = fmt(outstanding);
         }
@@ -1268,12 +1284,19 @@ window.respondPendingTransfer = function (transferId, action, btnEl) {
         });
 };
 
-/* ── Write-off line suppression ── */
+/* ── Write-off line explanation ──
+   2026-07-24 wording/accountability audit: this used to just set
+   el.style.display='none' on the matching line — the item silently vanished
+   from the customer's own bill with zero trace, which reads as a mistake
+   rather than the business telling them their debt for that item was
+   cleared. Now it stays visible, struck through, with a "written off by the
+   business" note and the exact date/time — matching the "Imelipwa" paid-line
+   treatment just above it, and the same "the system explains itself" bar
+   this app now holds every reject/approve flow to. */
 (function() {
     var _writeOffs = {{ receipt.meta.write_offs|default:"[]"|safe }};
     window._writeOffLines = _writeOffs;
     if (!_writeOffs.length) return;
-    // Hide matching lines from the server-rendered static block
     document.addEventListener('DOMContentLoaded', function() {
         var remaining = _writeOffs.slice();
         var wrap = document.getElementById('receipt-lines-static');
@@ -1284,7 +1307,22 @@ window.respondPendingTransfer = function (transferId, action, btnEl) {
             for (var i = 0; i < remaining.length; i++) {
                 var wo = remaining[i];
                 if (wo.name === name && Math.abs(parseFloat(wo.amount || 0) - amt) < 0.01) {
-                    el.style.display = 'none';
+                    el.style.opacity = '0.6';
+                    el.style.flexWrap = 'wrap';
+                    var nameEl = el.querySelector('.line-name');
+                    var amtEl  = el.querySelector('.line-amount');
+                    if (nameEl) nameEl.style.cssText = 'text-decoration:line-through; color:#888;';
+                    if (amtEl)  amtEl.style.cssText  = 'text-decoration:line-through; color:#888;';
+                    var badge = document.createElement('span');
+                    badge.style.cssText = 'color:#c9a84c; font-size:0.72rem; white-space:nowrap; margin:0 0.5rem;';
+                    badge.textContent = '✕ Imefutwa na biashara';
+                    if (amtEl) el.insertBefore(badge, amtEl); else el.appendChild(badge);
+                    if (wo.written_off_at) {
+                        var note = document.createElement('div');
+                        note.style.cssText = 'width:100%; color:#777; font-size:0.68rem; margin-top:0.15rem;';
+                        note.textContent = 'Tarehe ' + wo.written_off_at;
+                        el.appendChild(note);
+                    }
                     remaining.splice(i, 1);
                     break;
                 }

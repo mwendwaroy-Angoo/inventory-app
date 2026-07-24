@@ -18,6 +18,14 @@
 .pc-badge.approved { background:rgba(76,175,80,.12); color:#4caf50; border:1px solid rgba(76,175,80,.3); }
 .pc-badge.rejected { background:rgba(192,57,90,.12); color:#c0395a; border:1px solid rgba(192,57,90,.3); }
 .pc-actions { display:flex; gap:.4rem; margin-top:.45rem; flex-wrap:wrap; }
+#pc-toast {
+  position:fixed; bottom:1.25rem; left:50%; transform:translateX(-50%) translateY(120%);
+  background:#2a2a2a; border:1px solid #c9a84c; border-radius:10px;
+  padding:.65rem 1.1rem; color:#f0ece4; font-size:.85rem; max-width:90vw;
+  box-shadow:0 4px 18px rgba(0,0,0,.4); z-index:2000;
+  transition:transform .25s ease; text-align:center;
+}
+#pc-toast.show { transform:translateX(-50%) translateY(0); }
 </style>
 {% endblock %}
 
@@ -62,6 +70,7 @@
     {% if entry.reviewed_by %}
     <div style="color:#555; font-size:.75rem; margin-top:.15rem;">
       Imekaguliwa na {{ entry.reviewed_by.get_full_name|default:entry.reviewed_by.username }}
+      — {{ entry.reviewed_at|date:"d M Y, H:i" }}
       {% if entry.review_note %}: "{{ entry.review_note }}"{% endif %}
     </div>
     {% endif %}
@@ -82,6 +91,8 @@
 </div>
 {% endfor %}
 {% endif %}
+
+<div id="pc-toast"></div>
 
 <!-- Review note modal -->
 <div class="modal fade" id="pcReviewModal" tabindex="-1">
@@ -108,6 +119,15 @@
 <script>
 var _pendingAction = null;
 var _pendingId = null;
+
+function pcShowToast(msg) {
+  var el = document.getElementById('pc-toast');
+  if (!el) { alert(msg); return; }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(window._pcToastTimer);
+  window._pcToastTimer = setTimeout(function () { el.classList.remove('show'); }, 5000);
+}
 
 window.reviewEntry = function(entryId, action) {
   _pendingAction = action;
@@ -139,7 +159,7 @@ document.getElementById('pc-review-confirm-btn').addEventListener('click', funct
       if (d.ok) {
         var m = bootstrap.Modal.getInstance(document.getElementById('pcReviewModal'));
         if (m) m.hide();
-        // Update badge in page without reload
+        // Update badge + reviewed-by line in page without reload
         var card = document.getElementById('pc-entry-' + _pendingId);
         if (card) {
           var badge = card.querySelector('.pc-badge');
@@ -149,7 +169,19 @@ document.getElementById('pc-review-confirm-btn').addEventListener('click', funct
             badge.textContent = d.new_status === 'approved' ? '✓ Imekubaliwa' : '✕ Imekataliwa';
           }
           if (actions) actions.remove();
+          var infoBlock = card.querySelector('div[style*="min-width:160px"]');
+          if (infoBlock && !infoBlock.querySelector('.pc-reviewed-line')) {
+            var line = document.createElement('div');
+            line.className = 'pc-reviewed-line';
+            line.style.cssText = 'color:#555; font-size:.75rem; margin-top:.15rem;';
+            line.textContent = d.message;
+            infoBlock.appendChild(line);
+          }
         }
+        // Confirmation of exactly what was recorded, per the accountability
+        // standard — the reviewer should see the same reasoning trail that
+        // just got sent to the staffer who logged the entry.
+        pcShowToast(d.message || 'Imehifadhiwa.');
       } else {
         alert(d.error || 'Hitilafu.');
       }

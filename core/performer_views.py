@@ -113,6 +113,39 @@ def _fire_unverified_alert(session, unconfirmed_names):
                     logger.exception("DJ unverified alert SMS failed (business=%s, user=%s)", business.id, up.user_id)
 
 
+def _fire_session_cancelled_notification(session, cancelled_by, reason):
+    """Notify whoever booked the session (if different) and all owners/managers
+    when a DJ/MC session is cancelled. 2026-07-24 wording/accountability audit
+    finding: this used to be a bare status flip — no reason captured, no
+    notification fired, no confirmation message returned to the person who
+    clicked cancel."""
+    business = session.business
+    names = [session.performer.name] if session.performer else ['Haijulikani']
+    if session.second_performer:
+        names.append(session.second_performer.name)
+    performers_label = ' & '.join(names)
+    who_label = cancelled_by.get_full_name() or cancelled_by.username
+    reason_bit = f' Sababu: {reason}.' if reason else ' Hakuna sababu iliyotolewa.'
+    msg = (
+        f"🚫 Sesheni ya {performers_label} (tarehe {session.date.strftime('%d %b %Y')}) "
+        f"imefutwa na {who_label}.{reason_bit}"
+    )
+    targets = {}
+    if session.created_by_id and session.created_by_id != cancelled_by.id:
+        creator_up = business.users.filter(user_id=session.created_by_id).first()
+        if creator_up:
+            targets[creator_up.user_id] = creator_up
+    for up in business.users.filter(role__in=['owner', 'manager']):
+        targets[up.user_id] = up
+    for up in targets.values():
+        create_in_app_notification(up.user, '🚫 Sesheni ya DJ/MC Imefutwa', msg, notification_type='warning')
+        if business.event_sms_enabled and up.phone:
+            try:
+                send_sms_notification(msg, normalize_ke_phone(up.phone))
+            except Exception:
+                logger.exception("DJ cancel SMS failed (business=%s, user=%s)", business.id, up.user_id)
+
+
 def _send_payment_sms(session):
     """SMS to each performer confirming payment was made. No amount — privacy."""
     date_label = session.date.strftime('%d %b %Y')
@@ -534,9 +567,14 @@ def session_update(request, session_id):
         # High-fee approval clears that gate; confirmation still required
         session.status = PerformerSession.STATUS_PENDING_CONFIRMATION
         session.save(update_fields=['status'])
-        if _maybe_activate(session):
+        activated = _maybe_activate(session)
+        if activated:
             _fire_session_started_notification(session, request.user)
-        return JsonResponse({'ok': True, 'status': session.status})
+        message = (
+            'Sesheni imeidhinishwa na imeanza.' if activated
+            else 'Sesheni imeidhinishwa — inasubiri uthibitisho wa wafanyakazi na wasanii kabla haijaanza.'
+        )
+        return JsonResponse({'ok': True, 'status': session.status, 'message': message})
 
     if action == 'activate':
         if session.status != PerformerSession.STATUS_SCHEDULED:
@@ -570,9 +608,16 @@ def session_update(request, session_id):
         })
 
     if action == 'cancel':
-        session.status = PerformerSession.STATUS_CANCELLED
-        session.save(update_fields=['status'])
-        return JsonResponse({'ok': True})
+        reason = (data.get('reason') or '').strip()[:200]
+        session.status       = PerformerSession.STATUS_CANCELLED
+        session.cancel_reason = reason
+        session.cancelled_by  = request.user
+        session.cancelled_at  = timezone.now()
+        session.save(update_fields=['status', 'cancel_reason', 'cancelled_by', 'cancelled_at'])
+        _fire_session_cancelled_notification(session, request.user, reason)
+        performer_label = session.performer.name if session.performer else 'Sesheni'
+        message = f'{performer_label} imefutwa.' + (f' Sababu: {reason}.' if reason else '')
+        return JsonResponse({'ok': True, 'message': message})
 
     if action == 'end_performer':
         slot    = str(data.get('performer_slot', ''))

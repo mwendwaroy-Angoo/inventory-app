@@ -311,5 +311,6 @@ def discard_bunch(request, bunch_id):
             )
 
     bunch = get_object_or_404(ProduceBunch, id=bunch_id, business=up.business)
-    bunch.discard(request.POST.get('reason', 'Wilted / end of day'))
-    return JsonResponse({'ok': True, 'status': bunch.status})
+    reason = (request.POST.get('reason') or '').strip() or 'Haikuuzika kabla ya kufunga'
+    bunch.discard(reason)
+    return JsonResponse({'ok': True, 'status': bunch.status, 'reason': reason})

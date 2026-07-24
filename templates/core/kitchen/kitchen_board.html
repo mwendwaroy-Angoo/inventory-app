@@ -2116,7 +2116,7 @@
              '<div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap;">' +
              '<button class="btn btn-sm btn-gold" data-tab-id="' + tab.id + '" data-customer="' + (tab.customer_name||'').replace(/"/g,'&quot;') + '" data-unpaid="' + tab.unpaid_total + '" onclick="openKitchenTabSettle(this)">💰 Lipa</button>' +
              '<button class="btn btn-sm" style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.35);color:#c0395a;" onclick="openKitchenTabDeni(' + tab.id + ',\'' + safeCust + '\')">🤝 Deni</button>' +
-             '<button class="btn btn-sm" style="background:rgba(80,80,80,.1);border:1px solid #444;color:#888;" onclick="voidKitchenTab(' + tab.id + ')">Void</button>' +
+             '<button class="btn btn-sm" style="background:rgba(80,80,80,.1);border:1px solid #444;color:#888;" onclick="voidKitchenTab(' + tab.id + ')">Futa</button>' +
              '</div></div>';
     }).join('');
   }
@@ -2987,6 +2987,11 @@
     if (errEl)          errEl.style.display = 'none';
     if (managerWrap)    managerWrap.style.display = 'none';
     if (managerCheckbox) managerCheckbox.checked = false;
+    // Clear any leftover banner from a previous close (tabs-warn / auto-convert notice)
+    ['close-shift-tabs-warn', 'close-shift-autoconvert-warn'].forEach(function (id) {
+      var stale = document.getElementById(id);
+      if (stale) stale.remove();
+    });
     var offAmtEl = document.getElementById('close-offline-amount');
     var offNoteEl = document.getElementById('close-offline-note');
     if (offAmtEl)  offAmtEl.value  = '0';
@@ -3075,6 +3080,57 @@
                 : '<p style="font-size:.78rem; color:#4caf50; margin:.5rem 0 0;">✓ Hesabu iko sawa.</p>') +
               '</div>';
           }
+
+          // Food tabs left open / auto-converted to debt at shift close — parity with
+          // bar board (2026-07-24 wording/accountability audit: kitchen board had
+          // neither of these notices at all, so a kitchen closer had no idea an open
+          // food tab was left dangling or had just become a customer's debt).
+          if (d.open_tabs && d.open_tabs.length > 0) {
+            var kTabsWarnEl = document.getElementById('close-shift-tabs-warn');
+            if (!kTabsWarnEl) {
+              kTabsWarnEl = document.createElement('div');
+              kTabsWarnEl.id = 'close-shift-tabs-warn';
+              resEl.parentNode.insertBefore(kTabsWarnEl, resEl.nextSibling);
+            }
+            var kTabRows = d.open_tabs.map(function(t) {
+              return '<div style="display:flex;justify-content:space-between;align-items:center;padding:.3rem 0;border-bottom:1px solid #2a2a2a;">' +
+                '<span style="color:#f0ece4;font-size:.8rem;">👤 ' + t.customer_name + '</span>' +
+                '<span style="color:#b0b0b0;font-size:.75rem;">Ilianza ' + (t.opened_at || '—') + '</span>' +
+                '</div>';
+            }).join('');
+            if (d.manager_taking_over) {
+              kTabsWarnEl.innerHTML =
+                '<div style="margin-top:.75rem;padding:.6rem .8rem;background:rgba(93,222,122,0.07);border:1px solid rgba(93,222,122,0.25);border-radius:8px;">' +
+                '<div style="color:#5dde7a;font-size:.82rem;font-weight:600;margin-bottom:.4rem;">✓ Food Tab ' + d.open_tabs.length + ' — Meneja atashughulikia</div>' +
+                kTabRows +
+                '<div style="margin-top:.5rem;font-size:.75rem;color:#b0b0b0;">Tabs zimebaki wazi. Meneja au Mmiliki anaweza kuzifunga moja kwa moja kutoka kwenye orodha ya food tabs.</div>' +
+                '</div>';
+            } else {
+              kTabsWarnEl.innerHTML =
+                '<div style="margin-top:.75rem;padding:.6rem .8rem;background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.3);border-radius:8px;">' +
+                '<div style="color:#ff9800;font-size:.82rem;font-weight:600;margin-bottom:.4rem;">⚠ Food Tab ' + d.open_tabs.length + ' za wateja bado ziko wazi</div>' +
+                kTabRows +
+                '<div style="margin-top:.6rem;font-size:.75rem;color:#888;">Funga kila tab mwenyewe kwenye orodha ya food tabs.</div>' +
+                '</div>';
+            }
+          }
+          if (d.auto_converted_names && d.auto_converted_names.length > 0) {
+            var kAcWarnEl = document.getElementById('close-shift-autoconvert-warn');
+            if (!kAcWarnEl) {
+              kAcWarnEl = document.createElement('div');
+              kAcWarnEl.id = 'close-shift-autoconvert-warn';
+              resEl.parentNode.insertBefore(kAcWarnEl, resEl.nextSibling);
+            }
+            var kAcNames = d.auto_converted_names.map(function(n) { return '👤 ' + n; }).join(', ');
+            kAcWarnEl.innerHTML =
+              '<div style="margin-top:.75rem;padding:.6rem .8rem;background:rgba(192,57,90,0.08);border:1px solid rgba(192,57,90,0.3);border-radius:8px;">' +
+              '<div style="color:#c0395a;font-size:.82rem;font-weight:600;margin-bottom:.3rem;">💳 Food Tab ' + d.auto_converted_names.length +
+              (d.auto_converted_names.length === 1 ? ' imegeuzwa Deni kiotomatiki' : ' zimegeuzwa Deni kiotomatiki') + '</div>' +
+              '<div style="color:#f0ece4;font-size:.8rem;margin-bottom:.35rem;">' + kAcNames + '</div>' +
+              '<div style="color:#b0b0b0;font-size:.75rem;">Muda wa biashara umefika mwisho na hawakulipa kabla ya shift kufungwa, hivyo salio lao limehamishwa moja kwa moja kwenye Debt Tracker. Wasiliana nao kwa malipo.</div>' +
+              '</div>';
+          }
+
           btn.style.display = 'none';
           var doneBtn = document.createElement('button');
           doneBtn.className = 'btn btn-sm';
@@ -3255,7 +3311,7 @@
     if (reason === null) return;
     var body = new URLSearchParams();
     body.append('csrfmiddlewaretoken', CSRF);
-    body.append('reason', reason || 'Taka');
+    body.append('reason', reason || 'Sababu haikuelezwa');
     fetch('/kitchen/batch/' + batchId + '/discard/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
       .then(function(r){ return r.json(); })
       .then(function(d){

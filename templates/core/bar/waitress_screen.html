@@ -554,15 +554,17 @@
       .catch(function() {
         btn.disabled = false;
         btn.textContent = 'Tuma Agizo';
-        showToast('Network error', false);
+        showToast('Hitilafu ya mtandao.', false);
       });
   };
 
   // ── Cancel order ───────────────────────────────────────────────────────────
   window.cancelOrder = function(orderId) {
     if (!confirm('Futa agizo hili?')) return;
+    var reason = prompt('Sababu ya kufuta (mf. "Mteja amebadilisha mawazo", "Kosa la kuweka agizo"):', '') || '';
     var fd = new FormData();
     fd.append('csrfmiddlewaretoken', CSRF);
+    fd.append('reason', reason);
     fetch('/bar/orders/' + orderId + '/cancel/', { method: 'POST', body: fd })
       .then(function(r) { return r.json(); })
       .then(function(d) {

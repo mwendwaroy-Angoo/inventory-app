@@ -3909,6 +3909,81 @@ class AutoCloseShiftConvertsOpenTabsTest(TestCase):
         self.assertEqual(self.shift.status, 'CLOSED')
 
 
+class CloseShiftAutoConvertedNamesResponseTest(TestCase):
+    """2026-07-24 wording/accountability audit: close_shift() already computed and
+    returned auto_converted_names (customers whose open tab was silently converted
+    to debt because the shift closed past business hours) but neither bar_board.html
+    nor kitchen_board.html ever displayed it — the staffer closing the shift had no
+    way to know a customer's balance had just become debt, or who. This locks in
+    that the backend field is present and correct for both counters; the frontend
+    display itself isn't exercisable by this suite."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Autoconvert Names Biz')  # no closing_time set → 24/7, always converts
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.bar_staff = User.objects.create_user(username='acn_bar_staff', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='acn_kitchen_staff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='ACN Beer',
+            material_no='ACN-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+
+    def _make_open_tab_and_shift(self, staff, store, source, customer_name):
+        shift = Shift.objects.create(
+            business=self.biz, store=store, staff=staff,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=customer_name, status='OPEN', source=source,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='ACN Beer', amount=Decimal('100'),
+        )
+        return shift, tab
+
+    def test_bar_shift_close_returns_auto_converted_customer_names(self):
+        shift, tab = self._make_open_tab_and_shift(self.bar_staff, self.bar_store, 'bar', 'Bar Patron')
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {'closing_cash_counted': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['auto_converted'], 1)
+        self.assertIn('Bar Patron', data['auto_converted_names'])
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+
+    def test_kitchen_shift_close_returns_auto_converted_customer_names(self):
+        shift, tab = self._make_open_tab_and_shift(self.kitchen_staff, self.kitchen_store, 'kitchen', 'Kitchen Patron')
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/kitchen/shift/{shift.id}/close/', {'closing_cash_counted': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['auto_converted'], 1)
+        self.assertIn('Kitchen Patron', data['auto_converted_names'])
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+
+    def test_manager_taking_over_suppresses_auto_convert(self):
+        shift, tab = self._make_open_tab_and_shift(self.bar_staff, self.bar_store, 'bar', 'Handover Patron')
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {
+            'closing_cash_counted': '0', 'manager_taking_over': '1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['auto_converted_names'], [])
+        self.assertEqual(len(data['open_tabs']), 1)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+
+
 class TabStationScopingTest(TestCase):
     """Bar-module audit, Theme 3 (access-control scoping), 2026-07-19: tabs_list()
     (the read/GET side) already scopes correctly by station via _station_scope() —
@@ -5202,6 +5277,26 @@ class DiscardBunchShiftGateTest(TestCase):
         self.bunch.refresh_from_db()
         self.assertEqual(self.bunch.status, 'DISCARDED')
 
+    def test_real_reason_is_captured_and_echoed_back(self):
+        """2026-07-24 wording audit: the frontend used to hardcode a fake
+        'Wilted' reason regardless of what actually happened — the backend
+        must accept and echo back whatever real reason is given."""
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/discard/', {
+            'reason': 'Imeharibika kwenye jua',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['reason'], 'Imeharibika kwenye jua')
+
+    def test_blank_reason_falls_back_to_a_real_swahili_default(self):
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/discard/')
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertNotEqual(data['reason'], 'Wilted')
+        self.assertTrue(data['reason'])
+
 
 # ── Reset Sales & Analytics (2026-07-21) ──────────────────────────────────────
 
@@ -5358,6 +5453,16 @@ class SalesResetTest(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(Transaction.objects.filter(business=self.biz).exists())
         self.assertFalse(self.m['SalesResetLog'].objects.filter(business=self.biz).exists())
+
+    def test_complete_page_surfaces_the_reason_the_owner_gave(self):
+        """2026-07-24 wording/accountability audit: SalesResetLog.reason was captured
+        and stored but never displayed anywhere — the completion page only showed
+        the timestamp. The reason IS the story of why this happened; it should be
+        visible right where the owner lands after doing it."""
+        self._do_backup()
+        self._do_confirm()  # _do_confirm() sends reason='testing'
+        resp = self.client.get('/stock/reset-sales/complete/')
+        self.assertContains(resp, 'testing')
 
     # ── The critical two-business isolation test ────────────────────────
     def test_reset_wipes_scoped_models_and_leaves_other_business_untouched(self):
@@ -7014,6 +7119,150 @@ class ApproveWriteOffSetsDefaulterTest(TestCase):
         self.assertTrue(self.customer.is_defaulter)
 
 
+class WriteOffApprovalExplainsItselfTest(TestCase):
+    """2026-07-24 wording/accountability audit: approve_write_off()'s JSON response
+    was missing a `message` key entirely (reject_write_off already had one — the
+    owner-facing JS already did `d.message || 'Imeidhinishwa.'` and was silently
+    falling back to the generic text on every single approval). Separately,
+    _mark_receipt_write_off() used to just hide the matching receipt line with
+    zero trace — now it's marked with a written_off_at timestamp so the customer's
+    own receipt can explain, not just erase, what happened to that item."""
+
+    def setUp(self):
+        from core.models import WriteOffRequest, Receipt
+        self.WriteOffRequest = WriteOffRequest
+
+        self.biz = Business.objects.create(name='WO Explains Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='woexpl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='WO Explains Item',
+            material_no='WOEXPL-01', selling_price=Decimal('250'),
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), recipient='WO Explains Patron',
+            payment_method='credit', sale_amount=Decimal('250'),
+        )
+        self.wo = WriteOffRequest.objects.create(
+            transaction=self.txn, requested_by=self.owner, reason='test',
+            customer_name_cache='WO Explains Patron',
+        )
+        self.receipt = Receipt.issue(
+            business=self.biz,
+            lines=[{'name': 'WO Explains Item', 'subtotal': 250.0, 'qty': 1}],
+            payment_method='credit', customer_name='WO Explains Patron',
+        )
+        self.client.force_login(self.owner)
+
+    def test_approve_response_includes_reasoning_message(self):
+        resp = self.client.post(f'/debt/write-off/{self.wo.id}/approve/')
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('message', data)
+        self.assertIn('250', data['message'])
+        self.assertIn('WO Explains Item', data['message'])
+        self.assertIn('WO Explains Patron', data['message'])
+
+    def test_receipt_write_off_marker_includes_timestamp(self):
+        self.client.post(f'/debt/write-off/{self.wo.id}/approve/')
+        self.receipt.refresh_from_db()
+        wo_list = self.receipt.meta.get('write_offs', [])
+        self.assertEqual(len(wo_list), 1)
+        self.assertIn('written_off_at', wo_list[0])
+        self.assertTrue(wo_list[0]['written_off_at'])
+
+
+class RecordBreakageExplainsItselfTest(TestCase):
+    """2026-07-24 wording/accountability audit: record_breakage() used to return a
+    bare {"ok": True} with no reasoning trail and never notified the owner/manager
+    at all — a real stock/money loss event visible only to the staffer who
+    recorded it. Also fixed: 'Item not found' / 'Invalid quantity' were English-only
+    in an otherwise all-Swahili flow."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Breakage Wording Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='brkword_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='brkword_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Breakage Wording Bottle',
+            material_no='BRKWORD-01', unit='Pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('60'),
+        )
+
+    def test_response_includes_reasoning_message_with_reporter_and_loss(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/bar/breakage/', {
+            'item_id': self.item.id, 'qty': '2', 'note': 'Imeanguka',
+            'idempotency_token': 'brkword-1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('Breakage Wording Bottle', data['message'])
+        self.assertIn('120', data['message'])  # 2 x cost_price 60
+        self.assertIn('Imeanguka', data['message'])
+
+    def test_owner_notified_of_breakage(self):
+        self.client.force_login(self.staff)
+        self.client.post('/stock/bar/breakage/', {
+            'item_id': self.item.id, 'qty': '1', 'note': 'test',
+            'idempotency_token': 'brkword-2',
+        })
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Uharibifu').first()
+        self.assertIsNotNone(notif, 'Owner must be notified when staff records breakage/wastage')
+
+    def test_missing_item_error_is_in_swahili(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/bar/breakage/', {
+            'item_id': 999999, 'qty': '1', 'idempotency_token': 'brkword-3',
+        })
+        self.assertNotIn('Item not found', resp.json().get('error', ''))
+
+
+class DebtReasoningWordingTest(TestCase):
+    """2026-07-24 wording/accountability audit: clear_defaulter()'s notification
+    used to say the customer's old debt was 'forgiven' ('amesamehewa deni la
+    zamani') — this action only lifts the defaulter block and re-approves credit;
+    it does not touch any outstanding balance. That's a different, explicit
+    action (approve_write_off). toggle_credit_approval() was also English-only
+    (django-i18n _()) in an otherwise all-Swahili file."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Wording Biz')
+        self.owner = User.objects.create_user(username='debtword_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Debt Wording Patron', is_defaulter=True, credit_approved=False,
+        )
+        self.client.force_login(self.owner)
+
+    def test_clear_defaulter_message_does_not_claim_debt_forgiven(self):
+        resp = self.client.post(f'/debt/{self.customer.id}/clear-defaulter/', follow=True)
+        msgs = [str(m) for m in resp.context['messages']]
+        joined = ' '.join(msgs)
+        self.assertNotIn('amesamehewa', joined)
+        self.assertIn('bado linahitaji kulipwa', joined)
+
+    def test_clear_defaulter_notification_includes_reviewer_and_timestamp(self):
+        self.client.post(f'/debt/{self.customer.id}/clear-defaulter/')
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Ameruhusiwa').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('debtword_owner', notif.message)
+
+    def test_toggle_credit_approval_message_is_in_swahili(self):
+        resp = self.client.post(f'/debt/{self.customer.id}/toggle-credit/', follow=True)
+        msgs = [str(m) for m in resp.context['messages']]
+        joined = ' '.join(msgs)
+        self.assertIn('Mkopo', joined)
+        self.assertIn('Debt Wording Patron', joined)
+        self.assertNotIn('Credit', joined)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Debt Tracker Module Audit — Theme 3 (access-control scoping), 2026-07-21
 # ══════════════════════════════════════════════════════════════════════════════
@@ -8292,3 +8541,281 @@ class SplitAndTransferEntryTest(TestCase):
         remainder_entry = next(e for e in roy_json['entries'] if e['amount'] == 200.0)
         self.assertIn('Bosco', remainder_entry['transfer_note'])
         self.assertIn('alikataa', remainder_entry['transfer_note'])
+
+
+# ── Wording/accountability audit (2026-07-24): reject/approve flows must
+# capture a reason, notify the right people, and return a real confirmation
+# message — not a bare status flip. DJ/MC session cancel was the worst
+# offender found (core/performer_views.py session_update).
+
+class PerformerSessionCancelApproveTest(TestCase):
+    def setUp(self):
+        from core.models import Performer, PerformerSession
+        self.Performer = Performer
+        self.PerformerSession = PerformerSession
+
+        self.biz = Business.objects.create(name='DJMC Wording Biz', has_kitchen=False)
+        self.owner = User.objects.create_user(username='djmc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='djmc_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+
+        self.performer = Performer.objects.create(
+            business=self.biz, name='DJ Roy', performer_type='DJ', standard_rate=Decimal('2000'),
+        )
+
+    def _make_session(self, status):
+        return self.PerformerSession.objects.create(
+            business=self.biz, performer=self.performer, date=timezone.localdate(),
+            status=status, agreed_fee=Decimal('2000'), created_by=self.staff,
+        )
+
+    def test_cancel_captures_reason_and_returns_message(self):
+        session = self._make_session(self.PerformerSession.STATUS_PENDING_CONFIRMATION)
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/session/{session.id}/update/',
+            data='{"action": "cancel", "reason": "Msanii hakufika"}',
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('Msanii hakufika', data['message'])
+        session.refresh_from_db()
+        self.assertEqual(session.status, self.PerformerSession.STATUS_CANCELLED)
+        self.assertEqual(session.cancel_reason, 'Msanii hakufika')
+        self.assertEqual(session.cancelled_by_id, self.owner.id)
+        self.assertIsNotNone(session.cancelled_at)
+
+    def test_cancel_notifies_the_staff_who_booked_it(self):
+        session = self._make_session(self.PerformerSession.STATUS_PENDING_CONFIRMATION)
+        self.client.force_login(self.owner)
+        self.client.post(
+            f'/bar/session/{session.id}/update/',
+            data='{"action": "cancel", "reason": "Mteja alighairi"}',
+            content_type='application/json',
+        )
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Imefutwa').first()
+        self.assertIsNotNone(notif, 'The staffer who booked the session must be notified of the cancellation')
+        self.assertIn('Mteja alighairi', notif.message)
+
+    def test_cancel_with_no_reason_still_succeeds_and_says_so(self):
+        session = self._make_session(self.PerformerSession.STATUS_PENDING_CONFIRMATION)
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/session/{session.id}/update/',
+            data='{"action": "cancel", "reason": ""}',
+            content_type='application/json',
+        )
+        self.assertTrue(resp.json()['ok'])
+        session.refresh_from_db()
+        self.assertEqual(session.cancel_reason, '')
+
+    def test_approve_returns_confirmation_message(self):
+        session = self._make_session(self.PerformerSession.STATUS_PENDING_APPROVAL)
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/session/{session.id}/update/',
+            data='{"action": "approve"}',
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertTrue(data['message'])
+        session.refresh_from_db()
+        self.assertEqual(session.status, self.PerformerSession.STATUS_PENDING_CONFIRMATION)
+
+    def test_staff_cannot_approve(self):
+        session = self._make_session(self.PerformerSession.STATUS_PENDING_APPROVAL)
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f'/bar/session/{session.id}/update/',
+            data='{"action": "approve"}',
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 403)
+
+
+class PettyCashReviewMessageTest(TestCase):
+    """2026-07-24 wording/accountability audit: review_petty_cash() used to
+    return a bare {'new_status': ...} with no reasoning message, and never
+    told the staffer who recorded the entry whether it was approved or
+    rejected."""
+
+    def setUp(self):
+        from core.models import PettyCash
+        self.PettyCash = PettyCash
+
+        self.biz = Business.objects.create(name='Petty Cash Wording Biz')
+        self.owner = User.objects.create_user(username='pc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='pc_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+        self.entry = PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            description='Boda fare', recorded_by=self.staff, date=timezone.localdate(),
+        )
+
+    def test_approve_returns_reasoning_message_with_reviewer_and_timestamp(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('150', data['message'])
+        self.assertIn('imekubaliwa', data['message'])
+        self.entry.refresh_from_db()
+        when = timezone.localtime(self.entry.reviewed_at).strftime('%d %b %Y, %H:%M')
+        self.assertIn(when, data['message'])
+
+    def test_reject_message_includes_review_note_reason(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/petty-cash/{self.entry.id}/review/', {
+            'action': 'reject', 'review_note': 'Hakuna risiti',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('imekataliwa', data['message'])
+        self.assertIn('Hakuna risiti', data['message'])
+
+    def test_staffer_who_recorded_entry_is_notified(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Imekubaliwa').first()
+        self.assertIsNotNone(notif, 'The staffer who recorded the petty cash entry must be notified of the review outcome')
+        self.assertIn('150', notif.message)
+
+    def test_owner_reviewing_their_own_entry_gets_no_self_notification(self):
+        self.entry.recorded_by = self.owner
+        self.entry.save(update_fields=['recorded_by'])
+        self.client.force_login(self.owner)
+        before = Notification.objects.filter(user=self.owner).count()
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+        after = Notification.objects.filter(user=self.owner).count()
+        self.assertEqual(before, after)
+
+
+class StockVarianceReviewWordingTest(TestCase):
+    """2026-07-24 wording/accountability audit: review_variance()'s accept/dismiss
+    messages named neither who acted nor when, and 'accept' — unlike 'dismiss' —
+    never told the staffer who reported the variance what happened to their
+    explanation. Both are equally a final decision on the same reported
+    variance and should equally explain themselves."""
+
+    def setUp(self):
+        from core.models import StockVarianceQuery, StockTake
+        self.StockVarianceQuery = StockVarianceQuery
+
+        self.biz = Business.objects.create(name='Variance Wording Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='varword_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='varword_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Variance Wording Item',
+            material_no='VARWORD-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        self.stock_take = StockTake.objects.create(business=self.biz, store=self.store)
+        self.client.force_login(self.owner)
+
+    def _make_variance(self):
+        return self.StockVarianceQuery.objects.create(
+            stock_take=self.stock_take, item=self.item, item_name_cache='Variance Wording Item',
+            book_balance=Decimal('10'), actual_count=Decimal('8'),
+            direction=self.StockVarianceQuery.DECREASE,
+            queried_staff=self.staff_profile,
+        )
+
+    def test_accept_message_includes_reviewer_and_timestamp(self):
+        svq = self._make_variance()
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'cash',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('varword_owner', data['message'])
+        svq.refresh_from_db()
+        when = timezone.localtime(svq.owner_acted_at).strftime('%d %b %Y, %H:%M')
+        self.assertIn(when, data['message'])
+
+    def test_accept_notifies_the_staffer_who_reported_it(self):
+        svq = self._make_variance()
+        self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'cash',
+        })
+        notif = Notification.objects.filter(user=self.staff_user, title__icontains='Imekubaliwa').first()
+        self.assertIsNotNone(
+            notif,
+            'Accept must notify the reporting staffer too, just like dismiss already does — '
+            'both are a final decision on the same reported variance',
+        )
+
+    def test_dismiss_message_includes_reviewer_and_timestamp(self):
+        svq = self._make_variance()
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'dismiss'})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('varword_owner', data['message'])
+        svq.refresh_from_db()
+        when = timezone.localtime(svq.owner_acted_at).strftime('%d %b %Y, %H:%M')
+        self.assertIn(when, data['message'])
+
+
+class TableOrderCancelReasonTest(TestCase):
+    """2026-07-24 wording/accountability audit: cancelling a table order — on
+    EITHER cancel path (waitress-side cancel_table_order, or the bar-board
+    oqUpdate(...,'CANCELLED') shortcut) — used to be a bare status flip: no
+    reason captured, no one told, and every error message was English-only in
+    an otherwise all-Swahili flow."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Order Cancel Wording Biz')
+        self.owner = User.objects.create_user(username='ordcancel_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='ordcancel_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+
+    def _make_order(self, status='PENDING'):
+        from core.models import TableOrder
+        return TableOrder.objects.create(
+            business=self.biz, table_label='T1', waitress=self.waitress, status=status,
+        )
+
+    def test_waitress_cancel_captures_reason_and_notifies_owner(self):
+        order = self._make_order()
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/orders/{order.id}/cancel/', {'reason': 'Mteja ameondoka'})
+        self.assertTrue(resp.json()['ok'])
+        order.refresh_from_db()
+        self.assertEqual(order.cancel_reason, 'Mteja ameondoka')
+        self.assertEqual(order.cancelled_by_id, self.waitress.id)
+        self.assertIsNotNone(order.cancelled_at)
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Limefutwa').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('Mteja ameondoka', notif.message)
+
+    def test_bar_staff_cancel_notifies_the_waitress_who_placed_it(self):
+        order = self._make_order(status='ACCEPTED')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/orders/{order.id}/update/', {
+            'status': 'CANCELLED', 'reason': 'Bidhaa haipo',
+        })
+        self.assertTrue(resp.json()['ok'])
+        notif = Notification.objects.filter(user=self.waitress, title__icontains='Limefutwa').first()
+        self.assertIsNotNone(notif, 'The waitress who placed the order must be told it was cancelled')
+        self.assertIn('Bidhaa haipo', notif.message)
+        self.assertIn('tayari inatayarishwa', notif.message, 'An already-ACCEPTED order is mid-prep — say so')
+
+    def test_error_messages_are_in_swahili_not_english(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/bar/orders/999999/cancel/', {})
+        self.assertNotIn('Order not found', resp.json().get('error', ''))
+
+        order = self._make_order(status='SERVED')
+        resp2 = self.client.post(f'/bar/orders/{order.id}/cancel/', {})
+        self.assertNotIn('cannot be cancelled', resp2.json().get('error', ''))

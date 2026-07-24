@@ -1733,3 +1733,99 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   Swahili phrasing only ever needs to be right in one place. 7 new tests. Migration adds
   only the one new field (`paid_amount`) to the existing `TabTransferRequest` table. 426
   tests pass.
+- Wording/accountability audit (2026-07-24), same-day follow-up: Roy caught a real wording
+  bug in the split-transfer debt-reasoning note itself — "Ilikuwa itafunikwa na Bosco"
+  used "-funika" (the verb for capping a bottle or covering a plate) for a payment
+  obligation, and generalized the complaint into a standing instruction: this app is a
+  conversation with its users, on a transactional level as much as a literal one, and every
+  reject/approve/reconcile flow should both reconcile figures correctly AND explain why in
+  wording that actually fits the situation. Fixed the specific bug —
+  `BarTabEntry.transfer_reason_note()` now uses "Ilikuwa inafaa kulipwa na {who}" (ought to
+  have been paid by), addresses the reader as "wewe mwenyewe" (2nd person, since the debtor
+  reads this on their OWN statement), and states the exact date+time the source customer
+  paid their share, not just the amount — then ran a dedicated audit pass across every other
+  reject/approve/reconcile flow in the app for the same two things: (1) natural,
+  grammatically-correct wording — no literal/awkward word choices, correct language
+  (Swahili-first, not English-only in an otherwise Swahili flow), correct grammatical
+  person; (2) a comprehensive reasoning trail — who acted, when, why, and (where money/stock
+  moved) what changed, surfaced to everyone the decision affects, not just the actor.
+  Fixed, each independently tested: **DJ/MC session cancel** (`performer_views.py`) — used
+  to be a bare status flip with no reason and no notification; `PerformerSession` gains
+  `cancel_reason`/`cancelled_by`/`cancelled_at` (migration 0115), `session_update`'s cancel
+  action captures an optional reason and notifies whoever booked it + owners/managers; fixed
+  a real typo in the same pass — the approve button read "✓ Idhibiti" ("control/regulate")
+  instead of "✓ Idhinisha" ("approve"); approve now also returns a `message`. **Produce
+  discard** (`produce_views.py`/`quick_sell.html`) — `discardBunch()` hardcoded
+  `reason=Wilted` regardless of what the confirm dialog asked, and the confirm dialog itself
+  was in English; now prompts for a real Swahili reason and echoes it back in the success
+  toast. **Petty cash review** (`petty_cash_views.py`/`petty_cash_list.html`) —
+  `review_petty_cash()` returned a bare `{'new_status': ...}` and never told the staffer who
+  recorded the entry whether it was approved or rejected; now builds a message with amount,
+  reason, reviewer name and timestamp, notifies `entry.recorded_by`, and the reviewing
+  owner sees the same message via a toast + a persisted "Imekaguliwa na X — timestamp" line
+  on the card. **Shift-close auto-conversion** (`bar_board.html`/`kitchen_board.html`) —
+  `close_shift()` already computed `auto_converted_names` (customers whose open tab was
+  silently converted to debt because the shift closed past business hours) but neither
+  board ever displayed it, unlike the sibling `open_tabs` (still-open) warning which bar
+  board already showed; added the same raspberry-toned banner to both boards (kitchen board
+  was additionally missing the `open_tabs` warning entirely — added for parity) explaining
+  which customers were converted and why, plus stale-banner cleanup so a previous close's
+  notice doesn't linger when the modal reopens. **Write-off approval** (`debt_views.py`) —
+  `approve_write_off()`'s JSON response was missing a `message` key entirely, unlike sibling
+  `reject_write_off` — the owner-facing JS already did `d.message || 'Imeidhinishwa.'` and
+  had been silently falling back to the generic text on every approval since it shipped;
+  fixed. Separately, `_mark_receipt_write_off()` used to just hide the matching receipt
+  line (`display:none`) with zero trace — a line vanishing from a customer's own bill reads
+  as a bug, not as "the business cleared this for you"; now the line stays visible, struck
+  through, with a "✕ Imefutwa na biashara" badge and the exact write-off date/time, on both
+  the static receipt block and the live-polling debt-tab render path (which required
+  splitting `payableLines` from the display `lines` so a written-off line is shown but
+  never payable and never counted in the outstanding total). **Tab void wording**
+  (`keg_views.py`/`bar_board.html`/`quick_sell.html`) — voiding a tab used "Imetupwa"
+  ("thrown away," the verb for a physical object like litter) for a financial cancellation;
+  same bug class as the split-transfer fix. Changed to "Futa"/"Imefutwa" (cancel/cancelled)
+  across the button labels, modal copy, and default reasons in all three call sites (bar
+  board, Quick Sell, plus a stray English "Void" badge on `staff_duty_log.html` and two more
+  English "Void" buttons on `quick_sell.html`/`kitchen_board.html`). **Discard defaults** —
+  `discard_barrel`'s default reason (a real physical object, correctly kept as "-rudisha"/
+  returned) was mixed English/Swahili ("Imerudishwa / discarded"); kitchen batch discard's
+  JS fallback was the bare noun "Taka" (not a real sentence); both now send a real Swahili
+  "sababu haikuelezwa" (no reason given) default, matching the pattern used everywhere else
+  a reason is optional. **Bottle/stock breakage** (`keg_views.py`/`bar_board.html`) —
+  `record_breakage()` was entirely English-only end to end ("Item not found", "Invalid
+  quantity", "Please select an item.", "Wastage recorded.") and returned bare `{"ok": True}`
+  with no notification at all for a real stock/money-loss event; now Swahili throughout,
+  returns a message with item, qty, estimated KES loss, reporter name and timestamp, and
+  notifies owners/managers (mirroring the petty-cash notification shape). **Credit
+  actions** (`debt_views.py`) — `clear_defaulter()`'s notification said the customer
+  "amesamehewa deni la zamani" (has been forgiven the old debt) — this action only lifts the
+  defaulter block and re-approves credit; any actual balance is untouched and still owed,
+  a separate write-off decision. Rewrote to say plainly that this does NOT forgive any
+  debt, with reviewer name + timestamp. `toggle_credit_approval()` was an English-only
+  django-i18n string in an otherwise all-Swahili file; replaced with a Swahili f-string,
+  also carrying reviewer + timestamp. **Stock variance review**
+  (`stock_take_views.py:review_variance`) — neither accept nor dismiss named who acted or
+  when, and only `dismiss` notified the staffer who reported the variance — `accept` (an
+  equally final decision on the same reported explanation) left them with no idea their
+  explanation had been accepted; both branches now include reviewer + timestamp in the
+  returned message, and `accept` notifies the reporting staffer just like `dismiss` already
+  did. **Reset Sales reason** — `SalesResetLog.reason` was captured and stored at reset
+  time but never displayed anywhere; `reset_sales_complete.html` now shows it (plus who
+  performed the reset) on the confirmation page the owner lands on immediately after. **Table
+  order cancel** (`order_views.py`/`waitress_screen.html`/`bar_board.html`) — had two
+  separate cancel paths (`cancel_table_order` for the waitress screen, and
+  `update_table_order`'s CANCELLED transition for the bar-board queue drawer's `oqUpdate`
+  shortcut) and neither captured a reason, notified anyone, or spoke Swahili in its error
+  messages ("Order not found", "Order cannot be cancelled", "Permission denied"); the
+  bar-board cancel button additionally had no confirm dialog at all. `TableOrder` gains
+  `cancel_reason`/`cancelled_by`/`cancelled_at` (migration 0116, same shape as
+  PerformerSession's); both paths now prompt for an optional reason, and a shared
+  `_notify_order_cancelled()` helper tells whichever side of the order didn't do the
+  cancelling — the waitress who placed it, or the on-duty bar staff/owner/manager — noting
+  explicitly when an already-ACCEPTED/READY order (mid-prep) was cancelled. 34 new tests
+  across all of the above (`PerformerSessionCancelApproveTest`,
+  `DiscardBunchShiftGateTest` additions, `PettyCashReviewMessageTest`,
+  `CloseShiftAutoConvertedNamesResponseTest`, `WriteOffApprovalExplainsItselfTest`,
+  `RecordBreakageExplainsItselfTest`, `DebtReasoningWordingTest`,
+  `StockVarianceReviewWordingTest`, `TableOrderCancelReasonTest`, plus the reset-sales
+  reason-display test). Two migrations (0115, 0116), both additive. 455 tests pass.

@@ -1498,7 +1498,7 @@
   <div class="modal-dialog modal-dialog-centered modal-sm">
     <div class="modal-content">
       <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
-        <h6 class="modal-title" style="color:#c0395a;">Tupa Tab</h6>
+        <h6 class="modal-title" style="color:#c0395a;">Futa Tab</h6>
       </div>
       <div class="modal-body">
         <p id="void-tab-desc" style="color:#b0b0b0; font-size:0.85rem;"></p>
@@ -1510,7 +1510,7 @@
         <button class="btn btn-sm" style="background:#333; border-color:#444; color:#b0b0b0;"
                 onclick="window.hideModal('voidModal')">Acha</button>
         <button class="btn btn-sm" style="background:#c0395a; border:none; color:#fff;"
-                onclick="window._doVoid()">Tupa</button>
+                onclick="window._doVoid()">Futa</button>
       </div>
     </div>
   </div>
@@ -2331,7 +2331,7 @@
     var name   = kg ? kg.name : 'barrel hii';
     var reason = window.prompt('Sababu ya kutupa ' + name + ':', 'Imerudishwa kwa distributor');
     if (reason === null) return;
-    post('/stock/bar/discard/' + barrelId + '/', {reason: reason || 'Discarded'})
+    post('/stock/bar/discard/' + barrelId + '/', {reason: reason || 'Sababu haikuelezwa'})
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (d.ok) {
@@ -2668,7 +2668,7 @@
           '<div class="tab-actions-row" style="margin-top:0.3rem;">' +
           '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>' +
           (QS_IS_OWNER
-            ? '<button class="tab-action-btn tab-btn-void" onclick="window.openVoidModal(' + tab.id + ',\'' + safeCust + '\')">Void</button>'
+            ? '<button class="tab-action-btn tab-btn-void" onclick="window.openVoidModal(' + tab.id + ',\'' + safeCust + '\')">Futa</button>'
             : '') +
           '</div>' +
           '</div>';
@@ -2868,7 +2868,7 @@
   window.openVoidModal = function (tabId, custName) {
     _pendingVoidId = tabId;
     document.getElementById('void-tab-desc').textContent =
-      'Tab ya ' + custName + ' itatupwa. Pesa hazitarudishwa.';
+      'Tab ya ' + custName + ' itafutwa. Pesa hazitarudishwa.';
     document.getElementById('void-reason-input').value = '';
     showModal('voidModal');
   };
@@ -2877,11 +2877,11 @@
     if (!_pendingVoidId) return;
     var reason = (document.getElementById('void-reason-input').value || '').trim();
     hideModal('voidModal');
-    post('/bar/tabs/' + _pendingVoidId + '/void/', {reason: reason || 'Imetupwa'})
+    post('/bar/tabs/' + _pendingVoidId + '/void/', {reason: reason || 'Imefutwa — sababu haikuelezwa'})
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (d.ok) {
-          showToast('Tab imetupwa.');
+          showToast('Tab imefutwa.');
           window.loadTabs();
           loadBarBoard();
         } else {
@@ -3883,6 +3883,11 @@
     if (barrelList)     barrelList.innerHTML = '';
     if (managerWrap)    managerWrap.style.display = 'none';
     if (managerCheckbox) managerCheckbox.checked = false;
+    // Clear any leftover banner from a previous close (tabs-warn / auto-convert notice)
+    ['close-shift-tabs-warn', 'close-shift-autoconvert-warn'].forEach(function (id) {
+      var stale = document.getElementById(id);
+      if (stale) stale.remove();
+    });
     var offAmtEl = document.getElementById('close-offline-amount');
     var offNoteEl = document.getElementById('close-offline-note');
     if (offAmtEl)  offAmtEl.value  = '0';
@@ -4062,6 +4067,27 @@
                 '<span style="color:#666;font-size:.72rem;align-self:center;">au funga mwenyewe kila tab kwenye orodha ya tab</span>' +
                 '</div></div>';
             }
+          }
+
+          // 2026-07-24 wording/accountability audit: tabs auto-converted to debt at
+          // shift close (business hours over, no manager taking over) used to happen
+          // silently — staff closing the shift had no idea any customer's balance had
+          // just become debt, or who, unless they separately checked the debt tracker.
+          if (d.auto_converted_names && d.auto_converted_names.length > 0) {
+            var acWarnEl = document.getElementById('close-shift-autoconvert-warn');
+            if (!acWarnEl) {
+              acWarnEl = document.createElement('div');
+              acWarnEl.id = 'close-shift-autoconvert-warn';
+              resEl.parentNode.insertBefore(acWarnEl, resEl.nextSibling);
+            }
+            var acNames = d.auto_converted_names.map(function(n) { return '👤 ' + n; }).join(', ');
+            acWarnEl.innerHTML =
+              '<div style="margin-top:.75rem;padding:.6rem .8rem;background:rgba(192,57,90,0.08);border:1px solid rgba(192,57,90,0.3);border-radius:8px;">' +
+              '<div style="color:#c0395a;font-size:.82rem;font-weight:600;margin-bottom:.3rem;">💳 Tab ' + d.auto_converted_names.length +
+              (d.auto_converted_names.length === 1 ? ' imegeuzwa Deni kiotomatiki' : ' zimegeuzwa Deni kiotomatiki') + '</div>' +
+              '<div style="color:#f0ece4;font-size:.8rem;margin-bottom:.35rem;">' + acNames + '</div>' +
+              '<div style="color:#b0b0b0;font-size:.75rem;">Muda wa biashara umefika mwisho na hawakulipa kabla ya shift kufungwa, hivyo salio lao limehamishwa moja kwa moja kwenye Debt Tracker. Wasiliana nao kwa malipo.</div>' +
+              '</div>';
           }
 
           // Hide close button; show Done + Stock Take
@@ -4336,11 +4362,17 @@
   }
 
   window.oqUpdate = function (orderId, newStatus) {
+    var reason = '';
+    if (newStatus === 'CANCELLED') {
+      if (!confirm('Futa agizo hili?')) return;
+      reason = prompt('Sababu ya kufuta (mf. "Mteja ameondoka", "Bidhaa haipo"):', '') || '';
+    }
     var card = document.getElementById('oq-card-' + orderId);
     if (card) card.style.opacity = '.4';
     var fd = new FormData();
     fd.append('csrfmiddlewaretoken', CSRF);
     fd.append('status', newStatus);
+    if (newStatus === 'CANCELLED') fd.append('reason', reason);
     fetch('/bar/orders/' + orderId + '/update/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -4512,13 +4544,13 @@
     if (!itemId) {
       status.style.display = 'block';
       status.style.color = '#f87171';
-      status.textContent = 'Please select an item.';
+      status.textContent = 'Chagua bidhaa kwanza.';
       return;
     }
     if (!qty || parseFloat(qty) <= 0) {
       status.style.display = 'block';
       status.style.color = '#f87171';
-      status.textContent = 'Enter a valid quantity.';
+      status.textContent = 'Ingiza kiasi sahihi.';
       return;
     }
 
@@ -4540,18 +4572,18 @@
         status.style.display = 'block';
         if (data.ok) {
           status.style.color = '#9fcaa0';
-          status.textContent = 'Wastage recorded.';
-          setTimeout(function () { window.closeBreakageModal(); btn.disabled = false; }, 1200);
+          status.textContent = data.message || 'Imerekodiwa.';
+          setTimeout(function () { window.closeBreakageModal(); btn.disabled = false; }, 2200);
         } else {
           status.style.color = '#f87171';
-          status.textContent = data.error || 'Failed. Try again.';
+          status.textContent = data.error || 'Imeshindikana. Jaribu tena.';
           btn.disabled = false;
         }
       })
       .catch(function () {
         status.style.display = 'block';
         status.style.color = '#f87171';
-        status.textContent = 'Network error.';
+        status.textContent = 'Hitilafu ya mtandao.';
         btn.disabled = false;
       });
   };
@@ -4934,7 +4966,7 @@ window.barDeclineMerge = function() {
       if (s.status === 'PENDING_APPROVAL' && IS_OWNER) {
         html += '<div style="font-size:.8rem;color:#ffb74d;margin:.4rem 0;">&#8987; Inasubiri idhini yako</div>';
         html += '<div style="display:flex;gap:.5rem;">';
-        html += '<button onclick="window._djApproveSession(' + s.id + ')" style="flex:1;padding:.45rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.3);border-radius:8px;color:#81c784;font-size:.82rem;cursor:pointer;">&#10003; Idhibiti</button>';
+        html += '<button onclick="window._djApproveSession(' + s.id + ')" style="flex:1;padding:.45rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.3);border-radius:8px;color:#81c784;font-size:.82rem;cursor:pointer;">&#10003; Idhinisha</button>';
         html += '<button onclick="window._djCancelSession(' + s.id + ')" style="flex:1;padding:.45rem;background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:8px;color:#e87090;font-size:.82rem;cursor:pointer;">&#10007; Futa</button>';
         html += '</div>';
       }
@@ -5150,7 +5182,7 @@ window.barDeclineMerge = function() {
 
   window._djApproveSession = function (sessionId) {
     _post('/bar/session/' + sessionId + '/update/', {action: 'approve'}, function (d) {
-      if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+      if (d.ok) { showToast(d.message || 'Imeidhinishwa.'); _loadState(); } else { alert(d.error || 'Hitilafu.'); }
     });
   };
 
@@ -5176,8 +5208,9 @@ window.barDeclineMerge = function() {
 
   window._djCancelSession = function (sessionId) {
     if (!confirm('Futa sesheni hii? Hatua hii haiwezi kutendeka tena.')) return;
-    _post('/bar/session/' + sessionId + '/update/', {action: 'cancel'}, function (d) {
-      if (d.ok) { _loadState(); } else { alert(d.error || 'Hitilafu.'); }
+    var reason = prompt('Sababu ya kufuta (mf. "Msanii hakufika", "Mteja alighairi"):', '') || '';
+    _post('/bar/session/' + sessionId + '/update/', {action: 'cancel', reason: reason}, function (d) {
+      if (d.ok) { showToast(d.message || 'Sesheni imefutwa.'); _loadState(); } else { alert(d.error || 'Hitilafu.'); }
     });
   };
 

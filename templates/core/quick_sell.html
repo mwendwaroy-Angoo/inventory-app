@@ -1912,15 +1912,21 @@
     });
 
     function discardBunch(bunchId) {
-        if (!confirm('{% trans "Write this bunch off as wastage?" %}')) return;
+        if (!confirm('Tupa mzigo huu kama hasara (umenyauka/haujauzika)?')) return;
+        var reason = prompt('Sababu (mf. "Imenyauka", "Imeharibika", "Haikuuzika kabla ya kufunga"):', '') || '';
         fetch('/stock/produce/bunch/' + bunchId + '/discard/', {
             method: 'POST',
             headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'reason=Wilted'
+            body: 'reason=' + encodeURIComponent(reason || 'Haikuuzika kabla ya kufunga')
         }).then(function(r) { return r.json(); })
-          .then(function() {
+          .then(function(d) {
               var inst = bootstrap.Modal.getInstance(document.getElementById('bunchModal'));
               if (inst) inst.hide();
+              if (d.ok) {
+                  qsShowToast('🗑️ Imetupwa kama hasara.' + (reason ? ' Sababu: ' + reason : ''));
+              } else {
+                  qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena'), true);
+              }
               loadGreensBoard();
           });
     }
@@ -2557,7 +2563,7 @@
                 '</div>' +
                 '<div class="qs-tab-actions" style="margin-top:0.3rem;">' +
                 '<button class="qs-tab-btn" style="background:rgba(201,168,76,0.08);color:#c9a84c;border:1px solid rgba(201,168,76,0.25);" onclick="qsOpenTabDebt(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">→ Deni</button>' +
-                (QS_IS_OWNER ? '<button class="qs-tab-btn" style="background:rgba(192,57,90,0.1);color:#c0395a;border:1px solid rgba(192,57,90,0.3);" onclick="qsOpenTabVoid(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">Void</button>' : '') +
+                (QS_IS_OWNER ? '<button class="qs-tab-btn" style="background:rgba(192,57,90,0.1);color:#c0395a;border:1px solid rgba(192,57,90,0.3);" onclick="qsOpenTabVoid(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">Futa</button>' : '') +
                 '</div>' +
                 '</div>';
         });
@@ -2994,7 +3000,7 @@
     window.qsOpenTabVoid = function (tabId, custName) {
         _qsPendingVoidTabId = tabId;
         var desc = document.getElementById('qs-tab-void-desc');
-        if (desc) desc.textContent = 'Tab ya ' + custName + ' itatupwa. Pesa hazitarudishwa.';
+        if (desc) desc.textContent = 'Tab ya ' + custName + ' itafutwa. Pesa hazitarudishwa.';
         var rEl = document.getElementById('qs-tab-void-reason'); if (rEl) rEl.value = '';
         var m = document.getElementById('qsTabVoidModal');
         qsShowModal(m);
@@ -3002,7 +3008,7 @@
 
     window.qsDoTabVoid = function () {
         if (!_qsPendingVoidTabId) return;
-        var reason = (document.getElementById('qs-tab-void-reason').value || '').trim() || 'Imetupwa';
+        var reason = (document.getElementById('qs-tab-void-reason').value || '').trim() || 'Imefutwa — sababu haikuelezwa';
         var id = _qsPendingVoidTabId; _qsPendingVoidTabId = null;
         var m = document.getElementById('qsTabVoidModal');
         if (m) { var inst = bootstrap.Modal.getInstance(m); if (inst) inst.hide(); }
@@ -3010,7 +3016,7 @@
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 if (d.ok) {
-                    qsShowToast('Tab imetupwa.');
+                    qsShowToast('Tab imefutwa.');
                     qsLoadTabs();
                 } else {
                     qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));

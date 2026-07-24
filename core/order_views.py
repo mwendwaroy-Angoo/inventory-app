@@ -216,12 +216,45 @@ def table_order_queue_api(request):
             'items':          items_data,
             'total':          float(order.total_amount()),
             'elapsed_mins':   elapsed_mins,
-            'waitress':       (order.waitress.get_full_name() or order.waitress.username) if order.waitress else 'Unknown',
+            'waitress':       (order.waitress.get_full_name() or order.waitress.username) if order.waitress else 'Haijulikani',
             'created_at':     timezone.localtime(order.created_at).strftime('%H:%M'),
         })
 
     pending_count = sum(1 for o in result if o['status'] == 'PENDING')
     return JsonResponse({'orders': result, 'pending_count': pending_count})
+
+
+def _notify_order_cancelled(order, cancelled_by, reason, was_mid_prep):
+    """2026-07-24 wording/accountability audit: cancelling a table order used to be
+    a bare status flip on BOTH cancel paths (the waitress-side cancel_table_order()
+    and the bar-board oqUpdate(...,'CANCELLED') shortcut) — no reason captured, no
+    one told. Notify whichever side of the order didn't do the cancelling: the
+    waitress who placed it (if bar staff cancelled), or the on-duty bar staff
+    working the queue (if the waitress cancelled) — mirroring the DJ/MC session
+    cancel notification shape from the same audit pass. was_mid_prep flags an
+    order that was already ACCEPTED/READY — wasted prep work, worth a clearer note."""
+    from .models import Notification
+    from accounts.models import UserProfile as _UP
+
+    who_label = cancelled_by.get_full_name() or cancelled_by.username
+    reason_bit = f' Sababu: {reason}.' if reason else ' Hakuna sababu iliyotolewa.'
+    prep_bit = ' Ilikuwa tayari inatayarishwa.' if was_mid_prep else ''
+    msg = (
+        f"✕ Agizo la {order.table_label} limefutwa na {who_label}.{prep_bit}{reason_bit}"
+    )
+
+    targets = {}
+    if order.waitress_id and order.waitress_id != cancelled_by.id:
+        targets[order.waitress_id] = order.waitress
+    for up in _UP.objects.filter(
+        business=order.business, role__in=['owner', 'manager']
+    ).exclude(user_id=cancelled_by.id).select_related('user'):
+        targets.setdefault(up.user_id, up.user)
+
+    for user in targets.values():
+        Notification.objects.create(
+            user=user, title='✕ Agizo Limefutwa', message=msg, notification_type='warning',
+        )
 
 
 # ── Update order status (bartender actions) ───────────────────────────────────
@@ -238,7 +271,7 @@ def update_table_order(request, order_id):
             'items__item', 'items__preset'
         ).get(id=order_id, business=up.business)
     except TableOrder.DoesNotExist:
-        return JsonResponse({'ok': False, 'error': 'Order not found'}, status=404)
+        return JsonResponse({'ok': False, 'error': 'Agizo halikupatikana'}, status=404)
 
     new_status = request.POST.get('status', '').upper()
     valid_transitions = {
@@ -250,9 +283,10 @@ def update_table_order(request, order_id):
     if new_status not in allowed:
         return JsonResponse({
             'ok': False,
-            'error': f'Cannot move from {order.status} to {new_status}',
+            'error': f'Haiwezekani kubadilisha kutoka {order.status} kwenda {new_status}',
         }, status=400)
 
+    was_mid_prep = order.status in ('ACCEPTED', 'READY')
     order.status = new_status
     update_fields = ['status', 'updated_at']
 
@@ -261,6 +295,14 @@ def update_table_order(request, order_id):
         update_fields.append('served_at')
         order.save(update_fields=update_fields)
         _create_transactions_for_order(order, up)
+    elif new_status == 'CANCELLED':
+        reason = (request.POST.get('reason') or '').strip()[:200]
+        order.cancel_reason = reason
+        order.cancelled_by  = request.user
+        order.cancelled_at  = timezone.now()
+        update_fields += ['cancel_reason', 'cancelled_by', 'cancelled_at']
+        order.save(update_fields=update_fields)
+        _notify_order_cancelled(order, request.user, reason, was_mid_prep)
     else:
         order.save(update_fields=update_fields)
 
@@ -317,18 +359,24 @@ def cancel_table_order(request, order_id):
     try:
         order = TableOrder.objects.get(id=order_id, business=up.business)
     except TableOrder.DoesNotExist:
-        return JsonResponse({'ok': False, 'error': 'Order not found'}, status=404)
+        return JsonResponse({'ok': False, 'error': 'Agizo halikupatikana'}, status=404)
 
     if order.status in ('SERVED', 'CANCELLED'):
-        return JsonResponse({'ok': False, 'error': 'Order cannot be cancelled'}, status=400)
+        return JsonResponse({'ok': False, 'error': 'Agizo hili haliwezi kufutwa'}, status=400)
 
     # Only the waitress who placed it or owner/staff can cancel
     if (order.waitress != request.user and not up.is_owner
             and getattr(up, 'role', '') not in ('staff',)):
-        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kufuta agizo hili'}, status=403)
 
-    order.status = 'CANCELLED'
-    order.save(update_fields=['status', 'updated_at'])
+    was_mid_prep = order.status in ('ACCEPTED', 'READY')
+    reason = (request.POST.get('reason') or '').strip()[:200]
+    order.status        = 'CANCELLED'
+    order.cancel_reason = reason
+    order.cancelled_by  = request.user
+    order.cancelled_at  = timezone.now()
+    order.save(update_fields=['status', 'updated_at', 'cancel_reason', 'cancelled_by', 'cancelled_at'])
+    _notify_order_cancelled(order, request.user, reason, was_mid_prep)
     return JsonResponse({'ok': True})
 
 
