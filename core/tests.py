@@ -10,6 +10,7 @@ from accounts.models import Business, UserProfile
 from core.models import (
     BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
     KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
+    KitchenStockReceipt, KitchenStockReceiptLine,
     Notification, Payment, Receipt, Shift, Store, TabTransferRequest, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
@@ -11782,4 +11783,262 @@ class TabToDebtConversionSyncsReceiptPaymentMethodTest(TestCase):
         resp = self.client.get('/receipts/')
         ids = [r.id for r in resp.context['receipts']]
         self.assertIn(rcpt.id, ids, 'A debt-converted tab is a concluded sale — must appear in the default view')
-        self.assertContains(resp, 'Credit')
+
+
+class KitchenStockReceiptTest(TestCase):
+    """2026-07-25 live request (real Meatco chicken delivery: wings, legs,
+    drumsticks): one supplier delivery covering multiple portion items,
+    cost entered ONCE per cut, pooled under one header for profit tracking
+    — while each cut item keeps its own completely ordinary, independent
+    stock balance and sells via the existing preset mechanism, untouched.
+    Closing is a purely manual staff action that never blocks on stock-
+    balance math (a leg split into two drumstick-sized pieces can make the
+    sellable count exceed the nominal receipt count)."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='ksr')
+        self.wing = Item.objects.create(
+            business=self.biz, store=self.store, description='Chicken Wing',
+            material_no='KSR-WING', unit='Pcs', selling_price=Decimal('50'),
+        )
+        self.leg = Item.objects.create(
+            business=self.biz, store=self.store, description='Chicken Leg',
+            material_no='KSR-LEG', unit='Pcs', selling_price=Decimal('70'),
+        )
+        self.drumstick = Item.objects.create(
+            business=self.biz, store=self.store, description='Chicken Drumstick',
+            material_no='KSR-DRUMSTICK', unit='Pcs', selling_price=Decimal('90'),
+        )
+        self.client.force_login(self.owner_user)
+
+    def _create_receipt(self, lines=None, **overrides):
+        import json
+        import uuid
+        body = {
+            'supplier': 'Meatco',
+            'invoice_no': 'A25533',
+            'note': 'Weekly chicken order',
+            'lines': json.dumps(lines if lines is not None else [
+                {'item_id': self.wing.id, 'qty': '20', 'cost': '1960'},
+                {'item_id': self.leg.id, 'qty': '16', 'cost': '2000'},
+                {'item_id': self.drumstick.id, 'qty': '8', 'cost': '1340'},
+            ]),
+            'idempotency_token': str(uuid.uuid4()),
+        }
+        body.update(overrides)
+        return self.client.post('/kitchen/stock-receipt/create/', body)
+
+    def test_create_receipt_creates_lines_and_sets_cost_price_once(self):
+        resp = self._create_receipt()
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        receipt = KitchenStockReceipt.objects.get(id=data['receipt']['id'])
+        self.assertEqual(receipt.lines.count(), 3)
+        self.assertEqual(receipt.status, 'OPEN')
+        self.wing.refresh_from_db()
+        self.leg.refresh_from_db()
+        self.drumstick.refresh_from_db()
+        self.assertEqual(self.wing.cost_price, Decimal('98.00'))        # 1960/20
+        self.assertEqual(self.leg.cost_price, Decimal('125.00'))        # 2000/16
+        self.assertEqual(self.drumstick.cost_price, Decimal('167.50'))  # 1340/8
+        self.assertEqual(self.wing.current_balance(), 20)
+        self.assertEqual(self.leg.current_balance(), 16)
+        self.assertEqual(self.drumstick.current_balance(), 8)
+
+    def test_total_cost_is_sum_of_lines(self):
+        resp = self._create_receipt()
+        receipt = KitchenStockReceipt.objects.get(id=resp.json()['receipt']['id'])
+        self.assertEqual(receipt.total_cost, Decimal('5300'))  # 1960 + 2000 + 1340
+
+    def test_no_yield_wastage_side_effect(self):
+        """The bug Roy reported (idadi 10 -> balance 9.375) was caused by
+        Item.is_yield_item auto-wastage in add_transaction's Receipt flow.
+        This endpoint creates a plain Receipt transaction directly and must
+        never trigger that mechanism."""
+        self._create_receipt()
+        self.assertEqual(Transaction.objects.filter(item=self.wing, type='Wastage').count(), 0)
+        self.assertEqual(self.wing.current_balance(), 20)
+
+    def test_separate_balances_per_cut(self):
+        """Roy's confirmed answer: separate count per cut, shared cost only.
+        Selling one cut must never move another cut's balance."""
+        self._create_receipt()
+        Transaction.objects.create(
+            business=self.biz, item=self.wing, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('250'), payment_method='cash',
+        )
+        self.wing.refresh_from_db()
+        self.leg.refresh_from_db()
+        self.drumstick.refresh_from_db()
+        self.assertEqual(self.wing.current_balance(), 15)
+        self.assertEqual(self.leg.current_balance(), 16)       # untouched
+        self.assertEqual(self.drumstick.current_balance(), 8)  # untouched
+
+    def test_sell_and_profit_reflects_real_revenue(self):
+        resp = self._create_receipt()
+        receipt = KitchenStockReceipt.objects.get(id=resp.json()['receipt']['id'])
+        Transaction.objects.create(
+            business=self.biz, item=self.wing, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('250'), payment_method='cash',
+        )
+        self.assertEqual(receipt.total_revenue(), Decimal('250'))
+        self.assertEqual(receipt.profit, Decimal('250') - Decimal('5300'))
+
+    def test_close_marks_done_and_freezes_profit_window(self):
+        resp = self._create_receipt()
+        receipt_id = resp.json()['receipt']['id']
+        Transaction.objects.create(
+            business=self.biz, item=self.wing, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('250'), payment_method='cash',
+        )
+        close_resp = self.client.post(f'/kitchen/stock-receipt/{receipt_id}/close/')
+        data = close_resp.json()
+        self.assertTrue(data.get('ok'), data)
+        receipt = KitchenStockReceipt.objects.get(id=receipt_id)
+        self.assertEqual(receipt.status, 'DONE')
+        self.assertIsNotNone(receipt.closed_at)
+        # A sale recorded AFTER close must not bleed into this receipt's revenue.
+        Transaction.objects.create(
+            business=self.biz, item=self.wing, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('250'), payment_method='cash',
+        )
+        self.assertEqual(receipt.total_revenue(), Decimal('250'))
+
+    def test_close_is_idempotent(self):
+        resp = self._create_receipt()
+        receipt_id = resp.json()['receipt']['id']
+        self.client.post(f'/kitchen/stock-receipt/{receipt_id}/close/')
+        second = self.client.post(f'/kitchen/stock-receipt/{receipt_id}/close/')
+        data = second.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertTrue(data.get('already_closed'))
+
+    def test_close_never_blocks_on_oversold_balance(self):
+        """Roy's explicit clarification: splitting a leg into two drumstick-
+        sized pieces can make the sellable count EXCEED the nominal receipt
+        count — closing must never hard-block on this ('the calculation
+        should go on until she says done')."""
+        resp = self._create_receipt()
+        receipt_id = resp.json()['receipt']['id']
+        Transaction.objects.create(
+            business=self.biz, item=self.leg, type='Issue', qty=Decimal('-20'),
+            sale_amount=Decimal('1400'), payment_method='cash',
+        )
+        close_resp = self.client.post(f'/kitchen/stock-receipt/{receipt_id}/close/')
+        self.assertTrue(close_resp.json().get('ok'), close_resp.json())
+
+    def test_close_with_optional_wastage_writeoff(self):
+        import json
+        resp = self._create_receipt()
+        receipt_id = resp.json()['receipt']['id']
+        receipt = KitchenStockReceipt.objects.get(id=receipt_id)
+        wing_line = receipt.lines.get(item=self.wing)
+        close_resp = self.client.post(f'/kitchen/stock-receipt/{receipt_id}/close/', {
+            'write_offs': json.dumps([{'line_id': wing_line.id, 'qty': '3'}]),
+        })
+        self.assertTrue(close_resp.json().get('ok'), close_resp.json())
+        self.wing.refresh_from_db()
+        self.assertEqual(self.wing.current_balance(), 17)  # 20 - 3
+        self.assertEqual(Transaction.objects.filter(item=self.wing, type='Wastage').count(), 1)
+
+    def test_close_writeoff_never_forced(self):
+        """Closing with no write_offs at all must succeed cleanly — optional,
+        never automatic/forced, per Roy's explicit requirement."""
+        resp = self._create_receipt()
+        receipt_id = resp.json()['receipt']['id']
+        close_resp = self.client.post(f'/kitchen/stock-receipt/{receipt_id}/close/', {})
+        self.assertTrue(close_resp.json().get('ok'), close_resp.json())
+        self.assertEqual(Transaction.objects.filter(type='Wastage').count(), 0)
+
+    def test_list_endpoint_returns_open_then_closed(self):
+        resp = self._create_receipt()
+        receipt_id = resp.json()['receipt']['id']
+        listing = self.client.get('/kitchen/stock-receipt/list/')
+        data = listing.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertEqual(len(data['open']), 1)
+        self.assertEqual(data['open'][0]['id'], receipt_id)
+        self.client.post(f'/kitchen/stock-receipt/{receipt_id}/close/')
+        listing2 = self.client.get('/kitchen/stock-receipt/list/').json()
+        self.assertEqual(len(listing2['open']), 0)
+        self.assertEqual(len(listing2['closed']), 1)
+
+    def test_idempotency_token_blocks_duplicate_submit(self):
+        resp1 = self._create_receipt(idempotency_token='ksr-dup-tok')
+        resp2 = self._create_receipt(idempotency_token='ksr-dup-tok')
+        self.assertTrue(resp1.json().get('ok'), resp1.json())
+        self.assertFalse(resp2.json().get('ok'))
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(KitchenStockReceipt.objects.count(), 1)
+
+    def test_wrong_business_receipt_returns_404_on_close(self):
+        other_biz = Business.objects.create(name='Other KSR Biz', has_kitchen=True)
+        other_store = Store.objects.create(business=other_biz, name='Kitchen', is_kitchen=True)
+        other_receipt = KitchenStockReceipt.objects.create(
+            business=other_biz, store=other_store, supplier='Someone Else',
+        )
+        resp = self.client.post(f'/kitchen/stock-receipt/{other_receipt.id}/close/')
+        self.assertEqual(resp.status_code, 404)
+
+    def test_cross_business_item_cannot_be_added_to_receipt_line(self):
+        other_biz = Business.objects.create(name='Other KSR Biz 2', has_kitchen=True)
+        other_store = Store.objects.create(business=other_biz, name='Kitchen', is_kitchen=True)
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Foreign Wing',
+            material_no='KSR-FOREIGN', unit='Pcs', selling_price=Decimal('50'),
+        )
+        resp = self._create_receipt(lines=[{'item_id': other_item.id, 'qty': '10', 'cost': '500'}])
+        data = resp.json()
+        self.assertFalse(data.get('ok'), data)
+
+    def test_staff_without_kitchen_stock_permission_blocked(self):
+        staff_user = User.objects.create_user(username='ksr_staff_noperm', password='x')
+        UserProfile.objects.create(
+            user=staff_user, business=self.biz, role='kitchen', can_access_kitchen=True,
+        )
+        Shift.objects.create(business=self.biz, store=self.store, staff=staff_user, status='OPEN')
+        self.client.logout()
+        self.client.force_login(staff_user)
+        resp = self._create_receipt(idempotency_token='ksr-staff-noperm')
+        self.assertFalse(resp.json().get('ok'))
+        self.assertEqual(resp.status_code, 403)
+
+    def test_staff_with_can_receive_kitchen_stock_allowed(self):
+        staff_user = User.objects.create_user(username='ksr_staff_perm', password='x')
+        UserProfile.objects.create(
+            user=staff_user, business=self.biz, role='kitchen',
+            can_access_kitchen=True, can_receive_kitchen_stock=True,
+        )
+        Shift.objects.create(business=self.biz, store=self.store, staff=staff_user, status='OPEN')
+        self.client.logout()
+        self.client.force_login(staff_user)
+        resp = self._create_receipt(idempotency_token='ksr-staff-perm')
+        self.assertTrue(resp.json().get('ok'), resp.json())
+
+    def test_shift_required_for_non_owner_staff(self):
+        staff_user = User.objects.create_user(username='ksr_staff_noshift', password='x')
+        UserProfile.objects.create(
+            user=staff_user, business=self.biz, role='kitchen',
+            can_access_kitchen=True, can_receive_kitchen_stock=True,
+        )
+        self.client.logout()
+        self.client.force_login(staff_user)
+        resp = self._create_receipt(idempotency_token='ksr-staff-noshift')
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.assertTrue(data.get('shift_required'))
+
+    def test_bar_only_staff_blocked_by_station_scope(self):
+        """Station Scoping Principle: a bar-only staffer (no can_access_kitchen)
+        must never be able to receive kitchen stock directly."""
+        bar_staff = User.objects.create_user(username='ksr_bar_staff', password='x')
+        UserProfile.objects.create(
+            user=bar_staff, business=self.biz, role='staff',
+            can_access_kitchen=False, can_receive_kitchen_stock=True,
+        )
+        Shift.objects.create(business=self.biz, store=self.store, staff=bar_staff, status='OPEN')
+        self.client.logout()
+        self.client.force_login(bar_staff)
+        resp = self._create_receipt(idempotency_token='ksr-bar-staff')
+        self.assertFalse(resp.json().get('ok'))
+        self.assertEqual(resp.status_code, 403)

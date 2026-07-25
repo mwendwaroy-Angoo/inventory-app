@@ -23,7 +23,8 @@ from django.views.decorators.http import require_POST
 
 from .models import (
     BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KitchenBatch,
-    KitchenConsumableLog, ProduceBunch, Receipt, Store, Transaction,
+    KitchenConsumableLog, KitchenStockReceipt, KitchenStockReceiptLine,
+    ProduceBunch, Receipt, Store, Transaction,
 )
 from . import keg_metrics
 
@@ -1017,6 +1018,197 @@ def kitchen_receive(request):
     except Exception as exc:
         logger.exception('kitchen_receive failed business=%s item=%s mode=%s', business.id, item_id, mode)
         return JsonResponse({'ok': False, 'error': f'Hitilafu: {exc}'}, status=500)
+
+
+# ── Kitchen Stock Receipt (multi-item delivery, pooled cost) ───────────────────
+# 2026-07-25 live request: chicken (and similar) arrives as ONE delivery
+# covering several cut-items (wings, legs, drumsticks) at once — cost should
+# be entered ONCE per delivery, not re-typed every time a portion is
+# prepared/sold. Each line item still keeps its own completely ordinary
+# stock balance and sells via the existing preset mechanism, unaffected —
+# this header only exists to answer "was this whole delivery profitable".
+
+def _kitchen_stock_receipt_to_dict(receipt):
+    lines = list(receipt.lines.select_related('item'))
+    return {
+        'id':            receipt.id,
+        'supplier':      receipt.supplier,
+        'invoice_no':    receipt.invoice_no,
+        'received_on':   receipt.received_on.isoformat(),
+        'status':        receipt.status,
+        'note':          receipt.note,
+        'total_cost':    float(receipt.total_cost),
+        'total_revenue': float(receipt.total_revenue()),
+        'profit':        float(receipt.profit),
+        'profit_pct':    receipt.profit_pct,
+        'lines': [
+            {
+                'id':            l.id,
+                'item_id':       l.item_id,
+                'item_name':     l.item.description,
+                'qty_received':  float(l.qty_received),
+                'line_cost':     float(l.line_cost),
+                'unit_cost':     float(l.unit_cost),
+                'current_balance': float(l.item.current_balance()),
+            }
+            for l in lines
+        ],
+    }
+
+
+@login_required
+@require_POST
+def kitchen_stock_receipt_create(request):
+    """Record one supplier delivery covering multiple portion items at once —
+    e.g. 20 wings @ KES 98, 16 legs @ KES 125, 8 drumsticks @ KES 168 from one
+    Meatco order. Each line creates a completely ordinary Receipt Transaction
+    (same mechanism kitchen_receive()'s portion mode already uses for a single
+    item) and sets that item's cost_price — the ONE cost entry Roy asked for.
+    """
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not (is_owner or getattr(up, 'can_receive_kitchen_stock', False)):
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya kupokea stok inahitajika'}, status=403)
+
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
+    kitchen_store = _ensure_kitchen_store(business)
+
+    try:
+        raw_lines = json.loads(request.POST.get('lines', '[]'))
+    except (ValueError, TypeError):
+        raw_lines = []
+    if not raw_lines:
+        return JsonResponse({'ok': False, 'error': 'Ongeza angalau bidhaa moja.'}, status=400)
+
+    supplier   = (request.POST.get('supplier') or '').strip()[:100]
+    invoice_no = (request.POST.get('invoice_no') or '').strip()[:50]
+    note       = (request.POST.get('note') or '').strip()[:200]
+
+    from django.db import transaction as _txn
+    try:
+        with _txn.atomic():
+            receipt = KitchenStockReceipt.objects.create(
+                business=business, store=kitchen_store,
+                supplier=supplier, invoice_no=invoice_no, note=note,
+                recorded_by=request.user,
+            )
+            created_lines = 0
+            for row in raw_lines:
+                try:
+                    item_id = int(row.get('item_id', 0))
+                    qty = Decimal(str(row.get('qty', '0') or '0'))
+                    cost = Decimal(str(row.get('cost', '0') or '0'))
+                except (TypeError, ValueError, InvalidOperation):
+                    continue
+                if qty <= 0 or cost <= 0:
+                    continue
+                item = Item.objects.filter(id=item_id, store=kitchen_store).first()
+                if item is None:
+                    continue
+                txn = Transaction.objects.create(
+                    business=business, item=item, type='Receipt',
+                    qty=qty, payment_method='cash',
+                    invoice_no=invoice_no or (supplier or '')[:50],
+                    recorded_by=request.user,
+                )
+                item.cost_price = (cost / qty).quantize(Decimal('0.01'))
+                item.save(update_fields=['cost_price'])
+                KitchenStockReceiptLine.objects.create(
+                    receipt=receipt, item=item, qty_received=qty,
+                    line_cost=cost, transaction=txn,
+                )
+                created_lines += 1
+            if created_lines == 0:
+                raise ValueError('Hakuna mstari sahihi wa bidhaa.')
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    return JsonResponse({'ok': True, 'receipt': _kitchen_stock_receipt_to_dict(receipt)})
+
+
+@login_required
+def kitchen_stock_receipts_list(request):
+    """JSON: open (and a handful of recently-closed) kitchen stock receipts
+    for the board's own panel — each with a live profit-so-far preview."""
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+
+    kitchen_store = _ensure_kitchen_store(business)
+    open_receipts = list(
+        KitchenStockReceipt.objects.filter(business=business, store=kitchen_store, status='OPEN')
+        .prefetch_related('lines__item')
+        .order_by('-received_on', '-id')
+    )
+    recent_closed = list(
+        KitchenStockReceipt.objects.filter(business=business, store=kitchen_store, status='DONE')
+        .prefetch_related('lines__item')
+        .order_by('-closed_at')[:10]
+    )
+    return JsonResponse({
+        'ok': True,
+        'open':   [_kitchen_stock_receipt_to_dict(r) for r in open_receipts],
+        'closed': [_kitchen_stock_receipt_to_dict(r) for r in recent_closed],
+    })
+
+
+@login_required
+@require_POST
+def kitchen_stock_receipt_close(request, receipt_id):
+    """Staff confirms a delivery is fully sold through (or she's otherwise
+    done with it) — "the calculation should go on until she says done"
+    (2026-07-25 live request). Optional per-line wastage write-off for any
+    genuine leftover balance; never forced — a split/over-sold line (e.g. a
+    leg cut into two drumsticks) legitimately has nothing left to write off.
+    """
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not (is_owner or getattr(up, 'can_receive_kitchen_stock', False)):
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya kupokea stok inahitajika'}, status=403)
+
+    receipt = KitchenStockReceipt.objects.filter(id=receipt_id, business=business).first()
+    if receipt is None:
+        return JsonResponse({'ok': False, 'error': 'Receipt haikupatikana.'}, status=404)
+    if receipt.status == 'DONE':
+        return JsonResponse({'ok': True, 'already_closed': True, 'receipt': _kitchen_stock_receipt_to_dict(receipt)})
+
+    try:
+        write_offs = json.loads(request.POST.get('write_offs', '[]'))
+    except (ValueError, TypeError):
+        write_offs = []
+
+    for row in write_offs:
+        try:
+            line_id = int(row.get('line_id', 0))
+            qty = Decimal(str(row.get('qty', '0') or '0'))
+        except (TypeError, ValueError, InvalidOperation):
+            continue
+        if qty <= 0:
+            continue
+        line = next((l for l in receipt.lines.select_related('item') if l.id == line_id), None)
+        if line is None:
+            continue
+        available = line.item.current_balance()
+        if qty > available:
+            qty = Decimal(str(available))
+        if qty <= 0:
+            continue
+        Transaction.objects.create(
+            business=business, item=line.item, type='Wastage',
+            qty=-qty, recipient=f'Receipt #{receipt.id} imefungwa',
+            recorded_by=request.user,
+        )
+
+    receipt.close(request.user)
+    return JsonResponse({'ok': True, 'receipt': _kitchen_stock_receipt_to_dict(receipt)})
 
 
 # ── Cross-counter tab merge check (AJAX GET) ─────────────────────────────────

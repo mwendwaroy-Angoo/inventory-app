@@ -2560,3 +2560,61 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`ReceiptsListOpenTabDistinctionTest`,
   `TabToDebtConversionSyncsReceiptPaymentMethodTest`). No migrations. 660 tests
   pass (core + accounts).
+- Kitchen Stock Receipt — pooled-cost multi-item delivery tracking (2026-07-25), live
+  request with a real Meatco chicken delivery receipt attached (Order #A25533: wings,
+  legs, drumsticks bought together for one combined invoice total). Two parts. **(1)
+  Diagnosed, not a bug**: Roy's "idadi 10 → balance shows 9.375" report traced to
+  `Item.is_yield_item`/`yield_factor` — an existing, working feature (Receipt-type
+  transactions in `add_transaction`, `core/views.py`, auto-create an offsetting Wastage
+  transaction for `qty × (1 − yield_factor)`) — misconfigured on the affected chicken
+  item(s) for what Roy actually wanted (piece-counted cuts, not a yield percentage).
+  Remedy communicated: open Edit Item for the affected item(s) and untick Yield Item (or
+  set it to 100%) — no code change, since this mechanism is correct for its designed
+  use case (e.g. a whole chicken → usable meat after cleaning) and other items may
+  legitimately rely on it. **(2) New feature**: one supplier delivery (e.g. wings + legs
+  + drumsticks) needs its cost entered ONCE, pooled for a single profit figure, while
+  each cut keeps completely ordinary, independent stock and sells via the existing
+  preset mechanism — confirmed via clarifying questions: (a) "separate count per cut,
+  shared cost only" (no pooled single balance — each `Item` keeps its own
+  `current_balance()`, unchanged), (b) closing is a purely manual staff action that must
+  NEVER hard-block on stock-balance math, since physical splitting (a big leg cut in
+  half and sold as two drumstick-sized pieces) can make the sellable count legitimately
+  exceed the nominal received count — "the calculation should go on until she says
+  done." New `KitchenStockReceipt` (header: supplier, invoice_no, received_on, status
+  OPEN/DONE, closed_at/closed_by) + `KitchenStockReceiptLine` (`core/models.py`,
+  migration 0123) — each line creates one completely ordinary Receipt `Transaction` on
+  its item (same shape as `kitchen_receive()`'s existing portion-mode branch) and sets
+  `item.cost_price = line_cost / qty_received` (a `Item.cost_price` "one designed
+  writer" exception, same documented category as `KitchenBatch.open_batch()` and
+  `kitchen_receive()`'s own portion branch — noted in the model docstring). Deliberately
+  does NOT hook into the sale/checkout path the way `KegBarrel`/`ProduceBunch`/
+  `KitchenBatch` do (no `record_sale()` counter) — `total_revenue()` instead sums
+  ordinary Issue transactions on the receipt's own items in the window since the
+  receipt was created (or up to `closed_at` once closed), reusing the same
+  sale_amount-preferred `Case/When` revenue formula used elsewhere in the app. Chosen
+  specifically because it needed zero changes to kitchen checkout code, at the accepted
+  cost of imprecise attribution if two receipts for the same item ever overlap in time —
+  fine given Roy's confirmed real workflow (one delivery sells through before the next
+  is ordered). Three views in `core/kitchen_views.py`
+  (`kitchen_stock_receipt_create`/`_list`/`_close`), reusing the exact `_kb_gate()` +
+  `can_receive_kitchen_stock` + `claim_checkout_token` idempotency pattern already
+  established by `kitchen_batch_receive()` — same permission tier, same station
+  scoping, same double-submit protection, no new pattern invented. Close accepts an
+  OPTIONAL per-line wastage write-off (creates a Wastage `Transaction`, clamped to
+  available balance) — never forced; closing with zero write-offs, or with a line
+  already oversold past its nominal received qty, both succeed cleanly. Kitchen Board
+  UI: new "🧾 Stock Receipt" button beside "+ Pata Stok" (same `can_receive_stock` gate)
+  opens a multi-line modal (item picker from `_portionItems` + qty + cost per row, +
+  Ongeza bidhaa to add rows); a live "Open Kitchen Stock Receipts" panel shows each open
+  receipt's per-line unit costs and running profit-so-far, with a "✓ Fungwa" close flow
+  offering the optional per-line write-off inputs. **(3) Per-cut analytics — verified
+  already satisfied, nothing new built**: because each cut is tracked as its own
+  `Item` (per the confirmed design above), the existing "🍗 Kitchen Performance" table
+  in `core/analytics_views.py`/`analytics.html` (already grouped by `item_id`, already
+  sorted by revenue descending, already shows units + revenue + cost + margin%) already
+  answers "which cut sells more" per-item, and the page's existing 7/30/90/365-day
+  period selector (the same mechanism every other analytics section on this page uses)
+  already covers week/month/quarter/year framing — building a second, parallel
+  reporting mechanism would have duplicated this for no reason. 18 new tests
+  (`KitchenStockReceiptTest`), including the real Meatco figures as a fixture. One
+  migration (0123, additive). 678 tests pass (core + accounts).

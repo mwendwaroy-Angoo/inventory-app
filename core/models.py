@@ -3574,6 +3574,137 @@ class KitchenBatch(models.Model):
         return txn
 
 
+class KitchenStockReceipt(models.Model):
+    """One supplier delivery covering MULTIPLE portion items pooled under one
+    cost basis for profit tracking — e.g. one Meatco order: wings, legs, and
+    drumsticks bought together, each a completely ordinary Item with its own
+    stock balance and its own preset-based sales, unchanged. This header only
+    exists to answer "was this whole delivery profitable", not to gate or
+    block individual sales (2026-07-25 live request).
+
+    Deliberately does NOT hook into the sale/checkout path (unlike
+    KegBarrel/ProduceBunch/KitchenBatch, which increment revenue_collected
+    per sale) — profit is computed on demand from ordinary Issue transactions
+    on the receipt's own items, in the window since the receipt was created.
+    This matches the confirmed real workflow: one delivery is fully sold
+    through (staff keeps selling — a big leg cut in half and sold as two
+    drumsticks means the sellable count can exceed what's nominally on the
+    receipt, so there is no reliable stock-balance cutoff to gate on) before
+    the next one is ordered, so overlapping receipts for the same item are
+    not the normal case. Closing is always a deliberate staff action
+    ("the calculation should go on until she says done"), never automatic.
+    """
+    STATUS_CHOICES = [
+        ('OPEN', 'Open'),
+        ('DONE', 'Done'),
+    ]
+    business    = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='kitchen_stock_receipts',
+    )
+    store       = models.ForeignKey(
+        'Store', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='kitchen_stock_receipts',
+    )
+    supplier    = models.CharField(max_length=100, blank=True, help_text='e.g. Meatco')
+    invoice_no  = models.CharField(max_length=50, blank=True, help_text='e.g. Order #A25533')
+    received_on = models.DateField(default=timezone.localdate)
+    status      = models.CharField(max_length=10, choices=STATUS_CHOICES, default='OPEN')
+    note        = models.CharField(max_length=200, blank=True)
+    recorded_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='kitchen_stock_receipts_recorded',
+    )
+    created_at  = models.DateTimeField(default=timezone.now)
+    closed_at   = models.DateTimeField(null=True, blank=True)
+    closed_by   = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='kitchen_stock_receipts_closed',
+    )
+
+    class Meta:
+        ordering = ['-received_on', '-id']
+        verbose_name = 'Kitchen Stock Receipt'
+        verbose_name_plural = 'Kitchen Stock Receipts'
+
+    def __str__(self):
+        return f"{self.supplier or 'Receipt'} #{self.invoice_no or self.id} — {self.get_status_display()}"
+
+    @property
+    def total_cost(self):
+        return sum((l.line_cost for l in self.lines.all()), Decimal('0'))
+
+    def total_revenue(self):
+        """Sum of Issue-transaction revenue for this receipt's own items,
+        in the window since this receipt was created (or up to closed_at
+        once closed). Excludes void sales, matches Transaction.revenue()'s
+        own sale_amount-preferred convention."""
+        from django.db.models import Sum, Case, When, F, Value, DecimalField as _DF
+        from django.db.models.functions import Abs, Coalesce
+        item_ids = list(self.lines.values_list('item_id', flat=True))
+        if not item_ids:
+            return Decimal('0')
+        end = self.closed_at or timezone.now()
+        _rev = Case(
+            When(sale_amount__isnull=False, then=F('sale_amount')),
+            default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
+            output_field=_DF(max_digits=12, decimal_places=2),
+        )
+        total = Transaction.objects.filter(
+            business=self.business, item_id__in=item_ids, type='Issue',
+            created_at__gte=self.created_at, created_at__lte=end,
+        ).exclude(payment_method='void').aggregate(t=Sum(_rev))['t']
+        return total or Decimal('0')
+
+    @property
+    def profit(self):
+        return self.total_revenue() - self.total_cost
+
+    @property
+    def profit_pct(self):
+        cost = self.total_cost
+        if not cost or cost <= 0:
+            return None
+        return round(float(self.profit) / float(cost) * 100, 1)
+
+    def close(self, user):
+        if self.status == 'DONE':
+            return
+        self.status = 'DONE'
+        self.closed_at = timezone.now()
+        self.closed_by = user
+        self.save(update_fields=['status', 'closed_at', 'closed_by'])
+
+
+class KitchenStockReceiptLine(models.Model):
+    """One item within a KitchenStockReceipt — e.g. '20 wings @ KES 98 each'.
+    Creates a completely ordinary Receipt Transaction on `item` at line-
+    creation time (ONE cost entry, exactly Roy's ask — see
+    KitchenStockReceipt.total_revenue() for how selling stays untouched)."""
+    receipt      = models.ForeignKey(
+        KitchenStockReceipt, on_delete=models.CASCADE, related_name='lines',
+    )
+    item         = models.ForeignKey(
+        'Item', on_delete=models.PROTECT, related_name='kitchen_stock_receipt_lines',
+    )
+    qty_received = models.DecimalField(max_digits=10, decimal_places=2)
+    line_cost    = models.DecimalField(max_digits=10, decimal_places=2)
+    transaction  = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+
+    class Meta:
+        ordering = ['id']
+        verbose_name = 'Kitchen Stock Receipt Line'
+        verbose_name_plural = 'Kitchen Stock Receipt Lines'
+
+    def __str__(self):
+        return f"{self.item.description} × {self.qty_received:g}"
+
+    @property
+    def unit_cost(self):
+        return (self.line_cost / self.qty_received) if self.qty_received else Decimal('0')
+
+
 class KitchenConsumableLog(models.Model):
     """
     Tracks purchases of kitchen consumables that are pooled business-wide:
