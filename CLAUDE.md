@@ -2794,3 +2794,35 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   No migrations — confirmed and told to Roy directly, since he asked
   whether anything was needed on Render Shell: nothing, this round is
   code-only, ordinary git push + Render's normal auto-deploy is sufficient.
+- Fix: stale-tab-stuck-forever bug (2026-07-25, same-day follow-up, live
+  screenshot). Roy reported a specific tab ("Muya") still stuck in the Quick
+  Sell drawer after the earlier rounding-flag fix — tapping "Lipa Yote —
+  M-Pesa" did nothing, every time. Traced the exact mechanism from the
+  screenshot: the tab's own header total (KES 0) was correct — every entry
+  on it was already `is_paid=True` — but `tab.status` had never flipped to
+  `'SETTLED'`. Root cause found in `settle_tab()` (`core/keg_views.py`): its
+  `if not entries_to_settle:` guard (fires when there is nothing new to
+  settle) unconditionally returned a 400 error, with no check for "is the
+  WHOLE tab actually already fully paid" — so a tab that drifted into this
+  state (exact drift path not reproduced live, but the effect is directly
+  observable) could NEVER self-heal; every future tap hit the same guard
+  before ever reaching `_finish_settle_tab()`, the only code path that
+  actually closes a tab. Fixed by checking
+  `tab.entries.filter(is_paid=False).exists()` inside that guard — if
+  nothing is owed ANYWHERE on the tab, call `_finish_settle_tab()` right
+  there instead of erroring, so the exact same "Lipa Yote" tap Roy was
+  already making now closes the stuck tab for good. Deliberately narrow: if
+  `entry_ids` were given and those specific entries are already paid while a
+  DIFFERENT entry elsewhere on the tab is still genuinely unpaid, this still
+  errors as before — that's a wrong-selection mistake, not a stuck tab, and
+  must never silently close a tab with real money still owed.
+  **Also found while tracing this (not fixed — display-only, lower
+  priority, noted for a future pass)**: `bar_board.html`'s `renderTabs()`
+  filters `is_paid=True` entries out of the normal card entirely (matching
+  the 2026-07-23 tab-drawer visual audit's stated intent), but
+  `quick_sell.html` and `kitchen_board.html` both still render them
+  (checked+disabled, struck-through) — a tabs-drawer-parity gap where only
+  one of the three drawers actually hides settled items from the main
+  card. Cosmetic once this fix ships (the entry disappears the moment the
+  tab closes), not touched this pass. 3 new tests
+  (`StaleFullyPaidTabSelfHealsOnSettleTest`). No migrations.

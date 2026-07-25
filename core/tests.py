@@ -12505,3 +12505,90 @@ class ItemFormYieldSectionVisibilityTest(TestCase):
         resp = self.client.get('/stock/add/')
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'id_is_yield_item')
+
+
+class StaleFullyPaidTabSelfHealsOnSettleTest(TestCase):
+    """2026-07-25 live report (Monsoon Inn): a tab can drift into
+    status='OPEN' with ZERO unpaid entries left anywhere on it — every item
+    was individually settled through separate actions and something in that
+    sequence never re-checked "is this tab now fully paid" (a receipt-only
+    trace, not reproduced live — the exact drift path wasn't pinned down,
+    but the effect is directly observable: a tab sitting in the drawer
+    showing KES 0 owed with all its entries already paid/struck-through).
+    Before this fix, settle_tab()'s "no entries to settle" guard fired
+    every single time — pressing "Lipa Yote" forever did nothing and could
+    never close the stuck tab, no matter how many times it was tapped."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Stale Fully Paid Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='sfp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='SFP Item',
+            material_no='SFP-01', unit='Pcs', selling_price=Decimal('260'),
+        )
+        self.tab = BarTab.objects.create(
+            business=self.biz, customer_name='Muya', status='OPEN', source='qs',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('260'), payment_method='mpesa',
+        )
+        self.entry = BarTabEntry.objects.create(
+            tab=self.tab, transaction=txn, description='White Cap x1',
+            amount=Decimal('260'), is_paid=True, payment_method='mpesa',
+            paid_at=timezone.now(),
+        )
+        self.client.force_login(self.owner)
+
+    def test_tapping_lipa_yote_closes_the_stuck_tab(self):
+        resp = self.client.post(f'/bar/tabs/{self.tab.id}/settle/', {'payment_method': 'mpesa'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.status, 'SETTLED')
+
+    def test_still_owed_entry_elsewhere_on_tab_is_not_silently_closed(self):
+        """A DIFFERENT bug shape must stay an error: staff selects only
+        already-paid entries while a genuinely unpaid one still sits
+        elsewhere on the same tab — that's a wrong-selection mistake, not a
+        stuck tab, and must not silently self-heal (which would wrongly
+        close a tab with real money still owed)."""
+        other_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='',
+        )
+        BarTabEntry.objects.create(
+            tab=self.tab, transaction=other_txn, description='Still Owed Item',
+            amount=Decimal('100'), is_paid=False,
+        )
+        resp = self.client.post(
+            f'/bar/tabs/{self.tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(self.entry.id)]},
+        )
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.status, 'OPEN')
+
+    def test_genuinely_open_tab_with_real_balance_is_unaffected(self):
+        """Sanity check: an ordinary tab with real unpaid entries settles
+        exactly as before — this fix only changes the zero-entries edge
+        case, nothing else."""
+        tab2 = BarTab.objects.create(business=self.biz, customer_name='Normal', status='OPEN', source='qs')
+        txn2 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('260'), payment_method='',
+        )
+        BarTabEntry.objects.create(
+            tab=tab2, transaction=txn2, description='Normal Item',
+            amount=Decimal('260'), is_paid=False,
+        )
+        resp = self.client.post(f'/bar/tabs/{tab2.id}/settle/', {'payment_method': 'cash'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['total'], 260.0)
+        tab2.refresh_from_db()
+        self.assertEqual(tab2.status, 'SETTLED')

@@ -2432,6 +2432,21 @@ def settle_tab(request, tab_id):
     )
 
     if not entries_to_settle:
+        # A tab can end up with status='OPEN' but ZERO unpaid entries left
+        # anywhere on it — e.g. every entry got individually settled through
+        # separate actions and something in that sequence never re-checked
+        # "is this tab now fully paid" (found 2026-07-25, live report: Roy
+        # tapping "Lipa Yote" on a tab like this did nothing, every time,
+        # forever — this exact guard fired before ever reaching the code
+        # that actually closes a tab, so the stuck card could never self-
+        # heal no matter how many times the same button was pressed).
+        # Self-heal here instead of erroring — if selected_ids was given,
+        # still error normally (staff picked already-paid entries while
+        # OTHER unpaid ones remain — that's a real "wrong selection"
+        # mistake, not a stuck tab); only auto-close when the WHOLE tab
+        # genuinely has nothing left owed.
+        if not tab.entries.filter(is_paid=False).exists():
+            return _finish_settle_tab(request, up, tab, pay, [], now)
         return JsonResponse({'ok': False, 'error': 'Hakuna entries zilizochaguliwa.'}, status=400)
 
     # Station Scoping Principle: check each entry's OWN station (item.store.is_kitchen),
