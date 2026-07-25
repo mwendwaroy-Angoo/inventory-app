@@ -247,6 +247,7 @@ def kitchen_board(request):
                 {
                     'id': p.id, 'label': p.label, 'price': float(p.price),
                     'qty': float(p.quantity_consumed), 'khaki_type': p.khaki_type,
+                    'cost_price': float(p.cost_price) if p.cost_price is not None else None,
                 }
                 for p in item.portion_presets.all().order_by('display_order', 'price')
             ]
@@ -1029,7 +1030,7 @@ def kitchen_receive(request):
 # this header only exists to answer "was this whole delivery profitable".
 
 def _kitchen_stock_receipt_to_dict(receipt):
-    lines = list(receipt.lines.select_related('item'))
+    lines = list(receipt.lines.select_related('item', 'preset'))
     return {
         'id':            receipt.id,
         'supplier':      receipt.supplier,
@@ -1046,6 +1047,8 @@ def _kitchen_stock_receipt_to_dict(receipt):
                 'id':            l.id,
                 'item_id':       l.item_id,
                 'item_name':     l.item.description,
+                'preset_id':     l.preset_id,
+                'preset_label':  l.preset.label if l.preset_id else None,
                 'qty_received':  float(l.qty_received),
                 'line_cost':     float(l.line_cost),
                 'unit_cost':     float(l.unit_cost),
@@ -1104,6 +1107,8 @@ def kitchen_stock_receipt_create(request):
                     item_id = int(row.get('item_id', 0))
                     qty = Decimal(str(row.get('qty', '0') or '0'))
                     cost = Decimal(str(row.get('cost', '0') or '0'))
+                    preset_id_raw = row.get('preset_id')
+                    preset_id = int(preset_id_raw) if preset_id_raw else None
                 except (TypeError, ValueError, InvalidOperation):
                     continue
                 if qty <= 0 or cost <= 0:
@@ -1111,16 +1116,33 @@ def kitchen_stock_receipt_create(request):
                 item = Item.objects.filter(id=item_id, store=kitchen_store).first()
                 if item is None:
                     continue
+                # Per-cut costing (2026-07-25): several presets sharing ONE
+                # item (e.g. Kuku → Bawa/Paja/Kifua, bought pre-cut, not whole
+                # birds) can be bought at genuinely different unit costs. When
+                # a line names a preset, its unit cost is written to
+                # preset.cost_price, NEVER item.cost_price — item.cost_price
+                # is left exactly as it was. A plain item with no preset split
+                # keeps the original behaviour unchanged.
+                preset = None
+                if preset_id:
+                    preset = ItemPortionPreset.objects.filter(id=preset_id, item=item).first()
+                    if preset is None:
+                        continue
                 txn = Transaction.objects.create(
                     business=business, item=item, type='Receipt',
                     qty=qty, payment_method='cash',
                     invoice_no=invoice_no or (supplier or '')[:50],
                     recorded_by=request.user,
                 )
-                item.cost_price = (cost / qty).quantize(Decimal('0.01'))
-                item.save(update_fields=['cost_price'])
+                unit_cost = (cost / qty).quantize(Decimal('0.01'))
+                if preset is not None:
+                    preset.cost_price = unit_cost
+                    preset.save(update_fields=['cost_price'])
+                else:
+                    item.cost_price = unit_cost
+                    item.save(update_fields=['cost_price'])
                 KitchenStockReceiptLine.objects.create(
-                    receipt=receipt, item=item, qty_received=qty,
+                    receipt=receipt, item=item, preset=preset, qty_received=qty,
                     line_cost=cost, transaction=txn,
                 )
                 created_lines += 1

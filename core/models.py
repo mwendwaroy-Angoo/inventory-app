@@ -1881,6 +1881,16 @@ class ItemPortionPreset(models.Model):
                   'Drives the business-wide khaki pool deduction counter.',
     )
 
+    cost_price = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='Per-unit cost for THIS specific cut/preset — used when several presets '
+                  'under one shared item (e.g. Kuku: Bawa/Paja/Kifua) are bought at genuinely '
+                  'different unit costs, so item.cost_price alone cannot represent them (2026-07-25, '
+                  'Kitchen Stock Receipt). Written ONLY by KitchenStockReceiptLine at receiving time — '
+                  'deliberately never editable from the item form itself (Roy\'s explicit instruction). '
+                  'Item.cost_price is left untouched for these presets and stays whatever it was.',
+    )
+
     class Meta:
         ordering = ['display_order', 'price']
         verbose_name = 'Item Portion Preset'
@@ -3679,12 +3689,26 @@ class KitchenStockReceiptLine(models.Model):
     """One item within a KitchenStockReceipt — e.g. '20 wings @ KES 98 each'.
     Creates a completely ordinary Receipt Transaction on `item` at line-
     creation time (ONE cost entry, exactly Roy's ask — see
-    KitchenStockReceipt.total_revenue() for how selling stays untouched)."""
+    KitchenStockReceipt.total_revenue() for how selling stays untouched).
+
+    `preset` (2026-07-25, live request): for a single catalogued item that's
+    really several differently-priced pre-cut pieces sold via presets under
+    one shared name (e.g. Kuku → Bawa/Paja/Kifua presets, bought pre-cut from
+    a butcher, NOT whole birds cut on-site — presets carry no stock balance
+    of their own, they all deduct from the same shared item balance) — this
+    optionally records WHICH preset a line represents, so its unit cost can
+    be written to preset.cost_price instead of the shared item.cost_price
+    (which cannot represent several different per-cut costs at once). Null
+    for an ordinary item with no per-cut cost split."""
     receipt      = models.ForeignKey(
         KitchenStockReceipt, on_delete=models.CASCADE, related_name='lines',
     )
     item         = models.ForeignKey(
         'Item', on_delete=models.PROTECT, related_name='kitchen_stock_receipt_lines',
+    )
+    preset       = models.ForeignKey(
+        'ItemPortionPreset', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='kitchen_stock_receipt_lines',
     )
     qty_received = models.DecimalField(max_digits=10, decimal_places=2)
     line_cost    = models.DecimalField(max_digits=10, decimal_places=2)
@@ -3698,7 +3722,8 @@ class KitchenStockReceiptLine(models.Model):
         verbose_name_plural = 'Kitchen Stock Receipt Lines'
 
     def __str__(self):
-        return f"{self.item.description} × {self.qty_received:g}"
+        label = f" ({self.preset.label})" if self.preset_id else ""
+        return f"{self.item.description}{label} × {self.qty_received:g}"
 
     @property
     def unit_cost(self):

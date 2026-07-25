@@ -12044,6 +12044,133 @@ class KitchenStockReceiptTest(TestCase):
         self.assertEqual(resp.status_code, 403)
 
 
+class KitchenStockReceiptPresetCostingTest(TestCase):
+    """2026-07-25 same-day follow-up, Roy's explicit design call: for a
+    single catalogued item that's really several differently-priced
+    pre-cut pieces sold via presets under one shared name (Kuku → Bawa /
+    Paja / Kifua — bought pre-cut, NOT whole birds), presets don't carry
+    their own stock balance (all deduct from the one shared item balance)
+    but DO now carry their own cost_price, written ONLY by the Stock
+    Receipt flow — never from the item form."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='ksrpreset')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='KSRP-KUKU', unit='Pcs', selling_price=Decimal('0'),
+        )
+        self.bawa = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Bawa', price=Decimal('50'), quantity_consumed=Decimal('1'),
+        )
+        self.paja = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Paja', price=Decimal('70'), quantity_consumed=Decimal('1'),
+        )
+        self.kifua = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Kifua', price=Decimal('90'), quantity_consumed=Decimal('1'),
+        )
+        self.client.force_login(self.owner_user)
+
+    def _create(self, lines, **overrides):
+        import json
+        import uuid
+        body = {
+            'supplier': 'Meatco', 'invoice_no': 'A25533', 'note': '',
+            'lines': json.dumps(lines),
+            'idempotency_token': str(uuid.uuid4()),
+        }
+        body.update(overrides)
+        return self.client.post('/kitchen/stock-receipt/create/', body)
+
+    def test_preset_lines_set_preset_cost_not_item_cost(self):
+        resp = self._create([
+            {'item_id': self.kuku.id, 'preset_id': self.bawa.id, 'qty': '20', 'cost': '1960'},
+            {'item_id': self.kuku.id, 'preset_id': self.paja.id, 'qty': '16', 'cost': '2000'},
+            {'item_id': self.kuku.id, 'preset_id': self.kifua.id, 'qty': '8', 'cost': '1340'},
+        ])
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.bawa.refresh_from_db()
+        self.paja.refresh_from_db()
+        self.kifua.refresh_from_db()
+        self.assertEqual(self.bawa.cost_price, Decimal('98.00'))
+        self.assertEqual(self.paja.cost_price, Decimal('125.00'))
+        self.assertEqual(self.kifua.cost_price, Decimal('167.50'))
+        self.kuku.refresh_from_db()
+        self.assertIsNone(self.kuku.cost_price)
+
+    def test_all_presets_share_one_stock_balance(self):
+        self._create([
+            {'item_id': self.kuku.id, 'preset_id': self.bawa.id, 'qty': '20', 'cost': '1960'},
+            {'item_id': self.kuku.id, 'preset_id': self.paja.id, 'qty': '16', 'cost': '2000'},
+            {'item_id': self.kuku.id, 'preset_id': self.kifua.id, 'qty': '8', 'cost': '1340'},
+        ])
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), 44)  # 20 + 16 + 8
+
+    def test_line_creates_transaction_and_receipt_line_with_preset(self):
+        resp = self._create([
+            {'item_id': self.kuku.id, 'preset_id': self.bawa.id, 'qty': '20', 'cost': '1960'},
+        ])
+        receipt = KitchenStockReceipt.objects.get(id=resp.json()['receipt']['id'])
+        line = receipt.lines.get()
+        self.assertEqual(line.preset_id, self.bawa.id)
+        self.assertEqual(line.item_id, self.kuku.id)
+        self.assertEqual(receipt.total_cost, Decimal('1960'))
+
+    def test_preset_belonging_to_different_item_is_rejected(self):
+        other_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Other Kuku',
+            material_no='KSRP-OTHER', unit='Pcs', selling_price=Decimal('0'),
+        )
+        resp = self._create([
+            {'item_id': other_item.id, 'preset_id': self.bawa.id, 'qty': '20', 'cost': '1960'},
+        ])
+        data = resp.json()
+        self.assertFalse(data.get('ok'), data)
+        self.assertEqual(KitchenStockReceiptLine.objects.count(), 0)
+
+    def test_mixed_preset_and_plain_item_lines_in_one_receipt(self):
+        plain_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Smokie',
+            material_no='KSRP-SMOKIE', unit='Pcs', selling_price=Decimal('30'),
+        )
+        resp = self._create([
+            {'item_id': self.kuku.id, 'preset_id': self.bawa.id, 'qty': '20', 'cost': '1960'},
+            {'item_id': plain_item.id, 'qty': '50', 'cost': '1000'},
+        ])
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.bawa.refresh_from_db()
+        plain_item.refresh_from_db()
+        self.assertEqual(self.bawa.cost_price, Decimal('98.00'))
+        self.assertEqual(plain_item.cost_price, Decimal('20.00'))
+
+    def test_list_endpoint_includes_preset_label(self):
+        resp = self._create([
+            {'item_id': self.kuku.id, 'preset_id': self.bawa.id, 'qty': '20', 'cost': '1960'},
+        ])
+        receipt_id = resp.json()['receipt']['id']
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        line = listing['open'][0]['lines'][0]
+        self.assertEqual(line['preset_id'], self.bawa.id)
+        self.assertEqual(line['preset_label'], 'Bawa')
+
+    def test_selling_via_any_preset_deducts_the_shared_balance(self):
+        """Confirms presets never carried, and still don't carry, their own
+        stock — selling a Bawa reduces the SAME Kuku balance a Paja sale
+        would, exactly like before this feature."""
+        self._create([
+            {'item_id': self.kuku.id, 'preset_id': self.bawa.id, 'qty': '20', 'cost': '1960'},
+            {'item_id': self.kuku.id, 'preset_id': self.paja.id, 'qty': '16', 'cost': '2000'},
+        ])
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='cash',
+        )
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), 35)  # 36 - 1, regardless of which preset sold
+
+
 class ItemFormYieldSectionVisibilityTest(TestCase):
     """2026-07-25 live report: on a business with BOTH a keg module and a
     kitchen module, the Yield/Processing section (is_yield_item checkbox) was

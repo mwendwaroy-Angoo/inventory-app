@@ -3098,10 +3098,24 @@
     wrap.className = 'ksr-line';
     wrap.dataset.idx = idx;
     wrap.style.cssText = 'display:grid;grid-template-columns:1fr 70px 90px 28px;gap:.35rem;align-items:center;';
+    // Items with presets (e.g. Kuku → Bawa/Paja/Kifua — pre-cut pieces bought
+    // at genuinely different costs, sharing one stock balance) are split into
+    // one option PER PRESET, so the receiving line matches how the real
+    // supplier receipt actually itemises them. option value encodes
+    // "itemId" or "itemId:presetId" (2026-07-25, per-cut costing).
+    var ksrOptions = ['<option value="">— bidhaa —</option>'];
+    _portionItems.forEach(function(i){
+      if (i.presets && i.presets.length) {
+        i.presets.forEach(function(p){
+          ksrOptions.push('<option value="' + i.id + ':' + p.id + '">' + i.name + ' — ' + p.label + '</option>');
+        });
+      } else {
+        ksrOptions.push('<option value="' + i.id + '">' + i.name + '</option>');
+      }
+    });
     wrap.innerHTML =
       '<select class="ksr-line-item" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.35rem .5rem;font-size:.82rem;">' +
-        '<option value="">— bidhaa —</option>' +
-        _portionItems.map(function(i){ return '<option value="' + i.id + '">' + i.name + '</option>'; }).join('') +
+        ksrOptions.join('') +
       '</select>' +
       '<input type="number" class="ksr-line-qty" min="0.01" step="0.01" placeholder="Idadi" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.35rem .4rem;font-size:.82rem;">' +
       '<input type="number" class="ksr-line-cost" min="0.01" step="1" placeholder="Gharama" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.35rem .4rem;font-size:.82rem;">' +
@@ -3124,12 +3138,14 @@
     var errEl = document.getElementById('ksr-error');
     var lines = [];
     document.querySelectorAll('#ksr-lines .ksr-line').forEach(function(row){
-      var itemId = row.querySelector('.ksr-line-item').value;
+      var rawVal = row.querySelector('.ksr-line-item').value;
       var qty = row.querySelector('.ksr-line-qty').value;
       var cost = row.querySelector('.ksr-line-cost').value;
-      if (itemId && parseFloat(qty) > 0 && parseFloat(cost) > 0) {
-        lines.push({item_id: itemId, qty: qty, cost: cost});
-      }
+      if (!rawVal || !(parseFloat(qty) > 0) || !(parseFloat(cost) > 0)) return;
+      var parts = rawVal.split(':');
+      var line = {item_id: parts[0], qty: qty, cost: cost};
+      if (parts.length > 1) line.preset_id = parts[1];
+      lines.push(line);
     });
     if (!lines.length) {
       errEl.textContent = 'Ongeza angalau bidhaa moja na idadi + gharama sahihi.';
@@ -3179,7 +3195,8 @@
           var pft = r.profit;
           var pftColor = pft >= 0 ? '#4caf50' : '#c0395a';
           var linesHtml = r.lines.map(function(l){
-            return '<span style="display:inline-block;margin-right:.6rem;color:#b0b0b0;">' + l.item_name + ': ' + l.qty_received + ' @ KES ' + l.unit_cost.toFixed(2) + '</span>';
+            var lbl = l.preset_label ? (l.item_name + ' — ' + l.preset_label) : l.item_name;
+            return '<span style="display:inline-block;margin-right:.6rem;color:#b0b0b0;">' + lbl + ': ' + l.qty_received + ' @ KES ' + l.unit_cost.toFixed(2) + '</span>';
           }).join('');
           return '<div style="background:var(--onyx-card);border:1px solid rgba(76,175,80,.25);border-radius:10px;padding:.6rem .75rem;margin-bottom:.4rem;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;">' +
@@ -3200,8 +3217,9 @@
     var wrap = document.getElementById('ksr-close-lines');
     wrap.dataset.receiptId = receiptId;
     wrap.innerHTML = r.lines.map(function(l){
+      var lbl = l.preset_label ? (l.item_name + ' — ' + l.preset_label) : l.item_name;
       return '<div style="display:grid;grid-template-columns:1fr 90px;gap:.4rem;align-items:center;">' +
-        '<div style="font-size:.82rem;color:#f0ece4;">' + l.item_name + ' <span style="color:#888;font-size:.72rem;">(kilichobaki: ' + l.current_balance + ')</span></div>' +
+        '<div style="font-size:.82rem;color:#f0ece4;">' + lbl + ' <span style="color:#888;font-size:.72rem;">(kilichobaki: ' + l.current_balance + ')</span></div>' +
         '<input type="number" class="ksr-close-waste" data-line-id="' + l.id + '" min="0" step="0.01" placeholder="Taka" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.35rem .4rem;font-size:.82rem;">' +
       '</div>';
     }).join('');

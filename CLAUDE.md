@@ -2618,3 +2618,90 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   reporting mechanism would have duplicated this for no reason. 18 new tests
   (`KitchenStockReceiptTest`), including the real Meatco figures as a fixture. One
   migration (0123, additive). 678 tests pass (core + accounts).
+- Stale-tab rounding fix + hidden Yield toggle + per-preset chicken costing
+  (2026-07-25, live reports). Two bugs found and fixed, one feature added, all
+  same session. **(1) Stale zero-balance tab stuck in the drawer** — root-caused
+  via a background investigation agent rather than guessed: all six backend
+  "close the tab once nothing is unpaid" paths (`tick_entry`, `settle_tab` →
+  `_finish_settle_tab`, `_settle_tab_from_payment`,
+  `_settle_receipt_entries_from_payment`, `TabTransferRequest.accept()`,
+  `_merge_tab_into`) were already correct and consistent. The actual bug was
+  client-side, identically replicated in all three tabs drawers: the "pay it
+  all" amount box pre-filled with `Math.round(total)`, then
+  `settleTabPartial()`/`qsSettleTabPartial()`/`settleKitchenTab()` compared
+  that rounded value back against the exact (often fractional, from
+  proportional keg pricing or a split remainder) `total` to decide whether
+  staff had edited it. Whenever the cents portion was < .50, rounding DOWN
+  made `editedAmount < total` spuriously true even though nobody touched the
+  field — silently sending a partial-settle request a few shillings short.
+  `BarTab.settle_entries_amount_locked()` correctly never writes off that
+  shortfall (by design) — it splits the boundary entry and leaves a genuine
+  unpaid remainder, so `tab.status` correctly stayed OPEN, but the
+  now-near-zero balance displayed as "KES 0" once the UI's own rounding
+  formatter ran, looking exactly like a fully-paid tab stuck in the drawer.
+  Fixed by tracking "still the untouched pre-fill" via an explicit
+  `dataset.autofilled` flag (set on programmatic pre-fill, cleared by an
+  `oninput` handler) instead of comparing values — applied identically to
+  `bar_board.html` (cash/mpesa AND the inline STK path), `quick_sell.html`,
+  and `kitchen_board.html` (cash/mpesa AND its own modal STK path) per the
+  tabs-drawer-parity rule. No backend changes needed — the server-side
+  behavior was already correct throughout. **(2) Yield/Processing section
+  invisible for kitchen items** — Roy reported never seeing the Yield Item
+  toggle for "Kuku" and never having set it, casting doubt on the earlier
+  9.375-balance diagnosis. Traced `item_form.html`'s
+  `{% if not biz_profile.modules.keg %}` guard around the whole section:
+  `business_profiles.get_profile()` sets `modules['kitchen']` dynamically from
+  `business.has_kitchen` but leaves `modules['keg']` fixed from the static
+  business-type profile — so a bar-type business with a kitchen add-on
+  (`modules.keg=True` AND `modules.kitchen=True` simultaneously) hid this
+  section for EVERY item business-wide, not just keg items, even though the
+  intent was only ever "kegs track waste via KegBarrel/keg_metrics instead,
+  don't confuse owners with a second mechanism for those." Fixed: condition
+  widened to `{% if not biz_profile.modules.keg or kitchen_store_ids_json %}`
+  so the section always renders for a business with any kitchen store, then
+  JS-toggled per the already-established `isKitchenStore()` pattern (same one
+  driving `costPriceSection`/`kegSettingsBlock`) inside `applyKitchenMode()` —
+  hidden only when `YIELD_BIZ_HAS_KEG` is true AND the currently selected
+  store is NOT a kitchen store, leaving non-keg businesses and kitchen-store
+  items on combo businesses fully unaffected either way. This also means the
+  earlier "turn off Yield Item" remedy for the 9.375 report was never
+  reachable through the UI and is now understood to be the wrong diagnosis —
+  most likely explanation, given point (3) below, is ordinary fractional
+  preset consumption under a shared item balance, not yield_factor at all.
+  2 new tests (`ItemFormYieldSectionVisibilityTest`). **(3) Per-cut chicken
+  costing** — Roy's real catalog for chicken is NOT separate items per cut
+  (Wing/Leg/Drumstick as built in the Kitchen Stock Receipt sprint above) —
+  it's ONE item ("Kuku") with presets per cut (Bawa/Paja/Kifua), since pieces
+  arrive pre-cut from a butcher, not as whole birds processed on-site.
+  Presets share one stock balance by design (unchanged) but previously had no
+  cost of their own, so a pooled Stock Receipt against "Kuku" could only ever
+  write one blended `item.cost_price`, hiding that wings/legs/drumsticks cost
+  genuinely different amounts. Confirmed via AskUserQuestion (financial-
+  correctness decision, not guessable) — Roy chose to keep the one-item
+  catalog and add per-preset costing, explicit that cost must be settable
+  ONLY from the Stock Receipt side, never the item form. New
+  `ItemPortionPreset.cost_price` (nullable, migration 0124) — written
+  exclusively by `kitchen_stock_receipt_create()`, never exposed on
+  `item_form.html`. `KitchenStockReceiptLine.preset` (nullable FK, same
+  migration) records which cut a line represents. The "Chagua Bidhaa" picker
+  in the Stock Receipt modal now expands any item WITH presets into one
+  option per preset (`ItemName — PresetLabel`, encoded as `itemId:presetId`)
+  so receiving matches how a real supplier invoice actually itemises pre-cut
+  pieces; a preset-costed line still creates one ordinary Receipt Transaction
+  adding qty to the SAME shared item balance (physical stock genuinely is
+  shared — unchanged) but writes its unit cost to `preset.cost_price` instead
+  of `item.cost_price`, which is left untouched for such items. A line with
+  no `preset_id` (an ordinary item) keeps the original single-cost-price
+  behavior exactly as before — fully backward compatible. Cross-item preset
+  safety: a `preset_id` that doesn't actually belong to the given `item_id`
+  is silently rejected (same defensive pattern as the item-store check).
+  **Known, explicitly-flagged limitation**: `Transaction` has no `preset` FK
+  today, so while per-cut COST is now tracked accurately, per-cut SOLD
+  REVENUE still cannot be reconstructed from sales history — a sale of Bawa
+  vs Paja both just look like an ordinary "Kuku" Issue transaction. True
+  "wings earned X, drumsticks earned Y" analytics would need `Transaction`
+  to record which preset triggered a sale, touched at every PORTION-mode
+  checkout call site app-wide (Quick Sell, kitchen board, bar board) — out of
+  scope for this session, flagged to Roy rather than silently built or
+  silently omitted. 7 new tests (`KitchenStockReceiptPresetCostingTest`). Two
+  migrations (0124; the tabs/yield fixes needed none). 687 tests pass.
