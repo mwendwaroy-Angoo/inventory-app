@@ -2979,6 +2979,25 @@ class TabTransferRequest(models.Model):
                 row.save(update_fields=['status', 'resolved_at'])
                 if row.pk == self.pk:
                     result = row
+
+            # 2026-07-25 live report: after every entry on the source tab moved
+            # away (or was already paid — e.g. Roy's own 400 of a split 600),
+            # the source tab had nothing left to collect but its status stayed
+            # OPEN forever, since nothing ever re-checked it — it lingered in
+            # the tabs drawer indefinitely with a zero balance. Same "is there
+            # anything left unpaid" check _finish_settle_tab() already uses,
+            # and the same VOID-with-explanation closing pattern
+            # _merge_tab_into() already established for an emptied-out tab
+            # shell (this isn't a real cancellation — nothing went wrong).
+            source_tab = BarTab.objects.select_for_update().get(pk=fresh.source_tab_id)
+            if source_tab.status == 'OPEN' and not source_tab.entries.filter(is_paid=False).exists():
+                dest_names = ', '.join(sorted({row.dest_tab.customer_name for row in siblings}))
+                source_tab.status = 'VOID'
+                source_tab.settled_at = timezone.now()
+                source_tab.void_reason = (
+                    f'Bili yote ilihamishiwa kwa {dest_names} — hakuna iliyobaki kulipwa hapa'
+                )[:120]
+                source_tab.save(update_fields=['status', 'settled_at', 'void_reason'])
         self.status = result.status
         self.resolved_at = result.resolved_at
         return result

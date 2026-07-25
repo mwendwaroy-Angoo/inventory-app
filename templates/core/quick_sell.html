@@ -2771,7 +2771,9 @@
                 var html = '';
                 tabs.forEach(function (t) {
                     html += '<div style="background:#222;border:1px solid #333;border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem;">' +
-                        '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at + '</div>';
+                        '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at +
+                        (t.tab_open ? ' <span style="color:#f0a840;font-weight:400;">(bado wazi — bidhaa zingine hazijalipwa)</span>' : '') +
+                        '</div>';
                     t.entries.forEach(function (e) {
                         html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
                             '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + qsFmt(e.amount) + ' (' + e.payment_method + ')</span>' +

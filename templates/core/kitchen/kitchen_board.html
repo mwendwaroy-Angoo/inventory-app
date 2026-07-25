@@ -2327,7 +2327,9 @@
         var html = '';
         tabs.forEach(function (t) {
           html += '<div style="background:#222;border:1px solid #333;border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem;">' +
-            '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at + '</div>';
+            '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at +
+            (t.tab_open ? ' <span style="color:#f0a840;font-weight:400;">(bado wazi — bidhaa zingine hazijalipwa)</span>' : '') +
+            '</div>';
           t.entries.forEach(function (e) {
             html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
               '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ')</span>' +
@@ -3423,6 +3425,14 @@
                 (d.offline_sales_note ? ' — ' + d.offline_sales_note : '') +
                 '</span></div>';
             }
+            var pettyHtml = '';
+            if (parseFloat(d.petty_cash) > 0) {
+              // 2026-07-25 live report — parity with bar_board.html: show HOW
+              // MUCH petty cash was already netted out of "Inayotarajiwa" below.
+              pettyHtml =
+                '<div style="margin-top:.4rem; padding:.4rem .6rem; background:rgba(93,168,240,0.08); border:1px solid rgba(93,168,240,0.25); border-radius:6px;">' +
+                '<span style="color:#5da8f0; font-size:.76rem;">🧾 Petty cash iliyokubaliwa (tayari imepunguzwa hapa chini): <strong>KES ' + Math.round(d.petty_cash) + '</strong></span></div>';
+            }
             resEl.innerHTML =
               '<div style="background:#111; border-radius:8px; padding:.75rem; margin-bottom:.75rem;">' +
               '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
@@ -3431,6 +3441,7 @@
               '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(d.expected_cash) + '</span></div>' +
               '<div class="shift-stat"><span class="s-label">Tofauti</span><span class="s-val ' + vc + '">' + sign + 'KES ' + Math.round(parseFloat(d.variance)) + '</span></div>' +
               '</div>' +
+              pettyHtml +
               offlineHtml +
               (Math.abs(parseFloat(d.variance)) > 50
                 ? '<p style="font-size:.78rem; color:#ff9800; margin:.5rem 0 0;">⚠ Tofauti kubwa — angalia kwa uangalifu.</p>'

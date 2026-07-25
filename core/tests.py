@@ -5802,6 +5802,12 @@ class RevokePaymentAndRemoveEntryTest(TestCase):
         tab.status = 'SETTLED'
         tab.settled_at = timezone.now() - timezone.timedelta(hours=12)
         tab.save(update_fields=['status', 'settled_at'])
+        # 2026-07-25: recent_settled_tabs_api now queries the ENTRY's own paid_at
+        # (not the tab's settled_at) — a more correct "when was this actually
+        # paid" cutoff, since the two can differ for a partially-then-fully
+        # settled tab. Backdate the entry itself to match this test's intent.
+        entry.paid_at = tab.settled_at
+        entry.save(update_fields=['paid_at'])
         self.client.force_login(self.owner)
         resp = self.client.get('/bar/tabs/recent-settled/')
         data = resp.json()
@@ -11255,3 +11261,298 @@ class StartStockTakeIdempotencyTest(TestCase):
         self.assertTrue(r1.json()['ok'])
         self.assertTrue(r2.json()['ok'])
         self.assertEqual(StockTake.objects.filter(business=self.biz).count(), count_before + 2)
+
+
+class StockTakeVarianceDashboardExclusionTest(TestCase):
+    """2026-07-25 live report (Monsoon Inn): accepting a morning stock-take
+    variance was showing up as TODAY's live revenue on the home dashboard
+    before any real sale had happened — the discrepancy predates its
+    discovery, so it must not inflate real-time trading tracking. Locks in
+    the [SVQ] invoice_no tag + its exclusion from every live-revenue surface,
+    while confirming the revenue still counts in weekly/monthly targets."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='SVQ Dashboard Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='svq_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='SVQ Item',
+            material_no='SVQ-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        from core.models import RevenueTarget
+        RevenueTarget.objects.create(
+            business=self.biz, target_type='daily', amount=Decimal('1000'),
+        )
+        self.client.force_login(self.owner)
+
+    def _accept_variance(self, actual_count=15):
+        from core.models import StockTake, StockVarianceQuery
+        stock_take = StockTake.objects.create(business=self.biz, store=self.store, conducted_by=self.owner)
+        svq = StockVarianceQuery.objects.create(
+            stock_take=stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('20'), actual_count=Decimal(str(actual_count)),
+            direction=StockVarianceQuery.DECREASE,
+            estimated_revenue=Decimal('500'),
+        )
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'cash',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        return svq
+
+    def test_corrective_transaction_tagged_svq(self):
+        self._accept_variance()
+        txn = Transaction.objects.get(item=self.item, type='Issue')
+        self.assertEqual(txn.invoice_no, '[SVQ]')
+
+    def test_excluded_from_home_dashboard_bar_revenue(self):
+        self._accept_variance()
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['bar_today_revenue'], 0)
+
+    def test_excluded_from_dashboard_revenue_api_poll(self):
+        self._accept_variance()
+        resp = self.client.get('/dashboard/revenue/')
+        self.assertEqual(resp.json()['bar_revenue'], 0)
+
+    def test_excluded_from_daily_revenue_target_but_not_weekly(self):
+        self._accept_variance()
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['revenue_targets']['daily']['actual'], 0)
+        self.assertEqual(resp.context['revenue_targets']['weekly']['actual'], 500.0)
+
+    def test_excluded_from_shift_reconciliation_cash_sales(self):
+        from core.shift_views import _reconcile
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner,
+            opening_float=Decimal('0'), status='OPEN',
+        )
+        self._accept_variance()
+        rec = _reconcile(shift)
+        self.assertEqual(rec['cash_sales'], 0.0)
+
+    def test_stock_balance_still_corrected_regardless_of_tag(self):
+        # The physical count must still be reflected — only live revenue
+        # tracking is excluded, not the actual stock correction.
+        self._accept_variance(actual_count=15)
+        self.item.refresh_from_db()
+        self.assertEqual(float(self.item.current_balance()), 15.0)
+
+
+class PettyCashVisibleAtCloseShiftTest(TestCase):
+    """2026-07-25 live report (Monsoon Inn): _reconcile() correctly nets
+    approved petty cash out of expected_cash, but the amount itself was
+    never sent to the frontend — staff/owner had no way to verify the final
+    number already accounts for petty cash. Locks in that close_shift() and
+    the live shift-panel endpoints now return it."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Petty Visible Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='pv_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner,
+            opening_float=Decimal('1000'), status='OPEN',
+        )
+        from core.models import PettyCash
+        PettyCash.objects.create(
+            business=self.biz, amount=Decimal('300'), status='approved',
+            recorded_by=self.owner, created_at=self.shift.started_at,
+        )
+        self.client.force_login(self.owner)
+
+    def test_close_shift_response_includes_petty_cash(self):
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/close/', {
+            'closing_cash_counted': '700',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['petty_cash'], 300.0)
+        # expected_cash = 1000 float + 0 cash sales - 300 petty = 700 — variance 0
+        self.assertAlmostEqual(data['variance'], 0.0, places=1)
+
+    def test_active_shift_api_includes_petty_cash(self):
+        resp = self.client.get('/bar/shift/active/')
+        data = resp.json()
+        self.assertEqual(data['shift']['petty_cash'], 300.0)
+
+
+class TransferAcceptClosesEmptySourceTabTest(TestCase):
+    """2026-07-25 live report (Monsoon Inn): after a split-bill or whole-tab
+    transfer was accepted AND paid, the source tab (nothing left to collect)
+    stayed status=OPEN forever with a zero balance, lingering in the tabs
+    drawer indefinitely. accept() now closes it as VOID (matching the
+    existing _merge_tab_into() precedent for an emptied-out tab shell) the
+    moment it has no unpaid entries left — but only then, never while a
+    genuinely unrelated unpaid entry remains."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Transfer Close Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='tc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='tc_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Close Tusker',
+            material_no='TC-01', unit='Pcs', selling_price=Decimal('250'),
+        )
+        self.roy_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source='bar', store=self.store,
+        )
+        self.bosco_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bosco', status='OPEN', source='bar', store=self.store,
+        )
+
+    def _make_entry(self, tab, amount):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='',
+        )
+        return BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Close Tusker', amount=amount, is_paid=False,
+        )
+
+    def test_full_item_transfer_accept_closes_now_empty_source_tab(self):
+        entry = self._make_entry(self.roy_tab, Decimal('250'))
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=self.bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.accept()
+        self.roy_tab.refresh_from_db()
+        self.assertEqual(self.roy_tab.status, 'VOID')
+        self.assertIn('Bosco', self.roy_tab.void_reason)
+
+    def test_partial_split_transfer_accept_closes_source_tab_when_paid_portion_covers_rest(self):
+        # Roy pays 400 of a 600 entry himself (marked paid, stays on his tab);
+        # Bosco covers the remaining 200. Once Bosco accepts, Roy's tab has
+        # nothing left UNPAID — it should close even though it still has one
+        # (already-paid) entry sitting on it.
+        entry = self._make_entry(self.roy_tab, Decimal('600'))
+        _new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('400'),
+            paid_method='cash', dest_tab_id=self.bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.accept()
+        self.roy_tab.refresh_from_db()
+        self.assertEqual(self.roy_tab.status, 'VOID')
+
+    def test_source_tab_stays_open_when_unrelated_unpaid_entry_remains(self):
+        transferred = self._make_entry(self.roy_tab, Decimal('250'))
+        unrelated = self._make_entry(self.roy_tab, Decimal('100'))  # a different item, untouched
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=transferred.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=self.bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.accept()
+        self.roy_tab.refresh_from_db()
+        self.assertEqual(self.roy_tab.status, 'OPEN', 'Must stay open — an unrelated unpaid entry is still there')
+        unrelated.refresh_from_db()
+        self.assertFalse(unrelated.is_paid)
+
+    def test_whole_tab_transfer_accept_closes_source_tab(self):
+        e1 = self._make_entry(self.roy_tab, Decimal('250'))
+        e2 = self._make_entry(self.roy_tab, Decimal('150'))
+        batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=self.roy_tab.id, dest_tab_id=self.bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        requests[0].accept()
+        self.roy_tab.refresh_from_db()
+        self.assertEqual(self.roy_tab.status, 'VOID')
+        self.bosco_tab.refresh_from_db()
+        self.assertEqual(
+            set(self.bosco_tab.entries.values_list('id', flat=True)), {e1.id, e2.id},
+        )
+
+    def test_reject_does_not_close_source_tab(self):
+        entry = self._make_entry(self.roy_tab, Decimal('250'))
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=self.bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.reject()
+        self.roy_tab.refresh_from_db()
+        self.assertEqual(self.roy_tab.status, 'OPEN')
+
+
+class RecentPaymentsSurfacesOpenTabEntryTest(TestCase):
+    """2026-07-25 live report (Monsoon Inn): a single entry mistakenly paid
+    within an otherwise-still-OPEN, multi-item tab was invisible everywhere
+    — renderTabs() hides is_paid=True entries from the tab card by design,
+    and the old recent_settled_tabs_api only looked at status='SETTLED'
+    tabs, which this one never became (other entries are still unpaid).
+    recent_settled_tabs_api now queries paid ENTRIES directly, regardless
+    of the parent tab's status."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Recent Open Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ro_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Recent Item',
+            material_no='RO-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.tab = BarTab.objects.create(
+            business=self.biz, customer_name='Wanjiku', status='OPEN', source='bar', store=self.store,
+        )
+        txn_paid = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        self.paid_entry = BarTabEntry.objects.create(
+            tab=self.tab, transaction=txn_paid, description='Recent Item',
+            amount=Decimal('100'), is_paid=True, payment_method='cash',
+            paid_at=timezone.now(),
+        )
+        txn_unpaid = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='',
+        )
+        self.unpaid_entry = BarTabEntry.objects.create(
+            tab=self.tab, transaction=txn_unpaid, description='Recent Item',
+            amount=Decimal('100'), is_paid=False,
+        )
+        self.client.force_login(self.owner)
+
+    def test_paid_entry_on_still_open_tab_is_surfaced(self):
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        data = resp.json()
+        self.assertEqual(len(data['tabs']), 1)
+        bucket = data['tabs'][0]
+        self.assertEqual(bucket['tab_id'], self.tab.id)
+        self.assertTrue(bucket['tab_open'])
+        entry_ids = {e['id'] for e in bucket['entries']}
+        self.assertEqual(entry_ids, {self.paid_entry.id}, 'Only the PAID entry, not the still-unpaid one')
+
+    def test_fully_settled_tab_shows_tab_open_false(self):
+        self.tab.status = 'SETTLED'
+        self.tab.settled_at = timezone.now()
+        self.tab.save(update_fields=['status', 'settled_at'])
+        self.unpaid_entry.is_paid = True
+        self.unpaid_entry.paid_at = timezone.now()
+        self.unpaid_entry.payment_method = 'cash'
+        self.unpaid_entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        data = resp.json()
+        bucket = data['tabs'][0]
+        self.assertFalse(bucket['tab_open'])
+        self.assertEqual(len(bucket['entries']), 2)
+
+    def test_revoke_still_works_on_the_surfaced_open_tab_entry(self):
+        resp = self.client.post(
+            f'/bar/tabs/{self.tab.id}/entries/{self.paid_entry.id}/revoke-payment/',
+            {'reason': 'Test revoke'},
+        )
+        self.assertTrue(resp.json()['ok'])
+        self.paid_entry.refresh_from_db()
+        self.assertFalse(self.paid_entry.is_paid)

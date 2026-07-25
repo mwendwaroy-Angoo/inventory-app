@@ -309,6 +309,12 @@ def home(request):
 
             # Bar revenue — computed for any user who can see the bar station,
             # independent of the keg module (bar revenue = all non-kitchen Issue txns).
+            # invoice_no='[SVQ]' excludes stock-take variance corrections (2026-07-25
+            # live report, Monsoon Inn) — a morning stock take's accepted variance
+            # was inflating "today's" live revenue before any real sale had happened;
+            # that revenue predates its discovery, it's a correction not a fresh POS
+            # sale, so it must not appear on the real-time trading tile (still counted
+            # everywhere else — analytics/P&L, item history, debt tracker).
             try:
                 if show_bar:
                     _bar_txns = Transaction.objects.filter(
@@ -316,7 +322,7 @@ def home(request):
                         date=timezone.localdate(),
                         payment_method__in=['cash', 'mpesa'],
                         item__store__is_kitchen=False,
-                    ).exclude(payment_method='void').select_related('item')
+                    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
                     context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
             except Exception:
                 context['bar_today_revenue'] = 0
@@ -357,6 +363,7 @@ def home(request):
                 context['active_dj_sessions'] = []
 
             # Kitchen-specific today revenue (separate from bar)
+            # Same [SVQ] exclusion as bar_today_revenue above — see that comment.
             _has_kitchen = getattr(business, 'has_kitchen', False)
             context['has_kitchen'] = _has_kitchen
             try:
@@ -366,7 +373,7 @@ def home(request):
                         date=timezone.localdate(),
                         payment_method__in=['cash', 'mpesa'],
                         item__store__is_kitchen=True,
-                    ).exclude(payment_method='void').select_related('item')
+                    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
                     context['kitchen_today_revenue'] = sum(t.revenue() for t in _kitchen_txns)
                 else:
                     context['kitchen_today_revenue'] = 0
@@ -417,7 +424,7 @@ def home(request):
                 _week_start = _today - timedelta(days=_today.weekday())
                 _month_start = _today.replace(day=1)
 
-                def _period_rev(start, end):
+                def _period_rev(start, end, exclude_svq=False):
                     txns = Transaction.objects.filter(
                         business=business, type='Issue',
                         date__gte=start, date__lte=end,
@@ -427,6 +434,15 @@ def home(request):
                         txns = txns.filter(item__store__is_kitchen=True)
                     elif show_bar and not show_kitchen:
                         txns = txns.filter(item__store__is_kitchen=False)
+                    if exclude_svq:
+                        # Same [SVQ] exclusion as bar_today_revenue — only for the
+                        # DAILY target, matching this app's "live today tracking
+                        # must not be inflated by a stock-take correction" rule
+                        # (2026-07-25 live report). Weekly/monthly targets are
+                        # broader accounting periods, not real-time trading
+                        # tracking, so this revenue correctly still counts there —
+                        # it's real money, just discovered late.
+                        txns = txns.exclude(invoice_no='[SVQ]')
                     return sum(t.revenue() for t in txns)
 
                 def _get_target(ttype):
@@ -461,7 +477,7 @@ def home(request):
                     return {'actual': actual, 'target': target, 'pct': pct, 'color': color}
 
                 context['revenue_targets'] = {
-                    'daily':   _build_target_data(_period_rev(_today, _today),       _get_target('daily')),
+                    'daily':   _build_target_data(_period_rev(_today, _today, exclude_svq=True), _get_target('daily')),
                     'weekly':  _build_target_data(_period_rev(_week_start, _today),  _get_target('weekly')),
                     'monthly': _build_target_data(_period_rev(_month_start, _today), _get_target('monthly')),
                 }
@@ -563,6 +579,13 @@ def dashboard_revenue_api(request):
 
     No @login_required — unauthenticated polls return zeros so the JS poll
     never triggers a login redirect loop (same pattern as notifications_count).
+
+    Same [SVQ] exclusion as home()'s bar_today_revenue/kitchen_today_revenue —
+    this is the live AJAX poll that refreshes those exact tiles every few
+    seconds, so it needed the identical fix (2026-07-25 live report, Monsoon
+    Inn) or the tile would have flashed the correct number on page load then
+    silently drifted back to including stock-take-correction revenue on the
+    next poll.
     """
     if not request.user.is_authenticated:
         return JsonResponse({'bar_revenue': 0, 'kitchen_revenue': 0, 'has_kitchen': False})
@@ -579,7 +602,7 @@ def dashboard_revenue_api(request):
                 date=today,
                 payment_method__in=['cash', 'mpesa'],
                 item__store__is_kitchen=False,
-            ).exclude(payment_method='void').select_related('item')
+            ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
             bar_rev = sum(t.revenue() for t in _bar_txns)
         if show_kitchen and getattr(business, 'has_kitchen', False):
             _kit_txns = Transaction.objects.filter(
@@ -587,7 +610,7 @@ def dashboard_revenue_api(request):
                 date=today,
                 payment_method__in=['cash', 'mpesa'],
                 item__store__is_kitchen=True,
-            ).exclude(payment_method='void').select_related('item')
+            ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
             kitchen_rev = sum(t.revenue() for t in _kit_txns)
         return JsonResponse({
             'bar_revenue': round(bar_rev, 0),

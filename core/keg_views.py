@@ -1359,16 +1359,24 @@ def transferable_tabs_api(request):
 
 @login_required
 def recent_settled_tabs_api(request):
-    """JSON: tabs settled in the last few hours, with ALL their entries
-    (including paid ones) — powers a "🕐 Malipo ya Hivi Karibuni" (Recent
-    Payments) panel so staff/owner can find and undo a mistaken settlement
-    even after the tab has fully closed and dropped out of the ordinary
-    open-tabs drawer entirely (2026-07-25 live request: "confused the tab
-    payment for another customer" — by the time that's noticed, the
-    wrongly-settled tab may already be gone from the normal OPEN-tabs
-    view). Station-scoped like every other tabs endpoint. Voided entries
-    are excluded — they're a different, already-final correction
-    (remove_tab_entry), not a payment to revoke.
+    """JSON: recently-paid entries (last 6 hours), grouped by tab — powers a
+    "🕐 Malipo ya Hivi Karibuni" (Recent Payments) panel so staff/owner can
+    find and undo a mistaken settlement even after it's no longer visible
+    anywhere else (2026-07-25 live request: "confused the tab payment for
+    another customer" — by the time that's noticed, the wrongly-settled tab
+    may already be gone from the normal OPEN-tabs view).
+
+    Queries BarTabEntry directly (was: BarTab.objects.filter(status='SETTLED'))
+    — the tab-level query missed a real gap found in the same live report: a
+    SINGLE entry mistakenly paid on an otherwise-still-OPEN, multi-item tab
+    is invisible everywhere else in the UI (renderTabs() deliberately filters
+    out is_paid=True entries from the normal tab card — see the 2026-07-23
+    tab-drawer visual audit — and the tab itself never reaches status=SETTLED
+    since its other entries are still unpaid), so the old SETTLED-only query
+    could never surface it. Grouping by tab (entry.tab, not entry.tab__status)
+    covers both cases in one query. Station-scoped like every other tabs
+    endpoint. Voided entries are excluded — they're a different, already-final
+    correction (remove_tab_entry), not a payment to revoke.
     """
     up = _get_up(request)
     if not up:
@@ -1376,44 +1384,49 @@ def recent_settled_tabs_api(request):
 
     since = timezone.now() - timezone.timedelta(hours=6)
     allowed = _allowed_tab_sources(up)
-    tabs = (
-        BarTab.objects.filter(
-            business=up.business, status='SETTLED', settled_at__gte=since,
-            source__in=allowed,
+    paid_entries = (
+        BarTabEntry.objects.filter(
+            tab__business=up.business, is_paid=True, paid_at__gte=since,
+            tab__source__in=allowed,
         )
-        .prefetch_related(
-            Prefetch('entries', queryset=BarTabEntry.objects.select_related('transaction__item__store').order_by('id'))
-        )
-        .order_by('-settled_at')[:20]
+        .exclude(payment_method='void')
+        .select_related('transaction__item__store', 'tab')
+        .order_by('-paid_at')[:100]
     )
 
-    result = []
-    for tab in tabs:
-        entries = []
-        for e in tab.entries.all():
-            if e.payment_method == 'void':
-                continue
-            try:
-                is_kitchen = bool(e.transaction.item.store.is_kitchen)
-            except Exception:
-                is_kitchen = False
-            if ('kitchen' if is_kitchen else 'bar') not in allowed:
-                continue
-            entries.append({
-                'id': e.id,
-                'description': e.description,
-                'amount': float(e.amount),
-                'payment_method': e.payment_method,
-                'is_kitchen': is_kitchen,
-            })
-        if not entries:
+    tabs_map = {}
+    for e in paid_entries:
+        try:
+            is_kitchen = bool(e.transaction.item.store.is_kitchen)
+        except Exception:
+            is_kitchen = False
+        if ('kitchen' if is_kitchen else 'bar') not in allowed:
             continue
-        result.append({
-            'tab_id': tab.id,
-            'customer_name': tab.customer_name,
-            'settled_at': timezone.localtime(tab.settled_at).strftime('%H:%M') if tab.settled_at else '',
-            'entries': entries,
+        tab = e.tab
+        bucket = tabs_map.get(tab.id)
+        if bucket is None:
+            bucket = {
+                'tab_id': tab.id,
+                'customer_name': tab.customer_name,
+                'tab_open': tab.status == 'OPEN',
+                'entries': [],
+                '_latest': e.paid_at,
+            }
+            tabs_map[tab.id] = bucket
+        bucket['entries'].append({
+            'id': e.id,
+            'description': e.description,
+            'amount': float(e.amount),
+            'payment_method': e.payment_method,
+            'is_kitchen': is_kitchen,
         })
+        if e.paid_at and (bucket['_latest'] is None or e.paid_at > bucket['_latest']):
+            bucket['_latest'] = e.paid_at
+
+    result = sorted(tabs_map.values(), key=lambda b: b['_latest'], reverse=True)[:20]
+    for b in result:
+        b['settled_at'] = timezone.localtime(b['_latest']).strftime('%H:%M') if b['_latest'] else ''
+        del b['_latest']
     return JsonResponse({'tabs': result})
 
 

@@ -111,12 +111,17 @@ def attribute_variance_shift(business, current_shift, item=None, keg_barrel=None
 def _reconcile(shift):
     """Return a dict of sales totals and cash reconciliation for a shift."""
     end = shift.ended_at or timezone.now()
+    # invoice_no='[SVQ]' excludes stock-take variance corrections (2026-07-25 live
+    # report, Monsoon Inn) — if a stock take is accepted while a shift happens to be
+    # open, its corrective "cash sale" transaction would otherwise inflate this
+    # shift's expected_cash for money the staffer never actually collected during
+    # their shift, making an accurate physical count look like a false shortage.
     txns = Transaction.objects.filter(
         business=shift.business,
         type='Issue',
         created_at__gte=shift.started_at,
         created_at__lte=end,
-    )
+    ).exclude(invoice_no='[SVQ]')
     # Scope to the correct counter so concurrent bar + kitchen shifts don't bleed.
     # Kitchen staff  → kitchen store only (is_kitchen=True).
     # Bar/general staff → non-kitchen stores (is_kitchen=False).
@@ -527,6 +532,7 @@ def active_shift_api(request):
                         'credit_sales':  proxy_rec['credit_sales'],
                         'total_sales':   proxy_rec['total_sales'],
                         'expected_cash': proxy_rec['expected_cash'],
+                        'petty_cash':    proxy_rec['petty_cash'],
                         'variance':      proxy_rec['variance'],
                         'elapsed':       proxy_rec['elapsed'],
                         'is_mine':       False,
@@ -577,6 +583,7 @@ def active_shift_api(request):
             'credit_sales':   rec['credit_sales'],
             'total_sales':    rec['total_sales'],
             'expected_cash':  rec['expected_cash'],
+            'petty_cash':     rec['petty_cash'],
             'variance':       rec['variance'],
             'elapsed':        rec['elapsed'],
             'is_mine':        True,
@@ -841,6 +848,13 @@ def close_shift(request, shift_id):
         'total_sales':          rec['total_sales'],
         'cash_sales':           rec['cash_sales'],
         'mpesa_sales':          rec['mpesa_sales'],
+        # 2026-07-25 live report (Monsoon Inn): _reconcile() has correctly netted
+        # approved petty cash out of expected_cash since the previous session's
+        # fix, but the amount itself was never sent to the frontend — staff saw
+        # only the final number with no way to see it already accounts for petty
+        # cash, undermining trust that "cash sales make sense exactly." Now shown
+        # alongside the offline-sales note in the close-shift result panel.
+        'petty_cash':           rec['petty_cash'],
         'offline_sales_amount': float(offline_amt),
         'offline_sales_note':   offline_note,
         'weight_readings':      weight_readings,

@@ -514,6 +514,21 @@ def review_variance(request, var_id):
                         recipient=_customer,
                         recorded_by=request.user,
                         date=svq.stock_take.taken_at.date(),
+                        # 2026-07-25 live report (Monsoon Inn): accepting a morning
+                        # stock-take variance was showing up as TODAY's live revenue
+                        # on the home dashboard before any real sale had happened —
+                        # the discrepancy predates its discovery (it's a correction,
+                        # not a fresh POS sale), so it must never inflate the
+                        # real-time "today so far" tracking a business owner uses to
+                        # follow the day's actual trading. Tagged and excluded from
+                        # bar_today_revenue/kitchen_today_revenue (core/views.py) and
+                        # _reconcile()'s shift cash/mpesa totals (core/shift_views.py)
+                        # — the revenue still counts everywhere else (item history,
+                        # analytics/P&L, debt tracker if credit) since it's real money,
+                        # just discovered late; same [ADJ]-tag convention already used
+                        # by adjust_stock_balance for the same "correction, not a
+                        # normal transaction" purpose.
+                        invoice_no='[SVQ]',
                     )
             elif (svq.direction == StockVarianceQuery.INCREASE and svq.item):
                 corrective_txn = Transaction.objects.create(

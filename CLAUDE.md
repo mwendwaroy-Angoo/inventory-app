@@ -2444,3 +2444,71 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `revoke_entry_payment`/`remove_tab_entry` (already guarded, prior session),
   `add_shift_variance_note`/`review_shift_variance` (no duplicate-creation risk —
   single-field overwrites, not append-only) — checked out already correct.
+- Live report fixes, Monsoon Inn (2026-07-25): five distinct issues from a single
+  morning's real usage. **(1) Stock-take-accept revenue was inflating "today's" live
+  dashboard before any real sale.** Root cause: `review_variance()`'s accept action
+  creates a corrective `Issue` Transaction dated `svq.stock_take.taken_at.date()` —
+  correct for record-keeping (the discrepancy WAS discovered today), but that same
+  `date=today` + `payment_method='cash'/'mpesa'` meant it flowed straight into every
+  "today so far" live-tracking surface: `home()`'s `bar_today_revenue`/
+  `kitchen_today_revenue`, the `dashboard_revenue_api` AJAX poll that refreshes those
+  same tiles every few seconds, the daily revenue-target progress bar, AND (if a
+  shift happened to be open at accept time) `_reconcile()`'s shift cash/mpesa totals
+  — the last one meaning a stock-take acceptance mid-shift could make an accurate
+  physical cash count look like a false shortage. Fixed by tagging the corrective
+  Issue transaction `invoice_no='[SVQ]'` (same convention `adjust_stock_balance`
+  already uses for `[ADJ]`) and excluding it from all four live-tracking queries —
+  deliberately NOT excluded from weekly/monthly revenue targets, item transaction
+  history, analytics/P&L, or the debt tracker (if the explanation was credit), since
+  it's real revenue, just discovered late, and Roy was explicit it must stay
+  "accounted for in the system" somewhere. Stock balance correction is unaffected —
+  `current_balance()` still reflects the corrective transaction's qty exactly as
+  before; only which LIVE revenue tiles it counts toward changed. **(2) Petty cash
+  transparency at shift close.** The previous session's fix already correctly nets
+  approved petty cash out of `_reconcile()`'s `expected_cash`/`variance` — verified
+  the math is sound — but `close_shift()`'s JSON response never actually sent the
+  petty-cash amount to the frontend, so staff/owner saw only the final number with
+  no way to verify it already accounts for petty cash. Added `petty_cash` to
+  `close_shift()`, `active_shift_api()`'s own-shift AND owner-proxy-shift branches,
+  and a new amber info box in both `bar_board.html`/`kitchen_board.html`'s
+  close-shift result panel showing "Petty cash iliyokubaliwa (tayari imepunguzwa
+  hapa chini): KES X" right above the existing offline-sales note. **(3) A tab
+  didn't disappear from the drawer after its transfer was accepted and paid.**
+  `TabTransferRequest.accept()` moves an entry's `tab_id` to the destination but
+  never checked whether the SOURCE tab had anything left — a customer whose entire
+  tab (or whose last unpaid entry) got transferred away kept `status='OPEN'`
+  forever with a zero balance, lingering in the tabs drawer indefinitely. Fixed by
+  checking `not source_tab.entries.filter(is_paid=False).exists()` after the move
+  (same check `_finish_settle_tab()` already uses) and closing it `status='VOID'`
+  with an explanatory `void_reason` — the exact precedent `_merge_tab_into()`
+  already established for an emptied-out tab shell ("not a real cancellation,
+  nothing went wrong"). Correctly handles the partial-split case too (Roy pays 400
+  of 600 himself — marked paid, stays on his tab — Bosco covers the other 200 —
+  once accepted, Roy's tab has nothing UNPAID left even though it still holds one
+  already-paid entry, and now correctly closes) and correctly stays OPEN when an
+  unrelated unpaid entry remains untouched by the transfer. `reject()` needs no
+  equivalent — nothing ever left the source tab in that path. **(4) No discoverable
+  way to revoke a single mistakenly-paid entry on an otherwise-still-open,
+  multi-item tab.** Traced two compounding facts: `renderTabs()` deliberately hides
+  `is_paid=True` entries from a tab's own card (2026-07-23 tab-drawer visual audit),
+  and the prior session's `recent_settled_tabs_api` only queried
+  `BarTab.objects.filter(status='SETTLED', ...)` — a tab with one paid entry and
+  other still-unpaid entries never reaches SETTLED, so it could never appear there
+  either. Net effect: that one entry was invisible everywhere, with no revoke path
+  at all. Rewrote the endpoint to query `BarTabEntry.objects.filter(is_paid=True,
+  paid_at__gte=cutoff, ...)` directly instead of tabs, grouping by `entry.tab` —
+  this covers BOTH the settled-whole-tab case (unchanged) and the new still-open
+  case in one query, with a `tab_open` flag so the panel can show "(bado wazi —
+  bidhaa zingine hazijalipwa)" for the latter. Same fix applied to all three tabs
+  drawers per the tabs-drawer-parity rule; `revokeEntryPayment` itself needed no
+  changes (already worked per-entry regardless of tab status). **(5) "Stock
+  balances should only update after a real cash/mpesa/tab sale"** — audited and
+  confirmed already correctly true everywhere (Quick Sell, keg pours, kitchen,
+  tab-add, and both transfer paths — `split_paid_unpaid_locked()`'s remainder
+  Transaction is deliberately `qty=0`, and the zero-paid-amount full-item-transfer
+  path creates no Transaction at all); the ONE place revenue timing needed
+  correcting was the live-dashboard leak fixed in (1) above, not stock balance
+  itself. 16 new tests across four test classes
+  (`StockTakeVarianceDashboardExclusionTest`, `PettyCashVisibleAtCloseShiftTest`,
+  `TransferAcceptClosesEmptySourceTabTest`, `RecentPaymentsSurfacesOpenTabEntryTest`).
+  No migrations.
