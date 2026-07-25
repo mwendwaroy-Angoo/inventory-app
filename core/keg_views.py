@@ -777,7 +777,8 @@ def tap_barrel(request, barrel_id):
                         f"pungufu wakati wa kufungua — takriban {missing_l} L "
                         f"imeisha kabla ya mauzo kurekodiwa. Angalia haraka!"
                     )
-                    _fire_owner_alert_msg(up.business, barrel.item.description, msg)
+                    _fire_owner_alert_msg(up.business, barrel.item.description, msg,
+                                          link_url=f'/bar/reconciliation/{barrel.id}/')
             except (ValueError, TypeError):
                 pass
 
@@ -786,7 +787,7 @@ def tap_barrel(request, barrel_id):
 
 # ── Alert helpers ─────────────────────────────────────────────────────────────
 
-def _fire_owner_alert_msg(business, title, msg):
+def _fire_owner_alert_msg(business, title, msg, link_url=''):
     """Send in-app Notification + SMS (rate-limited) to all owners."""
     from accounts.models import UserProfile
     from .models import Notification
@@ -800,7 +801,8 @@ def _fire_owner_alert_msg(business, title, msg):
     owners = UserProfile.objects.filter(business=business, role='owner').select_related('user')
     for op in owners:
         Notification.objects.create(
-            user=op.user, title=title, message=msg, notification_type='warning'
+            user=op.user, title=title, message=msg, notification_type='warning',
+            link_url=link_url,
         )
         if can_sms and op.phone:
             normalized = normalize_ke_phone(op.phone)
@@ -813,8 +815,9 @@ def _fire_owner_alert_msg(business, title, msg):
 
 # ── Weigh / spot-check ────────────────────────────────────────────────────────
 
-def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pct):
-    """Notify all owners of a dangerous keg variance (in-app + SMS, respects bundling window)."""
+def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pct, barrel_id=None):
+    """Notify all owners/managers of a dangerous keg variance (in-app + SMS, respects
+    bundling window)."""
     from accounts.models import UserProfile
     from .models import Notification
     from .notifications import normalize_ke_phone, send_sms_notification
@@ -828,9 +831,13 @@ def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pc
         not business.last_txn_sms_at or
         (now - business.last_txn_sms_at).total_seconds() > 600
     )
-    owners = UserProfile.objects.filter(business=business, role='owner').select_related('user')
+    link_url = f'/bar/reconciliation/{barrel_id}/' if barrel_id else ''
+    owners = UserProfile.objects.filter(
+        business=business, role__in=['owner', 'manager']
+    ).select_related('user')
     for op in owners:
-        Notification.objects.create(user=op.user, title='Keg Variance Alert', message=msg, notification_type='warning')
+        Notification.objects.create(user=op.user, title='Keg Variance Alert', message=msg,
+                                    notification_type='warning', link_url=link_url)
         if can_sms and op.phone:
             normalized = normalize_ke_phone(op.phone)
             if normalized:
@@ -908,12 +915,54 @@ def weigh_barrel(request, barrel_id):
     if (flag == 'danger'
             and barrel.business.keg_alerts_enabled
             and dispensed_l >= float(barrel.business.keg_alert_min_litres)):
-        staff_name = request.user.get_full_name() or request.user.username
+        # Fairness check (2026-07-25): the SPOT variance above is measured against
+        # the barrel's WHOLE lifetime since tap, not just this shift's own window —
+        # so a staffer who opened shift minutes ago and hasn't sold a drop yet would
+        # otherwise get blamed for loss that happened on someone else's watch. Same
+        # test as the stock-take attribution: has THIS shift actually sold anything
+        # from THIS barrel yet? If not, redirect the alert to whoever was last
+        # responsible instead of naming the person who merely pressed "weigh".
+        from .shift_views import attribute_variance_shift
+        attributed_shift = attribute_variance_shift(barrel.business, linked_shift, keg_barrel=barrel)
+        redirected = bool(linked_shift and attributed_shift and attributed_shift.id != linked_shift.id)
+
+        if redirected:
+            staff_name = (attributed_shift.staff.get_full_name()
+                          or attributed_shift.staff.username) if attributed_shift.staff else 'haijulikani'
+            when = timezone.localtime(attributed_shift.started_at).strftime('%d %b, %H:%M')
+            staff_name = f"{staff_name} (zamu ya {when} — KABLA ya zamu ya sasa)"
+        elif linked_shift is None and attributed_shift is None:
+            staff_name = 'haijulikani — hakuna zamu iliyorekodiwa'
+        else:
+            staff_name = request.user.get_full_name() or request.user.username
         try:
             _fire_keg_alert(barrel.business, barrel.item.description, staff_name,
-                            variance_kes, variance_pct)
+                            variance_kes, variance_pct, barrel_id=barrel.id)
         except Exception:
             pass
+
+        # Clear the current weigher by name when the loss predates their shift —
+        # mirrors the stock-take 'not on you' notice so both people hear from the
+        # app, not just the one being asked about it. Only meaningful when the
+        # person who did the weigh-in IS the current shift's own staffer (an
+        # owner/manager spot-checking someone else's barrel has no "their shift"
+        # to be cleared on).
+        if redirected and linked_shift and linked_shift.staff_id == request.user.id:
+            try:
+                from .models import Notification as _Notif2
+                _Notif2.objects.create(
+                    user=request.user,
+                    title='ℹ️ Tofauti ya Keg — Si Zamu Yako',
+                    message=(
+                        f"{barrel.item.description}: tofauti iliyopatikana ulipopima sasa hivi "
+                        f"ilikuwepo KABLA ya zamu yako kuanza — haijahusishwa na wewe. "
+                        f"Hakuna hatua inayohitajika kwako."
+                    ),
+                    notification_type='info',
+                    link_url=f'/bar/reconciliation/{barrel.id}/',
+                )
+            except Exception:
+                pass
 
     return JsonResponse({
         'ok': True,
@@ -1580,10 +1629,13 @@ def _notify_tab_correction(tab, title, message, actor):
     for _up in _UP.objects.filter(business=tab.business, role__in=['owner', 'manager']):
         notify_targets[_up.user_id] = _up
 
+    _board_by_source = {'bar': '/bar/', 'kitchen': '/kitchen/', 'qs': '/quick-sell/'}
+    _tab_link = _board_by_source.get(tab.source or 'bar', '/bar/')
     for _up in notify_targets.values():
         if _up.user_id == actor.id:
             continue  # no self-notification
-        _Notif.objects.create(user=_up.user, title=title, message=message, notification_type='warning')
+        _Notif.objects.create(user=_up.user, title=title, message=message,
+                              notification_type='warning', link_url=_tab_link)
         _phone = (_up.phone or '').strip()
         if _phone:
             _n = normalize_ke_phone(_phone)
@@ -2549,6 +2601,7 @@ def add_cups(request):
                     title='Vikombe vimekwisha',
                     message=_cup_msg,
                     notification_type='warning',
+                    link_url='/bar/',
                 )
                 if op.phone:
                     try:
@@ -3077,6 +3130,7 @@ def record_breakage(request):
             title='🧯 Uharibifu Umerekodiwa',
             message=message,
             notification_type='warning',
+            link_url='/bar/',
         )
         if om.phone:
             normalized = normalize_ke_phone(om.phone)
@@ -3189,21 +3243,10 @@ def bar_z_report(request):
             continue
 
         rec = _reconcile(shift)
-
-        # Petty cash approved on this date attributed to this shift window
-        shift_end = shift.ended_at or timezone.now()
-        petty_qs = PettyCash.objects.filter(
-            business=business,
-            status='approved',
-            created_at__gte=shift.started_at,
-            created_at__lte=shift_end,
-        )
-        petty_total = float(petty_qs.aggregate(t=Sum('amount'))['t'] or 0)
-
-        # Adjusted expected cash includes petty cash out
-        adj_expected = round(rec['expected_cash'] - petty_total, 2)
-        adj_variance = (round(float(shift.closing_cash_counted) - adj_expected, 2)
-                        if shift.closing_cash_counted is not None else None)
+        # _reconcile() already nets approved petty cash out of expected_cash/variance
+        # (folded in 2026-07-25 so close_shift()'s own alert and this report never
+        # disagree) — no separate petty-cash pass needed here anymore.
+        petty_total = rec['petty_cash']
 
         shift_rows.append({
             'shift':          shift,
@@ -3214,9 +3257,9 @@ def bar_z_report(request):
             'opening_float':  float(shift.opening_float),
             'offline_adj':    rec['offline_adj'],
             'petty_cash':     petty_total,
-            'expected_cash':  adj_expected,
+            'expected_cash':  rec['expected_cash'],
             'closing_counted': float(shift.closing_cash_counted) if shift.closing_cash_counted is not None else None,
-            'variance':       adj_variance,
+            'variance':       rec['variance'],
             'elapsed':        rec['elapsed'],
             'status':         shift.status,
         })
@@ -3226,7 +3269,7 @@ def bar_z_report(request):
         day_credit       += rec['credit_sales']
         day_total        += rec['total_sales']
         day_opening_float += float(shift.opening_float)
-        day_expected_cash += adj_expected
+        day_expected_cash += rec['expected_cash']
         day_petty_cash   += petty_total
         counted_shifts   += 1
 

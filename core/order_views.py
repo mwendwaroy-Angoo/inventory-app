@@ -254,6 +254,7 @@ def _notify_order_cancelled(order, cancelled_by, reason, was_mid_prep):
     for user in targets.values():
         Notification.objects.create(
             user=user, title='✕ Agizo Limefutwa', message=msg, notification_type='warning',
+            link_url='/bar/orders/',
         )
 
 

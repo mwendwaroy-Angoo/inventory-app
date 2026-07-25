@@ -561,10 +561,11 @@ def _fire_cash_payment_request(business, tab_ids, customer_name, amount, sources
     for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
         notify_targets[up.user_id] = up
 
+    _cash_link = '/kitchen/' if (sources == {'kitchen'}) else '/bar/'
     for up in notify_targets.values():
         _Notif.objects.create(
             user=up.user, title='💵 Mteja anataka kulipa Cash',
-            message=msg, notification_type='warning',
+            message=msg, notification_type='warning', link_url=_cash_link,
         )
         phone = (up.phone or '').strip()
         if phone:
@@ -630,8 +631,11 @@ def _notify_tab_transfer_resolved(transfer):
     for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
         notify_targets[up.user_id] = up
 
+    _board_by_source = {'bar': '/bar/', 'kitchen': '/kitchen/', 'qs': '/quick-sell/'}
+    _transfer_link = _board_by_source.get(transfer.source_tab.source or 'bar', '/bar/')
     for up in notify_targets.values():
-        _Notif.objects.create(user=up.user, title=title, message=msg, notification_type='info')
+        _Notif.objects.create(user=up.user, title=title, message=msg, notification_type='info',
+                              link_url=_transfer_link)
         phone = (up.phone or '').strip()
         if phone:
             phone_n = normalize_ke_phone(phone)

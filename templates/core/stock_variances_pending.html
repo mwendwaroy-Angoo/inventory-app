@@ -113,6 +113,11 @@
                 <div style="color:var(--pearl);">
                     {% if v.queried_staff %}{{ v.queried_staff.user.get_full_name|default:v.queried_staff.user.username }}{% else %}&mdash;{% endif %}
                 </div>
+                {% if v.attributed_shift and v.stock_take.shift_id and v.attributed_shift_id != v.stock_take.shift_id %}
+                <div style="font-size:0.7rem; color:#fbbf24; margin-top:0.15rem;">
+                    ⏱️ zamu ya {{ v.attributed_shift.started_at|date:"d M, H:i" }} (si ya sasa)
+                </div>
+                {% endif %}
             </div>
             {% if v.estimated_revenue %}
             <div class="col-sm-4">

@@ -12,7 +12,19 @@
         padding: 1rem 1.5rem;
         margin-bottom: 0.8rem;
         border-left: 4px solid #333;
-        transition: border-color 0.2s;
+        transition: border-color 0.2s, background 0.15s;
+        display: block;
+        text-decoration: none;
+    }
+    a.notif-card:hover {
+        border-color: var(--gold);
+        background: rgba(201,168,76,0.05);
+        cursor: pointer;
+    }
+    .notif-goto {
+        font-size: 0.75rem;
+        color: var(--gold);
+        margin-top: 0.4rem;
     }
 
     .notif-card.transaction { border-left-color: var(--gold); }
@@ -54,11 +66,20 @@
 
 {% if notifications %}
     {% for notif in notifications %}
+    {% if notif.link_url %}
+    <a href="{{ notif.link_url }}" class="notif-card {{ notif.notification_type }}">
+        <div class="notif-title">{{ notif.title }}</div>
+        <div class="notif-message">{{ notif.message }}</div>
+        <div class="notif-time">{{ notif.created_at|timesince }} {% trans 'ago' %}</div>
+        <div class="notif-goto">{% trans 'Angalia →' %}</div>
+    </a>
+    {% else %}
     <div class="notif-card {{ notif.notification_type }}">
         <div class="notif-title">{{ notif.title }}</div>
         <div class="notif-message">{{ notif.message }}</div>
         <div class="notif-time">{{ notif.created_at|timesince }} {% trans 'ago' %}</div>
     </div>
+    {% endif %}
     {% endfor %}
 {% else %}
 <div class="text-center py-5" style="color:var(--muted)">

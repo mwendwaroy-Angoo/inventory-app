@@ -78,6 +78,7 @@ def request_restock(request):
                 title=notif_title,
                 message=sms_msg,
                 notification_type='warning',
+                link_url='/stock/restock/',
             )
         except Exception as exc:
             logger.error('Restock in-app notification failed: %s', exc)

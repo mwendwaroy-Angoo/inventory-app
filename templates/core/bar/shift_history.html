@@ -132,6 +132,38 @@
           <div class="value">{{ r.elapsed }}</div>
         </div>
       </div>
+      {% if s.closing_cash_counted is not None and r.variance and r.variance|floatformat:0 != "0" %}
+      <div style="margin-top:.6rem; padding:.5rem .65rem; background:rgba(201,168,76,0.06);
+                  border:1px solid rgba(201,168,76,0.2); border-radius:6px;">
+        {% if s.variance_note %}
+        <div style="font-size:.8rem; color:var(--pearl);">
+          💬 <strong>{{ s.staff.get_full_name|default:s.staff.username }}:</strong> "{{ s.variance_note }}"
+          {% if s.variance_mpesa_ref %}<span style="color:#888;"> — M-Pesa ref: {{ s.variance_mpesa_ref }}</span>{% endif %}
+        </div>
+        {% else %}
+        <div style="font-size:.78rem; color:#888;">Hakuna maelezo kutoka kwa mfanyakazi.</div>
+        {% endif %}
+        {% if s.variance_review_status == 'acknowledged' %}
+        <div style="font-size:.78rem; color:#5dde7a; margin-top:.35rem;">
+          ✓ Imethibitishwa na {{ s.variance_reviewed_by.get_full_name|default:s.variance_reviewed_by.username }}
+          — {{ s.variance_reviewed_at|date:"d M, H:i" }}
+          {% if s.variance_review_note %}"{{ s.variance_review_note }}"{% endif %}
+        </div>
+        {% elif s.variance_review_status == 'flagged' %}
+        <div style="font-size:.78rem; color:#c0395a; margin-top:.35rem;">
+          🔍 Imewekwa alama na {{ s.variance_reviewed_by.get_full_name|default:s.variance_reviewed_by.username }}
+          — {{ s.variance_reviewed_at|date:"d M, H:i" }}
+          {% if s.variance_review_note %}"{{ s.variance_review_note }}"{% endif %}
+        </div>
+        {% endif %}
+        {% if is_owner %}
+        <div style="margin-top:.5rem; display:flex; gap:.4rem; flex-wrap:wrap;">
+          <button class="confirm-btn" style="font-size:.75rem;" onclick="reviewVariance({{ s.id }}, 'acknowledged', this)">✓ Thibitisha</button>
+          <button class="confirm-btn" style="font-size:.75rem; border-color:#c0395a; color:#c0395a;" onclick="reviewVariance({{ s.id }}, 'flagged', this)">🔍 Weka Alama</button>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
       {% if s.offline_sales_amount %}
       <div style="margin-top:.5rem; padding:.3rem .65rem; background:rgba(255,152,0,0.08);
                   border:1px solid rgba(255,152,0,0.25); border-radius:6px; display:inline-block;">
@@ -183,6 +215,28 @@ function doConfirm(shiftId, btn) {
     }
   })
   .catch(() => { alert('Network error'); btn.disabled = false; });
+}
+
+function reviewVariance(shiftId, status, btn) {
+  var note = window.prompt(
+    status === 'acknowledged'
+      ? 'Maelezo (hiari) — mfano: "Nilimwambia atume M-Pesa"'
+      : 'Maelezo (hiari) — mfano: "Nahitaji kuongea naye ana kwa ana"'
+  );
+  if (note === null) return;  // cancelled — never forces a note
+  btn.disabled = true;
+  var body = new URLSearchParams({ status: status, review_note: note, csrfmiddlewaretoken: '{{ csrf_token }}' });
+  fetch('/bar/shift/' + shiftId + '/variance-review/', { method: 'POST', body: body })
+    .then(r => r.json())
+    .then(d => {
+      btn.disabled = false;
+      if (d.ok) {
+        location.reload();
+      } else {
+        alert(d.error || 'Imeshindikana');
+      }
+    })
+    .catch(() => { alert('Network error'); btn.disabled = false; });
 }
 </script>
 {% endblock %}

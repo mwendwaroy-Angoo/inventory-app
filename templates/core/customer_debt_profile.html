@@ -512,12 +512,17 @@
                 <div class="col-md-4">
                     <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:0.3rem;">
                         {% trans 'Credit Limit (KES)' %}
-                        <span style="color:#888; font-size:0.75rem;"> ({% trans 'optional' %})</span>
+                        <span style="color:#888; font-size:0.75rem;"> ({% trans 'optional — overrides the business default' %})</span>
                     </label>
                     <input type="number" name="credit_limit"
                            class="form-control" min="0" step="100"
                            value="{{ customer.credit_limit|default:'' }}"
-                           placeholder="{% trans 'No limit' %}">
+                           placeholder="{% if business.default_credit_limit %}{% blocktrans with lim=business.default_credit_limit|floatformat:0 %}Default: KES {{ lim }}{% endblocktrans %}{% else %}{% trans 'No limit' %}{% endif %}">
+                    {% if business.default_credit_limit and not customer.credit_limit %}
+                    <div style="font-size:0.72rem; color:#888; margin-top:0.25rem;">
+                        {% blocktrans with lim=business.default_credit_limit|floatformat:0 %}Using business-wide default of KES {{ lim }} — set a number above to give this customer their own limit instead.{% endblocktrans %}
+                    </div>
+                    {% endif %}
                 </div>
                 <div class="col-md-4 d-flex align-items-end">
                     <button type="submit" class="btn btn-gold w-100">

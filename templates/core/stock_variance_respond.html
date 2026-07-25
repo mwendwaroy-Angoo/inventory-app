@@ -101,6 +101,11 @@
         💡 {{ preset_hint }}
     </div>
     {% endif %}
+    {% if svq.attributed_shift and svq.stock_take.shift and svq.attributed_shift_id != svq.stock_take.shift_id %}
+    <div style="margin-top:0.6rem; font-size:0.78rem; color:#fbbf24; background:rgba(251,191,36,0.06); padding:0.5rem 0.7rem; border-radius:6px; border:1px solid rgba(251,191,36,0.25);">
+        ⏱️ {% blocktrans with when=svq.attributed_shift.started_at|date:"d M, H:i" %}Tofauti hii ilitokea KABLA ya zamu ya sasa kuanza — kwa hiyo unaulizwa kuhusu zamu yako iliyoanza {{ when }}, si zamu inayoendelea sasa.{% endblocktrans %}
+    </div>
+    {% endif %}
 </div>
 
 {% if error %}

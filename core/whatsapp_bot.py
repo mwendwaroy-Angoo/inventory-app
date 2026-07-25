@@ -489,6 +489,7 @@ def _finalize_order(phone, session):
                 f"{session.get('customer_name', 'Customer')} ordered "
                 f"{len(order_items)} item(s) worth KES {order.total_amount:,.0f}",
                 notification_type='transaction',
+                link_url='/orders/',
             )
     except Exception as e:
         logger.error(f"WhatsApp order notification error: {e}")

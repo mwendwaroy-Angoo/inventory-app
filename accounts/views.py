@@ -1,3 +1,4 @@
+from decimal import Decimal, InvalidOperation
 from django.shortcuts import render, redirect
 from django.contrib.auth.models import User
 from django.contrib.auth import login, logout as auth_logout
@@ -989,9 +990,12 @@ def payment_settings(request):
             # Save credit policy fields directly — avoids overwriting M-Pesa fields
             # when the credit policy form is submitted (boolean checkboxes not sent = False)
             try:
+                default_limit_raw = (request.POST.get('default_credit_limit') or '').strip()
+                default_limit = Decimal(default_limit_raw) if default_limit_raw else None
                 Business.objects.filter(pk=business.pk).update(
                     credit_policy_enabled=request.POST.get('credit_policy_enabled') == '1',
                     credit_window_days=max(1, int(request.POST.get('credit_window_days') or 30)),
+                    default_credit_limit=default_limit,
                     debt_cycle=request.POST.get('debt_cycle', 'rolling'),
                     debt_cutoff_days_before_month_end=max(0, int(request.POST.get('debt_cutoff_days_before_month_end') or 5)),
                     block_if_overdue=request.POST.get('block_if_overdue') == '1',
@@ -1002,7 +1006,7 @@ def payment_settings(request):
                     cooldown_days=max(0, int(request.POST.get('cooldown_days') or 14)),
                 )
                 messages.success(request, _("Sera ya Deni imehifadhiwa."))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, InvalidOperation):
                 messages.error(request, _("Tafadhali ingiza nambari sahihi kwa mipangilio ya deni."))
             return redirect('payment_settings')
 

@@ -504,6 +504,7 @@ def award_bid(request, bid_id):
                     f"Draft PO-{po.id} created",
                     f"A draft purchase order for {bid.supplier.name} was created from procurement award.",
                     notification_type="order",
+                    link_url=f'/purchase-orders/{po.id}/',
                 )
 
                 # Notify supplier owner (if present) via in-app and email
@@ -514,6 +515,7 @@ def award_bid(request, bid_id):
                         f"Procurement Award — {profile.business.name}",
                         f"You were awarded procurement '{bid.procurement.title}'. A draft PO ({po.id}) has been created.",
                         notification_type="order",
+                        link_url=f'/procurement/{bid.procurement_id}/',
                     )
 
                     # Render and send supplier award email (plain + HTML)
@@ -622,6 +624,7 @@ def confirm_delivery(request, bid_id):
                     f"Delivery Confirmed — {profile.business.name}",
                     f"The business owner confirmed delivery for procurement '{bid.procurement.title}'.",
                     notification_type="order",
+                    link_url=f'/procurement/{bid.procurement_id}/',
                 )
         except Exception:
             pass
@@ -679,6 +682,7 @@ def confirm_payment(request, bid_id):
                     f"Payment Confirmed — {profile.business.name}",
                     f"The supplier confirmed payment receipt for procurement '{bid.procurement.title}'.",
                     notification_type="order",
+                    link_url=f'/procurement/{bid.procurement_id}/',
                 )
         except Exception:
             pass

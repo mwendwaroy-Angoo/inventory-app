@@ -37,7 +37,7 @@ def _notify_owner(business, title, message):
     from accounts.models import UserProfile
     owners = UserProfile.objects.filter(business=business, role='owner').select_related('user')
     for op in owners:
-        create_in_app_notification(op.user, title, message, notification_type='warning')
+        create_in_app_notification(op.user, title, message, notification_type='warning', link_url='/stock/variances/')
         if op.phone:
             send_sms_notification(message, normalize_ke_phone(op.phone))
 
@@ -85,16 +85,27 @@ def start_stock_take(request):
                 shift=linked_shift,
             )
 
-            # Identify the staff member being queried (shift's staff, if linked)
-            queried_staff = None
-            if linked_shift and linked_shift.staff:
-                from accounts.models import UserProfile
-                queried_staff = UserProfile.objects.filter(
-                    user=linked_shift.staff, business=business
-                ).first()
+            from accounts.models import UserProfile
+            from core.shift_views import attribute_variance_shift
 
             variances_created = 0
             variance_items = []
+            # Per-queried-staff bucket so a single stock take can correctly split
+            # blame across TWO different people (last night's closer vs this
+            # morning's opener) instead of always querying whoever happens to be
+            # on duty when the count is taken. 'redirected' marks items whose
+            # attribution moved AWAY from linked_shift to an earlier one.
+            by_queried_staff = {}
+            # The shift actually on duty right now, if any — used to send them a
+            # separate "this isn't on you" notice for any redirected item, so both
+            # people in the story hear from the app, not just the one being asked
+            # to explain.
+            current_staff_profile = None
+            if linked_shift and linked_shift.staff:
+                current_staff_profile = UserProfile.objects.filter(
+                    user=linked_shift.staff, business=business
+                ).first()
+            redirected_for_current = []
 
             for row in counts:
                 try:
@@ -130,6 +141,16 @@ def start_stock_take(request):
                 if direction == StockVarianceQuery.DECREASE and item.selling_price:
                     estimated_revenue = abs(variance) * Decimal(str(item.selling_price))
 
+                # Per-ITEM attribution — different items in the same stock take can
+                # correctly land on different shifts (e.g. the beer she's already
+                # sold from today vs the cooking oil nobody has touched yet).
+                attributed_shift = attribute_variance_shift(business, linked_shift, item=item)
+                queried_staff = None
+                if attributed_shift and attributed_shift.staff:
+                    queried_staff = UserProfile.objects.filter(
+                        user=attributed_shift.staff, business=business
+                    ).first()
+
                 StockVarianceQuery.objects.create(
                     stock_take=stock_take,
                     item=item,
@@ -139,11 +160,22 @@ def start_stock_take(request):
                     direction=direction,
                     estimated_revenue=estimated_revenue,
                     queried_staff=queried_staff,
+                    attributed_shift=attributed_shift,
                 )
                 variances_created += 1
-                variance_items.append(
-                    f"{item.description}: {'−' if variance < 0 else '+'}{abs(variance):.2g} {item.unit}"
+                item_line = f"{item.description}: {'−' if variance < 0 else '+'}{abs(variance):.2g} {item.unit}"
+                variance_items.append(item_line)
+
+                redirected = bool(
+                    linked_shift and attributed_shift and attributed_shift.id != linked_shift.id
                 )
+                if queried_staff:
+                    bucket = by_queried_staff.setdefault(queried_staff.id, {
+                        'staff': queried_staff, 'items': [], 'redirected': redirected,
+                    })
+                    bucket['items'].append(item_line)
+                if redirected and current_staff_profile:
+                    redirected_for_current.append(item_line)
 
             # Notifications
             if variances_created:
@@ -158,21 +190,63 @@ def start_stock_take(request):
                     f"Hesabu ya stok na {conductor_name}: tofauti {variances_created} "
                     f"imepatikana ({items_summary}). Angalia: /stock/variances/"
                 )
+                if redirected_for_current:
+                    owner_msg += (
+                        f" Baadhi ya vitu ({len(redirected_for_current)}) vimehusishwa na "
+                        f"zamu iliyopita, si zamu ya sasa — angalia ukurasa wa Variances kwa maelezo."
+                    )
                 _notify_owner(business, f"📊 Tofauti za Stok ({variances_created})", owner_msg)
 
-                # Notify queried staff
-                if queried_staff and queried_staff.phone:
-                    staff_msg = (
-                        f"Kuna tofauti {variances_created} za stok wakati wa zamu yako "
-                        f"({items_summary}). Tafadhali eleza: jaribu ukurasa wa 'Variances' katika app."
-                    )
+                # Notify each queried staff member — only about the items actually
+                # attributed to THEM, worded differently depending on whether the
+                # discrepancy is on their current shift or one that already ended.
+                for bucket in by_queried_staff.values():
+                    qs_profile = bucket['staff']
+                    if not qs_profile:
+                        continue
+                    qs_items = ', '.join(bucket['items'][:5])
+                    if len(bucket['items']) > 5:
+                        qs_items += f' ... (+{len(bucket["items"]) - 5} zaidi)'
+                    if bucket['redirected']:
+                        staff_msg = (
+                            f"Kuna tofauti {len(bucket['items'])} za stok zinazohusishwa na zamu yako "
+                            f"iliyopita ({qs_items}) — hazikutokea leo, zilikuwepo kabla ya zamu ya sasa "
+                            f"kuanza. Tafadhali eleza: jaribu ukurasa wa 'Variances' katika app."
+                        )
+                    else:
+                        staff_msg = (
+                            f"Kuna tofauti {len(bucket['items'])} za stok wakati wa zamu yako "
+                            f"({qs_items}). Tafadhali eleza: jaribu ukurasa wa 'Variances' katika app."
+                        )
                     create_in_app_notification(
-                        queried_staff.user,
-                        f"📊 Tofauti {variances_created} za Stok",
+                        qs_profile.user,
+                        f"📊 Tofauti {len(bucket['items'])} za Stok",
                         staff_msg,
                         notification_type='warning',
+                        link_url='/stock/variances/',
                     )
-                    send_sms_notification(staff_msg, normalize_ke_phone(queried_staff.phone))
+                    if qs_profile.phone:
+                        send_sms_notification(staff_msg, normalize_ke_phone(qs_profile.phone))
+
+                # Clear the current on-duty staff by name for anything redirected away
+                # from them — otherwise a stock take that flags nothing about their own
+                # shift still leaves them wondering, since the app went quiet on them.
+                if redirected_for_current and current_staff_profile:
+                    clear_items = ', '.join(redirected_for_current[:5])
+                    if len(redirected_for_current) > 5:
+                        clear_items += f' ... (+{len(redirected_for_current) - 5} zaidi)'
+                    clear_msg = (
+                        f"Hesabu ya stock imepata tofauti kwa vitu ({clear_items}) ambavyo "
+                        f"hujauza bado kwenye zamu yako ya sasa — vimehusishwa na zamu iliyopita "
+                        f"badala yako. Hakuna hatua inayohitajika kwako kwa sasa."
+                    )
+                    create_in_app_notification(
+                        current_staff_profile.user,
+                        "ℹ️ Tofauti za Stock — Si Zamu Yako",
+                        clear_msg,
+                        notification_type='info',
+                        link_url='/stock/variances/',
+                    )
 
         except Exception as exc:
             logger.exception("Stock take POST failed: %s", exc)
@@ -476,6 +550,7 @@ def review_variance(request, var_id):
                 f"Mmiliki {reviewer_name} amekubali maelezo yako ya tofauti ya "
                 f"{svq.item_name_cache} tarehe {when}.",
                 notification_type='info',
+                link_url=f'/stock/variances/{svq.id}/respond/',
             )
 
         return JsonResponse({'ok': True, 'message': msg})
@@ -510,6 +585,7 @@ def review_variance(request, var_id):
                 f"⚠️ Tofauti Imekataliwa: {svq.item_name_cache}",
                 staff_msg,
                 notification_type='warning',
+                link_url=f'/stock/variances/{svq.id}/respond/',
             )
 
         dismiss_msg = f'Imekataliwa na {reviewer_name} tarehe {when} — imerekodiwa kwenye rekodi ya utendaji.'

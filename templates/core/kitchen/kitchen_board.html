@@ -3482,6 +3482,54 @@
               '</div>';
           }
 
+          // Cash-variance accountability — parity with bar board (2026-07-25): a real
+          // gap (>50 KES) could only be unlogged petty cash or something the staffer
+          // needs to explain (most often: sent the drawer's cash to M-Pesa on the
+          // owner's instruction). Optional, never required.
+          if (Math.abs(parseFloat(d.variance)) > 50) {
+            var kVnWrap = document.createElement('div');
+            kVnWrap.style.cssText = 'margin-top:.6rem;';
+            kVnWrap.innerHTML = '<button type="button" id="close-shift-explain-btn" ' +
+              'style="width:100%;padding:.5rem;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.35);' +
+              'border-radius:6px;color:#c9a84c;font-size:.8rem;cursor:pointer;">💬 Eleza Tofauti Hii (hiari)</button>' +
+              '<div id="close-shift-explain-result" style="display:none;font-size:.78rem;color:#4caf50;margin-top:.4rem;"></div>';
+            resEl.parentNode.insertBefore(kVnWrap, resEl.nextSibling);
+            var kShiftIdForNote = _activeShiftId;
+            document.getElementById('close-shift-explain-btn').onclick = function (ev) {
+              window.openReasonChips({
+                anchorEl: ev.target,
+                title: 'Kwa nini kuna tofauti?',
+                chips: [
+                  'Nilituma sehemu ya pesa kwa M-Pesa (mwenye biashara aliniambia)',
+                  'Kuna gharama ndogo niliyolipa lakini sijaandika kwenye Petty Cash bado',
+                  'Sina uhakika kwa nini kuna tofauti',
+                ],
+                skipLabel: 'Ruka — bila maelezo',
+                onSelect: function (text) {
+                  if (!text) return;
+                  var kMpesaRef = '';
+                  if (text.indexOf('M-Pesa') !== -1) {
+                    kMpesaRef = (window.prompt('Namba ya M-Pesa (hiari)') || '').trim();
+                  }
+                  var kBody = new URLSearchParams({
+                    variance_note: text, variance_mpesa_ref: kMpesaRef,
+                    csrfmiddlewaretoken: '{{ csrf_token }}',
+                  });
+                  fetch('/kitchen/shift/' + kShiftIdForNote + '/variance-note/', { method: 'POST', body: kBody })
+                    .then(function (r) { return r.json(); }).then(function (rd) {
+                      var kOut = document.getElementById('close-shift-explain-result');
+                      if (kOut) {
+                        kOut.style.display = 'block';
+                        kOut.textContent = '✓ ' + (rd.message || 'Maelezo yamehifadhiwa.');
+                      }
+                      var kBtn2 = document.getElementById('close-shift-explain-btn');
+                      if (kBtn2) kBtn2.style.display = 'none';
+                    });
+                },
+              });
+            };
+          }
+
           btn.style.display = 'none';
           var doneBtn = document.createElement('button');
           doneBtn.className = 'btn btn-sm';

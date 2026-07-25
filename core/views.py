@@ -1007,6 +1007,7 @@ def add_transaction(request):
                             title=f"Stock Received: {item.description}",
                             message=_sms_r,
                             notification_type='info',
+                            link_url=f'/item/{item.id}/',
                         )
                     except Exception:
                         pass
@@ -1128,6 +1129,7 @@ def add_transaction(request):
                         title='Receipt recorded — cost price check needed',
                         message=notif_msg,
                         notification_type='info',
+                        link_url=f'/item/{item.id}/',
                     )
                 except Exception:
                     pass

@@ -190,6 +190,7 @@ def kitchen_wastage(request):
             title='🧯 Upotezaji wa Chakula Umerekodiwa',
             message=message,
             notification_type='warning',
+            link_url='/kitchen/',
         )
         if om.phone:
             normalized = normalize_ke_phone(om.phone)

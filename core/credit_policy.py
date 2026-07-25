@@ -120,8 +120,11 @@ def evaluate_credit(business, customer, amount=None, scope='all', when=None):
                 overridable=False,
             )
 
-    # 5. Credit limit check
+    # 5. Credit limit check — per-customer limit wins; otherwise fall back to the
+    # business-wide default (blank on both = no KES cap, other gates still apply).
     credit_limit = customer.credit_limit
+    if credit_limit is None:
+        credit_limit = getattr(business, 'default_credit_limit', None)
     if credit_limit is not None:
         limit_val = float(credit_limit)
         new_total = outstanding + (float(amount) if amount is not None else 0)
@@ -277,6 +280,7 @@ def notify_owners_of_conversion_risk(business, customer, scope, unpaid_total, co
                 title=f"{icon} Hatari ya mkopo — {customer.name}",
                 message=msg,
                 notification_type='warning',
+                link_url=f'/debt/{customer.id}/',
             )
             if up.phone:
                 normalized = normalize_ke_phone(up.phone)

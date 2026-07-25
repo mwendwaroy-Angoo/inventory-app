@@ -330,6 +330,7 @@ def _handle_browse(phone, parts, level):
                     f"Customer ({phone}) ordered {qty}x {item.description} "
                     f"— KES {order.total_amount:,.0f}",
                     notification_type='transaction',
+                    link_url='/orders/',
                 )
         except Exception as e:
             logger.error(f"USSD order notification error: {e}")

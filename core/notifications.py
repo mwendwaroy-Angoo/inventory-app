@@ -226,7 +226,7 @@ def send_whatsapp_notification(phone, message, business=None):
     return False
 
 
-def create_in_app_notification(user, title, message, notification_type="info"):
+def create_in_app_notification(user, title, message, notification_type="info", link_url=""):
     from core.models import Notification
 
     try:
@@ -235,6 +235,7 @@ def create_in_app_notification(user, title, message, notification_type="info"):
             title=title,
             message=message,
             notification_type=notification_type,
+            link_url=link_url or "",
         )
         logger.info(f"In-app notification created for {user.username}: {title}")
         return True
@@ -271,6 +272,7 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
         f"{emoji} {trans_type}: {item.description}",
         f"{qty} {item.unit} {action}. Balance: {item.current_balance()}. By: {recorded_by}",
         notification_type="transaction",
+        link_url=f'/item/{item.id}/',
     )
 
     # Issue: route through central router (SMS with 10-min bundling + email)
@@ -325,6 +327,7 @@ def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
         f"⚠️ Low Stock: {item.description}",
         f"Balance: {item.current_balance()} {item.unit}. Reorder level: {item.reorder_level}",
         notification_type="warning",
+        link_url=f'/item/{item.id}/',
     )
     route_notification(
         NotifEvent.LOW_STOCK,
@@ -431,6 +434,7 @@ def notify_new_order(order):
         f"🛒 New Order #{order.order_number}",
         f"{order.customer_name} — KES {order.total_amount:,.0f} ({delivery_label}, {pay_label})",
         notification_type="order",
+        link_url='/orders/',
     )
 
     # In-app notification for all staff
@@ -439,6 +443,7 @@ def notify_new_order(order):
             staff_profile.user,
             f"🛒 New Order #{order.order_number}",
             f"{order.customer_name} — KES {order.total_amount:,.0f} ({delivery_label})",
+            link_url='/fulfillment/',
             notification_type="order",
         )
 
@@ -621,7 +626,7 @@ def notify_reorder_recommendations(business, max_items=20, create_draft=False):
     long_msg = "\n".join(long_msg_lines)
 
     # In-app notification
-    create_in_app_notification(owner, title, short_msg, notification_type="warning")
+    create_in_app_notification(owner, title, short_msg, notification_type="warning", link_url='/stock/')
 
     # Email via router (REORDER: email only, no SMS per routing table)
     route_notification(
@@ -649,6 +654,7 @@ def notify_reorder_recommendations(business, max_items=20, create_draft=False):
                 f"Draft PO-{po.id} created",
                 f"A draft PO with {len(recs)} lines was created.",
                 notification_type="order",
+                link_url=f'/purchase-orders/{po.id}/',
             )
         except Exception:
             logger.exception(
@@ -724,6 +730,7 @@ def notify_new_bid_opportunity(procurement_request):
             "💼 New Bid Opportunity",
             f"{requesting_business.name} — {procurement_request.title} ({budget_text})",
             notification_type="procurement",
+            link_url=f'/procurement/{procurement_request.id}/',
         )
 
         # Email notification
@@ -780,6 +787,7 @@ def notify_supplier_bid_received(bid):
         f"📋 New Bid from {supplier_name}",
         f"KES {bid.amount:,.0f} for {bid.procurement.title}",
         notification_type="procurement",
+        link_url=f'/procurement/{bid.procurement_id}/',
     )
 
     # Email to owner
@@ -830,6 +838,7 @@ def notify_supplier_bid_awarded(bid):
         "🎉 Bid Awarded!",
         f"Your bid to {requesting_business.name} for KES {bid.amount:,.0f} has been accepted!",
         notification_type="success",
+        link_url=f'/procurement/{bid.procurement_id}/',
     )
 
     # Email to supplier owner
@@ -872,6 +881,7 @@ def notify_rider_delivery_assigned(rider_profile, order):
         "🚚 Delivery Assigned",
         f"Order #{order.order_number} — {order.customer_name} in {order.customer_location}",
         notification_type="delivery",
+        link_url='/fulfillment/',
     )
 
     # Email to rider
@@ -926,6 +936,7 @@ def notify_business_rider_assigned(order, rider_profile):
         "🚗 Rider Assigned",
         f"Order #{order.order_number} — {rider_name} ({rider_phone})",
         notification_type="delivery",
+        link_url='/orders/',
     )
 
     # Email to owner

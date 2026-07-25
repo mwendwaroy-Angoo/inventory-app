@@ -908,6 +908,7 @@ def clear_defaulter(request, customer_id):
         title=f"✅ {customer.name} — Ameruhusiwa Tena",
         message=clear_message,
         notification_type='info',
+        link_url=f'/debt/{customer.id}/',
     )
 
     messages.success(request, clear_message)
@@ -1054,6 +1055,7 @@ def request_write_off(request, txn_id):
                 f"KES {amount:,.0f} ({customer_name}). Sababu: {reason}"
             ),
             notification_type='warning',
+            link_url='/debt/write-offs/pending/',
         )
         if om.phone:
             normalized = normalize_ke_phone(om.phone)
@@ -1121,6 +1123,7 @@ def manager_review_write_off(request, req_id):
                 f"Uamuzi wako (mmiliki) ndio wa mwisho."
             ),
             notification_type='info' if verdict == 'approved' else 'warning',
+            link_url='/debt/write-offs/pending/',
         )
         if ow.phone:
             normalized = normalize_ke_phone(ow.phone)
@@ -1197,6 +1200,7 @@ def approve_write_off(request, req_id):
         title='✅ Write-off Imeidhinishwa',
         message=f"{reviewer_name} amefuta: {item_name} KES {amount:,.0f} ({customer_name}).",
         notification_type='info',
+        link_url='/debt/write-offs/pending/',
     )
 
     # Notify the requesting staff member
@@ -1206,6 +1210,7 @@ def approve_write_off(request, req_id):
             title='✅ Ombi la Write-off Limeidhinishwa',
             message=f"Mmiliki ameidhinisha: {item_name} KES {amount:,.0f} ({customer_name}) imefutwa.",
             notification_type='info',
+            link_url='/debt/write-offs/pending/',
         )
         from accounts.models import UserProfile as _UP
         sp = _UP.objects.filter(user=wo.requested_by, business=up.business).first()
@@ -1297,6 +1302,7 @@ def reject_write_off(request, req_id):
                     f"KES {amount:,.0f} itaondolewa kwenye mshahara wako."
                 ),
                 notification_type='warning',
+                link_url='/debt/write-offs/pending/',
             )
             if staff_profile.phone:
                 normalized = normalize_ke_phone(staff_profile.phone)
@@ -1314,6 +1320,7 @@ def reject_write_off(request, req_id):
         title='❌ Write-off Imekataliwa',
         message=f"{reviewer_name} alikataa: {item_name} KES {amount:,.0f} ({customer_name}). Haki deduction imetumwa.",
         notification_type='warning',
+        link_url='/debt/write-offs/pending/',
     )
 
     deducted_from = ''

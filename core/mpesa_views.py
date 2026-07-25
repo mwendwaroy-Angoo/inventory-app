@@ -94,6 +94,7 @@ def _bridge_stk_to_prompt(payment):
                 + f". Receipt: {receipt}. Please confirm what was sold."
             ),
             notification_type='transaction',
+            link_url='/mpesa/prompts/',
         )
     logger.info("STK prompt created: id=%s business=%s amount=%s", prompt.id, payment.business_id, payment.amount)
 
@@ -515,12 +516,14 @@ def _settle_receipt_entries_from_payment(payment):
             for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
                 notify_targets[up.user_id] = up
 
+            _receipt_link = f'/r/{rcpt_for_notif.token}/' if rcpt_for_notif else ''
             for up in notify_targets.values():
                 _Notif.objects.create(
                     user=up.user,
                     title='💰 Malipo ya deni yamepokelewa',
                     message=notif_msg,
                     notification_type='info',
+                    link_url=_receipt_link,
                 )
                 phone = (up.phone or '').strip()
                 if phone:
@@ -1151,6 +1154,7 @@ def c2b_confirmation(request):
                 + f". Receipt: {trans_id}. Please confirm what was sold."
             ),
             notification_type='transaction',
+            link_url='/mpesa/prompts/',
         )
 
     logger.info("C2B prompt created: id=%s business=%s amount=%s", prompt.id, business.name, amount)

@@ -95,6 +95,8 @@ from core.shift_views import (
     active_shift_api,
     shift_history,
     stock_take_api,
+    add_shift_variance_note,
+    review_shift_variance,
 )
 from core.order_views import (
     waitress_screen,
@@ -389,6 +391,8 @@ urlpatterns = [
     path("bar/shift/active/",                 active_shift_api,       name="active_shift_api"),
     path("bar/shift/history/",                shift_history,          name="shift_history"),
     path("bar/shift/<int:shift_id>/stock-take/", stock_take_api,      name="stock_take_api"),
+    path("bar/shift/<int:shift_id>/variance-note/",   add_shift_variance_note, name="add_shift_variance_note"),
+    path("bar/shift/<int:shift_id>/variance-review/", review_shift_variance,   name="review_shift_variance"),
     # ── Waitress Order Queue (Sprint 5) ──────────────────────────────────────
     path("bar/orders/",                       waitress_screen,        name="waitress_screen"),
     path("bar/orders/place/",                 place_table_order,      name="place_table_order"),
@@ -420,6 +424,8 @@ urlpatterns = [
     path("kitchen/shift/active/",                 active_shift_api,       name="kitchen_active_shift_api"),
     path("kitchen/shift/history/",                shift_history,          name="kitchen_shift_history"),
     path("kitchen/shift/<int:shift_id>/stock-take/", stock_take_api,      name="kitchen_stock_take_api"),
+    path("kitchen/shift/<int:shift_id>/variance-note/",   add_shift_variance_note, name="kitchen_add_shift_variance_note"),
+    path("kitchen/shift/<int:shift_id>/variance-review/", review_shift_variance,   name="kitchen_review_shift_variance"),
 
     # ── Petty Cash / Counter Drawdown ────────────────────────────────────────
     path("petty-cash/",                           petty_cash_list,    name="petty_cash_list"),

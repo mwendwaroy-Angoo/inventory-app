@@ -82,7 +82,7 @@ def _fire_session_started_notification(session, started_by):
         f"🎤 DJ/MC session started — {performers_label}. Staff: {staff_label}."
     )
     for up in business.users.filter(role='owner').select_related('user'):
-        create_in_app_notification(up.user, '🎤 DJ/MC Sesheni Imeanza', msg)
+        create_in_app_notification(up.user, '🎤 DJ/MC Sesheni Imeanza', msg, link_url='/bar/sessions/')
 
     if business.event_sms_enabled:
         for up in business.users.filter(role='owner').select_related('user'):
@@ -102,7 +102,7 @@ def _fire_unverified_alert(session, unconfirmed_names):
         f"Tarehe: {session.date}."
     )
     for up in business.users.filter(role='owner').select_related('user'):
-        create_in_app_notification(up.user, '⚠️ DJ/MC Hajakuthibitishwa', msg)
+        create_in_app_notification(up.user, '⚠️ DJ/MC Hajakuthibitishwa', msg, link_url='/bar/sessions/')
 
     if business.event_sms_enabled:
         for up in business.users.filter(role='owner').select_related('user'):
@@ -138,7 +138,8 @@ def _fire_session_cancelled_notification(session, cancelled_by, reason):
     for up in business.users.filter(role__in=['owner', 'manager']):
         targets[up.user_id] = up
     for up in targets.values():
-        create_in_app_notification(up.user, '🚫 Sesheni ya DJ/MC Imefutwa', msg, notification_type='warning')
+        create_in_app_notification(up.user, '🚫 Sesheni ya DJ/MC Imefutwa', msg, notification_type='warning',
+                                   link_url='/bar/sessions/')
         if business.event_sms_enabled and up.phone:
             try:
                 send_sms_notification(msg, normalize_ke_phone(up.phone))

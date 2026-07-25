@@ -41,6 +41,7 @@ def _create_approval_request(request, item, user_profile, quantity, recipient, i
                 f'Go to Pending Approvals to approve or deny.'
             ),
             notification_type='warning',
+            link_url='/approvals/',
         )
 
     # Notify all owners — in-app already done above
@@ -204,6 +205,7 @@ def decide_approval(request, approval_id):
                 'The transaction has been recorded automatically.'
             ),
             notification_type='info',
+            link_url=f'/item/{approval.item_id}/',
         )
 
         messages.success(
@@ -228,6 +230,7 @@ def decide_approval(request, approval_id):
                 f'{" Reason: " + denial_reason if denial_reason else ""}'
             ),
             notification_type='warning',
+            link_url=f'/item/{approval.item_id}/',
         )
 
         messages.info(request, _('Sale request denied.'))

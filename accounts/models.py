@@ -138,6 +138,14 @@ class Business(models.Model):
         default=14,
         help_text='Clean days required after clearing all debt before credit resumes (for repeat late-payers).',
     )
+    default_credit_limit = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text='Business-wide default max outstanding credit (KES) applied to every customer '
+                   'who has no limit of their own set on their profile. Blank = no default limit '
+                   '(a customer with no per-customer limit either can borrow without a KES cap, '
+                   'subject to the other credit policy gates). A per-customer limit on Customer.'
+                   'credit_limit always overrides this default for that one customer.',
+    )
 
     last_txn_sms_at = models.DateTimeField(
         null=True, blank=True,

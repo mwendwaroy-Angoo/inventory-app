@@ -441,6 +441,7 @@ def _check_and_fire_recognition(staff_profile, business, contrib):
                     title=title,
                     message=f"{msg_key}. Consider recognising them.",
                     notification_type='staff',
+                    link_url=f'/staff/{staff_profile.id}/statement/',
                 )
     except Exception:
         pass

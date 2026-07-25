@@ -160,6 +160,7 @@ def review_petty_cash(request, entry_id):
             title=title,
             message=message,
             notification_type=('info' if action == 'approve' else 'warning'),
+            link_url='/petty-cash/',
         )
 
     return JsonResponse({

@@ -210,6 +210,12 @@ class Notification(models.Model):
     )
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    # 2026-07-25: deep-link to the record this notification is actually about, so
+    # tapping it takes the reader straight into the story instead of just the
+    # notifications list. Optional and additive — every existing call site keeps
+    # working unchanged (blank = not clickable, notifications.html renders those as
+    # plain cards exactly as before).
+    link_url = models.CharField(max_length=300, blank=True, default='')
 
     class Meta:
         ordering = ['-created_at']
@@ -2135,6 +2141,37 @@ class Shift(models.Model):
         help_text='True when the shift was closed automatically by the business-hours sweep.',
     )
 
+    # ── Cash variance accountability (2026-07-25) ───────────────────────────────
+    # A cash shortfall/surplus at close is caused by exactly two things: unlogged
+    # petty cash (fixed at the source by folding approved petty cash into
+    # _reconcile()'s expected_cash — see shift_views.py) or a real explanation that
+    # needs a paper trail (most often: the owner told the staffer by phone/SMS to
+    # send the drawer's cash to M-Pesa instead of holding it). variance_note is the
+    # staff's own account, captured via reason chips right after they see the
+    # number — never required, per this app's "never block" chips contract.
+    # variance_review_* is the owner/manager's side of the same conversation.
+    VARIANCE_REVIEW_CHOICES = [
+        ('acknowledged', 'Acknowledged — explanation accepted'),
+        ('flagged',      'Flagged — needs follow-up'),
+    ]
+    variance_note = models.CharField(
+        max_length=300, blank=True,
+        help_text="Staff's own explanation for a cash variance at close, captured via reason chips.",
+    )
+    variance_mpesa_ref = models.CharField(
+        max_length=40, blank=True,
+        help_text='M-Pesa transaction code, when the explanation was "sent the cash to M-Pesa".',
+    )
+    variance_reviewed_by = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='shift_variances_reviewed',
+    )
+    variance_reviewed_at = models.DateTimeField(null=True, blank=True)
+    variance_review_note = models.CharField(max_length=300, blank=True)
+    variance_review_status = models.CharField(
+        max_length=15, blank=True, choices=VARIANCE_REVIEW_CHOICES,
+    )
+
     class Meta:
         ordering = ['-started_at']
         verbose_name = 'Shift'
@@ -3989,6 +4026,14 @@ class StockVarianceQuery(models.Model):
 
     queried_staff     = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL,
                                           null=True, blank=True, related_name='variance_queries')
+    # 2026-07-25: WHICH shift is believed accountable, separate from queried_staff
+    # (who is asked to explain — now always the attributed shift's own staff, not
+    # just "whoever's shift happened to be open when the stock take was run"). Set
+    # by shift_views.attribute_variance_shift() at creation time. None when no shift
+    # context exists (owner/manager stock take with no linked shift) or when no
+    # prior shift could be identified either (e.g. an overnight/unattended gap).
+    attributed_shift  = models.ForeignKey('Shift', on_delete=models.SET_NULL,
+                                          null=True, blank=True, related_name='attributed_variance_queries')
     status            = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
 
     response_type     = models.CharField(max_length=20, choices=RESPONSE_CHOICES, blank=True)

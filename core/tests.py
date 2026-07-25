@@ -1438,6 +1438,111 @@ class CreditGateCreditLimitTest(TestCase):
         self.assertTrue(decision.allowed)
 
 
+class UniversalCreditLimitTest(TestCase):
+    """Business.default_credit_limit applies to any customer with no personal limit
+    of their own; a per-customer Customer.credit_limit always overrides it."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='Universal Limit Biz', credit_policy_enabled=True,
+            default_credit_limit=Decimal('1000'),
+        )
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Universal Limit Item',
+            material_no='ULIM-01', selling_price=Decimal('500'),
+        )
+
+    def _sell_on_credit(self, customer, amount):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), recipient=customer.name,
+            payment_method='credit', sale_amount=Decimal(str(amount)),
+        )
+
+    def test_business_default_blocks_customer_with_no_personal_limit(self):
+        customer = Customer.objects.create(
+            business=self.biz, name='No Personal Limit', credit_approved=True,
+        )
+        self._sell_on_credit(customer, 900)
+        decision = evaluate_credit(self.biz, customer, amount=Decimal('200'))
+        self.assertFalse(decision.allowed)
+        self.assertIn('1,000', decision.reason)
+
+    def test_business_default_allows_under_the_cap(self):
+        customer = Customer.objects.create(
+            business=self.biz, name='Under Default Cap', credit_approved=True,
+        )
+        self._sell_on_credit(customer, 300)
+        decision = evaluate_credit(self.biz, customer, amount=Decimal('200'))
+        self.assertTrue(decision.allowed)
+
+    def test_personal_limit_overrides_business_default(self):
+        # Personal limit is HIGHER than the business default — customer may still borrow
+        # past the default because their own limit takes priority.
+        customer = Customer.objects.create(
+            business=self.biz, name='Higher Personal Limit', credit_approved=True,
+            credit_limit=Decimal('5000'),
+        )
+        self._sell_on_credit(customer, 1200)  # already past the business default of 1000
+        decision = evaluate_credit(self.biz, customer, amount=Decimal('500'))
+        self.assertTrue(decision.allowed)
+
+    def test_personal_limit_lower_than_default_still_blocks(self):
+        customer = Customer.objects.create(
+            business=self.biz, name='Lower Personal Limit', credit_approved=True,
+            credit_limit=Decimal('300'),
+        )
+        self._sell_on_credit(customer, 250)
+        decision = evaluate_credit(self.biz, customer, amount=Decimal('100'))
+        self.assertFalse(decision.allowed)
+        self.assertIn('300', decision.reason)
+
+    def test_no_default_and_no_personal_limit_means_no_cap(self):
+        self.biz.default_credit_limit = None
+        self.biz.save(update_fields=['default_credit_limit'])
+        customer = Customer.objects.create(
+            business=self.biz, name='No Cap At All', credit_approved=True,
+        )
+        self._sell_on_credit(customer, 50000)
+        decision = evaluate_credit(self.biz, customer, amount=Decimal('1000'))
+        self.assertTrue(decision.allowed)
+
+    def test_owner_saves_business_default_via_payment_settings(self):
+        owner = User.objects.create_user(username='ulim_owner', password='x')
+        UserProfile.objects.create(user=owner, business=self.biz, role='owner')
+        self.client.force_login(owner)
+        resp = self.client.post('/business/payment-settings/', {
+            '_section': 'credit_policy',
+            'credit_policy_enabled': '1',
+            'credit_window_days': '30',
+            'default_credit_limit': '2500',
+            'debt_cycle': 'rolling',
+            'debt_cutoff_days_before_month_end': '5',
+            'overdue_grace_days': '0',
+            'late_repayment_strikes': '3',
+            'late_threshold_days': '7',
+            'cooldown_days': '14',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.biz.refresh_from_db()
+        self.assertEqual(self.biz.default_credit_limit, Decimal('2500.00'))
+
+    def test_owner_clears_business_default_with_blank_field(self):
+        owner = User.objects.create_user(username='ulim_owner2', password='x')
+        UserProfile.objects.create(user=owner, business=self.biz, role='owner')
+        self.client.force_login(owner)
+        self.client.post('/business/payment-settings/', {
+            '_section': 'credit_policy',
+            'credit_window_days': '30', 'debt_cycle': 'rolling',
+            'debt_cutoff_days_before_month_end': '5', 'overdue_grace_days': '0',
+            'late_repayment_strikes': '3', 'late_threshold_days': '7', 'cooldown_days': '14',
+            'default_credit_limit': '',
+        })
+        self.biz.refresh_from_db()
+        self.assertIsNone(self.biz.default_credit_limit)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Sprint K4 — Customer-Facing Accountability Receipts
 # ══════════════════════════════════════════════════════════════════════════════
@@ -10474,3 +10579,517 @@ class StaffJourneyTest(TestCase):
         self.client.force_login(other)
         resp = self.client.get(f'/staff/{self.staff_profile.id}/journey/')
         self.assertEqual(resp.status_code, 302)
+
+
+class ShiftHistoryVisibilityScopingTest(TestCase):
+    """A staffer must only ever see their OWN shift history; only owner/manager sees
+    everyone's. Station scoping (bar vs kitchen) already existed — this locks in the
+    separate identity axis Roy flagged: 'each user only sees their own shifts, only
+    the owner sees all of them'."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Shift Vis Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='shiftvis_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='shiftvis_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff_a = User.objects.create_user(username='shiftvis_a', password='x')
+        UserProfile.objects.create(user=self.staff_a, business=self.biz, role='staff')
+        self.staff_b = User.objects.create_user(username='shiftvis_b', password='x')
+        UserProfile.objects.create(user=self.staff_b, business=self.biz, role='staff')
+
+        from core.models import Shift
+        Shift.objects.create(business=self.biz, store=self.store, staff=self.staff_a, status='CLOSED')
+        Shift.objects.create(business=self.biz, store=self.store, staff=self.staff_b, status='CLOSED')
+
+    def test_staff_sees_only_own_shifts(self):
+        self.client.force_login(self.staff_a)
+        resp = self.client.get('/bar/shift/history/')
+        staff_ids = {row['shift'].staff_id for row in resp.context['rows']}
+        self.assertEqual(staff_ids, {self.staff_a.id})
+
+    def test_owner_sees_all_shifts(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/history/')
+        staff_ids = {row['shift'].staff_id for row in resp.context['rows']}
+        self.assertEqual(staff_ids, {self.staff_a.id, self.staff_b.id})
+
+    def test_manager_sees_all_shifts(self):
+        self.client.force_login(self.manager)
+        resp = self.client.get('/bar/shift/history/')
+        staff_ids = {row['shift'].staff_id for row in resp.context['rows']}
+        self.assertEqual(staff_ids, {self.staff_a.id, self.staff_b.id})
+
+    def test_manager_sees_review_context_flag(self):
+        # is_owner in the template context must be owner-OR-manager, matching this
+        # app's established convention (was strictly owner-only, a gap fixed
+        # alongside the cash-variance review feature since it shares the same page).
+        self.client.force_login(self.manager)
+        resp = self.client.get('/bar/shift/history/')
+        self.assertTrue(resp.context['is_owner'])
+
+
+class CashVarianceAccountabilityTest(TestCase):
+    """A shift-close cash variance has exactly two legitimate causes per Roy's own
+    framing: unlogged petty cash (fixed at the source — petty cash is now folded
+    into _reconcile()'s expected_cash) or something that needs a real explanation
+    (most often: the owner told the staffer to send the drawer's cash to M-Pesa).
+    This locks in the staff-explains / owner-reviews conversation for the second
+    case, and the petty-cash fold-in for the first."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Cash Variance Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='cv_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='cv_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='cv_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff', phone='0712345678')
+        self.other_staff = User.objects.create_user(username='cv_other', password='x')
+        UserProfile.objects.create(user=self.other_staff, business=self.biz, role='staff')
+
+        from core.models import Shift
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            opening_float=Decimal('1000'), closing_cash_counted=Decimal('700'),
+            status='CLOSED',
+        )
+
+    def test_reconcile_deducts_approved_petty_cash_from_expected(self):
+        from core.shift_views import _reconcile
+        from core.models import PettyCash
+        PettyCash.objects.create(
+            business=self.biz, amount=Decimal('300'), status='approved',
+            recorded_by=self.staff, created_at=self.shift.started_at,
+        )
+        # A pending entry must NOT be deducted — only approved money actually left the till.
+        PettyCash.objects.create(
+            business=self.biz, amount=Decimal('9999'), status='pending',
+            recorded_by=self.staff, created_at=self.shift.started_at,
+        )
+        rec = _reconcile(self.shift)
+        self.assertEqual(rec['petty_cash'], 300.0)
+        self.assertAlmostEqual(rec['expected_cash'], 1000.0 - 300.0, places=1)
+
+    def test_staff_adds_variance_note_notifies_owner_and_manager(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/variance-note/', {
+            'variance_note': 'Nilituma sehemu ya pesa kwa M-Pesa (mwenye biashara aliniambia)',
+            'variance_mpesa_ref': 'QAB123XYZ',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.shift.refresh_from_db()
+        self.assertIn('M-Pesa', self.shift.variance_note)
+        self.assertEqual(self.shift.variance_mpesa_ref, 'QAB123XYZ')
+
+        owner_notif = Notification.objects.filter(user=self.owner, title__icontains='Maelezo').first()
+        manager_notif = Notification.objects.filter(user=self.manager, title__icontains='Maelezo').first()
+        self.assertIsNotNone(owner_notif)
+        self.assertIsNotNone(manager_notif)
+        self.assertIn('QAB123XYZ', owner_notif.message)
+
+    def test_skipping_the_note_never_blocks(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/variance-note/', {
+            'variance_note': '', 'variance_mpesa_ref': '',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.assertEqual(Notification.objects.filter(title__icontains='Maelezo').count(), 0)
+
+    def test_other_staff_cannot_add_note_to_someone_elses_shift(self):
+        self.client.force_login(self.other_staff)
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/variance-note/', {
+            'variance_note': 'Not my shift',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_owner_acknowledges_variance_notifies_staff(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/variance-review/', {
+            'status': 'acknowledged', 'review_note': 'Nilimwambia atume M-Pesa',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.variance_review_status, 'acknowledged')
+        self.assertEqual(self.shift.variance_reviewed_by, self.owner)
+
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Imethibitishwa').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('Nilimwambia atume M-Pesa', notif.message)
+
+    def test_manager_can_flag_variance_for_followup(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/variance-review/', {
+            'status': 'flagged', 'review_note': 'Nahitaji kuongea naye',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.variance_review_status, 'flagged')
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Ufuatiliaji').first()
+        self.assertIsNotNone(notif)
+
+    def test_reversal_is_flagged_in_message(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/shift/{self.shift.id}/variance-review/', {'status': 'flagged'})
+        Notification.objects.filter(user=self.staff).delete()
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/variance-review/', {'status': 'acknowledged'})
+        data = resp.json()
+        self.assertTrue(data['is_reversal'])
+        self.assertIn('MAREKEBISHO', data['message'])
+
+    def test_staff_cannot_review_variance(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/variance-review/', {'status': 'acknowledged'})
+        self.assertEqual(resp.status_code, 403)
+
+
+class AttributeVarianceShiftTest(TestCase):
+    """Unit coverage for shift_views.attribute_variance_shift() — the fairness test
+    behind stock-take and (later) keg SPOT-weigh attribution: a shift with zero
+    recorded activity on the item/barrel since it started cannot be blamed for a
+    variance that must therefore predate it."""
+
+    def setUp(self):
+        from core.models import Shift
+        self.biz = Business.objects.create(name='Attribution Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.staff_yesterday = User.objects.create_user(username='attr_yesterday', password='x')
+        UserProfile.objects.create(user=self.staff_yesterday, business=self.biz, role='staff')
+        self.staff_today = User.objects.create_user(username='attr_today', password='x')
+        UserProfile.objects.create(user=self.staff_today, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Attribution Item',
+            material_no='ATTR-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        yesterday = timezone.now() - timedelta(days=1)
+        self.shift_yesterday = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_yesterday,
+            started_at=yesterday, ended_at=yesterday + timedelta(hours=8), status='CONFIRMED',
+        )
+        self.shift_today = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_today,
+            started_at=timezone.now(), status='OPEN',
+        )
+
+    def test_attributes_to_current_shift_when_it_has_activity(self):
+        from core.shift_views import attribute_variance_shift
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash',
+            created_at=self.shift_today.started_at + timedelta(minutes=5),
+        )
+        result = attribute_variance_shift(self.biz, self.shift_today, item=self.item)
+        self.assertEqual(result.id, self.shift_today.id)
+
+    def test_redirects_to_prior_shift_when_current_has_no_activity(self):
+        from core.shift_views import attribute_variance_shift
+        # Only yesterday's shift touched this item — today's staff hasn't sold it yet.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash',
+            created_at=self.shift_yesterday.started_at + timedelta(minutes=5),
+        )
+        result = attribute_variance_shift(self.biz, self.shift_today, item=self.item)
+        self.assertEqual(result.id, self.shift_yesterday.id)
+
+    def test_returns_none_when_no_prior_shift_exists(self):
+        from core.shift_views import attribute_variance_shift
+        self.shift_yesterday.delete()
+        result = attribute_variance_shift(self.biz, self.shift_today, item=self.item)
+        self.assertIsNone(result)
+
+    def test_returns_none_when_no_current_shift_context(self):
+        from core.shift_views import attribute_variance_shift
+        result = attribute_variance_shift(self.biz, None, item=self.item)
+        self.assertIsNone(result)
+
+    def test_current_shift_with_no_item_or_barrel_arg_defaults_to_current(self):
+        from core.shift_views import attribute_variance_shift
+        result = attribute_variance_shift(self.biz, self.shift_today)
+        self.assertEqual(result.id, self.shift_today.id)
+
+
+class StockTakeVarianceAttributionTest(TestCase):
+    """Integration coverage: a stock take run during today's shift correctly splits
+    blame per item — the item today's staff already sold stays on them, the item
+    nobody has touched today gets redirected to whoever was on shift last, and BOTH
+    people are told something (one is asked to explain, the other is told it's not
+    on them) — the exact 'two people have questions to answer' scenario Roy described."""
+
+    def setUp(self):
+        from core.models import Shift
+        self.biz = Business.objects.create(name='Stock Attribution Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='sta_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_last_night = User.objects.create_user(username='sta_lastnight', password='x')
+        UserProfile.objects.create(user=self.staff_last_night, business=self.biz, role='staff', phone='0711111111')
+        self.staff_this_morning = User.objects.create_user(username='sta_thismorning', password='x')
+        UserProfile.objects.create(user=self.staff_this_morning, business=self.biz, role='staff', phone='0722222222')
+
+        self.item_untouched = Item.objects.create(
+            business=self.biz, store=self.store, description='Untouched Today Item',
+            material_no='STA-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        self.item_sold_today = Item.objects.create(
+            business=self.biz, store=self.store, description='Sold Today Item',
+            material_no='STA-02', unit='pcs', selling_price=Decimal('80'),
+        )
+        # Give both items a real opening balance via Receipt so current_balance() > 0.
+        for it in (self.item_untouched, self.item_sold_today):
+            Transaction.objects.create(
+                business=self.biz, item=it, type='Receipt', qty=Decimal('20'),
+                created_at=timezone.now() - timedelta(days=1),
+            )
+
+        yesterday = timezone.now() - timedelta(hours=10)
+        self.shift_last_night = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_last_night,
+            started_at=yesterday, ended_at=yesterday + timedelta(hours=6), status='CONFIRMED',
+        )
+        self.shift_this_morning = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_this_morning,
+            started_at=timezone.now() - timedelta(minutes=10), status='OPEN',
+        )
+        # This morning's staff already sold item_sold_today — but never touched item_untouched.
+        Transaction.objects.create(
+            business=self.biz, item=self.item_sold_today, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('160'), payment_method='cash',
+            created_at=self.shift_this_morning.started_at + timedelta(minutes=2),
+        )
+
+    def _run_stock_take(self, actual_untouched, actual_sold_today):
+        import json
+        self.client.force_login(self.owner)
+        counts = json.dumps([
+            {'item_id': self.item_untouched.id, 'actual_count': actual_untouched},
+            {'item_id': self.item_sold_today.id, 'actual_count': actual_sold_today},
+        ])
+        return self.client.post('/stock/take/', {
+            'counts': counts, 'shift': self.shift_this_morning.id,
+        })
+
+    def test_untouched_item_attributed_to_last_nights_shift(self):
+        from core.models import StockVarianceQuery
+        # Untouched item shows a shortage nobody today caused; sold-today item matches book.
+        self._run_stock_take(actual_untouched=15, actual_sold_today=18)
+        svq = StockVarianceQuery.objects.get(item=self.item_untouched)
+        self.assertEqual(svq.attributed_shift_id, self.shift_last_night.id)
+        self.assertEqual(svq.queried_staff.user_id, self.staff_last_night.id)
+
+    def test_sold_today_item_stays_attributed_to_current_shift(self):
+        from core.models import StockVarianceQuery
+        self._run_stock_take(actual_untouched=20, actual_sold_today=15)
+        svq = StockVarianceQuery.objects.get(item=self.item_sold_today)
+        self.assertEqual(svq.attributed_shift_id, self.shift_this_morning.id)
+        self.assertEqual(svq.queried_staff.user_id, self.staff_this_morning.id)
+
+    def test_both_staff_notified_appropriately(self):
+        self._run_stock_take(actual_untouched=15, actual_sold_today=18)
+
+        # Last night's staff is asked to explain, worded as a PAST shift, not "today".
+        explain_notif = Notification.objects.filter(
+            user=self.staff_last_night, title__icontains='Tofauti',
+        ).exclude(title__icontains='Si Zamu Yako').first()
+        self.assertIsNotNone(explain_notif)
+        self.assertIn('iliyopita', explain_notif.message)
+
+        # This morning's staff is told it's not on them for the untouched item.
+        clear_notif = Notification.objects.filter(
+            user=self.staff_this_morning, title__icontains='Si Zamu Yako',
+        ).first()
+        self.assertIsNotNone(clear_notif)
+        self.assertIn('Hakuna hatua', clear_notif.message)
+
+    def test_respond_page_shows_attribution_reasoning_to_the_right_person(self):
+        from core.models import StockVarianceQuery
+        self._run_stock_take(actual_untouched=15, actual_sold_today=18)
+        svq = StockVarianceQuery.objects.get(item=self.item_untouched)
+
+        self.client.force_login(self.staff_last_night)
+        resp = self.client.get(f'/stock/variances/{svq.id}/respond/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'KABLA ya zamu ya sasa')
+
+    def test_current_staff_can_still_be_queried_for_their_own_item(self):
+        from core.models import StockVarianceQuery
+        self._run_stock_take(actual_untouched=20, actual_sold_today=15)
+        svq = StockVarianceQuery.objects.get(item=self.item_sold_today)
+        self.client.force_login(self.staff_this_morning)
+        resp = self.client.get(f'/stock/variances/{svq.id}/respond/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'KABLA ya zamu ya sasa')
+
+
+class KegSpotWeighAttributionTest(TestCase):
+    """weigh_barrel()'s SPOT alert used to always blame request.user — the person who
+    happened to press 'weigh' — even when their shift had sold nothing yet from that
+    barrel, meaning the loss necessarily predates them. Same fairness test as stock
+    takes, applied to keg SPOT checks."""
+
+    def setUp(self):
+        self.business = Business.objects.create(name='Keg Attribution Biz')
+        self.store = Store.objects.create(business=self.business, name='Bar Counter')
+        self.staff_last_night = User.objects.create_user(username='keg_lastnight', password='x')
+        UserProfile.objects.create(user=self.staff_last_night, business=self.business, role='staff')
+        self.staff_today = User.objects.create_user(username='keg_today', password='x')
+        UserProfile.objects.create(user=self.staff_today, business=self.business, role='staff')
+
+        self.item = Item.objects.create(
+            business=self.business, store=self.store,
+            material_no='KEG-ATTR-01', description='Attribution Lager', unit='ml',
+            is_keg=True, selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        self.barrel = KegBarrel.objects.create(
+            business=self.business, store=self.store, item=self.item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+            gross_weight_kg=Decimal('60'), tare_weight_kg=Decimal('10'),
+            status='TAPPED', tapped_at=timezone.now() - timedelta(hours=10),
+        )
+        self.preset = ItemPortionPreset.objects.create(
+            item=self.item, label='Pint', price=Decimal('200'),
+            quantity_consumed=Decimal('500'), serving_type='pint',
+        )
+        self.business.keg_alerts_enabled = True
+        self.business.keg_variance_tolerance_pct = Decimal('0.1')  # tight — any gap is 'danger'
+        self.business.keg_alert_min_litres = Decimal('1.0')
+        self.business.save(update_fields=[
+            'keg_alerts_enabled', 'keg_variance_tolerance_pct', 'keg_alert_min_litres',
+        ])
+
+        yesterday = timezone.now() - timedelta(hours=10)
+        self.shift_last_night = Shift.objects.create(
+            business=self.business, store=self.store, staff=self.staff_last_night,
+            started_at=yesterday, ended_at=yesterday + timedelta(hours=6), status='CONFIRMED',
+        )
+        self.shift_today = Shift.objects.create(
+            business=self.business, store=self.store, staff=self.staff_today,
+            started_at=timezone.now() - timedelta(minutes=5), status='OPEN',
+            opening_float=Decimal('0'),
+        )
+        # Book only reflects a sale from LAST NIGHT — well under what the scale will show.
+        self.barrel.volume_dispensed_ml = Decimal('500')
+        self.barrel.revenue_collected = Decimal('200')
+        self.barrel.save(update_fields=['volume_dispensed_ml', 'revenue_collected'])
+        Transaction.objects.create(
+            business=self.business, item=self.item, type='Issue', qty=Decimal('-500'),
+            sale_amount=Decimal('200'), payment_method='cash', keg_barrel=self.barrel,
+            created_at=self.shift_last_night.started_at + timedelta(minutes=10),
+        )
+
+    def _weigh(self, user, weight_kg):
+        from django.test import RequestFactory
+        from core.keg_views import weigh_barrel
+        rf = RequestFactory()
+        req = rf.post(f'/stock/bar/weigh/{self.barrel.id}/', {'weight_kg': str(weight_kg)})
+        req.user = user
+        req.session = {}
+        return weigh_barrel(req, self.barrel.id)
+
+    def test_redirects_alert_to_last_nights_shift_when_today_has_not_sold(self):
+        with patch('core.keg_views._fire_keg_alert') as mock_alert:
+            resp = self._weigh(self.staff_today, '30.0')  # big drop vs gross 60kg → danger
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(mock_alert.called)
+            staff_name_arg = mock_alert.call_args[0][2]
+            self.assertIn('keg_lastnight', staff_name_arg)
+            self.assertIn('KABLA ya zamu ya sasa', staff_name_arg)
+
+        clear_notif = Notification.objects.filter(
+            user=self.staff_today, title__icontains='Si Zamu Yako',
+        ).first()
+        self.assertIsNotNone(clear_notif)
+        self.assertIn('Hakuna hatua', clear_notif.message)
+
+    def test_alert_stays_on_current_staff_when_they_have_sold_from_barrel(self):
+        # This shift's own staffer already poured from this barrel — attribution
+        # should NOT redirect, and no 'not your shift' notice should fire.
+        Transaction.objects.create(
+            business=self.business, item=self.item, type='Issue', qty=Decimal('-500'),
+            sale_amount=Decimal('200'), payment_method='cash', keg_barrel=self.barrel,
+            created_at=self.shift_today.started_at + timedelta(minutes=1),
+        )
+        with patch('core.keg_views._fire_keg_alert') as mock_alert:
+            resp = self._weigh(self.staff_today, '25.0')
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(mock_alert.called)
+            staff_name_arg = mock_alert.call_args[0][2]
+            self.assertNotIn('KABLA ya zamu ya sasa', staff_name_arg)
+
+        self.assertEqual(
+            Notification.objects.filter(user=self.staff_today, title__icontains='Si Zamu Yako').count(),
+            0,
+        )
+
+    def test_owner_weighing_on_behalf_of_staff_shift_gets_no_self_clear_notice(self):
+        owner = User.objects.create_user(username='keg_owner_attr', password='x')
+        UserProfile.objects.create(user=owner, business=self.business, role='owner')
+        with patch('core.keg_views._fire_keg_alert'):
+            resp = self._weigh(owner, '30.0')
+            self.assertEqual(resp.status_code, 200)
+        # The owner performed the weigh-in, not staff_today — no self-clearing notice
+        # should be created for the owner (they have no "own shift" being cleared).
+        self.assertEqual(
+            Notification.objects.filter(user=owner, title__icontains='Si Zamu Yako').count(),
+            0,
+        )
+
+
+class ClickableNotificationTest(TestCase):
+    """Notification.link_url — tapping a notification should take the reader
+    straight into the record it's about, not just the notifications list."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Clickable Notif Biz')
+        self.owner = User.objects.create_user(username='cn_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_notification_with_link_renders_as_anchor(self):
+        Notification.objects.create(
+            user=self.owner, title='Test Linked', message='msg',
+            notification_type='info', link_url='/stock/variances/',
+        )
+        resp = self.client.get('/notifications/')
+        self.assertContains(resp, '<a href="/stock/variances/"')
+        self.assertContains(resp, 'Test Linked')
+
+    def test_notification_without_link_renders_as_plain_div(self):
+        Notification.objects.create(
+            user=self.owner, title='Test Unlinked', message='msg',
+            notification_type='info',
+        )
+        resp = self.client.get('/notifications/')
+        self.assertNotContains(resp, '<a href=""')
+        self.assertContains(resp, 'Test Unlinked')
+
+    def test_clear_defaulter_notification_links_to_customer_debt_profile(self):
+        from core.models import Customer
+        customer = Customer.objects.create(
+            business=self.biz, name='Linked Customer', is_defaulter=True, credit_approved=False,
+        )
+        self.client.post(f'/debt/{customer.id}/clear-defaulter/')
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Ameruhusiwa').first()
+        self.assertIsNotNone(notif)
+        self.assertEqual(notif.link_url, f'/debt/{customer.id}/')
+
+    def test_stock_variance_notification_links_to_variances_page(self):
+        from core.models import StockTake, StockVarianceQuery
+        store = Store.objects.create(business=self.biz, name='Main')
+        item = Item.objects.create(
+            business=self.biz, store=store, description='Clickable Item',
+            material_no='CLICK-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        stock_take = StockTake.objects.create(business=self.biz, store=store, conducted_by=self.owner)
+        StockVarianceQuery.objects.create(
+            stock_take=stock_take, item=item, item_name_cache=item.description,
+            book_balance=Decimal('10'), actual_count=Decimal('8'),
+            direction=StockVarianceQuery.DECREASE,
+        )
+        from core.stock_take_views import _notify_owner
+        _notify_owner(self.biz, 'Test title', 'Test message')
+        notif = Notification.objects.filter(user=self.owner, title='Test title').first()
+        self.assertIsNotNone(notif)
+        self.assertEqual(notif.link_url, '/stock/variances/')

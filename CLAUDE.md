@@ -2295,3 +2295,111 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `timezone.localtime().replace(hour=0, minute=1, ...)` (start of today), which is
   always within-today regardless of when the suite happens to run. 27 new tests
   (`RevokePaymentAndRemoveEntryTest`). One migration (0119, additive). 584 tests pass.
+- Accountability overhaul — six increments in one session (2026-07-25), run
+  autonomously overnight per Roy's request before he went to sleep, each independently
+  tested and ready to commit. **(1) Shift visibility scoping**: `shift_history()`
+  (`core/shift_views.py`) already station-scoped (bar vs kitchen) but had no identity
+  scoping at all — any staff member saw every OTHER staff member's shifts within their
+  station. Added `staff=request.user` filter for non-owner/manager, matching the
+  `is_owner_or_manager` convention used everywhere else in this app; also fixed the
+  template's `is_owner` context var, which was strictly `up.is_owner` (excluding
+  managers) even though the view's own station-scoping logic already correctly used
+  `is_owner_or_manager` two lines above it — managers could see all shifts but the
+  template variable powering the Confirm button (and now the variance-review buttons,
+  see below) didn't reflect that. **(2) Universal + per-customer credit limit**:
+  `Customer.credit_limit` (per-customer, nullable) already existed; added
+  `Business.default_credit_limit` (accounts migration 0051) as a business-wide
+  fallback. `evaluate_credit()`'s limit check now resolves `customer.credit_limit if
+  not None else business.default_credit_limit` — a personal limit always overrides
+  the default, blank on both means no KES cap (other policy gates still apply). New
+  field exposed in Payment Settings' "Sera ya Deni" section (`_section=credit_policy`
+  handler in `accounts/views.py`) and as a placeholder/hint on the per-customer field
+  in `customer_debt_profile.html` when no personal limit is set. **(3) Cash variance
+  at shift close**: Roy's own diagnosis was exactly right — a shift-close cash gap has
+  only two legitimate causes, unlogged petty cash or something needing a real
+  explanation (most often: owner tells staff by phone to send the drawer's cash to
+  M-Pesa). Root cause of cause #1: `_reconcile()`'s `expected_cash` never subtracted
+  approved petty cash — only the LATER-built Z-report did its own separate
+  subtraction — so the FIRST number staff ever saw at close (and the >KES 500 owner
+  alert, which fires from `close_shift()` itself) was already wrong, a false shortfall
+  that petty cash fully explains. Folded petty cash into `_reconcile()` itself (now
+  returns `petty_cash` too) so every consumer — `close_shift`, `active_shift_api`
+  (staff's own live shift panel), `shift_history`, `bar_z_report` — shares one correct
+  number; removed the Z-report's now-duplicate calculation. For cause #2, new
+  `Shift.variance_note`/`variance_mpesa_ref` (staff's explanation, captured via reason
+  chips right after they see the number, M-Pesa ref prompted only when relevant) and
+  `Shift.variance_review_status`/`variance_review_note`/`variance_reviewed_by/_at`
+  (owner/manager's acknowledge-or-flag decision, re-reviewable with a MAREKEBISHO
+  correction message on reversal — same pattern as `review_petty_cash`'s undo). New
+  endpoints `add_shift_variance_note`/`review_shift_variance` (migration 0120),
+  wired into both `bar_board.html` and `kitchen_board.html`'s close-shift result
+  panel (tabs-drawer-parity rule applies here too — both boards have their own
+  near-identical close-shift modal) and a review UI in `shift_history.html`. Drive-by
+  fix: the >KES 500 cash-variance alert and the keg overnight-loss alert both
+  notified `role='owner'` only, excluding managers — widened to
+  `role__in=['owner','manager']` to match this app's own convention, since managers
+  are exactly who Roy described handling this in practice. **(4) Stock variance
+  shift-boundary attribution** — the core of "two people have questions to answer":
+  `start_stock_take()` used to set `queried_staff` to whichever shift happened to be
+  linked to the stock take, with no check for whether that shift had actually done
+  anything to the item in question. New `shift_views.attribute_variance_shift(
+  business, current_shift, item=None, keg_barrel=None)` — the fairness test: has the
+  current shift recorded ANY transaction on this specific item/barrel since it
+  started? If yes, attribute to them (plausibly theirs, or at least happened on their
+  watch). If zero activity, walk back to the most recent PRIOR shift and attribute
+  there instead (`None` if no prior shift exists — "kabla ya zamu yoyote
+  iliyorekodiwa", never guessed). Applied PER ITEM (not per stock-take), since one
+  stock take can correctly split blame across two different people in the same
+  submission — new `StockVarianceQuery.attributed_shift` FK (migration 0121) records
+  which shift is believed responsible, separate from `queried_staff` (who's actually
+  asked). Notifications now correctly route: the attributed (queried) staff gets
+  asked to explain with wording that says "zamu yako ILIYOPITA" when redirected
+  (never "leo"/today when it wasn't), AND the current on-duty staff gets a separate
+  informational "si zamu yako, hakuna hatua inayohitajika" notice for any item
+  redirected away from them — so both people in the story hear from the app, not just
+  the one being asked. `stock_variance_respond.html` and `stock_variances_pending.html`
+  both surface the attribution reasoning inline. **(5) Keg SPOT weigh-in attribution
+  fix** — the identical bug, worse in practice: `weigh_barrel()`'s SPOT alert always
+  named `request.user` — whoever pressed "weigh" — even when their shift had sold
+  nothing yet from that barrel, meaning the loss necessarily predates them (the
+  scenario Roy described almost verbatim: open shift, weigh immediately, previous
+  night's tally doesn't match, staff hasn't sold anything). Reused the same
+  `attribute_variance_shift()` helper (`keg_barrel=barrel`); when redirected, the
+  alert names the attributed shift's staff with an explicit "(zamu ya {when} — KABLA
+  ya zamu ya sasa)" suffix instead of the current weigher, and the weigher gets the
+  same "si zamu yako" clearing notice as the stock-take case (only when they ARE the
+  current shift's own staffer — an owner/manager spot-checking someone else's barrel
+  has no "their shift" to be cleared on). Note: `confirm_barrel_weights()` (the
+  SHIFT_OPEN vs last SHIFT_CLOSE overnight-loss check, Sprint 4/F2) was ALREADY
+  correctly non-blaming — it compares against the prior shift's own closing reading
+  and alerts the owner about an "overnight" loss, never naming the incoming staffer;
+  only the separate mid-shift SPOT-check path had the bug. **(6) Clickable
+  notifications** — new `Notification.link_url` (migration 0122, blank-by-default,
+  fully backward compatible — every existing call site keeps working unchanged) plus
+  a `create_in_app_notification(..., link_url="")` param on the shared helper.
+  `notifications.html` renders a notification as an `<a>` wrapping the whole card
+  when `link_url` is set (with a "Angalia →" affordance), a plain `<div>` otherwise.
+  Swept essentially every `Notification.objects.create()`/`create_in_app_notification()`
+  call site in the codebase (~45 across `core/notifications.py` — the busiest single
+  file, covering transaction/low-stock/reorder/marketplace-order/procurement-bid/
+  rider notifications — plus `keg_views.py`, `shift_views.py`, `debt_views.py`,
+  `stock_take_views.py`, `mpesa_views.py`, `receipt_views.py`, `restricted_items_
+  views.py`, `restock_views.py`, `petty_cash_views.py`, `order_views.py`,
+  `credit_policy.py`, `kitchen_views.py`, `views.py`, `haki_views.py`,
+  `performer_views.py`, `procurement_views.py`, `customer_ussd.py`,
+  `whatsapp_bot.py`) and gave each a real destination — debt/write-off notifications
+  go to the customer's debt profile or the write-off queue, stock/keg variance
+  alerts go to the variance page or barrel reconciliation, restock/petty-cash/
+  approval notifications go to their respective action queues, procurement/bid
+  notifications go to the specific procurement request, etc. Two deliberately left
+  unlinked (a username-change notice and a staff login/logout ping) where no
+  destination page makes sense. `_fire_keg_alert()` and `_fire_owner_alert_msg()`
+  gained an optional `barrel_id`/`link_url` param threaded through their existing
+  callers (`weigh_barrel`, `close_shift`, `tap_barrel`) rather than duplicating the
+  notify logic. Cause-and-Effect notes: none of the six increments needed new
+  migrations beyond the additive ones listed (0051 accounts; 0120, 0121, 0122 core);
+  all six were verified with targeted test runs plus one full `core + accounts`
+  suite pass before commit, per this file's own end-of-sprint ritual. Also queued for
+  the same session: a fresh systemic audit of all bar processes (Roy's mid-session
+  ask, similar in spirit to the 2026-07-19 bar/keg systemic audit but covering
+  everything shipped since).

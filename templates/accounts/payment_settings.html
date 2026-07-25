@@ -542,6 +542,17 @@
                      value="{{ business.credit_window_days }}" min="1" max="365">
             </div>
 
+            <!-- Universal (default) credit limit -->
+            <div class="col-12 col-md-6">
+              <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">{% trans 'Kikomo cha Deni cha Jumla (KES)' %}</label>
+              <input type="number" name="default_credit_limit" class="form-control"
+                     value="{{ business.default_credit_limit|default_if_none:'' }}"
+                     min="0" step="100" placeholder="{% trans 'Hakuna kikomo' %}">
+              <div style="font-size:0.72rem; color:#888; margin-top:0.25rem;">
+                {% trans 'Inatumika kwa mteja YEYOTE asiye na kikomo chake mwenyewe kwenye ukurasa wake wa deni. Kikomo cha mteja binafsi kinapewa kipaumbele juu ya hiki.' %}
+              </div>
+            </div>
+
             <!-- Monthly cutoff -->
             <div class="col-12 col-md-6">
               <label class="form-label" style="color:#b0b0b0; font-size:0.8rem;">{% trans 'Siku za Kuzuia Mwishoni mwa Mwezi' %}</label>

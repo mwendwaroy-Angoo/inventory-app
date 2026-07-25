@@ -24,7 +24,7 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .models import Item, KegBarrel, KegWeightReading, Shift, ShiftStockCount, Transaction
+from .models import Item, KegBarrel, KegWeightReading, PettyCash, Shift, ShiftStockCount, Transaction
 
 
 def _get_up(request):
@@ -54,6 +54,56 @@ def get_active_staff_shift(user_profile, business):
         business=business, status='OPEN', staff=user_profile.user
     ).first()
     return active if active else False
+
+
+# ── Variance attribution ──────────────────────────────────────────────────────
+
+def attribute_variance_shift(business, current_shift, item=None, keg_barrel=None):
+    """Decide which shift is accountable for a stock/keg variance discovered right now.
+
+    The real-world problem this solves: a stock take (or a keg SPOT weigh-in) can
+    happen at any moment during ANY shift — often minutes after a new staff member
+    opens up. If that discrepancy already existed before their shift started, blaming
+    whoever happens to be on duty when it's DISCOVERED is unfair and gives the wrong
+    person "questions to answer." The fair test: has this shift actually recorded any
+    activity on this specific item/barrel since it started? If yes, the variance is
+    plausibly theirs (or at least happened on their watch) — attribute to them. If
+    zero activity, the variance predates their custody — walk back to the most recent
+    PRIOR shift and attribute there instead.
+
+    Args:
+        business:      accounts.Business
+        current_shift: the Shift open (or most recently closed) at the moment the
+                        variance was discovered — None means an owner/manager acting
+                        directly with no shift context, in which case there is no
+                        "current shift" to compare against and this returns None.
+        item:          core.Item — pass for a stock variance.
+        keg_barrel:    core.KegBarrel — pass for a keg SPOT weigh-in variance.
+
+    Returns:
+        Shift instance believed responsible, or None if either there's no shift
+        context to attribute to, or no prior shift can be identified (e.g. the very
+        first shift of the business, or an overnight/unattended gap with nothing
+        recorded before it either) — callers should treat None as "not clearly
+        anyone's — say so plainly rather than guessing."
+    """
+    if current_shift is None:
+        return None
+
+    qs = Transaction.objects.filter(business=business, created_at__gte=current_shift.started_at)
+    if item is not None:
+        qs = qs.filter(item=item)
+    elif keg_barrel is not None:
+        qs = qs.filter(keg_barrel=keg_barrel)
+    else:
+        return current_shift
+
+    if qs.exists():
+        return current_shift
+
+    return Shift.objects.filter(
+        business=business, started_at__lt=current_shift.started_at,
+    ).order_by('-started_at').first()
 
 
 # ── Reconciliation helper ─────────────────────────────────────────────────────
@@ -95,8 +145,23 @@ def _reconcile(shift):
     credit_sales = float(txns.filter(payment_method='credit').aggregate(t=Sum(_rev))['t'] or 0)
     total_sales  = cash_sales + mpesa_sales + credit_sales
     offline_adj  = float(shift.offline_sales_amount or 0)
-    # expected_cash includes any offline cash that staff declared but didn't enter in the system
-    expected_cash = float(shift.opening_float) + cash_sales + offline_adj
+
+    # Approved petty cash taken out of the till during this shift's own window — this
+    # money physically left the drawer for a legitimate business reason and must be
+    # subtracted before comparing to the physical count, or a staffer who handed out
+    # cash the owner already approved looks "short" for money they never took.
+    # Folded in here (not just at the Z-report) so the FIRST number staff/owner ever
+    # see — right at close_shift(), including the >KES 500 alert — is already correct;
+    # previously only the Z-report (built later) subtracted it, so a false shortfall
+    # alarm could already have fired by the time the report caught up.
+    petty_total = float(PettyCash.objects.filter(
+        business=shift.business, status='approved',
+        created_at__gte=shift.started_at, created_at__lte=end,
+    ).aggregate(t=Sum('amount'))['t'] or 0)
+
+    # expected_cash includes any offline cash that staff declared but didn't enter in the
+    # system, net of approved petty cash paid out during the shift.
+    expected_cash = float(shift.opening_float) + cash_sales + offline_adj - petty_total
     variance = None
     if shift.closing_cash_counted is not None:
         variance = round(float(shift.closing_cash_counted) - expected_cash, 2)
@@ -108,6 +173,7 @@ def _reconcile(shift):
         'mpesa_sales':   round(mpesa_sales, 2),
         'credit_sales':  round(credit_sales, 2),
         'total_sales':   round(total_sales, 2),
+        'petty_cash':    round(petty_total, 2),
         'expected_cash': round(expected_cash, 2),
         'variance':           variance,
         'elapsed':            f"{hours}h {mins:02d}m",
@@ -334,6 +400,7 @@ def _auto_close_expired_shifts(business):
                         f"{tabs_note}"
                     ),
                     notification_type='shift',
+                    link_url='/bar/shift/history/',
                 )
         except Exception:
             pass
@@ -597,6 +664,7 @@ def open_shift(request):
                     title=f'🟢 Shift Imefunguliwa — {staff_name}',
                     message=f"{staff_name} amefungua shift na float ya {float_str}.",
                     notification_type='staff',
+                    link_url='/bar/shift/history/',
                 )
         except Exception:
             pass
@@ -697,6 +765,7 @@ def close_shift(request, shift_id):
                                 request.user.get_full_name() or request.user.username,
                                 bv.wastage_kes or 0.0,
                                 bv.wastage_pct,
+                                barrel_id=barrel.id,
                             )
                 except Exception:
                     pass
@@ -728,13 +797,14 @@ def close_shift(request, shift_id):
                 f"Angalia Z-Report kwa maelezo zaidi."
             )
             for _op in _UP.objects.filter(
-                business=up.business, role='owner'
+                business=up.business, role__in=['owner', 'manager']
             ).select_related('user'):
                 _Notif.objects.create(
                     user=_op.user,
                     title='⚠️ Tofauti ya Fedha',
                     message=_alert_msg,
                     notification_type='warning',
+                    link_url='/bar/shift/history/',
                 )
                 if _op.phone:
                     try:
@@ -780,6 +850,113 @@ def close_shift(request, shift_id):
         'auto_converted_names': auto_converted_names,
         'manager_taking_over':  _manager_taking_over,
     })
+
+
+# ── Cash variance accountability (staff explains, owner reviews) ──────────────
+
+@login_required
+@require_POST
+def add_shift_variance_note(request, shift_id):
+    """Staff's own explanation for a cash variance, captured right after they see
+    the number at close — never required (skip is always an option, matching this
+    app's reason-chips contract everywhere else). Only the shift's own staff member
+    (or owner/manager) may add it. Folds an optional M-Pesa reference in separately
+    so 'I sent it to M-Pesa' has a checkable paper trail, not just a claim.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    shift = get_object_or_404(Shift, id=shift_id, business=up.business)
+    if not up.is_owner_or_manager and shift.staff_id != request.user.id:
+        return JsonResponse({'ok': False, 'error': 'Si zamu yako'}, status=403)
+
+    note = (request.POST.get('variance_note') or '').strip()[:300]
+    mpesa_ref = (request.POST.get('variance_mpesa_ref') or '').strip()[:40]
+    shift.variance_note = note
+    shift.variance_mpesa_ref = mpesa_ref
+    shift.save(update_fields=['variance_note', 'variance_mpesa_ref'])
+
+    if note:
+        rec = _reconcile(shift)
+        var = rec['variance']
+        staff_name = shift.staff.get_full_name() or shift.staff.username
+        var_txt = f"KES {abs(var):,.0f} ({'upungufu' if (var or 0) < 0 else 'ziada'})" if var is not None else '—'
+        msg = f"{staff_name} ameeleza tofauti ya fedha ({var_txt}): \"{note}\""
+        if mpesa_ref:
+            msg += f" — M-Pesa ref: {mpesa_ref}"
+        from .models import Notification
+        from accounts.models import UserProfile as _UP
+        from .notifications import normalize_ke_phone, send_sms_notification
+        for op in _UP.objects.filter(business=up.business, role__in=['owner', 'manager']).select_related('user'):
+            Notification.objects.create(
+                user=op.user, title='💬 Maelezo ya Tofauti ya Fedha', message=msg,
+                notification_type='info', link_url='/bar/shift/history/',
+            )
+            if op.phone:
+                try:
+                    send_sms_notification(msg, normalize_ke_phone(op.phone))
+                except Exception:
+                    pass
+
+    return JsonResponse({'ok': True, 'message': 'Maelezo yamehifadhiwa.' if note else 'Sawa.'})
+
+
+@login_required
+@require_POST
+def review_shift_variance(request, shift_id):
+    """Owner/manager's side of the same conversation — acknowledge the staff's
+    explanation (or the variance itself, if no note was given) or flag it for
+    follow-up. Mirrors review_petty_cash()/review_variance()'s pending→reviewed
+    lifecycle, and — like both of those — notifies the staff member of the
+    decision, naming who decided and when, per this app's wording/accountability
+    standard. Re-reviewable any number of times, same as petty cash's undo.
+    """
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+
+    shift = get_object_or_404(Shift, id=shift_id, business=up.business)
+    status = request.POST.get('status', '')
+    if status not in ('acknowledged', 'flagged'):
+        return JsonResponse({'ok': False, 'error': 'Hali si sahihi'}, status=400)
+
+    note = (request.POST.get('review_note') or '').strip()[:300]
+    is_reversal = bool(shift.variance_reviewed_at) and shift.variance_review_status != status
+
+    shift.variance_review_status = status
+    shift.variance_review_note = note
+    shift.variance_reviewed_by = request.user
+    shift.variance_reviewed_at = timezone.now()
+    shift.save(update_fields=[
+        'variance_review_status', 'variance_review_note',
+        'variance_reviewed_by', 'variance_reviewed_at',
+    ])
+
+    reviewer_name = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(shift.variance_reviewed_at).strftime('%d %b, %H:%M')
+    verb = 'Imethibitishwa' if status == 'acknowledged' else 'Imewekwa alama kwa ufuatiliaji'
+    prefix = 'MAREKEBISHO: ' if is_reversal else ''
+    msg = f"{prefix}{verb} na {reviewer_name} — {when}."
+    if note:
+        msg += f" \"{note}\""
+
+    try:
+        from .models import Notification
+        title = '✓ Tofauti ya Fedha Imethibitishwa' if status == 'acknowledged' else '🔍 Tofauti ya Fedha — Ufuatiliaji'
+        Notification.objects.create(
+            user=shift.staff, title=title, message=msg, notification_type='info',
+            link_url='/bar/shift/history/',
+        )
+        from accounts.models import UserProfile as _UP
+        staff_profile = _UP.objects.filter(user=shift.staff, business=up.business).first()
+        if staff_profile and staff_profile.phone:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            send_sms_notification(msg, normalize_ke_phone(staff_profile.phone))
+    except Exception:
+        logger.exception('review_shift_variance: notify failed for shift %s', shift.id)
+
+    return JsonResponse({'ok': True, 'message': msg, 'is_reversal': is_reversal})
 
 
 # ── Confirm barrel weights (incoming staff after opening their shift) ─────────
@@ -853,12 +1030,13 @@ def confirm_barrel_weights(request):
                             (now - up.business.last_txn_sms_at).total_seconds() > 600
                         )
                         owners = UserProfile.objects.filter(
-                            business=up.business, role='owner'
+                            business=up.business, role__in=['owner', 'manager']
                         ).select_related('user')
                         for op in owners:
                             Notification.objects.create(
                                 user=op.user, title='Keg Barrel Alert', message=msg,
                                 notification_type='warning',
+                                link_url=f'/bar/reconciliation/{barrel.id}/',
                             )
                             if can_sms and op.phone:
                                 normalized = normalize_ke_phone(op.phone)
@@ -940,6 +1118,12 @@ def shift_history(request):
     elif _show_bar and not _show_kitchen:
         _base_qs = _base_qs.filter(_Q(store__is_kitchen=False) | _Q(store__isnull=True))
 
+    # Identity scoping: only owner/manager sees every staff member's shifts. A regular
+    # staffer (including waitress/kitchen) only ever sees their OWN shift history — station
+    # scoping above answers "which counter", this answers "whose shifts", and both apply.
+    if not _is_owner:
+        _base_qs = _base_qs.filter(staff=request.user)
+
     shifts_qs = _base_qs.select_related('staff', 'confirmed_by').order_by('-started_at')[:60]
 
     rows = []
@@ -962,7 +1146,10 @@ def shift_history(request):
 
     return render(request, 'core/bar/shift_history.html', {
         'rows':     rows,
-        'is_owner': getattr(up, 'is_owner', False),
+        # Owner-or-manager (matches the identity-scoping check above and this app's
+        # established is_owner_or_manager convention) — a manager confirms shifts and
+        # reviews cash-variance explanations the same as an owner would.
+        'is_owner': _is_owner,
     })
 
 

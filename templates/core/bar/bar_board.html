@@ -4459,6 +4459,52 @@
               '</div>';
           }
 
+          // Cash-variance accountability: a real gap (>50 KES) could only be unlogged
+          // petty cash or something the staffer needs to explain (most often: the
+          // owner told them by phone to send the drawer's cash to M-Pesa). Prompt for
+          // an optional explanation right here — never required, matching this app's
+          // reason-chips contract everywhere else.
+          if (Math.abs(parseFloat(d.variance)) > 50) {
+            var vnWrap = document.createElement('div');
+            vnWrap.style.cssText = 'margin-top:.6rem;';
+            vnWrap.innerHTML = '<button type="button" id="close-shift-explain-btn" ' +
+              'style="width:100%;padding:.5rem;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.35);' +
+              'border-radius:6px;color:#c9a84c;font-size:.8rem;cursor:pointer;">💬 Eleza Tofauti Hii (hiari)</button>' +
+              '<div id="close-shift-explain-result" style="display:none;font-size:.78rem;color:#4caf50;margin-top:.4rem;"></div>';
+            resEl.parentNode.insertBefore(vnWrap, resEl.nextSibling);
+            var shiftIdForNote = _activeShiftId;
+            document.getElementById('close-shift-explain-btn').onclick = function (ev) {
+              window.openReasonChips({
+                anchorEl: ev.target,
+                title: 'Kwa nini kuna tofauti?',
+                chips: [
+                  'Nilituma sehemu ya pesa kwa M-Pesa (mwenye biashara aliniambia)',
+                  'Kuna gharama ndogo niliyolipa lakini sijaandika kwenye Petty Cash bado',
+                  'Sina uhakika kwa nini kuna tofauti',
+                ],
+                skipLabel: 'Ruka — bila maelezo',
+                onSelect: function (text) {
+                  if (!text) return;
+                  var mpesaRef = '';
+                  if (text.indexOf('M-Pesa') !== -1) {
+                    mpesaRef = (window.prompt('Namba ya M-Pesa (hiari)') || '').trim();
+                  }
+                  post('/bar/shift/' + shiftIdForNote + '/variance-note/', {
+                    variance_note: text, variance_mpesa_ref: mpesaRef,
+                  }).then(function (r) { return r.json(); }).then(function (rd) {
+                    var out = document.getElementById('close-shift-explain-result');
+                    if (out) {
+                      out.style.display = 'block';
+                      out.textContent = '✓ ' + (rd.message || 'Maelezo yamehifadhiwa.');
+                    }
+                    var btn2 = document.getElementById('close-shift-explain-btn');
+                    if (btn2) btn2.style.display = 'none';
+                  });
+                },
+              });
+            };
+          }
+
           // Hide close button; show Done + Stock Take
           btn.style.display = 'none';
           var doneBtn = document.createElement('button');
