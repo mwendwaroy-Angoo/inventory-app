@@ -1002,7 +1002,8 @@
              genuinely paying less (e.g. mpesa 70 of an 80 tab) — the
              shortfall stays as an ordinary unpaid balance, never dropped. -->
         <label style="color:#888;font-size:.72rem;display:block;margin-bottom:.15rem;">Kiasi kinacholipwa sasa (KES)</label>
-        <input type="number" id="kb-settle-pay-amount" min="0" step="1" class="form-control form-control-sm mb-2">
+        <input type="number" id="kb-settle-pay-amount" min="0" step="1" class="form-control form-control-sm mb-2"
+               oninput="this.dataset.autofilled='0'">
         <input type="tel" id="kb-settle-phone" class="form-control form-control-sm mb-2"
                placeholder="Simu ya mteja (lazima kwa STK, hiari kwa SMS risiti)">
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
@@ -2511,7 +2512,14 @@
     var amtEl = document.getElementById('kb-settle-amount');
     var payAmountEl = document.getElementById('kb-settle-pay-amount');
     var defaultPayable = checked.length > 0 ? selectedTotal : _settleTabAmount;
-    if (payAmountEl) { payAmountEl.value = defaultPayable > 0 ? Math.round(defaultPayable) : ''; payAmountEl.max = defaultPayable; }
+    // Explicit "still the pre-fill, never touched" flag rather than
+    // comparing the (rounded) field value back against the (unrounded)
+    // payable total — that comparison silently misfired whenever the cents
+    // portion was < .50 (Math.round rounds DOWN), treating an untouched box
+    // as a partial payment a few shillings short of the real total and
+    // leaving a stale near-zero-balance tab stuck in the drawer (found
+    // 2026-07-25, same bug as bar_board.html/quick_sell.html).
+    if (payAmountEl) { payAmountEl.value = defaultPayable > 0 ? Math.round(defaultPayable) : ''; payAmountEl.max = defaultPayable; payAmountEl.dataset.autofilled = '1'; }
     if (checked.length > 0) {
       amtEl.textContent = 'KES ' + fmt(selectedTotal) + ' (kati ya KES ' + fmt(_settleTabAmount) + ')';
     } else {
@@ -2542,8 +2550,9 @@
     // differs from what's actually payable, so an untouched input behaves
     // exactly like before (full settle).
     var payAmountEl = document.getElementById('kb-settle-pay-amount');
-    var editedAmount = payAmountEl && payAmountEl.value ? parseFloat(payAmountEl.value) : fullPayable;
-    if (editedAmount > 0 && editedAmount < fullPayable) bodyObj.amount = editedAmount;
+    var userTouched = payAmountEl && payAmountEl.dataset.autofilled !== '1' && payAmountEl.value;
+    var editedAmount = userTouched ? parseFloat(payAmountEl.value) : fullPayable;
+    if (userTouched && editedAmount > 0 && editedAmount < fullPayable) bodyObj.amount = editedAmount;
     var body = new URLSearchParams(bodyObj);
     checked.forEach(function(cb) { body.append('entry_ids', cb.dataset.entryId); });
     fetch('/bar/tabs/' + _settleTabId + '/settle/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
@@ -2595,7 +2604,8 @@
     // exactly this much, e.g. mpesa 70 of an 80 tab; falls back to the full
     // tab total if left untouched (unchanged behavior).
     var payAmountEl = document.getElementById('kb-settle-pay-amount');
-    var stkAmount = payAmountEl && payAmountEl.value ? parseFloat(payAmountEl.value) : _settleTabAmount;
+    var stkUserTouched = payAmountEl && payAmountEl.dataset.autofilled !== '1' && payAmountEl.value;
+    var stkAmount = stkUserTouched ? parseFloat(payAmountEl.value) : _settleTabAmount;
     if (!stkAmount || stkAmount <= 0 || stkAmount > _settleTabAmount) stkAmount = _settleTabAmount;
     stkBtn.disabled = true; stkBtn.textContent = '⏳ Inatuma...';
     resEl.style.display = 'none';

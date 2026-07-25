@@ -12042,3 +12042,40 @@ class KitchenStockReceiptTest(TestCase):
         resp = self._create_receipt(idempotency_token='ksr-bar-staff')
         self.assertFalse(resp.json().get('ok'))
         self.assertEqual(resp.status_code, 403)
+
+
+class ItemFormYieldSectionVisibilityTest(TestCase):
+    """2026-07-25 live report: on a business with BOTH a keg module and a
+    kitchen module, the Yield/Processing section (is_yield_item checkbox) was
+    hidden from the item form for EVERY item, including kitchen items like
+    "Kuku" — because the old template condition checked the business's whole
+    keg module flag, not the specific item's own store. The section must
+    render (and be JS-toggled by store selection) for kitchen-store items in
+    a combo business, exactly as it always has for non-keg businesses."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        bar_type, _created = BusinessType.objects.get_or_create(name='Bar')
+        self.biz = Business.objects.create(
+            name='Yield Combo Biz', business_type=bar_type, has_kitchen=True,
+        )
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku',
+            material_no='YLD-KUKU', unit='Bird', selling_price=Decimal('50'),
+        )
+        self.owner = User.objects.create_user(username='yield_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_yield_checkbox_present_in_edit_form_for_kitchen_item_on_combo_business(self):
+        resp = self.client.get(f'/stock/edit/{self.kuku.id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'id_is_yield_item')
+        self.assertContains(resp, 'yieldProcessingSection')
+
+    def test_yield_checkbox_present_in_add_form_on_combo_business(self):
+        resp = self.client.get('/stock/add/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'id_is_yield_item')

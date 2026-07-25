@@ -2678,6 +2678,7 @@
             '<span style="display:flex;align-items:center;gap:.25rem;">' +
             '<span style="color:#888;font-size:.72rem;">Kiasi:</span>' +
             '<input type="number" id="tab-partial-amount-' + tab.id + '" min="0" step="1" ' +
+            'oninput="this.dataset.autofilled=\'0\'" ' +
             'style="width:80px;background:#111;border:1px solid #444;border-radius:5px;color:#f0ece4;padding:.15rem .35rem;font-size:.75rem;" ' +
             'title="Badilisha kama mteja analipa sehemu tu (mfano: mpesa 70 kati ya 80)">' +
             '</span>' +
@@ -3059,7 +3060,17 @@
     // e.g. mpesa 70 of an 80 selection). Reset (not preserved) on selection
     // change so a stale partial amount from a previous selection can never
     // silently carry over onto a different set of items.
-    if (amountEl) { amountEl.value = total > 0 ? Math.round(total) : ''; amountEl.max = total; }
+    // Track "still the pre-fill, never touched" via an explicit flag rather
+    // than comparing the (rounded) field value back against the (unrounded)
+    // total — that comparison silently misfired whenever the cents portion
+    // was < .50 (Math.round rounds DOWN), making settleTabPartial() treat an
+    // untouched box as a partial payment a few shillings short of the real
+    // total. The server correctly never writes off that shortfall — it
+    // splits the boundary entry and leaves a genuine unpaid remainder — so
+    // the tab stayed technically OPEN with a near-zero balance that looked
+    // like "KES 0" once the display rounded it, explaining tabs that seemed
+    // stuck in the drawer after being "fully" paid (found 2026-07-25).
+    if (amountEl) { amountEl.value = total > 0 ? Math.round(total) : ''; amountEl.max = total; amountEl.dataset.autofilled = '1'; }
     if (btnCash)  btnCash.disabled       = checked.length === 0;
     if (btnMpesa) btnMpesa.disabled      = checked.length === 0;
     if (btnStk)   btnStk.disabled        = checked.length === 0;
@@ -3082,7 +3093,8 @@
     // Staff-edited amount (2026-07-25) — request STK for exactly this much,
     // e.g. the customer wants to pay 70 of an 80 selection via M-Pesa.
     var amountEl = document.getElementById('tab-partial-amount-' + tabId);
-    var stkAmount = amountEl && amountEl.value ? parseFloat(amountEl.value) : total;
+    var stkAmount = (amountEl && amountEl.dataset.autofilled !== '1' && amountEl.value)
+      ? parseFloat(amountEl.value) : total;
     if (!stkAmount || stkAmount <= 0 || stkAmount > total) stkAmount = total;
     // Store selected entry IDs for sendTabStk to include in the body
     window._pendingStkEntryIds = ids;
@@ -3101,8 +3113,9 @@
     // differs from the full selected total, so an untouched input behaves
     // exactly like before — a plain full settle of everything checked.
     var amountEl = document.getElementById('tab-partial-amount-' + tabId);
-    var editedAmount = amountEl && amountEl.value ? parseFloat(amountEl.value) : total;
-    if (editedAmount > 0 && editedAmount < total) bodyObj.amount = editedAmount;
+    var userTouched = amountEl && amountEl.dataset.autofilled !== '1' && amountEl.value;
+    var editedAmount = userTouched ? parseFloat(amountEl.value) : total;
+    if (userTouched && editedAmount > 0 && editedAmount < total) bodyObj.amount = editedAmount;
     var body = new URLSearchParams(bodyObj);
     checked.forEach(function (cb) { body.append('entry_ids', cb.dataset.entryId); });
     document.querySelectorAll('.tab-action-btn, .tab-partial-btn').forEach(function (b) { b.disabled = true; });

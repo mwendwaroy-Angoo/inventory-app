@@ -296,8 +296,19 @@
             {% bootstrap_field form.reorder_quantity %}
             </div>
 
-            {% if not biz_profile.modules.keg %}
-            <!-- ── Yield / Processing Section ── -->
+            {% if not biz_profile.modules.keg or kitchen_store_ids_json %}
+            <!-- ── Yield / Processing Section ──
+                 2026-07-25 live report: on a business that has BOTH a keg module
+                 AND a kitchen module (e.g. a bar with a kitchen add-on), this whole
+                 section used to be hidden for EVERY item — including kitchen items
+                 like "Kuku" — because the old condition checked the business's
+                 overall keg module flag, not the specific item's own store. The
+                 intent was only ever to hide it for KEG items (which track waste via
+                 the richer KegBarrel/keg_metrics system instead), never for kitchen
+                 items in the same business. Now renders whenever the business isn't
+                 keg-only, and — for a combo business — is additionally toggled by
+                 store selection via isKitchenStore() below (id="yieldProcessingSection"). -->
+            <div id="yieldProcessingSection">
             <div class="section-divider" style="margin-top:1.5rem;"><span>⚗️ {% trans 'Yield / Processing' %}</span></div>
             <div style="background:rgba(243,156,18,0.05); border:1px solid rgba(243,156,18,0.2); border-radius:10px; padding:1rem; margin-bottom:1rem;">
                 <div class="form-check mb-2">
@@ -327,8 +338,9 @@
                     <div id="yieldFactorHint" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.25); border-radius:6px; padding:0.5rem 0.75rem; font-size:0.82rem; color:var(--gold); display:none; margin-top:0.5rem;"></div>
                 </div>
             </div>
+            </div>
             <!-- ── end Yield Section ── -->
-            {% endif %}{# not keg #}
+            {% endif %}{# not keg-only #}
 
             {% if user.userprofile.is_owner %}
             <div class="section-divider"><span>🔒 {% trans 'Restriction Settings' %}</span></div>
@@ -2106,6 +2118,12 @@
     var KITCHEN_IDS = {{ kitchen_store_ids_json|safe }};
     if (!KITCHEN_IDS.length) return;
 
+    // 2026-07-25 live report: on a keg-module business (e.g. a bar with a
+    // kitchen add-on), the Yield/Processing section must stay available for
+    // KITCHEN-store items (was previously hidden business-wide) but still
+    // hidden for keg/bar-store items, which track waste via KegBarrel instead.
+    var YIELD_BIZ_HAS_KEG = {{ biz_profile.modules.keg|yesno:"true,false" }};
+
     // Initial state from the saved item — used by setupKitchenModeToggle to restore
     // km_batch / km_portion without querying is_produce / pm_bunch DOM elements,
     // which are absent on bar business forms (gated by the keg module flag).
@@ -2237,6 +2255,9 @@
 
     function applyKitchenMode(isKitchen) {
         _kitchenActive = isKitchen;
+
+        var yieldSec = document.getElementById('yieldProcessingSection');
+        if (yieldSec) yieldSec.style.display = (YIELD_BIZ_HAS_KEG && !isKitchen) ? 'none' : '';
 
         if (kegDividerEl) kegDividerEl.style.display = isKitchen ? 'none' : '';
         if (kegBlock)     kegBlock.style.display     = isKitchen ? 'none' : '';
