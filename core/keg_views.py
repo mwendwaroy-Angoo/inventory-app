@@ -81,6 +81,31 @@ def _cancel_pending_transfers_for_tab(tab):
             logger.exception('Failed to auto-cancel TabTransferRequest %s', tfr.id)
 
 
+def _sync_master_receipt_payment_method(business, tab, payment_method):
+    """Keep a tab's master receipt's payment_method in sync with reality when
+    the tab concludes some way OTHER than the ordinary settle_tab() flow
+    (which already does this itself via _finish_settle_tab) — specifically
+    tab-to-debt conversion (Geuza Deni), all three call sites (
+    convert_tab_to_debt, bulk_convert_tabs_to_debt,
+    _convert_open_tabs_to_debt_for_shift).
+
+    2026-07-25 live report: /receipts/ was showing a converted tab's receipt
+    with whatever payment_method it had when first opened ('tab' — a plain
+    string, matching neither 'cash'/'mpesa'/'credit' — see the sibling fix in
+    receipts_list()'s badge logic) even after conversion correctly flipped
+    every underlying Transaction to payment_method='credit'. Never raises —
+    a receipt display glitch must never block the conversion itself.
+    """
+    try:
+        from core.tab_receipts import resolve_master_receipt
+        master_rcpt, _ = resolve_master_receipt(business, tab)
+        if master_rcpt and master_rcpt.payment_method != payment_method:
+            master_rcpt.payment_method = payment_method
+            master_rcpt.save(update_fields=['payment_method'])
+    except Exception:
+        logger.exception('_sync_master_receipt_payment_method failed (tab=%s)', tab.id)
+
+
 def _merge_tab_into(source_tab, target_tab):
     """Fold `source_tab`'s entries into `target_tab` and close the now-empty
     source tab, instead of leaving two separately-open tabs for the same
@@ -2437,6 +2462,7 @@ def convert_tab_to_debt(request, tab_id):
     tab.cash_requested_at = None
     tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
     _cancel_pending_transfers_for_tab(tab)
+    _sync_master_receipt_payment_method(up.business, tab, 'credit')
 
     # Heads-up (not a block — goods already served) if this customer is
     # already credit-risky per the K3 policy gate.
@@ -2542,6 +2568,7 @@ def bulk_convert_tabs_to_debt(request):
         tab.cash_requested_at = None
         tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
         _cancel_pending_transfers_for_tab(tab)
+        _sync_master_receipt_payment_method(up.business, tab, 'credit')
         converted += 1
 
         try:

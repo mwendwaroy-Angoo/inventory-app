@@ -31,6 +31,7 @@
 .pay-cash   { background: rgba(120,180,90,0.15); color: #9fcaa0; }
 .pay-mpesa  { background: rgba(76,175,80,0.15);  color: #4caf50; }
 .pay-credit { background: rgba(192,57,90,0.15);  color: #e87090; }
+.pay-open   { background: rgba(251,191,36,0.15); color: #fbbf24; }
 .src-badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 8px; font-size: 0.65rem; font-weight: 600; white-space: nowrap; }
 .src-kitchen { background: rgba(255,180,50,0.13); color: #f5a623; }
 .src-bar     { background: rgba(200,117,42,0.13); color: #C8752A; }
@@ -67,6 +68,11 @@
 
     <!-- Filter bar -->
     <form method="get" class="filter-bar">
+        <select name="status">
+            <option value="sold" {% if status_filter == 'sold' %}selected{% endif %}>✅ Zilizouzwa (si tabs wazi)</option>
+            <option value="open" {% if status_filter == 'open' %}selected{% endif %}>🔶 Tabs Wazi Pekee</option>
+            <option value="all"  {% if status_filter == 'all' %}selected{% endif %}>Zote</option>
+        </select>
         <select name="month">
             {% for num, abbr in month_options %}
             <option value="{{ num }}" {% if num == sel_month %}selected{% endif %}>{{ abbr }}</option>
@@ -79,8 +85,15 @@
         </select>
         <input type="text" name="q" value="{{ search }}" placeholder="Search customer…" style="flex:1; min-width:120px;">
         <button type="submit">Filter</button>
-        {% if search or sel_month != cur_year %}<a href="{% url 'receipts_list' %}" style="color:#b0b0b0; font-size:0.8rem; text-decoration:none; padding:0.35rem 0.5rem;">✕ Clear</a>{% endif %}
+        {% if search or status_filter != 'sold' %}<a href="{% url 'receipts_list' %}" style="color:#b0b0b0; font-size:0.8rem; text-decoration:none; padding:0.35rem 0.5rem;">✕ Clear</a>{% endif %}
     </form>
+
+    {% if open_tab_count and status_filter == 'sold' %}
+    <div style="font-size:0.72rem; color:#fbbf24; margin-bottom:0.6rem; padding:0.45rem 0.7rem; background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.25); border-radius:8px;">
+        🔶 {{ open_tab_count }} tab{{ open_tab_count|pluralize }} bado wazi (haijalipwa) haionyeshwi hapa —
+        <a href="?status=open{% if search %}&q={{ search }}{% endif %}&month={{ sel_month }}&year={{ sel_year }}" style="color:#fbbf24; text-decoration:underline;">angalia</a>
+    </div>
+    {% endif %}
 
     {% if receipts %}
         <div style="font-size:0.72rem; color:#b0b0b0; margin-bottom:0.5rem;">
@@ -99,9 +112,17 @@
                 {% for line in r.lines %}{% if line.qty != 0 %}{{ line.name }}{% if not forloop.last %}, {% endif %}{% endif %}{% endfor %}
             </span>
             <span class="rct-total">KES {{ r.total|floatformat:"0" }}</span>
-            <span class="pay-badge {% if r.payment_method == 'mpesa' %}pay-mpesa{% elif r.payment_method == 'credit' %}pay-credit{% else %}pay-cash{% endif %}">
-                {% if r.payment_method == 'mpesa' %}M-Pesa{% elif r.payment_method == 'credit' %}Credit{% else %}Cash{% endif %}
-            </span>
+            {% if r.is_open_tab %}
+            <span class="pay-badge pay-open">🔶 Tab Wazi</span>
+            {% elif r.payment_method == 'mpesa' %}
+            <span class="pay-badge pay-mpesa">M-Pesa</span>
+            {% elif r.payment_method == 'credit' %}
+            <span class="pay-badge pay-credit">Credit</span>
+            {% elif r.payment_method == 'cash' %}
+            <span class="pay-badge pay-cash">Cash</span>
+            {% else %}
+            <span class="pay-badge" style="background:rgba(176,176,176,0.15); color:#b0b0b0;">{{ r.payment_method|default:"—" }}</span>
+            {% endif %}
             {% if r.source == 'kitchen' %}<span class="src-badge src-kitchen">🍗 Kitchen</span>{% endif %}
             {% if r.created_by %}<span class="rct-server" title="Served by {{ r.created_by.get_full_name|default:r.created_by.username }}">{{ r.created_by.username }}</span>{% endif %}
         </a>
@@ -111,6 +132,10 @@
             <div style="font-size:2.5rem; margin-bottom:0.5rem;">🧾</div>
             {% if search %}
             <div>No receipts found for <strong>{{ search }}</strong> in this period.</div>
+            {% elif status_filter == 'open' %}
+            <div>No open tabs right now — every receipt this period is a completed sale.</div>
+            {% elif status_filter == 'sold' and total_count %}
+            <div>Nothing sold yet this month — {{ total_count }} receipt{{ total_count|pluralize }} still on open tabs. <a href="?status=open&month={{ sel_month }}&year={{ sel_year }}" style="color:var(--gold);">Angalia tabs wazi</a></div>
             {% else %}
             <div>No receipts for this month. Receipts are created automatically on every Quick Sell, bar order, and debt payment.</div>
             {% endif %}

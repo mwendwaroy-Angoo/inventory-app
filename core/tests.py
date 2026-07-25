@@ -11638,3 +11638,148 @@ class BackfillSvqInvoiceTagsCommandTest(TestCase):
         )
         # Must not raise — no corrective_txn to touch.
         call_command('backfill_svq_invoice_tags')
+
+
+class ReceiptsListOpenTabDistinctionTest(TestCase):
+    """2026-07-25 live report: a receipt tied to a still-open, unpaid tab was
+    issued with payment_method='tab' — a plain string matching neither
+    'cash'/'mpesa'/'credit' — which /receipts/'s badge logic silently
+    rendered as "Cash", so staff/owner saw an in-progress, unpaid tab
+    looking exactly like a completed cash sale. Locks in the fix: open-tab
+    receipts get their own badge, are excluded from the default 'sold'
+    view, and are reachable via an explicit 'open' filter."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Receipts Open Tab Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rot_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def _make_receipt_for_tab(self, tab_status, payment_method='tab'):
+        from core.models import Receipt
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Wanjiku', status=tab_status, source='bar', store=self.store,
+        )
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Tusker', 'qty': 1, 'subtotal': 200}],
+            payment_method=payment_method, customer_name='Wanjiku',
+            meta={'tab_id': tab.id},
+        )
+        return tab, rcpt
+
+    def test_open_tab_receipt_flagged_and_excluded_from_default_view(self):
+        tab, rcpt = self._make_receipt_for_tab('OPEN')
+        resp = self.client.get('/receipts/')
+        ids = [r.id for r in resp.context['receipts']]
+        self.assertNotIn(rcpt.id, ids, 'Default (sold) view must exclude open-tab receipts')
+        self.assertEqual(resp.context['open_tab_count'], 1)
+
+    def test_open_tab_receipt_shows_tab_wazi_badge_not_cash(self):
+        tab, rcpt = self._make_receipt_for_tab('OPEN')
+        resp = self.client.get('/receipts/?status=open')
+        self.assertContains(resp, 'Tab Wazi')
+        self.assertNotContains(resp, '>Cash<')
+
+    def test_settled_tab_receipt_shows_correct_payment_badge(self):
+        tab, rcpt = self._make_receipt_for_tab('SETTLED', payment_method='mpesa')
+        resp = self.client.get('/receipts/')
+        ids = [r.id for r in resp.context['receipts']]
+        self.assertIn(rcpt.id, ids, 'A settled tab receipt is a completed sale — must appear in the default view')
+        self.assertContains(resp, 'M-Pesa')
+
+    def test_all_filter_shows_both(self):
+        open_tab, open_rcpt = self._make_receipt_for_tab('OPEN')
+        settled_tab, settled_rcpt = self._make_receipt_for_tab('SETTLED', payment_method='cash')
+        resp = self.client.get('/receipts/?status=all')
+        ids = {r.id for r in resp.context['receipts']}
+        self.assertEqual(ids, {open_rcpt.id, settled_rcpt.id})
+
+    def test_open_filter_shows_only_open(self):
+        open_tab, open_rcpt = self._make_receipt_for_tab('OPEN')
+        settled_tab, settled_rcpt = self._make_receipt_for_tab('SETTLED', payment_method='cash')
+        resp = self.client.get('/receipts/?status=open')
+        ids = {r.id for r in resp.context['receipts']}
+        self.assertEqual(ids, {open_rcpt.id})
+
+    def test_credit_sale_with_no_tab_stays_in_default_sold_view(self):
+        # A plain Quick Sell credit sale (no BarTab at all) must never be
+        # mistaken for an open tab — it's a completed, credit-tracked sale.
+        from core.models import Receipt
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Soda', 'qty': 1, 'subtotal': 50}],
+            payment_method='credit', customer_name='Deni Mteja',
+        )
+        resp = self.client.get('/receipts/')
+        ids = [r.id for r in resp.context['receipts']]
+        self.assertIn(rcpt.id, ids)
+
+
+class TabToDebtConversionSyncsReceiptPaymentMethodTest(TestCase):
+    """2026-07-25 live report follow-up: converting a tab to debt (Geuza Deni)
+    correctly flips every underlying Transaction to payment_method='credit'
+    but never touched the tab's master Receipt — so even after conversion,
+    /receipts/ kept showing the old 'tab' placeholder (rendered as "Cash").
+    All three conversion call sites now sync it."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Convert Sync Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='cs_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Convert Item',
+            material_no='CS-01', unit='Pcs', selling_price=Decimal('200'),
+        )
+        self.client.force_login(self.owner)
+
+    def _open_tab_with_receipt(self, name='Roy'):
+        from core.models import Receipt
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source='bar', store=self.store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Convert Item', amount=Decimal('200'), is_paid=False,
+        )
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Convert Item', 'qty': 1, 'subtotal': 200}],
+            payment_method='tab', customer_name=name, meta={'tab_id': tab.id},
+        )
+        return tab, rcpt
+
+    def test_convert_tab_to_debt_syncs_receipt(self):
+        tab, rcpt = self._open_tab_with_receipt()
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        rcpt.refresh_from_db()
+        self.assertEqual(rcpt.payment_method, 'credit')
+
+    def test_bulk_convert_tabs_to_debt_syncs_receipt(self):
+        import json
+        tab, rcpt = self._open_tab_with_receipt()
+        resp = self.client.post('/bar/tabs/bulk-convert-to-debt/', {'tab_ids': json.dumps([tab.id])})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        rcpt.refresh_from_db()
+        self.assertEqual(rcpt.payment_method, 'credit')
+
+    def test_shift_close_auto_convert_syncs_receipt(self):
+        from core.shift_views import _convert_open_tabs_to_debt_for_shift
+        tab, rcpt = self._open_tab_with_receipt()
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner, status='OPEN',
+        )
+        _convert_open_tabs_to_debt_for_shift(shift, self.biz, should_convert=True)
+        rcpt.refresh_from_db()
+        self.assertEqual(rcpt.payment_method, 'credit')
+
+    def test_converted_receipt_no_longer_flagged_open_and_shows_credit_badge(self):
+        tab, rcpt = self._open_tab_with_receipt()
+        self.client.post(f'/bar/tabs/{tab.id}/debt/')
+        resp = self.client.get('/receipts/')
+        ids = [r.id for r in resp.context['receipts']]
+        self.assertIn(rcpt.id, ids, 'A debt-converted tab is a concluded sale — must appear in the default view')
+        self.assertContains(resp, 'Credit')

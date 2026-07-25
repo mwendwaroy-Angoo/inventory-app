@@ -48,19 +48,53 @@ def receipts_list(request):
         if not getattr(user_profile, 'can_access_bar', False):
             qs = qs.filter(source='kitchen')
 
-    receipts = qs.order_by('-created_at')
+    all_receipts = list(qs.order_by('-created_at'))
+
+    # Distinguish an actually-completed sale from a still-live, unpaid tab
+    # (2026-07-25 live report: a receipt for an open tab was issued with
+    # payment_method='tab' — a plain string matching neither 'cash', 'mpesa'
+    # nor 'credit' — which the badge below used to silently render as "Cash",
+    # so staff/owner saw an in-progress, unpaid tab looking exactly like a
+    # completed cash sale). Batch-resolve every referenced tab's status in
+    # ONE query instead of N — same _receipt_all_tab_ids() helper the public
+    # receipt page already uses as the single source of truth for "does this
+    # receipt still have a live tab".
+    from .models import BarTab as _BarTab
+    all_tab_ids = set()
+    for r in all_receipts:
+        all_tab_ids.update(_receipt_all_tab_ids(r))
+    open_tab_ids = (
+        set(_BarTab.objects.filter(id__in=all_tab_ids, status='OPEN').values_list('id', flat=True))
+        if all_tab_ids else set()
+    )
+
+    status_filter = request.GET.get('status', 'sold')  # 'sold' (default) | 'all' | 'open'
+    receipts = []
+    open_tab_count = 0
+    for r in all_receipts:
+        r.is_open_tab = bool(set(_receipt_all_tab_ids(r)) & open_tab_ids)
+        if r.is_open_tab:
+            open_tab_count += 1
+        if status_filter == 'sold' and r.is_open_tab:
+            continue
+        if status_filter == 'open' and not r.is_open_tab:
+            continue
+        receipts.append(r)
 
     # Build month options for the filter UI (current year, plus one back)
     import calendar as _cal
     month_options = [(m, _cal.month_abbr[m]) for m in range(1, 13)]
 
     return render(request, 'core/receipts_list.html', {
-        'receipts':      receipts,
-        'sel_month':     month,
-        'sel_year':      year,
-        'search':        search,
-        'month_options': month_options,
-        'cur_year':      now.year,
+        'receipts':        receipts,
+        'sel_month':       month,
+        'sel_year':        year,
+        'search':          search,
+        'month_options':   month_options,
+        'cur_year':        now.year,
+        'status_filter':   status_filter,
+        'open_tab_count':  open_tab_count,
+        'total_count':     len(all_receipts),
     })
 
 

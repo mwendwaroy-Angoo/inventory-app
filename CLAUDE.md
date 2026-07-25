@@ -2522,3 +2522,41 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   guessing which transactions came from this flow. `--dry-run` flag to preview
   first; safe to re-run (skips already-tagged rows). Run once per deployed
   environment via Render's Shell tab. 6 new tests. No migrations.
+- Fix: Receipts list showed an open tab as a completed "Cash" sale (2026-07-25 live
+  report). Root cause: when an item is added to a tab, its receipt is issued with
+  `payment_method='tab'` (a literal string — matches the payment method CHOSEN at
+  the point of sale, and `'tab'` is a real option alongside cash/mpesa) — correct
+  for the individual receipt detail page (`receipt_public.html`, confirmed already
+  handles `'tab'` with its own distinct badge), but `receipts_list.html`'s badge
+  logic only branched on `'mpesa'`/`'credit'`, silently falling through to
+  `{% else %}` → labelled and coloured exactly like a completed cash sale for
+  EVERY other value, including `'tab'`. An open, unpaid, still-accumulating tab
+  looked indistinguishable from money already in the drawer. Fixed
+  `receipts_list()` to batch-resolve (one extra query, not N) whether each
+  receipt's underlying tab(s) — via the same `_receipt_all_tab_ids()` helper the
+  public receipt page already treats as the single source of truth — are still
+  `status='OPEN'`, tagging each receipt `is_open_tab`. New `pay-open` badge ("🔶
+  Tab Wazi") replaces the wrong Cash label. Also delivers the efficiency ask in
+  the same report ("staff and business owner want ... what they have sold
+  already, not what is on tabs"): a `?status=` filter — `sold` (new default,
+  excludes open-tab receipts entirely), `open` (open tabs only), `all` — plus a
+  banner on the default view naming how many open tabs are hidden with a direct
+  link to see them, and filter-aware empty-state copy. A plain Quick-Sell credit
+  sale (no BarTab at all) is correctly unaffected — `_receipt_all_tab_ids()`
+  returns empty for it, so it stays in the default "sold" view exactly as before.
+  **Adjacent bug found while tracing this**: converting a tab to debt (Geuza
+  Deni) already correctly flips every underlying Transaction to
+  `payment_method='credit'`, but never touched the tab's master Receipt — so
+  even after conversion, `/receipts/` kept showing the stale `'tab'` value
+  (rendered as "Cash", same bug, different trigger). New shared
+  `_sync_master_receipt_payment_method(business, tab, payment_method)` helper
+  (`core/keg_views.py`, next to `_cancel_pending_transfers_for_tab` which every
+  conversion site already calls) resolves the tab's master receipt via
+  `resolve_master_receipt()` and syncs it — wired into all three conversion call
+  sites (`convert_tab_to_debt`, `bulk_convert_tabs_to_debt`,
+  `_convert_open_tabs_to_debt_for_shift`), matching this file's own "fix one, fix
+  every copy" rule for that trio. Never raises — a receipt display glitch must
+  never block the actual conversion. 14 new tests
+  (`ReceiptsListOpenTabDistinctionTest`,
+  `TabToDebtConversionSyncsReceiptPaymentMethodTest`). No migrations. 660 tests
+  pass (core + accounts).
