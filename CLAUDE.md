@@ -2760,3 +2760,37 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   auto-fills the date input the first time the panel is opened, never
   overwriting a date the owner has already picked. 11 new tests
   (`RecentPaymentsDatePickerTest`). No migrations.
+- Direct-sale payment correction + Receipts/Transaction History date filters
+  (2026-07-25, same-day follow-up). Roy reported a "Viceroy" sale visible in
+  Receipts and Transaction History but missing from the Recent Payments
+  panel he'd just gotten a date picker for. Root cause: `recent_settled_
+  tabs_api` only ever queried `BarTabEntry` — but a DIRECT checkout (Quick
+  Sell / bar board / kitchen board cash-or-mpesa sale with no tab involved
+  at all) creates a plain `Transaction` with no `BarTabEntry`, so it was
+  invisible to that panel and had NO correction path at all, tab or
+  otherwise. Added a second `direct` list to the same endpoint —
+  `Transaction.objects.filter(type='Issue', payment_method__in=['cash',
+  'mpesa'], tab_entry__isnull=True, ...)` for the same selected day,
+  station-scoped the same way. New `correct_transaction_payment_method`
+  view (`/bar/transactions/<id>/correct-payment/`) is the direct-sale
+  sibling of `revoke_entry_payment` — same shift-gate + station-scope
+  pattern, but simpler: a direct sale has no "unpaid" state to revert to
+  (the sale is genuinely complete), so it just relabels cash↔mpesa, never
+  touching `qty`/`sale_amount`. New `_notify_direct_correction()` helper
+  mirrors `_notify_tab_correction`'s exact recipient fan-out (on-shift staff
+  + owners/managers, in-app + SMS) without a `BarTab` to key off. All three
+  tabs drawers render a new "Mauzo ya Moja kwa Moja (si tab)" section in the
+  same panel with a "🔄 Cash/M-Pesa" toggle button per direct sale, reusing
+  the same `openReasonChips` pattern. Separately, added the requested date
+  picker + running count to two more surfaces: `receipts_list` (`?date=
+  YYYY-MM-DD`, takes priority over month/year when given, new
+  `receipt_count` context var, a visible "🧾 N receipt(s)" banner) and
+  Transaction History (`templates/core/transaction_history.html` — a
+  `<input type="date">` combined via AND logic with the existing free-text
+  search, both driving one shared `applyFilters()` that updates a live "X /
+  Y transactions" count banner; each row's `data-date` attribute uses
+  `|date:'Y-m-d'` so the date input's ISO value matches directly). 15 new
+  tests (`DirectSalePaymentCorrectionTest`, `ReceiptsListDateFilterTest`).
+  No migrations — confirmed and told to Roy directly, since he asked
+  whether anything was needed on Render Shell: nothing, this round is
+  code-only, ordinary git push + Render's normal auto-deploy is sufficient.

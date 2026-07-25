@@ -2413,7 +2413,8 @@
       .then(function (r) { return r.json(); })
       .then(function (d) {
         var tabs = d.tabs || [];
-        if (!tabs.length) {
+        var direct = d.direct || [];
+        if (!tabs.length && !direct.length) {
           panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Hakuna malipo tarehe hii.</div>';
           return;
         }
@@ -2432,9 +2433,47 @@
           });
           html += '</div>';
         });
+        if (direct.length) {
+          html += '<div style="font-size:.72rem;color:#888;font-weight:600;margin:.3rem 0 .15rem;">Mauzo ya Moja kwa Moja (si tab)</div>';
+          direct.forEach(function (e) {
+            var other = e.payment_method === 'cash' ? 'mpesa' : 'cash';
+            var otherLabel = other === 'cash' ? 'Cash' : 'M-Pesa';
+            html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
+              '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ') — ' + e.time + '</span>' +
+              '<button onclick="window.kbCorrectDirectPayment(' + e.id + ',\'' + other + '\',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+              'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
+              '</div>';
+          });
+        }
         panel.innerHTML = html;
       })
       .catch(function () { panel.innerHTML = '<div style="color:#c0395a;font-size:.75rem;padding:.4rem;">Hitilafu ya mtandao.</div>'; });
+  };
+
+  window.kbCorrectDirectPayment = function (txnId, newMethod, desc, anchorEl) {
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kwa nini unabadilisha njia ya malipo ya "' + desc + '"?',
+      chips: ['Njia ya malipo si sahihi (mfano: mpesa badala ya cash)', 'Iliingizwa kimakosa'],
+      onSelect: function (reason) {
+        var fd = new URLSearchParams();
+        fd.append('new_method', newMethod);
+        fd.append('reason', reason || '');
+        fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+        fetch('/bar/transactions/' + txnId + '/correct-payment/', {
+          method: 'POST', credentials: 'same-origin', body: fd
+        })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d.ok) {
+              showToast(d.message || '✓ Imerekebishwa');
+              window.kbLoadRecentPayments();
+            } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
+            else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
+          })
+          .catch(function(){ showToast('Hitilafu ya mtandao'); });
+      },
+    });
   };
 
   window.kbRevokeEntryPayment = function (entryId, tabId, desc, anchorEl) {

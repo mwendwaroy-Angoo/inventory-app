@@ -141,6 +141,12 @@
             <div class="suggestions-box" id="suggestionsBox"></div>
         </div>
 
+        <!-- Date filter (2026-07-25 live request: "how many receipts on the
+             25th?" — combines with the text search above, AND logic) -->
+        <input type="date" id="dateFilter" class="form-control form-control-sm"
+               style="background:#222; border:1px solid #444; color:var(--pearl); width:auto;"
+               title="{% trans 'Filter to one day' %}">
+
         <!-- Export -->
         <a href="{% url 'export_transactions' %}"
            id="export-transactions-btn" class="btn btn-secondary btn-sm d-flex align-items-center gap-2">
@@ -154,6 +160,10 @@
 
         <a href="{% url 'home' %}" class="btn btn-secondary btn-sm">← {% trans 'Dashboard' %}</a>
     </div>
+</div>
+
+<div id="historyCountBanner" style="font-size:0.85rem; color:var(--gold); font-weight:600; margin-bottom:1rem; padding:0.5rem 0.75rem; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:8px;">
+    🕒 {{ transactions|length }} {% trans 'transactions' %}
 </div>
 
 <div class="table-responsive">
@@ -172,7 +182,8 @@
         </thead>
         <tbody id="tableBody">
             {% for trans in transactions %}
-            <tr data-search="{{ trans.date }} {{ trans.item.description }} {{ trans.item.material_no }} {{ trans.item.store.name }} {{ trans.get_type_display }} {{ trans.qty }} {{ trans.recipient }} {{ trans.invoice_no }}">
+            <tr data-search="{{ trans.date }} {{ trans.item.description }} {{ trans.item.material_no }} {{ trans.item.store.name }} {{ trans.get_type_display }} {{ trans.qty }} {{ trans.recipient }} {{ trans.invoice_no }}"
+                data-date="{{ trans.date|date:'Y-m-d' }}">
                 <td>{{ trans.date }}</td>
                 <td>
                     <strong>{{ trans.item.description }}</strong>
@@ -279,8 +290,11 @@
 {% block extra_js %}
 <script>
     const searchInput = document.getElementById('searchInput');
+    const dateFilter = document.getElementById('dateFilter');
     const suggestionsBox = document.getElementById('suggestionsBox');
+    const countBanner = document.getElementById('historyCountBanner');
     const rows = document.querySelectorAll('#tableBody tr[data-search]');
+    const totalCount = rows.length;
 
     // Build unique search terms from all row data
     const allTerms = new Set();
@@ -290,16 +304,33 @@
         });
     });
 
-    searchInput.addEventListener('input', function () {
-        const query = this.value.toLowerCase().trim();
-
-        // Filter rows
+    // 2026-07-25 live request: text search and the date picker combine (AND
+    // logic) — running count updates on every keystroke/date change so "how
+    // many receipts on the 25th?" is answered instantly.
+    function applyFilters() {
+        const query = searchInput.value.toLowerCase().trim();
+        const day = dateFilter.value;
         let visibleCount = 0;
         rows.forEach(row => {
-            const match = row.dataset.search.toLowerCase().includes(query);
+            const matchesText = !query || row.dataset.search.toLowerCase().includes(query);
+            const matchesDate = !day || row.dataset.date === day;
+            const match = matchesText && matchesDate;
             row.style.display = match ? '' : 'none';
             if (match) visibleCount++;
         });
+        if (countBanner) {
+            countBanner.textContent = (query || day)
+                ? '🕒 ' + visibleCount + ' / ' + totalCount + ' transactions' + (day ? ' — ' + day : '')
+                : '🕒 ' + totalCount + ' transactions';
+        }
+        return {query: query, visibleCount: visibleCount};
+    }
+
+    dateFilter.addEventListener('change', applyFilters);
+
+    searchInput.addEventListener('input', function () {
+        const filtered = applyFilters();
+        const query = filtered.query;
 
         // Show suggestions
         if (query.length >= 1) {

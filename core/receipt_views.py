@@ -32,13 +32,32 @@ def receipts_list(request):
     month = max(1, min(12, month))
     year  = max(2020, min(now.year + 1, year))
 
+    # ?date=YYYY-MM-DD (2026-07-25 live request): a single-day filter above
+    # the month/year select, so "how many receipts on the 25th?" is one pick
+    # instead of scanning a whole month. Takes priority over month/year when
+    # given; falls back to month/year unchanged when absent.
+    import datetime as _dt
+    sel_date = None
+    date_str = (request.GET.get('date') or '').strip()
+    if date_str:
+        try:
+            sel_date = _dt.datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            sel_date = None
+
     search = request.GET.get('q', '').strip()
 
-    qs = Receipt.objects.filter(
-        business=user_profile.business,
-        created_at__year=year,
-        created_at__month=month,
-    ).select_related('created_by')
+    if sel_date:
+        qs = Receipt.objects.filter(
+            business=user_profile.business,
+            created_at__date=sel_date,
+        ).select_related('created_by')
+    else:
+        qs = Receipt.objects.filter(
+            business=user_profile.business,
+            created_at__year=year,
+            created_at__month=month,
+        ).select_related('created_by')
 
     if search:
         qs = qs.filter(customer_name__icontains=search)
@@ -89,12 +108,14 @@ def receipts_list(request):
         'receipts':        receipts,
         'sel_month':       month,
         'sel_year':        year,
+        'sel_date':        sel_date.isoformat() if sel_date else '',
         'search':          search,
         'month_options':   month_options,
         'cur_year':        now.year,
         'status_filter':   status_filter,
         'open_tab_count':  open_tab_count,
         'total_count':     len(all_receipts),
+        'receipt_count':   len(receipts),
     })
 
 

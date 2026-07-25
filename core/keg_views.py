@@ -1472,7 +1472,106 @@ def recent_settled_tabs_api(request):
     for b in result:
         b['settled_at'] = timezone.localtime(b['_latest']).strftime('%H:%M') if b['_latest'] else ''
         del b['_latest']
-    return JsonResponse({'tabs': result, 'date': sel_date.isoformat()})
+
+    # Direct (non-tab) cash/mpesa sales — Quick Sell, bar board, and kitchen
+    # board all also support a plain direct checkout with no BarTab at all,
+    # which the entry-based query above can never see (there's no
+    # BarTabEntry to query). Found 2026-07-25, live report: Roy could see a
+    # "Viceroy" sale in Receipts and Transaction History but not here — the
+    # panel was silently BarTabEntry-only the whole time, so a mistaken cash/
+    # mpesa label on a direct (non-tab) sale had no correction path at all.
+    direct_txns = (
+        Transaction.objects.filter(
+            business=up.business, type='Issue',
+            payment_method__in=['cash', 'mpesa'],
+            created_at__gte=day_start, created_at__lte=day_end,
+            tab_entry__isnull=True,
+        )
+        .select_related('item__store')
+        .order_by('-created_at')
+    )
+    direct = []
+    for t in direct_txns:
+        try:
+            is_kitchen = bool(t.item.store.is_kitchen)
+        except Exception:
+            is_kitchen = False
+        if ('kitchen' if is_kitchen else 'bar') not in allowed:
+            continue
+        direct.append({
+            'id': t.id,
+            'description': t.item.description if t.item else '',
+            'amount': float(t.revenue()),
+            'payment_method': t.payment_method,
+            'is_kitchen': is_kitchen,
+            'time': timezone.localtime(t.created_at).strftime('%H:%M') if t.created_at else '',
+        })
+
+    return JsonResponse({'tabs': result, 'direct': direct, 'date': sel_date.isoformat()})
+
+
+@login_required
+@require_POST
+def correct_transaction_payment_method(request, txn_id):
+    """Correct the payment method on a DIRECT (non-tab) sale — e.g. a Quick
+    Sell / bar board / kitchen board checkout entered as Cash when the
+    customer actually paid M-Pesa, or vice versa (2026-07-25 live request,
+    the direct-sale sibling of revoke_entry_payment — there is no BarTabEntry
+    for a direct sale, so that endpoint doesn't apply here). Unlike a tab
+    revoke there is no "unpaid" state to revert to — the sale is genuinely
+    complete — so this simply relabels which channel actually collected it.
+    Never touches qty/stock or sale_amount/revenue; only payment_method.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    new_method = (request.POST.get('new_method') or '').strip()
+    if new_method not in ('cash', 'mpesa'):
+        return JsonResponse({'ok': False, 'error': 'Njia ya malipo si sahihi.'}, status=400)
+
+    txn = get_object_or_404(
+        Transaction.objects.select_related('item__store'),
+        id=txn_id, business=up.business, type='Issue', tab_entry__isnull=True,
+    )
+    try:
+        is_kitchen = bool(txn.item.store.is_kitchen)
+    except Exception:
+        is_kitchen = False
+    if ('kitchen' if is_kitchen else 'bar') not in _allowed_tab_sources(up):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kurekebisha mauzo haya.'}, status=403)
+
+    if txn.payment_method not in ('cash', 'mpesa'):
+        return JsonResponse({'ok': False, 'error': 'Muamala huu hauwezi kurekebishwa.'}, status=400)
+
+    reason = (request.POST.get('reason') or '').strip()
+    old_method = txn.payment_method
+    if old_method == new_method:
+        return JsonResponse({'ok': True, 'message': 'Haijabadilika — tayari ilikuwa ' + new_method + '.'})
+
+    txn.payment_method = new_method
+    txn.save(update_fields=['payment_method'])
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    label = {'cash': 'Cash', 'mpesa': 'M-Pesa'}
+    message = (
+        f'🔄 {who} amerekebisha njia ya malipo ya "{txn.item.description}" '
+        f'(KES {float(txn.revenue()):,.0f}) kutoka {label.get(old_method, old_method)} '
+        f'kwenda {label.get(new_method, new_method)} — tarehe {when}.'
+        + (f' Sababu: {reason}' if reason else '')
+    )
+    _notify_direct_correction(up.business, message, request.user)
+
+    return JsonResponse({'ok': True, 'message': message, 'payment_method': new_method})
 
 
 @login_required
@@ -1704,6 +1803,34 @@ def _notify_tab_correction(tab, title, message, actor):
             continue  # no self-notification
         _Notif.objects.create(user=_up.user, title=title, message=message,
                               notification_type='warning', link_url=_tab_link)
+        _phone = (_up.phone or '').strip()
+        if _phone:
+            _n = normalize_ke_phone(_phone)
+            if _n:
+                send_sms_notification(message, _n)
+
+
+def _notify_direct_correction(business, message, actor):
+    """Same recipient fan-out as _notify_tab_correction, but for a direct
+    (non-tab) sale correction, which has no BarTab to key off — owners/
+    managers plus everyone else currently on shift, in-app + SMS."""
+    from .models import Notification as _Notif, Shift as _Shift
+    from accounts.models import UserProfile as _UP
+    from .notifications import normalize_ke_phone, send_sms_notification
+
+    notify_targets = {}
+    for _sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
+        _up = _UP.objects.filter(user_id=_sh.staff_id, business=business).first()
+        if _up:
+            notify_targets[_sh.staff_id] = _up
+    for _up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
+        notify_targets[_up.user_id] = _up
+
+    for _up in notify_targets.values():
+        if _up.user_id == actor.id:
+            continue
+        _Notif.objects.create(user=_up.user, title='🔄 Njia ya Malipo Imerekebishwa',
+                              message=message, notification_type='warning')
         _phone = (_up.phone or '').strip()
         if _phone:
             _n = normalize_ke_phone(_phone)

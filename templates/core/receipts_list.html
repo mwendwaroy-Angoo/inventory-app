@@ -43,9 +43,15 @@
     margin-bottom: 1rem;
     display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;
 }
-.filter-bar select, .filter-bar input[type=text] {
+.filter-bar select, .filter-bar input[type=text], .filter-bar input[type=date] {
     background: #111; border: 1px solid #333; border-radius: 6px;
     color: var(--pearl); padding: 0.35rem 0.65rem; font-size: 0.82rem;
+}
+.receipt-count-banner {
+    font-size: 0.85rem; color: var(--gold); font-weight: 600;
+    margin-bottom: 0.6rem; padding: 0.5rem 0.75rem;
+    background: rgba(201,168,76,0.08); border: 1px solid rgba(201,168,76,0.25);
+    border-radius: 8px;
 }
 .filter-bar select:focus, .filter-bar input:focus { border-color: var(--gold); outline: none; }
 .filter-bar button {
@@ -73,6 +79,7 @@
             <option value="open" {% if status_filter == 'open' %}selected{% endif %}>🔶 Tabs Wazi Pekee</option>
             <option value="all"  {% if status_filter == 'all' %}selected{% endif %}>Zote</option>
         </select>
+        <input type="date" name="date" value="{{ sel_date }}" title="Chagua siku moja — inapita mwezi/mwaka hapo juu">
         <select name="month">
             {% for num, abbr in month_options %}
             <option value="{{ num }}" {% if num == sel_month %}selected{% endif %}>{{ abbr }}</option>
@@ -85,20 +92,22 @@
         </select>
         <input type="text" name="q" value="{{ search }}" placeholder="Search customer…" style="flex:1; min-width:120px;">
         <button type="submit">Filter</button>
-        {% if search or status_filter != 'sold' %}<a href="{% url 'receipts_list' %}" style="color:#b0b0b0; font-size:0.8rem; text-decoration:none; padding:0.35rem 0.5rem;">✕ Clear</a>{% endif %}
+        {% if search or status_filter != 'sold' or sel_date %}<a href="{% url 'receipts_list' %}" style="color:#b0b0b0; font-size:0.8rem; text-decoration:none; padding:0.35rem 0.5rem;">✕ Clear</a>{% endif %}
     </form>
 
     {% if open_tab_count and status_filter == 'sold' %}
     <div style="font-size:0.72rem; color:#fbbf24; margin-bottom:0.6rem; padding:0.45rem 0.7rem; background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.25); border-radius:8px;">
         🔶 {{ open_tab_count }} tab{{ open_tab_count|pluralize }} bado wazi (haijalipwa) haionyeshwi hapa —
-        <a href="?status=open{% if search %}&q={{ search }}{% endif %}&month={{ sel_month }}&year={{ sel_year }}" style="color:#fbbf24; text-decoration:underline;">angalia</a>
+        <a href="?status=open{% if search %}&q={{ search }}{% endif %}{% if sel_date %}&date={{ sel_date }}{% else %}&month={{ sel_month }}&year={{ sel_year }}{% endif %}" style="color:#fbbf24; text-decoration:underline;">angalia</a>
     </div>
     {% endif %}
 
+    <div class="receipt-count-banner">
+        🧾 {{ receipt_count }} receipt{{ receipt_count|pluralize }}
+        {% if sel_date %}tarehe {{ sel_date }}{% else %}for this period{% endif %}
+    </div>
+
     {% if receipts %}
-        <div style="font-size:0.72rem; color:#b0b0b0; margin-bottom:0.5rem;">
-            {{ receipts|length }} receipt{{ receipts|length|pluralize }} found
-        </div>
         {% for r in receipts %}
         <a href="{% url 'public_receipt' r.token %}" class="receipt-row" target="_blank" rel="noopener">
             <span class="rct-num">#{{ r.receipt_number }}</span>
@@ -135,7 +144,7 @@
             {% elif status_filter == 'open' %}
             <div>No open tabs right now — every receipt this period is a completed sale.</div>
             {% elif status_filter == 'sold' and total_count %}
-            <div>Nothing sold yet this month — {{ total_count }} receipt{{ total_count|pluralize }} still on open tabs. <a href="?status=open&month={{ sel_month }}&year={{ sel_year }}" style="color:var(--gold);">Angalia tabs wazi</a></div>
+            <div>Nothing sold yet this period — {{ total_count }} receipt{{ total_count|pluralize }} still on open tabs. <a href="?status=open{% if sel_date %}&date={{ sel_date }}{% else %}&month={{ sel_month }}&year={{ sel_year }}{% endif %}" style="color:var(--gold);">Angalia tabs wazi</a></div>
             {% else %}
             <div>No receipts for this month. Receipts are created automatically on every Quick Sell, bar order, and debt payment.</div>
             {% endif %}

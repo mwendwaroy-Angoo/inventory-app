@@ -11648,6 +11648,216 @@ class RecentPaymentsDatePickerTest(TestCase):
         self.assertEqual(len(data['tabs']), 1)
 
 
+class DirectSalePaymentCorrectionTest(TestCase):
+    """2026-07-25 same-day follow-up (Monsoon Inn): Roy could see a
+    "Viceroy" sale in Receipts and Transaction History but NOT in the
+    Recent Payments/revoke panel — that panel only ever queried
+    BarTabEntry, which doesn't exist for a direct (non-tab) Quick Sell /
+    bar board / kitchen board cash-or-mpesa checkout. recent_settled_tabs_api
+    now also returns these as a separate 'direct' list, and
+    correct_transaction_payment_method lets staff relabel cash<->mpesa on
+    one directly (no BarTabEntry involved, so no 'revert to unpaid' — the
+    sale is genuinely complete, only the channel label can be wrong)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Direct Sale Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='ds_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.staff = User.objects.create_user(username='ds_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Viceroy',
+            material_no='DS-BAR-01', unit='Pcs', selling_price=Decimal('300'),
+            cost_price=Decimal('200'), opening_bin_balance=Decimal('20'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chips',
+            material_no='DS-KIT-01', unit='Pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('60'), opening_bin_balance=Decimal('20'),
+        )
+
+    def _direct_txn(self, item, payment_method='cash', amount=Decimal('300')):
+        return Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method=payment_method,
+        )
+
+    def test_direct_sale_surfaced_in_recent_settled_api(self):
+        self._direct_txn(self.bar_item, 'cash')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        data = resp.json()
+        self.assertEqual(len(data['direct']), 1)
+        self.assertEqual(data['direct'][0]['description'], 'Viceroy')
+        self.assertEqual(data['direct'][0]['payment_method'], 'cash')
+
+    def test_tab_based_sale_still_not_in_direct_list(self):
+        txn = self._direct_txn(self.bar_item, 'cash')
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Tab Customer', status='OPEN',
+            source='bar', store=self.bar_store,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Viceroy',
+            amount=Decimal('300'), is_paid=True, payment_method='cash', paid_at=timezone.now(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        data = resp.json()
+        self.assertEqual(len(data['direct']), 0, 'A tab-based sale must appear in tabs, not direct')
+        self.assertEqual(len(data['tabs']), 1)
+
+    def test_correct_payment_method_cash_to_mpesa(self):
+        txn = self._direct_txn(self.bar_item, 'cash')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {
+            'new_method': 'mpesa', 'reason': 'Ilikuwa mpesa',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'mpesa')
+
+    def test_correction_never_touches_qty_or_sale_amount(self):
+        txn = self._direct_txn(self.bar_item, 'cash', amount=Decimal('300'))
+        original_qty = txn.qty
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {'new_method': 'mpesa'})
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, original_qty)
+        self.assertEqual(txn.sale_amount, Decimal('300'))
+
+    def test_same_method_is_a_no_op(self):
+        txn = self._direct_txn(self.bar_item, 'cash')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {'new_method': 'cash'})
+        self.assertTrue(resp.json().get('ok'))
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')
+
+    def test_invalid_new_method_rejected(self):
+        txn = self._direct_txn(self.bar_item, 'cash')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {'new_method': 'credit'})
+        self.assertFalse(resp.json().get('ok'))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_credit_transaction_cannot_be_corrected(self):
+        txn = self._direct_txn(self.bar_item, 'credit')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {'new_method': 'cash'})
+        self.assertFalse(resp.json().get('ok'))
+
+    def test_tab_transaction_rejected_not_a_direct_sale(self):
+        """A Transaction that DOES have a tab_entry must be corrected via
+        revoke_entry_payment, not this endpoint."""
+        txn = self._direct_txn(self.bar_item, 'cash')
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Tab Customer', status='OPEN',
+            source='bar', store=self.bar_store,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Viceroy',
+            amount=Decimal('300'), is_paid=True, payment_method='cash', paid_at=timezone.now(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {'new_method': 'mpesa'})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_staff_with_open_shift_can_correct(self):
+        txn = self._direct_txn(self.bar_item, 'cash')
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {'new_method': 'mpesa'})
+        self.assertTrue(resp.json().get('ok'), resp.json())
+
+    def test_staff_without_shift_blocked(self):
+        no_shift_staff = User.objects.create_user(username='ds_noshift', password='x')
+        UserProfile.objects.create(user=no_shift_staff, business=self.biz, role='staff')
+        txn = self._direct_txn(self.bar_item, 'cash')
+        self.client.force_login(no_shift_staff)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {'new_method': 'mpesa'})
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.assertTrue(data.get('shift_required'))
+
+    def test_bar_only_staff_blocked_from_kitchen_direct_sale(self):
+        txn = self._direct_txn(self.kitchen_item, 'cash', amount=Decimal('100'))
+        self.client.force_login(self.staff)  # bar-only, no can_access_kitchen
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {'new_method': 'mpesa'})
+        self.assertFalse(resp.json().get('ok'))
+        self.assertEqual(resp.status_code, 403)
+
+    def test_cross_business_transaction_returns_404(self):
+        other_biz = Business.objects.create(name='Other DS Biz')
+        other_store = Store.objects.create(business=other_biz, name='Bar')
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Foreign Item',
+            material_no='DS-FOREIGN', unit='Pcs', selling_price=Decimal('300'),
+        )
+        other_txn = Transaction.objects.create(
+            business=other_biz, item=other_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'), payment_method='cash',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{other_txn.id}/correct-payment/', {'new_method': 'mpesa'})
+        self.assertEqual(resp.status_code, 404)
+
+
+class ReceiptsListDateFilterTest(TestCase):
+    """2026-07-25 live request: a single-day filter above the existing
+    month/year select, plus a visible receipt count, so "how many receipts
+    on the 25th?" is answered directly instead of scanning a whole month."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Receipts Date Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rd2_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def _receipt(self, created_at, name='Cust'):
+        from core.models import Receipt
+        r = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Item', 'qty': 1, 'subtotal': 100}],
+            payment_method='cash', customer_name=name,
+        )
+        r.created_at = created_at
+        r.save(update_fields=['created_at'])
+        return r
+
+    def test_date_filter_shows_only_that_day(self):
+        import datetime as dt
+        today = timezone.localdate()
+        yesterday = today - timezone.timedelta(days=1)
+        self._receipt(timezone.make_aware(dt.datetime.combine(today, dt.time(10, 0))), 'Today1')
+        self._receipt(timezone.make_aware(dt.datetime.combine(today, dt.time(14, 0))), 'Today2')
+        self._receipt(timezone.make_aware(dt.datetime.combine(yesterday, dt.time(10, 0))), 'Yday')
+
+        resp = self.client.get('/receipts/?date=' + today.isoformat())
+        self.assertEqual(resp.context['receipt_count'], 2)
+        names = {r.customer_name for r in resp.context['receipts']}
+        self.assertEqual(names, {'Today1', 'Today2'})
+
+    def test_no_date_falls_back_to_month_year(self):
+        today = timezone.localdate()
+        self._receipt(timezone.now(), 'ThisMonth')
+        resp = self.client.get('/receipts/')
+        self.assertEqual(resp.context['sel_date'], '')
+        self.assertGreaterEqual(resp.context['receipt_count'], 1)
+
+    def test_receipt_count_matches_receipts_length(self):
+        today = timezone.localdate()
+        self._receipt(timezone.now(), 'A')
+        self._receipt(timezone.now(), 'B')
+        resp = self.client.get('/receipts/?date=' + today.isoformat())
+        self.assertEqual(resp.context['receipt_count'], len(resp.context['receipts']))
+
+
 class BackfillSvqInvoiceTagsCommandTest(TestCase):
     """2026-07-25 live report (Monsoon Inn): the [SVQ] exclusion fix only tags
     NEW corrective transactions going forward — a variance already accepted
