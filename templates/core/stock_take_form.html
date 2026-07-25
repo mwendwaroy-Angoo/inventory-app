@@ -277,6 +277,8 @@
 
         var fd = new FormData(document.getElementById('stockTakeForm'));
         fd.append('counts', JSON.stringify(counts));
+        fd.append('idempotency_token',
+            (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
 
         fetch(window.location.pathname, {
             method: 'POST',

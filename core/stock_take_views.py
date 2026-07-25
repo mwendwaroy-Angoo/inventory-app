@@ -76,6 +76,16 @@ def start_stock_take(request):
         if not counts:
             return JsonResponse({'ok': False, 'error': 'Hakuna hesabu zilizotumwa.'}, status=400)
 
+        # Server-side double-submit backstop (2026-07-25 audit finding) — same gap
+        # class already fixed elsewhere in this app. A duplicate request (slow-
+        # network retry) would otherwise create a second StockTake with duplicate
+        # StockVarianceQuery rows for the same items and double-notify both the
+        # queried staff and the owner for the same physical count.
+        from core.idempotency import claim_checkout_token
+        idem_token = (request.POST.get('idempotency_token') or '').strip()
+        if not claim_checkout_token(business.id, idem_token):
+            return JsonResponse({'ok': False, 'error': 'Hesabu hii tayari imewasilishwa.', 'duplicate': True}, status=409)
+
         try:
             # Create the header
             stock_take = StockTake.objects.create(

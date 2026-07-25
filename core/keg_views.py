@@ -855,6 +855,16 @@ def weigh_barrel(request, barrel_id):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
+    # Server-side double-submit backstop (2026-07-25 audit finding) — same gap
+    # class already fixed for receive_barrel/record_breakage/add_cups. A duplicate
+    # request (slow-network retry) would otherwise create a second near-identical
+    # KegWeightReading (perturbing the shift-bracketed variance math other reports
+    # rely on) and could double-fire the danger alert/SMS for the same event.
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(up.business_id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
     barrel = get_object_or_404(
         KegBarrel.objects.select_related('business'),
         id=barrel_id,
@@ -1850,6 +1860,18 @@ def split_and_transfer_entry(request, entry_id):
                 status=403,
             )
 
+    # Server-side double-submit backstop (2026-07-25 audit finding). The paid_amount>0
+    # split path is self-protecting (the original entry flips is_paid=True, so a retry
+    # hits the "already paid" guard inside split_and_transfer_locked) — but the
+    # paid_amount=0 full-item-transfer path deliberately leaves the entry completely
+    # unmodified until accept(), so a retry would sail through every check again and
+    # create a second pending TabTransferRequest on the same entry (duplicate SMS to
+    # the destination customer, a confusing doubled pending banner).
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(up.business_id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Ombi hili tayari limetumwa.', 'duplicate': True}, status=409)
+
     entry = get_object_or_404(
         BarTabEntry.objects.select_related('tab'),
         id=entry_id, tab__business=up.business,
@@ -1934,6 +1956,14 @@ def transfer_whole_tab(request, tab_id):
                 {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
                 status=403,
             )
+
+    # Server-side double-submit backstop, for consistency with split_and_transfer_entry
+    # — propose_whole_tab_locked() already self-protects via its own "entry already has
+    # a pending transfer" check, so this is defense-in-depth, not the only guard.
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(up.business_id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Ombi hili tayari limetumwa.', 'duplicate': True}, status=409)
 
     source_tab = get_object_or_404(
         BarTab, id=tab_id, business=up.business,

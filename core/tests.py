@@ -10085,6 +10085,82 @@ class FullItemAndWholeTabTransferTest(TestCase):
         self.assertIn('Roy', names)
 
 
+class TransferIdempotencyTest(TestCase):
+    """2026-07-25 audit finding: unlike the paid_amount>0 split path (self-
+    protected — the original entry flips is_paid=True, so a retry hits the
+    'already paid' guard), the paid_amount=0 full-item-transfer path left the
+    entry completely unmodified, so a retry could create a second pending
+    TabTransferRequest on the same entry. Fixed with both a model-layer
+    'already has a pending transfer' guard (mirroring propose_whole_tab_locked's
+    own established check) and a view-layer claim_checkout_token backstop."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Transfer Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ti_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='ti_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Idem Tusker',
+            material_no='TI-01', unit='Pcs', selling_price=Decimal('250'),
+        )
+        self.roy_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source='bar', store=self.store,
+        )
+        self.bosco_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bosco', status='OPEN', source='bar', store=self.store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='',
+        )
+        self.entry = BarTabEntry.objects.create(
+            tab=self.roy_tab, transaction=txn, description='Idem Tusker',
+            amount=Decimal('250'), is_paid=False,
+        )
+        self.client.force_login(self.staff)
+
+    def test_model_layer_rejects_second_full_item_transfer_on_same_entry(self):
+        BarTabEntry.split_and_transfer_locked(
+            entry_id=self.entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=self.bosco_tab.id, staff_user=self.staff,
+        )
+        with self.assertRaises(ValueError):
+            BarTabEntry.split_and_transfer_locked(
+                entry_id=self.entry.id, business=self.biz, paid_amount=Decimal('0'),
+                paid_method='cash', dest_tab_id=self.bosco_tab.id, staff_user=self.staff,
+            )
+        self.assertEqual(TabTransferRequest.objects.filter(entry_id=self.entry.id).count(), 1)
+
+    def test_view_layer_duplicate_token_rejected(self):
+        token = 'transfer-idem-token-1'
+        r1 = self.client.post(f'/bar/tabs/entries/{self.entry.id}/split-transfer/', {
+            'paid_amount': '0', 'dest_tab_id': self.bosco_tab.id, 'idempotency_token': token,
+        })
+        r2 = self.client.post(f'/bar/tabs/entries/{self.entry.id}/split-transfer/', {
+            'paid_amount': '0', 'dest_tab_id': self.bosco_tab.id, 'idempotency_token': token,
+        })
+        self.assertTrue(r1.json()['ok'])
+        self.assertFalse(r2.json()['ok'])
+        self.assertTrue(r2.json().get('duplicate'))
+        self.assertEqual(TabTransferRequest.objects.filter(entry_id=self.entry.id).count(), 1)
+
+    def test_whole_tab_transfer_duplicate_token_rejected(self):
+        token = 'whole-tab-idem-token-1'
+        r1 = self.client.post(f'/bar/tabs/{self.roy_tab.id}/transfer-whole/', {
+            'dest_tab_id': self.bosco_tab.id, 'idempotency_token': token,
+        })
+        r2 = self.client.post(f'/bar/tabs/{self.roy_tab.id}/transfer-whole/', {
+            'dest_tab_id': self.bosco_tab.id, 'idempotency_token': token,
+        })
+        self.assertTrue(r1.json()['ok'])
+        self.assertFalse(r2.json()['ok'])
+        self.assertTrue(r2.json().get('duplicate'))
+        self.assertEqual(TabTransferRequest.objects.filter(source_tab=self.roy_tab).count(), 1)
+
+
 # ── Wording/accountability audit (2026-07-24): reject/approve flows must
 # capture a reason, notify the right people, and return a real confirmation
 # message — not a bare status flip. DJ/MC session cancel was the worst
@@ -11093,3 +11169,89 @@ class ClickableNotificationTest(TestCase):
         notif = Notification.objects.filter(user=self.owner, title='Test title').first()
         self.assertIsNotNone(notif)
         self.assertEqual(notif.link_url, '/stock/variances/')
+
+
+class WeighBarrelIdempotencyTest(TestCase):
+    """2026-07-25 audit finding: weigh_barrel() had none of this app's standard
+    double-submit protection — a network retry would silently create a second
+    near-identical KegWeightReading and could double-fire the danger alert for
+    the same physical weigh-in. Same claim_checkout_token backstop already used
+    by receive_barrel/record_breakage/add_cups."""
+
+    def setUp(self):
+        self.business, self.store, self.owner, self.item, self.barrel, self.preset, self.shift = (
+            _make_keg_fixtures_with_shift('Weigh Idem Biz')
+        )
+        self.client.force_login(self.owner)
+
+    def test_duplicate_token_does_not_create_two_readings(self):
+        count_before = KegWeightReading.objects.filter(barrel=self.barrel).count()
+        token = 'weigh-idem-token-1'
+        r1 = self.client.post(f'/stock/bar/weigh/{self.barrel.id}/',
+                              {'weight_kg': '45.0', 'idempotency_token': token})
+        r2 = self.client.post(f'/stock/bar/weigh/{self.barrel.id}/',
+                              {'weight_kg': '45.0', 'idempotency_token': token})
+        self.assertTrue(r1.json()['ok'])
+        self.assertFalse(r2.json()['ok'])
+        self.assertTrue(r2.json().get('duplicate'))
+        self.assertEqual(KegWeightReading.objects.filter(barrel=self.barrel).count(), count_before + 1)
+
+    def test_different_tokens_both_go_through(self):
+        count_before = KegWeightReading.objects.filter(barrel=self.barrel).count()
+        r1 = self.client.post(f'/stock/bar/weigh/{self.barrel.id}/',
+                              {'weight_kg': '45.0', 'idempotency_token': 'tok-a'})
+        r2 = self.client.post(f'/stock/bar/weigh/{self.barrel.id}/',
+                              {'weight_kg': '40.0', 'idempotency_token': 'tok-b'})
+        self.assertTrue(r1.json()['ok'])
+        self.assertTrue(r2.json()['ok'])
+        self.assertEqual(KegWeightReading.objects.filter(barrel=self.barrel).count(), count_before + 2)
+
+    def test_blank_token_still_works_no_protection(self):
+        resp = self.client.post(f'/stock/bar/weigh/{self.barrel.id}/', {'weight_kg': '45.0'})
+        self.assertTrue(resp.json()['ok'])
+
+
+class StartStockTakeIdempotencyTest(TestCase):
+    """2026-07-25 audit finding: start_stock_take() (the full accountability-
+    lifecycle stock take, distinct from stock_take_api's inherently-idempotent
+    update_or_create) had no double-submit guard — a retry would create a second
+    StockTake with duplicate StockVarianceQuery rows and double-notify staff/owner
+    for the same physical count."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='StockTake Idem Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='sti_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Idem Item',
+            material_no='STI-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner)
+
+    def _post(self, token):
+        import json
+        counts = json.dumps([{'item_id': self.item.id, 'actual_count': 15}])
+        return self.client.post('/stock/take/', {'counts': counts, 'idempotency_token': token})
+
+    def test_duplicate_token_does_not_double_create(self):
+        from core.models import StockTake
+        count_before = StockTake.objects.filter(business=self.biz).count()
+        r1 = self._post('sti-token-1')
+        r2 = self._post('sti-token-1')
+        self.assertTrue(r1.json()['ok'])
+        self.assertFalse(r2.json()['ok'])
+        self.assertTrue(r2.json().get('duplicate'))
+        self.assertEqual(StockTake.objects.filter(business=self.biz).count(), count_before + 1)
+
+    def test_different_tokens_both_go_through(self):
+        from core.models import StockTake
+        count_before = StockTake.objects.filter(business=self.biz).count()
+        r1 = self._post('sti-token-a')
+        r2 = self._post('sti-token-b')
+        self.assertTrue(r1.json()['ok'])
+        self.assertTrue(r2.json()['ok'])
+        self.assertEqual(StockTake.objects.filter(business=self.biz).count(), count_before + 2)

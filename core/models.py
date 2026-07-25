@@ -2706,6 +2706,16 @@ class BarTabEntry(models.Model):
                 # pending request points at; it only actually moves tabs on
                 # accept(), exactly like the split-remainder case already
                 # does, so rejection still needs zero reversal.
+                #
+                # Unlike the paid_amount>0 branch below (which self-protects
+                # against a duplicate retry by flipping entry.is_paid=True),
+                # this path leaves the entry completely unmodified — so a
+                # retry would otherwise sail through every check again and
+                # create a second pending request on the same entry. Same
+                # explicit guard propose_whole_tab_locked() already uses
+                # (2026-07-25 audit finding).
+                if TabTransferRequest.objects.filter(entry_id=entry.id, status='PENDING').exists():
+                    raise ValueError('Kiingilio hiki tayari kina ombi la uhamisho linalosubiri.')
                 transfer = TabTransferRequest.objects.create(
                     business=business, entry=entry,
                     source_tab=entry.tab, dest_tab=dest_tab, amount=entry.amount,

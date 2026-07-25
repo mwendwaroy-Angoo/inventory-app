@@ -2403,3 +2403,44 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   the same session: a fresh systemic audit of all bar processes (Roy's mid-session
   ask, similar in spirit to the 2026-07-19 bar/keg systemic audit but covering
   everything shipped since).
+- Follow-up audit pass (2026-07-25, same overnight session) — scoped to the newest/
+  most complex bar-money code (the six increments above plus the 2026-07-23–25 split/
+  whole-tab transfer feature) using the same money-path-idempotency lens as the
+  2026-07-19 systemic audit, rather than re-walking the whole module from scratch.
+  Found and fixed three real gaps, each with dedicated regression tests. **(1)
+  `weigh_barrel()`** had none of this app's standard double-submit protection — a
+  retry would create a second near-identical `KegWeightReading` (perturbing the
+  shift-bracketed variance math `staff_shrinkage()` relies on) and could double-fire
+  the danger alert/SMS for one physical weigh-in. Added the same `claim_checkout_token`
+  backstop already used by `receive_barrel`/`record_breakage`/`add_cups`, plus a
+  client-side token in `bar_board.html`'s `submitWeigh()`. **(2) `start_stock_take()`**
+  (the full accountability-lifecycle stock take — distinct from `stock_take_api`'s
+  `ShiftStockCount`, which is already self-idempotent via `update_or_create`'s
+  `unique_together`) had the identical gap: a retry would create a second `StockTake`
+  header with duplicate `StockVarianceQuery` rows and double-notify both the queried
+  staff and the owner for one physical count. Same guard added, plus a token in
+  `stock_take_form.html`. **(3) The full-item transfer path** (`BarTabEntry.
+  split_and_transfer_locked()`'s `paid_amount=0` branch) was the most interesting
+  find: the sibling `paid_amount>0` branch is self-protecting against a retry — it
+  flips the original entry's `is_paid=True`, so a second call immediately hits the
+  "already paid" guard — but the zero-paid-amount branch deliberately leaves the
+  entry completely unmodified until accept(), so a retry sailed through every check
+  again and created a SECOND pending `TabTransferRequest` on the same entry (duplicate
+  SMS to the destination customer, a confusing doubled pending banner). Its sibling
+  method, `TabTransferRequest.propose_whole_tab_locked()`, already had the correct
+  guard (`if TabTransferRequest.objects.filter(entry_id__in=entry_ids,
+  status='PENDING').exists(): raise ValueError(...)`) — added the same explicit
+  model-layer check to `split_and_transfer_locked()`'s zero-amount branch (defense-in-
+  depth, not just relying on the token), plus `claim_checkout_token` guards on both
+  `split_and_transfer_entry` and `transfer_whole_tab` views (the latter was already
+  self-protected by its model-layer check — added anyway for consistency with every
+  other checkout-shaped endpoint in this app) and matching idempotency tokens in all
+  three tabs drawers' `_doSplitTransfer`/`_doTransferWholeTab` JS functions
+  (tabs-drawer-parity rule). Verified against the full pre-existing
+  `FullItemAndWholeTabTransferTest` suite (31 tests, all still pass) to confirm none
+  of this broke the already-shipped, heavily-tested transfer feature. 8 new tests
+  (`WeighBarrelIdempotencyTest`, `StartStockTakeIdempotencyTest`,
+  `TransferIdempotencyTest`). No migrations. Everything else audited in this pass —
+  `revoke_entry_payment`/`remove_tab_entry` (already guarded, prior session),
+  `add_shift_variance_note`/`review_shift_variance` (no duplicate-creation risk —
+  single-field overwrites, not append-only) — checked out already correct.

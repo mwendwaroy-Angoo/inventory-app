@@ -3231,7 +3231,10 @@
         var destNewName = document.getElementById('qs-split-dest-new-name').value.trim();
         var errEl = document.getElementById('qs-split-error');
         errEl.style.display = 'none';
-        var body = {paid_amount: paid, paid_method: window._qsSplitMethod};
+        var body = {
+            paid_amount: paid, paid_method: window._qsSplitMethod,
+            idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
+        };
         if (destSel === '__new__') {
             if (!destNewName) { errEl.textContent = 'Weka jina la mteja.'; errEl.style.display = 'block'; return; }
             body.dest_customer_name = destNewName;
@@ -3291,7 +3294,9 @@
         var destNewName = document.getElementById('qs-whole-tab-dest-new-name').value.trim();
         var errEl = document.getElementById('qs-whole-tab-error');
         errEl.style.display = 'none';
-        var body = {};
+        var body = {
+            idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
+        };
         if (destSel === '__new__') {
             if (!destNewName) { errEl.textContent = 'Weka jina la mteja.'; errEl.style.display = 'block'; return; }
             body.dest_customer_name = destNewName;

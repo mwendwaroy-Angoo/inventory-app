@@ -2387,7 +2387,10 @@
     btn.disabled    = true;
     btn.textContent = 'Inapima...';
 
-    post('/stock/bar/weigh/' + _weighBarrel + '/', { weight_kg: grossKg })
+    post('/stock/bar/weigh/' + _weighBarrel + '/', {
+      weight_kg: grossKg,
+      idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
+    })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         btn.textContent = 'Pima tena';
@@ -3318,7 +3321,10 @@
     var destNewName = document.getElementById('split-dest-new-name').value.trim();
     var errEl = document.getElementById('split-error');
     errEl.style.display = 'none';
-    var body = {paid_amount: paid, paid_method: window._splitMethod};
+    var body = {
+      paid_amount: paid, paid_method: window._splitMethod,
+      idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
+    };
     if (destSel === '__new__') {
       if (!destNewName) { errEl.textContent = 'Weka jina la mteja.'; errEl.style.display = 'block'; return; }
       body.dest_customer_name = destNewName;
@@ -3377,7 +3383,9 @@
     var destNewName = document.getElementById('whole-tab-dest-new-name').value.trim();
     var errEl = document.getElementById('whole-tab-error');
     errEl.style.display = 'none';
-    var body = {};
+    var body = {
+      idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
+    };
     if (destSel === '__new__') {
       if (!destNewName) { errEl.textContent = 'Weka jina la mteja.'; errEl.style.display = 'block'; return; }
       body.dest_customer_name = destNewName;
