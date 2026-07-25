@@ -7,7 +7,7 @@ Sprint 4: shift handover.
 """
 import json
 import logging
-from datetime import date as date_type, timedelta
+from datetime import date as date_type, datetime, time as dt_time, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
@@ -1384,7 +1384,7 @@ def transferable_tabs_api(request):
 
 @login_required
 def recent_settled_tabs_api(request):
-    """JSON: recently-paid entries (last 6 hours), grouped by tab — powers a
+    """JSON: paid entries for a given day, grouped by tab — powers a
     "🕐 Malipo ya Hivi Karibuni" (Recent Payments) panel so staff/owner can
     find and undo a mistaken settlement even after it's no longer visible
     anywhere else (2026-07-25 live request: "confused the tab payment for
@@ -1402,21 +1402,41 @@ def recent_settled_tabs_api(request):
     covers both cases in one query. Station-scoped like every other tabs
     endpoint. Voided entries are excluded — they're a different, already-final
     correction (remove_tab_entry), not a payment to revoke.
+
+    ?date=YYYY-MM-DD (2026-07-25 same-day follow-up): a fixed rolling 6-hour
+    window meant staff could only ever see "just now" payments and a hard cap
+    of the newest 20 tabs / 100 entries silently hid the rest — Roy's own
+    report ("I am only seeing a few... unable to see all the paid
+    transactions"). Now scoped to one LOCAL CALENDAR DAY (Nairobi wall-clock,
+    matching every other "today" surface in this app), defaulting to today
+    when no date is given, with no artificial cap — a single business's
+    one-day paid-entry count is never large enough to need one.
     """
     up = _get_up(request)
     if not up:
         return JsonResponse({'tabs': []})
 
-    since = timezone.now() - timezone.timedelta(hours=6)
+    date_str = (request.GET.get('date') or '').strip()
+    if date_str:
+        try:
+            sel_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            sel_date = timezone.localdate()
+    else:
+        sel_date = timezone.localdate()
+    day_start = timezone.make_aware(datetime.combine(sel_date, dt_time.min))
+    day_end = timezone.make_aware(datetime.combine(sel_date, dt_time.max))
+
     allowed = _allowed_tab_sources(up)
     paid_entries = (
         BarTabEntry.objects.filter(
-            tab__business=up.business, is_paid=True, paid_at__gte=since,
+            tab__business=up.business, is_paid=True,
+            paid_at__gte=day_start, paid_at__lte=day_end,
             tab__source__in=allowed,
         )
         .exclude(payment_method='void')
         .select_related('transaction__item__store', 'tab')
-        .order_by('-paid_at')[:100]
+        .order_by('-paid_at')
     )
 
     tabs_map = {}
@@ -1448,11 +1468,11 @@ def recent_settled_tabs_api(request):
         if e.paid_at and (bucket['_latest'] is None or e.paid_at > bucket['_latest']):
             bucket['_latest'] = e.paid_at
 
-    result = sorted(tabs_map.values(), key=lambda b: b['_latest'], reverse=True)[:20]
+    result = sorted(tabs_map.values(), key=lambda b: b['_latest'], reverse=True)
     for b in result:
         b['settled_at'] = timezone.localtime(b['_latest']).strftime('%H:%M') if b['_latest'] else ''
         del b['_latest']
-    return JsonResponse({'tabs': result})
+    return JsonResponse({'tabs': result, 'date': sel_date.isoformat()})
 
 
 @login_required

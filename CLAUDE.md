@@ -2705,3 +2705,58 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   scope for this session, flagged to Roy rather than silently built or
   silently omitted. 7 new tests (`KitchenStockReceiptPresetCostingTest`). Two
   migrations (0124; the tabs/yield fixes needed none). 687 tests pass.
+- Cash-reconciliation bug — split-remainder transactions silently tagged
+  'cash' (2026-07-25, live Monsoon Inn report: system showed KES 2980
+  expected cash for a shift, physical count was KES 1700, staff insisted
+  entries were correct and no money had left the drawer). Traced
+  `core.shift_views._reconcile()` (feeds `close_shift`, `active_shift_api`,
+  `shift_history`, the Z-report — every "expected cash" figure in the app):
+  its `cash_sales` aggregate reads `Transaction.payment_method` directly, with
+  zero awareness of the sibling `BarTabEntry.is_paid` flag. Root cause:
+  `BarTabEntry.split_paid_unpaid_locked()` (`core/models.py`) — the shared
+  building block behind BOTH the 2026-07-25 "theft-prevention" partial-amount
+  settle feature (`BarTab.settle_entries_amount_locked`) AND the "split bill
+  to a different customer" transfer feature (`split_and_transfer_locked`) —
+  creates the STILL-UNPAID remainder as a new `Transaction` with no
+  `payment_method=` kwarg. `Transaction.payment_method`'s model field default
+  is `'cash'` (unlike `BarTabEntry.payment_method`, which correctly defaults
+  to blank) — so every split-remainder, whether sitting unpaid on the same
+  tab or a split-transfer still pending the OTHER customer's acceptance, was
+  silently counted as a completed cash sale the instant it was created, even
+  though no money had changed hands. Fixed by setting `payment_method='credit'`
+  explicitly — matching the convention every other "on a tab, not yet
+  collected" `Transaction` in the app already uses (`KegBarrel.record_sale`:
+  `pay = 'credit' if tab else ...`), so it now correctly lands in
+  `_reconcile()`'s `credit_sales` bucket, which the shift math already
+  excludes from `expected_cash`. One shared fix in `split_paid_unpaid_locked()`
+  covers both features at once, since both route through it. Regression-swept
+  every other `Transaction.objects.create()` call site in `core/` for the
+  same "Issue-type transaction created with no explicit payment_method"
+  pattern — all others either specify it explicitly or are non-Issue types
+  (Receipt/Wastage/Draw, not counted by `_reconcile()`'s Issue-only filter)
+  and are unaffected; two lower-traffic surfaces (`api_views.py`'s DRF cart
+  checkout, the legacy USSD stock-logging flow) share the same omission but
+  are separate from the bar/kitchen/Quick-Sell flow this incident traced
+  through — flagged as a follow-up, not fixed in this pass.
+  Also fixed in the same session: a stray leading `;` before `restock_views.py`'s
+  module docstring was crashing the ENTIRE app (any request touching
+  `stockapp/urls.py`, which imports from it) — caught via `manage.py check`
+  failing with a `SyntaxError` mid-session; removed.
+- Recent Payments date picker (2026-07-25, same-day follow-up): Roy reported
+  the "🕐 Malipo ya Hivi Karibuni" revoke-payment panel only ever showed "a
+  few" transactions and he couldn't find today's confirmed sales to correct a
+  mistaken payment method. Root cause: `recent_settled_tabs_api`
+  (`core/keg_views.py`) used a fixed rolling 6-hour window plus a hard cap of
+  the newest 20 tabs / 100 entries — exactly matching his report. Replaced
+  with an explicit `?date=YYYY-MM-DD` param (defaults to today, LOCAL
+  calendar day via `timezone.localdate()`/`make_aware()`, matching every
+  other "today" surface in this app) and removed the artificial cap entirely
+  — a single business's one-day paid-entry count is never large enough to
+  need one. Added a `<input type="date">` picker to the panel header, wired
+  to reload on change, in all three tabs drawers (`bar_board.html`,
+  `quick_sell.html`, `kitchen_board.html`) per the tabs-drawer-parity rule —
+  each defaults to today via a small `_todayIso()` helper (one copy per
+  file, matching this app's established per-template JS convention) and only
+  auto-fills the date input the first time the panel is opened, never
+  overwriting a date the owner has already picked. 11 new tests
+  (`RecentPaymentsDatePickerTest`). No migrations.

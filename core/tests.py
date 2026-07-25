@@ -5799,21 +5799,38 @@ class RevokePaymentAndRemoveEntryTest(TestCase):
         self.assertEqual(found['entries'][0]['payment_method'], 'mpesa')
 
     def test_recent_settled_tabs_api_excludes_old_settlements(self):
+        """2026-07-25 same-day follow-up (Monsoon Inn): a fixed rolling
+        6-hour window meant staff could only ever see "just now" payments —
+        Roy's own report was "I am only seeing a few... unable to see all
+        the paid transactions." recent_settled_tabs_api now scopes to a full
+        LOCAL CALENDAR DAY (default: today), not a rolling window — so a
+        same-day settlement from many hours ago (e.g. this morning) must now
+        correctly show by default, while a settlement from a genuinely
+        different (earlier) calendar day must not. See
+        RecentPaymentsDatePickerTest for the dedicated ?date= coverage."""
+        import datetime as dt
         tab, entry = self._make_tab_with_entry(self.bar_item, is_paid=True, payment_method='cash')
         tab.status = 'SETTLED'
-        tab.settled_at = timezone.now() - timezone.timedelta(hours=12)
+        yesterday = timezone.localdate() - timezone.timedelta(days=1)
+        yesterday_dt = timezone.make_aware(dt.datetime.combine(yesterday, dt.time(14, 0)))
+        tab.settled_at = yesterday_dt
         tab.save(update_fields=['status', 'settled_at'])
-        # 2026-07-25: recent_settled_tabs_api now queries the ENTRY's own paid_at
-        # (not the tab's settled_at) — a more correct "when was this actually
-        # paid" cutoff, since the two can differ for a partially-then-fully
+        # recent_settled_tabs_api queries the ENTRY's own paid_at (not the
+        # tab's settled_at) — a more correct "when was this actually paid"
+        # cutoff, since the two can differ for a partially-then-fully
         # settled tab. Backdate the entry itself to match this test's intent.
-        entry.paid_at = tab.settled_at
+        entry.paid_at = yesterday_dt
         entry.save(update_fields=['paid_at'])
         self.client.force_login(self.owner)
-        resp = self.client.get('/bar/tabs/recent-settled/')
+        resp = self.client.get('/bar/tabs/recent-settled/')  # defaults to today
         data = resp.json()
         found = next((t for t in data['tabs'] if t['tab_id'] == tab.id), None)
-        self.assertIsNone(found, 'Settlements from many hours ago should not clutter the recent list')
+        self.assertIsNone(found, "Yesterday's settlements must not clutter today's default view")
+
+        resp_yday = self.client.get('/bar/tabs/recent-settled/?date=' + yesterday.isoformat())
+        data_yday = resp_yday.json()
+        found_yday = next((t for t in data_yday['tabs'] if t['tab_id'] == tab.id), None)
+        self.assertIsNotNone(found_yday, 'Explicitly picking yesterday must still surface it')
 
     def test_recent_settled_tabs_api_station_scoped(self):
         tab, entry = self._make_tab_with_entry(self.kitchen_item, is_paid=True, payment_method='cash', source='kitchen')
@@ -11557,6 +11574,78 @@ class RecentPaymentsSurfacesOpenTabEntryTest(TestCase):
         self.assertTrue(resp.json()['ok'])
         self.paid_entry.refresh_from_db()
         self.assertFalse(self.paid_entry.is_paid)
+
+
+class RecentPaymentsDatePickerTest(TestCase):
+    """2026-07-25 same-day follow-up (Monsoon Inn): the old rolling 6-hour
+    window plus a hard cap of 20 tabs / 100 entries meant staff could only
+    ever see "just now" payments, and Roy's own report was "I am only seeing
+    a few... unable to see all the paid transactions." recent_settled_tabs_api
+    now takes an explicit ?date=YYYY-MM-DD (default: today, LOCAL calendar
+    day) with no artificial cap."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Recent Date Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Recent Date Item',
+            material_no='RD-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.client.force_login(self.owner)
+
+    def _paid_entry(self, name, paid_at, amount=Decimal('100')):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='SETTLED', source='bar', store=self.store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='cash',
+        )
+        return BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Recent Date Item',
+            amount=amount, is_paid=True, payment_method='cash', paid_at=paid_at,
+        )
+
+    def test_default_date_is_today_not_a_rolling_window(self):
+        """An entry paid near the start of today (likely outside the old
+        6-hour rolling window) must still show up with no date param, since
+        it's still today's calendar day."""
+        early_today = timezone.localtime().replace(hour=0, minute=0, second=1, microsecond=0)
+        self._paid_entry('EarlyToday', early_today)
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        data = resp.json()
+        self.assertEqual(data['date'], timezone.localdate().isoformat())
+        self.assertEqual(len(data['tabs']), 1)
+
+    def test_explicit_date_filters_to_that_calendar_day(self):
+        import datetime as dt
+        yesterday = timezone.localdate() - timezone.timedelta(days=1)
+        yesterday_dt = timezone.make_aware(dt.datetime.combine(yesterday, dt.time(14, 0)))
+        self._paid_entry('Yesterday', yesterday_dt)
+        self._paid_entry('Today', timezone.now())
+
+        resp_today = self.client.get('/bar/tabs/recent-settled/?date=' + timezone.localdate().isoformat())
+        self.assertEqual(len(resp_today.json()['tabs']), 1)
+        self.assertEqual(resp_today.json()['tabs'][0]['customer_name'], 'Today')
+
+        resp_yday = self.client.get('/bar/tabs/recent-settled/?date=' + yesterday.isoformat())
+        self.assertEqual(len(resp_yday.json()['tabs']), 1)
+        self.assertEqual(resp_yday.json()['tabs'][0]['customer_name'], 'Yesterday')
+
+    def test_no_artificial_cap_more_than_twenty_tabs_all_returned(self):
+        for i in range(25):
+            self._paid_entry(f'Customer{i}', timezone.now())
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        self.assertEqual(len(resp.json()['tabs']), 25)
+
+    def test_invalid_date_param_falls_back_to_today(self):
+        self._paid_entry('Today', timezone.now())
+        resp = self.client.get('/bar/tabs/recent-settled/?date=not-a-date')
+        data = resp.json()
+        self.assertEqual(data['date'], timezone.localdate().isoformat())
+        self.assertEqual(len(data['tabs']), 1)
 
 
 class BackfillSvqInvoiceTagsCommandTest(TestCase):

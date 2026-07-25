@@ -2775,9 +2775,25 @@ class BarTabEntry(models.Model):
         entry.paid_at = timezone.now()
         entry.save(update_fields=['amount', 'is_paid', 'payment_method', 'paid_at'])
 
+        # payment_method='credit' EXPLICITLY (found 2026-07-25, live Monsoon
+        # Inn cash-reconciliation report: system showed KES 2980 expected,
+        # physical count KES 1700). Transaction.payment_method's model field
+        # default is 'cash' — omitting this kwarg here silently tagged every
+        # STILL-UNPAID remainder (money not yet collected — either sitting as
+        # an ordinary open balance on this same tab, or a split-transfer
+        # pending a different customer's acceptance) as if it were a
+        # completed cash sale. core.shift_views._reconcile()'s cash_sales
+        # aggregate reads Transaction.payment_method directly, with no
+        # awareness of the sibling BarTabEntry.is_paid flag, so every such
+        # remainder inflated expected_cash for money genuinely still sitting
+        # unpaid — exactly the "not tabs" money Roy's shift math must
+        # exclude. 'credit' matches the convention every other unpaid/on-a-
+        # tab Transaction in the app already uses (see KegBarrel.record_sale:
+        # `pay = 'credit' if tab else ...`), so it's correctly excluded from
+        # cash_sales/mpesa_sales and instead counted in credit_sales.
         new_txn = Transaction.objects.create(
             item=orig_txn.item, business=orig_txn.business, type='Issue',
-            qty=Decimal('0'), sale_amount=remainder,
+            qty=Decimal('0'), sale_amount=remainder, payment_method='credit',
             keg_barrel=orig_txn.keg_barrel, produce_bunch=orig_txn.produce_bunch,
             kitchen_batch=orig_txn.kitchen_batch,
             date=orig_txn.date, created_at=orig_txn.created_at,
