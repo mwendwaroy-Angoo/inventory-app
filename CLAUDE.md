@@ -2512,3 +2512,13 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`StockTakeVarianceDashboardExclusionTest`, `PettyCashVisibleAtCloseShiftTest`,
   `TransferAcceptClosesEmptySourceTabTest`, `RecentPaymentsSurfacesOpenTabEntryTest`).
   No migrations.
+- Backfill for the pre-fix stock-take-variance dashboard leak (2026-07-25, same day):
+  the `[SVQ]` exclusion above only tags NEW corrective transactions going forward —
+  Monsoon Inn's actual this-morning variance was accepted before that fix existed, so
+  it stayed untagged and kept showing on the live dashboard even after the fix
+  deployed. `backfill_svq_invoice_tags` management command (same one-time-backfill
+  pattern as `backfill_tab_tokens`) retroactively tags historical corrective
+  transactions via their `StockVarianceQuery.corrective_txn` FK — precise, no
+  guessing which transactions came from this flow. `--dry-run` flag to preview
+  first; safe to re-run (skips already-tagged rows). Run once per deployed
+  environment via Render's Shell tab. 6 new tests. No migrations.
