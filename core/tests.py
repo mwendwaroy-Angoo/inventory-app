@@ -11556,3 +11556,85 @@ class RecentPaymentsSurfacesOpenTabEntryTest(TestCase):
         self.assertTrue(resp.json()['ok'])
         self.paid_entry.refresh_from_db()
         self.assertFalse(self.paid_entry.is_paid)
+
+
+class BackfillSvqInvoiceTagsCommandTest(TestCase):
+    """2026-07-25 live report (Monsoon Inn): the [SVQ] exclusion fix only tags
+    NEW corrective transactions going forward — a variance already accepted
+    before the fix shipped has no tag, so it was still showing on the live
+    dashboard even after deploying the fix. This one-time backfill command
+    retroactively tags historical corrective transactions via their
+    StockVarianceQuery.corrective_txn link (precise — no guessing which
+    transactions came from this flow)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='SVQ Backfill Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Backfill Item',
+            material_no='SVQB-01', unit='pcs', selling_price=Decimal('100'),
+        )
+
+    def _make_resolved_svq(self, payment_method='cash', invoice_no='', txn_type='Issue'):
+        from core.models import StockTake, StockVarianceQuery
+        stock_take = StockTake.objects.create(business=self.biz, store=self.store)
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type=txn_type,
+            qty=Decimal('-5'), sale_amount=Decimal('500'),
+            payment_method=payment_method, invoice_no=invoice_no,
+        )
+        return StockVarianceQuery.objects.create(
+            stock_take=stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('20'), actual_count=Decimal('15'),
+            direction=StockVarianceQuery.DECREASE, corrective_txn=txn,
+            status=StockVarianceQuery.RESOLVED, owner_accepted=True,
+        )
+
+    def test_untagged_cash_correction_gets_tagged(self):
+        from django.core.management import call_command
+        svq = self._make_resolved_svq(payment_method='cash')
+        call_command('backfill_svq_invoice_tags')
+        svq.corrective_txn.refresh_from_db()
+        self.assertEqual(svq.corrective_txn.invoice_no, '[SVQ]')
+
+    def test_credit_correction_also_tagged(self):
+        from django.core.management import call_command
+        svq = self._make_resolved_svq(payment_method='credit')
+        call_command('backfill_svq_invoice_tags')
+        svq.corrective_txn.refresh_from_db()
+        self.assertEqual(svq.corrective_txn.invoice_no, '[SVQ]')
+
+    def test_already_tagged_transaction_left_untouched(self):
+        from django.core.management import call_command
+        svq = self._make_resolved_svq(payment_method='mpesa', invoice_no='[SVQ]')
+        call_command('backfill_svq_invoice_tags')
+        svq.corrective_txn.refresh_from_db()
+        self.assertEqual(svq.corrective_txn.invoice_no, '[SVQ]')
+
+    def test_wastage_correction_not_touched(self):
+        # Wastage corrections have no revenue and were never the leak — the
+        # command should only ever touch Issue-type corrective transactions.
+        from django.core.management import call_command
+        svq = self._make_resolved_svq(payment_method='', txn_type='Wastage')
+        call_command('backfill_svq_invoice_tags')
+        svq.corrective_txn.refresh_from_db()
+        self.assertEqual(svq.corrective_txn.invoice_no, '')
+
+    def test_dry_run_does_not_save(self):
+        from django.core.management import call_command
+        svq = self._make_resolved_svq(payment_method='cash')
+        call_command('backfill_svq_invoice_tags', '--dry-run')
+        svq.corrective_txn.refresh_from_db()
+        self.assertEqual(svq.corrective_txn.invoice_no, '')
+
+    def test_variance_with_no_corrective_txn_is_skipped(self):
+        from django.core.management import call_command
+        from core.models import StockTake, StockVarianceQuery
+        stock_take = StockTake.objects.create(business=self.biz, store=self.store)
+        StockVarianceQuery.objects.create(
+            stock_take=stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('20'), actual_count=Decimal('15'),
+            direction=StockVarianceQuery.DECREASE,
+        )
+        # Must not raise — no corrective_txn to touch.
+        call_command('backfill_svq_invoice_tags')
