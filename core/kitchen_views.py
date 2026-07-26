@@ -434,10 +434,15 @@ def _batch_to_dict(batch):
 
 def _kitchen_checkout(request, up, business, is_owner):
     """Handle kitchen sale POST."""
-    # Shift gate: staff must have an open shift
-    if not is_owner:
+    # Shift gate: staff must have an open shift to SELL. Owner is always
+    # exempt; a manager supervises freely but must open their OWN shift to
+    # sell, exactly like ordinary staff (2026-07-26 live clarification) — the
+    # `is_owner` PARAM here is actually is_owner_or_manager (see kitchen_board()'s
+    # definition), so check the real owner flag directly and require the
+    # manager's own shift via manager_must_have_shift.
+    if not up.is_owner:
         from core.shift_views import get_active_staff_shift
-        if get_active_staff_shift(up, business) is False:
+        if get_active_staff_shift(up, business, manager_must_have_shift=True) is False:
             return JsonResponse(
                 {'ok': False, 'shift_required': True,
                  'error': 'Fungua shift yako kwanza kabla ya kuuza.'},

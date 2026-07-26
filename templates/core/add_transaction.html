@@ -476,6 +476,21 @@
                 </div>
             </div>
 
+            {% if not user.userprofile.is_owner %}
+            <!-- Stock receipt confirmation — Receipt only, staff/manager (2026-07-26) -->
+            <div class="mb-4" id="requestConfirmSection" style="display:none;">
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" name="request_confirmation" value="1" id="requestConfirmCheck">
+                    <label class="form-check-label" for="requestConfirmCheck" style="color:#e2c36e;">
+                        📦 {% trans 'Hii ni oda ya mmiliki (hayupo) — hitaji uthibitisho wake au wa meneja' %}
+                    </label>
+                </div>
+                <div style="color:#888; font-size:0.72rem; margin-top:0.25rem;">
+                    {% trans 'Itatuma ombi la uthibitisho kwenye Maombi — mmiliki au meneja atathibitisha au kupinga.' %}
+                </div>
+            </div>
+            {% endif %}
+
             <!-- Payment Method — Issue only -->
             <div class="mb-3" id="paymentMethodRow" style="display:none;">
                 <label class="form-label">💳 Payment Method</label>
@@ -799,6 +814,7 @@ $(document).ready(function () {
             $('#backdateSection').hide();
             $('#backdatedAt').val('');
             $('#expiryDateSection').show();
+            $('#requestConfirmSection').show();
             checkCostPriceSection();
         } else {
             $('#storeField').hide();
@@ -810,6 +826,8 @@ $(document).ready(function () {
             $('#costPriceSection').hide();
             $('#expiryDateSection').hide();
             $('#expiryDateInput').val('');
+            $('#requestConfirmSection').hide();
+            $('#requestConfirmCheck').prop('checked', false);
             // Backdate toggle only relevant for Issue (offline sale), not Wastage
             if (type === 'Issue') {
                 $('#backdateToggle').show();

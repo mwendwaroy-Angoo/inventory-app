@@ -2924,3 +2924,55 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   a duplicated code path). 736 pre-existing core+accounts tests confirmed
   green before this sprint's own ~60 new tests were added on top. Three
   migrations (0125, 0126, 0127), all additive.
+- Accountability overhaul II, follow-up (2026-07-26, same day): Roy's live
+  correction on operational model + two feature asks. **Manager shift gate
+  clarified**: the owner sells freely at all times, no gate; a manager
+  supervises and may do EVERY oversight/corrective action (settle, void,
+  revoke, restock, receive stock, breakage, approvals) without opening a
+  shift, but to actually SELL (create a new Issue transaction) a manager
+  must open their OWN shift, exactly like ordinary staff — `get_active_
+  staff_shift()` previously returned "no gate" for `is_owner_or_manager`
+  unconditionally, silently letting managers sell without ever opening a
+  shift. Added a `manager_must_have_shift` kwarg (default False — every
+  existing oversight call site is completely unaffected) and threaded
+  `manager_must_have_shift=True` through the four real "new sale" entry
+  points only: `quick_sell()`, `add_transaction()` (Issue only — Receipt/
+  Wastage are oversight, left ungated for managers, required restructuring
+  to parse `trans_type` before the gate instead of after), `bar_board()`'s
+  keg-cart checkout, and `_kitchen_checkout()` (both had their own inline
+  `is_owner_or_manager`-named-`is_owner` checks, not routed through the
+  shared helper at all — fixed to call it properly). 8 new tests
+  (`ManagerMustHaveOwnShiftToSellTest`); all 724 pre-existing tests
+  confirmed still green (oversight actions untouched). **Stock receipt
+  confirmation**: owner orders stock remotely and isn't present to witness
+  delivery — whoever DOES receive it (staff on shift, or a manager without
+  one) can now tick "📦 Hii ni oda ya mmiliki (hayupo)" at Add Transaction's
+  Receipt step, which auto-creates a `StaffRequest` (new `stock_confirm`
+  category + a `related_transaction` FK — the one deliberate exception to
+  "no generic FK", since this request is inherently about one specific
+  Transaction) linking straight to the recorded Receipt; a second person
+  (owner reviewing remotely, or a manager) confirms accurate or disputes via
+  the SAME existing `/staff-requests/<id>/review/` flow — no new endpoint
+  needed. Never prompted when the owner receives stock personally (nothing
+  to confirm). 4 new tests (`StockReceiptConfirmationTest`). **Salary
+  advance requests**: new `SalaryAdvanceRequest` model (amount, reason,
+  period, status, reviewed_by/at/note, `salary_payment` FK set on approval)
+  — staff submit via a "🆘 Omba Advance ya Dharura" button on Kazi Yangu;
+  owner/manager approve (immediately creates the actual disbursement —
+  `SalaryPayment(payment_type='advance')`, a new payment type alongside
+  full/partial — reducing that period's remaining balance right away, same
+  as any other payment) or reject (reason required back to the staffer, no
+  money moves). New shared `_salary_period_balance(business, staff, period)`
+  helper — expected (from the staff's configured `RecurringExpense` salary
+  line, if any) minus paid-so-far (every `SalaryPayment` for the period,
+  all types combined) — is the single source of truth used at payment
+  confirmation, Kazi Yangu's display, and advance approval, so "remaining
+  balance" is never computed two different ways. Kazi Yangu shows the
+  remaining balance figure, an advance-request history list with each
+  request's outcome and reviewer, and the request modal; owner's Haki
+  contribution report surfaces pending advance requests inline for
+  approve/reject. 7 new tests (`SalaryAdvanceRequestTest`). Migration 0129
+  (SalaryPayment.payment_type gains 'advance'; new SalaryAdvanceRequest
+  table); migration 0128 (StaffRequest.related_transaction +
+  stock_confirm category). 19 new tests total this follow-up, on top of
+  the same-day sprint above.

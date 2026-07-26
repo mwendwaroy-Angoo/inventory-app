@@ -90,6 +90,33 @@
     </div>
 </div>
 
+{% if pending_advances %}
+<div class="contrib-card" style="border-left:3px solid #c0395a;">
+    <div style="padding:1rem;">
+        <div style="color:#e8a0b0; font-weight:600; margin-bottom:0.6rem;">
+            🆘 {% trans 'Maombi ya Advance Yanayosubiri' %} ({{ pending_advances|length }})
+        </div>
+        {% for adv in pending_advances %}
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-2" id="adv-row-{{ adv.id }}"
+             style="padding:0.5rem 0; border-bottom:1px solid #2a2a2a;">
+            <div>
+                <span style="color:#f0ece4; font-weight:600;">{{ adv.staff.user.get_full_name|default:adv.staff.user.username }}</span>
+                <span style="color:#e8a0b0; font-weight:600; margin-left:0.5rem;">KES {{ adv.amount_requested|floatformat:0 }}</span>
+                <span style="color:#888; font-size:0.75rem; margin-left:0.4rem;">({{ adv.period }})</span>
+                <div style="color:#888; font-size:0.8rem; margin-top:0.15rem;">"{{ adv.reason }}"</div>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
+                        onclick="reviewAdvance({{ adv.id }}, 'approve')">✓ Idhinisha</button>
+                <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
+                        onclick="reviewAdvance({{ adv.id }}, 'reject', this)">✕ Kataa</button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 {% if rows %}
 {% for row in rows %}
 <div class="contrib-card">
@@ -317,4 +344,37 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function reviewAdvance(advanceId, action, anchorEl) {
+    var reviewNote = '';
+    if (action === 'reject') {
+        reviewNote = prompt('Sababu ya kukataa (hiari):', '') || '';
+        if (reviewNote === null) return;
+    }
+    var btn = anchorEl;
+    if (btn) btn.disabled = true;
+    fetch('/staff/salary/advance/' + advanceId + '/review/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({action: action, review_note: reviewNote}),
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.ok) {
+                var row = document.getElementById('adv-row-' + advanceId);
+                if (row) row.remove();
+            } else {
+                alert(d.error || 'Hitilafu.');
+                if (btn) btn.disabled = false;
+            }
+        })
+        .catch(function () {
+            alert('Hitilafu ya mtandao.');
+            if (btn) btn.disabled = false;
+        });
+}
+</script>
 {% endblock %}

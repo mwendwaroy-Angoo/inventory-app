@@ -307,7 +307,11 @@ def bar_board(request):
 
     if request.method == 'POST':
         # Shift enforcement — staff must have personally opened an active shift
-        if not is_owner:
+        # to SELL. Owner is always exempt; a manager supervises freely but must
+        # open their OWN shift to sell, exactly like ordinary staff (2026-07-26
+        # live clarification) — `is_owner` here is actually is_owner_or_manager
+        # (see its definition above), so check the real owner flag directly.
+        if not up.is_owner:
             from .models import Shift as _Shift
             from django.contrib import messages as _msg
             my_shift = _Shift.objects.filter(

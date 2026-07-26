@@ -1653,6 +1653,7 @@ class SalaryPayment(models.Model):
     PAYMENT_TYPE_CHOICES = [
         ('full',    _('Full Payment')),
         ('partial', _('Partial Payment')),
+        ('advance', _('Salary Advance')),
     ]
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_type = models.CharField(
@@ -1699,6 +1700,52 @@ class SalaryPayment(models.Model):
     @property
     def is_overdue(self):
         return self.days_overdue > 0
+
+
+class SalaryAdvanceRequest(models.Model):
+    """Staff-initiated request for an emergency salary advance ahead of the
+    normal pay cycle (2026-07-26 live request) — with a reason, an owner
+    approve/reject decision, and a direct link to the SalaryPayment created
+    when the owner actually disburses it (payment_type='advance'), so it
+    counts against that period's remaining balance the same as any other
+    payment — "follow-up... upon partial payments or remaining balance" is
+    answered by that shared remaining-balance calculation, not a separate
+    tracking mechanism.
+    """
+    STATUS_PENDING  = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        ('pending',  _('Inasubiri')),
+        ('approved', _('Imeidhinishwa')),
+        ('rejected', _('Imekataliwa')),
+    ]
+
+    business         = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='salary_advance_requests')
+    staff            = models.ForeignKey('accounts.UserProfile', on_delete=models.CASCADE, related_name='salary_advance_requests')
+    amount_requested = models.DecimalField(max_digits=12, decimal_places=2)
+    reason           = models.TextField()
+    period           = models.CharField(max_length=7, help_text="Period this advance counts against, YYYY-MM.")
+    status           = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    requested_at     = models.DateTimeField(auto_now_add=True)
+    reviewed_by      = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='salary_advances_reviewed')
+    reviewed_at      = models.DateTimeField(null=True, blank=True)
+    review_note      = models.CharField(max_length=300, blank=True)
+    # Set at approval time — the actual disbursement record. Nullable/blank
+    # for the (rare) case an advance is approved in principle before the
+    # owner has physically paid it out.
+    salary_payment   = models.ForeignKey(
+        'SalaryPayment', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='advance_request',
+    )
+
+    class Meta:
+        ordering = ['-requested_at']
+        verbose_name = _('Salary Advance Request')
+        verbose_name_plural = _('Salary Advance Requests')
+
+    def __str__(self):
+        return f"{self.staff} — KES {self.amount_requested:,.0f} ({self.period}) [{self.status}]"
 
 
 # ────────────────────────────────────────────────
@@ -4507,15 +4554,17 @@ class StaffRequest(models.Model):
     that would duplicate machinery those dedicated flows already have; this
     is for everything else.
     """
-    CATEGORY_RESTOCK    = 'restock'
-    CATEGORY_PERMISSION = 'permission'
-    CATEGORY_CORRECTION = 'correction'
-    CATEGORY_GENERAL    = 'general'
+    CATEGORY_RESTOCK       = 'restock'
+    CATEGORY_PERMISSION    = 'permission'
+    CATEGORY_CORRECTION    = 'correction'
+    CATEGORY_STOCK_CONFIRM = 'stock_confirm'
+    CATEGORY_GENERAL       = 'general'
     CATEGORY_CHOICES = [
-        ('restock',    _('Ombi la Stock')),
-        ('permission', _('Ruhusa Maalum')),
-        ('correction', _('Marekebisho')),
-        ('general',    _('Jambo Lingine')),
+        ('restock',       _('Ombi la Stock')),
+        ('permission',    _('Ruhusa Maalum')),
+        ('correction',    _('Marekebisho')),
+        ('stock_confirm', _('Uthibitisho wa Oda')),
+        ('general',       _('Jambo Lingine')),
     ]
 
     STATUS_PENDING  = 'pending'
@@ -4537,6 +4586,16 @@ class StaffRequest(models.Model):
     reviewed_at  = models.DateTimeField(null=True, blank=True)
     review_note  = models.CharField(max_length=300, blank=True)
     created_at   = models.DateTimeField(auto_now_add=True)
+    # 2026-07-26 (live follow-up) — the ONE deliberate exception to "no generic
+    # FK": a stock-receipt confirmation is inherently about a specific Receipt
+    # Transaction (owner ordered stock remotely, isn't present to witness
+    # delivery — a second person, present staff or manager, confirms the
+    # recorded receipt is accurate). Reusing this same channel/review flow
+    # rather than building a parallel model for one extra field.
+    related_transaction = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='staff_requests',
+    )
 
     class Meta:
         ordering = ['-created_at']

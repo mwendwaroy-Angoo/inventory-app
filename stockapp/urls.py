@@ -251,6 +251,8 @@ from core.haki_views import (
     staff_journey,
     confirm_salary_payment,
     run_payroll,
+    request_salary_advance,
+    review_salary_advance,
 )
 from core.restock_views import (
     request_restock,
@@ -538,6 +540,8 @@ urlpatterns = [
     path("staff/<int:profile_id>/journey/", staff_journey, name="staff_journey"),
     path("staff/payroll-run/", run_payroll, name="run_payroll"),
     path("staff/salary/<int:payment_id>/confirm/", confirm_salary_payment, name="confirm_salary_payment"),
+    path("staff/salary/advance/request/", request_salary_advance, name="request_salary_advance"),
+    path("staff/salary/advance/<int:advance_id>/review/", review_salary_advance, name="review_salary_advance"),
     path("me/", my_work_and_pay, name="my_work_and_pay"),
     # ── DJ / MC Performer Module ──────────────────────────────────────────────
     path("bar/performers/",                     performer_list,        name="performer_list"),

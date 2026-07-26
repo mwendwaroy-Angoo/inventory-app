@@ -30,10 +30,31 @@ from django.views.decorators.http import require_POST
 
 from accounts.models import UserProfile
 from core.models import (
-    CustomerDebtPayment, PettyCash, SalaryDeduction, SalaryPayment, Shift, Transaction,
+    CustomerDebtPayment, PettyCash, SalaryAdvanceRequest, SalaryDeduction,
+    SalaryPayment, Shift, Transaction,
     RecurringExpense, Notification, BarTab, Receipt, StockVarianceQuery,
 )
 from core.views import get_user_profile, owner_required, owner_or_manager_required
+
+
+def _salary_period_balance(business, staff_profile, period):
+    """(expected, paid, remaining) for one staff member's period — expected
+    comes from their configured RecurringExpense salary line (None if not
+    configured, in which case remaining is meaningless and not shown), paid
+    sums EVERY SalaryPayment for that period regardless of type (full/
+    partial/advance — an advance reduces what's still owed exactly like a
+    partial payment does). Single source of truth used at confirmation,
+    Kazi Yangu, and advance-approval time so the figure is always the same.
+    """
+    configured = RecurringExpense.objects.filter(
+        business=business, staff_profile=staff_profile, is_active=True,
+    ).first()
+    expected = configured.amount if configured else None
+    paid = SalaryPayment.objects.filter(
+        business=business, staff=staff_profile, period=period,
+    ).aggregate(t=Sum('amount'))['t'] or Decimal('0')
+    remaining = (expected - paid) if expected is not None else None
+    return expected, paid, remaining
 
 
 # ── Contribution helper ───────────────────────────────────────────────────────
@@ -297,6 +318,13 @@ def staff_contribution_report(request):
         status=WriteOffRequest.STATUS_PENDING,
     ).count()
 
+    # 2026-07-26 (item 8 follow-up) — pending emergency advance requests need
+    # an owner decision; surfaced here so they're seen alongside everyone
+    # else's contribution/pay status, not buried in a separate page.
+    pending_advances = list(SalaryAdvanceRequest.objects.filter(
+        business=business, status='pending',
+    ).select_related('staff__user').order_by('requested_at'))
+
     return render(request, 'core/haki_contribution.html', {
         'rows': rows,
         'date_from': date_from.isoformat(),
@@ -305,6 +333,7 @@ def staff_contribution_report(request):
         'date_to_label': date_to.strftime('%d %b %Y'),
         'current_period': current_period,
         'pending_wo_count': pending_wo_count,
+        'pending_advances': pending_advances,
     })
 
 
@@ -424,7 +453,15 @@ def confirm_salary_payment(request, payment_id):
 
     who = request.user.get_full_name() or request.user.username
     when = timezone.localtime(payment.confirmed_at).strftime('%d %b %Y, %H:%M')
+    _expected, _paid, remaining = _salary_period_balance(
+        user_profile.business, user_profile, payment.period,
+    )
     message = f'{who} amethibitisha kupokea mshahara wa KES {payment.amount:,.0f} ({payment.period}) — {when}.'
+    if remaining is not None:
+        message += (
+            f' Iliyobaki kwa {payment.period}: KES {remaining:,.0f}.' if remaining > 0
+            else f' Mshahara wa {payment.period} umekamilika.'
+        )
     if payment.recorded_by_id and payment.recorded_by_id != request.user.id:
         Notification.objects.create(
             user=payment.recorded_by,
@@ -433,7 +470,122 @@ def confirm_salary_payment(request, payment_id):
             notification_type='info',
             link_url='/staff/contribution/',
         )
-    return JsonResponse({'ok': True, 'message': 'Asante — imethibitishwa.'})
+    return JsonResponse({
+        'ok': True, 'message': 'Asante — imethibitishwa.',
+        'remaining_balance': float(remaining) if remaining is not None else None,
+    })
+
+
+# ── Item 8 follow-up (2026-07-26): salary advance requests ───────────────────
+
+@login_required
+@require_POST
+def request_salary_advance(request):
+    """Staff requests an emergency salary advance — amount + reason, always
+    reviewed by the owner (manager verdict on money matters is not final
+    anywhere else in this app either — see WriteOffRequest's own docstring).
+    """
+    user_profile = get_user_profile(request)
+    business = user_profile.business
+    if user_profile.is_owner_or_manager:
+        return JsonResponse({'ok': False, 'error': 'Owners/managers do not request advances.'}, status=400)
+
+    amount_raw = (request.POST.get('amount') or '').strip()
+    reason = (request.POST.get('reason') or '').strip()
+    period = (request.POST.get('period') or '').strip() or timezone.localdate().strftime('%Y-%m')
+
+    try:
+        amount_dec = Decimal(amount_raw)
+        if amount_dec <= 0:
+            raise ValueError
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'Ingiza kiasi sahihi.'}, status=400)
+    if not reason:
+        return JsonResponse({'ok': False, 'error': 'Eleza sababu ya dharura.'}, status=400)
+
+    adv = SalaryAdvanceRequest.objects.create(
+        business=business, staff=user_profile, amount_requested=amount_dec,
+        reason=reason, period=period,
+    )
+
+    who = request.user.get_full_name() or request.user.username
+    for op in UserProfile.objects.filter(business=business, role__in=['owner', 'manager']).select_related('user'):
+        Notification.objects.create(
+            user=op.user,
+            title='🆘 Ombi la Advance ya Mshahara',
+            message=f'{who} ameomba advance ya KES {amount_dec:,.0f} ({period}): {reason}',
+            notification_type='warning',
+            link_url='/staff/contribution/',
+        )
+    return JsonResponse({'ok': True, 'request_id': adv.id})
+
+
+@login_required
+@require_POST
+def review_salary_advance(request, advance_id):
+    """Approve (disburses immediately — creates the actual SalaryPayment,
+    payment_type='advance', reducing that period's remaining balance right
+    away) or reject (with a reason, no money moves).
+    """
+    user_profile = get_user_profile(request)
+    if not user_profile or not user_profile.is_owner_or_manager:
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only.'}, status=403)
+    business = user_profile.business
+    adv = get_object_or_404(SalaryAdvanceRequest, id=advance_id, business=business)
+    if adv.status != 'pending':
+        return JsonResponse({'ok': False, 'error': 'Ombi hili tayari limeamuliwa.'}, status=400)
+
+    action = request.POST.get('action')
+    if action not in ('approve', 'reject'):
+        return JsonResponse({'ok': False, 'error': 'Invalid action'}, status=400)
+    review_note = (request.POST.get('review_note') or '').strip()
+    method = request.POST.get('method', 'cash')
+
+    adv.reviewed_by = request.user
+    adv.reviewed_at = timezone.now()
+    adv.review_note = review_note
+
+    if action == 'approve':
+        today = timezone.localdate()
+        last_day = calendar.monthrange(today.year, today.month)[1]
+        due_date = date(today.year, today.month, last_day)
+        payment = SalaryPayment.objects.create(
+            business=business, staff=adv.staff, period=adv.period,
+            amount=adv.amount_requested, payment_type='advance',
+            due_date=due_date, paid=True, paid_at=timezone.now(),
+            method=method, recorded_by=request.user,
+            notes=f'Advance ya dharura: {adv.reason}',
+        )
+        adv.status = 'approved'
+        adv.salary_payment = payment
+    else:
+        adv.status = 'rejected'
+    adv.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'review_note', 'salary_payment'])
+
+    reviewer = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(adv.reviewed_at).strftime('%d %b %Y, %H:%M')
+    _expected, _paid, remaining = _salary_period_balance(business, adv.staff, adv.period)
+
+    if action == 'approve':
+        message = f'Advance yako ya KES {adv.amount_requested:,.0f} imeidhinishwa na {reviewer} tarehe {when}.'
+        if remaining is not None:
+            message += (
+                f' Iliyobaki kwa {adv.period}: KES {remaining:,.0f}.' if remaining > 0
+                else f' Mshahara wa {adv.period} umekamilika.'
+            )
+    else:
+        message = f'Advance yako ya KES {adv.amount_requested:,.0f} imekataliwa na {reviewer} tarehe {when}.'
+        if review_note:
+            message += f' Sababu: {review_note}'
+
+    Notification.objects.create(
+        user=adv.staff.user,
+        title='✅ Advance Imeidhinishwa' if action == 'approve' else '❌ Advance Imekataliwa',
+        message=message,
+        notification_type=('info' if action == 'approve' else 'warning'),
+        link_url='/me/',
+    )
+    return JsonResponse({'ok': True, 'message': message, 'status': adv.status})
 
 
 # ── Item 8 (2026-07-26): bulk payroll run ────────────────────────────────────
@@ -575,6 +727,17 @@ def my_work_and_pay(request):
     ).order_by('paid_at'))
     paid_total = sum(p.amount for p in paid_rows)
 
+    # 2026-07-26 (item 8 follow-up) — remaining balance + advance request
+    # history/status, so the staffer sees the full accountability picture:
+    # what's expected, what's paid (full/partial/advance combined), what's
+    # left, and where any emergency advance requests stand.
+    expected, _paid_total_calc, remaining_balance = _salary_period_balance(
+        business, user_profile, current_period,
+    )
+    advance_requests = list(SalaryAdvanceRequest.objects.filter(
+        business=business, staff=user_profile,
+    ).select_related('reviewed_by').order_by('-requested_at')[:10])
+
     return render(request, 'core/haki_kazi_yangu.html', {
         **contrib,
         'salary': salary,
@@ -585,6 +748,9 @@ def my_work_and_pay(request):
         'paid_rows': paid_rows,
         'paid_total': paid_total,
         'current_period': current_period,
+        'expected_salary': expected,
+        'remaining_balance': remaining_balance,
+        'advance_requests': advance_requests,
     })
 
 

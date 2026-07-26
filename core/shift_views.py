@@ -63,7 +63,7 @@ def _detect_overlapping_shift_pairs(shifts):
     return pairs
 
 
-def get_active_staff_shift(user_profile, business):
+def get_active_staff_shift(user_profile, business, manager_must_have_shift=False):
     """Return the caller's open Shift, or None.
 
     Owner always returns None — meaning "no gate needed, proceed".
@@ -74,11 +74,26 @@ def get_active_staff_shift(user_profile, business):
             return error(...)   # block the action
         # proceed (shift is either the Shift object or None for owner)
     Returns:
-        None  — caller is owner; no shift gate required
+        None  — caller is owner (or manager, when manager_must_have_shift is
+                False — the default); no shift gate required
         Shift — caller has an open shift; proceed
-        False — caller is staff with no open shift; block
+        False — caller must have their own shift and doesn't; block
+
+    manager_must_have_shift (2026-07-26, live clarification): Roy's real
+    operational model — the owner sells freely at all times with no gate;
+    a manager SUPERVISES and may perform oversight/corrective actions
+    (settle, void, revoke, restock, receive stock, approve requests) without
+    opening a shift, but to actually SELL (create a new Issue/checkout) a
+    manager must open their OWN shift, exactly like ordinary staff. Pass
+    True only at the handful of real "new sale" entry points (Quick Sell,
+    bar/kitchen checkout, Add Transaction's Issue path) — every other call
+    site (settlement, void, revoke, restock, breakage, variance response,
+    write-off, etc.) is oversight, not a sale, and keeps the default
+    manager-bypass behavior unchanged.
     """
-    if getattr(user_profile, 'is_owner_or_manager', False):
+    if getattr(user_profile, 'is_owner', False):
+        return None
+    if getattr(user_profile, 'is_manager', False) and not manager_must_have_shift:
         return None
     from .models import Shift
     active = Shift.objects.filter(

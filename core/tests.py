@@ -12600,6 +12600,276 @@ class SalaryConfirmationAndPayrollRunTest(TestCase):
         self.assertNotEqual(resp.status_code, 200)
 
 
+class ManagerMustHaveOwnShiftToSellTest(TestCase):
+    """2026-07-26 live clarification: the owner sells freely at all times with
+    no gate; a manager supervises and may perform oversight actions without
+    a shift, but must open their OWN shift to actually SELL, exactly like
+    ordinary staff. Covers the four real "new sale" entry points; every
+    other gate (settlement, void, revoke, restock, breakage, etc.) is
+    deliberately unaffected — oversight, not selling.
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Manager Shift Gate Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='msg_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='msg_manager', password='x')
+        self.manager_profile = UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Manager Gate Beer',
+            material_no='MSG-1', unit='Pcs', selling_price=Decimal('200'),
+            opening_bin_balance=Decimal('50'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Manager Gate Chips',
+            material_no='MSG-2', unit='Pcs', selling_price=Decimal('150'),
+            opening_bin_balance=Decimal('50'),
+        )
+
+    def test_owner_sells_via_quick_sell_with_no_shift(self):
+        self.client.force_login(self.owner)
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.bar_item.id, 'qty': 1, 'price': 200}]),
+            'payment_method': 'cash',
+        })
+        self.assertTrue(Transaction.objects.filter(item=self.bar_item, type='Issue').exists())
+
+    def test_manager_without_own_shift_cannot_sell_via_quick_sell(self):
+        self.client.force_login(self.manager)
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.bar_item.id, 'qty': 1, 'price': 200}]),
+            'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(item=self.bar_item, type='Issue').exists())
+
+    def test_manager_with_own_shift_can_sell_via_quick_sell(self):
+        Shift.objects.create(business=self.biz, staff=self.manager, status='OPEN')
+        self.client.force_login(self.manager)
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.bar_item.id, 'qty': 1, 'price': 200}]),
+            'payment_method': 'cash',
+        })
+        self.assertTrue(Transaction.objects.filter(item=self.bar_item, type='Issue').exists())
+
+    def test_manager_without_shift_cannot_sell_via_bar_board(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post('/bar/', {
+            'keg_cart': json.dumps([]), 'payment_method': 'cash',
+        })
+        # Redirected back to bar_board with an error message (no shift) rather
+        # than proceeding to process the (empty) cart.
+        self.assertEqual(resp.status_code, 302)
+
+    def test_manager_without_shift_cannot_sell_via_kitchen_board(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post('/kitchen/', {
+            'cart': json.dumps([{'item_id': self.kitchen_item.id, 'amount': 150, 'qty': 1, 'description': 'x'}]),
+            'payment_method': 'cash',
+        })
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.assertTrue(data.get('shift_required'))
+        self.assertFalse(Transaction.objects.filter(item=self.kitchen_item, type='Issue').exists())
+
+    def test_manager_can_receive_stock_without_own_shift(self):
+        # Receiving (Receipt) is oversight, not a sale — must NOT be gated.
+        self.client.force_login(self.manager)
+        self.client.post('/add-transaction/', {
+            'item': self.bar_item.id, 'type': 'Receipt', 'quantity': '10',
+        })
+        self.assertTrue(Transaction.objects.filter(item=self.bar_item, type='Receipt').exists())
+
+    def test_manager_without_own_shift_cannot_issue_via_add_transaction(self):
+        self.client.force_login(self.manager)
+        self.client.post('/add-transaction/', {
+            'item': self.bar_item.id, 'type': 'Issue',
+            'quantity': '1', 'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(item=self.bar_item, type='Issue').exists())
+
+    def test_manager_can_still_void_tab_without_own_shift(self):
+        # Oversight/corrective action — must remain unaffected by the sell gate.
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Manager Gate Tab', status='OPEN',
+            source='bar', store=self.bar_store,
+        )
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/void/', {'reason': 'test'})
+        self.assertNotEqual(resp.status_code, 403)
+
+
+class StockReceiptConfirmationTest(TestCase):
+    """2026-07-26 live request: owner ordered stock remotely and wasn't
+    present — whoever received it can flag the Receipt for a second person
+    (owner or manager) to confirm accurate or dispute, via the same Maombi
+    channel and review flow as any other StaffRequest.
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Stock Confirm Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='sc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='sc_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Remote Order Item',
+            material_no='SC-1', unit='Pcs', selling_price=Decimal('300'),
+        )
+
+    def test_checkbox_creates_stock_confirm_request_linked_to_transaction(self):
+        from core.models import StaffRequest
+        self.client.force_login(self.staff)
+        self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '20',
+            'request_confirmation': '1',
+        })
+        txn = Transaction.objects.get(item=self.item, type='Receipt')
+        sr = StaffRequest.objects.filter(business=self.biz, category='stock_confirm').first()
+        self.assertIsNotNone(sr)
+        self.assertEqual(sr.related_transaction_id, txn.id)
+        self.assertEqual(sr.requested_by, self.staff)
+
+    def test_no_checkbox_creates_no_confirmation_request(self):
+        from core.models import StaffRequest
+        self.client.force_login(self.staff)
+        self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '20',
+        })
+        self.assertFalse(StaffRequest.objects.filter(business=self.biz, category='stock_confirm').exists())
+
+    def test_owner_confirming_uses_existing_review_flow(self):
+        from core.models import StaffRequest
+        self.client.force_login(self.staff)
+        self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '20',
+            'request_confirmation': '1',
+        })
+        sr = StaffRequest.objects.get(business=self.biz, category='stock_confirm')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertTrue(resp.json()['ok'])
+        sr.refresh_from_db()
+        self.assertEqual(sr.status, 'approved')
+
+    def test_owner_receiving_personally_gets_no_confirmation_prompt(self):
+        from core.models import StaffRequest
+        self.client.force_login(self.owner)
+        self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '20',
+            'request_confirmation': '1',
+        })
+        self.assertFalse(StaffRequest.objects.filter(business=self.biz, category='stock_confirm').exists())
+
+
+class SalaryAdvanceRequestTest(TestCase):
+    """2026-07-26 live request: staff can request an emergency salary advance
+    with a reason; owner approves (disburses immediately, reducing the
+    period's remaining balance) or rejects (with a reason, no money moves).
+    """
+
+    def setUp(self):
+        from core.models import RecurringExpense, SalaryAdvanceRequest
+        self.SalaryAdvanceRequest = SalaryAdvanceRequest
+        self.biz = Business.objects.create(name='Advance Biz')
+        self.owner = User.objects.create_user(username='adv_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='adv_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        RecurringExpense.objects.create(
+            business=self.biz, description='Salary', category='labor',
+            amount=Decimal('20000'), staff_profile=self.staff_profile, is_active=True,
+        )
+
+    def test_staff_can_request_advance(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/staff/salary/advance/request/', {
+            'amount': '5000', 'reason': 'Dharura ya matibabu',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.assertEqual(self.SalaryAdvanceRequest.objects.filter(business=self.biz).count(), 1)
+
+    def test_owner_notified_on_advance_request(self):
+        self.client.force_login(self.staff)
+        self.client.post('/staff/salary/advance/request/', {
+            'amount': '5000', 'reason': 'Dharura',
+        })
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Advance').first()
+        self.assertIsNotNone(notif)
+
+    def test_approving_advance_creates_salary_payment_and_reduces_remaining(self):
+        from core.haki_views import _salary_period_balance
+        period = timezone.localdate().strftime('%Y-%m')
+        adv = self.SalaryAdvanceRequest.objects.create(
+            business=self.biz, staff=self.staff_profile, amount_requested=Decimal('5000'),
+            reason='Dharura', period=period,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff/salary/advance/{adv.id}/review/', {'action': 'approve'})
+        self.assertTrue(resp.json()['ok'])
+        adv.refresh_from_db()
+        self.assertEqual(adv.status, 'approved')
+        self.assertIsNotNone(adv.salary_payment_id)
+        self.assertEqual(adv.salary_payment.payment_type, 'advance')
+
+        _expected, _paid, remaining = _salary_period_balance(self.biz, self.staff_profile, period)
+        self.assertEqual(remaining, Decimal('15000'))
+
+    def test_rejecting_advance_creates_no_salary_payment(self):
+        period = timezone.localdate().strftime('%Y-%m')
+        adv = self.SalaryAdvanceRequest.objects.create(
+            business=self.biz, staff=self.staff_profile, amount_requested=Decimal('5000'),
+            reason='Dharura', period=period,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff/salary/advance/{adv.id}/review/', {
+            'action': 'reject', 'review_note': 'Haiwezekani sasa',
+        })
+        self.assertTrue(resp.json()['ok'])
+        adv.refresh_from_db()
+        self.assertEqual(adv.status, 'rejected')
+        self.assertIsNone(adv.salary_payment_id)
+        self.assertFalse(SalaryPayment.objects.filter(business=self.biz, staff=self.staff_profile).exists())
+
+    def test_staff_notified_with_reason_on_rejection(self):
+        period = timezone.localdate().strftime('%Y-%m')
+        adv = self.SalaryAdvanceRequest.objects.create(
+            business=self.biz, staff=self.staff_profile, amount_requested=Decimal('5000'),
+            reason='Dharura', period=period,
+        )
+        self.client.force_login(self.owner)
+        self.client.post(f'/staff/salary/advance/{adv.id}/review/', {
+            'action': 'reject', 'review_note': 'Haiwezekani sasa',
+        })
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Kataliwa').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('Haiwezekani sasa', notif.message)
+
+    def test_cannot_review_already_decided_advance(self):
+        period = timezone.localdate().strftime('%Y-%m')
+        adv = self.SalaryAdvanceRequest.objects.create(
+            business=self.biz, staff=self.staff_profile, amount_requested=Decimal('5000'),
+            reason='Dharura', period=period, status='approved',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff/salary/advance/{adv.id}/review/', {'action': 'reject'})
+        self.assertFalse(resp.json()['ok'])
+
+    def test_kazi_yangu_shows_remaining_balance(self):
+        SalaryPayment.objects.create(
+            business=self.biz, staff=self.staff_profile, period=timezone.localdate().strftime('%Y-%m'),
+            amount=Decimal('12000'), payment_type='partial',
+            due_date=timezone.localdate(), paid=True, paid_at=timezone.now(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/me/')
+        self.assertEqual(resp.context['remaining_balance'], Decimal('8000'))
+
+
 class ReceiptsListDateFilterTest(TestCase):
     """2026-07-25 live request: a single-day filter above the existing
     month/year select, plus a visible receipt count, so "how many receipts

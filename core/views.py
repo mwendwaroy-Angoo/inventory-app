@@ -843,18 +843,25 @@ def add_transaction(request):
             if not claim_checkout_token(user_profile.business_id, idem_token):
                 return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
 
-        # Shift gate: staff must have an open shift to write any transaction
-        if not user_profile.is_owner_or_manager:
+        item_id = request.POST["item"]
+        trans_type = request.POST["type"]
+
+        # Shift gate: staff must have an open shift to write any transaction.
+        # A manager may receive stock or write off a loss (oversight) without
+        # opening a shift, but must open their OWN shift to sell (Issue) —
+        # see get_active_staff_shift()'s manager_must_have_shift docstring
+        # (2026-07-26 live clarification). Owner is always exempt.
+        if not user_profile.is_owner:
             from core.shift_views import get_active_staff_shift
-            if get_active_staff_shift(user_profile, user_profile.business) is False:
+            if get_active_staff_shift(
+                user_profile, user_profile.business,
+                manager_must_have_shift=(trans_type == 'Issue'),
+            ) is False:
                 messages.error(
                     request,
                     'Fungua shift yako kwanza kabla ya kuingiza muamala.'
                 )
                 return redirect('add_transaction')
-
-        item_id = request.POST["item"]
-        trans_type = request.POST["type"]
         try:
             quantity = Decimal(request.POST.get('quantity', '0'))
         except InvalidOperation:
@@ -1014,6 +1021,44 @@ def add_transaction(request):
             expiry_date=expiry_date,
             **({"created_at": backdated_at} if backdated_at else {}),
         )
+
+        # ── STOCK RECEIPT CONFIRMATION (2026-07-26 live request) ─────────
+        # Owner ordered stock remotely and wasn't present to witness delivery —
+        # whoever DID receive it (staff on shift, or a manager) can flag this
+        # exact Receipt for a second person (owner reviewing remotely, or a
+        # manager if staff received it) to confirm accurate or dispute, via
+        # the same Maombi/StaffRequest channel and review flow as any other
+        # request. Opt-in checkbox — routine restocks don't need this
+        # ceremony. Never required from the owner themselves (nothing to
+        # confirm if they received it personally).
+        if trans_type == 'Receipt' and not user_profile.is_owner and request.POST.get('request_confirmation') == '1':
+            from .models import StaffRequest
+            who = request.user.get_full_name() or request.user.username
+            cost_note = request.POST.get('cost_price', '').strip()
+            sr = StaffRequest.objects.create(
+                business=user_profile.business,
+                requested_by=request.user,
+                category=StaffRequest.CATEGORY_STOCK_CONFIRM,
+                subject=f'Thibitisha oda: {item.description} ({abs(quantity)} {item.unit})',
+                description=(
+                    f'Imepokelewa na {who} — kiasi {abs(quantity)} {item.unit}'
+                    + (f', gharama KES {cost_note}' if cost_note else '')
+                    + f', tarehe {transaction.date}.'
+                ),
+                related_transaction=transaction,
+            )
+            from .models import Notification as _Notif
+            from accounts.models import UserProfile as _UP
+            for op in _UP.objects.filter(
+                business=user_profile.business, role__in=['owner', 'manager']
+            ).exclude(user=request.user).select_related('user'):
+                _Notif.objects.create(
+                    user=op.user,
+                    title='📦 Uthibitisho wa Oda Unahitajika',
+                    message=f'{who} amepokea "{item.description}" ({abs(quantity)} {item.unit}) — thibitisha kama ni sahihi.',
+                    notification_type='warning',
+                    link_url='/staff-requests/',
+                )
 
         # ── RESTOCK REQUEST AUTO-RESOLVE ─────────────────────────────────
         if trans_type == 'Receipt':
@@ -2704,9 +2749,15 @@ def quick_sell(request):
 
     if request.method == "POST":
         # Shift gate: ALL staff (any business type) must have their own open shift
-        if not user_profile.is_owner_or_manager:
+        # to SELL. Owner is always exempt. A manager supervises and may perform
+        # oversight actions freely, but must open their OWN shift to sell, exactly
+        # like ordinary staff (2026-07-26 live clarification) — see
+        # get_active_staff_shift()'s manager_must_have_shift docstring.
+        if not user_profile.is_owner:
             from core.shift_views import get_active_staff_shift
-            if get_active_staff_shift(user_profile, user_profile.business) is False:
+            if get_active_staff_shift(
+                user_profile, user_profile.business, manager_must_have_shift=True
+            ) is False:
                 messages.error(
                     request,
                     'Fungua shift yako kwanza kabla ya kuuza.'
