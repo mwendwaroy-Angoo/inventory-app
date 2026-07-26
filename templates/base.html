@@ -474,6 +474,8 @@
                         {% if user.userprofile.can_access_bar and biz_profile.modules.keg %}<li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'staff_request_list' %}">📨 {% trans 'Maombi' %}</a></li>
                         {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                     </ul>
 
@@ -490,6 +492,8 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'staff_request_list' %}">📨 {% trans 'Maombi' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'fulfillment_list' %}">📋 {% trans 'Order Fulfillment' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'pending_prompts' %}">💰 {% trans 'Payments' %}</a></li>
                         {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
@@ -549,6 +553,7 @@
                                 <li><a class="dropdown-item" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'staff_request_list' %}">📨 {% trans 'Maombi' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'payment_settings' %}">⚙️ {% trans 'Payment Settings' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
@@ -556,6 +561,7 @@
                                 <li><a class="dropdown-item" href="{% url 'promo_compose' %}">📢 {% trans 'Tuma Promo / SMS' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
+                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'run_payroll' %}">💰 {% trans 'Payroll Run' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'reset_sales_intro' %}" style="color:var(--danger);">🧹 {% trans 'Reset Sales & Analytics' %}</a></li>{% endif %}
                             </ul>
@@ -670,6 +676,8 @@
                         {% if user.userprofile.can_access_bar and biz_profile.modules.keg %}<li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>{% endif %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'staff_request_list' %}">📨 {% trans 'Maombi' %}</a></li>
                         {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                     </ul>
 
@@ -686,6 +694,8 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">{% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'staff_request_list' %}">📨 {% trans 'Maombi' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'fulfillment_list' %}">📋 {% trans 'Order Fulfillment' %}</a></li>
                         {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                         <li class="nav-item">
@@ -757,6 +767,7 @@
                                 <li><a class="dropdown-item" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'receipts_list' %}">🧾 {% trans 'Receipts' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'petty_cash_list' %}">🪙 {% trans 'Petty Cash' %}</a></li>
+                                <li><a class="dropdown-item" href="{% url 'staff_request_list' %}">📨 {% trans 'Maombi' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'revenue_target_settings' %}">🎯 {% trans 'Revenue Targets' %}</a></li>
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'payment_settings' %}">⚙️ {% trans 'Payment Settings' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
@@ -764,6 +775,7 @@
                                 <li><a class="dropdown-item" href="{% url 'promo_compose' %}">📢 {% trans 'Tuma Promo / SMS' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
+                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'run_payroll' %}">💰 {% trans 'Payroll Run' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'reset_sales_intro' %}" style="color:var(--danger);">🧹 {% trans 'Reset Sales & Analytics' %}</a></li>{% endif %}
                             </ul>

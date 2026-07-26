@@ -471,6 +471,22 @@
             {% endfor %}
         </div>
 
+        {% if receipt.meta.payment_corrections %}
+        <!-- 2026-07-26 (items 2+4) — a mis-tagged sale later split across two
+             payment methods (e.g. 500 entered as mpesa, actually 200 cash +
+             300 mpesa) is reflected here, best-effort, when this receipt's
+             matching line was found at split time. -->
+        <div style="margin:0.5rem 0; padding:0.5rem 0.7rem; background:rgba(93,168,240,0.08); border:1px solid rgba(93,168,240,0.25); border-radius:8px;">
+            <div style="color:#5da8f0; font-size:0.75rem; font-weight:600; margin-bottom:0.2rem;">✂️ Malipo Yamegawanywa</div>
+            {% for c in receipt.meta.payment_corrections %}
+            <div style="color:#b0b0b0; font-size:0.72rem;">
+                {{ c.item }}: KES {{ c.remaining_amount|floatformat:"0" }} {{ c.old_method|upper }}
+                + KES {{ c.new_amount|floatformat:"0" }} {{ c.new_method|upper }} — {{ c.at }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
         <div class="receipt-total">
             <span class="total-label">{% if tab_status == 'DEBT' %}Bado Kulipa{% else %}Jumla{% endif %}</span>
             <span class="total-amount">KES {{ receipt.total|floatformat:"0" }}</span>

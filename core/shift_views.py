@@ -32,6 +32,37 @@ def _get_up(request):
     return get_user_profile(request)
 
 
+def _detect_overlapping_shift_pairs(shifts):
+    """Return [(shift_a, shift_b), ...] for any two DIFFERENT staff members'
+    shifts (already filtered to one station) whose time windows intersect.
+
+    2026-07-26 (live Monsoon Inn report: Z-report showed KES 4000 cash, the
+    till had KES 1700, mpesa was inflated by a similar ratio). Root cause:
+    open_shift() only blocks the SAME staffer from having two open shifts —
+    nothing stops a second staffer opening a shift on the same counter while
+    the first one is still open (a forgotten shift-handover close, or two
+    people genuinely sharing one till). _reconcile() correctly sums every
+    sale in ITS OWN shift's window, but a naive sum-across-shifts (as
+    bar_z_report used to do) then counts every overlapping sale twice. This
+    helper detects that condition so callers can show a true, deduped total
+    instead, plus explain why two shift rows show similar figures.
+    """
+    shifts = sorted(shifts, key=lambda s: s.started_at)
+    now = timezone.now()
+    pairs = []
+    for i in range(len(shifts)):
+        a = shifts[i]
+        a_end = a.ended_at or now
+        for j in range(i + 1, len(shifts)):
+            b = shifts[j]
+            if b.started_at >= a_end:
+                break  # sorted by started_at — no further shift can overlap `a`
+            b_end = b.ended_at or now
+            if b.started_at < a_end and a.started_at < b_end and a.staff_id != b.staff_id:
+                pairs.append((a, b))
+    return pairs
+
+
 def get_active_staff_shift(user_profile, business):
     """Return the caller's open Shift, or None.
 
@@ -164,9 +195,45 @@ def _reconcile(shift):
         created_at__gte=shift.started_at, created_at__lte=end,
     ).aggregate(t=Sum('amount'))['t'] or 0)
 
+    # 2026-07-26 (item 1) — petty cash still awaiting the owner's decision, shown
+    # separately from the already-approved total so the shift-close screen can
+    # present the full chain: cash sales → petty cash (pending) → remaining, and
+    # only "solidify" the remaining figure once the owner actually decides.
+    petty_pending = float(PettyCash.objects.filter(
+        business=shift.business, status='pending',
+        created_at__gte=shift.started_at, created_at__lte=end,
+    ).aggregate(t=Sum('amount'))['t'] or 0)
+    petty_rejected = float(PettyCash.objects.filter(
+        business=shift.business, status='rejected',
+        created_at__gte=shift.started_at, created_at__lte=end,
+    ).aggregate(t=Sum('amount'))['t'] or 0)
+
+    # 2026-07-26 (item 3 fix) — debt RECOVERED (an old credit sale being paid back
+    # in cash/mpesa) is a completely separate model (CustomerDebtPayment) from a
+    # NEW credit sale (Transaction.payment_method='credit', already in credit_sales
+    # above). Real cash/mpesa a customer hands over to clear an old debt lands in
+    # the till during THIS shift and must be added to expected_cash the same way
+    # any other cash/mpesa sale is — before this fix it was invisible to
+    # reconciliation entirely, understating expected_cash by exactly the recovered
+    # amount (a false "surplus" once counted, not a shortage).
+    from .models import CustomerDebtPayment
+    debt_qs = CustomerDebtPayment.objects.filter(
+        business=shift.business,
+        paid_at__gte=shift.started_at, paid_at__lte=end,
+    )
+    if staff_role == 'kitchen':
+        debt_qs = debt_qs.filter(source='kitchen')
+    elif staff_role != 'owner':
+        debt_qs = debt_qs.filter(source='bar')
+    debt_recovered_cash  = float(debt_qs.filter(payment_method='cash' ).aggregate(t=Sum('amount_paid'))['t'] or 0)
+    debt_recovered_mpesa = float(debt_qs.filter(payment_method='mpesa').aggregate(t=Sum('amount_paid'))['t'] or 0)
+
     # expected_cash includes any offline cash that staff declared but didn't enter in the
-    # system, net of approved petty cash paid out during the shift.
-    expected_cash = float(shift.opening_float) + cash_sales + offline_adj - petty_total
+    # system, plus debt recovered in cash, net of approved petty cash paid out during
+    # the shift. Petty cash still PENDING owner review is deliberately NOT subtracted
+    # yet — that is the "remaining if approved" provisional figure below.
+    expected_cash = float(shift.opening_float) + cash_sales + offline_adj + debt_recovered_cash - petty_total
+    expected_cash_if_pending_approved = expected_cash - petty_pending
     variance = None
     if shift.closing_cash_counted is not None:
         variance = round(float(shift.closing_cash_counted) - expected_cash, 2)
@@ -179,7 +246,12 @@ def _reconcile(shift):
         'credit_sales':  round(credit_sales, 2),
         'total_sales':   round(total_sales, 2),
         'petty_cash':    round(petty_total, 2),
+        'petty_cash_pending':  round(petty_pending, 2),
+        'petty_cash_rejected': round(petty_rejected, 2),
+        'debt_recovered_cash':  round(debt_recovered_cash, 2),
+        'debt_recovered_mpesa': round(debt_recovered_mpesa, 2),
         'expected_cash': round(expected_cash, 2),
+        'expected_cash_if_pending_approved': round(expected_cash_if_pending_approved, 2),
         'variance':           variance,
         'elapsed':            f"{hours}h {mins:02d}m",
         'elapsed_mins':       elapsed_secs // 60,
@@ -498,6 +570,9 @@ def active_shift_api(request):
             'cash_sales':  rec['cash_sales'],
             'mpesa_sales': rec['mpesa_sales'],
             'total_sales': rec['total_sales'],
+            'credit_sales': rec['credit_sales'],
+            'debt_recovered_cash':  rec['debt_recovered_cash'],
+            'debt_recovered_mpesa': rec['debt_recovered_mpesa'],
         })
 
     # MY shift — for the bar board's own shift panel
@@ -533,7 +608,12 @@ def active_shift_api(request):
                         'credit_sales':  proxy_rec['credit_sales'],
                         'total_sales':   proxy_rec['total_sales'],
                         'expected_cash': proxy_rec['expected_cash'],
+                        'expected_cash_if_pending_approved': proxy_rec['expected_cash_if_pending_approved'],
                         'petty_cash':    proxy_rec['petty_cash'],
+                        'petty_cash_pending':  proxy_rec['petty_cash_pending'],
+                        'petty_cash_rejected': proxy_rec['petty_cash_rejected'],
+                        'debt_recovered_cash':  proxy_rec['debt_recovered_cash'],
+                        'debt_recovered_mpesa': proxy_rec['debt_recovered_mpesa'],
                         'variance':      proxy_rec['variance'],
                         'elapsed':       proxy_rec['elapsed'],
                         'is_mine':       False,
@@ -584,7 +664,12 @@ def active_shift_api(request):
             'credit_sales':   rec['credit_sales'],
             'total_sales':    rec['total_sales'],
             'expected_cash':  rec['expected_cash'],
+            'expected_cash_if_pending_approved': rec['expected_cash_if_pending_approved'],
             'petty_cash':     rec['petty_cash'],
+            'petty_cash_pending':  rec['petty_cash_pending'],
+            'petty_cash_rejected': rec['petty_cash_rejected'],
+            'debt_recovered_cash':  rec['debt_recovered_cash'],
+            'debt_recovered_mpesa': rec['debt_recovered_mpesa'],
             'variance':       rec['variance'],
             'elapsed':        rec['elapsed'],
             'is_mine':        True,
@@ -646,6 +731,33 @@ def open_shift(request):
     if notes:
         full_notes = (full_notes + '\n' + notes).strip() if full_notes else notes
 
+    # 2026-07-26 — warn (never block) when another staffer already has this exact
+    # station open. Nothing stops two people sharing one till on purpose, but a
+    # forgotten shift-handover close is the single most common cause of the
+    # overlapping-shift Z-report double-count (see _detect_overlapping_shift_pairs
+    # docstring) — surfacing it AT OPEN TIME, before any sales happen under the
+    # confusion, is cheaper than untangling it after the fact.
+    my_station = 'kitchen' if getattr(up, 'role', '') == 'kitchen' else 'bar'
+    overlap_warning = None
+    if getattr(up, 'role', '') != 'owner':
+        same_station_open = Shift.objects.filter(
+            business=up.business, status='OPEN',
+        ).exclude(staff=request.user).select_related('staff__userprofile')
+        for other in same_station_open:
+            try:
+                other_station = 'kitchen' if other.staff.userprofile.role == 'kitchen' else 'bar'
+            except Exception:
+                other_station = 'bar'
+            if other_station == my_station:
+                other_name = other.staff.get_full_name() or other.staff.username
+                started = timezone.localtime(other.started_at).strftime('%H:%M')
+                overlap_warning = (
+                    f"⚠️ {other_name} ana shift ya {('kitchen' if my_station == 'kitchen' else 'bar')} "
+                    f"iliyo wazi tangu {started}. Mkishirikiana till moja, mauzo yenu mawili "
+                    f"yataonekana kwa wote wawili — hii si tatizo mradi mfahamu."
+                )
+                break
+
     shift = Shift.objects.create(
         business=up.business,
         store=up.business.stores.first() if up.business.stores.exists() else None,
@@ -690,6 +802,7 @@ def open_shift(request):
         'opening_float': float(opening_float),
         'started_at': timezone.localtime(shift.started_at).strftime('%H:%M'),
         'tapped_barrels': tapped,
+        'overlap_warning': overlap_warning,
     })
 
 
@@ -856,6 +969,11 @@ def close_shift(request, shift_id):
         # cash, undermining trust that "cash sales make sense exactly." Now shown
         # alongside the offline-sales note in the close-shift result panel.
         'petty_cash':           rec['petty_cash'],
+        'petty_cash_pending':   rec['petty_cash_pending'],
+        'petty_cash_rejected':  rec['petty_cash_rejected'],
+        'expected_cash_if_pending_approved': rec['expected_cash_if_pending_approved'],
+        'debt_recovered_cash':  rec['debt_recovered_cash'],
+        'debt_recovered_mpesa': rec['debt_recovered_mpesa'],
         'offline_sales_amount': float(offline_amt),
         'offline_sales_note':   offline_note,
         'weight_readings':      weight_readings,

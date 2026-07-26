@@ -30,7 +30,7 @@ from django.views.decorators.http import require_POST
 
 from accounts.models import UserProfile
 from core.models import (
-    CustomerDebtPayment, SalaryDeduction, SalaryPayment, Shift, Transaction,
+    CustomerDebtPayment, PettyCash, SalaryDeduction, SalaryPayment, Shift, Transaction,
     RecurringExpense, Notification, BarTab, Receipt, StockVarianceQuery,
 )
 from core.views import get_user_profile, owner_required, owner_or_manager_required
@@ -135,6 +135,45 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
         stock_take__taken_at__date__lte=date_to,
     ).count()
 
+    # ── 2026-07-26 (item 1) — petty cash storytelling: a REJECTED entry is an
+    # unresolved cash-accountability question against this staffer specifically —
+    # surfaced here with the owner's own stated reason (review_note) so the report
+    # reads as "here's what happened and why," not a bare number. Pending entries
+    # shown too so the staffer's own report explains why a shift's cash might not
+    # look "closed" yet.
+    petty_cash_rejected = list(PettyCash.objects.filter(
+        business=business, recorded_by=user, status='rejected',
+        date__gte=date_from, date__lte=date_to,
+    ).select_related('reviewed_by').order_by('-reviewed_at'))
+    petty_cash_rejected_kes = sum(float(e.amount) for e in petty_cash_rejected)
+    petty_cash_pending_kes = float(PettyCash.objects.filter(
+        business=business, recorded_by=user, status='pending',
+        date__gte=date_from, date__lte=date_to,
+    ).aggregate(t=Sum('amount'))['t'] or 0)
+
+    # ── 2026-07-26 (item 8b) — wastage + stock-variance loss attribution. Both
+    # were entirely absent from this report before — a staffer's Haki record
+    # showed clean keg handling and debts recovered, but nothing about wastage
+    # they logged or stock variances attributed to their shift, an incomplete
+    # accountability picture in either direction (it can also clear them, when
+    # StockVarianceQuery.attributed_shift correctly points elsewhere).
+    wastage_kes = float(Transaction.objects.filter(
+        business=business, type='Wastage', recorded_by=user,
+        date__gte=date_from, date__lte=date_to,
+    ).aggregate(
+        t=Sum(
+            Abs(F('qty')) * Coalesce(F('item__cost_price'), Value(0)),
+            output_field=DecimalField(max_digits=12, decimal_places=2),
+        )
+    )['t'] or 0)
+
+    variance_loss_kes = float(StockVarianceQuery.objects.filter(
+        attributed_shift__staff=user, attributed_shift__business=business,
+        direction='decrease',
+        stock_take__taken_at__date__gte=date_from,
+        stock_take__taken_at__date__lte=date_to,
+    ).aggregate(t=Sum('estimated_revenue'))['t'] or 0)
+
     return {
         'profile': staff_profile,
         'user': user,
@@ -150,6 +189,11 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
         'clean_keg_record': clean_keg,
         'milestones': milestones,
         'dismissed_variances': dismissed_variances,
+        'petty_cash_rejected': petty_cash_rejected,
+        'petty_cash_rejected_kes': petty_cash_rejected_kes,
+        'petty_cash_pending_kes': petty_cash_pending_kes,
+        'wastage_kes': wastage_kes,
+        'variance_loss_kes': variance_loss_kes,
     }
 
 
@@ -355,6 +399,138 @@ def record_salary_payment(request, profile_id):
         _(f'{type_label} Mshahara wa KES {amount_dec:,.2f} umerekodiwa kwa {staff_name}.').strip()
     )
     return redirect('staff_contribution_report')
+
+
+# ── Item 8 (2026-07-26): staff confirms receipt ──────────────────────────────
+
+@login_required
+@require_POST
+def confirm_salary_payment(request, payment_id):
+    """Staff acknowledges they actually received a recorded salary payment —
+    closes the loop record_salary_payment's SMS notice started but never
+    confirmed. Own payment only; owner/manager have no need to confirm their
+    own records.
+    """
+    user_profile = get_user_profile(request)
+    payment = get_object_or_404(
+        SalaryPayment, id=payment_id, business=user_profile.business, staff=user_profile,
+    )
+    if payment.confirmed_by_staff:
+        return JsonResponse({'ok': True, 'message': 'Tayari umethibitisha.'})
+
+    payment.confirmed_by_staff = True
+    payment.confirmed_at = timezone.now()
+    payment.save(update_fields=['confirmed_by_staff', 'confirmed_at'])
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(payment.confirmed_at).strftime('%d %b %Y, %H:%M')
+    message = f'{who} amethibitisha kupokea mshahara wa KES {payment.amount:,.0f} ({payment.period}) — {when}.'
+    if payment.recorded_by_id and payment.recorded_by_id != request.user.id:
+        Notification.objects.create(
+            user=payment.recorded_by,
+            title='✅ Mshahara Umethibitishwa',
+            message=message,
+            notification_type='info',
+            link_url='/staff/contribution/',
+        )
+    return JsonResponse({'ok': True, 'message': 'Asante — imethibitishwa.'})
+
+
+# ── Item 8 (2026-07-26): bulk payroll run ────────────────────────────────────
+
+STAFF_PAY_ROLES = ['staff', 'waitress', 'kitchen', 'manager']
+
+
+@login_required
+@owner_or_manager_required
+def run_payroll(request):
+    """One pass across all active pay-eligible staff for a period — reuses the
+    exact same SalaryPayment-creation + SMS logic record_salary_payment uses,
+    per selected staff line, instead of visiting each person one at a time.
+    """
+    user_profile = get_user_profile(request)
+    business = user_profile.business
+    today = timezone.localdate()
+    current_period = today.strftime('%Y-%m')
+
+    if request.method == 'POST':
+        selected_ids = request.POST.getlist('pay_staff_id')
+        method = request.POST.get('method', 'cash')
+        period = request.POST.get('period', current_period)
+        last_day = calendar.monthrange(today.year, today.month)[1]
+        due_date = date(today.year, today.month, last_day)
+
+        paid_count = 0
+        for profile_id in selected_ids:
+            amount_raw = (request.POST.get(f'amount_{profile_id}') or '').strip()
+            try:
+                amount_dec = Decimal(amount_raw)
+                if amount_dec <= 0:
+                    continue
+            except Exception:
+                continue
+            staff_profile = UserProfile.objects.filter(
+                id=profile_id, business=business, role__in=STAFF_PAY_ROLES, user__is_active=True,
+            ).first()
+            if not staff_profile:
+                continue
+
+            configured = RecurringExpense.objects.filter(
+                business=business, staff_profile=staff_profile, is_active=True,
+            ).first()
+            payment_type = 'full'
+            if configured and amount_dec < configured.amount:
+                payment_type = 'partial'
+
+            SalaryPayment.objects.create(
+                business=business, staff=staff_profile, period=period,
+                amount=amount_dec, payment_type=payment_type,
+                due_date=due_date, paid=True, paid_at=timezone.now(),
+                method=method, recorded_by=request.user,
+            )
+            paid_count += 1
+
+            staff_name = staff_profile.user.get_full_name() or staff_profile.user.username
+            period_label = due_date.strftime('%B %Y')
+            phone = staff_profile.phone
+            if phone:
+                try:
+                    from core.notifications import normalize_ke_phone, send_sms_notification
+                    normalized = normalize_ke_phone(phone)
+                    if normalized:
+                        msg = (
+                            f"{business.name}: Mshahara wako wa {period_label} "
+                            f"KES {amount_dec:,.0f} umelipwa. Asante kwa kazi nzuri. 🙏"
+                        )
+                        send_sms_notification(msg, normalized)
+                except Exception:
+                    pass
+
+        messages.success(request, _(f'Mishahara {paid_count} imerekodiwa.'))
+        return redirect('staff_contribution_report')
+
+    staff_profiles = UserProfile.objects.filter(
+        business=business, role__in=STAFF_PAY_ROLES, user__is_active=True,
+    ).select_related('user')
+
+    rows = []
+    for sp in staff_profiles:
+        configured = RecurringExpense.objects.filter(
+            business=business, staff_profile=sp, is_active=True,
+        ).first()
+        already_paid = SalaryPayment.objects.filter(
+            business=business, staff=sp, period=current_period,
+        ).aggregate(t=Sum('amount'))['t'] or 0
+        rows.append({
+            'profile': sp,
+            'suggested_amount': configured.amount if configured else None,
+            'already_paid': already_paid,
+        })
+
+    return render(request, 'core/haki_payroll_run.html', {
+        'rows': rows,
+        'current_period': current_period,
+    })
 
 
 # ── H3: Staff — "Kazi Yangu" self-service page ───────────────────────────────

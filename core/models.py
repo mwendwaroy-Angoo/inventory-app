@@ -701,6 +701,66 @@ class Transaction(models.Model):
     def profit(self):
         return self.revenue() - self.cost()
 
+    @classmethod
+    def split_payment_method_locked(cls, txn_id, business, split_amount, new_method, staff_user=None):
+        """Split a DIRECT-sale (no tab_entry — Quick Sell/bar/kitchen walk-up
+        checkout) Issue transaction's amount across two payment methods
+        (2026-07-26 live request) — e.g. a KES 500 sale entered entirely as
+        M-Pesa when the customer actually paid 200 cash + 300 mpesa. Reduces
+        the original transaction's amount to (original − split_amount),
+        keeping its existing payment_method, and creates a NEW sibling
+        transaction for split_amount tagged new_method.
+
+        Mirrors BarTabEntry.split_paid_unpaid_locked's qty=0 remainder
+        pattern — this re-bills an already-sold item, no additional stock
+        leaves the shelf — and copies keg_barrel/produce_bunch/kitchen_batch
+        so Transaction.cost()'s proportional-share formula still attributes
+        correctly across both rows (same reasoning as that method's
+        docstring). Total revenue across both rows is exactly the original
+        total — this can never inflate or deflate cash/mpesa reconciliation,
+        only correct which channel collected which part.
+
+        Returns (original_txn, new_txn). Caller must hold no prior lock —
+        this acquires its own via select_for_update().
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            txn = cls.objects.select_for_update().get(pk=txn_id, business=business)
+            # tab_entry is a reverse OneToOne accessor (from BarTabEntry.transaction),
+            # not a physical column — no _id shortcut exists; must try/except.
+            try:
+                has_tab_entry = txn.tab_entry is not None
+            except Exception:
+                has_tab_entry = False
+            if txn.type != 'Issue' or has_tab_entry:
+                raise ValueError('Muamala huu hauwezi kugawanywa — si mauzo ya moja kwa moja.')
+            if txn.payment_method not in ('cash', 'mpesa'):
+                raise ValueError('Njia ya malipo ya sasa haiwezi kugawanywa.')
+            if new_method not in ('cash', 'mpesa') or new_method == txn.payment_method:
+                raise ValueError('Chagua njia tofauti ya malipo kwa sehemu ya pili.')
+
+            original_amount = float(txn.revenue())
+            split_amount = float(split_amount)
+            if split_amount <= 0 or split_amount >= original_amount:
+                raise ValueError('Kiasi cha mgawanyo lazima kiwe kati ya 0 na jumla ya mauzo.')
+
+            remaining = round(original_amount - split_amount, 2)
+            txn.sale_amount = Decimal(str(remaining))
+            txn.save(update_fields=['sale_amount'])
+
+            new_txn = cls.objects.create(
+                item=txn.item, business=txn.business, type='Issue',
+                qty=Decimal('0'), sale_amount=Decimal(str(round(split_amount, 2))),
+                payment_method=new_method,
+                recipient=txn.recipient, invoice_no=txn.invoice_no,
+                recorded_by=staff_user or txn.recorded_by,
+                date=txn.date,
+                keg_barrel_id=txn.keg_barrel_id,
+                produce_bunch_id=txn.produce_bunch_id,
+                kitchen_batch_id=txn.kitchen_batch_id,
+            )
+            return txn, new_txn
+
     def __str__(self):
         return f"{self.type} {abs(self.qty)} {self.item.unit} - {self.item.description}"
 
@@ -839,6 +899,7 @@ class BusinessExpense(models.Model):
         ('tax', _('Taxes & Licenses')),
         ('entertainment', _('Entertainment / DJ / MC Fees')),
         ('security', _('Security & Facilitation')),
+        ('petty_cash', _('Petty Cash (Counter Drawdowns)')),
         ('other', _('Other')),
     ]
 
@@ -894,6 +955,21 @@ class PettyCash(models.Model):
     reviewed_by  = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='petty_cash_reviewed')
     reviewed_at  = models.DateTimeField(null=True, blank=True)
     review_note  = models.CharField(max_length=200, blank=True)
+
+    # ── 2026-07-26 (item 1) — staff explanation + expense linkage ───────────────
+    # staff_note: the RECORDING staffer's own explanation — editable while still
+    # pending, and (separately) appendable even after a rejection so they can
+    # respond to the owner's review_note without needing a new entry.
+    staff_note    = models.TextField(blank=True)
+    staff_note_at = models.DateTimeField(null=True, blank=True)
+    # linked_expense: created ONLY when this entry is approved (mirrors it into
+    # Expense Intelligence as a real cost), deleted if later reversed back to
+    # rejected — see review_petty_cash() for the sync logic. Never a source of
+    # truth on its own; PettyCash.status is always authoritative.
+    linked_expense = models.ForeignKey(
+        'BusinessExpense', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='petty_cash_entries',
+    )
 
     class Meta:
         ordering = ['-created_at']
@@ -1596,6 +1672,12 @@ class SalaryPayment(models.Model):
         'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='salary_payments_recorded',
     )
+    # 2026-07-26 (item 8) — staff-side acknowledgement, closing the loop the
+    # owner's record_salary_payment already started (SMS notice) but never
+    # confirmed was actually received. A staffer disputing a payment now has
+    # somewhere concrete to say so, rather than a silent "did they get it?".
+    confirmed_by_staff = models.BooleanField(default=False)
+    confirmed_at       = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-period', '-paid_at', 'staff']
@@ -4410,3 +4492,56 @@ class SupplierCatalogEntryPriceLog(models.Model):
             )
         except ZeroDivisionError:
             return None
+
+
+# ────────────────────────────────────────────────
+# STAFF ↔ OWNER STRUCTURED REQUESTS (item 5, 2026-07-26)
+# ────────────────────────────────────────────────
+
+class StaffRequest(models.Model):
+    """A staff-initiated request that isn't already covered by a dedicated
+    flow (restock has StockRequest, debt write-off has WriteOffRequest, stock
+    variance has StockVarianceQuery) — a general "ask the owner something and
+    get a real answer" channel: permission overrides, corrections, or a plain
+    question/note. Deliberately NOT a generic FK to every possible model —
+    that would duplicate machinery those dedicated flows already have; this
+    is for everything else.
+    """
+    CATEGORY_RESTOCK    = 'restock'
+    CATEGORY_PERMISSION = 'permission'
+    CATEGORY_CORRECTION = 'correction'
+    CATEGORY_GENERAL    = 'general'
+    CATEGORY_CHOICES = [
+        ('restock',    _('Ombi la Stock')),
+        ('permission', _('Ruhusa Maalum')),
+        ('correction', _('Marekebisho')),
+        ('general',    _('Jambo Lingine')),
+    ]
+
+    STATUS_PENDING  = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        ('pending',  _('Inasubiri')),
+        ('approved', _('Imeidhinishwa')),
+        ('rejected', _('Imekataliwa')),
+    ]
+
+    business     = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='staff_requests')
+    requested_by = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='staff_requests_made')
+    category     = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='general')
+    subject      = models.CharField(max_length=150)
+    description  = models.TextField(blank=True)
+    status       = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    reviewed_by  = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='staff_requests_reviewed')
+    reviewed_at  = models.DateTimeField(null=True, blank=True)
+    review_note  = models.CharField(max_length=300, blank=True)
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = _('Staff Request')
+        verbose_name_plural = _('Staff Requests')
+
+    def __str__(self):
+        return f"[{self.get_category_display()}] {self.subject} — {self.requested_by} ({self.status})"

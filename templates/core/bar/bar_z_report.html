@@ -103,6 +103,23 @@
   </div>
   {% else %}
 
+  {% if has_overlapping_shifts %}
+  <div class="zr-card" style="border-left:4px solid var(--gold,#c9a84c);">
+    <div class="zr-body" style="padding:1rem;">
+      <div style="font-weight:600;color:var(--gold-light,#e2c36e);margin-bottom:0.5rem;">
+        &#9888;&#65039; Zamu mbili ziliingiliana kwenye till moja leo
+      </div>
+      {% for note in overlap_notes %}
+      <div style="color:#b0b0b0;font-size:0.92rem;margin-bottom:0.3rem;">{{ note }}</div>
+      {% endfor %}
+      <div style="color:#b0b0b0;font-size:0.85rem;margin-top:0.4rem;">
+        Jumla ya siku (hapo juu) haijaongezwa mara mbili — imehesabiwa moja kwa moja
+        kutoka kwenye mauzo halisi ya siku, si kwa kuongeza kila zamu.
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Day summary metrics -->
   <div class="zr-card">
     <div class="zr-header">&#128202; Day Summary — {{ counted_shifts }} shift{{ counted_shifts|pluralize }}</div>

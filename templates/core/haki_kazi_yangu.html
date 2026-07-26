@@ -206,11 +206,12 @@
                     <th>{% trans 'Aina' %}</th>
                     <th>{% trans 'Njia' %}</th>
                     <th>{% trans 'Tarehe' %}</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody style="font-size:0.85rem;">
                 {% for pay in pay_history %}
-                <tr style="border-color:#2a2a2a;">
+                <tr style="border-color:#2a2a2a;" id="salary-pay-{{ pay.id }}">
                     <td>{{ pay.period }}</td>
                     <td class="text-end" style="color:#e0e0e0;">KES {{ pay.amount|floatformat:0 }}</td>
                     <td>
@@ -222,10 +223,18 @@
                     </td>
                     <td style="color:#b0b0b0; font-size:0.78rem;">{{ pay.method|default:"—" }}</td>
                     <td style="color:#b0b0b0; font-size:0.78rem;">{{ pay.paid_at|date:"d M Y" }}</td>
+                    <td>
+                        {% if pay.confirmed_by_staff %}
+                        <span style="font-size:0.7rem; color:#6ee7b7;">✓ Umethibitisha</span>
+                        {% else %}
+                        <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;font-size:.7rem;padding:.15rem .5rem;"
+                                onclick="confirmSalaryPayment({{ pay.id }})">✓ Nimepokea</button>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% if pay.staff_note %}
                 <tr style="border-color:#2a2a2a;">
-                    <td colspan="5" style="color:#c9a84c; font-style:italic; font-size:0.72rem; padding-top:0; border:none;">
+                    <td colspan="6" style="color:#c9a84c; font-style:italic; font-size:0.72rem; padding-top:0; border:none;">
                         "{{ pay.staff_note }}"
                     </td>
                 </tr>
@@ -244,5 +253,28 @@
     </p>
 </div>
 {% endif %}
+{% endblock %}
 
+{% block extra_js %}
+<script>
+function confirmSalaryPayment(paymentId) {
+    fetch('/staff/salary/' + paymentId + '/confirm/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'},
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.ok) {
+                var row = document.getElementById('salary-pay-' + paymentId);
+                if (row) {
+                    var cell = row.querySelector('td:last-child');
+                    if (cell) cell.innerHTML = '<span style="font-size:0.7rem;color:#6ee7b7;">✓ Umethibitisha</span>';
+                }
+            } else {
+                alert(d.error || 'Hitilafu.');
+            }
+        })
+        .catch(function () { alert('Hitilafu ya mtandao.'); });
+}
+</script>
 {% endblock %}

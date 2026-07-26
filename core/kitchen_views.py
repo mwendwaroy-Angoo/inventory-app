@@ -646,6 +646,11 @@ def _kitchen_checkout(request, up, business, is_owner):
                 item = Item.objects.get(id=item_id, store__is_kitchen=True, store__business=business)
             except Item.DoesNotExist:
                 continue
+            # Stock-take variance lock (item 6, 2026-07-26) — this specific item
+            # only; owner-only unlock via review_variance() resolving it.
+            from core.stock_take_views import item_has_pending_variance
+            if item_has_pending_variance(item.id):
+                continue
             txn = Transaction.objects.create(
                 business=business,
                 item=item,

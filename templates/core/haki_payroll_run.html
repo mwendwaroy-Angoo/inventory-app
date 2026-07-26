@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Payroll Run{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="page-title mb-1">💰 {% trans 'Payroll Run' %}</h1>
+    <div style="color:#b0b0b0; font-size:.85rem;">
+      Kipindi: {{ current_period }} — chagua wafanyakazi wa kulipa mshahara kwa pamoja
+    </div>
+  </div>
+  <a href="{% url 'staff_contribution_report' %}" class="btn btn-sm btn-outline-secondary">‹ Rudi</a>
+</div>
+
+{% if not rows %}
+<div class="text-center py-5" style="color:#555;">Hakuna wafanyakazi wanaostahili mshahara.</div>
+{% else %}
+<form method="post" id="payroll-form">
+  {% csrf_token %}
+  <div style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:10px;padding:1rem;margin-bottom:1rem;">
+    <div class="row g-2 mb-3">
+      <div class="col-auto">
+        <label style="color:#b0b0b0;font-size:.78rem;">Njia ya malipo</label>
+        <select name="method" class="form-select form-select-sm" style="background:#111;border:1px solid #333;color:#f0ece4;">
+          <option value="cash">Cash</option>
+          <option value="mpesa">M-Pesa</option>
+          <option value="bank">Bank Transfer</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label style="color:#b0b0b0;font-size:.78rem;">Kipindi</label>
+        <input type="text" name="period" value="{{ current_period }}" class="form-control form-control-sm"
+               style="background:#111;border:1px solid #333;color:#f0ece4;">
+      </div>
+    </div>
+
+    <table class="table table-sm" style="color:#f0ece4;">
+      <thead>
+        <tr style="color:#888;font-size:.78rem;">
+          <th><input type="checkbox" id="select-all"></th>
+          <th>Mfanyakazi</th>
+          <th>Amelipwa Kipindi Hiki</th>
+          <th>Kiasi cha Kulipa (KES)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td><input type="checkbox" name="pay_staff_id" value="{{ row.profile.id }}" class="pay-checkbox"></td>
+          <td>{{ row.profile.user.get_full_name|default:row.profile.user.username }}
+              <span style="color:#666;font-size:.72rem;">({{ row.profile.get_role_display }})</span></td>
+          <td style="color:#888;font-size:.85rem;">KES {{ row.already_paid|floatformat:0 }}</td>
+          <td>
+            <input type="number" name="amount_{{ row.profile.id }}" min="1" step="1"
+                   value="{{ row.suggested_amount|default:'' }}" placeholder="0"
+                   class="form-control form-control-sm" style="background:#111;border:1px solid #333;color:#f0ece4;width:140px;">
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <button type="submit" class="btn btn-gold">💰 Lipa Waliochaguliwa</button>
+</form>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('select-all')?.addEventListener('change', function () {
+  document.querySelectorAll('.pay-checkbox').forEach(function (cb) { cb.checked = this.checked; }, this);
+});
+</script>
+{% endblock %}

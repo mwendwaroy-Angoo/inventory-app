@@ -69,6 +69,7 @@ from core.keg_views import (
     remove_tab_entry,
     revoke_entry_payment,
     correct_transaction_payment_method,
+    split_transaction_payment_method,
     split_and_transfer_entry,
     transfer_whole_tab,
     respond_tab_transfer,
@@ -129,6 +130,8 @@ from core.petty_cash_views import (
     record_petty_cash,
     petty_cash_list,
     review_petty_cash,
+    edit_petty_cash,
+    respond_petty_cash,
 )
 from core.customer_ussd import customer_ussd_callback
 from core.mpesa_views import (
@@ -246,11 +249,18 @@ from core.haki_views import (
     haki_recognition_statement,
     staff_duty_log,
     staff_journey,
+    confirm_salary_payment,
+    run_payroll,
 )
 from core.restock_views import (
     request_restock,
     restock_list,
     restock_mark_ordered,
+)
+from core.staff_request_views import (
+    submit_staff_request,
+    staff_request_list,
+    review_staff_request,
 )
 from core.owner_consumption_views import record_owner_consumption
 from core.reset_views import (
@@ -320,6 +330,9 @@ urlpatterns = [
     path("stock/restock/", restock_list, name="restock_list"),
     path("stock/restock/request/", request_restock, name="request_restock"),
     path("stock/restock/<int:request_id>/ordered/", restock_mark_ordered, name="restock_mark_ordered"),
+    path("staff-requests/",                         staff_request_list,   name="staff_request_list"),
+    path("staff-requests/submit/",                  submit_staff_request, name="submit_staff_request"),
+    path("staff-requests/<int:request_id>/review/",  review_staff_request, name="review_staff_request"),
     path("stock/take/",                              start_stock_take,    name="start_stock_take"),
     path("stock/takes/",                             stock_take_history,  name="stock_take_history"),
     path("stock/takes/<int:take_id>/",               stock_take_detail,   name="stock_take_detail"),
@@ -383,6 +396,7 @@ urlpatterns = [
     path("bar/tabs/<int:tab_id>/entries/<int:entry_id>/remove/", remove_tab_entry, name="remove_tab_entry"),
     path("bar/tabs/<int:tab_id>/entries/<int:entry_id>/revoke-payment/", revoke_entry_payment, name="revoke_entry_payment"),
     path("bar/transactions/<int:txn_id>/correct-payment/", correct_transaction_payment_method, name="correct_transaction_payment_method"),
+    path("bar/transactions/<int:txn_id>/split-payment/", split_transaction_payment_method, name="split_transaction_payment_method"),
     path("bar/tabs/entries/<int:entry_id>/split-transfer/", split_and_transfer_entry, name="split_and_transfer_entry"),
     path("bar/tabs/<int:tab_id>/transfer-whole/", transfer_whole_tab, name="transfer_whole_tab"),
     path("bar/tabs/transferable/", transferable_tabs_api, name="transferable_tabs_api"),
@@ -439,6 +453,8 @@ urlpatterns = [
     path("petty-cash/",                           petty_cash_list,    name="petty_cash_list"),
     path("petty-cash/record/",                    record_petty_cash,  name="record_petty_cash"),
     path("petty-cash/<int:entry_id>/review/",     review_petty_cash,  name="review_petty_cash"),
+    path("petty-cash/<int:entry_id>/edit/",       edit_petty_cash,    name="edit_petty_cash"),
+    path("petty-cash/<int:entry_id>/respond/",    respond_petty_cash, name="respond_petty_cash"),
 
     path("stock/stores/", manage_stores, name="manage_stores"),
     # ── Restricted Items / Sale Approvals ────────────────────────────────────
@@ -520,6 +536,8 @@ urlpatterns = [
     path("staff/<int:profile_id>/statement/", haki_recognition_statement, name="haki_recognition_statement"),
     path("staff/<int:profile_id>/duty-log/", staff_duty_log, name="staff_duty_log"),
     path("staff/<int:profile_id>/journey/", staff_journey, name="staff_journey"),
+    path("staff/payroll-run/", run_payroll, name="run_payroll"),
+    path("staff/salary/<int:payment_id>/confirm/", confirm_salary_payment, name="confirm_salary_payment"),
     path("me/", my_work_and_pay, name="my_work_and_pay"),
     # ── DJ / MC Performer Module ──────────────────────────────────────────────
     path("bar/performers/",                     performer_list,        name="performer_list"),

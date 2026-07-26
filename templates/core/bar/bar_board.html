@@ -3006,12 +3006,51 @@
               '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ') — ' + e.time + '</span>' +
               '<button onclick="window.correctDirectPayment(' + e.id + ',\'' + other + '\',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
               'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
+              '<button onclick="window.splitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
+              'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
               '</div>';
           });
         }
         panel.innerHTML = html;
       })
       .catch(function () { panel.innerHTML = '<div style="color:#c0395a;font-size:.75rem;padding:.4rem;">Hitilafu ya mtandao.</div>'; });
+  };
+
+  // 2026-07-26 (items 2+4) — split one sale's payment across two methods,
+  // e.g. a KES 500 sale entered entirely as M-Pesa when the customer
+  // actually paid 200 cash + 300 mpesa. Plain prompt() — a number entered
+  // rarely, deliberately, by the correcting staffer, same reasoning as the
+  // Kitchen Batch cost-edit precedent — not a mid-service quick-tap chip.
+  window.splitDirectPayment = function (txnId, currentMethod, totalAmount, desc) {
+    var otherMethod = currentMethod === 'cash' ? 'mpesa' : 'cash';
+    var otherLabel = otherMethod === 'cash' ? 'Cash' : 'M-Pesa';
+    var currentLabel = currentMethod === 'cash' ? 'Cash' : 'M-Pesa';
+    var amtStr = prompt(
+      '"' + desc + '" — jumla KES ' + Math.round(totalAmount) + ' (' + currentLabel + ').\n' +
+      'Ni KES ngapi ZILIZOLIPWA KAMA ' + otherLabel + '? (Ile iliyobaki itabaki ' + currentLabel + ')',
+      ''
+    );
+    if (amtStr === null) return;
+    var amt = parseFloat(amtStr);
+    if (isNaN(amt) || amt <= 0 || amt >= totalAmount) {
+      showToast('Kiasi lazima kiwe kati ya 0 na KES ' + Math.round(totalAmount) + '.');
+      return;
+    }
+    post('/bar/transactions/' + txnId + '/split-payment/', {
+      new_method: otherMethod, split_amount: amt, reason: 'Malipo yaligawanywa kati ya njia mbili',
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          showToast(d.message || '✓ Imegawanywa');
+          window.loadRecentPayments();
+        } else if (d.shift_required) {
+          showToast('Fungua shift kwanza.');
+        } else {
+          showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+        }
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao.'); });
   };
 
   window.correctDirectPayment = function (txnId, newMethod, desc, anchorEl) {
@@ -4101,7 +4140,8 @@
         '<div class="shift-stat"><span class="s-label">Float</span><span class="s-val">' + _fmt(s.opening_float) + '</span></div>' +
         '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(s.cash_sales) + '</span></div>' +
         '<div class="shift-stat"><span class="s-label">M-Pesa</span><span class="s-val">' + _fmt(s.mpesa_sales) + '</span></div>' +
-        (s.credit_sales > 0 ? '<div class="shift-stat"><span class="s-label">Credit</span><span class="s-val">' + _fmt(s.credit_sales) + '</span></div>' : '') +
+        (s.credit_sales > 0 ? '<div class="shift-stat" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa"><span class="s-label">Mikopo Mapya</span><span class="s-val">' + _fmt(s.credit_sales) + '</span></div>' : '') +
+        ((s.debt_recovered_cash > 0 || s.debt_recovered_mpesa > 0) ? '<div class="shift-stat" title="Wateja waliolipa deni la zamani — hii NI fedha halisi, tofauti na Mikopo Mapya"><span class="s-label">Deni Zilizolipwa</span><span class="s-val">' + _fmt((s.debt_recovered_cash || 0) + (s.debt_recovered_mpesa || 0)) + '</span></div>' : '') +
         '<div class="shift-stat"><span class="s-label">Jumla</span><span class="s-val">' + _fmt(s.total_sales) + '</span></div>' +
         (s.variance !== null && s.variance !== undefined
           ? '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(s.expected_cash) + '</span></div>'
@@ -4308,6 +4348,9 @@
             loadShift();
             showToast('✓ Shift imefunguliwa na float ya KES ' + Math.round(parseFloat(d.opening_float)));
           }
+          if (d.overlap_warning) {
+            setTimeout(function () { showToast(d.overlap_warning); }, 1200);
+          }
         } else {
           if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
         }
@@ -4482,6 +4525,26 @@
                 '<div style="margin-top:.4rem; padding:.4rem .6rem; background:rgba(93,168,240,0.08); border:1px solid rgba(93,168,240,0.25); border-radius:6px;">' +
                 '<span style="color:#5da8f0; font-size:.76rem;">🧾 Petty cash iliyokubaliwa (tayari imepunguzwa hapa chini): <strong>KES ' + Math.round(d.petty_cash) + '</strong></span></div>';
             }
+            // 2026-07-26 (item 1) — reconciliation chain: petty cash still awaiting
+            // the owner's decision is NOT yet subtracted from "Inayotarajiwa" above,
+            // so show the provisional "ikikubaliwa" figure alongside it explicitly —
+            // Roy's worked example: cash 400, petty cash 300 pending → remaining
+            // shown as "100 ikikubaliwa" until the owner actually decides.
+            var pendingHtml = '';
+            if (parseFloat(d.petty_cash_pending) > 0) {
+              pendingHtml =
+                '<div style="margin-top:.4rem; padding:.4rem .6rem; background:rgba(201,168,76,0.10); border:1px solid rgba(201,168,76,0.35); border-radius:6px;">' +
+                '<span style="color:#e2c36e; font-size:.76rem;">⏳ Petty cash inayosubiri idhini ya mmiliki: <strong>KES ' + Math.round(d.petty_cash_pending) + '</strong>' +
+                '<br>Ikikubaliwa, Inayotarajiwa itapungua kufikia <strong>KES ' + Math.round(d.expected_cash_if_pending_approved) + '</strong>. ' +
+                'Ikikataliwa, inabaki <strong>KES ' + Math.round(d.expected_cash) + '</strong>.</span></div>';
+            }
+            var debtRecHtml = '';
+            if (parseFloat(d.debt_recovered_cash) > 0 || parseFloat(d.debt_recovered_mpesa) > 0) {
+              debtRecHtml =
+                '<div style="margin-top:.4rem; padding:.4rem .6rem; background:rgba(76,175,80,0.08); border:1px solid rgba(76,175,80,0.25); border-radius:6px;">' +
+                '<span style="color:#4caf50; font-size:.76rem;">💵 Deni zilizolipwa (si mauzo mapya): Cash KES ' + Math.round(d.debt_recovered_cash) +
+                ' · M-Pesa KES ' + Math.round(d.debt_recovered_mpesa) + ' — tayari zimeongezwa kwenye Inayotarajiwa.</span></div>';
+            }
             resEl.innerHTML =
               '<div style="background:#111; border-radius:8px; padding:.75rem; margin-bottom:.75rem;">' +
               '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
@@ -4491,6 +4554,8 @@
               '<div class="shift-stat"><span class="s-label">Tofauti</span><span class="s-val ' + vc + '">' + sign + 'KES ' + Math.round(parseFloat(d.variance)) + '</span></div>' +
               '</div>' +
               pettyHtml +
+              pendingHtml +
+              debtRecHtml +
               offlineHtml +
               (Math.abs(parseFloat(d.variance)) > 50
                 ? '<p style="font-size:.78rem; color:#ff9800; margin:.5rem 0 0;">⚠ Tofauti kubwa — angalia kwa uangalifu.</p>'

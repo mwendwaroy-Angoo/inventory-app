@@ -941,6 +941,21 @@ def add_transaction(request):
             # else: sale is within freely-sellable range — falls through below
         # ─────────────────────────────────────────────────────────────────────
 
+        # ── STOCK-TAKE VARIANCE LOCK (item 6, 2026-07-26) ──────────────────────
+        # Only Issue (a sale) is blocked — Receipt/Wastage are how a variance
+        # often gets resolved in the first place (receiving stock or writing off
+        # a loss), so blocking those would work against the owner, not for them.
+        if trans_type == "Issue":
+            from core.stock_take_views import item_has_pending_variance
+            if item_has_pending_variance(item.id):
+                messages.error(
+                    request,
+                    _(f'{item.description} imefungwa kwa mauzo — kuna tofauti ya '
+                      f'hesabu inayosubiri uamuzi wa mmiliki. Haiwezi kuuzwa mpaka itatuliwe.')
+                )
+                return redirect('add_transaction')
+        # ─────────────────────────────────────────────────────────────────────
+
         if trans_type in ("Issue", "Wastage"):
             # Both Issue and Wastage reduce stock — qty must be stored negative.
             # Only Issue is guarded against going below zero; Wastage is allowed
@@ -2820,6 +2835,21 @@ def quick_sell(request):
                     )
                     continue
                 # else: sale is within freely-sellable range — falls through
+            # ─────────────────────────────────────────────────────────────
+
+            # ── STOCK-TAKE VARIANCE LOCK (item 6, 2026-07-26) ──────────────
+            # An unresolved stock-take discrepancy on THIS item blocks selling
+            # it — every other item in the cart still goes through. Owner
+            # resolves via /stock/variances/ (accept or dismiss); nothing else
+            # can lift this.
+            from core.stock_take_views import item_has_pending_variance
+            if item_has_pending_variance(item.id):
+                messages.warning(
+                    request,
+                    _(f'{item.description} imefungwa — kuna tofauti ya hesabu '
+                      f'inayosubiri uamuzi wa mmiliki. Haiwezi kuuzwa mpaka itatuliwe.')
+                )
+                continue
             # ─────────────────────────────────────────────────────────────
 
             if item.current_balance() < stock_qty:

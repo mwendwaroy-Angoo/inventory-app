@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch, MagicMock
@@ -888,6 +889,70 @@ class ZReportDrawerMathTest(TestCase):
         self.assertAlmostEqual(rec['variance'], -100.0, places=1)
 
 
+class DebtRecoveryReconciliationTest(TestCase):
+    """2026-07-26 fix (item 3): a customer paying back an OLD debt in cash during
+    a shift is a completely different thing from a NEW credit sale (Transaction.
+    payment_method='credit') — before this fix, recovered debt was invisible to
+    _reconcile()'s expected_cash entirely, understating it by the recovered amount.
+    """
+
+    def test_debt_recovered_cash_added_to_expected_cash_and_reported_separately(self):
+        from core.shift_views import _reconcile
+        from core.models import Customer, CustomerDebtPayment
+
+        business = Business.objects.create(name='Debt Recon Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        user = User.objects.create_user(username='dr_staff', password='x')
+        UserProfile.objects.create(user=user, business=business, role='staff')
+        item = Item.objects.create(
+            business=business, store=store, material_no='DR-1',
+            description='Test Soda', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('30'),
+        )
+        shift = Shift.objects.create(
+            business=business, store=store, staff=user,
+            opening_float=Decimal('0'),
+        )
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'),
+            payment_method='cash', created_at=shift.started_at,
+        )
+        customer = Customer.objects.create(business=business, name='Kamau')
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=business,
+            amount_paid=Decimal('200'), payment_method='cash', source='bar',
+            paid_at=shift.started_at,
+        )
+
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['cash_sales'], 100.0, places=1)
+        self.assertAlmostEqual(rec['debt_recovered_cash'], 200.0, places=1)
+        # expected_cash must include the recovered debt, not just the sale
+        self.assertAlmostEqual(rec['expected_cash'], 300.0, places=1)
+
+    def test_debt_recovered_kitchen_source_not_counted_on_bar_shift(self):
+        from core.shift_views import _reconcile
+        from core.models import Customer, CustomerDebtPayment
+
+        business = Business.objects.create(name='Debt Recon Station Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        user = User.objects.create_user(username='dr_staff2', password='x')
+        UserProfile.objects.create(user=user, business=business, role='staff')
+        shift = Shift.objects.create(
+            business=business, store=store, staff=user, opening_float=Decimal('0'),
+        )
+        customer = Customer.objects.create(business=business, name='Otieno')
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=business,
+            amount_paid=Decimal('150'), payment_method='cash', source='kitchen',
+            paid_at=shift.started_at,
+        )
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['debt_recovered_cash'], 0.0, places=1)
+        self.assertAlmostEqual(rec['expected_cash'], 0.0, places=1)
+
+
 class ZReportOpenTabsTest(TestCase):
     """Z-report view includes open tabs in context."""
 
@@ -914,6 +979,101 @@ class ZReportOpenTabsTest(TestCase):
         response = bar_z_report(req)
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'2', response.content)   # open_tab_count = 2 appears somewhere
+
+
+class BarZReportOverlappingShiftsTest(TestCase):
+    """2026-07-26 fix — live Monsoon Inn report: Z-report showed KES 4000 cash,
+    the till had KES 1700 (mpesa inflated the same way). Root cause: two
+    different staff had overlapping OPEN bar shifts, and bar_z_report used to
+    sum each shift's own _reconcile() into the day total — double-counting
+    every sale made during the overlap. The fix computes the owner's day
+    total from one deduped day-level query (matching home()'s already-correct
+    bar_today_revenue) instead of summing per-shift figures.
+    """
+
+    def _setup(self):
+        from django.test import RequestFactory
+        from core.keg_views import bar_z_report
+
+        business = Business.objects.create(name='Overlap Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        owner_user = User.objects.create_user(username='ov_owner', password='x')
+        UserProfile.objects.create(user=owner_user, business=business, role='owner')
+
+        staff1 = User.objects.create_user(username='ov_staff1', password='x')
+        UserProfile.objects.create(user=staff1, business=business, role='staff')
+        staff2 = User.objects.create_user(username='ov_staff2', password='x')
+        UserProfile.objects.create(user=staff2, business=business, role='staff')
+
+        now = timezone.now()
+        # Both shifts OPEN and overlapping — staff1 started earlier, staff2
+        # opened before staff1 closed (the exact "forgotten handover" scenario).
+        shift1 = Shift.objects.create(
+            business=business, store=store, staff=staff1,
+            opening_float=Decimal('0'), started_at=now - timedelta(hours=3),
+        )
+        shift2 = Shift.objects.create(
+            business=business, store=store, staff=staff2,
+            opening_float=Decimal('0'), started_at=now - timedelta(hours=1),
+        )
+
+        item = Item.objects.create(
+            business=business, store=store, material_no='OV-1',
+            description='Overlap Beer', unit='bottle',
+            selling_price=Decimal('500'), cost_price=Decimal('100'),
+        )
+        # Three cash sales inside the overlap window (last hour) — a shared
+        # till both "shifts" would independently see as their own.
+        for _n in range(3):
+            Transaction.objects.create(
+                business=business, item=item, type='Issue',
+                qty=Decimal('-1'), sale_amount=Decimal('500'),
+                payment_method='cash',
+                created_at=now - timedelta(minutes=30),
+            )
+
+        req = RequestFactory().get('/bar/z-report/')
+        req.user = owner_user
+        response = bar_z_report(req)
+        return business, shift1, shift2, response
+
+    def test_day_total_is_not_doubled(self):
+        import re
+        _business, _s1, _s2, response = self._setup()
+        self.assertEqual(response.status_code, 200)
+        # metric-num renders as e.g. <div class="metric-num">1500</div> — check the
+        # exact rendered figure (bounded by non-digits), not a loose substring match,
+        # since "3000" is also a substring of unrelated page content (e.g. the
+        # notifications poll's setInterval(..., 30000)).
+        self.assertTrue(re.search(rb'>1500<', response.content), 'true deduped total (1500) not found')
+        self.assertFalse(re.search(rb'>3000<', response.content), 'doubled total (3000) found — regression')
+
+    def test_overlap_banner_shown(self):
+        _business, _s1, _s2, response = self._setup()
+        self.assertIn('ziliingiliana'.encode('utf-8'), response.content)
+
+    def test_non_overlapping_shifts_show_no_banner(self):
+        from django.test import RequestFactory
+        from core.keg_views import bar_z_report
+
+        business = Business.objects.create(name='No Overlap Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        owner_user = User.objects.create_user(username='no_ov_owner', password='x')
+        UserProfile.objects.create(user=owner_user, business=business, role='owner')
+        staff1 = User.objects.create_user(username='no_ov_staff1', password='x')
+        UserProfile.objects.create(user=staff1, business=business, role='staff')
+
+        now = timezone.now()
+        Shift.objects.create(
+            business=business, store=store, staff=staff1,
+            opening_float=Decimal('0'), started_at=now - timedelta(hours=2),
+            ended_at=now - timedelta(hours=1), status='CONFIRMED',
+        )
+
+        req = RequestFactory().get('/bar/z-report/')
+        req.user = owner_user
+        response = bar_z_report(req)
+        self.assertNotIn('ziliingiliana'.encode('utf-8'), response.content)
 
 
 # ── F5 Bottle / spirits envelope ─────────────────────────────────────────────
@@ -10369,6 +10529,193 @@ class PettyCashReviewMessageTest(TestCase):
         self.assertEqual(before, after)
 
 
+class PettyCashAccountabilityTest(TestCase):
+    """2026-07-26 (item 1, live Monsoon Inn request): mismatch flag, staff
+    self-edit while pending, staff explanation after rejection, and the
+    approved-petty-cash → BusinessExpense linkage (created on approve, removed
+    if reversed back to rejected).
+    """
+
+    def setUp(self):
+        from core.models import PettyCash
+        self.PettyCash = PettyCash
+
+        self.biz = Business.objects.create(name='Petty Cash Acct Biz')
+        self.owner = User.objects.create_user(username='pca_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='pca_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+
+    def test_mismatch_warning_when_petty_cash_exceeds_shift_cash(self):
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            opening_float=Decimal('0'),
+        )
+        item = Item.objects.create(
+            business=self.biz, store=self.store, material_no='PCA-1',
+            description='Beer', unit='bottle', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'),
+            payment_method='cash', created_at=shift.started_at,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post('/petty-cash/record/', {
+            'amount': '300', 'reason': 'transport', 'description': 'Boda',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIsNotNone(data['warning'], 'entry exceeding available shift cash must carry a warning')
+        # Still recorded despite the mismatch — this app never hard-blocks here.
+        self.assertEqual(self.PettyCash.objects.filter(business=self.biz).count(), 1)
+
+    def test_no_warning_when_within_available_cash(self):
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            opening_float=Decimal('0'),
+        )
+        item = Item.objects.create(
+            business=self.biz, store=self.store, material_no='PCA-2',
+            description='Beer', unit='bottle', selling_price=Decimal('500'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'),
+            payment_method='cash', created_at=shift.started_at,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post('/petty-cash/record/', {
+            'amount': '100', 'reason': 'transport', 'description': 'Boda',
+        })
+        self.assertIsNone(resp.json()['warning'])
+
+    def test_staff_can_edit_own_pending_entry(self):
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/edit/', {
+            'amount': '200', 'reason': 'fuel', 'description': 'Corrected',
+        })
+        self.assertTrue(resp.json()['ok'])
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount, Decimal('200'))
+        self.assertEqual(entry.reason, 'fuel')
+
+    def test_staff_cannot_edit_after_review(self):
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+            status='approved',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/edit/', {'amount': '999'})
+        self.assertFalse(resp.json()['ok'])
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount, Decimal('150'))
+
+    def test_staff_cannot_edit_someone_elses_entry(self):
+        other = User.objects.create_user(username='pca_other', password='x')
+        UserProfile.objects.create(user=other, business=self.biz, role='staff')
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=other, date=timezone.localdate(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/edit/', {'amount': '999'})
+        self.assertFalse(resp.json()['ok'])
+
+    def test_staff_can_explain_after_rejection_and_owner_is_notified(self):
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+            status='rejected', reviewed_by=self.owner, reviewed_at=timezone.now(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/respond/', {
+            'staff_note': 'Nilikuwa na risiti lakini nimeipoteza, hii ni kweli.',
+        })
+        self.assertTrue(resp.json()['ok'])
+        entry.refresh_from_db()
+        self.assertIn('risiti', entry.staff_note)
+        self.assertIsNotNone(entry.staff_note_at)
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Maelezo').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('risiti', notif.message)
+
+    def test_cannot_respond_to_a_still_pending_entry(self):
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/respond/', {'staff_note': 'x'})
+        self.assertFalse(resp.json()['ok'])
+
+    def test_approval_creates_linked_business_expense(self):
+        from core.models import BusinessExpense
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('250'), reason='fuel',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/petty-cash/{entry.id}/review/', {'action': 'approve'})
+        self.assertTrue(resp.json()['ok'])
+        entry.refresh_from_db()
+        self.assertIsNotNone(entry.linked_expense_id)
+        self.assertEqual(entry.linked_expense.amount, Decimal('250'))
+        self.assertEqual(entry.linked_expense.category, 'petty_cash')
+
+    def test_reversal_to_rejected_removes_linked_expense(self):
+        from core.models import BusinessExpense
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('250'), reason='fuel',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner)
+        self.client.post(f'/petty-cash/{entry.id}/review/', {'action': 'approve'})
+        entry.refresh_from_db()
+        expense_id = entry.linked_expense_id
+        self.assertIsNotNone(expense_id)
+
+        self.client.post(f'/petty-cash/{entry.id}/review/', {'action': 'reject'})
+        entry.refresh_from_db()
+        self.assertIsNone(entry.linked_expense_id)
+        self.assertFalse(BusinessExpense.objects.filter(id=expense_id).exists())
+
+    def test_staff_list_view_shows_only_own_entries(self):
+        other = User.objects.create_user(username='pca_other2', password='x')
+        UserProfile.objects.create(user=other, business=self.biz, role='staff')
+        self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('100'), reason='fuel',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('999'), reason='fuel',
+            recorded_by=other, date=timezone.localdate(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/petty-cash/')
+        self.assertEqual(resp.status_code, 200)
+        entries = list(resp.context['entries'])
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].recorded_by_id, self.staff.id)
+        self.assertFalse(resp.context['is_owner'])
+
+    def test_owner_list_view_shows_everyones_entries(self):
+        self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('100'), reason='fuel',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/petty-cash/')
+        self.assertTrue(resp.context['is_owner'])
+        self.assertEqual(len(list(resp.context['entries'])), 1)
+
+
 class PettyCashReviewUndoTest(TestCase):
     """2026-07-25 live report: Roy rejected a petty cash entry by mistake and had
     no way to reverse it. review_petty_cash() never actually blocked re-review —
@@ -11806,6 +12153,451 @@ class DirectSalePaymentCorrectionTest(TestCase):
         self.client.force_login(self.owner)
         resp = self.client.post(f'/bar/transactions/{other_txn.id}/correct-payment/', {'new_method': 'mpesa'})
         self.assertEqual(resp.status_code, 404)
+
+
+class DirectSalePaymentSplitTest(TestCase):
+    """2026-07-26 (items 2+4, live request): a bill of 500 paid as 200 cash +
+    300 mpesa but mistakenly entered entirely as mpesa must be splittable
+    after the fact, on a direct (non-tab) sale — the sibling of
+    correct_transaction_payment_method's whole-amount flip.
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Split Pay Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='sp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='sp_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Smirnoff',
+            material_no='SP-1', unit='Pcs', selling_price=Decimal('500'),
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='mpesa',
+        )
+
+    def test_model_split_reduces_original_and_creates_sibling(self):
+        orig, new_txn = Transaction.split_payment_method_locked(
+            txn_id=self.txn.id, business=self.biz,
+            split_amount=Decimal('200'), new_method='cash', staff_user=self.staff,
+        )
+        orig.refresh_from_db()
+        self.assertEqual(orig.payment_method, 'mpesa')
+        self.assertEqual(float(orig.sale_amount), 300.0)
+        self.assertEqual(new_txn.payment_method, 'cash')
+        self.assertEqual(float(new_txn.sale_amount), 200.0)
+        self.assertEqual(float(new_txn.qty), 0.0)
+        # Total revenue across both rows must equal the original total exactly.
+        self.assertAlmostEqual(orig.revenue() + new_txn.revenue(), 500.0, places=2)
+
+    def test_model_rejects_split_amount_at_or_above_total(self):
+        with self.assertRaises(ValueError):
+            Transaction.split_payment_method_locked(
+                txn_id=self.txn.id, business=self.biz,
+                split_amount=Decimal('500'), new_method='cash',
+            )
+
+    def test_model_rejects_same_method(self):
+        with self.assertRaises(ValueError):
+            Transaction.split_payment_method_locked(
+                txn_id=self.txn.id, business=self.biz,
+                split_amount=Decimal('100'), new_method='mpesa',
+            )
+
+    def test_model_rejects_tab_linked_transaction(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Tabbed', status='OPEN',
+            source='bar', store=self.store,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=self.txn, description='Smirnoff',
+            amount=Decimal('500'), is_paid=True, payment_method='mpesa', paid_at=timezone.now(),
+        )
+        with self.assertRaises(ValueError):
+            Transaction.split_payment_method_locked(
+                txn_id=self.txn.id, business=self.biz,
+                split_amount=Decimal('200'), new_method='cash',
+            )
+
+    def test_view_splits_and_notifies(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/split-payment/', {
+            'new_method': 'cash', 'split_amount': '200',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['remaining_amount'], 300.0)
+        self.assertEqual(data['new_amount'], 200.0)
+        self.assertEqual(data['new_method'], 'cash')
+        self.txn.refresh_from_db()
+        self.assertEqual(float(self.txn.sale_amount), 300.0)
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), 2)
+
+    def test_view_rejects_without_open_shift(self):
+        other_staff = User.objects.create_user(username='sp_noshift', password='x')
+        UserProfile.objects.create(user=other_staff, business=self.biz, role='staff')
+        self.client.force_login(other_staff)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/split-payment/', {
+            'new_method': 'cash', 'split_amount': '200',
+        })
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json().get('shift_required'))
+
+    def test_cross_tenant_split_returns_404(self):
+        other_biz = Business.objects.create(name='Other Split Biz')
+        other_store = Store.objects.create(business=other_biz, name='Bar')
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Foreign',
+            material_no='SP-FOREIGN', unit='Pcs', selling_price=Decimal('500'),
+        )
+        other_txn = Transaction.objects.create(
+            business=other_biz, item=other_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='mpesa',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{other_txn.id}/split-payment/', {
+            'new_method': 'cash', 'split_amount': '200',
+        })
+        self.assertEqual(resp.status_code, 404)
+
+    def test_receipt_reflection_best_effort(self):
+        receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=1, token='split-recpt-tok-1',
+            payment_method='mpesa', total=Decimal('500'),
+            lines=[{'name': 'Smirnoff', 'qty': 1, 'subtotal': 500.0}],
+        )
+        self.client.force_login(self.staff)
+        self.client.post(f'/bar/transactions/{self.txn.id}/split-payment/', {
+            'new_method': 'cash', 'split_amount': '200',
+        })
+        receipt.refresh_from_db()
+        corrections = receipt.meta.get('payment_corrections')
+        self.assertTrue(corrections)
+        self.assertEqual(corrections[0]['item'], 'Smirnoff')
+        self.assertEqual(corrections[0]['remaining_amount'], 300.0)
+        self.assertEqual(corrections[0]['new_amount'], 200.0)
+
+    def test_receipt_reflection_skipped_when_ambiguous(self):
+        # Two receipts both have a matching line — must not guess.
+        for i in range(2):
+            Receipt.objects.create(
+                business=self.biz, receipt_number=i + 1, token=f'split-ambig-tok-{i}',
+                payment_method='mpesa', total=Decimal('500'),
+                lines=[{'name': 'Smirnoff', 'qty': 1, 'subtotal': 500.0}],
+            )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/split-payment/', {
+            'new_method': 'cash', 'split_amount': '200',
+        })
+        self.assertTrue(resp.json()['ok'])  # split itself must still succeed
+        for r in Receipt.objects.filter(business=self.biz):
+            self.assertFalse(r.meta.get('payment_corrections'))
+
+
+class StockTakeVarianceItemLockTest(TestCase):
+    """2026-07-26 (item 6, live request): an unresolved stock-take variance on
+    a SPECIFIC item blocks selling that exact item across counters — never
+    the whole business — until the owner resolves it (accept or dismiss),
+    which is the only thing that can lift the lock.
+    """
+
+    def setUp(self):
+        from core.models import StockTake, StockVarianceQuery
+        self.StockVarianceQuery = StockVarianceQuery
+
+        self.biz = Business.objects.create(name='Variance Lock Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='vl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='vl_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+
+        self.locked_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Locked Whiskey',
+            material_no='VL-1', unit='Pcs', selling_price=Decimal('300'),
+            opening_bin_balance=Decimal('50'),
+        )
+        self.free_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Free Soda',
+            material_no='VL-2', unit='Pcs', selling_price=Decimal('100'),
+            opening_bin_balance=Decimal('50'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Locked Chips',
+            material_no='VL-3', unit='Pcs', selling_price=Decimal('150'),
+            opening_bin_balance=Decimal('50'),
+        )
+        self.stock_take = StockTake.objects.create(business=self.biz, store=self.bar_store)
+
+    def _lock(self, item, status='pending'):
+        return self.StockVarianceQuery.objects.create(
+            stock_take=self.stock_take, item=item, item_name_cache=item.description,
+            book_balance=Decimal('50'), actual_count=Decimal('45'),
+            direction=self.StockVarianceQuery.DECREASE, status=status,
+        )
+
+    def test_quick_sell_skips_only_locked_item(self):
+        self._lock(self.locked_item)
+        self.client.force_login(self.staff)
+        cart = [
+            {'id': self.locked_item.id, 'qty': 1, 'price': 300},
+            {'id': self.free_item.id, 'qty': 1, 'price': 100},
+        ]
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps(cart), 'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(item=self.locked_item, type='Issue').exists())
+        self.assertTrue(Transaction.objects.filter(item=self.free_item, type='Issue').exists())
+
+    def test_add_transaction_blocks_issue_on_locked_item(self):
+        self._lock(self.locked_item)
+        self.client.force_login(self.owner)
+        self.client.post('/add-transaction/', {
+            'item': self.locked_item.id, 'type': 'Issue',
+            'quantity': '1', 'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(item=self.locked_item, type='Issue').exists())
+
+    def test_add_transaction_allows_receipt_on_locked_item(self):
+        # Receiving stock is often how a variance gets resolved — must not be blocked.
+        self._lock(self.locked_item)
+        self.client.force_login(self.owner)
+        self.client.post('/add-transaction/', {
+            'item': self.locked_item.id, 'type': 'Receipt',
+            'quantity': '10', 'cost_price': '150',
+        })
+        self.assertTrue(Transaction.objects.filter(item=self.locked_item, type='Receipt').exists())
+
+    def test_kitchen_checkout_skips_locked_item(self):
+        self._lock(self.kitchen_item)
+        self.client.force_login(self.staff)
+        cart = [{'item_id': self.kitchen_item.id, 'amount': 150, 'qty': 1, 'description': 'Locked Chips'}]
+        self.client.post('/kitchen/', {
+            'cart': json.dumps(cart), 'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(item=self.kitchen_item, type='Issue').exists())
+
+    def test_responded_status_still_blocks_until_owner_resolves(self):
+        # "only revocable on the owner's side" — a staffer's response alone must
+        # NOT lift the lock, only an actual owner accept/dismiss (RESOLVED) does.
+        svq = self._lock(self.locked_item, status=self.StockVarianceQuery.RESPONDED)
+        self.client.force_login(self.staff)
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.locked_item.id, 'qty': 1, 'price': 300}]),
+            'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(item=self.locked_item, type='Issue').exists())
+
+    def test_owner_resolving_variance_unlocks_the_item(self):
+        svq = self._lock(self.locked_item)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'dismiss'})
+        self.assertTrue(resp.json()['ok'])
+        svq.refresh_from_db()
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.locked_item.id, 'qty': 1, 'price': 300}]),
+            'payment_method': 'cash',
+        })
+        self.assertTrue(Transaction.objects.filter(item=self.locked_item, type='Issue').exists())
+
+
+class StaffRequestTest(TestCase):
+    """2026-07-26 (item 5, live request): a structured request/approval channel
+    for anything not already covered by a dedicated flow — staff submit,
+    owner/manager decide, requester is notified either way with a reason.
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Staff Request Biz')
+        self.owner = User.objects.create_user(username='sr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='sr_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.other_staff = User.objects.create_user(username='sr_other', password='x')
+        UserProfile.objects.create(user=self.other_staff, business=self.biz, role='staff')
+
+    def test_staff_can_submit_request(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/staff-requests/submit/', {
+            'category': 'permission', 'subject': 'Naomba kuuza kwa deni',
+            'description': 'Mteja wa zamani, anaaminika.',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        from core.models import StaffRequest
+        self.assertEqual(StaffRequest.objects.filter(business=self.biz).count(), 1)
+
+    def test_submit_requires_subject(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/staff-requests/submit/', {'category': 'general', 'subject': ''})
+        self.assertFalse(resp.json()['ok'])
+
+    def test_owner_notified_on_submit(self):
+        self.client.force_login(self.staff)
+        self.client.post('/staff-requests/submit/', {
+            'category': 'general', 'subject': 'Test ombi',
+        })
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Ombi Jipya').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('Test ombi', notif.message)
+
+    def test_staff_sees_only_own_requests(self):
+        from core.models import StaffRequest
+        StaffRequest.objects.create(business=self.biz, requested_by=self.staff, subject='Mine')
+        StaffRequest.objects.create(business=self.biz, requested_by=self.other_staff, subject='Not mine')
+        self.client.force_login(self.staff)
+        resp = self.client.get('/staff-requests/')
+        reqs = list(resp.context['requests'])
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0].subject, 'Mine')
+        self.assertFalse(resp.context['is_owner'])
+
+    def test_owner_sees_all_requests(self):
+        from core.models import StaffRequest
+        StaffRequest.objects.create(business=self.biz, requested_by=self.staff, subject='A')
+        StaffRequest.objects.create(business=self.biz, requested_by=self.other_staff, subject='B')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/staff-requests/')
+        self.assertEqual(len(list(resp.context['requests'])), 2)
+        self.assertTrue(resp.context['is_owner'])
+
+    def test_owner_approve_notifies_requester_with_reason(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(business=self.biz, requested_by=self.staff, subject='Test')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertTrue(resp.json()['ok'])
+        sr.refresh_from_db()
+        self.assertEqual(sr.status, 'approved')
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Kubaliwa').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('Test', notif.message)
+
+    def test_owner_reject_includes_reason_in_notification(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(business=self.biz, requested_by=self.staff, subject='Test')
+        self.client.force_login(self.owner)
+        self.client.post(f'/staff-requests/{sr.id}/review/', {
+            'action': 'reject', 'review_note': 'Haiwezekani kwa sasa',
+        })
+        sr.refresh_from_db()
+        self.assertEqual(sr.status, 'rejected')
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Kataliwa').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('Haiwezekani kwa sasa', notif.message)
+
+    def test_staff_cannot_review_requests(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(business=self.biz, requested_by=self.other_staff, subject='Test')
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_cross_tenant_review_returns_404(self):
+        from core.models import StaffRequest
+        other_biz = Business.objects.create(name='Other SR Biz')
+        other_staff = User.objects.create_user(username='sr_foreign', password='x')
+        UserProfile.objects.create(user=other_staff, business=other_biz, role='staff')
+        sr = StaffRequest.objects.create(business=other_biz, requested_by=other_staff, subject='Foreign')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertEqual(resp.status_code, 404)
+
+
+class SalaryConfirmationAndPayrollRunTest(TestCase):
+    """2026-07-26 (item 8): staff-side confirmation of a recorded salary
+    payment, and a bulk payroll run across all pay-eligible staff for a
+    period (reuses record_salary_payment's exact SalaryPayment-creation
+    shape, just looped).
+    """
+
+    def setUp(self):
+        from datetime import date as _date
+        self.biz = Business.objects.create(name='Payroll Run Biz')
+        self.owner = User.objects.create_user(username='pr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='pr_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.other_staff = User.objects.create_user(username='pr_other', password='x')
+        UserProfile.objects.create(user=self.other_staff, business=self.biz, role='staff')
+
+        self.payment = SalaryPayment.objects.create(
+            business=self.biz, staff=self.staff_profile, period='2026-07',
+            amount=Decimal('15000'), due_date=_date(2026, 7, 31),
+            paid=True, paid_at=timezone.now(), recorded_by=self.owner,
+        )
+
+    def test_staff_can_confirm_own_payment(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/staff/salary/{self.payment.id}/confirm/')
+        self.assertTrue(resp.json()['ok'])
+        self.payment.refresh_from_db()
+        self.assertTrue(self.payment.confirmed_by_staff)
+        self.assertIsNotNone(self.payment.confirmed_at)
+
+    def test_confirming_notifies_recorder(self):
+        self.client.force_login(self.staff)
+        self.client.post(f'/staff/salary/{self.payment.id}/confirm/')
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Umethibitishwa').first()
+        self.assertIsNotNone(notif)
+
+    def test_cannot_confirm_someone_elses_payment(self):
+        self.client.force_login(self.other_staff)
+        resp = self.client.post(f'/staff/salary/{self.payment.id}/confirm/')
+        self.assertEqual(resp.status_code, 404)
+
+    def test_double_confirm_is_idempotent(self):
+        self.client.force_login(self.staff)
+        self.client.post(f'/staff/salary/{self.payment.id}/confirm/')
+        first_confirmed_at = SalaryPayment.objects.get(id=self.payment.id).confirmed_at
+        resp = self.client.post(f'/staff/salary/{self.payment.id}/confirm/')
+        self.assertTrue(resp.json()['ok'])
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.confirmed_at, first_confirmed_at)
+
+    def test_payroll_run_page_lists_pay_eligible_staff(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/staff/payroll-run/')
+        self.assertEqual(resp.status_code, 200)
+        names = [r['profile'].id for r in resp.context['rows']]
+        self.assertIn(self.staff_profile.id, names)
+
+    def test_payroll_run_creates_salary_payment_per_selected_staff(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/staff/payroll-run/', {
+            'method': 'cash', 'period': '2026-08',
+            'pay_staff_id': [str(self.staff_profile.id)],
+            f'amount_{self.staff_profile.id}': '15000',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(SalaryPayment.objects.filter(
+            business=self.biz, staff=self.staff_profile, period='2026-08', amount=Decimal('15000'),
+        ).exists())
+
+    def test_payroll_run_skips_unselected_staff(self):
+        other_profile = UserProfile.objects.get(user=self.other_staff)
+        self.client.force_login(self.owner)
+        self.client.post('/staff/payroll-run/', {
+            'method': 'cash', 'period': '2026-08',
+            'pay_staff_id': [str(self.staff_profile.id)],
+            f'amount_{self.staff_profile.id}': '15000',
+            f'amount_{other_profile.id}': '12000',
+        })
+        self.assertFalse(SalaryPayment.objects.filter(
+            business=self.biz, staff=other_profile, period='2026-08',
+        ).exists())
+
+    def test_payroll_run_requires_owner_or_manager(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/staff/payroll-run/')
+        self.assertNotEqual(resp.status_code, 200)
 
 
 class ReceiptsListDateFilterTest(TestCase):

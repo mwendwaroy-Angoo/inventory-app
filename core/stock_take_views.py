@@ -42,6 +42,22 @@ def _notify_owner(business, title, message):
             send_sms_notification(message, normalize_ke_phone(op.phone))
 
 
+def item_has_pending_variance(item_id):
+    """2026-07-26 (item 6, live request): a stock-take discrepancy on a
+    SPECIFIC item blocks selling that exact item — never the whole business —
+    until the owner resolves it via review_variance() (accept or dismiss),
+    which is the ONLY thing that flips status to RESOLVED. This is why no
+    separate "unlock" endpoint is needed: resolution IS the unlock, and it is
+    already owner/manager-only (see @owner_or_manager_required on that view).
+    'responded' (staff has explained but owner hasn't decided yet) still
+    blocks — only a genuine owner decision clears it, per Roy's explicit
+    "only revocable on the owner's side."
+    """
+    return StockVarianceQuery.objects.filter(
+        item_id=item_id,
+    ).exclude(status=StockVarianceQuery.RESOLVED).exists()
+
+
 # ── View 1: Start / submit a stock take ───────────────────────────────────────
 
 @owner_or_manager_required

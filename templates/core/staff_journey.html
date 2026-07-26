@@ -140,6 +140,47 @@
     </div>
 </div>
 
+<!-- 2026-07-26 (items 1 + 8b) — wastage, stock-variance loss, and petty cash
+     accountability, in one place so the story is complete: revenue attributed
+     above, cost/loss attributed here. -->
+{% if contrib.wastage_kes or contrib.variance_loss_kes or contrib.petty_cash_rejected or contrib.petty_cash_pending_kes %}
+<div class="sj-section">
+    <div class="sj-section-title">⚖️ Uwajibikaji wa Gharama</div>
+    <div class="sj-card">
+        <div class="sj-stat-row">
+            <div class="sj-stat">
+                <div class="sj-stat-label">Upotevu (Wastage)</div>
+                <div class="sj-stat-val">KES {{ contrib.wastage_kes|floatformat:0 }}</div>
+            </div>
+            <div class="sj-stat">
+                <div class="sj-stat-label">Tofauti za Hesabu Zilizohusishwa Naye</div>
+                <div class="sj-stat-val">KES {{ contrib.variance_loss_kes|floatformat:0 }}</div>
+            </div>
+            {% if contrib.petty_cash_pending_kes %}
+            <div class="sj-stat">
+                <div class="sj-stat-label">Petty Cash Inayosubiri Idhini</div>
+                <div class="sj-stat-val">KES {{ contrib.petty_cash_pending_kes|floatformat:0 }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% if contrib.petty_cash_rejected %}
+        <div style="margin-top:.6rem; font-size:.8rem; color:#e2a8a8;">
+            <strong>Petty Cash Iliyokataliwa:</strong>
+            {% for e in contrib.petty_cash_rejected %}
+            <div style="margin-top:.3rem; padding:.4rem .5rem; background:rgba(192,57,90,0.08); border-radius:6px;">
+                KES {{ e.amount|floatformat:0 }} ({{ e.get_reason_display }}) — imekataliwa na
+                {% if e.reviewed_by %}{{ e.reviewed_by.get_full_name|default:e.reviewed_by.username }}{% else %}mmiliki{% endif %}
+                {% if e.reviewed_at %}tarehe {{ e.reviewed_at|date:"d M Y, H:i" }}{% endif %}.
+                {% if e.review_note %}Sababu: {{ e.review_note }}.{% endif %}
+                {% if e.staff_note %}<br><em>Maelezo yako: {{ e.staff_note }}</em>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Keg handling -->
 {% if keg_detail %}
 <div class="sj-section">

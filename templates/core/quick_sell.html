@@ -2815,12 +2815,47 @@
                             '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + qsFmt(e.amount) + ' (' + e.payment_method + ') — ' + e.time + '</span>' +
                             '<button onclick="window.qsCorrectDirectPayment(' + e.id + ',\'' + other + '\',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
                             'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
+                            '<button onclick="window.qsSplitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
+                            'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
                             '</div>';
                     });
                 }
                 panel.innerHTML = html;
             })
             .catch(function () { panel.innerHTML = '<div style="color:#c0395a;font-size:.75rem;padding:.4rem;">Hitilafu ya mtandao.</div>'; });
+    };
+
+    // 2026-07-26 (items 2+4) — parity with bar_board.html's splitDirectPayment.
+    window.qsSplitDirectPayment = function (txnId, currentMethod, totalAmount, desc) {
+        var otherMethod = currentMethod === 'cash' ? 'mpesa' : 'cash';
+        var otherLabel = otherMethod === 'cash' ? 'Cash' : 'M-Pesa';
+        var currentLabel = currentMethod === 'cash' ? 'Cash' : 'M-Pesa';
+        var amtStr = prompt(
+            '"' + desc + '" — jumla KES ' + Math.round(totalAmount) + ' (' + currentLabel + ').\n' +
+            'Ni KES ngapi ZILIZOLIPWA KAMA ' + otherLabel + '? (Ile iliyobaki itabaki ' + currentLabel + ')',
+            ''
+        );
+        if (amtStr === null) return;
+        var amt = parseFloat(amtStr);
+        if (isNaN(amt) || amt <= 0 || amt >= totalAmount) {
+            qsShowToast('Kiasi lazima kiwe kati ya 0 na KES ' + Math.round(totalAmount) + '.', true);
+            return;
+        }
+        qsPost('/bar/transactions/' + txnId + '/split-payment/', {
+            new_method: otherMethod, split_amount: amt, reason: 'Malipo yaligawanywa kati ya njia mbili',
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.ok) {
+                    qsShowToast(d.message || '✓ Imegawanywa');
+                    window.qsLoadRecentPayments();
+                } else if (d.shift_required) {
+                    qsShowToast('Fungua shift kwanza.', true);
+                } else {
+                    qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'), true);
+                }
+            })
+            .catch(function () { qsShowToast('Hitilafu ya mtandao.', true); });
     };
 
     window.qsCorrectDirectPayment = function (txnId, newMethod, desc, anchorEl) {

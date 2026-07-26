@@ -113,7 +113,12 @@ def recurring_expense_list(request):
     expenses = RecurringExpense.objects.filter(business=business).order_by('category', 'description')
 
     from accounts.models import UserProfile
-    STAFF_PAY_ROLES = ['staff', 'waitress', 'kitchen']
+    # 2026-07-26 fix (live request, item 7): managers were excluded from this list
+    # entirely — a manager's salary line could never be added here even though
+    # Sprint M1 gave managers full operational access. STAFF_PAY_ROLES is this
+    # app's one place that decides who is salary-eligible; grep this constant
+    # before adding a new role anywhere else that needs the same list.
+    STAFF_PAY_ROLES = ['staff', 'waitress', 'kitchen', 'manager']
     # Departed staff should not be selectable for a NEW recurring salary rule —
     # existing rules against them are left untouched (RecurringExpense.staff_profile
     # is SET_NULL, not filtered here) so their pay history stays intact.

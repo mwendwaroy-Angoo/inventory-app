@@ -2826,3 +2826,101 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   card. Cosmetic once this fix ships (the entry disappears the moment the
   tab closes), not touched this pass. 3 new tests
   (`StaleFullyPaidTabSelfHealsOnSettleTest`). No migrations.
+- Accountability overhaul II — 9-item request from a real KES 4000-vs-1700
+  Monsoon Inn reconciliation gap (2026-07-26). Roy's own framing: build
+  toward 100% realistic, practical cash accountability, not just fix the one
+  number. Cause-and-Effect map produced first per this file's own protocol.
+  **Fix 0 (found mid-session, higher priority than the request itself):**
+  root-caused the actual 4000-vs-1700 gap — `open_shift()` only blocks the
+  SAME staffer from opening two shifts, so two different staff can have
+  overlapping OPEN shifts on the same bar counter (a forgotten handover
+  close, or two people genuinely sharing one till); `bar_z_report`'s day
+  totals (and `bar_z_report_share`'s SMS) summed each shift's own
+  `_reconcile()` into the day figure with no overlap check, double-counting
+  every sale made during the overlap — inflating cash AND mpesa identically,
+  exactly matching the report. `home()`'s dashboard tile was never affected
+  (already a single deduped day-level query). Fixed both to compute the
+  owner's day total the same way — one deduped query — plus a non-blocking
+  overlap banner listing which staff overlapped, and a heads-up (never a
+  block) at `open_shift()` when another staffer already has that station
+  open. **Item 1 (petty cash truthfulness):** `_reconcile()` gained
+  `debt_recovered_cash/mpesa` (a customer paying back an OLD debt in cash is
+  a different model — `CustomerDebtPayment` — from a NEW credit sale, and was
+  previously invisible to `expected_cash` entirely — this is also the item-3
+  answer: "Credit" = new debt given out, never debt recovered) and
+  `petty_cash_pending/rejected`, so the shift-close screen shows the full
+  chain (cash sales → petty cash pending → remaining if approved/rejected)
+  instead of three disconnected numbers, in both `bar_board.html` and
+  `kitchen_board.html`. `PettyCash` gained `staff_note`/`staff_note_at`
+  (migration 0125) — staff can edit their own still-pending entry
+  (`edit_petty_cash`), or explain themselves after a rejection
+  (`respond_petty_cash`, notifies the owner, never changes status on its
+  own) — the whole `/petty-cash/` list page was owner-only before this;
+  widened so staff see (and can act on) only their own entries. Non-blocking
+  mismatch flag at record time when an entry would exceed the shift's
+  available cash (warns, still records — this app never hard-blocks on a
+  figure that could be legitimate). `BusinessExpense` gained a `petty_cash`
+  category; `linked_expense` FK created only on approval, deleted if later
+  reversed back to rejected (symmetric with the existing approve/reject
+  undo). `_staff_contribution()`/`staff_journey.html` gained
+  `petty_cash_rejected`/`petty_cash_pending_kes` with the owner's own
+  `review_note` shown — the storytelling Roy asked for. **Items 2+4 (direct-
+  sale payment split):** `Transaction.split_payment_method_locked()` (mirrors
+  `BarTabEntry.split_paid_unpaid_locked`'s qty=0 remainder pattern) splits a
+  mis-tagged direct sale (no tab) across two payment methods — e.g. 500
+  entered as mpesa, actually 200 cash + 300 mpesa — via a new
+  `split_transaction_payment_method` endpoint alongside the existing whole-
+  amount `correct_transaction_payment_method`; wired into bar_board.html and
+  quick_sell.html's Recent Payments panel (kitchen_board.html never had the
+  base direct-correction feature at all — pre-existing gap, not widened
+  here). Receipt reflection is a best-effort, precise-match-or-skip
+  heuristic (`Receipt.lines` has no stored link back to a Transaction) —
+  same business/day, one line matching item name + pre-split subtotal
+  exactly; ambiguous (0 or 2+ candidates) silently skips rather than
+  guessing. **Item 6 (stock-take variance item lock, scoped to "just the
+  specific item" per Roy's own answer):** `item_has_pending_variance()`
+  (`core/stock_take_views.py`) blocks selling ONE item — never the whole
+  business — while it has an unresolved `StockVarianceQuery` (pending OR
+  responded; only an actual owner `review_variance()` accept/dismiss, which
+  is already owner/manager-only, sets RESOLVED and lifts it — "only
+  revocable on the owner's side" for free, no new unlock endpoint needed).
+  Wired into Quick Sell's cart loop (skip-with-message, other lines still
+  sell), `add_transaction` (Issue only — Receipt/Wastage are how a variance
+  often gets resolved, so left open), and kitchen board's portion-item
+  branch. Bar board's keg pours are a different, already-built reconciliation
+  mechanism (barrel weight, not per-Item stock-take) — correctly out of
+  scope. **Item 7:** `STAFF_PAY_ROLES` in `recurring_expense_views.py` was
+  missing `'manager'` entirely since Sprint M1 gave managers full operational
+  access — one-line fix, confirmed via grep it's the single definition.
+  **Item 8b (wastage/variance attribution):** `_staff_contribution()` had
+  zero wastage or stock-variance-loss figures — added `wastage_kes` (Wastage
+  transactions by `recorded_by`) and `variance_loss_kes` (via
+  `StockVarianceQuery.attributed_shift`), surfaced in `staff_journey.html`.
+  Found and fixed a real `FieldError` in this new aggregate during the full
+  suite run: `Abs(F('qty')) * Coalesce(F('item__cost_price'), Value(0))` with
+  no explicit `output_field` mixed DecimalField and Value's default
+  IntegerField — added `output_field=DecimalField(...)`, matching the `_rev`
+  pattern already used everywhere else in this app. **Item 5 (structured
+  request/approval, scope confirmed via clarifying question):** new
+  `StaffRequest` model (migration 0126) — category
+  (restock/permission/correction/general), subject, description, status,
+  reviewed_by/at/note — deliberately NOT a generic FK to every model (that
+  would duplicate StockRequest/WriteOffRequest/StockVarianceQuery's own
+  dedicated machinery); this is for everything else. `core/
+  staff_request_views.py` + `/staff-requests/` page (staff see only their
+  own; owner/manager see and review all, always with a reason back to the
+  requester, matching this app's wording/accountability standard). **Item 8
+  (Haki payroll, scoped after discovering `SalaryPayment` already supports
+  partial payments and a `staff_note` field from an earlier, undocumented
+  change — did not rebuild what already existed):** `SalaryPayment` gained
+  `confirmed_by_staff`/`confirmed_at` (migration 0127) — a "✓ Nimepokea"
+  button on Kazi Yangu's pay history closes the loop `record_salary_payment`'s
+  SMS notice started but never confirmed; idempotent (re-confirming is a
+  no-op), notifies whoever recorded the payment. New `run_payroll` view
+  (`/staff/payroll-run/`, owner/manager) — one pass across all pay-eligible
+  staff for a period, pre-filled from each staff's configured
+  `RecurringExpense` salary line, creating one `SalaryPayment` per selected
+  row via the same creation shape `record_salary_payment` already uses (not
+  a duplicated code path). 736 pre-existing core+accounts tests confirmed
+  green before this sprint's own ~60 new tests were added on top. Three
+  migrations (0125, 0126, 0127), all additive.

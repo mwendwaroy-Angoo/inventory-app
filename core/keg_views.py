@@ -1576,6 +1576,109 @@ def correct_transaction_payment_method(request, txn_id):
 
 @login_required
 @require_POST
+def split_transaction_payment_method(request, txn_id):
+    """Split a direct sale's payment across two methods (2026-07-26 live
+    request) — e.g. a KES 500 sale entered entirely as M-Pesa when the
+    customer actually paid 200 cash + 300 mpesa. Sibling of
+    correct_transaction_payment_method (whole-amount flip); this handles the
+    partial case via Transaction.split_payment_method_locked().
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    txn = get_object_or_404(
+        Transaction.objects.select_related('item__store'),
+        id=txn_id, business=up.business, type='Issue', tab_entry__isnull=True,
+    )
+    try:
+        is_kitchen = bool(txn.item.store.is_kitchen)
+    except Exception:
+        is_kitchen = False
+    if ('kitchen' if is_kitchen else 'bar') not in _allowed_tab_sources(up):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kurekebisha mauzo haya.'}, status=403)
+
+    new_method = (request.POST.get('new_method') or '').strip()
+    split_amount_raw = (request.POST.get('split_amount') or '').strip()
+    reason = (request.POST.get('reason') or '').strip()
+    old_method = txn.payment_method
+    old_total = float(txn.revenue())
+
+    try:
+        split_amount = Decimal(split_amount_raw)
+    except (InvalidOperation, ValueError):
+        return JsonResponse({'ok': False, 'error': 'Ingiza kiasi sahihi.'}, status=400)
+
+    try:
+        _orig, new_txn = Transaction.split_payment_method_locked(
+            txn_id=txn.id, business=up.business, split_amount=split_amount,
+            new_method=new_method, staff_user=request.user,
+        )
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    label = {'cash': 'Cash', 'mpesa': 'M-Pesa'}
+    message = (
+        f'✂️ {who} amegawanya malipo ya "{txn.item.description}" (jumla KES {old_total:,.0f}): '
+        f'KES {float(_orig.revenue()):,.0f} {label.get(old_method, old_method)} + '
+        f'KES {float(new_txn.revenue()):,.0f} {label.get(new_method, new_method)} — tarehe {when}.'
+        + (f' Sababu: {reason}' if reason else '')
+    )
+    _notify_direct_correction(up.business, message, request.user)
+
+    # 2026-07-26 (item 4) — best-effort receipt reflection. Receipt.lines is a
+    # point-in-time snapshot with no stored link back to this Transaction, so
+    # this is a precise-match-or-skip heuristic (never blocks or fails the
+    # split itself): same business, same day, a line whose name matches the
+    # item and whose subtotal matches the PRE-split total exactly. Ambiguous
+    # (0 or >1 candidates) → silently skipped; the split itself already
+    # succeeded and is fully correct in Transaction History regardless.
+    try:
+        candidates = Receipt.objects.filter(
+            business=up.business, created_at__date=txn.date, payment_method=old_method,
+        )
+        match = None
+        for r in candidates:
+            hits = [l for l in (r.lines or []) if l.get('name') == txn.item.description
+                    and abs(float(l.get('subtotal', 0)) - old_total) < 0.01]
+            if len(hits) == 1:
+                if match is not None:
+                    match = None
+                    break
+                match = r
+        if match is not None:
+            corrections = list(match.meta.get('payment_corrections') or [])
+            corrections.append({
+                'item': txn.item.description,
+                'old_method': old_method, 'new_method': new_method,
+                'remaining_amount': round(float(_orig.revenue()), 2),
+                'new_amount': round(float(new_txn.revenue()), 2),
+                'at': when,
+            })
+            match.meta['payment_corrections'] = corrections
+            match.save(update_fields=['meta'])
+    except Exception:
+        logger.exception('split_transaction_payment_method: receipt reflection best-effort failed for txn %s', txn.id)
+
+    return JsonResponse({
+        'ok': True, 'message': message,
+        'remaining_amount': float(_orig.revenue()), 'remaining_method': old_method,
+        'new_amount': float(new_txn.revenue()), 'new_method': new_method,
+    })
+
+
+@login_required
+@require_POST
 def update_tab_name(request, tab_id):
     """Allow staff to rename the customer on an open tab (also updates linked Customer + Transaction.recipient).
 
@@ -3496,14 +3599,61 @@ def bar_z_report(request):
             'status':         shift.status,
         })
 
-        day_cash         += rec['cash_sales']
-        day_mpesa        += rec['mpesa_sales']
-        day_credit       += rec['credit_sales']
-        day_total        += rec['total_sales']
         day_opening_float += float(shift.opening_float)
-        day_expected_cash += rec['expected_cash']
-        day_petty_cash   += petty_total
+        if not is_owner:
+            # Staff's own restricted view: qs is already filtered to just this
+            # staffer's own shifts, which never overlap each other (open_shift()
+            # blocks a second shift for the SAME user) — safe to sum directly.
+            day_cash         += rec['cash_sales']
+            day_mpesa        += rec['mpesa_sales']
+            day_credit       += rec['credit_sales']
+            day_total        += rec['total_sales']
+            day_expected_cash += rec['expected_cash']
+            day_petty_cash   += petty_total
         counted_shifts   += 1
+
+    bar_shifts_today = [row['shift'] for row in shift_rows]
+    has_overlapping_shifts = False
+    overlap_notes = []
+
+    if is_owner:
+        # 2026-07-26 fix (live Monsoon Inn report: Z-report showed KES 4000 cash,
+        # the till had KES 1700 — mpesa inflated the same way). The old code
+        # summed each shift's OWN _reconcile() into the day total, which double-
+        # counts every sale whenever two different staff had overlapping bar
+        # shifts (a forgotten handover close, or two people sharing one till).
+        # This mirrors home()'s bar_today_revenue — the one figure that was
+        # ALWAYS correct — with a single, deduped, day-level query instead.
+        _day_txns = list(Transaction.objects.filter(
+            business=business, type='Issue',
+            created_at__gte=day_start, created_at__lte=day_end,
+            item__store__is_kitchen=False,
+        ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item'))
+        day_cash   = sum(t.revenue() for t in _day_txns if t.payment_method == 'cash')
+        day_mpesa  = sum(t.revenue() for t in _day_txns if t.payment_method == 'mpesa')
+        day_credit = sum(t.revenue() for t in _day_txns if t.payment_method == 'credit')
+        day_total  = day_cash + day_mpesa + day_credit
+
+        day_petty_cash = float(PettyCash.objects.filter(
+            business=business, status='approved',
+            created_at__gte=day_start, created_at__lte=day_end,
+        ).aggregate(t=Sum('amount'))['t'] or 0)
+        day_offline_adj = sum(float(s.offline_sales_amount or 0) for s in bar_shifts_today)
+        day_expected_cash = day_opening_float + day_cash + day_offline_adj - day_petty_cash
+
+        from .shift_views import _detect_overlapping_shift_pairs
+        overlap_pairs = _detect_overlapping_shift_pairs(bar_shifts_today)
+        has_overlapping_shifts = bool(overlap_pairs)
+        for a, b in overlap_pairs:
+            a_name = a.staff.get_full_name() or a.staff.username
+            b_name = b.staff.get_full_name() or b.staff.username
+            a_start = timezone.localtime(a.started_at).strftime('%H:%M')
+            b_start = timezone.localtime(b.started_at).strftime('%H:%M')
+            overlap_notes.append(
+                f"{a_name} (tangu {a_start}) na {b_name} (tangu {b_start}) waliingiliana "
+                f"kwenye till moja — jumla ya siku hapa chini si mara mbili, lakini safu za "
+                f"zamu zao binafsi hapo chini zinaweza kuonekana zinafanana."
+            )
 
     # Open tabs (cash still on the floor)
     open_tabs = BarTab.objects.filter(
@@ -3603,6 +3753,8 @@ def bar_z_report(request):
         'kra_pin':                   business.kra_pin or '',
         'counted_shifts':            counted_shifts,
         'business':                  business,
+        'has_overlapping_shifts':    has_overlapping_shifts,
+        'overlap_notes':             overlap_notes,
         'day_entertainment_paid':          round(day_entertainment_paid, 2),
         'day_entertainment_unpaid':        round(day_entertainment_unpaid, 2),
         'owner_consumption_txns':          owner_consumption_txns,
@@ -3615,7 +3767,6 @@ def bar_z_report(request):
 def bar_z_report_share(request):
     """Send the day's Z-report summary SMS to the owner's phone."""
     from .notifications import normalize_ke_phone, send_sms_notification
-    from .shift_views import _reconcile
     from accounts.models import UserProfile
 
     up = _get_up(request)
@@ -3633,21 +3784,20 @@ def bar_z_report_share(request):
     day_start = timezone.make_aware(timezone.datetime.combine(report_date, timezone.datetime.min.time()))
     day_end   = timezone.make_aware(timezone.datetime.combine(report_date, timezone.datetime.max.time()))
 
-    shifts = Shift.objects.filter(
-        business=business, started_at__gte=day_start, started_at__lte=day_end,
-    ).select_related('staff')
-
-    total_sales = total_cash = total_mpesa = 0.0
-    for shift in shifts:
-        try:
-            if shift.staff.userprofile.role == 'kitchen':
-                continue
-        except Exception:
-            pass
-        rec = _reconcile(shift)
-        total_sales += rec['total_sales']
-        total_cash  += rec['cash_sales']
-        total_mpesa += rec['mpesa_sales']
+    # 2026-07-26 fix — same double-count bug as bar_z_report's day tiles: summing
+    # each shift's own _reconcile() here double-counts any sale made while two
+    # different staff had overlapping bar shifts open. One deduped day-level
+    # query, matching bar_z_report's own fix, so the SMS and the on-screen
+    # report never disagree.
+    _day_txns = list(Transaction.objects.filter(
+        business=business, type='Issue',
+        created_at__gte=day_start, created_at__lte=day_end,
+        item__store__is_kitchen=False,
+    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item'))
+    total_cash  = sum(t.revenue() for t in _day_txns if t.payment_method == 'cash')
+    total_mpesa = sum(t.revenue() for t in _day_txns if t.payment_method == 'mpesa')
+    total_credit = sum(t.revenue() for t in _day_txns if t.payment_method == 'credit')
+    total_sales = total_cash + total_mpesa + total_credit
 
     open_tabs = BarTab.objects.filter(
         business=business, status='OPEN', opened_at__gte=day_start,

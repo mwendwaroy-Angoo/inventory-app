@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Maombi{% endblock %}
+
+{% block extra_css %}
+<style>
+.sr-card {
+  background:#2a2a2a; border:1px solid #3a3a3a; border-radius:10px;
+  padding:.75rem 1rem; margin-bottom:.55rem;
+  display:flex; align-items:flex-start; gap:.75rem; flex-wrap:wrap;
+}
+.sr-badge {
+  display:inline-block; border-radius:20px; padding:.2rem .65rem;
+  font-size:.72rem; font-weight:600; white-space:nowrap;
+}
+.sr-badge.pending  { background:rgba(255,152,0,.12); color:#ff9800; border:1px solid rgba(255,152,0,.3); }
+.sr-badge.approved { background:rgba(76,175,80,.12); color:#4caf50; border:1px solid rgba(76,175,80,.3); }
+.sr-badge.rejected { background:rgba(192,57,90,.12); color:#c0395a; border:1px solid rgba(192,57,90,.3); }
+.sr-cat {
+  display:inline-block; border-radius:6px; padding:.1rem .5rem; font-size:.68rem;
+  background:rgba(93,168,240,.1); border:1px solid rgba(93,168,240,.3); color:#5da8f0;
+}
+#sr-toast {
+  position:fixed; bottom:1.25rem; left:50%; transform:translateX(-50%) translateY(120%);
+  background:#2a2a2a; border:1px solid #c9a84c; border-radius:10px;
+  padding:.65rem 1.1rem; color:#f0ece4; font-size:.85rem; max-width:90vw;
+  box-shadow:0 4px 18px rgba(0,0,0,.4); z-index:2000;
+  transition:transform .25s ease; text-align:center;
+}
+#sr-toast.show { transform:translateX(-50%) translateY(0); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="page-title mb-1">📨 {% trans 'Maombi' %}</h1>
+    <div style="color:#b0b0b0; font-size:.85rem;">
+      {% if is_owner %}Maombi kutoka kwa wafanyakazi{% else %}Maombi yangu{% endif %}
+      {% if pending_count > 0 %}
+      — <span style="color:#ff9800; font-weight:600;">{{ pending_count }} yanasubiri</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <button class="btn btn-sm btn-gold" onclick="window.openNewRequest()">➕ Ombi Jipya</button>
+    <a href="?status=all" class="btn btn-sm {% if status_filter == 'all' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yote</a>
+    <a href="?status=pending" class="btn btn-sm {% if status_filter == 'pending' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yanasubiri</a>
+    <a href="?status=approved" class="btn btn-sm {% if status_filter == 'approved' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yamekubaliwa</a>
+    <a href="?status=rejected" class="btn btn-sm {% if status_filter == 'rejected' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yamekataliwa</a>
+  </div>
+</div>
+
+{% if not requests %}
+<div class="text-center py-5" style="color:#555;">
+  <div style="font-size:2rem; margin-bottom:.5rem;">📨</div>
+  Hakuna maombi {% if status_filter != 'all' %}kwa filter hii{% endif %}.
+</div>
+{% else %}
+{% for r in requests %}
+<div class="sr-card" id="sr-{{ r.id }}">
+  <div style="flex:1; min-width:200px;">
+    <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.2rem;">
+      <span class="sr-cat">{{ r.get_category_display }}</span>
+      <span style="color:#f0ece4; font-weight:600; font-size:.92rem;">{{ r.subject }}</span>
+    </div>
+    {% if r.description %}
+    <div style="color:#888; font-size:.8rem; margin-top:.2rem;">{{ r.description }}</div>
+    {% endif %}
+    <div style="color:#555; font-size:.75rem; margin-top:.3rem;">
+      {% if is_owner %}Kutoka kwa <strong style="color:#b0b0b0;">{{ r.requested_by.get_full_name|default:r.requested_by.username }}</strong> — {% endif %}
+      {{ r.created_at|date:"d M Y, H:i" }}
+    </div>
+    {% if r.reviewed_by %}
+    <div style="color:#555; font-size:.75rem; margin-top:.15rem;">
+      Imepitiwa na {{ r.reviewed_by.get_full_name|default:r.reviewed_by.username }}
+      — {{ r.reviewed_at|date:"d M Y, H:i" }}
+      {% if r.review_note %}: "{{ r.review_note }}"{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div style="display:flex; flex-direction:column; align-items:flex-end; gap:.4rem;">
+    <span class="sr-badge {{ r.status }}">
+      {% if r.status == 'pending' %}⏳ Inasubiri{% elif r.status == 'approved' %}✓ Imekubaliwa{% else %}✕ Imekataliwa{% endif %}
+    </span>
+    {% if is_owner and r.status == 'pending' %}
+    <div style="display:flex; gap:.4rem;">
+      <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
+              onclick="reviewRequest({{ r.id }}, 'approve')">✓ Kubali</button>
+      <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
+              onclick="reviewRequest({{ r.id }}, 'reject', this)">✕ Kataa</button>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<div id="sr-toast"></div>
+
+<!-- New request modal -->
+<div class="modal fade" id="newRequestModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#c9a84c;">📨 Ombi Jipya</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.85rem;">
+        <div style="margin-bottom:.5rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Aina</label>
+          <select id="sr-category" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.85rem;">
+            <option value="restock">📦 Ombi la Stock</option>
+            <option value="permission">🔓 Ruhusa Maalum</option>
+            <option value="correction">✏️ Marekebisho</option>
+            <option value="general" selected>💬 Jambo Lingine</option>
+          </select>
+        </div>
+        <div style="margin-bottom:.5rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Kichwa</label>
+          <input type="text" id="sr-subject" placeholder="e.g. Naomba kuongeza bei ya Tusker"
+                 style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.9rem;">
+        </div>
+        <div style="margin-bottom:.4rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Maelezo zaidi (hiari)</label>
+          <textarea id="sr-description" rows="3" placeholder="Eleza zaidi..."
+                 style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.85rem;"></textarea>
+        </div>
+        <div id="sr-error" style="display:none;color:#c0395a;font-size:.8rem;margin-top:.35rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;padding:.75rem;">
+        <button id="sr-submit-btn" class="btn btn-sm w-100"
+                style="background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.4);color:#c9a84c;font-weight:600;"
+                onclick="submitNewRequest()">📨 Tuma Ombi</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function srShowToast(msg) {
+  var el = document.getElementById('sr-toast');
+  if (!el) { alert(msg); return; }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(window._srToastTimer);
+  window._srToastTimer = setTimeout(function () { el.classList.remove('show'); }, 5000);
+}
+
+window.openNewRequest = function () {
+  document.getElementById('sr-subject').value = '';
+  document.getElementById('sr-description').value = '';
+  document.getElementById('sr-error').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('newRequestModal')).show();
+};
+
+window.submitNewRequest = function () {
+  var subject = document.getElementById('sr-subject').value.trim();
+  var errEl = document.getElementById('sr-error');
+  if (!subject) {
+    errEl.textContent = 'Andika kichwa cha ombi.';
+    errEl.style.display = 'block';
+    return;
+  }
+  var btn = document.getElementById('sr-submit-btn');
+  btn.disabled = true; btn.textContent = 'Inatuma...';
+  var body = new URLSearchParams({
+    category: document.getElementById('sr-category').value,
+    subject: subject,
+    description: document.getElementById('sr-description').value.trim(),
+    csrfmiddlewaretoken: '{{ csrf_token }}',
+  });
+  fetch('/staff-requests/submit/', {
+    method: 'POST', body: body, headers: {'X-CSRFToken': '{{ csrf_token }}'},
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      btn.disabled = false; btn.textContent = '📨 Tuma Ombi';
+      if (d.ok) {
+        var m = bootstrap.Modal.getInstance(document.getElementById('newRequestModal'));
+        if (m) m.hide();
+        srShowToast('✓ Ombi limetumwa.');
+        setTimeout(function () { location.reload(); }, 800);
+      } else {
+        errEl.textContent = d.error || 'Hitilafu.';
+        errEl.style.display = 'block';
+      }
+    })
+    .catch(function () {
+      btn.disabled = false; btn.textContent = '📨 Tuma Ombi';
+      errEl.textContent = 'Hitilafu ya mtandao.';
+      errEl.style.display = 'block';
+    });
+};
+
+window.reviewRequest = function (requestId, action, anchorEl) {
+  if (action === 'reject') {
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kwa nini umekataa?',
+      chips: ['Haiwezekani kwa sasa', 'Hitaji maelezo zaidi'],
+      onSelect: function (reason) { _submitReviewRequest(requestId, 'reject', reason); },
+    });
+    return;
+  }
+  _submitReviewRequest(requestId, 'approve', '');
+};
+
+function _submitReviewRequest(requestId, action, note) {
+  var body = new URLSearchParams({
+    action: action, review_note: note || '', csrfmiddlewaretoken: '{{ csrf_token }}',
+  });
+  fetch('/staff-requests/' + requestId + '/review/', {
+    method: 'POST', body: body, headers: {'X-CSRFToken': '{{ csrf_token }}'},
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        srShowToast(d.message || 'Imehifadhiwa.');
+        setTimeout(function () { location.reload(); }, 800);
+      } else {
+        alert(d.error || 'Hitilafu.');
+      }
+    })
+    .catch(function () { alert('Hitilafu ya mtandao.'); });
+}
+
+/* ── Reason Chips popover — same copy-pasted component used elsewhere (no
+   shared JS bundle in this app). See petty_cash_list.html for the original. */
+(function () {
+  var _rcPopover = null, _rcOnSelect = null;
+  function _rcClose() {
+    if (_rcPopover) { _rcPopover.remove(); _rcPopover = null; }
+    document.removeEventListener('mousedown', _rcOutsideClick, true);
+  }
+  function _rcOutsideClick(e) {
+    if (_rcPopover && !_rcPopover.contains(e.target)) {
+      var cb = _rcOnSelect; _rcClose();
+      if (cb) cb('');
+    }
+  }
+  window.openReasonChips = function (opts) {
+    _rcClose();
+    _rcOnSelect = opts.onSelect || function () {};
+    var chips = opts.chips || [];
+    var pop = document.createElement('div');
+    pop.style.cssText = 'position:absolute;z-index:3000;background:#222;border:1px solid #444;border-radius:10px;padding:.6rem;box-shadow:0 6px 20px rgba(0,0,0,.4);max-width:280px;font-size:.8rem;';
+    var html = '<div style="color:#c9a84c;font-weight:600;margin-bottom:.4rem;">' + (opts.title || 'Sababu') + '</div><div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.5rem;">';
+    chips.forEach(function (c, i) {
+      html += '<button type="button" class="rc-chip" data-i="' + i + '" style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);color:#e2c36e;border-radius:20px;padding:.35rem .7rem;font-size:.78rem;cursor:pointer;white-space:nowrap;">' + c + '</button>';
+    });
+    html += '<button type="button" class="rc-chip-other" style="background:rgba(255,255,255,.05);border:1px solid #555;color:#ccc;border-radius:20px;padding:.35rem .7rem;font-size:.78rem;cursor:pointer;">' + (opts.otherLabel || 'Nyingine…') + '</button></div>' +
+      '<div class="rc-other-row" style="display:none;gap:.3rem;margin-bottom:.5rem;">' +
+      '<input type="text" class="rc-other-input" maxlength="300" style="flex:1;min-width:0;background:#111;border:1px solid #444;border-radius:6px;color:#f0ece4;padding:.3rem .5rem;font-size:.78rem;">' +
+      '<button type="button" class="rc-other-send" style="background:#c9a84c;border:none;border-radius:6px;color:#111;padding:.3rem .6rem;font-size:.78rem;cursor:pointer;">Tuma</button></div>' +
+      '<button type="button" class="rc-skip" style="display:block;width:100%;background:transparent;border:1px dashed #444;color:#888;border-radius:6px;padding:.3rem;font-size:.74rem;cursor:pointer;">' + (opts.skipLabel || 'Ruka — bila sababu') + '</button>';
+    pop.innerHTML = html;
+    document.body.appendChild(pop);
+    _rcPopover = pop;
+
+    if (opts.anchorEl) {
+      var r = opts.anchorEl.getBoundingClientRect();
+      pop.style.top = (r.bottom + window.scrollY + 6) + 'px';
+      pop.style.left = Math.max(10, r.left + window.scrollX) + 'px';
+    } else {
+      pop.style.top = '40%'; pop.style.left = '50%'; pop.style.transform = 'translate(-50%, -50%)';
+    }
+
+    pop.querySelectorAll('.rc-chip').forEach(function (btn) {
+      btn.onclick = function () {
+        var text = chips[parseInt(btn.dataset.i, 10)];
+        var cb = _rcOnSelect; _rcClose(); cb(text);
+      };
+    });
+    pop.querySelector('.rc-chip-other').onclick = function () {
+      pop.querySelector('.rc-other-row').style.display = 'flex';
+      pop.querySelector('.rc-other-input').focus();
+    };
+    pop.querySelector('.rc-other-send').onclick = function () {
+      var text = pop.querySelector('.rc-other-input').value.trim();
+      var cb = _rcOnSelect; _rcClose(); cb(text);
+    };
+    pop.querySelector('.rc-skip').onclick = function () {
+      var cb = _rcOnSelect; _rcClose(); cb('');
+    };
+    setTimeout(function () { document.addEventListener('mousedown', _rcOutsideClick, true); }, 0);
+  };
+})();
+</script>
+{% endblock %}
