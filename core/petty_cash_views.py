@@ -43,6 +43,17 @@ def record_petty_cash(request):
     if reason not in valid_reasons:
         reason = 'other'
 
+    # 2026-07-27 — which till this cash came out of (see shift_views.
+    # till_expected_cash() and PettyCash.station's docstring). The shared
+    # modal (bar_board/kitchen_board/quick_sell) sends a 'station' field set
+    # by whichever board included it; fall back to the recording staffer's
+    # own role — the same discriminator _reconcile() already uses — when it's
+    # missing or invalid (e.g. an older cached page, or Quick Sell which has
+    # no station of its own).
+    station = (request.POST.get('station') or '').strip()
+    if station not in ('bar', 'kitchen'):
+        station = 'kitchen' if getattr(up, 'role', '') == 'kitchen' else 'bar'
+
     # 2026-07-26 (item 1) — mismatch flag: if this staffer has an open shift, warn
     # (never block — this app never hard-blocks on a figure that could be a real,
     # legitimate withdrawal) when this entry would take total petty cash beyond
@@ -75,6 +86,7 @@ def record_petty_cash(request):
         description=description,
         recorded_by=request.user,
         date=timezone.localdate(),
+        station=station,
     )
     return JsonResponse({
         'ok': True,

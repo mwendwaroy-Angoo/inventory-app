@@ -132,6 +132,36 @@
           <div class="value">{{ r.elapsed }}</div>
         </div>
       </div>
+      {% if s.expected_opening_cash is not None %}
+      <div style="margin-top:.5rem; font-size:.76rem; color:#888;">
+        Ufunguzi: alihesabu <strong style="color:var(--pearl);">KES {{ s.opening_float|floatformat:0 }}</strong>,
+        mfumo ulitarajia <strong style="color:var(--pearl);">KES {{ s.expected_opening_cash|floatformat:0 }}</strong>
+        {% if s.opening_variance and s.opening_variance|floatformat:0 != "0" %}
+          — tofauti <strong style="color:{% if s.opening_variance < 0 %}#c0395a{% else %}#f0a840{% endif %};">
+            {% if s.opening_variance >= 0 %}+{% endif %}KES {{ s.opening_variance|floatformat:0 }}</strong>
+        {% endif %}
+        {% if s.banked_amount %} · KES {{ s.banked_amount|floatformat:0 }} zilibankwa kabla ya kuanza{% endif %}
+      </div>
+      {% endif %}
+      {% if s.status == 'CLOSED' %}
+        {% if r.petty_cash or r.petty_cash_pending or r.petty_cash_rejected %}
+        <div style="margin-top:.5rem; padding:.5rem .65rem; background:rgba(255,152,0,0.06);
+                    border:1px solid rgba(255,152,0,0.2); border-radius:6px; font-size:.78rem;">
+          <div style="color:#ff9800; font-weight:600; margin-bottom:.2rem;">🪙 Petty Cash — kabla ya "Thibitisha"</div>
+          <div style="color:var(--pearl);">Imekubaliwa (tayari imepunguzwa kwenye Inayotarajiwa): <strong>KES {{ r.petty_cash|floatformat:0 }}</strong></div>
+          {% if r.petty_cash_pending %}
+          <div style="color:#e2c36e; margin-top:.15rem;">
+            Inasubiri idhini yako: <strong>KES {{ r.petty_cash_pending|floatformat:0 }}</strong> —
+            ikikubaliwa, Inayotarajiwa itapungua kufikia <strong>KES {{ r.expected_cash_if_pending_approved|floatformat:0 }}</strong>.
+            <a href="{% url 'petty_cash_list' %}?status=pending" style="color:#e2c36e;">Kagua sasa →</a>
+          </div>
+          {% endif %}
+          {% if r.petty_cash_rejected %}
+          <div style="color:#888; margin-top:.15rem;">Ilikataliwa (haikupunguzwa): KES {{ r.petty_cash_rejected|floatformat:0 }}</div>
+          {% endif %}
+        </div>
+        {% endif %}
+      {% endif %}
       {% if s.closing_cash_counted is not None and r.variance and r.variance|floatformat:0 != "0" %}
       <div style="margin-top:.6rem; padding:.5rem .65rem; background:rgba(201,168,76,0.06);
                   border:1px solid rgba(201,168,76,0.2); border-radius:6px;">

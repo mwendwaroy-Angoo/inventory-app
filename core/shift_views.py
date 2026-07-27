@@ -102,6 +102,21 @@ def get_active_staff_shift(user_profile, business, manager_must_have_shift=False
     return active if active else False
 
 
+def _shift_station(shift):
+    """'kitchen' or 'bar' — the counter this shift belongs to, by staff role
+    (the same discriminator _reconcile() already uses for its own station
+    filter; Shift.store is not station-aware — it's just set to the
+    business's first store at creation, not the store actually worked).
+    An owner's own shift (if they ever open one) has no single station and
+    must not be passed through here for till purposes — see
+    till_expected_cash()'s docstring.
+    """
+    try:
+        return 'kitchen' if shift.staff.userprofile.role == 'kitchen' else 'bar'
+    except Exception:
+        return 'bar'
+
+
 # ── Variance attribution ──────────────────────────────────────────────────────
 
 def attribute_variance_shift(business, current_shift, item=None, keg_barrel=None):
@@ -205,23 +220,30 @@ def _reconcile(shift):
     # see — right at close_shift(), including the >KES 500 alert — is already correct;
     # previously only the Z-report (built later) subtracted it, so a false shortfall
     # alarm could already have fired by the time the report caught up.
-    petty_total = float(PettyCash.objects.filter(
-        business=shift.business, status='approved',
-        created_at__gte=shift.started_at, created_at__lte=end,
-    ).aggregate(t=Sum('amount'))['t'] or 0)
+    # 2026-07-27 — station-scoped (PettyCash.station), mirroring the txns
+    # station filter immediately above (including the same "owner shift stays
+    # unscoped" exception — an owner's own shift isn't tied to one counter, so
+    # its reconciliation must still see petty cash from either till).
+    # Previously unscoped entirely, so a kitchen petty-cash withdrawal bled
+    # into a concurrently-open bar shift's reconciliation and vice versa on
+    # any combo bar+kitchen business — the same double-count-across-counters
+    # shape as the overlap bug this file already guards against for
+    # Transaction/CustomerDebtPayment. Blank-station rows (pre-migration, or a
+    # genuinely business-wide withdrawal with no clear till) are excluded from
+    # both stations rather than guessed into one — see PettyCash.station's docstring.
+    _petty_qs = PettyCash.objects.filter(business=shift.business, created_at__gte=shift.started_at, created_at__lte=end)
+    if staff_role == 'kitchen':
+        _petty_qs = _petty_qs.filter(station='kitchen')
+    elif staff_role != 'owner':
+        _petty_qs = _petty_qs.filter(station='bar')
+    petty_total = float(_petty_qs.filter(status='approved').aggregate(t=Sum('amount'))['t'] or 0)
 
     # 2026-07-26 (item 1) — petty cash still awaiting the owner's decision, shown
     # separately from the already-approved total so the shift-close screen can
     # present the full chain: cash sales → petty cash (pending) → remaining, and
     # only "solidify" the remaining figure once the owner actually decides.
-    petty_pending = float(PettyCash.objects.filter(
-        business=shift.business, status='pending',
-        created_at__gte=shift.started_at, created_at__lte=end,
-    ).aggregate(t=Sum('amount'))['t'] or 0)
-    petty_rejected = float(PettyCash.objects.filter(
-        business=shift.business, status='rejected',
-        created_at__gte=shift.started_at, created_at__lte=end,
-    ).aggregate(t=Sum('amount'))['t'] or 0)
+    petty_pending = float(_petty_qs.filter(status='pending').aggregate(t=Sum('amount'))['t'] or 0)
+    petty_rejected = float(_petty_qs.filter(status='rejected').aggregate(t=Sum('amount'))['t'] or 0)
 
     # 2026-07-26 (item 3 fix) — debt RECOVERED (an old credit sale being paid back
     # in cash/mpesa) is a completely separate model (CustomerDebtPayment) from a
@@ -272,6 +294,126 @@ def _reconcile(shift):
         'elapsed_mins':       elapsed_secs // 60,
         'offline_adj':        round(offline_adj, 2),
         'offline_sales_note': shift.offline_sales_note or '',
+    }
+
+
+def till_expected_cash(business, station, as_of=None):
+    """Live, continuous "how much cash SHOULD be sitting in this till right
+    now" for one station ('bar' or 'kitchen') — independent of shift
+    boundaries.
+
+    2026-07-27, Roy's own accountability ask: what the system says is cash
+    and what staff physically counts at the counter should match REGARDLESS
+    of a shift change in between, and must also correctly include any cash
+    sales the OWNER makes directly without ever opening a shift (the owner
+    sells freely, no gate — see get_active_staff_shift()). A per-shift
+    _reconcile() alone can't answer this: it only knows about activity
+    inside ONE shift's own [started_at, ended_at] window, and resets its
+    frame of reference every time a new shift opens. This instead anchors on
+    the last moment this station's cash was PHYSICALLY counted (a shift
+    close — close_shift() always sets closing_cash_counted) and adds every
+    cash movement since, purely by time + station, whether or not a shift
+    happened to be open when it occurred — a gap with no shift at all is
+    just as visible to this query as one covered by a shift.
+
+    Formula:
+        expected = anchor.closing_cash_counted   (0 if this station has never closed a shift)
+                 + cash sales since the anchor
+                 + debt recovered in cash since the anchor
+                 - approved petty cash since the anchor (station-scoped — see
+                   PettyCash.station; unattributed/blank-station entries are
+                   deliberately excluded from BOTH stations rather than guessed)
+                 - banked/removed amounts declared by any shift opened since
+                   the anchor (Shift.banked_amount)
+
+    Owner-staffed shifts are excluded as anchors and from the banked-amount
+    sweep — _reconcile() already treats an owner's own shift as unscoped (it
+    may span both counters at once), so it can't reliably anchor ONE
+    station's till; the owner's own cash/debt/petty-cash activity is still
+    counted via the plain time-window sums above, same as any other actor.
+
+    Returns a dict — expected_cash, anchor_at (datetime or None),
+    anchor_label (str or None), breakdown (dict of the components above).
+    Never raises.
+    """
+    as_of = as_of or timezone.now()
+    is_kitchen = (station == 'kitchen')
+
+    anchor_qs = Shift.objects.filter(
+        business=business, status__in=('CLOSED', 'CONFIRMED'),
+        ended_at__isnull=False, ended_at__lte=as_of,
+    ).exclude(staff__userprofile__role='owner').select_related('staff')
+    anchor_qs = (
+        anchor_qs.filter(staff__userprofile__role='kitchen') if is_kitchen
+        else anchor_qs.exclude(staff__userprofile__role='kitchen')
+    )
+    anchor = anchor_qs.order_by('-ended_at').first()
+
+    if anchor:
+        base = float(anchor.closing_cash_counted or 0)
+        window_start = anchor.ended_at
+        anchor_label = (
+            f"{anchor.staff.get_full_name() or anchor.staff.username} — "
+            f"{timezone.localtime(anchor.ended_at).strftime('%d %b, %H:%M')}"
+        )
+    else:
+        base = 0.0
+        window_start = None
+        anchor_label = None
+
+    _rev = Case(
+        When(sale_amount__isnull=False, then=F('sale_amount')),
+        default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+    txns = Transaction.objects.filter(
+        business=business, type='Issue', payment_method='cash',
+        created_at__lte=as_of, item__store__is_kitchen=is_kitchen,
+    ).exclude(invoice_no='[SVQ]')
+    if window_start:
+        txns = txns.filter(created_at__gt=window_start)
+    cash_sales = float(txns.aggregate(t=Sum(_rev))['t'] or 0)
+
+    from .models import CustomerDebtPayment
+    debt_qs = CustomerDebtPayment.objects.filter(
+        business=business, payment_method='cash',
+        source=('kitchen' if is_kitchen else 'bar'), paid_at__lte=as_of,
+    )
+    if window_start:
+        debt_qs = debt_qs.filter(paid_at__gt=window_start)
+    debt_recovered = float(debt_qs.aggregate(t=Sum('amount_paid'))['t'] or 0)
+
+    petty_qs = PettyCash.objects.filter(
+        business=business, status='approved',
+        station=('kitchen' if is_kitchen else 'bar'), created_at__lte=as_of,
+    )
+    if window_start:
+        petty_qs = petty_qs.filter(created_at__gt=window_start)
+    petty_approved = float(petty_qs.aggregate(t=Sum('amount'))['t'] or 0)
+
+    banked = 0.0
+    if window_start:
+        banked_qs = Shift.objects.filter(
+            business=business, started_at__gt=window_start, started_at__lte=as_of,
+        ).exclude(staff__userprofile__role='owner')
+        banked_qs = (
+            banked_qs.filter(staff__userprofile__role='kitchen') if is_kitchen
+            else banked_qs.exclude(staff__userprofile__role='kitchen')
+        )
+        banked = float(banked_qs.aggregate(t=Sum('banked_amount'))['t'] or 0)
+
+    expected = base + cash_sales + debt_recovered - petty_approved - banked
+    return {
+        'expected_cash': round(expected, 2),
+        'anchor_at':     window_start,
+        'anchor_label':  anchor_label,
+        'breakdown': {
+            'base':           round(base, 2),
+            'cash_sales':     round(cash_sales, 2),
+            'debt_recovered': round(debt_recovered, 2),
+            'petty_cash':     round(petty_approved, 2),
+            'banked':         round(banked, 2),
+        },
     }
 
 
@@ -564,6 +706,16 @@ def active_shift_api(request):
         except Exception:
             return False
 
+    # 2026-07-27 — continuous till figure per station, for both the opening-shift
+    # suggestion (replaces the old my-own-shift-scoped last_closing — see
+    # till_expected_cash()'s docstring for why that was wrong for anyone opening
+    # after a DIFFERENT staff member's shift) and the owner's home-dashboard
+    # "expected cash right now" tiles, which need both stations regardless of
+    # which board this request came from.
+    till_by_station = {'bar': till_expected_cash(up.business, 'bar')}
+    if getattr(up.business, 'has_kitchen', False):
+        till_by_station['kitchen'] = till_expected_cash(up.business, 'kitchen')
+
     # All open/closing shifts for the business (for dashboard)
     all_open = list(
         Shift.objects.filter(
@@ -635,17 +787,20 @@ def active_shift_api(request):
                     },
                     'can_open': True,
                     'all_shifts': all_shifts_data,
+                    'till_by_station': till_by_station,
                     'auto_closed': len(auto_closed),
                 })
 
-        # Float suggestion: the previous CONFIRMED shift opened by this same staff member
-        last = Shift.objects.filter(
-            business=up.business,
-            status='CONFIRMED',
-            closing_cash_counted__isnull=False,
-            staff=request.user,
-        ).order_by('-ended_at').first()
-        last_closing = float(last.closing_cash_counted) if last else None
+        # Float suggestion: 2026-07-27 — station-wide live till figure (was
+        # previously scoped to "the previous CONFIRMED shift opened by THIS
+        # SAME staff member", which meant a different staffer opening after
+        # someone else closed got no suggestion at all, and never accounted
+        # for owner sales made in the gap with no shift open — see
+        # till_expected_cash()'s docstring). last_closing kept (same key,
+        # same meaning to the frontend: "what should I count towards") for
+        # the my_station this staffer is about to open on.
+        my_open_station = 'kitchen' if getattr(up, 'role', '') == 'kitchen' else 'bar'
+        last_closing = till_by_station.get(my_open_station, till_by_station['bar'])['expected_cash']
 
         # Missed-tasks reminder: check the most recent CLOSED auto-closed shift
         # for this staff member. Remind until the shift is CONFIRMED.
@@ -662,6 +817,7 @@ def active_shift_api(request):
             'can_open': True,
             'last_closing': last_closing,
             'all_shifts': all_shifts_data,
+            'till_by_station': till_by_station,
             'auto_closed': len(auto_closed),
             'missed_tasks': missed_tasks,
         })
@@ -691,6 +847,7 @@ def active_shift_api(request):
         },
         'can_open': False,
         'all_shifts': all_shifts_data,
+        'till_by_station': till_by_station,
         'auto_closed': len(auto_closed),
     })
 
@@ -773,11 +930,32 @@ def open_shift(request):
                 )
                 break
 
+    # 2026-07-27 — continuous till accountability: compute what the system
+    # expects this station's cash to be RIGHT NOW (before this shift exists,
+    # so the anchor/window still correctly points at whatever came before —
+    # the previous shift's close, or the owner selling directly in the gap
+    # with no shift open at all) and compare it to what staff physically
+    # counted and typed in as opening_float. Mirrors the >KES 500 threshold
+    # close_shift() already uses for its own closing-cash variance alert.
+    #
+    # banked_amount is subtracted from the raw till figure before comparing —
+    # it's a real, legitimate reduction staff/owner is declaring RIGHT NOW
+    # (cash physically removed before this count), which till_expected_cash()
+    # itself has no way to know about yet since this shift doesn't exist
+    # until the create() below. Without this, every single banked-cash open
+    # would falsely read as a shortage equal to the banked amount.
+    till = till_expected_cash(up.business, my_station)
+    expected_opening_cash = Decimal(str(till['expected_cash'])) - banked
+    opening_variance = opening_float - expected_opening_cash
+
     shift = Shift.objects.create(
         business=up.business,
         store=up.business.stores.first() if up.business.stores.exists() else None,
         staff=request.user,
         opening_float=opening_float,
+        banked_amount=banked,
+        expected_opening_cash=expected_opening_cash,
+        opening_variance=opening_variance,
         notes=full_notes,
     )
 
@@ -804,6 +982,42 @@ def open_shift(request):
         except Exception:
             pass
 
+    # Opening cash variance alert — fires to owner/manager when what staff
+    # physically counted differs materially from the till's live-computed
+    # expected figure (same >KES 500 threshold and delivery shape as
+    # close_shift()'s closing-cash variance alert, just at the other end of
+    # the shift).
+    if abs(opening_variance) > 500:
+        try:
+            from .notifications import normalize_ke_phone as _nkp, send_sms_notification as _ssms
+            from .models import Notification as _Notif
+            from accounts.models import UserProfile as _UP
+            _staff_name = request.user.get_full_name() or request.user.username
+            _direction  = 'pungufu' if opening_variance < 0 else 'zaidi'
+            _alert_msg  = (
+                f"⚠️ Tofauti ya fedha ufunguzi wa shift — {_staff_name} ({my_station}): "
+                f"alihesabu KES {int(opening_float)}, mfumo ulitarajia KES "
+                f"{int(expected_opening_cash)} ({_direction} kwa KES {abs(int(opening_variance))}). "
+                f"Angalia Shift History kwa maelezo zaidi."
+            )
+            for _op in _UP.objects.filter(
+                business=up.business, role__in=['owner', 'manager']
+            ).select_related('user'):
+                _Notif.objects.create(
+                    user=_op.user,
+                    title='⚠️ Tofauti ya Fedha — Ufunguzi',
+                    message=_alert_msg,
+                    notification_type='warning',
+                    link_url='/bar/shift/history/',
+                )
+                if _op.phone:
+                    try:
+                        _ssms(_alert_msg, _nkp(_op.phone))
+                    except Exception:
+                        pass
+        except Exception:
+            logger.exception('open_shift: opening cash variance alert failed for shift %s', shift.id)
+
     # Kitchen staff have no kegs — skip barrel confirm step entirely
     if getattr(up, 'role', '') == 'kitchen':
         tapped = []
@@ -815,6 +1029,8 @@ def open_shift(request):
         'shift_id': shift.id,
         'staff_name': request.user.get_full_name() or request.user.username,
         'opening_float': float(opening_float),
+        'expected_opening_cash': float(expected_opening_cash),
+        'opening_variance': float(opening_variance),
         'started_at': timezone.localtime(shift.started_at).strftime('%H:%M'),
         'tapped_barrels': tapped,
         'overlap_warning': overlap_warning,

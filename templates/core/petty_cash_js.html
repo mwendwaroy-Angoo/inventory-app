@@ -24,7 +24,12 @@ window._submitPettyCash = function() {
 
   var CSRF_TOKEN = document.querySelector('[name=csrfmiddlewaretoken]');
   var csrf = CSRF_TOKEN ? CSRF_TOKEN.value : '{{ csrf_token }}';
-  var body = new URLSearchParams({amount: amount, reason: reason, description: desc, csrfmiddlewaretoken: csrf});
+  // 2026-07-27 — which till this came out of; set by the including board
+  // (bar_board.html='bar', kitchen_board.html='kitchen') before this modal
+  // is ever opened. Left unset on Quick Sell — the server falls back to the
+  // recording staffer's own role there. See PettyCash.station's docstring.
+  var station = window.PETTY_CASH_STATION || '';
+  var body = new URLSearchParams({amount: amount, reason: reason, description: desc, station: station, csrfmiddlewaretoken: csrf});
   fetch('/petty-cash/record/', {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}})
     .then(function(r){ return r.json(); })
     .then(function(d){

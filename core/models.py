@@ -971,6 +971,19 @@ class PettyCash(models.Model):
         related_name='petty_cash_entries',
     )
 
+    # ── 2026-07-27 — station attribution ─────────────────────────────────────
+    # Which till this cash physically came out of. Blank/unset on older rows
+    # (pre-migration) and on business-wide withdrawals with no clear counter
+    # (e.g. an owner paying rent from the safe, not either till) — those are
+    # deliberately excluded from BOTH stations' till math (shift_views.
+    # till_expected_cash) rather than guessed into one, since attributing them
+    # wrongly would make that till's expected figure wrong, not just vague.
+    STATION_CHOICES = [
+        ('bar',     _('Bar')),
+        ('kitchen', _('Kitchen')),
+    ]
+    station = models.CharField(max_length=10, choices=STATION_CHOICES, blank=True)
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = _('Petty Cash Entry')
@@ -2310,6 +2323,25 @@ class Shift(models.Model):
     variance_review_status = models.CharField(
         max_length=15, blank=True, choices=VARIANCE_REVIEW_CHOICES,
     )
+
+    # ── Continuous till accountability (2026-07-27) ─────────────────────────────
+    # Previously "Kiasi kilichoondolewa / kubanked" was accepted at open_shift() and
+    # folded into an audit NOTE string only — never stored, so it was invisible to
+    # any real reconciliation math. banked_amount is cash physically removed from
+    # this station's till between the PREVIOUS shift's close and THIS shift's open
+    # (an owner banking excess cash, for example) — see shift_views.
+    # till_expected_cash(), which subtracts it when carrying the running balance
+    # forward across the gap.
+    banked_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0'),
+        help_text='Cash removed/banked from this till between the previous shift closing and this one opening.',
+    )
+    # What the system computed the till SHOULD have held at the moment this shift
+    # opened (till_expected_cash() as of just before creation) — frozen here so the
+    # audit trail stays stable even as later activity changes the live figure.
+    # opening_variance = opening_float - expected_opening_cash; null until computed.
+    expected_opening_cash = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    opening_variance = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     class Meta:
         ordering = ['-started_at']
