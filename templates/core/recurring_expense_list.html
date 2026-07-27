@@ -7,6 +7,11 @@
 <style>
     .rc-card { background:var(--onyx-card); border:1px solid #2a2a2a; border-radius:10px; overflow:hidden; margin-bottom:1.25rem; }
     .rc-card-header { background:linear-gradient(135deg,#1a1a1a,#2a2a2a); border-bottom:1px solid #333; padding:0.75rem 1.25rem; font-family:'Playfair Display',serif; color:var(--gold); font-size:1rem; }
+    /* 2026-07-27 live report: the table's 9 columns (Description..Actions) overflow
+       a phone screen; .rc-card's own overflow:hidden (there for rounded corners) was
+       CLIPPING the Edit/Delete buttons in the last column entirely, not just pushing
+       them off-screen — same .scroll-wrap pattern already used in keg_reconciliation.html. */
+    .scroll-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .exp-table { width:100%; border-collapse:collapse; font-size:0.88rem; }
     .exp-table thead tr { font-size:0.7rem; color:var(--gold); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid #2a2a2a; }
     .exp-table th { padding:0.5rem 0.75rem; font-weight:600; white-space:nowrap; }
@@ -119,6 +124,7 @@
 {% if expenses %}
 <div class="rc-card">
     <div class="rc-card-header">📋 Active & Inactive Recurring Expenses</div>
+    <div class="scroll-wrap">
     <table class="exp-table">
         <thead>
             <tr>
@@ -170,6 +176,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% else %}
 <div style="background:var(--onyx-card); border:1px solid #2a2a2a; border-radius:10px; padding:2rem; text-align:center; color:#555;">
