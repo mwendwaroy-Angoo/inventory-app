@@ -2331,10 +2331,14 @@ class Shift(models.Model):
     # this station's till between the PREVIOUS shift's close and THIS shift's open
     # (an owner banking excess cash, for example) — see shift_views.
     # till_expected_cash(), which subtracts it when carrying the running balance
-    # forward across the gap.
+    # forward across the gap. Can go NEGATIVE — review_opening_variance() also uses
+    # this same field to fold in a later-acknowledged correction (a shortfall
+    # increases it, a surplus decreases it below zero), so till_expected_cash()
+    # needs no separate mechanism for "explained after the fact" vs "declared at
+    # open time" — both are the same fact, just discovered at different times.
     banked_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=Decimal('0'),
-        help_text='Cash removed/banked from this till between the previous shift closing and this one opening.',
+        help_text='Net cash removed (or, if negative, added) from this till since the previous shift closed.',
     )
     # What the system computed the till SHOULD have held at the moment this shift
     # opened (till_expected_cash() as of just before creation) — frozen here so the
@@ -2342,6 +2346,36 @@ class Shift(models.Model):
     # opening_variance = opening_float - expected_opening_cash; null until computed.
     expected_opening_cash = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     opening_variance = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    # ── Opening-variance accountability (2026-07-27, live report) ───────────────
+    # Roy's own real scenario: staff opens with float=0 because the till's real
+    # cash was already taken by the owner (e.g. deposited to his own M-Pesa)
+    # before this shift started, but nobody declared it as banked_amount at open
+    # time. The system correctly flags the resulting variance (see open_shift()),
+    # but without a way to ACKNOWLEDGE it as legitimate, till_expected_cash()
+    # would keep carrying the old, now-explained figure forward into every later
+    # calculation — same shape as the close-side variance conversation
+    # (variance_note / variance_review_*), mirrored here for the opening side.
+    # review_opening_variance() folds an acknowledged amount into banked_amount
+    # (reversible on re-review) so the running till reflects the correction
+    # immediately, not just once this shift eventually closes.
+    opening_variance_note = models.CharField(
+        max_length=300, blank=True,
+        help_text="Staff's own explanation for an opening-cash variance, captured via reason chips.",
+    )
+    opening_variance_mpesa_ref = models.CharField(
+        max_length=40, blank=True,
+        help_text='M-Pesa transaction code, when the explanation was "sent/deposited to M-Pesa".',
+    )
+    opening_variance_reviewed_by = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='shift_opening_variances_reviewed',
+    )
+    opening_variance_reviewed_at = models.DateTimeField(null=True, blank=True)
+    opening_variance_review_note = models.CharField(max_length=300, blank=True)
+    opening_variance_review_status = models.CharField(
+        max_length=15, blank=True, choices=VARIANCE_REVIEW_CHOICES,
+    )
 
     class Meta:
         ordering = ['-started_at']

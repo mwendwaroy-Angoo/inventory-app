@@ -1415,6 +1415,23 @@ def recent_settled_tabs_api(request):
     matching every other "today" surface in this app), defaulting to today
     when no date is given, with no artificial cap — a single business's
     one-day paid-entry count is never large enough to need one.
+
+    ?station=bar|kitchen (2026-07-27 live report — "recent sales in the tabs
+    drawer for either bar board or bar orders are showing kitchen sales").
+    ROOT CAUSE: this endpoint is the SAME URL for all three callers (bar
+    board, kitchen board, Quick Sell/"Bar Orders") with no indication of
+    which counter is asking, so it fell back to _allowed_tab_sources(up) —
+    an IDENTITY check (what is this viewer PERMITTED to see) — as if it were
+    also a DISPLAY-SCOPE check (what belongs to the counter they're currently
+    looking at). For an owner/manager, both stations are always permitted,
+    so the per-entry filter below (which reused that same `allowed` set)
+    never actually excluded anything — every owner viewing Bar Board's panel
+    saw kitchen sales mixed in, and vice versa. `station`, when given, is an
+    explicit DISPLAY restriction on top of (never instead of) the permission
+    check — still intersected with `allowed`, so a station-restricted
+    staffer can't use the param to see a counter they're not permitted to.
+    Falls back to the old permission-only behavior when omitted (defensive
+    default for a stale cached page), but all three templates now send it.
     """
     up = _get_up(request)
     if not up:
@@ -1432,6 +1449,11 @@ def recent_settled_tabs_api(request):
     day_end = timezone.make_aware(datetime.combine(sel_date, dt_time.max))
 
     allowed = _allowed_tab_sources(up)
+    station_param = (request.GET.get('station') or '').strip()
+    display_stations = {'kitchen', 'bar'} & allowed
+    if station_param in ('bar', 'kitchen'):
+        display_stations = {station_param} & allowed
+
     paid_entries = (
         BarTabEntry.objects.filter(
             tab__business=up.business, is_paid=True,
@@ -1449,7 +1471,7 @@ def recent_settled_tabs_api(request):
             is_kitchen = bool(e.transaction.item.store.is_kitchen)
         except Exception:
             is_kitchen = False
-        if ('kitchen' if is_kitchen else 'bar') not in allowed:
+        if ('kitchen' if is_kitchen else 'bar') not in display_stations:
             continue
         tab = e.tab
         bucket = tabs_map.get(tab.id)
@@ -1500,7 +1522,7 @@ def recent_settled_tabs_api(request):
             is_kitchen = bool(t.item.store.is_kitchen)
         except Exception:
             is_kitchen = False
-        if ('kitchen' if is_kitchen else 'bar') not in allowed:
+        if ('kitchen' if is_kitchen else 'bar') not in display_stations:
             continue
         direct.append({
             'id': t.id,

@@ -140,8 +140,40 @@
           — tofauti <strong style="color:{% if s.opening_variance < 0 %}#c0395a{% else %}#f0a840{% endif %};">
             {% if s.opening_variance >= 0 %}+{% endif %}KES {{ s.opening_variance|floatformat:0 }}</strong>
         {% endif %}
-        {% if s.banked_amount %} · KES {{ s.banked_amount|floatformat:0 }} zilibankwa kabla ya kuanza{% endif %}
+        {% if s.banked_amount %} · KES {{ s.banked_amount|floatformat:0 }} zilibankwa/zimerekebishwa tangu shift iliyopita{% endif %}
       </div>
+      {% if s.opening_variance and s.opening_variance|floatformat:0 != "0" %}
+      <div style="margin-top:.4rem; padding:.5rem .65rem; background:rgba(201,168,76,0.06);
+                  border:1px solid rgba(201,168,76,0.2); border-radius:6px;">
+        {% if s.opening_variance_note %}
+        <div style="font-size:.8rem; color:var(--pearl);">
+          💬 <strong>{{ s.staff.get_full_name|default:s.staff.username }}:</strong> "{{ s.opening_variance_note }}"
+          {% if s.opening_variance_mpesa_ref %}<span style="color:#888;"> — M-Pesa ref: {{ s.opening_variance_mpesa_ref }}</span>{% endif %}
+        </div>
+        {% else %}
+        <div style="font-size:.78rem; color:#888;">Hakuna maelezo kutoka kwa mfanyakazi.</div>
+        {% endif %}
+        {% if s.opening_variance_review_status == 'acknowledged' %}
+        <div style="font-size:.78rem; color:#5dde7a; margin-top:.35rem;">
+          ✓ Imethibitishwa na {{ s.opening_variance_reviewed_by.get_full_name|default:s.opening_variance_reviewed_by.username }}
+          — {{ s.opening_variance_reviewed_at|date:"d M, H:i" }} — kiasi hiki hakitatarajiwa tena kwenye "Inayotarajiwa" ijayo.
+          {% if s.opening_variance_review_note %}"{{ s.opening_variance_review_note }}"{% endif %}
+        </div>
+        {% elif s.opening_variance_review_status == 'flagged' %}
+        <div style="font-size:.78rem; color:#c0395a; margin-top:.35rem;">
+          🔍 Imewekwa alama na {{ s.opening_variance_reviewed_by.get_full_name|default:s.opening_variance_reviewed_by.username }}
+          — {{ s.opening_variance_reviewed_at|date:"d M, H:i" }}
+          {% if s.opening_variance_review_note %}"{{ s.opening_variance_review_note }}"{% endif %}
+        </div>
+        {% endif %}
+        {% if is_owner %}
+        <div style="margin-top:.5rem; display:flex; gap:.4rem; flex-wrap:wrap;">
+          <button class="confirm-btn" style="font-size:.75rem;" onclick="reviewOpeningVariance({{ s.id }}, 'acknowledged', this)">✓ Thibitisha (imeelezeka)</button>
+          <button class="confirm-btn" style="font-size:.75rem; border-color:#c0395a; color:#c0395a;" onclick="reviewOpeningVariance({{ s.id }}, 'flagged', this)">🔍 Weka Alama</button>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
       {% endif %}
       {% if s.status == 'CLOSED' %}
         {% if r.petty_cash or r.petty_cash_pending or r.petty_cash_rejected %}
@@ -257,6 +289,32 @@ function reviewVariance(shiftId, status, btn) {
   btn.disabled = true;
   var body = new URLSearchParams({ status: status, review_note: note, csrfmiddlewaretoken: '{{ csrf_token }}' });
   fetch('/bar/shift/' + shiftId + '/variance-review/', { method: 'POST', body: body })
+    .then(r => r.json())
+    .then(d => {
+      btn.disabled = false;
+      if (d.ok) {
+        location.reload();
+      } else {
+        alert(d.error || 'Imeshindikana');
+      }
+    })
+    .catch(() => { alert('Network error'); btn.disabled = false; });
+}
+
+function reviewOpeningVariance(shiftId, status, btn) {
+  // Acknowledging here doesn't just label the variance — it folds the
+  // explained amount into the shift's own banked_amount so the running till
+  // (shift_views.till_expected_cash) stops carrying the old, now-explained
+  // figure forward from this point on, per Roy's own accountability ask.
+  var note = window.prompt(
+    status === 'acknowledged'
+      ? 'Maelezo (hiari) — mfano: "Nilituma KES 2000 kwa M-Pesa yangu kabla ya shift"'
+      : 'Maelezo (hiari) — mfano: "Nahitaji kuongea naye ana kwa ana"'
+  );
+  if (note === null) return;  // cancelled — never forces a note
+  btn.disabled = true;
+  var body = new URLSearchParams({ status: status, review_note: note, csrfmiddlewaretoken: '{{ csrf_token }}' });
+  fetch('/bar/shift/' + shiftId + '/opening-variance-review/', { method: 'POST', body: body })
     .then(r => r.json())
     .then(d => {
       btn.disabled = false;

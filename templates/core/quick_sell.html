@@ -2782,7 +2782,7 @@
         panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Inapakia...</div>';
         var dateEl = document.getElementById('qs-recent-payments-date');
         var sel = (dateEl && dateEl.value) ? dateEl.value : _qsTodayIso();
-        fetch('/bar/tabs/recent-settled/?date=' + sel, {credentials: 'same-origin'})
+        fetch('/bar/tabs/recent-settled/?date=' + sel + '&station=bar', {credentials: 'same-origin'})
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 var tabs = d.tabs || [];

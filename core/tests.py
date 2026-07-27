@@ -1005,16 +1005,26 @@ class BarZReportOverlappingShiftsTest(TestCase):
         staff2 = User.objects.create_user(username='ov_staff2', password='x')
         UserProfile.objects.create(user=staff2, business=business, role='staff')
 
+        # Anchored to start-of-today (clamped, never before local midnight) rather
+        # than a bare `now() - timedelta(hours=N)` — bar_z_report scopes to
+        # timezone.localdate() ("today"), and a suite run in the first few hours
+        # after local midnight would otherwise push started_at back into
+        # YESTERDAY's local date, silently excluding the shift from the report
+        # and failing this test purely on timing. Same bug class documented in
+        # this project's own Known Issues (PettyCashReviewUndoTest, 2026-07-25).
         now = timezone.now()
+        today_start = timezone.localtime().replace(hour=0, minute=1, second=0, microsecond=0)
+        shift1_start = max(today_start, now - timedelta(hours=3))
+        shift2_start = max(today_start + timedelta(minutes=1), now - timedelta(hours=1))
         # Both shifts OPEN and overlapping — staff1 started earlier, staff2
         # opened before staff1 closed (the exact "forgotten handover" scenario).
         shift1 = Shift.objects.create(
             business=business, store=store, staff=staff1,
-            opening_float=Decimal('0'), started_at=now - timedelta(hours=3),
+            opening_float=Decimal('0'), started_at=shift1_start,
         )
         shift2 = Shift.objects.create(
             business=business, store=store, staff=staff2,
-            opening_float=Decimal('0'), started_at=now - timedelta(hours=1),
+            opening_float=Decimal('0'), started_at=shift2_start,
         )
 
         item = Item.objects.create(
@@ -1024,12 +1034,13 @@ class BarZReportOverlappingShiftsTest(TestCase):
         )
         # Three cash sales inside the overlap window (last hour) — a shared
         # till both "shifts" would independently see as their own.
+        sale_at = max(today_start + timedelta(minutes=2), now - timedelta(minutes=30))
         for _n in range(3):
             Transaction.objects.create(
                 business=business, item=item, type='Issue',
                 qty=Decimal('-1'), sale_amount=Decimal('500'),
                 payment_method='cash',
-                created_at=now - timedelta(minutes=30),
+                created_at=sale_at,
             )
 
         req = RequestFactory().get('/bar/z-report/')
@@ -1063,11 +1074,16 @@ class BarZReportOverlappingShiftsTest(TestCase):
         staff1 = User.objects.create_user(username='no_ov_staff1', password='x')
         UserProfile.objects.create(user=staff1, business=business, role='staff')
 
+        # Same start-of-today clamp as _setup() above — avoids crossing back into
+        # yesterday's local date when the suite runs shortly after local midnight.
         now = timezone.now()
+        today_start = timezone.localtime().replace(hour=0, minute=1, second=0, microsecond=0)
         Shift.objects.create(
             business=business, store=store, staff=staff1,
-            opening_float=Decimal('0'), started_at=now - timedelta(hours=2),
-            ended_at=now - timedelta(hours=1), status='CONFIRMED',
+            opening_float=Decimal('0'),
+            started_at=max(today_start, now - timedelta(hours=2)),
+            ended_at=max(today_start + timedelta(minutes=1), now - timedelta(hours=1)),
+            status='CONFIRMED',
         )
 
         req = RequestFactory().get('/bar/z-report/')
@@ -14023,3 +14039,307 @@ class ReconcilePettyCashStationScopingTest(TestCase):
         )
         rec = self._reconcile(bar_shift)
         self.assertEqual(rec['petty_cash'], 150.0)
+
+
+# ── Opening-Variance Accountability + Till Anchor Fix (2026-07-27 live report) ──
+# Roy's own report: the till appeared to "reset" at business closing hours.
+# Root cause — _auto_close_expired_shifts() force-closes a shift with
+# closing_cash_counted left at None (nobody ever counted), and the anchor
+# query only checked ended_at, so `float(None or 0)` silently treated "we
+# never counted" as "the till held zero." Also: an owner acknowledging an
+# explained opening variance (e.g. "I deposited that 2000 to my own M-Pesa
+# before this shift opened") must fold into the running till immediately,
+# not just once the current shift eventually closes with a real count.
+
+class TillAnchorSkipsAutoClosedShiftTest(TestCase):
+    def setUp(self):
+        from core.shift_views import till_expected_cash
+        self.till_expected_cash = till_expected_cash
+        self.biz = Business.objects.create(name='Anchor Skip Biz')
+        self.staff = User.objects.create_user(username='ancsk_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='ANCSK-1',
+            description='Beer', unit='bottle', selling_price=Decimal('100'),
+        )
+
+    def test_auto_closed_shift_with_no_count_is_not_used_as_anchor(self):
+        # Real anchor: a manually-closed shift with an actual physical count.
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('1000'),
+        )
+        # Simulates _auto_close_expired_shifts(): ended_at set, but
+        # closing_cash_counted stays None because nobody ever counted.
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('1000'), status='CLOSED', auto_closed=True,
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=None,
+        )
+        # One sale during the auto-closed shift's own window...
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'), payment_method='cash',
+            created_at=timezone.now() - timedelta(hours=2, minutes=30),
+        )
+        # ...and one after it ended, with no shift open at all.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+            created_at=timezone.now() - timedelta(hours=1),
+        )
+        till = self.till_expected_cash(self.biz, 'bar')
+        # Must still be anchored on the REAL count (1000), plus BOTH sales
+        # (the auto-closed shift being skipped as an anchor must not also
+        # skip the movements that happened during its own window).
+        self.assertEqual(till['expected_cash'], 1500.0)
+
+    def test_manual_close_with_explicit_zero_is_still_a_valid_anchor(self):
+        """A deliberate, submitted '0' count is real data — unlike an
+        auto-close's None — and must still anchor correctly."""
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=2),
+            ended_at=timezone.now() - timedelta(hours=1),
+            closing_cash_counted=Decimal('0'),
+        )
+        till = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till['expected_cash'], 0.0)
+        self.assertIsNotNone(till['anchor_at'])
+
+
+class OpeningVarianceReviewTest(TestCase):
+    def setUp(self):
+        from core.shift_views import till_expected_cash
+        self.till_expected_cash = till_expected_cash
+        self.biz = Business.objects.create(name='Opening Var Review Biz')
+        self.owner = User.objects.create_user(username='ovr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='ovr_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+
+        # Anchor: 1000 confirmed closing count.
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CONFIRMED',
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('1000'),
+        )
+        # Staff opens next, counting only 300 (till expected 1000) — the
+        # missing 700 was actually deposited to the owner's own M-Pesa
+        # before this shift opened, but never declared as banked_amount.
+        self.open_shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('300'), status='OPEN',
+            started_at=timezone.now() - timedelta(hours=3),
+            expected_opening_cash=Decimal('1000'),
+            opening_variance=Decimal('-700'),
+        )
+
+    def test_acknowledging_folds_shortfall_into_banked_and_corrects_till(self):
+        till_before = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till_before['expected_cash'], 1000.0)
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/opening-variance-review/', {
+            'status': 'acknowledged', 'review_note': 'Alituma M-Pesa yangu.',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.banked_amount, Decimal('700'))
+        self.assertEqual(self.open_shift.opening_variance_review_status, 'acknowledged')
+
+        # Roy's own ask: the till must reflect this correction immediately —
+        # not just once this shift eventually closes with a real count.
+        till_after = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till_after['expected_cash'], 300.0)
+
+        notif = Notification.objects.filter(user=self.staff, title__icontains='Tofauti ya Ufunguzi').first()
+        self.assertIsNotNone(notif)
+
+    def test_reacknowledging_does_not_double_apply(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/shift/{self.open_shift.id}/opening-variance-review/', {
+            'status': 'acknowledged',
+        })
+        self.client.post(f'/bar/shift/{self.open_shift.id}/opening-variance-review/', {
+            'status': 'acknowledged', 'review_note': 'Updated note only.',
+        })
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.banked_amount, Decimal('700'))
+
+    def test_reversal_to_flagged_undoes_the_adjustment(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/shift/{self.open_shift.id}/opening-variance-review/', {
+            'status': 'acknowledged',
+        })
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.banked_amount, Decimal('700'))
+
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/opening-variance-review/', {
+            'status': 'flagged', 'review_note': 'Actually need to double check.',
+        })
+        self.assertTrue(resp.json()['is_reversal'])
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.banked_amount, Decimal('0'))
+
+        till_after = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till_after['expected_cash'], 1000.0)
+
+    def test_staff_cannot_review(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/opening-variance-review/', {
+            'status': 'acknowledged',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_review_requires_a_recorded_expected_figure(self):
+        old_shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='OPEN',
+            started_at=timezone.now(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{old_shift.id}/opening-variance-review/', {
+            'status': 'acknowledged',
+        })
+        self.assertFalse(resp.json()['ok'])
+
+
+class AddOpeningVarianceNoteTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Opening Var Note Biz')
+        self.owner = User.objects.create_user(username='ovn_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='ovn_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('300'), status='OPEN',
+            expected_opening_cash=Decimal('1000'), opening_variance=Decimal('-700'),
+        )
+
+    def test_staff_note_saved_and_owner_notified(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/opening-variance-note/', {
+            'variance_note': 'Mmiliki alituma pesa hii M-Pesa yake kabla sijafungua',
+            'variance_mpesa_ref': 'QAB999',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.shift.refresh_from_db()
+        self.assertIn('M-Pesa', self.shift.opening_variance_note)
+        self.assertEqual(self.shift.opening_variance_mpesa_ref, 'QAB999')
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Ufunguzi').first()
+        self.assertIsNotNone(notif)
+
+    def test_other_staff_cannot_add_note(self):
+        other = User.objects.create_user(username='ovn_other', password='x')
+        UserProfile.objects.create(user=other, business=self.biz, role='staff')
+        self.client.force_login(other)
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/opening-variance-note/', {
+            'variance_note': 'x',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+
+class RecentSettledTabsStationScopingTest(TestCase):
+    """2026-07-27 live report: "recent sales in the tabs drawer for either
+    bar board or bar orders are showing kitchen sales... each counter
+    should be accountable to its own sales." Root cause: bar_board.html,
+    kitchen_board.html, and quick_sell.html all hit the exact same
+    /bar/tabs/recent-settled/ URL with no indication of which counter was
+    asking, so the endpoint fell back to _allowed_tab_sources(up) (an
+    IDENTITY check — what this viewer is PERMITTED to see) as if it were
+    also a DISPLAY-SCOPE check. For an owner/manager both stations are
+    always permitted, so nothing was ever actually excluded. The fix adds
+    an explicit ?station= param, now sent by all three templates."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Recent Payments Scope Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='rps_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='RPS-1',
+            description='Tusker', unit='bottle', selling_price=Decimal('250'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, material_no='RPS-2',
+            description='Chips', unit='plate', selling_price=Decimal('150'),
+        )
+
+        bar_tab = BarTab.objects.create(business=self.biz, customer_name='Bar Cust', status='SETTLED', source='bar')
+        bar_txn = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=bar_tab, transaction=bar_txn, description='Tusker',
+            amount=Decimal('250'), is_paid=True, paid_at=timezone.now(), payment_method='cash',
+        )
+
+        kitchen_tab = BarTab.objects.create(business=self.biz, customer_name='Kitchen Cust', status='SETTLED', source='kitchen')
+        kitchen_txn = Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=kitchen_tab, transaction=kitchen_txn, description='Chips',
+            amount=Decimal('150'), is_paid=True, paid_at=timezone.now(), payment_method='cash',
+        )
+
+        # Direct (non-tab) sales, one per station, same coverage as the
+        # tab-entry case above.
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='mpesa',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='mpesa',
+        )
+
+    def test_bar_station_param_excludes_kitchen_sales(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/recent-settled/?station=bar')
+        data = resp.json()
+        names = [t['customer_name'] for t in data['tabs']]
+        self.assertIn('Bar Cust', names)
+        self.assertNotIn('Kitchen Cust', names)
+        direct_descs = [d['description'] for d in data['direct']]
+        self.assertIn('Tusker', direct_descs)
+        self.assertNotIn('Chips', direct_descs)
+
+    def test_kitchen_station_param_excludes_bar_sales(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/recent-settled/?station=kitchen')
+        data = resp.json()
+        names = [t['customer_name'] for t in data['tabs']]
+        self.assertIn('Kitchen Cust', names)
+        self.assertNotIn('Bar Cust', names)
+        direct_descs = [d['description'] for d in data['direct']]
+        self.assertIn('Chips', direct_descs)
+        self.assertNotIn('Tusker', direct_descs)
+
+    def test_no_station_param_falls_back_to_permission_only(self):
+        """Defensive backward-compat path for a stale cached page — owner is
+        permitted both, so both still show when no station is specified."""
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/recent-settled/')
+        data = resp.json()
+        names = [t['customer_name'] for t in data['tabs']]
+        self.assertIn('Bar Cust', names)
+        self.assertIn('Kitchen Cust', names)

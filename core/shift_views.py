@@ -339,9 +339,26 @@ def till_expected_cash(business, station, as_of=None):
     as_of = as_of or timezone.now()
     is_kitchen = (station == 'kitchen')
 
+    # 2026-07-27 live report (Roy): the till appeared to "reset" to 0 at business
+    # closing hours. Root cause: _auto_close_expired_shifts() force-closes an OPEN
+    # shift past closing time + grace WITHOUT ever asking anyone to count the
+    # drawer — it sets ended_at but deliberately leaves closing_cash_counted at
+    # its default of None (nobody counted, so there is nothing real to record).
+    # This anchor query originally only checked ended_at__isnull=False, so an
+    # auto-closed shift qualified as an anchor and `float(None or 0)` silently
+    # treated "we never counted" as "the till held exactly zero" — a real
+    # physical-cash figure was never actually confirmed to be zero, it just
+    # looked that way. closing_cash_counted__isnull=False restricts anchors to
+    # shifts where a REAL physical count happened (every manual close_shift()
+    # always sets this field, even to an explicit 0 — that IS a real data point,
+    # unlike an auto-close's None). Movements during the skipped auto-closed
+    # shift's own window are still correctly summed below (those queries are
+    # pure time-windows, not shift-scoped) — only which shift can serve as the
+    # restart point changes.
     anchor_qs = Shift.objects.filter(
         business=business, status__in=('CLOSED', 'CONFIRMED'),
         ended_at__isnull=False, ended_at__lte=as_of,
+        closing_cash_counted__isnull=False,
     ).exclude(staff__userprofile__role='owner').select_related('staff')
     anchor_qs = (
         anchor_qs.filter(staff__userprofile__role='kitchen') if is_kitchen
@@ -1319,6 +1336,132 @@ def review_shift_variance(request, shift_id):
             send_sms_notification(msg, normalize_ke_phone(staff_profile.phone))
     except Exception:
         logger.exception('review_shift_variance: notify failed for shift %s', shift.id)
+
+    return JsonResponse({'ok': True, 'message': msg, 'is_reversal': is_reversal})
+
+
+# ── Opening-variance accountability (mirrors the closing-side pair above) ─────
+
+@login_required
+@require_POST
+def add_opening_variance_note(request, shift_id):
+    """Staff's own explanation for an opening-cash variance — mirrors
+    add_shift_variance_note() exactly, just for the other end of the shift.
+    Never required; skip is always an option."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    shift = get_object_or_404(Shift, id=shift_id, business=up.business)
+    if not up.is_owner_or_manager and shift.staff_id != request.user.id:
+        return JsonResponse({'ok': False, 'error': 'Si zamu yako'}, status=403)
+
+    note = (request.POST.get('variance_note') or '').strip()[:300]
+    mpesa_ref = (request.POST.get('variance_mpesa_ref') or '').strip()[:40]
+    shift.opening_variance_note = note
+    shift.opening_variance_mpesa_ref = mpesa_ref
+    shift.save(update_fields=['opening_variance_note', 'opening_variance_mpesa_ref'])
+
+    if note:
+        var = shift.opening_variance
+        staff_name = shift.staff.get_full_name() or shift.staff.username
+        var_txt = f"KES {abs(var):,.0f} ({'pungufu' if (var or 0) < 0 else 'zaidi'})" if var is not None else '—'
+        msg = f"{staff_name} ameeleza tofauti ya fedha ya ufunguzi ({var_txt}): \"{note}\""
+        if mpesa_ref:
+            msg += f" — M-Pesa ref: {mpesa_ref}"
+        from .models import Notification
+        from accounts.models import UserProfile as _UP
+        from .notifications import normalize_ke_phone, send_sms_notification
+        for op in _UP.objects.filter(business=up.business, role__in=['owner', 'manager']).select_related('user'):
+            Notification.objects.create(
+                user=op.user, title='💬 Maelezo ya Tofauti — Ufunguzi', message=msg,
+                notification_type='info', link_url='/bar/shift/history/',
+            )
+            if op.phone:
+                try:
+                    send_sms_notification(msg, normalize_ke_phone(op.phone))
+                except Exception:
+                    pass
+
+    return JsonResponse({'ok': True, 'message': 'Maelezo yamehifadhiwa.' if note else 'Sawa.'})
+
+
+@login_required
+@require_POST
+def review_opening_variance(request, shift_id):
+    """Owner/manager acknowledges (or flags) an opening-cash variance —
+    Roy's own real scenario: staff opened with float=0 because the till's
+    cash had already been taken (e.g. deposited to the owner's own M-Pesa)
+    before this shift started, with nobody having declared it as
+    banked_amount at open time. Acknowledging here is not just a label —
+    it FOLDS the explained amount into this shift's own banked_amount, the
+    same field till_expected_cash() already reads to carry the running
+    balance forward, so every later computation reflects the correction
+    immediately rather than waiting for this shift to eventually close.
+    Re-reviewable any number of times (same undo pattern as petty cash /
+    the closing-side review_shift_variance): re-acknowledging is a no-op on
+    the ledger, flipping AWAY from acknowledged reverses the fold-in
+    exactly, since the adjustment amount is always deterministically
+    (expected_opening_cash - opening_float) — both frozen at shift open.
+    """
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+
+    shift = get_object_or_404(Shift, id=shift_id, business=up.business)
+    if shift.expected_opening_cash is None:
+        return JsonResponse({'ok': False, 'error': 'Hakuna kiasi kilichotarajiwa kilichorekodiwa kwa shift hii'}, status=400)
+
+    status = request.POST.get('status', '')
+    if status not in ('acknowledged', 'flagged'):
+        return JsonResponse({'ok': False, 'error': 'Hali si sahihi'}, status=400)
+
+    note = (request.POST.get('review_note') or '').strip()[:300]
+    was_acknowledged = shift.opening_variance_review_status == 'acknowledged'
+    is_reversal = bool(shift.opening_variance_reviewed_at) and shift.opening_variance_review_status != status
+
+    # Positive = shortfall (counted less than expected — cash left before the
+    # count); negative = surplus (counted more — cash added before the count).
+    adjustment = shift.expected_opening_cash - shift.opening_float
+    update_fields = [
+        'opening_variance_review_status', 'opening_variance_review_note',
+        'opening_variance_reviewed_by', 'opening_variance_reviewed_at',
+    ]
+    if status == 'acknowledged' and not was_acknowledged:
+        shift.banked_amount = (shift.banked_amount or Decimal('0')) + adjustment
+        update_fields.append('banked_amount')
+    elif status != 'acknowledged' and was_acknowledged:
+        shift.banked_amount = (shift.banked_amount or Decimal('0')) - adjustment
+        update_fields.append('banked_amount')
+
+    shift.opening_variance_review_status = status
+    shift.opening_variance_review_note = note
+    shift.opening_variance_reviewed_by = request.user
+    shift.opening_variance_reviewed_at = timezone.now()
+    shift.save(update_fields=update_fields)
+
+    reviewer_name = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(shift.opening_variance_reviewed_at).strftime('%d %b, %H:%M')
+    verb = 'Imethibitishwa' if status == 'acknowledged' else 'Imewekwa alama kwa ufuatiliaji'
+    prefix = 'MAREKEBISHO: ' if is_reversal else ''
+    msg = f"{prefix}{verb} na {reviewer_name} — {when}."
+    if note:
+        msg += f" \"{note}\""
+
+    try:
+        from .models import Notification
+        title = '✓ Tofauti ya Ufunguzi Imethibitishwa' if status == 'acknowledged' else '🔍 Tofauti ya Ufunguzi — Ufuatiliaji'
+        Notification.objects.create(
+            user=shift.staff, title=title, message=msg, notification_type='info',
+            link_url='/bar/shift/history/',
+        )
+        from accounts.models import UserProfile as _UP
+        staff_profile = _UP.objects.filter(user=shift.staff, business=up.business).first()
+        if staff_profile and staff_profile.phone:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            send_sms_notification(msg, normalize_ke_phone(staff_profile.phone))
+    except Exception:
+        logger.exception('review_opening_variance: notify failed for shift %s', shift.id)
 
     return JsonResponse({'ok': True, 'message': msg, 'is_reversal': is_reversal})
 

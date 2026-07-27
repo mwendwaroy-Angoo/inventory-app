@@ -2414,7 +2414,7 @@
     panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Inapakia...</div>';
     var dateEl = document.getElementById('kb-recent-payments-date');
     var sel = (dateEl && dateEl.value) ? dateEl.value : _kbTodayIso();
-    fetch('/bar/tabs/recent-settled/?date=' + sel, {credentials: 'same-origin'})
+    fetch('/bar/tabs/recent-settled/?date=' + sel + '&station=kitchen', {credentials: 'same-origin'})
       .then(function (r) { return r.json(); })
       .then(function (d) {
         var tabs = d.tabs || [];
@@ -3655,14 +3655,41 @@
           // 2026-07-27 — let staff see the same opening-cash variance the
           // owner/manager was just alerted to (never hide a financial figure
           // from one side only — same principle as every other reconciliation
-          // flow in this app). Non-blocking: the shift is already open.
+          // flow in this app), AND offer an immediate chance to explain —
+          // mirroring the bar board's "💬 Eleza Tofauti Hii" flow. Non-blocking
+          // (skip always available): the shift is already open either way.
           if (d.opening_variance !== undefined && d.opening_variance !== null && Math.abs(d.opening_variance) > 500) {
             var _dir = d.opening_variance < 0 ? 'pungufu' : 'zaidi';
+            var _openShiftIdForNote = d.shift_id;
             setTimeout(function () {
               showToast('⚠️ Ulihesabu KES ' + Math.round(d.opening_float) + ', mfumo ulitarajia KES ' +
                 Math.round(d.expected_opening_cash) + ' (' + _dir + ' kwa KES ' + Math.round(Math.abs(d.opening_variance)) +
                 '). Mmiliki ameelezwa.');
-            }, 2000);
+              window.openReasonChips({
+                title: 'Kwa nini kuna tofauti ya ufunguzi?',
+                chips: [
+                  'Mmiliki alichukua/alituma pesa hii kwa M-Pesa kabla sijafungua',
+                  'Kuna gharama niliyolipa kabla sijaandika kwenye Petty Cash',
+                  'Sina uhakika kwa nini kuna tofauti',
+                ],
+                skipLabel: 'Ruka — bila maelezo',
+                onSelect: function (text) {
+                  if (!text) return;
+                  var mpesaRef = '';
+                  if (text.indexOf('M-Pesa') !== -1) {
+                    mpesaRef = (window.prompt('Namba ya M-Pesa (hiari)') || '').trim();
+                  }
+                  var vnFd = new FormData();
+                  vnFd.append('variance_note', text);
+                  vnFd.append('variance_mpesa_ref', mpesaRef);
+                  vnFd.append('csrfmiddlewaretoken', CSRF);
+                  fetch('/kitchen/shift/' + _openShiftIdForNote + '/opening-variance-note/', { method: 'POST', body: vnFd })
+                    .then(function (r) { return r.json(); }).then(function () {
+                      showToast('✓ Maelezo yamehifadhiwa.');
+                    });
+                },
+              });
+            }, 2200);
           }
         } else {
           if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
