@@ -2996,3 +2996,37 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   shift's card so a later petty-cash review is reflected before clicking Thibitisha. Applied
   identically to bar_board.html and kitchen_board.html per this file's counter-parity rule.
   16 new tests. Migration 0130 (additive). 792 tests pass.
+- Till reset bug, opening-variance acknowledge, cross-counter Recent Payments leak
+  (2026-07-27, three live reports from Roy). (1) The till appeared to "reset" at business
+  closing hours — `_auto_close_expired_shifts()` force-closes an OPEN shift with
+  `closing_cash_counted` left at `None` (nobody ever counted the drawer), and
+  `till_expected_cash()`'s anchor query only checked `ended_at`, so `float(None or 0)`
+  silently treated "we never counted" as "the till held exactly zero." Added
+  `closing_cash_counted__isnull=False` to the anchor filter — real cash now correctly
+  carries through an unattended auto-close; a deliberate manual close with an explicit `0`
+  (a real, submitted data point) still anchors correctly. (2) Opening-variance
+  acknowledge/flag mechanism, mirroring the existing close-side `variance_note`/
+  `variance_review` pair: when an owner acknowledges an explained opening variance (e.g. "I
+  deposited that 2000 to my own M-Pesa before this shift opened, staff correctly counted
+  0"), the amount folds into `Shift.banked_amount` — the same field `till_expected_cash()`
+  already subtracts — so the running till reflects the correction immediately rather than
+  waiting for the shift to eventually close with a real count. Reversible (re-flagging
+  undoes the fold-in), same undo pattern as petty cash review. New
+  `add_opening_variance_note`/`review_opening_variance` views, reason-chips capture in
+  bar_board.html/kitchen_board.html right after a variance is detected at open, and an
+  acknowledge/flag block in shift_history.html mirroring the closing-side UI. (3) "Recent
+  Payments" panel (🕐 Malipo ya Hivi Karibuni) was showing cross-counter sales — kitchen
+  sales visible from Bar Board, bar sales visible from Kitchen Board/Quick Sell ("Bar
+  Orders"). Root cause: all three templates hit the exact same `/bar/tabs/recent-settled/`
+  URL with no indication of which counter was asking, so the endpoint fell back to
+  `_allowed_tab_sources(up)` — an IDENTITY check (what this viewer is PERMITTED to see) —
+  as if it were also a DISPLAY-SCOPE check; for an owner/manager both stations are always
+  permitted, so nothing was ever actually excluded. Added an explicit `?station=` param
+  (still intersected with the permission check, never bypassing it), now sent by all three
+  templates. The dashboard's per-station till tiles were independently verified NOT to
+  share this bug — each call passes an explicit station parameter with no identity-based
+  fallback. Also fixed a pre-existing flaky test (`BarZReportOverlappingShiftsTest`) that
+  hardcoded shift start times as `now() - timedelta(hours=N)`, crossing back into the
+  previous LOCAL calendar day when run in the first few hours after local midnight — same
+  bug class already documented above (`PettyCashReviewUndoTest`, 2026-07-25). 12 new tests.
+  Migration 0131 (additive).
