@@ -2976,3 +2976,23 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   table); migration 0128 (StaffRequest.related_transaction +
   stock_confirm category). 19 new tests total this follow-up, on top of
   the same-day sprint above.
+- Continuous till accountability (2026-07-27): `shift_views.till_expected_cash(business,
+  station)` — a live, continuous "what should be in this till right now" figure, anchored
+  on the last shift that physically closed with a counted balance for that station, then
+  adding every cash sale/cash debt-recovery and subtracting approved petty cash + banked
+  amounts since, purely by time + station (never shift boundaries) — so cash the owner
+  sells directly with no shift open is automatically included, and any staff opening next
+  (not just the same person who closed last) sees the correct expected float. `open_shift()`
+  now stores `Shift.expected_opening_cash`/`opening_variance`/`banked_amount` and alerts
+  owner/manager (mirroring the existing >KES 500 close-shift alert) on a material mismatch
+  between what staff physically counted and what the till expected. Fixed a real pre-existing
+  gap while building this: `_reconcile()`'s petty cash queries had no station filter at all,
+  so a kitchen withdrawal could silently reduce a bar shift's expected cash on combo
+  bar+kitchen businesses — `PettyCash.station` (new field, auto-derived from the recording
+  staffer's role, explicit via the shared petty-cash modal on bar_board/kitchen_board) fixes
+  this. home() dashboard gains a live "expected counter cash" tile per station (owner sees
+  all, staff see their own, visible before opening shift); shift_history.html now shows the
+  petty-cash approved/pending/rejected breakdown and opening-variance figures on a CLOSED
+  shift's card so a later petty-cash review is reflected before clicking Thibitisha. Applied
+  identically to bar_board.html and kitchen_board.html per this file's counter-parity rule.
+  16 new tests. Migration 0130 (additive). 792 tests pass.
