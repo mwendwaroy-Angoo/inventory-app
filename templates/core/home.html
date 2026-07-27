@@ -201,6 +201,42 @@
          border-radius:10px; padding:.6rem 1rem; margin-bottom:1rem;">
     </div>
 
+    <!-- 2026-07-27 — live "expected counter cash" per station (continuous till,
+         independent of shift boundaries). Owner sees every station they can see;
+         staff see only their own station, so they know what to count towards
+         BEFORE they open shift — see core/views.py home() and shift_views.
+         till_expected_cash() for the full accountability rationale. -->
+    {% if till_bar_expected or till_kitchen_expected %}
+    <div style="background:#1a1a1a; border:1px solid #333; border-radius:10px;
+                padding:.75rem 1rem; margin-bottom:1rem;">
+        <div style="font-size:.72rem; color:#888; text-transform:uppercase; letter-spacing:.05em; margin-bottom:.5rem;">
+            💰 Kiasi Kinachotarajiwa Kwenye Counter Sasa
+        </div>
+        <div style="display:flex; gap:1.75rem; flex-wrap:wrap;">
+            {% if till_bar_expected %}
+            <div>
+                <div style="font-family:'Playfair Display',serif; font-size:1.35rem; font-weight:700; color:#c9a84c;">
+                    KES {{ till_bar_expected.expected_cash|floatformat:0 }}
+                </div>
+                <div style="font-size:.7rem; color:#888;">🍺 Bar</div>
+            </div>
+            {% endif %}
+            {% if till_kitchen_expected %}
+            <div>
+                <div style="font-family:'Playfair Display',serif; font-size:1.35rem; font-weight:700; color:#ff9800;">
+                    KES {{ till_kitchen_expected.expected_cash|floatformat:0 }}
+                </div>
+                <div style="font-size:.7rem; color:#888;">🍗 Kitchen</div>
+            </div>
+            {% endif %}
+        </div>
+        <div style="font-size:.7rem; color:#666; margin-top:.5rem;">
+            Hesabu hii inaendelea moja kwa moja hata shift ikifungwa — hesabu pesa halisi
+            uliyo nayo kwenye counter kabla ya kufungua shift na ulinganishe na hii.
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Waitress Quick Actions -->
     {% if user.userprofile.is_waitress %}
     <div style="background:rgba(255,152,0,0.06); border:1px solid rgba(255,152,0,0.2);

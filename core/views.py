@@ -380,6 +380,28 @@ def home(request):
             except Exception:
                 context['kitchen_today_revenue'] = 0
 
+            # 2026-07-27 — live "expected counter cash" per station (continuous
+            # till, independent of shift boundaries — see shift_views.
+            # till_expected_cash()). Roy's own accountability ask: the owner
+            # should see this for every counter at all times, not just while a
+            # shift happens to be open, so they always know what SHOULD be in
+            # each drawer right now; staff see it for their own station before
+            # they open shift, so they know what to count towards. Gated the
+            # same way bar_today_revenue/kitchen_today_revenue are above —
+            # only computed for a station that actually exists for this
+            # business and that this viewer can see.
+            context['till_bar_expected'] = None
+            context['till_kitchen_expected'] = None
+            try:
+                from .shift_views import till_expected_cash
+                from .business_profiles import get_profile as _get_profile_till
+                if show_bar and _get_profile_till(business).get('modules', {}).get('keg'):
+                    context['till_bar_expected'] = till_expected_cash(business, 'bar')
+                if show_kitchen and _has_kitchen:
+                    context['till_kitchen_expected'] = till_expected_cash(business, 'kitchen')
+            except Exception:
+                pass
+
             # Active managers logged in today (shown to owner on dashboard)
             if user_profile.is_owner:
                 try:

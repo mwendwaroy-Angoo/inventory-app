@@ -11107,14 +11107,18 @@ class CashVarianceAccountabilityTest(TestCase):
     def test_reconcile_deducts_approved_petty_cash_from_expected(self):
         from core.shift_views import _reconcile
         from core.models import PettyCash
+        # station='bar' — 2026-07-27: _reconcile() now station-scopes petty
+        # cash the same way it already scopes transactions/debt recovery (see
+        # ReconcilePettyCashStationScopingTest); self.staff here is a plain
+        # 'staff' role, i.e. bar station.
         PettyCash.objects.create(
             business=self.biz, amount=Decimal('300'), status='approved',
-            recorded_by=self.staff, created_at=self.shift.started_at,
+            recorded_by=self.staff, created_at=self.shift.started_at, station='bar',
         )
         # A pending entry must NOT be deducted — only approved money actually left the till.
         PettyCash.objects.create(
             business=self.biz, amount=Decimal('9999'), status='pending',
-            recorded_by=self.staff, created_at=self.shift.started_at,
+            recorded_by=self.staff, created_at=self.shift.started_at, station='bar',
         )
         rec = _reconcile(self.shift)
         self.assertEqual(rec['petty_cash'], 300.0)
@@ -13654,3 +13658,368 @@ class StaleFullyPaidTabSelfHealsOnSettleTest(TestCase):
         self.assertEqual(data['total'], 260.0)
         tab2.refresh_from_db()
         self.assertEqual(tab2.status, 'SETTLED')
+
+
+# ── Continuous Till Accountability (2026-07-27) ─────────────────────────────
+# Roy's own accountability ask: what the system says is cash and what staff
+# physically counts at the counter should match REGARDLESS of a shift change
+# in between, and must correctly include cash the owner sells directly with
+# no shift open at all. See shift_views.till_expected_cash() for the full
+# design rationale (anchor on the last physical count, add every cash
+# movement since, purely by time + station).
+
+class TillExpectedCashTest(TestCase):
+    def setUp(self):
+        from core.shift_views import till_expected_cash
+        self.till_expected_cash = till_expected_cash
+
+        self.biz = Business.objects.create(name='Till Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='till_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_staff = User.objects.create_user(username='till_bar', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='till_kit', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='TB-1',
+            description='Beer', unit='bottle', selling_price=Decimal('200'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, material_no='TB-2',
+            description='Chips', unit='plate', selling_price=Decimal('150'),
+        )
+
+    def test_no_prior_shift_sums_from_all_history(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        till = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till['expected_cash'], 200.0)
+        self.assertIsNone(till['anchor_at'])
+
+    def test_anchor_plus_cash_sales_since_close(self):
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff,
+            opening_float=Decimal('500'), status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=1),
+            closing_cash_counted=Decimal('1000'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'), payment_method='cash',
+            created_at=timezone.now() - timedelta(minutes=30),
+        )
+        till = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till['expected_cash'], 1300.0)
+        self.assertIsNotNone(till['anchor_at'])
+
+    def test_owner_sale_without_open_shift_is_included(self):
+        """Core of Roy's ask: cash the owner sells directly, with no shift
+        open at all, must still flow into the running till figure."""
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff,
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('500'),
+        )
+        # No new shift opened — owner sells directly in the gap.
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+            recorded_by=self.owner, created_at=timezone.now() - timedelta(hours=2),
+        )
+        till = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till['expected_cash'], 700.0)
+
+    def test_stations_scored_independently_for_cash_sales(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='cash',
+        )
+        bar_till = self.till_expected_cash(self.biz, 'bar')
+        kitchen_till = self.till_expected_cash(self.biz, 'kitchen')
+        self.assertEqual(bar_till['expected_cash'], 200.0)
+        self.assertEqual(kitchen_till['expected_cash'], 150.0)
+
+    def test_approved_petty_cash_subtracted_and_station_scoped(self):
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff,
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('1000'),
+        )
+        from core.models import PettyCash
+        PettyCash.objects.create(
+            business=self.biz, amount=Decimal('200'), reason='transport',
+            recorded_by=self.bar_staff, date=timezone.localdate(),
+            status='approved', station='bar',
+            created_at=timezone.now() - timedelta(hours=1),
+        )
+        # Kitchen-station petty cash must NOT affect the bar till.
+        PettyCash.objects.create(
+            business=self.biz, amount=Decimal('999'), reason='transport',
+            recorded_by=self.kitchen_staff, date=timezone.localdate(),
+            status='approved', station='kitchen',
+            created_at=timezone.now() - timedelta(hours=1),
+        )
+        # Still-pending bar petty cash must NOT be subtracted yet.
+        PettyCash.objects.create(
+            business=self.biz, amount=Decimal('50'), reason='transport',
+            recorded_by=self.bar_staff, date=timezone.localdate(),
+            status='pending', station='bar',
+            created_at=timezone.now() - timedelta(hours=1),
+        )
+        till = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till['expected_cash'], 800.0)
+
+    def test_banked_amount_subtracted_since_anchor(self):
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff,
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('1000'),
+        )
+        # A later shift opens on the same station and declares a banked amount.
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff,
+            opening_float=Decimal('700'), status='OPEN',
+            started_at=timezone.now() - timedelta(hours=3),
+            banked_amount=Decimal('300'),
+        )
+        till = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till['expected_cash'], 700.0)
+
+    def test_debt_recovered_cash_included_and_source_scoped(self):
+        from core.models import CustomerDebtPayment
+        customer = Customer.objects.create(business=self.biz, name='Debt Customer')
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff,
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('0'),
+        )
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('400'),
+            payment_method='cash', source='bar',
+            paid_at=timezone.now() - timedelta(hours=1),
+        )
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('900'),
+            payment_method='cash', source='kitchen',
+            paid_at=timezone.now() - timedelta(hours=1),
+        )
+        till = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(till['expected_cash'], 400.0)
+
+
+class OpenShiftVarianceTest(TestCase):
+    """open_shift() must compare what staff physically counted against the
+    live till figure and alert owner/manager on a material mismatch — the
+    opening-time mirror of close_shift()'s existing closing-cash alert."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Open Variance Biz')
+        self.owner = User.objects.create_user(username='ov_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner', phone='0700000001')
+        self.staff = User.objects.create_user(username='ov_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+
+    def test_matching_count_fires_no_variance_alert(self):
+        # No prior anchor → expected is 0.
+        self.client.force_login(self.staff)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['expected_opening_cash'], 0.0)
+        self.assertEqual(data['opening_variance'], 0.0)
+        self.assertFalse(
+            Notification.objects.filter(user=self.owner, title__icontains='Ufunguzi').exists()
+        )
+
+    def test_material_mismatch_alerts_owner_and_stores_variance(self):
+        # CONFIRMED (not just CLOSED) — a still-unconfirmed CLOSED shift for
+        # the SAME staff member blocks them opening a new one (existing,
+        # unrelated behavior); a realistic anchor here is one already signed
+        # off, same as the previous test's fixture pattern elsewhere.
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CONFIRMED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('1000'),
+        )
+        self.client.force_login(self.staff)
+        # Staff counts only 300 when the till expected 1000 — a 700 shortfall.
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '300'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['expected_opening_cash'], 1000.0)
+        self.assertEqual(data['opening_variance'], -700.0)
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Ufunguzi').first()
+        self.assertIsNotNone(notif, 'owner must be alerted on a material opening variance')
+        self.assertIn('700', notif.message)
+
+        shift = Shift.objects.get(business=self.biz, staff=self.staff, status='OPEN')
+        self.assertEqual(shift.expected_opening_cash, Decimal('1000.00'))
+        self.assertEqual(shift.opening_variance, Decimal('-700.00'))
+
+    def test_banked_amount_reduces_expected_and_avoids_false_variance(self):
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CONFIRMED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('1000'),
+        )
+        self.client.force_login(self.staff)
+        # Owner banked 300 before this shift opened — staff correctly counts 700.
+        resp = self.client.post('/bar/shift/open/', {
+            'opening_float': '700', 'banked_amount': '300',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['expected_opening_cash'], 700.0)
+        self.assertEqual(data['opening_variance'], 0.0)
+        self.assertFalse(
+            Notification.objects.filter(user=self.owner, title__icontains='Ufunguzi').exists(),
+            'a declared banked amount must not itself look like a shortage',
+        )
+        shift = Shift.objects.get(business=self.biz, staff=self.staff, status='OPEN')
+        self.assertEqual(shift.banked_amount, Decimal('300'))
+
+
+class ActiveShiftApiTillTest(TestCase):
+    """active_shift_api()'s float suggestion must be station-wide (any staff
+    opening on this counter), not scoped to the same staff member's own
+    history — the gap that left a second staffer with no suggestion at all."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Active Till Biz')
+        self.owner = User.objects.create_user(username='at_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_a = User.objects.create_user(username='at_staff_a', password='x')
+        UserProfile.objects.create(user=self.staff_a, business=self.biz, role='staff')
+        self.staff_b = User.objects.create_user(username='at_staff_b', password='x')
+        UserProfile.objects.create(user=self.staff_b, business=self.biz, role='staff')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+
+    def test_different_staff_member_sees_correct_suggestion(self):
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff_a,
+            opening_float=Decimal('0'), status='CONFIRMED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('850'),
+        )
+        # staff_b (a DIFFERENT person) opens next — must still see the
+        # correct station-wide figure, not None (the old staff-scoped bug).
+        self.client.force_login(self.staff_b)
+        resp = self.client.get('/bar/shift/active/')
+        data = resp.json()
+        self.assertEqual(data['last_closing'], 850.0)
+        self.assertIn('bar', data['till_by_station'])
+        self.assertEqual(data['till_by_station']['bar']['expected_cash'], 850.0)
+
+
+class PettyCashStationTest(TestCase):
+    """PettyCash.station drives which till a withdrawal is subtracted from —
+    must default sensibly from the recording staffer's role and be settable
+    explicitly by the shared modal."""
+
+    def setUp(self):
+        from core.models import PettyCash
+        self.PettyCash = PettyCash
+        self.biz = Business.objects.create(name='PC Station Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='pcs_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_staff = User.objects.create_user(username='pcs_bar', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='pcs_kit', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+
+    def test_kitchen_staff_defaults_to_kitchen_station(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post('/petty-cash/record/', {
+            'amount': '100', 'reason': 'transport',
+        })
+        self.assertTrue(resp.json()['ok'])
+        entry = self.PettyCash.objects.get(business=self.biz)
+        self.assertEqual(entry.station, 'kitchen')
+
+    def test_bar_staff_defaults_to_bar_station(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post('/petty-cash/record/', {
+            'amount': '100', 'reason': 'transport',
+        })
+        self.assertTrue(resp.json()['ok'])
+        entry = self.PettyCash.objects.get(business=self.biz)
+        self.assertEqual(entry.station, 'bar')
+
+    def test_explicit_station_param_respected(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/petty-cash/record/', {
+            'amount': '100', 'reason': 'transport', 'station': 'kitchen',
+        })
+        self.assertTrue(resp.json()['ok'])
+        entry = self.PettyCash.objects.get(business=self.biz)
+        self.assertEqual(entry.station, 'kitchen')
+
+
+class ReconcilePettyCashStationScopingTest(TestCase):
+    """_reconcile()'s petty cash figures must be station-scoped like its
+    other queries — a kitchen withdrawal must never reduce a bar shift's
+    expected cash, and vice versa, on a combo bar+kitchen business."""
+
+    def setUp(self):
+        from core.shift_views import _reconcile
+        self._reconcile = _reconcile
+        self.biz = Business.objects.create(name='Reconcile PC Biz', has_kitchen=True)
+        self.bar_staff = User.objects.create_user(username='rpc_bar', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='rpc_kit', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+    def test_kitchen_petty_cash_does_not_reduce_bar_shift(self):
+        from core.models import PettyCash
+        bar_shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff,
+            opening_float=Decimal('0'),
+        )
+        PettyCash.objects.create(
+            business=self.biz, amount=Decimal('500'), reason='transport',
+            recorded_by=self.kitchen_staff, date=timezone.localdate(),
+            status='approved', station='kitchen',
+            created_at=bar_shift.started_at + timedelta(minutes=5),
+        )
+        rec = self._reconcile(bar_shift)
+        self.assertEqual(rec['petty_cash'], 0.0)
+
+    def test_bar_petty_cash_counted_in_bar_shift(self):
+        from core.models import PettyCash
+        bar_shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff,
+            opening_float=Decimal('0'),
+        )
+        PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.bar_staff, date=timezone.localdate(),
+            status='approved', station='bar',
+            created_at=bar_shift.started_at + timedelta(minutes=5),
+        )
+        rec = self._reconcile(bar_shift)
+        self.assertEqual(rec['petty_cash'], 150.0)

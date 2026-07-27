@@ -18,6 +18,7 @@ test_run*.log
 # Environment
 .env
 venv/
+.venv/
 env/
 
 # IDE

@@ -842,12 +842,16 @@
                 style="background:none; border:none; color:#b0b0b0; font-size:1.3rem;">✕</button>
       </div>
       <div class="modal-body">
-        <!-- Handover suggestion box — shown when previous shift has a closing count -->
+        <!-- Till suggestion box — 2026-07-27: live, continuous "expected cash right
+             now" for this counter (shift_views.till_expected_cash), not just what the
+             previous shift happened to close with — it already includes any cash sales
+             made since then even if no shift was open (e.g. the owner selling directly). -->
         <div id="open-shift-suggestion" style="display:none; background:#111; border:1px solid #333;
              border-radius:8px; padding:.75rem; margin-bottom:1rem;">
           <p style="font-size:.8rem; color:#888; margin:0 0 .5rem;">
-            Shift iliyopita iliisha na:
+            Kiasi kinachotarajiwa kwenye counter sasa:
             <strong id="open-shift-prev-amount" style="color:#c9a84c;"></strong>
+            <br><span style="font-size:.72rem; color:#666;">Hesabu hii tayari inajumuisha mauzo yote tangu shift iliyoisha, hata kama hayakuwa na shift wazi.</span>
           </p>
           <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
             <button type="button" id="open-shift-use-prev"
@@ -1718,6 +1722,7 @@
   var KegRevMult  = {{ business.keg_revenue_multiplier }};
   var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
   var CAN_AUTH_TAB = {% if is_owner or user.userprofile.can_authorize_tab_accumulation %}true{% else %}false{% endif %};
+  window.PETTY_CASH_STATION = 'bar';  // 2026-07-27 — which till the shared petty cash modal records against on this board
   var CSRF        = "{{ csrf_token }}";
   /* Seeded from server — updated dynamically once shift API responds */
   var _myShiftOpen = {% if has_my_shift %}true{% else %}false{% endif %};
@@ -4350,6 +4355,18 @@
           }
           if (d.overlap_warning) {
             setTimeout(function () { showToast(d.overlap_warning); }, 1200);
+          }
+          // 2026-07-27 — let staff see the same opening-cash variance the
+          // owner/manager was just alerted to (never hide a financial figure
+          // from one side only — same principle as every other reconciliation
+          // flow in this app). Non-blocking: the shift is already open.
+          if (d.opening_variance !== undefined && d.opening_variance !== null && Math.abs(d.opening_variance) > 500) {
+            var _dir = d.opening_variance < 0 ? 'pungufu' : 'zaidi';
+            setTimeout(function () {
+              showToast('⚠️ Ulihesabu KES ' + Math.round(d.opening_float) + ', mfumo ulitarajia KES ' +
+                Math.round(d.expected_opening_cash) + ' (' + _dir + ' kwa KES ' + Math.round(Math.abs(d.opening_variance)) +
+                '). Mmiliki ameelezwa.');
+            }, 2000);
           }
         } else {
           if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
