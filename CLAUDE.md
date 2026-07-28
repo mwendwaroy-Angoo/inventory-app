@@ -3165,3 +3165,17 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   page can never be served stale by any caching layer again, without relying on the user
   to manually clear their cache after every deploy. 825 tests pass (core + accounts). No
   migrations.
+- Home dashboard till breakdown disclosure (2026-07-28), same-day follow-up: Roy cleared
+  cache five times and the KES 1400 Bar figure never moved — strong evidence it was a
+  genuine, correctly-computed number from real historical data, not a caching bug at all
+  (confirmed moments later: Christine Nyakundi's Saturday shift closed with a real physical
+  count, and nothing had closed on Bar since, so the till correctly kept carrying that
+  forward). Rather than keep diagnosing live production numbers blind (no direct DB
+  access), added an owner-only `<details>` disclosure under each station's KES figure on
+  the home dashboard — "🍺 Bar — vipi hesabu hii ilipatikana?" — surfacing
+  `till_expected_cash()`'s own `anchor_label` and full `breakdown` dict (base, cash sales
+  since anchor, debt recovered, petty cash deducted, banked deducted) directly on screen,
+  so a live "where did this number come from" question is self-answerable without a Render
+  shell session. 2 new tests (`HomeDashboardTillBreakdownTest` — owner sees the breakdown
+  with correct figures, staff does not see it at all). No migrations. 827 tests pass (core
+  + accounts).

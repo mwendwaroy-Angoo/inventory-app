@@ -14877,3 +14877,60 @@ class KitchenBoardCheckoutSplitPaymentTest(TestCase):
         self.assertEqual(
             Transaction.objects.filter(business=self.biz, item=self.item, payment_method='mpesa').count(), 0,
         )
+
+
+# ── Home dashboard till breakdown disclosure (2026-07-28) ──────────────────
+# Roy's live follow-up after the anchor-established fix + cache-hardening
+# still showed KES 1400 for Bar with no bar sales that day, and cache
+# clearing on his end made no difference — strong evidence the figure was a
+# genuine, correctly-computed number from a real (if surprising/forgotten)
+# historical anchor, not a caching bug at all. Rather than keep guessing
+# without database access, the home dashboard now surfaces
+# till_expected_cash()'s own breakdown (anchor label + each component)
+# directly on the card, owner-only, so a live "where did this number come
+# from" question is self-answerable on screen.
+
+class HomeDashboardTillBreakdownTest(TestCase):
+    def setUp(self):
+        from core.models import BusinessType
+        bar_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz = Business.objects.create(
+            name='Breakdown Biz', has_kitchen=True, business_type=bar_type,
+        )
+        self.owner = User.objects.create_user(username='bd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='bd_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='BD-1',
+            description='Beer', unit='bottle', selling_price=Decimal('200'), is_keg=True,
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('500'), status='CLOSED', station='bar',
+            started_at=timezone.now() - timedelta(hours=6),
+            ended_at=timezone.now() - timedelta(hours=5),
+            closing_cash_counted=Decimal('1000'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('400'), payment_method='cash',
+            created_at=timezone.now() - timedelta(hours=4),
+        )
+
+    def test_owner_sees_bar_breakdown_with_correct_figures(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        self.assertIn('vipi hesabu hii ilipatikana', content)
+        self.assertIn('KES 1000', content)  # base
+        self.assertIn('KES 400', content)   # cash sales since anchor
+        self.assertIn('KES 1400', content)  # total shown in the summary tile
+
+    def test_staff_does_not_see_breakdown_disclosure(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn('vipi hesabu hii ilipatikana', resp.content.decode())

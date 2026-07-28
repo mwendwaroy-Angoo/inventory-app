@@ -251,6 +251,42 @@
             shift ya kwanza itakapofungwa na kuhesabiwa, ufuatiliaji utaanza kutoka hapo.
             {% endif %}
         </div>
+
+        <!-- 2026-07-28 — breakdown disclosure, owner-only: Roy's own live question
+             ("where is this number coming from?") should be answerable directly on
+             this card, without needing a Render shell session to inspect the DB.
+             Shows exactly what till_expected_cash() computed: the anchor (who/when
+             physically counted), then each component of the running total. -->
+        {% if user.userprofile.is_owner %}
+        {% if till_bar_expected.anchor_established %}
+        <details style="margin-top:.5rem;">
+            <summary style="font-size:.68rem; color:#c9a84c; cursor:pointer;">🍺 Bar — vipi hesabu hii ilipatikana?</summary>
+            <div style="font-size:.68rem; color:#999; margin-top:.35rem; line-height:1.6;">
+                Hesabu ya mwisho ya kimwili: <strong style="color:#ccc;">{{ till_bar_expected.anchor_label }}</strong><br>
+                Msingi (hesabu ya mwisho): KES {{ till_bar_expected.breakdown.base|floatformat:0 }}<br>
+                + Mauzo taslimu tangu hapo: KES {{ till_bar_expected.breakdown.cash_sales|floatformat:0 }}<br>
+                + Deni lililolipwa taslimu: KES {{ till_bar_expected.breakdown.debt_recovered|floatformat:0 }}<br>
+                − Petty cash iliyokubaliwa: KES {{ till_bar_expected.breakdown.petty_cash|floatformat:0 }}<br>
+                − Kiasi kilichowekwa banked: KES {{ till_bar_expected.breakdown.banked|floatformat:0 }}<br>
+                <strong style="color:#c9a84c;">= Jumla: KES {{ till_bar_expected.expected_cash|floatformat:0 }}</strong>
+            </div>
+        </details>
+        {% endif %}
+        {% if till_kitchen_expected.anchor_established %}
+        <details style="margin-top:.5rem;">
+            <summary style="font-size:.68rem; color:#ff9800; cursor:pointer;">🍗 Kitchen — vipi hesabu hii ilipatikana?</summary>
+            <div style="font-size:.68rem; color:#999; margin-top:.35rem; line-height:1.6;">
+                Hesabu ya mwisho ya kimwili: <strong style="color:#ccc;">{{ till_kitchen_expected.anchor_label }}</strong><br>
+                Msingi (hesabu ya mwisho): KES {{ till_kitchen_expected.breakdown.base|floatformat:0 }}<br>
+                + Mauzo taslimu tangu hapo: KES {{ till_kitchen_expected.breakdown.cash_sales|floatformat:0 }}<br>
+                + Deni lililolipwa taslimu: KES {{ till_kitchen_expected.breakdown.debt_recovered|floatformat:0 }}<br>
+                − Petty cash iliyokubaliwa: KES {{ till_kitchen_expected.breakdown.petty_cash|floatformat:0 }}<br>
+                − Kiasi kilichowekwa banked: KES {{ till_kitchen_expected.breakdown.banked|floatformat:0 }}<br>
+                <strong style="color:#ff9800;">= Jumla: KES {{ till_kitchen_expected.expected_cash|floatformat:0 }}</strong>
+            </div>
+        </details>
+        {% endif %}
+        {% endif %}
     </div>
     {% endif %}
 
