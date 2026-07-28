@@ -178,6 +178,15 @@ LOGOUT_REDIRECT_URL = "/"
 LOGIN_URL = "/accounts/login/"
 DEVICE_LANGUAGE_COOKIE_NAME = "duka_device_language"
 
+# 2026-07-28 live report: ~80% of client logins were hitting Django's default
+# raw "Forbidden (403) — CSRF verification failed" dead-end page, with the
+# only known workaround being "clear phone cache, reopen the app icon." See
+# core.views.csrf_failure_view's own docstring for the full root-cause
+# analysis (most likely a service-worker-cached stale page on slow mobile
+# connections) — this makes ANY CSRF failure, for any reason, self-heal by
+# bouncing the user straight back to a working page instead of a dead end.
+CSRF_FAILURE_VIEW = "core.views.csrf_failure_view"
+
 # ── EMAIL (Resend API — Gmail SMTP is blocked on Render free tier) ────────────
 # The Gmail SMTP block that previously appeared here was dead code: Render blocks
 # outbound port 587, and DEFAULT_FROM_EMAIL was being overwritten by the Resend

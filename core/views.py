@@ -144,6 +144,42 @@ def _station_scope(up):
     return True, bool(getattr(up, 'can_access_kitchen', False))
 
 
+def csrf_failure_view(request, reason=""):
+    """Custom CSRF_FAILURE_VIEW (2026-07-28 live report — Roy: ~80% of client
+    logins hit a raw "Forbidden (403) — CSRF verification failed" page, with
+    the only known fix being "clear phone cache, reopen the app icon."
+
+    Root cause, most likely on Kenyan mobile connections specifically: the
+    service worker's navigate handler is network-first but falls back to a
+    CACHED copy of the page on a slow/failed fetch (see static/sw.js) — a
+    stale cached /accounts/login/ (or any authenticated page) carries a
+    CSRF token baked into its HTML at the time it was cached, which can go
+    stale relative to the current cookie/session state, especially after a
+    device gets logged out elsewhere (SingleSessionMiddleware) or the CSRF
+    cookie is otherwise refreshed. sw.js has been updated to never cache or
+    fall back to a stale copy of /accounts/ pages at all — but a CSRF
+    mismatch can in principle still happen for other reasons (a genuinely
+    expired cookie, a user with two tabs open, a very old bookmark), and
+    Django's DEFAULT CSRF_FAILURE_VIEW is an unrecoverable dead-end error
+    page that requires exactly the manual "clear cache" workaround clients
+    have been doing.
+
+    This is the safety net: regardless of WHY a CSRF check failed, the user
+    is bounced straight back to a working page with a fresh token and a
+    plain-language explanation — "automatic booting" per Roy's own framing —
+    instead of a dead end. Never raises; always returns a redirect.
+    """
+    messages.warning(
+        request,
+        'Ombi hilo lilishindikana kwa sababu ya muda (kikao kimepitwa na wakati). '
+        'Jaribu tena — hii mara nyingine itafanya kazi. '
+        '(Request expired — please try again, this time it will work.)',
+    )
+    if request.user.is_authenticated:
+        return redirect('home')
+    return redirect('login')
+
+
 def home(request):
     context = {"today": timezone.now().strftime("%B %d, %Y")}
 

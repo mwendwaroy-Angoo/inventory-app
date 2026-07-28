@@ -1,4 +1,4 @@
-const CACHE_NAME = 'duka-v10';
+const CACHE_NAME = 'duka-v11';
 const OFFLINE_URL = '/offline/';
 
 const PRECACHE_URLS = [
@@ -59,6 +59,28 @@ self.addEventListener('fetch', event => {
           return response;
         });
       })
+    );
+    return;
+  }
+
+  // 2026-07-28 live report — Roy: ~80% of client logins hit a raw CSRF 403
+  // dead-end page, only fixable by manually clearing the phone's cache.
+  // Root cause: /accounts/ pages (login, logout, password reset...) and the
+  // pre-login signup forms (/business/signup/, /business/rider/signup/,
+  // /business/supplier/signup/) each embed a CSRF token bound to the
+  // CURRENT cookie/session state. The general navigate handler below is
+  // network-first but falls back to a CACHED copy on a slow/failed fetch —
+  // extremely common on Kenyan mobile data — and a stale cached page's
+  // token can no longer match a since-refreshed cookie (e.g. after
+  // SingleSessionMiddleware logs the device out elsewhere). These pages
+  // must NEVER be served from cache: network-only, falling back to the
+  // offline page (never a stale copy of THIS URL) on failure. Paired with a
+  // custom CSRF_FAILURE_VIEW (core/views.py) as a second-layer safety net
+  // for any CSRF mismatch this doesn't prevent.
+  if (request.mode === 'navigate' &&
+      (request.url.includes('/accounts/') || request.url.includes('/signup/'))) {
+    event.respondWith(
+      fetch(request).catch(() => caches.match(OFFLINE_URL))
     );
     return;
   }

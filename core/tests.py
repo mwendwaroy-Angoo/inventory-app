@@ -14343,3 +14343,33 @@ class RecentSettledTabsStationScopingTest(TestCase):
         names = [t['customer_name'] for t in data['tabs']]
         self.assertIn('Bar Cust', names)
         self.assertIn('Kitchen Cust', names)
+
+
+class CsrfFailureViewTest(TestCase):
+    """2026-07-28 live report — Roy: ~80% of client logins hit Django's raw,
+    unrecoverable default CSRF-failure page, with "clear phone cache" as the
+    only known workaround. CSRF_FAILURE_VIEW now bounces the user straight
+    back to a working page (login for anonymous, home for authenticated)
+    with a friendly explanation instead of a dead end — see core.views.
+    csrf_failure_view's docstring for the full root-cause analysis."""
+
+    def test_csrf_failure_redirects_to_login_for_anonymous_user(self):
+        from django.test import Client
+        client = Client(enforce_csrf_checks=True)
+        resp = client.post('/accounts/login/', {'username': 'nobody', 'password': 'x'})
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/accounts/login/', resp.url)
+
+    def test_csrf_failure_redirects_to_home_for_authenticated_user(self):
+        from django.test import Client
+        biz = Business.objects.create(name='Csrf Test Biz')
+        user = User.objects.create_user(username='csrf_user', password='x')
+        UserProfile.objects.create(user=user, business=biz, role='owner')
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(user)
+        # No csrfmiddlewaretoken in the POST body — enforce_csrf_checks=True
+        # means this must fail CSRF (not some other validation) and hit our
+        # custom failure view rather than a raw 403 page.
+        resp = client.post('/petty-cash/record/', {'amount': '100', 'reason': 'other'})
+        self.assertEqual(resp.status_code, 302)
+        self.assertNotIn('accounts/login', resp.url)
