@@ -460,6 +460,13 @@ def _kitchen_checkout(request, up, business, is_owner):
         merge_tab_id = int(merge_tab_id_raw) if merge_tab_id_raw.isdigit() else None
         stk_payment_id_raw = (request.POST.get('stk_payment_id') or '').strip()
         idem_token = (request.POST.get('idempotency_token') or '').strip()
+        # 2026-07-28 live request — checkout-time split payment, direct
+        # cash/mpesa sales only. See Transaction.apply_split_payment_locked().
+        try:
+            split_amount = Decimal(str(request.POST.get('split_amount', '') or '0'))
+        except Exception:
+            split_amount = Decimal('0')
+        split_method = (request.POST.get('split_method') or '').strip()
     except (json.JSONDecodeError, Exception):
         return JsonResponse({'ok': False, 'error': 'Invalid request'}, status=400)
 
@@ -581,6 +588,10 @@ def _kitchen_checkout(request, up, business, is_owner):
     # For tabs → 'credit'; for direct credit → 'credit'; for cash/mpesa → as-is
     txn_pm = 'credit' if (active_tab or payment_method == 'credit') else payment_method
     txn_recipient = credit_name if payment_method == 'credit' else (tab_customer or '')
+    # 2026-07-28 live request — checkout-time split payment (e.g. Chipo at
+    # KES 100 paid as 40 cash + 60 mpesa), direct sales only (no active_tab).
+    # See Transaction.apply_split_payment_locked().
+    created_txn_ids = []
 
     for entry in cart:
         item_id = entry.get('item_id')
@@ -623,6 +634,8 @@ def _kitchen_checkout(request, up, business, is_owner):
                 BarTabEntry.objects.create(
                     tab=active_tab, transaction=txn, description=desc, amount=amount,
                 )
+            elif txn:
+                created_txn_ids.append(txn.id)
             receipt_lines.append({'name': desc, 'subtotal': float(amount)})
             total += amount
         elif bunch_id:
@@ -643,6 +656,8 @@ def _kitchen_checkout(request, up, business, is_owner):
                     description=desc,
                     amount=amount,
                 )
+            else:
+                created_txn_ids.append(txn.id)
             receipt_lines.append({'name': desc, 'subtotal': float(amount)})
             total += amount
         else:
@@ -673,11 +688,37 @@ def _kitchen_checkout(request, up, business, is_owner):
                     description=desc,
                     amount=amount,
                 )
+            else:
+                created_txn_ids.append(txn.id)
             receipt_lines.append({'name': desc, 'subtotal': float(amount), 'qty': float(qty)})
             total += amount
 
     if not receipt_lines:
         return JsonResponse({'ok': False, 'error': 'No valid items'}, status=400)
+
+    # Checkout-time split payment — direct (no active_tab) cash/mpesa sale
+    # only. Never blocks the checkout: the sale already happened above.
+    if (
+        active_tab is None
+        and payment_method in ('cash', 'mpesa')
+        and split_method in ('cash', 'mpesa')
+        and split_method != payment_method
+        and split_amount > 0
+        and created_txn_ids
+    ):
+        try:
+            Transaction.apply_split_payment_locked(
+                created_txn_ids, business, split_amount, split_method,
+                staff_user=request.user,
+            )
+        except ValueError:
+            # Sale already recorded above; a bad split amount (client already
+            # validates bounds, so this is a rare race/edge case) must never
+            # roll back or fail the checkout itself — just skip the split.
+            logger.warning(
+                'kitchen checkout: split_amount %s rejected for txns %s',
+                split_amount, created_txn_ids,
+            )
 
     # For direct credit: auto-create Customer record
     if payment_method == 'credit' and credit_name:

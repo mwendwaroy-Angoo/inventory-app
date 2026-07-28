@@ -17,7 +17,7 @@ from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Case, DecimalField, F, Sum, Value, When
+from django.db.models import Case, DecimalField, F, Q, Sum, Value, When
 from django.db.models.functions import Abs, Coalesce
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -103,18 +103,42 @@ def get_active_staff_shift(user_profile, business, manager_must_have_shift=False
 
 
 def _shift_station(shift):
-    """'kitchen' or 'bar' — the counter this shift belongs to, by staff role
-    (the same discriminator _reconcile() already uses for its own station
-    filter; Shift.store is not station-aware — it's just set to the
-    business's first store at creation, not the store actually worked).
+    """'kitchen' or 'bar' — the counter this shift belongs to.
+
+    2026-07-28 live report (Monsoon Inn till showing bar cash with zero bar
+    sales that day): prefers the explicit Shift.station field, captured from
+    the request path at open_shift() time — the one 100%-reliable source,
+    since it's set from WHICH BOARD "Fungua Shift" was actually clicked on,
+    not who the staffer nominally is. Falls back to role-based inference
+    (staff.userprofile.role == 'kitchen') only for rows created before this
+    field existed (blank station) — role inference is WRONG whenever a
+    manager or any cross-access staffer (can_access_kitchen/can_access_bar)
+    works the counter that isn't their nominal role, which is exactly the
+    scenario that produced the live bug.
+
     An owner's own shift (if they ever open one) has no single station and
     must not be passed through here for till purposes — see
     till_expected_cash()'s docstring.
     """
+    if shift.station in ('bar', 'kitchen'):
+        return shift.station
     try:
         return 'kitchen' if shift.staff.userprofile.role == 'kitchen' else 'bar'
     except Exception:
         return 'bar'
+
+
+def _station_q(is_kitchen):
+    """Q object matching a Shift's station for DB-level filtering — the
+    queryset counterpart to _shift_station() (same explicit-field-first,
+    role-fallback-for-blank-rows logic), for call sites that need to filter
+    many shifts at once rather than inspect one instance."""
+    target = 'kitchen' if is_kitchen else 'bar'
+    role_fallback = (
+        Q(staff__userprofile__role='kitchen') if is_kitchen
+        else ~Q(staff__userprofile__role='kitchen')
+    )
+    return Q(station=target) | (Q(station='') & role_fallback)
 
 
 # ── Variance attribution ──────────────────────────────────────────────────────
@@ -184,21 +208,24 @@ def _reconcile(shift):
         created_at__lte=end,
     ).exclude(invoice_no='[SVQ]')
     # Scope to the correct counter so concurrent bar + kitchen shifts don't bleed.
-    # Kitchen staff  → kitchen store only (is_kitchen=True).
-    # Bar/general staff → non-kitchen stores (is_kitchen=False).
-    # Owner → no store filter: the owner may sell on either board and we must not
-    #   exclude their transactions by store type. The is_kitchen filter exists only
-    #   to separate concurrent staff shifts; the owner's shift doesn't need it.
-    #   Also avoids the INNER JOIN that silently drops items with store=None.
+    # 2026-07-28 — uses _shift_station(shift) (explicit field, falling back to
+    # role only for pre-migration rows) rather than role alone: a manager or
+    # any cross-access staffer (can_access_kitchen/can_access_bar) working the
+    # OTHER counter than their nominal role broke plain role-based inference —
+    # confirmed live (Monsoon Inn till showing bar cash with zero bar sales).
+    # Owner → no station filter: the owner may sell on either board and we must
+    #   not exclude their transactions by store type. The is_kitchen filter
+    #   exists only to separate concurrent staff shifts; the owner's shift
+    #   doesn't need it. Also avoids the INNER JOIN that silently drops items
+    #   with store=None.
     try:
         staff_role = shift.staff.userprofile.role
     except Exception:
         staff_role = 'staff'
+    _shift_stn = _shift_station(shift)
 
-    if staff_role == 'kitchen':
-        txns = txns.filter(item__store__is_kitchen=True)
-    elif staff_role != 'owner':
-        txns = txns.filter(item__store__is_kitchen=False)
+    if staff_role != 'owner':
+        txns = txns.filter(item__store__is_kitchen=(_shift_stn == 'kitchen'))
     # Revenue per transaction: use sale_amount when set (keg pours, preset Quick Sell),
     # otherwise abs(qty) * selling_price (regular Quick Sell without preset).
     _rev = Case(
@@ -232,10 +259,8 @@ def _reconcile(shift):
     # genuinely business-wide withdrawal with no clear till) are excluded from
     # both stations rather than guessed into one — see PettyCash.station's docstring.
     _petty_qs = PettyCash.objects.filter(business=shift.business, created_at__gte=shift.started_at, created_at__lte=end)
-    if staff_role == 'kitchen':
-        _petty_qs = _petty_qs.filter(station='kitchen')
-    elif staff_role != 'owner':
-        _petty_qs = _petty_qs.filter(station='bar')
+    if staff_role != 'owner':
+        _petty_qs = _petty_qs.filter(station=_shift_stn)
     petty_total = float(_petty_qs.filter(status='approved').aggregate(t=Sum('amount'))['t'] or 0)
 
     # 2026-07-26 (item 1) — petty cash still awaiting the owner's decision, shown
@@ -258,10 +283,8 @@ def _reconcile(shift):
         business=shift.business,
         paid_at__gte=shift.started_at, paid_at__lte=end,
     )
-    if staff_role == 'kitchen':
-        debt_qs = debt_qs.filter(source='kitchen')
-    elif staff_role != 'owner':
-        debt_qs = debt_qs.filter(source='bar')
+    if staff_role != 'owner':
+        debt_qs = debt_qs.filter(source=_shift_stn)
     debt_recovered_cash  = float(debt_qs.filter(payment_method='cash' ).aggregate(t=Sum('amount_paid'))['t'] or 0)
     debt_recovered_mpesa = float(debt_qs.filter(payment_method='mpesa').aggregate(t=Sum('amount_paid'))['t'] or 0)
 
@@ -355,15 +378,17 @@ def till_expected_cash(business, station, as_of=None):
     # shift's own window are still correctly summed below (those queries are
     # pure time-windows, not shift-scoped) — only which shift can serve as the
     # restart point changes.
+    # 2026-07-28 live report (Monsoon Inn till showing bar cash with zero bar
+    # sales that day): station matching now goes through _station_q() (the
+    # explicit Shift.station field, falling back to role only for
+    # pre-migration blank rows) instead of role alone -- a manager's or
+    # cross-access staffer's shift on the OTHER counter than their nominal
+    # role was being picked up as the wrong station's anchor.
     anchor_qs = Shift.objects.filter(
         business=business, status__in=('CLOSED', 'CONFIRMED'),
         ended_at__isnull=False, ended_at__lte=as_of,
         closing_cash_counted__isnull=False,
-    ).exclude(staff__userprofile__role='owner').select_related('staff')
-    anchor_qs = (
-        anchor_qs.filter(staff__userprofile__role='kitchen') if is_kitchen
-        else anchor_qs.exclude(staff__userprofile__role='kitchen')
-    )
+    ).exclude(staff__userprofile__role='owner').filter(_station_q(is_kitchen)).select_related('staff')
     anchor = anchor_qs.order_by('-ended_at').first()
 
     if anchor:
@@ -412,11 +437,7 @@ def till_expected_cash(business, station, as_of=None):
     if window_start:
         banked_qs = Shift.objects.filter(
             business=business, started_at__gt=window_start, started_at__lte=as_of,
-        ).exclude(staff__userprofile__role='owner')
-        banked_qs = (
-            banked_qs.filter(staff__userprofile__role='kitchen') if is_kitchen
-            else banked_qs.exclude(staff__userprofile__role='kitchen')
-        )
+        ).exclude(staff__userprofile__role='owner').filter(_station_q(is_kitchen))
         banked = float(banked_qs.aggregate(t=Sum('banked_amount'))['t'] or 0)
 
     expected = base + cash_sales + debt_recovered - petty_approved - banked
@@ -480,11 +501,7 @@ def _convert_open_tabs_to_debt_for_shift(shift, business, should_convert):
     from .models import BarTab
     from core.models import Customer
 
-    try:
-        _is_kitchen_shift = shift.staff.userprofile.role == 'kitchen'
-    except Exception:
-        _is_kitchen_shift = False
-    _tab_source = 'kitchen' if _is_kitchen_shift else 'bar'
+    _tab_source = _shift_station(shift)
 
     open_tabs = list(
         BarTab.objects.filter(business=business, status='OPEN', source=_tab_source)
@@ -709,10 +726,7 @@ def active_shift_api(request):
     auto_closed = _auto_close_expired_shifts(up.business)
 
     def _section(s):
-        try:
-            return 'kitchen' if s.staff.userprofile.role == 'kitchen' else 'bar'
-        except Exception:
-            return 'bar'
+        return _shift_station(s)
 
     def _covers_both(s):
         try:
@@ -816,7 +830,13 @@ def active_shift_api(request):
         # till_expected_cash()'s docstring). last_closing kept (same key,
         # same meaning to the frontend: "what should I count towards") for
         # the my_station this staffer is about to open on.
-        my_open_station = 'kitchen' if getattr(up, 'role', '') == 'kitchen' else 'bar'
+        #
+        # 2026-07-28 — path-based (this endpoint has two distinct URLs,
+        # /bar/shift/active/ and /kitchen/shift/active/, same pattern as
+        # _target_section above), not role-based: a manager or cross-access
+        # staffer opening a shift on the OTHER counter than their nominal
+        # role would otherwise be suggested the wrong station's float.
+        my_open_station = 'kitchen' if request.path.startswith('/kitchen/') else 'bar'
         last_closing = till_by_station.get(my_open_station, till_by_station['bar'])['expected_cash']
 
         # Missed-tasks reminder: check the most recent CLOSED auto-closed shift
@@ -926,17 +946,23 @@ def open_shift(request):
     # overlapping-shift Z-report double-count (see _detect_overlapping_shift_pairs
     # docstring) — surfacing it AT OPEN TIME, before any sales happen under the
     # confusion, is cheaper than untangling it after the fact.
-    my_station = 'kitchen' if getattr(up, 'role', '') == 'kitchen' else 'bar'
+    #
+    # 2026-07-28 live report (Monsoon Inn till showing bar cash with zero bar
+    # sales that day): my_station is now path-based (this endpoint has two
+    # distinct URLs, /bar/shift/open/ and /kitchen/shift/open/) rather than
+    # role-based — a manager or cross-access staffer opening a shift on the
+    # OTHER counter than their nominal role was being mis-tagged, which
+    # cascaded into every later till/reconciliation calculation for that
+    # shift. Also now the shift's own explicit station of record — see
+    # Shift.station and _shift_station().
+    my_station = 'kitchen' if request.path.startswith('/kitchen/') else 'bar'
     overlap_warning = None
     if getattr(up, 'role', '') != 'owner':
         same_station_open = Shift.objects.filter(
             business=up.business, status='OPEN',
         ).exclude(staff=request.user).select_related('staff__userprofile')
         for other in same_station_open:
-            try:
-                other_station = 'kitchen' if other.staff.userprofile.role == 'kitchen' else 'bar'
-            except Exception:
-                other_station = 'bar'
+            other_station = _shift_station(other)
             if other_station == my_station:
                 other_name = other.staff.get_full_name() or other.staff.username
                 started = timezone.localtime(other.started_at).strftime('%H:%M')
@@ -969,6 +995,7 @@ def open_shift(request):
         business=up.business,
         store=up.business.stores.first() if up.business.stores.exists() else None,
         staff=request.user,
+        station=my_station,
         opening_float=opening_float,
         banked_amount=banked,
         expected_opening_cash=expected_opening_cash,
@@ -1605,8 +1632,15 @@ def shift_history(request):
         from django.shortcuts import redirect
         return redirect('login')
 
-    # Station scoping: bar-only staff see bar shifts; kitchen-only staff see kitchen shifts
-    from django.db.models import Q as _Q
+    # Station scoping: bar-only staff see bar shifts; kitchen-only staff see kitchen shifts.
+    # 2026-07-28 fix: this used to filter on Shift.store — which is ALWAYS set
+    # to the business's first store at creation (see open_shift()), completely
+    # unrelated to which counter the shift was actually for. That meant a
+    # kitchen-only staffer's OWN shift history filter (store__is_kitchen=True)
+    # could never match anything (their shifts all had store=the bar store),
+    # and a bar-only staffer's filter matched everything, kitchen shifts
+    # included. Now uses _station_q() — the same explicit-field-first,
+    # role-fallback predicate the till/reconciliation code uses.
     _is_owner = getattr(up, 'is_owner_or_manager', False)
     _is_kitchen = getattr(up, 'is_kitchen_staff', False)
     _can_bar = getattr(up, 'can_access_bar', False)
@@ -1621,9 +1655,9 @@ def shift_history(request):
 
     _base_qs = Shift.objects.filter(business=up.business)
     if _show_kitchen and not _show_bar:
-        _base_qs = _base_qs.filter(store__is_kitchen=True)
+        _base_qs = _base_qs.filter(_station_q(True))
     elif _show_bar and not _show_kitchen:
-        _base_qs = _base_qs.filter(_Q(store__is_kitchen=False) | _Q(store__isnull=True))
+        _base_qs = _base_qs.filter(_station_q(False))
 
     # Identity scoping: only owner/manager sees every staff member's shifts. A regular
     # staffer (including waitress/kitchen) only ever sees their OWN shift history — station

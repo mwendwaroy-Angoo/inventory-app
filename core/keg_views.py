@@ -355,6 +355,14 @@ def bar_board(request):
         tab_server = (request.POST.get('tab_server') or '').strip()
         merge_tab_id_raw = (request.POST.get('merge_tab_id') or '').strip()
         merge_tab_id = int(merge_tab_id_raw) if merge_tab_id_raw.isdigit() else None
+        # 2026-07-28 live request — checkout-time split payment (e.g. a KES
+        # 100 pour paid as 40 cash + 60 mpesa), only meaningful for a direct
+        # cash/mpesa sale (never a tab). See Transaction.apply_split_payment_locked().
+        try:
+            split_amount = Decimal(str(request.POST.get('split_amount', '') or '0'))
+        except Exception:
+            split_amount = Decimal('0')
+        split_method = (request.POST.get('split_method') or '').strip()
 
         try:
             cart = json.loads(cart_json)
@@ -448,6 +456,7 @@ def bar_board(request):
 
         receipt_lines = []
         total_revenue = Decimal('0')
+        created_txn_ids = []  # direct (non-tab) sales only — for checkout-time split payment below
 
         for entry in cart:
             try:
@@ -473,12 +482,14 @@ def bar_board(request):
                 continue
 
             try:
-                KegBarrel.record_sale_locked(
+                _sale_txn = KegBarrel.record_sale_locked(
                     barrel.id, business, preset, qty, payment_method,
                     request.user, tab=active_tab,
                 )
             except KegBarrel.DoesNotExist:
                 continue  # depleted between fetch and lock
+            if active_tab is None and _sale_txn is not None:
+                created_txn_ids.append(_sale_txn.id)
             amount = Decimal(str(float(preset.price) * qty))
             total_revenue += amount
             receipt_lines.append({
@@ -488,6 +499,24 @@ def bar_board(request):
             })
 
         if receipt_lines:
+            # Checkout-time split payment — direct (non-tab) cash/mpesa sale
+            # only. Never blocks the checkout: the pours already happened above.
+            if (
+                payment_method in ('cash', 'mpesa')
+                and split_method in ('cash', 'mpesa')
+                and split_method != payment_method
+                and split_amount > 0
+                and created_txn_ids
+            ):
+                try:
+                    Transaction.apply_split_payment_locked(
+                        created_txn_ids, business, split_amount, split_method,
+                        staff_user=request.user,
+                    )
+                except ValueError as _split_err:
+                    from django.contrib import messages as _msg
+                    _msg.warning(request, str(_split_err))
+
             receipt_token = None
             receipt_number = None
             receipt_id = None
@@ -3057,16 +3086,17 @@ def bar_daily_report(request):
 
     # ── Staff / shift performance ──────────────────────────────────────────────
     from .models import Shift
+    from .shift_views import _shift_station
     staff_data = []
     for shift in Shift.objects.filter(
         business=business, started_at__date=report_date
     ).select_related('staff').order_by('started_at'):
-        # Skip kitchen-staff shifts — they belong in the kitchen board report
-        try:
-            if shift.staff.userprofile.role == 'kitchen':
-                continue
-        except Exception:
-            pass
+        # Skip kitchen shifts — they belong in the kitchen board report.
+        # 2026-07-28: uses _shift_station() (explicit field + role fallback),
+        # not bare role — a manager's or cross-access staffer's kitchen shift
+        # was previously slipping into the BAR report under plain role check.
+        if _shift_station(shift) == 'kitchen':
+            continue
         shift_end = shift.ended_at or timezone.now()
         st = Transaction.objects.filter(
             business=business,
@@ -3558,7 +3588,7 @@ def bar_shrinkage_report(request):
 @login_required
 def bar_z_report(request):
     """End-of-night Z-report. Owner sees all bar shifts for the day; staff sees own shift only."""
-    from .shift_views import _reconcile
+    from .shift_views import _reconcile, _shift_station
 
     up = _get_up(request)
     if not up:
@@ -3596,11 +3626,9 @@ def bar_z_report(request):
     counted_shifts = 0
 
     for shift in qs:
-        try:
-            is_kitchen_shift = shift.staff.userprofile.role == 'kitchen'
-        except Exception:
-            is_kitchen_shift = False
-        if is_kitchen_shift:
+        # 2026-07-28: uses _shift_station() (explicit field + role fallback),
+        # not bare role — see bar_daily_report's identical fix above.
+        if _shift_station(shift) == 'kitchen':
             continue
 
         rec = _reconcile(shift)

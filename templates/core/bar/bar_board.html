@@ -1011,6 +1011,11 @@
       <label class="btn btn-outline-secondary" for="pay-tab"
              style="border-color:#444; color:#e2c36e; font-size:0.8rem;">Tab</label>
     </div>
+    <button type="button" id="split-toggle-btn" onclick="window.toggleSplitPayment()"
+            style="display:none; background:rgba(93,168,240,.1); border:1px solid rgba(93,168,240,.3);
+                   border-radius:6px; color:#5da8f0; font-size:0.78rem; padding:4px 8px; cursor:pointer;">
+      ✂️ Gawanya
+    </button>
     <button class="btn btn-gold btn-sm" id="maliza-btn" onclick="this.disabled=true; window.completeSale()">Maliza Mauzo</button>
   </div>
   <!-- Tab customer / server fields — shown only when Tab is selected -->
@@ -1032,6 +1037,17 @@
          background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.25); border-radius:6px;
          color:#e2c36e; line-height:1.5;"></div>
   </div>
+  <!-- 2026-07-28 live request — checkout-time split payment (e.g. a KES 100
+       pour paid as 40 cash + 60 mpesa), at the point of sale rather than
+       only as a later Recent Payments correction. Cash/M-Pesa only. -->
+  <div id="split-fields" style="display:none; width:100%; margin-top:6px; padding:0 0.5rem;">
+    <label style="color:#b0b0b0; font-size:.75rem; display:block; margin-bottom:3px;">
+      Kiasi kilicholipwa kama <span id="split-other-label">M-Pesa</span> (KES) — iliyobaki inabaki kama njia kuu
+    </label>
+    <input type="number" id="split-amount-input" min="1" step="1" placeholder="e.g. 60"
+           style="background:#111; border:1px solid #444; color:#f0ece4; border-radius:8px;
+                  padding:5px 10px; font-size:0.83rem; width:100%;">
+  </div>
   <div style="display:none;">
   </div>
 </div>
@@ -1047,6 +1063,8 @@
   <input type="hidden" name="tab_server"     id="keg-tab-server-input">
   <input type="hidden" name="tab_phone"      id="keg-tab-phone-input">
   <input type="hidden" name="merge_tab_id"   id="keg-merge-tab-id" value="">
+  <input type="hidden" name="split_amount"   id="keg-split-amount-input" value="">
+  <input type="hidden" name="split_method"   id="keg-split-method-input" value="">
   <input type="hidden" name="idempotency_token" id="keg-idem-token" value="">
 </form>
 
@@ -2335,6 +2353,31 @@
     var cartArray = Object.values(kegCart).map(function (l) {
       return {barrel_id: l.barrel_id, preset_id: l.preset_id, qty: l.qty};
     });
+
+    // 2026-07-28 — checkout-time split payment: only meaningful for a direct
+    // Cash/M-Pesa sale, only sent when the staffer actually opened the split
+    // row and entered an amount.
+    var splitAmountVal = '';
+    var splitMethodVal = '';
+    if (method === 'cash' || method === 'mpesa') {
+      var splitFields = document.getElementById('split-fields');
+      var splitInput = document.getElementById('split-amount-input');
+      if (splitFields && splitFields.style.display !== 'none' && splitInput && splitInput.value) {
+        var splitAmt = parseFloat(splitInput.value);
+        var cartTotal = 0;
+        Object.values(kegCart).forEach(function (l) { cartTotal += l.price * l.qty; });
+        if (isNaN(splitAmt) || splitAmt <= 0 || splitAmt >= cartTotal) {
+          showToast('Kiasi cha mgawanyo lazima kiwe kati ya 0 na jumla ya mauzo (KES ' + Math.round(cartTotal) + ').', true);
+          splitInput.focus();
+          return;
+        }
+        splitAmountVal = String(splitAmt);
+        splitMethodVal = method === 'cash' ? 'mpesa' : 'cash';
+      }
+    }
+    document.getElementById('keg-split-amount-input').value = splitAmountVal;
+    document.getElementById('keg-split-method-input').value = splitMethodVal;
+
     document.getElementById('keg-cart-input').value    = JSON.stringify(cartArray);
     document.getElementById('keg-payment-input').value = method;
     document.getElementById('keg-idem-token').value =
@@ -4879,8 +4922,32 @@
           tabInput.dispatchEvent(new Event('blur'));
         }
       }
+      // 2026-07-28 — split payment (✂️ Gawanya) only makes sense for a
+      // direct Cash/M-Pesa sale, never Tab. Reset it on every method change
+      // so a stale split from a previous selection never carries through.
+      var splitBtn = document.getElementById('split-toggle-btn');
+      var splitFields = document.getElementById('split-fields');
+      var splitInput = document.getElementById('split-amount-input');
+      var splitOtherLabel = document.getElementById('split-other-label');
+      if (splitInput) splitInput.value = '';
+      if (splitFields) splitFields.style.display = 'none';
+      var isCashOrMpesa = this.value === 'cash' || this.value === 'mpesa';
+      if (splitBtn) splitBtn.style.display = isCashOrMpesa ? 'inline-block' : 'none';
+      if (isCashOrMpesa && splitOtherLabel) {
+        splitOtherLabel.textContent = this.value === 'cash' ? 'M-Pesa' : 'Cash';
+      }
     });
   });
+
+  window.toggleSplitPayment = function () {
+    var fields = document.getElementById('split-fields');
+    if (!fields) return;
+    fields.style.display = fields.style.display === 'none' ? 'block' : 'none';
+    if (fields.style.display === 'block') {
+      var input = document.getElementById('split-amount-input');
+      if (input) input.focus();
+    }
+  };
 
   /* ════════════════════════════════════════════════════════
      ORDER QUEUE MODULE

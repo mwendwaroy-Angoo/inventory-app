@@ -3030,3 +3030,88 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   previous LOCAL calendar day when run in the first few hours after local midnight — same
   bug class already documented above (`PettyCashReviewUndoTest`, 2026-07-25). 12 new tests.
   Migration 0131 (additive).
+- CSRF login-failure dead-end fix (2026-07-27), live report: ~80% of client logins hit a
+  raw Django "Forbidden (403) — CSRF verification failed" page, requiring the customer to
+  clear phone cache and reopen the app icon to recover; also asked to make cross-device
+  login "boot" the prior session automatically instead of erroring. Root-caused to the
+  Service Worker: `sw.js`'s general navigation handler could serve a stale cached copy of
+  an auth-adjacent page (login/signup) on a slow/flaky mobile connection, and a stale page
+  carries a stale CSRF token — the very next POST (login submit) fails verification with
+  Django's default raw 403 page, which has no "try again" affordance, hence the
+  clear-cache-and-reopen workaround clients had found on their own. `SingleSessionMiddleware`
+  (the cross-device "boot the other session" mechanism, Sprint 17) was independently
+  confirmed already correct and unrelated to this bug — it only fires post-login, this
+  failure was pre-login. Two-layer fix: (1) `sw.js` (bumped `duka-v10`→`duka-v11`) — new
+  early-exit block in the fetch handler makes any navigation whose URL contains
+  `/accounts/` or `/signup/` network-only, falling back to the offline page (never a stale
+  cached copy of the same URL) if the network truly is unreachable; (2) new
+  `CSRF_FAILURE_VIEW = "core.views.csrf_failure_view"` (`stockapp/settings.py`) — a safety
+  net for the residual case (token genuinely expired mid-session, or a network hiccup during
+  the POST itself): shows a friendly Swahili+English explanation via `messages.warning` and
+  redirects straight back into the app (home if already authenticated, login otherwise)
+  instead of Django's raw unstyled dead-end page — so even when a CSRF failure still
+  happens, it self-recovers with one tap instead of requiring a cache-clear. 2 new tests
+  (`CsrfFailureViewTest`, using `Client(enforce_csrf_checks=True)`). No migrations.
+- Shift station misattribution fix + checkout-time split payment, all 3 counters
+  (2026-07-27–28), from a live Monsoon Inn report with screenshots: "no bar sales recorded
+  yesterday before they closed but kitchen ones were made, so the counter cash entry there
+  is wrongly placed," plus two feature gaps — kitchen board's Recent Payments panel had no
+  split-payment correction (bar board already did), and no counter anywhere let a customer
+  paying straight cash/mpesa (not a tab) split across both methods at the point of sale
+  itself ("if chipo is 100 the customer may pay 40 cash and 60 mpesa... physical cash and
+  mpesa should be exactly accurate to what is in the system, this applies to all
+  counters"). **Root cause of the till mis-attribution**: `_shift_station()`,
+  `till_expected_cash()`'s anchor query, `_reconcile()`, and
+  `_convert_open_tabs_to_debt_for_shift()` all discriminated bar-vs-kitchen purely from
+  `staff.userprofile.role == 'kitchen'` — correct for an ordinary single-station staffer,
+  wrong for a manager or any cross-access staff member (`can_access_bar`+
+  `can_access_kitchen`) actually working the OTHER counter that shift; their role never
+  changes, so every till/reconciliation/shift-history calculation silently attributed their
+  kitchen-counter shift to the bar (or vice versa) — exactly the Monsoon Inn symptom.
+  `shift_history()`'s station filter had a second, independent bug in the same area: it
+  filtered on `Shift.store`, which is always `business.stores.first()` regardless of which
+  counter the shift actually ran, not a real per-shift signal at all. Fixed by adding an
+  explicit `Shift.station` field (migration 0132, `'bar'`/`'kitchen'`, blank for
+  pre-migration rows) captured once at `open_shift()` time from the URL prefix the request
+  actually came in on (`/bar/...` vs `/kitchen/...` — 100% reliable, unlike role) and stored
+  on the Shift permanently; new `_shift_station(shift)` prefers this explicit field,
+  falling back to the old role-based inference only for blank legacy rows, and new
+  `_station_q(is_kitchen)` gives the same logic as a Q-object for queryset-level filtering.
+  Propagated through every call site that had the bug: `till_expected_cash()`'s anchor +
+  banked-amount queries, `_reconcile()` (txns/petty-cash/debt all three), `open_shift()`'s
+  overlap check, `active_shift_api()`, `_convert_open_tabs_to_debt_for_shift()`, and
+  `shift_history()`'s station filter (rewritten from the broken `store`-based filter to
+  `_station_q()`). **Adjacent cross-counter leak, same investigation**: the "🕐 Malipo ya
+  Hivi Karibuni" (Recent Payments) correction panel in all three tabs drawers was showing
+  the OTHER counter's sales — root cause was `recent_settled_tabs_api()` using
+  `_allowed_tab_sources(up)` (an IDENTITY check — what this viewer is PERMITTED to see) as
+  its DISPLAY-SCOPE filter too; for an owner/manager both stations are always permitted, so
+  nothing was ever actually excluded regardless of which drawer was asking. Fixed with an
+  explicit `?station=` param sent by all three templates, intersected with (never
+  bypassing) the existing permission check. **Kitchen split-payment parity**: confirmed the
+  backend (`split_transaction_payment_method`) was already station-agnostic and correctly
+  gated — this was a frontend-only gap; added the same "✂️ Gawanya" button/JS to
+  `kitchen_board.html`'s Recent Payments panel that bar board and Quick Sell already had.
+  **New: checkout-time split payment** — new `Transaction.apply_split_payment_locked(cls,
+  txn_ids, business, split_amount, split_method, staff_user=None)` (`core/models.py`,
+  mirrors the existing correction-time `split_payment_method_locked()`'s qty=0 remainder
+  pattern) is the single model-layer entry point: given the just-created direct-sale Issue
+  transaction ids from ONE checkout, recolors whole transactions to `split_method` first
+  (walking oldest-first) and, if the split lands mid-transaction, delegates to
+  `split_payment_method_locked()` for that one boundary transaction — so a multi-line cart
+  splits correctly no matter how many lines it takes to cover the split amount. Wired into
+  all three checkout views identically: `quick_sell()` (`core/views.py`), `bar_board()`'s
+  keg-cart checkout (`core/keg_views.py`), and `_kitchen_checkout()` (`core/kitchen_views.py`)
+  each collect `created_txn_ids` for direct (non-tab) sales only and apply the split — never
+  for tab/credit sales, and never blocking the checkout itself (the sale already happened;
+  a `ValueError` from an invalid split amount just shows a warning message, the sale
+  stands). Frontend: a "✂️ Gawanya malipo" toggle + amount input added next to the
+  cash/mpesa payment selector in all three checkout UIs (`bar_board.html`,
+  `kitchen_board.html`, `quick_sell.html`), each validating the split amount client-side
+  against the cart total before submit, per the tabs-drawer-parity convention applied here
+  to checkout UI as well. 4 new test classes (`ApplySplitPaymentLockedTest` — model-level:
+  single split, split≥total raises, zero/blank no-op, multi-line split, same-method no-op;
+  `QuickSellCheckoutSplitPaymentTest`, `BarBoardCheckoutSplitPaymentTest`,
+  `KitchenBoardCheckoutSplitPaymentTest` — end-to-end POST tests, each also confirming the
+  split is never applied to a tab/credit sale). One migration (0132, additive). 823 tests
+  pass (core + accounts).

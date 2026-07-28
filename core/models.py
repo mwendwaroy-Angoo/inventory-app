@@ -761,6 +761,68 @@ class Transaction(models.Model):
             )
             return txn, new_txn
 
+    @classmethod
+    def apply_split_payment_locked(cls, txn_ids, business, split_amount, split_method, staff_user=None):
+        """Checkout-time sibling of split_payment_method_locked() (2026-07-28
+        live request — Roy: tabs have always supported a customer paying part
+        cash + part M-Pesa, but a DIRECT sale — e.g. Chipo at KES 100, paid as
+        40 cash + 60 mpesa — could only be split as a LATER correction, not at
+        the point of sale itself). Given the just-created direct-sale Issue
+        transaction ids from ONE checkout (all sharing a single PRIMARY
+        payment method), reallocates split_amount worth of them to
+        split_method.
+
+        Walks the transactions in id (creation) order, converting whole ones
+        as they fit, then splits the boundary transaction via
+        split_payment_method_locked() for any remainder that doesn't land on
+        a transaction boundary — the same walk-and-split shape already
+        proven by BarTab.settle_entries_amount_locked() for partial tab
+        settlement. Total revenue across the whole batch is unchanged either
+        way — this only ever relabels which channel collected which part,
+        never creates or destroys revenue.
+
+        No-ops silently when split_amount is None/<=0 (the normal case — no
+        split requested; every checkout calls this, most will pass nothing).
+        Raises ValueError if split_amount >= the batch total (would leave
+        nothing on the primary method — not a genuine split).
+        """
+        if not txn_ids or split_amount is None:
+            return
+        split_amount = float(split_amount)
+        if split_amount <= 0:
+            return
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            txns = list(
+                cls.objects.select_for_update()
+                .filter(id__in=txn_ids, business=business, type='Issue')
+                .order_by('id')
+            )
+            total = sum(float(t.revenue()) for t in txns)
+            if split_amount >= total:
+                raise ValueError('Kiasi cha mgawanyo lazima kiwe kidogo kuliko jumla ya mauzo.')
+
+            remaining = split_amount
+            for t in txns:
+                if remaining <= 0:
+                    break
+                if t.payment_method not in ('cash', 'mpesa') or t.payment_method == split_method:
+                    continue
+                amt = float(t.revenue())
+                if amt <= 0:
+                    continue
+                if remaining >= amt - 0.005:
+                    t.payment_method = split_method
+                    t.save(update_fields=['payment_method'])
+                    remaining = round(remaining - amt, 2)
+                else:
+                    cls.split_payment_method_locked(
+                        txn_id=t.id, business=business,
+                        split_amount=Decimal(str(remaining)), new_method=split_method,
+                        staff_user=staff_user,
+                    )
+                    remaining = 0
+
     def __str__(self):
         return f"{self.type} {abs(self.qty)} {self.item.unit} - {self.item.description}"
 
@@ -2336,6 +2398,21 @@ class Shift(models.Model):
     # increases it, a surplus decreases it below zero), so till_expected_cash()
     # needs no separate mechanism for "explained after the fact" vs "declared at
     # open time" — both are the same fact, just discovered at different times.
+    # ── Explicit station (2026-07-28 live report) ───────────────────────────────
+    # Which counter this shift was actually opened FROM (captured from the
+    # request path at open_shift() time — 100% reliable, unlike inferring it
+    # from staff.userprofile.role, which breaks for a manager or any
+    # cross-access staffer (can_access_kitchen/can_access_bar) working the
+    # OTHER counter than their nominal role. Confirmed live: a Monsoon Inn
+    # till showed KES 1400 attributed to Bar with zero bar sales that day —
+    # traced to till_expected_cash()'s anchor query picking up a
+    # non-kitchen-role staffer's KITCHEN shift close as if it were a bar
+    # close, because station was inferred from role alone. Blank on rows
+    # created before this field existed — see shift_views._shift_station()
+    # and _station_q(), which fall back to role-based inference ONLY for
+    # those old, blank rows.
+    STATION_CHOICES = [('bar', 'Bar'), ('kitchen', 'Kitchen')]
+    station = models.CharField(max_length=10, choices=STATION_CHOICES, blank=True)
     banked_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=Decimal('0'),
         help_text='Net cash removed (or, if negative, added) from this till since the previous shift closed.',

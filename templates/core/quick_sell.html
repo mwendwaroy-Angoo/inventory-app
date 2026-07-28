@@ -974,6 +974,29 @@
                 {% endif %}
               </div>
             </div>
+            <!-- 2026-07-28 live request — checkout-time split payment (e.g. a
+                 KES 100 sale paid as 40 cash + 60 mpesa), at the point of sale
+                 rather than only as a later Recent Payments correction. Shown
+                 only for a direct Cash/M-Pesa sale — never Tab/Deni, where
+                 there's no cash+mpesa split to make. -->
+            <div id="qsSplitPaymentRow" style="display:none; margin-bottom:0.6rem;">
+              <button type="button" id="qsSplitToggleBtn" onclick="window.qsToggleSplitPayment()"
+                      style="width:100%; background:rgba(93,168,240,.08); border:1px solid rgba(93,168,240,.3);
+                             border-radius:6px; color:#5da8f0; font-size:.78rem; padding:.4rem .6rem; cursor:pointer;">
+                ✂️ Gawanya malipo (Cash + M-Pesa)
+              </button>
+              <div id="qsSplitPaymentInputs" style="display:none; margin-top:.4rem;">
+                <label style="color:#b0b0b0; font-size:.75rem; display:block; margin-bottom:.25rem;">
+                  Kiasi kilicholipwa kama <span id="qsSplitOtherLabel">M-Pesa</span> (KES)
+                </label>
+                <input type="number" id="qsSplitAmountInput" min="1" step="1" placeholder="e.g. 60"
+                       style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                              color:var(--pearl); padding:.45rem .7rem; font-size:.85rem;">
+                <div style="font-size:.72rem; color:#666; margin-top:.25rem;">
+                  Iliyobaki itabaki kama njia kuu uliyochagua hapo juu.
+                </div>
+              </div>
+            </div>
             <!-- Customer / tab name — shown for both Tab and Credit/Deni -->
             <div id="qsCreditCustomerRow" style="display:none; margin-bottom:0.6rem;">
               <label id="qsCustomerRowLabel" style="color:var(--gold); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.07em; display:block; margin-bottom:0.3rem;">
@@ -1015,6 +1038,8 @@
     <input type="hidden" name="payment_method" id="qsPaymentMethodData" value="cash">
     <input type="hidden" name="recipient" id="qsRecipientData" value="">
     <input type="hidden" name="credit_phone" id="qsCreditPhoneData" value="">
+    <input type="hidden" name="split_amount" id="qsSplitAmountData" value="">
+    <input type="hidden" name="split_method" id="qsSplitMethodData" value="">
     <input type="hidden" name="idempotency_token" id="qsIdemToken" value="">
 </form>
 
@@ -1624,8 +1649,34 @@
                 }
                 if (phoneRow) phoneRow.style.display = 'block';
             }
+            // 2026-07-28 — split-payment row only makes sense for a direct
+            // Cash/M-Pesa sale; reset it whenever the method changes so a
+            // stale split from a previous selection never carries through.
+            var splitRow = document.getElementById('qsSplitPaymentRow');
+            var otherLabel = document.getElementById('qsSplitOtherLabel');
+            var splitInputs = document.getElementById('qsSplitPaymentInputs');
+            var splitInput = document.getElementById('qsSplitAmountInput');
+            if (splitInput) splitInput.value = '';
+            if (splitInputs) splitInputs.style.display = 'none';
+            if (splitRow) {
+                var isCashOrMpesa = this.value === 'cash' || this.value === 'mpesa';
+                splitRow.style.display = isCashOrMpesa ? 'block' : 'none';
+                if (isCashOrMpesa && otherLabel) {
+                    otherLabel.textContent = this.value === 'cash' ? 'M-Pesa' : 'Cash';
+                }
+            }
         });
     });
+
+    window.qsToggleSplitPayment = function () {
+        var inputs = document.getElementById('qsSplitPaymentInputs');
+        if (!inputs) return;
+        inputs.style.display = inputs.style.display === 'none' ? 'block' : 'none';
+        if (inputs.style.display === 'block') {
+            var input = document.getElementById('qsSplitAmountInput');
+            if (input) input.focus();
+        }
+    };
 
     // ── COMPLETE SALE ──
     var _qsFormSubmitted = false;
@@ -1659,6 +1710,28 @@
             document.getElementById('qsRecipientData').value = '';
             document.getElementById('qsCreditPhoneData').value = '';
         }
+        // 2026-07-28 — checkout-time split payment: only meaningful for a
+        // direct cash/mpesa sale, and only sent when the staffer actually
+        // opened the split row and entered an amount.
+        var splitAmountVal = '';
+        var splitMethodVal = '';
+        if (pm === 'cash' || pm === 'mpesa') {
+            var splitInputs = document.getElementById('qsSplitPaymentInputs');
+            var splitInput = document.getElementById('qsSplitAmountInput');
+            if (splitInputs && splitInputs.style.display !== 'none' && splitInput && splitInput.value) {
+                var splitAmt = parseFloat(splitInput.value);
+                var cartTotal = cart.reduce(function(s, c) { return s + c.qty * c.price; }, 0);
+                if (isNaN(splitAmt) || splitAmt <= 0 || splitAmt >= cartTotal) {
+                    alert('Kiasi cha mgawanyo lazima kiwe kati ya 0 na jumla ya mauzo (KES ' + Math.round(cartTotal) + ').');
+                    splitInput.focus();
+                    return;
+                }
+                splitAmountVal = String(splitAmt);
+                splitMethodVal = pm === 'cash' ? 'mpesa' : 'cash';
+            }
+        }
+        document.getElementById('qsSplitAmountData').value = splitAmountVal;
+        document.getElementById('qsSplitMethodData').value = splitMethodVal;
         document.getElementById('qsCartData').value = JSON.stringify(cart);
         document.getElementById('qsPaymentMethodData').value = pm;
         document.getElementById('qsIdemToken').value =

@@ -702,6 +702,23 @@
             <input type="text" id="kb-credit-name" class="form-control form-control-sm mb-1" placeholder="Jina la mteja (lazima)..." autocomplete="off">
             <input type="tel" id="kb-credit-phone" class="form-control form-control-sm" placeholder="Namba ya simu (07XX... — SMS)" autocomplete="off">
           </div>
+          <!-- 2026-07-28 live request — checkout-time split payment (e.g.
+               Chipo at KES 100 paid as 40 cash + 60 mpesa), at the point of
+               sale rather than only as a later Recent Payments correction.
+               Cash/M-Pesa direct sale only. -->
+          <div id="kb-split-toggle-row" style="display:none; margin-top:0.5rem;">
+            <button type="button" onclick="kbToggleSplitPayment()"
+                    style="width:100%; background:rgba(93,168,240,.08); border:1px solid rgba(93,168,240,.3);
+                           border-radius:6px; color:#5da8f0; font-size:.78rem; padding:.35rem .6rem; cursor:pointer;">
+              ✂️ Gawanya malipo (Cash + M-Pesa)
+            </button>
+          </div>
+          <div id="kb-split-row" style="display:none; margin-top:0.4rem;">
+            <label style="color:#b0b0b0; font-size:.75rem; display:block; margin-bottom:3px;">
+              Kiasi kilicholipwa kama <span id="kb-split-other-label">M-Pesa</span> (KES)
+            </label>
+            <input type="number" id="kb-split-amount" class="form-control form-control-sm" min="1" step="1" placeholder="e.g. 60">
+          </div>
           <!-- Receipt link shown after successful cash/mpesa/credit sale -->
           <div id="kb-receipt-banner" style="display:none; margin-top:0.5rem; padding:0.45rem 0.6rem; background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:8px; text-align:center;">
             <a id="kb-receipt-link" href="#" target="_blank" rel="noopener" style="color:#c9a84c; font-size:0.82rem; font-weight:600; text-decoration:none;">🧾 Angalia Risiti</a>
@@ -1829,6 +1846,20 @@
     creditRow.style.display = (pm === 'credit') ? 'block' : 'none';
     stkRow.style.display    = (pm === 'stk') ? 'block' : 'none';
     document.getElementById('kb-receipt-banner').style.display = 'none';
+    // 2026-07-28 — split payment only makes sense for a direct Cash/M-Pesa
+    // sale. Reset it on every method change so a stale split never carries
+    // through to a different payment method.
+    var splitToggleRow = document.getElementById('kb-split-toggle-row');
+    var splitRow = document.getElementById('kb-split-row');
+    var splitAmountInput = document.getElementById('kb-split-amount');
+    var splitOtherLabel = document.getElementById('kb-split-other-label');
+    if (splitAmountInput) splitAmountInput.value = '';
+    if (splitRow) splitRow.style.display = 'none';
+    var isCashOrMpesa = (pm === 'cash' || pm === 'mpesa');
+    if (splitToggleRow) splitToggleRow.style.display = isCashOrMpesa ? 'block' : 'none';
+    if (isCashOrMpesa && splitOtherLabel) {
+      splitOtherLabel.textContent = pm === 'cash' ? 'M-Pesa' : 'Cash';
+    }
     // Trigger cross-tab check immediately if name already typed when food_tab selected
     if (pm === 'food_tab') {
       var _nameNow = document.getElementById('kb-tab-name');
@@ -1842,6 +1873,16 @@
     }
   }
   window.selectPM = selectPM;
+
+  window.kbToggleSplitPayment = function () {
+    var row = document.getElementById('kb-split-row');
+    if (!row) return;
+    row.style.display = row.style.display === 'none' ? 'block' : 'none';
+    if (row.style.display === 'block') {
+      var input = document.getElementById('kb-split-amount');
+      if (input) input.focus();
+    }
+  };
 
   /* ── Tile clicks ── */
   window.tileClick = function(itemId) {
@@ -1993,6 +2034,17 @@
     var btn = document.getElementById('kb-checkout-btn');
     btn.disabled = true; btn.textContent = 'Inatuma...';
     var mergeTabId = (document.getElementById('kb-merge-tab-id').value||'').trim();
+    // 2026-07-28 — checkout-time split payment (already validated in doCheckout()).
+    var splitAmountVal = '';
+    var splitMethodVal = '';
+    if (pm === 'cash' || pm === 'mpesa') {
+      var splitRow = document.getElementById('kb-split-row');
+      var splitInput = document.getElementById('kb-split-amount');
+      if (splitRow && splitRow.style.display !== 'none' && splitInput && splitInput.value) {
+        splitAmountVal = splitInput.value;
+        splitMethodVal = pm === 'cash' ? 'mpesa' : 'cash';
+      }
+    }
     var body = new URLSearchParams({
       cart: JSON.stringify(_cart),
       payment_method: pm,
@@ -2001,6 +2053,8 @@
       credit_name: creditName,
       credit_phone: creditPhone,
       merge_tab_id: mergeTabId,
+      split_amount: splitAmountVal,
+      split_method: splitMethodVal,
       stk_payment_id: (meta && meta.stk_payment_id) ? String(meta.stk_payment_id) : '',
       idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
       csrfmiddlewaretoken: CSRF,
@@ -2064,6 +2118,20 @@
       document.getElementById('kb-credit-name').focus();
       showToast('Ingiza jina la mteja kwa deni.');
       return;
+    }
+    // 2026-07-28 — checkout-time split payment validation (Cash/M-Pesa only).
+    if (_pm === 'cash' || _pm === 'mpesa') {
+      var splitRow = document.getElementById('kb-split-row');
+      var splitInput = document.getElementById('kb-split-amount');
+      if (splitRow && splitRow.style.display !== 'none' && splitInput && splitInput.value) {
+        var splitAmt = parseFloat(splitInput.value);
+        var cartTotal = _cart.reduce(function(s,e){ return s + e.amount; }, 0);
+        if (isNaN(splitAmt) || splitAmt <= 0 || splitAmt >= cartTotal) {
+          showToast('Kiasi cha mgawanyo lazima kiwe kati ya 0 na jumla ya mauzo (KES ' + Math.round(cartTotal) + ').');
+          splitInput.focus();
+          return;
+        }
+      }
     }
     if (_pm === 'stk') {
       // Open STK modal; actual checkout fires after payment confirmed
@@ -2447,12 +2515,54 @@
               '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ') — ' + e.time + '</span>' +
               '<button onclick="window.kbCorrectDirectPayment(' + e.id + ',\'' + other + '\',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
               'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
+              '<button onclick="window.kbSplitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
+              'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
               '</div>';
           });
         }
         panel.innerHTML = html;
       })
       .catch(function () { panel.innerHTML = '<div style="color:#c0395a;font-size:.75rem;padding:.4rem;">Hitilafu ya mtandao.</div>'; });
+  };
+
+  // 2026-07-28 live report: bar board / Quick Sell have had a split-payment
+  // correction (KES 100 mis-entered as one method, actually paid as e.g.
+  // 40 cash + 60 mpesa) since 2026-07-26 — kitchen board never got it,
+  // leaving only the whole-amount toggle above. Same backend endpoint
+  // (split_transaction_payment_method), same plain prompt() UX as bar board
+  // (a number entered rarely and deliberately by the correcting staffer).
+  window.kbSplitDirectPayment = function (txnId, currentMethod, totalAmount, desc) {
+    var otherMethod = currentMethod === 'cash' ? 'mpesa' : 'cash';
+    var otherLabel = otherMethod === 'cash' ? 'Cash' : 'M-Pesa';
+    var currentLabel = currentMethod === 'cash' ? 'Cash' : 'M-Pesa';
+    var amtStr = prompt(
+      '"' + desc + '" — jumla KES ' + Math.round(totalAmount) + ' (' + currentLabel + ').\n' +
+      'Ni KES ngapi ZILIZOLIPWA KAMA ' + otherLabel + '? (Ile iliyobaki itabaki ' + currentLabel + ')',
+      ''
+    );
+    if (amtStr === null) return;
+    var amt = parseFloat(amtStr);
+    if (isNaN(amt) || amt <= 0 || amt >= totalAmount) {
+      showToast('Kiasi lazima kiwe kati ya 0 na KES ' + Math.round(totalAmount) + '.');
+      return;
+    }
+    var fd = new URLSearchParams();
+    fd.append('new_method', otherMethod);
+    fd.append('split_amount', amt);
+    fd.append('reason', 'Malipo yaligawanywa kati ya njia mbili');
+    fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+    fetch('/bar/transactions/' + txnId + '/split-payment/', {
+      method: 'POST', credentials: 'same-origin', body: fd
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) {
+          showToast(d.message || '✓ Imegawanywa');
+          window.kbLoadRecentPayments();
+        } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
+        else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
+      })
+      .catch(function(){ showToast('Hitilafu ya mtandao'); });
   };
 
   window.kbCorrectDirectPayment = function (txnId, newMethod, desc, anchorEl) {

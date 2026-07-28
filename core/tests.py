@@ -14373,3 +14373,430 @@ class CsrfFailureViewTest(TestCase):
         resp = client.post('/petty-cash/record/', {'amount': '100', 'reason': 'other'})
         self.assertEqual(resp.status_code, 302)
         self.assertNotIn('accounts/login', resp.url)
+
+
+# ── Shift Station Misattribution Fix (2026-07-28 live report) ──────────────
+# Monsoon Inn's till showed KES 1400 attributed to Bar with ZERO bar sales
+# that day, while kitchen sales had happened. Root cause: station was
+# inferred from staff.userprofile.role everywhere (_shift_station,
+# _reconcile, till_expected_cash's anchor/banked queries,
+# _convert_open_tabs_to_debt_for_shift, shift_history's — separately broken
+# — Shift.store filter) — which breaks for a MANAGER or any cross-access
+# staffer (can_access_kitchen/can_access_bar) working the counter that
+# ISN'T their nominal role. Shift.station is now captured explicitly from
+# the request path at open_shift() time — 100% reliable regardless of role.
+
+class ShiftStationMisattributionTest(TestCase):
+    def setUp(self):
+        from core.shift_views import till_expected_cash, _shift_station
+        self.till_expected_cash = till_expected_cash
+        self._shift_station = _shift_station
+
+        self.biz = Business.objects.create(name='Station Misattribution Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='smt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        # A MANAGER — not role='kitchen' — who actually works the kitchen
+        # counter. This is exactly the real-world shape of the bug: role
+        # alone says "not kitchen", but this shift is genuinely a kitchen shift.
+        self.manager = User.objects.create_user(username='smt_manager', password='x')
+        UserProfile.objects.create(
+            user=self.manager, business=self.biz, role='manager',
+            can_access_kitchen=True, can_access_bar=True,
+        )
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, material_no='SMT-1',
+            description='Chipo', unit='plate', selling_price=Decimal('100'),
+        )
+
+    def test_manager_shift_opened_from_kitchen_board_stores_kitchen_station(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post('/kitchen/shift/open/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        shift = Shift.objects.get(id=data['shift_id'])
+        self.assertEqual(shift.station, 'kitchen')
+        self.assertEqual(self._shift_station(shift), 'kitchen')
+
+    def test_manager_kitchen_shift_anchors_kitchen_till_not_bar(self):
+        """The exact live bug: a manager's KITCHEN shift close must never be
+        picked up as the BAR till's anchor."""
+        self.client.force_login(self.manager)
+        open_resp = self.client.post('/kitchen/shift/open/', {'opening_float': '0'})
+        shift_id = open_resp.json()['shift_id']
+
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        close_resp = self.client.post(f'/kitchen/shift/{shift_id}/close/', {
+            'closing_cash_counted': '100',
+        })
+        self.assertTrue(close_resp.json()['ok'])
+
+        bar_till = self.till_expected_cash(self.biz, 'bar')
+        kitchen_till = self.till_expected_cash(self.biz, 'kitchen')
+        self.assertEqual(bar_till['expected_cash'], 0.0, 'bar till must NOT pick up the manager\'s kitchen close')
+        self.assertEqual(kitchen_till['expected_cash'], 100.0)
+
+    def test_manager_kitchen_shift_reconcile_scopes_to_kitchen_items_only(self):
+        self.client.force_login(self.manager)
+        open_resp = self.client.post('/kitchen/shift/open/', {'opening_float': '0'})
+        shift = Shift.objects.get(id=open_resp.json()['shift_id'])
+
+        bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='SMT-2',
+            description='Beer', unit='bottle', selling_price=Decimal('200'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+            created_at=shift.started_at,
+        )
+        # A bar sale happening concurrently must NOT bleed into this manager's
+        # kitchen shift reconciliation.
+        Transaction.objects.create(
+            business=self.biz, item=bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+            created_at=shift.started_at,
+        )
+        from core.shift_views import _reconcile
+        rec = _reconcile(shift)
+        self.assertEqual(rec['cash_sales'], 100.0)
+
+    def test_shift_history_shows_manager_kitchen_shift_under_kitchen_filter(self):
+        """Separate pre-existing bug found in the same investigation:
+        shift_history()'s station filter relied on Shift.store, which is
+        ALWAYS the business's first store regardless of actual counter — a
+        kitchen-only viewer's filter (store__is_kitchen=True) could never
+        match ANY shift. Now uses the same station predicate as till/reconcile."""
+        self.client.force_login(self.manager)
+        self.client.post('/kitchen/shift/open/', {'opening_float': '0'})
+
+        kitchen_only = User.objects.create_user(username='smt_kitchen_only', password='x')
+        UserProfile.objects.create(user=kitchen_only, business=self.biz, role='kitchen')
+        # kitchen_only staff only sees their OWN shifts, so log in as owner to
+        # confirm the manager's shift is correctly bucketed under "kitchen".
+        self.client.force_login(self.owner)
+        resp = self.client.get('/kitchen/shift/history/')
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.context['rows']
+        self.assertTrue(
+            any(r['shift'].staff_id == self.manager.id for r in rows),
+            'manager kitchen shift must appear in the kitchen-filtered history',
+        )
+
+
+class KitchenDirectSalePaymentSplitTest(TestCase):
+    """2026-07-28 live report: kitchen board's Recent Payments panel had no
+    split-payment (✂️ Gawanya) button/JS at all — only the bar board and
+    Quick Sell got it in the 2026-07-26 sprint. The backend endpoint
+    (split_transaction_payment_method) was already station-agnostic and
+    correctly gated via _allowed_tab_sources per-item station — this locks
+    that in for a kitchen item specifically, confirming the gap really was
+    frontend-only (template fix), not a missing backend capability."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Split Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.staff = User.objects.create_user(username='kbsp_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN', station='kitchen')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            material_no='KBSP-1', unit='Plate', selling_price=Decimal('100'),
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='mpesa',
+        )
+
+    def test_kitchen_staff_can_split_kitchen_direct_sale(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/split-payment/', {
+            'new_method': 'cash', 'split_amount': '40',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.txn.refresh_from_db()
+        self.assertEqual(float(self.txn.sale_amount), 60.0)
+        self.assertEqual(self.txn.payment_method, 'mpesa')
+
+
+# ── Checkout-time split payment for direct (non-tab) sales (2026-07-28) ──────
+# Roy's live report: "across all counters for orders been paid straight up
+# cash or mpesa and not going to tabs... there is no payment split modal we
+# only have it in tabs... if chipo is 100 the customer may pay 40 cash and 60
+# mpesa, this is important because at the end of the day physical cash and
+# mpesa should be exactly accurate to what is in the system." Transaction.
+# apply_split_payment_locked() is the shared model-layer entry point wired
+# into Quick Sell, Bar Board, and Kitchen Board checkout — never blocks the
+# sale itself (the goods/pours already happened by the time this runs), only
+# recolors the payment_method(s) on the transaction(s) just created.
+
+class ApplySplitPaymentLockedTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Split Model Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Split Test Item',
+            material_no='SPLIT-01', unit='pcs', selling_price=Decimal('100'),
+        )
+
+    def test_single_transaction_split_creates_sibling_with_correct_amounts(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        Transaction.apply_split_payment_locked([txn.id], self.biz, Decimal('60'), 'mpesa')
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')
+        self.assertEqual(float(txn.sale_amount), 40.0)
+        sibling = Transaction.objects.filter(
+            business=self.biz, item=self.item, payment_method='mpesa',
+        ).exclude(id=txn.id).first()
+        self.assertIsNotNone(sibling, 'Split must create a sibling transaction for the split portion')
+        self.assertEqual(float(sibling.sale_amount), 60.0)
+        self.assertEqual(sibling.qty, Decimal('0'), 'Split sibling must not double-deduct stock')
+
+    def test_split_amount_gte_total_raises(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        with self.assertRaises(ValueError):
+            Transaction.apply_split_payment_locked([txn.id], self.biz, Decimal('100'), 'mpesa')
+        with self.assertRaises(ValueError):
+            Transaction.apply_split_payment_locked([txn.id], self.biz, Decimal('150'), 'mpesa')
+
+    def test_zero_or_blank_split_amount_is_a_no_op(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        Transaction.apply_split_payment_locked([txn.id], self.biz, Decimal('0'), 'mpesa')
+        Transaction.apply_split_payment_locked([txn.id], self.biz, None, 'mpesa')
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item).count(), 1,
+            'A zero/blank split amount must not create any sibling transaction',
+        )
+
+    def test_split_across_multiple_cart_lines_recolors_whole_lines_first(self):
+        # Two lines of 100 each (cart total 200), customer pays 120 mpesa / 80 cash.
+        # The split amount (80) should fully recolor the first whole transaction to
+        # 'mpesa' rather than being spread proportionally.
+        txn1 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        txn2 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        Transaction.apply_split_payment_locked(
+            [txn1.id, txn2.id], self.biz, Decimal('120'), 'mpesa',
+        )
+        txn1.refresh_from_db()
+        txn2.refresh_from_db()
+        mpesa_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, payment_method='mpesa',
+            )
+        )
+        cash_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, payment_method='cash',
+            )
+        )
+        self.assertEqual(mpesa_total, 120.0)
+        self.assertEqual(cash_total, 80.0)
+
+    def test_ignores_transactions_already_on_the_split_method(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='mpesa',
+        )
+        # Splitting into the SAME method as the original must not touch it.
+        Transaction.apply_split_payment_locked([txn.id], self.biz, Decimal('50'), 'mpesa')
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item).count(), 1,
+        )
+
+    def test_no_txn_ids_is_a_no_op(self):
+        Transaction.apply_split_payment_locked([], self.biz, Decimal('50'), 'mpesa')
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), 0)
+
+
+class QuickSellCheckoutSplitPaymentTest(TestCase):
+    """POST /quick-sell/ with split_amount/split_method must split the direct
+    (non-tab) sale's payment methods, matching the tabs-drawer split-payment
+    feature this app already had."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='QS Split Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='qssplit_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='QS Split Item',
+            material_no='QSSPLIT-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_cash_sale_split_with_mpesa_portion(self):
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'cash',
+            'split_amount': '40',
+            'split_method': 'mpesa',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        cash_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, type='Issue', payment_method='cash',
+            )
+        )
+        mpesa_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, type='Issue', payment_method='mpesa',
+            )
+        )
+        self.assertEqual(cash_total, 60.0)
+        self.assertEqual(mpesa_total, 40.0)
+
+    def test_split_never_applied_to_credit_tab_sales(self):
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'tab',
+            'recipient': 'QS Split Tab Patron',
+            'split_amount': '40',
+            'split_method': 'mpesa',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        # Split must never touch a tab/credit sale — only direct cash/mpesa checkouts.
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, payment_method='mpesa').count(), 0,
+        )
+
+
+class BarBoardCheckoutSplitPaymentTest(TestCase):
+    """POST /bar/ with split_amount/split_method on a direct (non-tab) keg
+    cart sale must split payment methods the same way tab settlement does."""
+
+    def setUp(self):
+        self.biz, self.store, self.staff_user, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'Bar Split Biz'
+        )
+        self.owner = User.objects.create_user(username='barsplit_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_cash_sale_split_with_mpesa_portion(self):
+        import json
+        cart = json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
+        resp = self.client.post('/bar/', {
+            'keg_cart': cart,
+            'payment_method': 'cash',
+            'split_amount': '80',
+            'split_method': 'mpesa',
+            'idempotency_token': 'bar-split-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        cash_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, type='Issue', payment_method='cash',
+            )
+        )
+        mpesa_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, type='Issue', payment_method='mpesa',
+            )
+        )
+        # Preset price 200 total; split 80 to mpesa, 120 stays cash.
+        self.assertEqual(mpesa_total, 80.0)
+        self.assertEqual(cash_total, 120.0)
+
+    def test_split_never_applied_to_tab_sales(self):
+        import json
+        cart = json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
+        resp = self.client.post('/bar/', {
+            'keg_cart': cart,
+            'payment_method': 'tab',
+            'tab_customer': 'Bar Split Tab Patron',
+            'split_amount': '80',
+            'split_method': 'mpesa',
+            'idempotency_token': 'bar-split-2',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, payment_method='mpesa').count(), 0,
+        )
+
+
+class KitchenBoardCheckoutSplitPaymentTest(TestCase):
+    """POST /kitchen/ with split_amount/split_method on a direct (non-tab)
+    portion-item sale must split payment methods, matching bar board/QS."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Split Checkout Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbsplit_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kitchen Split Chipo',
+            material_no='KBSPLITCK-01', unit='Plate', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_cash_sale_split_with_mpesa_portion(self):
+        import json
+        cart = json.dumps([{
+            'item_id': self.item.id, 'qty': 1, 'amount': 100, 'description': 'Kitchen Split Chipo',
+        }])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart,
+            'payment_method': 'cash',
+            'split_amount': '40',
+            'split_method': 'mpesa',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        cash_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, type='Issue', payment_method='cash',
+            )
+        )
+        mpesa_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, type='Issue', payment_method='mpesa',
+            )
+        )
+        self.assertEqual(cash_total, 60.0)
+        self.assertEqual(mpesa_total, 40.0)
+
+    def test_split_never_applied_to_food_tab_sales(self):
+        import json
+        cart = json.dumps([{
+            'item_id': self.item.id, 'qty': 1, 'amount': 100, 'description': 'Kitchen Split Chipo',
+        }])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart,
+            'payment_method': 'food_tab',
+            'tab_customer': 'Kitchen Split Tab Patron',
+            'split_amount': '40',
+            'split_method': 'mpesa',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, payment_method='mpesa').count(), 0,
+        )

@@ -2846,6 +2846,17 @@ def quick_sell(request):
         is_tab_sale = (payment_method_raw == "tab")
         payment_method_qs = "credit" if is_tab_sale else payment_method_raw
 
+        # 2026-07-28 live request — checkout-time split payment (e.g. Chipo
+        # at KES 100 paid as 40 cash + 60 mpesa, at the point of sale rather
+        # than as a later correction). Only meaningful for a direct cash/mpesa
+        # checkout — never for credit/tab, where there's no cash+mpesa split
+        # to make. See Transaction.apply_split_payment_locked().
+        try:
+            split_amount_qs = Decimal(str(request.POST.get("split_amount", "") or "0"))
+        except Exception:
+            split_amount_qs = Decimal("0")
+        split_method_qs = request.POST.get("split_method", "").strip()
+
         # ── CREDIT DISCIPLINE GATE (credit sales only — not bar tabs; tab
         #    creation doesn't use the debt ledger credit_approved path) ────────
         if payment_method_raw == 'credit' and credit_recipient:
@@ -2877,6 +2888,11 @@ def quick_sell(request):
         recorded = []
         last_transaction = None
         tab_transactions = []  # (transaction, description, amount) for BarTabEntry creation
+        # 2026-07-28 live request — checkout-time split payment (cash+mpesa
+        # split at the point of sale, not just as a later correction — see
+        # Transaction.apply_split_payment_locked()). Collected regardless of
+        # payment method; only used below when payment_method_qs is cash/mpesa.
+        created_txn_ids = []
 
         for entry in cart:
             # ── Greens / bunch (revenue-envelope) lines ──────────────────
@@ -2893,6 +2909,7 @@ def quick_sell(request):
                     recorded.append(line)
                     if txn:
                         last_transaction = txn
+                        created_txn_ids.append(txn.id)
                 else:
                     # Unlike the regular-item path below, a depleted/closed bunch
                     # used to fail completely silently — the client already
@@ -2995,6 +3012,7 @@ def quick_sell(request):
                 recipient=credit_recipient if payment_method_qs == "credit" else "",
                 recorded_by=request.user,
             )
+            created_txn_ids.append(last_transaction.id)
             recorded.append(
                 {
                     "name": item.description,
@@ -3007,6 +3025,23 @@ def quick_sell(request):
 
         if recorded and last_transaction:
             total = sum(r["subtotal"] for r in recorded)
+
+            # Checkout-time split payment — only for a direct cash/mpesa sale
+            # (never credit/tab). Never blocks the checkout itself: the sale
+            # already happened above regardless of what happens here.
+            if (
+                payment_method_qs in ("cash", "mpesa")
+                and split_method_qs in ("cash", "mpesa")
+                and split_method_qs != payment_method_qs
+                and split_amount_qs > 0
+            ):
+                try:
+                    Transaction.apply_split_payment_locked(
+                        created_txn_ids, user_profile.business,
+                        split_amount_qs, split_method_qs, staff_user=request.user,
+                    )
+                except ValueError as _split_err:
+                    messages.warning(request, str(_split_err))
 
             try:
                 from .notifications import notify_transaction_async
