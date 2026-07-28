@@ -3152,3 +3152,16 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `test_kitchen_established_bar_not_matches_dashboard_scenario` — the latter
   reproduces the exact dashboard shape of the live report: kitchen has a real anchor
   and real sales, bar has neither). No migrations. 825 tests pass (core + accounts).
+- Home dashboard cache hardening (2026-07-28), same-day follow-up: after the till fix
+  above deployed, Roy still saw the stale KES 1400 figure on screen. The server-side fix
+  was correct — this was a caching problem, not a data problem. `home()` (`core/views.py`)
+  had no explicit Cache-Control headers at all, so a dashboard this volatile (live shift
+  status, till figures, revenue, notifications) was exposed to being served stale by any
+  layer between the browser and the view — the phone's own HTTP disk cache, a mobile
+  carrier's transparent compression proxy (common on Kenyan mobile data), or an edge case
+  in the service worker's cache — even though the SW's own navigate handler is already
+  network-first for "/". Added `@never_cache` (Django's standard decorator) to `home()`,
+  forcing `Cache-Control: no-cache, no-store, must-revalidate` on every response so this
+  page can never be served stale by any caching layer again, without relying on the user
+  to manually clear their cache after every deploy. 825 tests pass (core + accounts). No
+  migrations.

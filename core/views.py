@@ -7,6 +7,7 @@ from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
 from django.db.models import Q, Sum
 from django.views.decorators.http import require_POST
+from django.views.decorators.cache import never_cache
 from django.utils.translation import gettext as _
 from .models import (
     Item,
@@ -180,7 +181,22 @@ def csrf_failure_view(request, reason=""):
     return redirect('login')
 
 
+@never_cache
 def home(request):
+    # 2026-07-28 live report: Roy saw the KES 1400 till figure (already fixed
+    # server-side — see till_expected_cash()'s anchor_established handling)
+    # persist on-screen even after the fix deployed. Root cause candidate:
+    # this view had NO explicit Cache-Control headers at all, so a dashboard
+    # this volatile (shift status, live till, revenue, notifications — all
+    # meant to be correct to the second) was exposed to being served stale by
+    # ANY caching layer between the browser and this view — the phone's own
+    # HTTP disk cache, a mobile carrier's transparent compression proxy
+    # (common on Kenyan mobile data), or an edge case in the service worker's
+    # own cache fallback — even though the SW's own navigate handler is
+    # already network-first. @never_cache forces
+    # Cache-Control: no-cache, no-store, must-revalidate on every response
+    # from this view, closing all of those off at once rather than relying
+    # on the user to manually clear their cache after every deploy.
     context = {"today": timezone.now().strftime("%B %d, %Y")}
 
     if request.user.is_authenticated:
