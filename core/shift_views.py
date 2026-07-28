@@ -391,17 +391,39 @@ def till_expected_cash(business, station, as_of=None):
     ).exclude(staff__userprofile__role='owner').filter(_station_q(is_kitchen)).select_related('staff')
     anchor = anchor_qs.order_by('-ended_at').first()
 
-    if anchor:
-        base = float(anchor.closing_cash_counted or 0)
-        window_start = anchor.ended_at
-        anchor_label = (
-            f"{anchor.staff.get_full_name() or anchor.staff.username} — "
-            f"{timezone.localtime(anchor.ended_at).strftime('%d %b, %H:%M')}"
-        )
-    else:
-        base = 0.0
-        window_start = None
-        anchor_label = None
+    # 2026-07-28 live report (Monsoon Inn: Bar tile showed KES 1400 with zero
+    # bar sales that day). ROOT CAUSE: when a station has NEVER had a shift
+    # close with a real physical cash count, `window_start` was None, which
+    # left the cash-sales/debt-recovered queries below completely unfiltered
+    # by time — summing EVERY cash Issue transaction ever recorded against
+    # that station since the business was created, including sales from
+    # before this till-tracking feature even existed. That's not "what's
+    # currently in the till" — it's an arbitrary historical total with no
+    # relationship to physical cash sitting in a drawer today. Until a real
+    # physical count establishes a starting point for a station, the correct
+    # answer is "unknown," not a guessed number — same principle as the
+    # closing-count anchor requirement itself. anchor_established=False
+    # signals every caller (home dashboard tile, open-shift variance check,
+    # the open-shift modal's float suggestion) to show/treat this as
+    # "not yet tracked" rather than a number to trust or alert on.
+    if not anchor:
+        return {
+            'expected_cash': None,
+            'anchor_established': False,
+            'anchor_at': None,
+            'anchor_label': None,
+            'breakdown': {
+                'base': 0.0, 'cash_sales': 0.0, 'debt_recovered': 0.0,
+                'petty_cash': 0.0, 'banked': 0.0,
+            },
+        }
+
+    base = float(anchor.closing_cash_counted or 0)
+    window_start = anchor.ended_at
+    anchor_label = (
+        f"{anchor.staff.get_full_name() or anchor.staff.username} — "
+        f"{timezone.localtime(anchor.ended_at).strftime('%d %b, %H:%M')}"
+    )
 
     _rev = Case(
         When(sale_amount__isnull=False, then=F('sale_amount')),
@@ -443,6 +465,7 @@ def till_expected_cash(business, station, as_of=None):
     expected = base + cash_sales + debt_recovered - petty_approved - banked
     return {
         'expected_cash': round(expected, 2),
+        'anchor_established': True,
         'anchor_at':     window_start,
         'anchor_label':  anchor_label,
         'breakdown': {
@@ -987,9 +1010,20 @@ def open_shift(request):
     # itself has no way to know about yet since this shift doesn't exist
     # until the create() below. Without this, every single banked-cash open
     # would falsely read as a shortage equal to the banked amount.
+    # 2026-07-28 — if this station has never had a real physical cash count
+    # (till['anchor_established'] False), there is nothing trustworthy to
+    # compare opening_float against yet — see till_expected_cash()'s
+    # docstring. Leave both fields None (already nullable) and skip the
+    # variance alert entirely rather than comparing against a guessed
+    # number; THIS shift's own eventual close (with a real counted amount)
+    # becomes the first anchor for every future computation.
     till = till_expected_cash(up.business, my_station)
-    expected_opening_cash = Decimal(str(till['expected_cash'])) - banked
-    opening_variance = opening_float - expected_opening_cash
+    if till['anchor_established']:
+        expected_opening_cash = Decimal(str(till['expected_cash'])) - banked
+        opening_variance = opening_float - expected_opening_cash
+    else:
+        expected_opening_cash = None
+        opening_variance = None
 
     shift = Shift.objects.create(
         business=up.business,
@@ -1030,8 +1064,9 @@ def open_shift(request):
     # physically counted differs materially from the till's live-computed
     # expected figure (same >KES 500 threshold and delivery shape as
     # close_shift()'s closing-cash variance alert, just at the other end of
-    # the shift).
-    if abs(opening_variance) > 500:
+    # the shift). opening_variance is None when this station has no
+    # established anchor yet — nothing to compare against, so no alert.
+    if opening_variance is not None and abs(opening_variance) > 500:
         try:
             from .notifications import normalize_ke_phone as _nkp, send_sms_notification as _ssms
             from .models import Notification as _Notif
@@ -1073,8 +1108,8 @@ def open_shift(request):
         'shift_id': shift.id,
         'staff_name': request.user.get_full_name() or request.user.username,
         'opening_float': float(opening_float),
-        'expected_opening_cash': float(expected_opening_cash),
-        'opening_variance': float(opening_variance),
+        'expected_opening_cash': float(expected_opening_cash) if expected_opening_cash is not None else None,
+        'opening_variance': float(opening_variance) if opening_variance is not None else None,
         'started_at': timezone.localtime(shift.started_at).strftime('%H:%M'),
         'tapped_barrels': tapped,
         'overlap_warning': overlap_warning,

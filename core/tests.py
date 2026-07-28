@@ -13707,14 +13707,45 @@ class TillExpectedCashTest(TestCase):
             description='Chips', unit='plate', selling_price=Decimal('150'),
         )
 
-    def test_no_prior_shift_sums_from_all_history(self):
+    def test_no_prior_shift_means_till_is_not_yet_established(self):
+        """2026-07-28 live report (Monsoon Inn): a station that has NEVER had
+        a shift close with a real physical cash count must show as "not yet
+        tracked", never a guessed number summed from all-time history — the
+        old behavior silently summed every cash sale ever recorded for that
+        station (including sales from long before this feature existed),
+        producing a number with no relationship to real cash in a drawer."""
         Transaction.objects.create(
             business=self.biz, item=self.bar_item, type='Issue',
             qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
         )
         till = self.till_expected_cash(self.biz, 'bar')
-        self.assertEqual(till['expected_cash'], 200.0)
+        self.assertIsNone(till['expected_cash'])
+        self.assertFalse(till['anchor_established'])
         self.assertIsNone(till['anchor_at'])
+
+    def test_kitchen_established_bar_not_matches_dashboard_scenario(self):
+        """End-to-end shape of the actual Monsoon Inn report: kitchen has a
+        real closing anchor and real cash sales; bar has NEVER closed with a
+        real count and has zero activity that day. Bar must read as
+        "not established", not as some stray non-zero figure."""
+        Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.kitchen_staff,
+            opening_float=Decimal('0'), status='CLOSED', station='kitchen',
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('0'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+            created_at=timezone.now() - timedelta(hours=3),
+        )
+        bar_till = self.till_expected_cash(self.biz, 'bar')
+        kitchen_till = self.till_expected_cash(self.biz, 'kitchen')
+        self.assertIsNone(bar_till['expected_cash'])
+        self.assertFalse(bar_till['anchor_established'])
+        self.assertEqual(kitchen_till['expected_cash'], 100.0)
+        self.assertTrue(kitchen_till['anchor_established'])
 
     def test_anchor_plus_cash_sales_since_close(self):
         Shift.objects.create(
@@ -13753,13 +13784,29 @@ class TillExpectedCashTest(TestCase):
         self.assertEqual(till['expected_cash'], 700.0)
 
     def test_stations_scored_independently_for_cash_sales(self):
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff,
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('0'), station='bar',
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.kitchen_staff,
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('0'), station='kitchen',
+        )
         Transaction.objects.create(
             business=self.biz, item=self.bar_item, type='Issue',
             qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+            created_at=timezone.now() - timedelta(minutes=30),
         )
         Transaction.objects.create(
             business=self.biz, item=self.kitchen_item, type='Issue',
             qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='cash',
+            created_at=timezone.now() - timedelta(minutes=30),
         )
         bar_till = self.till_expected_cash(self.biz, 'bar')
         kitchen_till = self.till_expected_cash(self.biz, 'kitchen')
@@ -13853,13 +13900,39 @@ class OpenShiftVarianceTest(TestCase):
         UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
         self.bar_store = Store.objects.create(business=self.biz, name='Bar')
 
-    def test_matching_count_fires_no_variance_alert(self):
-        # No prior anchor → expected is 0.
+    def test_no_established_anchor_skips_variance_entirely(self):
+        """2026-07-28 fix: with no prior anchor (this station has never
+        closed a shift with a real physical count), there is nothing
+        trustworthy to compare opening_float against — expected/variance
+        must be None (not a guessed 0), and no alert fires regardless of
+        what staff typed. This shift's own eventual close becomes the first
+        real anchor for every future computation."""
         self.client.force_login(self.staff)
         resp = self.client.post('/bar/shift/open/', {'opening_float': '0'})
         data = resp.json()
         self.assertTrue(data['ok'], data)
-        self.assertEqual(data['expected_opening_cash'], 0.0)
+        self.assertIsNone(data['expected_opening_cash'])
+        self.assertIsNone(data['opening_variance'])
+        self.assertFalse(
+            Notification.objects.filter(user=self.owner, title__icontains='Ufunguzi').exists()
+        )
+        shift = Shift.objects.get(business=self.biz, staff=self.staff, status='OPEN')
+        self.assertIsNone(shift.expected_opening_cash)
+        self.assertIsNone(shift.opening_variance)
+
+    def test_matching_count_fires_no_variance_alert(self):
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CONFIRMED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('500'),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '500'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['expected_opening_cash'], 500.0)
         self.assertEqual(data['opening_variance'], 0.0)
         self.assertFalse(
             Notification.objects.filter(user=self.owner, title__icontains='Ufunguzi').exists()
@@ -14437,7 +14510,11 @@ class ShiftStationMisattributionTest(TestCase):
 
         bar_till = self.till_expected_cash(self.biz, 'bar')
         kitchen_till = self.till_expected_cash(self.biz, 'kitchen')
-        self.assertEqual(bar_till['expected_cash'], 0.0, 'bar till must NOT pick up the manager\'s kitchen close')
+        self.assertFalse(
+            bar_till['anchor_established'],
+            "bar till must NOT pick up the manager's kitchen close as its own anchor",
+        )
+        self.assertIsNone(bar_till['expected_cash'])
         self.assertEqual(kitchen_till['expected_cash'], 100.0)
 
     def test_manager_kitchen_shift_reconcile_scopes_to_kitchen_items_only(self):

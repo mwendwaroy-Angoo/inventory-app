@@ -215,24 +215,41 @@
         <div style="display:flex; gap:1.75rem; flex-wrap:wrap;">
             {% if till_bar_expected %}
             <div>
+                {% if till_bar_expected.anchor_established %}
                 <div style="font-family:'Playfair Display',serif; font-size:1.35rem; font-weight:700; color:#c9a84c;">
                     KES {{ till_bar_expected.expected_cash|floatformat:0 }}
                 </div>
+                {% else %}
+                <div style="font-family:'Playfair Display',serif; font-size:1rem; font-weight:700; color:#888;">
+                    Bado haijawekwa
+                </div>
+                {% endif %}
                 <div style="font-size:.7rem; color:#888;">🍺 Bar</div>
             </div>
             {% endif %}
             {% if till_kitchen_expected %}
             <div>
+                {% if till_kitchen_expected.anchor_established %}
                 <div style="font-family:'Playfair Display',serif; font-size:1.35rem; font-weight:700; color:#ff9800;">
                     KES {{ till_kitchen_expected.expected_cash|floatformat:0 }}
                 </div>
+                {% else %}
+                <div style="font-family:'Playfair Display',serif; font-size:1rem; font-weight:700; color:#888;">
+                    Bado haijawekwa
+                </div>
+                {% endif %}
                 <div style="font-size:.7rem; color:#888;">🍗 Kitchen</div>
             </div>
             {% endif %}
         </div>
         <div style="font-size:.7rem; color:#666; margin-top:.5rem;">
+            {% if till_bar_expected.anchor_established or till_kitchen_expected.anchor_established %}
             Hesabu hii inaendelea moja kwa moja hata shift ikifungwa — hesabu pesa halisi
             uliyo nayo kwenye counter kabla ya kufungua shift na ulinganishe na hii.
+            {% else %}
+            Bado hakuna shift iliyofungwa na kuhesabu pesa halisi kwenye counter hii — mara
+            shift ya kwanza itakapofungwa na kuhesabiwa, ufuatiliaji utaanza kutoka hapo.
+            {% endif %}
         </div>
     </div>
     {% endif %}

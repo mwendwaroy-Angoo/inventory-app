@@ -3115,3 +3115,40 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `KitchenBoardCheckoutSplitPaymentTest` — end-to-end POST tests, each also confirming the
   split is never applied to a tab/credit sale). One migration (0132, additive). 823 tests
   pass (core + accounts).
+- Till "not yet established" fix (2026-07-28), same-day follow-up to the station
+  misattribution fix above — Roy pushed back with screenshots: Bar showed KES 1400
+  expected counter cash with ZERO bar sales that day (kitchen had all the activity,
+  cash KES 100 which kitchen staff took as lunch and logged as pending petty cash).
+  Station misattribution was already ruled out (this business genuinely has no bar
+  shift ever closed with a real physical count). ROOT CAUSE, distinct from the
+  previous fix: `till_expected_cash()`'s docstring always said "0 if this station has
+  never closed a shift," but the CODE didn't match — when `anchor` was `None`,
+  `window_start` was also `None`, which left the cash-sales/debt-recovered/petty-cash
+  queries completely unfiltered by time, summing EVERY cash Issue transaction ever
+  recorded against that station since the business was created — including sales from
+  long before this till-tracking feature existed. That unbounded historical sum is
+  what produced 1400 for Bar: not a bug in reading which station a shift belongs to,
+  but a bug in what "no anchor yet" means. Fixed by returning early with
+  `expected_cash: None, anchor_established: False` whenever no shift has ever closed
+  for that station with a real counted amount — "unknown, not yet tracked" instead of
+  a guessed number. Propagated the `anchor_established` flag through every caller:
+  `open_shift()` now sets `expected_opening_cash`/`opening_variance` to `None` (both
+  fields already nullable) and skips the >KES 500 opening-variance alert entirely when
+  no anchor exists yet — nothing trustworthy to compare against; the shift's own
+  eventual close (with a real physical count) becomes the first anchor for every
+  future computation, matching the existing closing-anchor design exactly. The
+  open-shift-modal float suggestion (`last_closing`) and the JSON response's
+  `expected_opening_cash`/`opening_variance` already had `!== null` guards on the
+  frontend and in `shift_history.html`'s template (defensively written ahead of this
+  exact scenario, it turned out) — only the JSON response builder itself needed a
+  `float(x) if x is not None else None` guard to avoid a `TypeError` on `float(None)`.
+  `home.html`'s till tile now shows "Bado haijawekwa" (not yet set) per station
+  instead of a number when `anchor_established` is false, with an explanation that
+  tracking begins once that station's first shift is properly closed with a real
+  cash count — never silently displaying a fabricated figure. Four pre-existing tests
+  had encoded the old (buggy) "sum all history" behavior as their expected result and
+  needed updating to the new correct behavior; two new regression-lock tests added
+  (`test_no_prior_shift_means_till_is_not_yet_established`,
+  `test_kitchen_established_bar_not_matches_dashboard_scenario` — the latter
+  reproduces the exact dashboard shape of the live report: kitchen has a real anchor
+  and real sales, bar has neither). No migrations. 825 tests pass (core + accounts).
