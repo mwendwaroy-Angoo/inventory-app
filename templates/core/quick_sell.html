@@ -1430,11 +1430,15 @@
             var safeId   = String(itemId);
             var safeName = itemName.replace(/'/g, "\\'");
             var safeLbl  = p.label.replace(/'/g, "\\'");
+            // 2026-07-28 — price=0 is the "custom price" sentinel: staff is asked
+            // for the amount at the point of sale instead of a fixed preset price.
+            var isCustom = !p.price || p.price <= 0;
+            var priceLabel = isCustom ? 'Bei Yoyote' : ('KES ' + p.price.toFixed(0));
             html += '<button type="button" ' +
-                'onclick="addPresetToCart(\'' + safeId + '\',\'' + safeName + '\',' + p.price + ',' + p.quantity_consumed + ',\'' + safeLbl + '\')" ' +
+                'onclick="addPresetToCart(\'' + safeId + '\',\'' + safeName + '\',' + p.price + ',' + p.quantity_consumed + ',\'' + safeLbl + '\',' + p.id + ')" ' +
                 'style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); ' +
                 'color:var(--pearl); border-radius:8px; padding:0.75rem 0.5rem; cursor:pointer; text-align:center;">' +
-                '<div style="font-weight:700; font-size:1.05rem; color:var(--gold);">KES ' + p.price.toFixed(0) + '</div>' +
+                '<div style="font-weight:700; font-size:1.05rem; color:var(--gold);">' + priceLabel + '</div>' +
                 '<div style="font-size:0.75rem; color:#b0b0b0; margin-top:0.2rem;">' + p.label + '</div>' +
                 '</button>';
         });
@@ -1444,10 +1448,19 @@
         bsModal.show();
     };
 
-    window.addPresetToCart = function(itemId, itemName, price, qtyConsumed, label) {
+    window.addPresetToCart = function(itemId, itemName, price, qtyConsumed, label, presetId) {
         if (window._addingPreset) return;
         window._addingPreset = true;
         setTimeout(function() { window._addingPreset = false; }, 1500);
+        var amount = price;
+        if (!amount || amount <= 0) {
+            // Custom-price preset — ask, never force. Cancelling adds nothing to cart.
+            var typed = prompt('Bei ya ' + label + ' (KES)?');
+            window._addingPreset = false;
+            if (typed === null) return;
+            amount = parseFloat(typed);
+            if (!amount || amount <= 0 || isNaN(amount)) { alert('Bei si sahihi.'); return; }
+        }
         var bsModal = bootstrap.Modal.getInstance(document.getElementById('produceModal'));
         if (bsModal) bsModal.hide();
         var entryName = itemName + ' (' + label + ')';
@@ -1455,7 +1468,7 @@
         if (existing) {
             existing.qty += 1;
         } else {
-            cart.push({id: String(itemId), name: entryName, price: price, unit: '', qty: 1, stock_qty: qtyConsumed});
+            cart.push({id: String(itemId), name: entryName, price: amount, unit: '', qty: 1, stock_qty: qtyConsumed, preset_id: presetId});
         }
         updateCart();
     };
@@ -2415,7 +2428,7 @@
                 qty:       c.qty,
                 amount:    c.qty * c.price,
                 description: c.name,
-                preset_id: c.presetId  || null,
+                preset_id: c.preset_id || null,
                 bunch_id:  c.bunchId   || null,
             };
         });

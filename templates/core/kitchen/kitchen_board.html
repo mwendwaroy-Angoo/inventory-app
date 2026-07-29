@@ -1913,9 +1913,13 @@
     document.getElementById('kb-preset-modal-title').textContent = item.name;
     var body = document.getElementById('kb-preset-modal-body');
     body.innerHTML = item.presets.map(function(p, idx){
+      // 2026-07-28 — price=0 is the "custom price" sentinel: some cuts (e.g. a
+      // small chicken leg, too small to split) don't have one fixed price —
+      // staff is asked for the amount at the point of sale instead.
+      var priceLabel = (p.price && p.price > 0) ? ('KES ' + fmt(p.price)) : 'Bei Yoyote';
       return '<div class="kb-preset-item" onclick="addPreset(' + item.id + ',' + idx + ')">' +
              '<span class="kb-preset-label">' + p.label + '</span>' +
-             '<span class="kb-preset-price">KES ' + fmt(p.price) + '</span>' +
+             '<span class="kb-preset-price">' + priceLabel + '</span>' +
              '</div>';
     }).join('');
     showModal('kbPresetModal');
@@ -1931,8 +1935,16 @@
     if (!item) return;
     var p = item.presets[presetIdx];
     if (!p) return;
+    var amount = p.price;
+    if (!amount || amount <= 0) {
+      // Custom-price preset — ask, never force. Cancelling adds nothing to cart.
+      var typed = prompt('Bei ya ' + p.label + ' (KES)?');
+      if (typed === null) return;
+      amount = parseFloat(typed);
+      if (!amount || amount <= 0 || isNaN(amount)) { showToast('Bei si sahihi.'); return; }
+    }
     addToCart({item_id: itemId, preset_id: p.id,
-               description: item.name + ' — ' + p.label, amount: p.price, qty: p.qty});
+               description: item.name + ' — ' + p.label, amount: amount, qty: p.qty});
   };
 
   /* ── Batch modal ── */

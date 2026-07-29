@@ -14934,3 +14934,305 @@ class HomeDashboardTillBreakdownTest(TestCase):
         resp = self.client.get('/')
         self.assertEqual(resp.status_code, 200)
         self.assertNotIn('vipi hesabu hii ilipatikana', resp.content.decode())
+
+
+# ── Per-preset sale-time cost attribution + custom-price presets (2026-07-28) ──
+# Roy's live design question: one shared "Kuku" item sells wings/legs/drumsticks
+# via presets, but a chicken LEG split in half and sold at the SAME price as a
+# drumstick (KES 150) does NOT cost the same as a drumstick. Before this,
+# Transaction.cost() had no way to know WHICH preset made a sale — it only knew
+# the item — so every preset sale was costed against one blended
+# item.cost_price, which breaks the instant two presets share a price but not
+# a cost. Transaction.preset (new FK) plus this cost() branch close that gap,
+# reusing the existing preset.cost_price already written by Kitchen Stock
+# Receipt (built 2026-07-25). Also introduces the "price=0 means ask staff for
+# the amount at sale time" convention (for a small leg sold whole at a
+# variable 150-200 depending on size) — deliberately a sentinel on the
+# existing required `price` field rather than a new UI/model addition, to
+# avoid touching item_form.html's already-fragile multi-mode preset table.
+
+class TransactionPresetCostTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Preset Cost Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='PCOST-KUKU', unit='Pcs', selling_price=Decimal('0'),
+            cost_price=Decimal('120'),  # stale/blended item-level cost
+        )
+        self.paja_nusu = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Paja Nusu', price=Decimal('150'),
+            quantity_consumed=Decimal('0.5'), cost_price=Decimal('100'),  # per whole leg piece
+        )
+        self.bawa = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Bawa', price=Decimal('70'),
+            quantity_consumed=Decimal('1'),  # no cost_price of its own yet
+        )
+
+    def test_preset_with_its_own_cost_overrides_blended_item_cost(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Issue',
+            qty=Decimal('-0.5'), sale_amount=Decimal('150'), payment_method='cash',
+            preset=self.paja_nusu,
+        )
+        # 0.5 (half leg) x KES 100 (cost per whole leg piece) = KES 50 — NOT
+        # 0.5 x item.cost_price (120) = 60, and NOT the full 100.
+        self.assertEqual(txn.cost(), 50.0)
+
+    def test_preset_without_its_own_cost_falls_back_to_item_cost(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('70'), payment_method='cash',
+            preset=self.bawa,
+        )
+        self.assertEqual(txn.cost(), 120.0)  # unchanged, ordinary item.cost_price path
+
+    def test_no_preset_at_all_is_unaffected_regression_lock(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        self.assertEqual(txn.cost(), 120.0)
+
+    def test_drumstick_and_half_leg_share_a_price_but_not_a_cost(self):
+        """The exact scenario Roy described: two presets both sell at KES 150,
+        but must never be costed the same."""
+        drumstick = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Mguu', price=Decimal('150'),
+            quantity_consumed=Decimal('1'), cost_price=Decimal('60'),
+        )
+        leg_txn = Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Issue',
+            qty=Decimal('-0.5'), sale_amount=Decimal('150'), payment_method='cash',
+            preset=self.paja_nusu,
+        )
+        drumstick_txn = Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='cash',
+            preset=drumstick,
+        )
+        self.assertEqual(leg_txn.revenue(), drumstick_txn.revenue())  # same price
+        self.assertNotEqual(leg_txn.cost(), drumstick_txn.cost())     # different cost
+        self.assertEqual(leg_txn.cost(), 50.0)
+        self.assertEqual(drumstick_txn.cost(), 60.0)
+
+
+class KitchenBoardPresetCheckoutTest(TestCase):
+    """End-to-end: Kitchen Board checkout must attach the preset that was
+    actually sold to the Transaction, and support a custom ('price=0') preset
+    where the amount comes from the cart entry, not a fixed preset price."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Preset Checkout Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbpc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='KBPC-KUKU', unit='Pcs', selling_price=Decimal('0'),
+        )
+        self.paja_nusu = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Paja Nusu', price=Decimal('150'),
+            quantity_consumed=Decimal('0.5'), cost_price=Decimal('100'),
+        )
+        self.paja_ndogo = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Paja Ndogo', price=Decimal('0'),  # custom-price sentinel
+            quantity_consumed=Decimal('1'), cost_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_fixed_price_preset_sale_attaches_preset_and_uses_its_cost(self):
+        import json
+        cart = json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': self.paja_nusu.id,
+            'qty': 0.5, 'amount': 150, 'description': 'Kuku — Paja Nusu',
+        }])
+        resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.preset_id, self.paja_nusu.id)
+        self.assertEqual(txn.cost(), 50.0)
+
+    def test_custom_price_preset_uses_the_amount_staff_entered(self):
+        """Paja Ndogo has price=0 (custom) — the frontend prompts staff for the
+        real amount and sends it as the cart entry's amount; the backend must
+        trust that amount (it already does for every preset, this locks it in
+        specifically for the custom-price case) and still attribute cost via
+        the preset's own cost_price."""
+        import json
+        cart = json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': self.paja_ndogo.id,
+            'qty': 1, 'amount': 180, 'description': 'Kuku — Paja Ndogo',
+        }])
+        resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'mpesa'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.preset_id, self.paja_ndogo.id)
+        self.assertEqual(float(txn.sale_amount), 180.0)
+        self.assertEqual(txn.cost(), 100.0)
+
+    def test_preset_id_from_a_different_item_is_rejected(self):
+        other_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='KBPC-CHIPO', unit='Plate', selling_price=Decimal('100'),
+        )
+        other_preset = ItemPortionPreset.objects.create(
+            item=other_item, label='Kubwa', price=Decimal('100'), quantity_consumed=Decimal('1'),
+        )
+        import json
+        cart = json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': other_preset.id,
+            'qty': 0.5, 'amount': 150, 'description': 'Kuku — Paja Nusu',
+        }])
+        resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertIsNone(txn.preset_id, "a preset belonging to a different item must never attach")
+
+
+class QuickSellPresetCheckoutTest(TestCase):
+    """Same preset-cost attribution, on Quick Sell's regular (non-kitchen)
+    portion-item checkout path — e.g. spirits sold by preset."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='QS Preset Checkout Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='qspc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.gin = Item.objects.create(
+            business=self.biz, store=self.store, description='Gilbeys Gin',
+            material_no='QSPC-GIN', unit='Bottle', selling_price=Decimal('0'),
+            cost_price=Decimal('900'),
+        )
+        self.half = ItemPortionPreset.objects.create(
+            item=self.gin, label='Half Bottle', price=Decimal('600'),
+            quantity_consumed=Decimal('0.5'), cost_price=Decimal('800'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.gin, type='Receipt', qty=Decimal('10'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_quick_sell_preset_sale_attaches_preset_and_uses_its_cost(self):
+        import json
+        cart = json.dumps([{
+            'id': self.gin.id, 'qty': 1, 'price': 600,
+            'stock_qty': 0.5, 'preset_id': self.half.id,
+        }])
+        resp = self.client.post('/quick-sell/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertNotEqual(resp.status_code, 500)
+        txn = Transaction.objects.filter(business=self.biz, item=self.gin, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.preset_id, self.half.id)
+        self.assertEqual(txn.cost(), 400.0)  # 0.5 x 800, not 0.5 x 900
+
+
+class PresetAttributionLatentGapFixesTest(TestCase):
+    """Four call sites already RESOLVED a preset (via preset_id) for some
+    other purpose but silently dropped it instead of attaching it to the
+    Transaction they created — found during the 2026-07-28 preset-cost sweep.
+    None of these change behavior for a preset with no cost_price of its own
+    (backward compatible); each locks in that the resolved preset is now
+    actually recorded."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Latent Gap Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='lg_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku',
+            material_no='LG-KUKU', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.preset = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Paja Nusu', price=Decimal('150'),
+            quantity_consumed=Decimal('0.5'), cost_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('20'),
+        )
+
+    def test_settle_qs_from_payment_attaches_preset(self):
+        from core.mpesa_views import _settle_qs_from_payment
+        from core.models import Payment
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Gin',
+            material_no='LG-GIN', unit='Bottle', selling_price=Decimal('600'),
+        )
+        preset = ItemPortionPreset.objects.create(
+            item=item, label='Half', price=Decimal('600'), quantity_consumed=Decimal('0.5'),
+            cost_price=Decimal('800'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Receipt', qty=Decimal('10'),
+        )
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('600'), phone='0700000000',
+            status='completed',
+            qs_cart=[{'item_id': item.id, 'qty': 0.5, 'amount': 600, 'preset_id': preset.id}],
+        )
+        from core.mpesa_views import _settle_qs_from_payment as settle
+        settle(payment)
+        txn = Transaction.objects.filter(business=self.biz, item=item, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.preset_id, preset.id)
+
+    def test_settle_kitchen_order_from_payment_attaches_preset(self):
+        from core.mpesa_views import _settle_kitchen_order_from_payment
+        from core.models import Payment
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('150'), phone='0700000000',
+            status='completed',
+            kitchen_cart=[{
+                'item_id': self.kuku.id, 'qty': 0.5, 'amount': 150,
+                'preset_id': self.preset.id, 'description': 'Kuku — Paja Nusu',
+            }],
+        )
+        _settle_kitchen_order_from_payment(payment)
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.preset_id, self.preset.id)
+
+    def test_confirm_prompt_attaches_preset(self):
+        from core.models import PendingTransactionPrompt
+        prompt = PendingTransactionPrompt.objects.create(
+            business=self.biz, phone='0700000000', amount=Decimal('150'), status='pending',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/mpesa/prompt/{prompt.id}/confirm/', {
+            'item_id': self.kuku.id, 'preset_id': self.preset.id,
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.preset_id, self.preset.id)
+
+    def test_served_table_order_attaches_preset(self):
+        from core.models import TableOrder, TableOrderItem
+        from accounts.models import UserProfile as _UP
+        waitress = User.objects.create_user(username='lg_waitress', password='x')
+        _UP.objects.create(user=waitress, business=self.biz, role='waitress')
+        order = TableOrder.objects.create(
+            business=self.biz, table_label='Table 3', waitress=waitress,
+            status='ACCEPTED', payment_method='cash',
+        )
+        TableOrderItem.objects.create(
+            order=order, item=self.kuku, preset=self.preset,
+            quantity=Decimal('0.5'), unit_price=Decimal('150'),
+            preset_label='Paja Nusu', item_name='Kuku',
+        )
+        from core.order_views import _create_transactions_for_order
+        up = _UP.objects.get(user=waitress)
+        _create_transactions_for_order(order, up)
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.preset_id, self.preset.id)

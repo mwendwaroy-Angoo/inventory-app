@@ -633,6 +633,18 @@ class Transaction(models.Model):
         related_name='sales',
         help_text='Kitchen batch this sale was drawn from. Discriminator for kitchen batch analytics.',
     )
+    preset = models.ForeignKey(
+        'ItemPortionPreset', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sales',
+        help_text=(
+            "Which portion preset was actually sold, e.g. 'Paja Nusu' vs 'Paja Nzima' on a "
+            "shared 'Kuku' item. 2026-07-28: closes the gap flagged when per-preset cost_price "
+            "was built — without this, cost() had no way to know WHICH cut was sold and fell "
+            "back to the item's single blended cost_price for every preset, which breaks the "
+            "moment two presets share a price (e.g. a half chicken leg and a drumstick both "
+            "sold at KES 150) but have different real costs. See Transaction.cost()."
+        ),
+    )
     created_at = models.DateTimeField(
         default=timezone.now, null=True, blank=True,
         help_text='Exact timestamp — used for shift-level reconciliation. Can be backdated for offline sales.',
@@ -694,6 +706,17 @@ class Transaction(models.Model):
             if float(batch.revenue_collected or 0) > 0 and self.sale_amount is not None:
                 return float(self.sale_amount) * float(batch.cost_total) / float(batch.revenue_collected)
             return 0
+        # Preset-attributed cost (2026-07-28) — e.g. one shared "Kuku" item sold via
+        # several presets (Bawa/Paja Nzima/Paja Nusu) that don't all cost the same
+        # per piece. preset.cost_price is per whole base-item-unit (set at receiving
+        # time via Kitchen Stock Receipt); qty already IS that preset's
+        # quantity_consumed (e.g. -0.5 for a half leg), so the same
+        # abs(qty) * cost formula used below for item.cost_price applies unchanged —
+        # no proportional-envelope math needed, this is an exact quantity × unit cost.
+        # Falls back to item.cost_price when the preset has no cost of its own yet
+        # (the ordinary, unchanged case for every preset that isn't opted into this).
+        if self.preset_id and self.preset and self.preset.cost_price is not None:
+            return abs(float(self.qty)) * float(self.preset.cost_price)
         if self.item.cost_price:
             return abs(float(self.qty)) * float(self.item.cost_price)
         return 0

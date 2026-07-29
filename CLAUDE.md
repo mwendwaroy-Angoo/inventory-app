@@ -3179,3 +3179,49 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   shell session. 2 new tests (`HomeDashboardTillBreakdownTest` — owner sees the breakdown
   with correct figures, staff does not see it at all). No migrations. 827 tests pass (core
   + accounts).
+- Per-preset sale-time cost attribution + custom-price presets (2026-07-29). Roy's live
+  design question, with a real Meatco chicken receipt as the concrete case: one shared
+  "Kuku" item sells wings/legs/drumsticks via presets (built 2026-07-25's Kitchen Stock
+  Receipt sprint), but a chicken leg split in half and sold at the SAME price as a
+  drumstick (KES 150) does NOT cost the same as a drumstick — and `Transaction.cost()` had
+  no way to know WHICH preset made a sale, only which item, so every preset sale was costed
+  against one blended `item.cost_price`. This is exactly the gap flagged (but not closed)
+  when per-preset `cost_price` was built. **Recommendation given and built**: no "sub-preset"
+  structure needed — flat presets with fractional `quantity_consumed` already model "half a
+  leg" fine (same mechanism used elsewhere, e.g. fractional cabbage portions); the missing
+  piece was purely cost attribution at sale time. New `Transaction.preset` FK (migration
+  0133, nullable, `SET_NULL` — fourth sale-attribution discriminator alongside
+  `keg_barrel`/`produce_bunch`/`kitchen_batch`) records which preset actually sold;
+  `Transaction.cost()` gained a branch using `preset.cost_price` (already written by Kitchen
+  Stock Receipt) when set, falling back to `item.cost_price` unchanged for every preset that
+  doesn't opt in — fully backward compatible. Wired into every checkout/settlement path that
+  creates a portion-item sale: `quick_sell()`, `_kitchen_checkout()`'s portion-item branch,
+  `_settle_qs_from_payment()`, `_settle_kitchen_order_from_payment()`'s item_id branch,
+  `confirm_prompt()`, and table-order SERVED conversion
+  (`_create_transactions_for_order()`) — the last four had ALREADY resolved the `preset` for
+  some other purpose (khaki counting, label text, quantity) but silently dropped it instead
+  of attaching it to the `Transaction` they created; a genuine pre-existing latent gap found
+  and closed in the same sweep, not just new code. **Custom-price presets**: for a small leg
+  too small to split (sold whole at a variable 150–200 depending on size), added the
+  convention that `price=0` on a preset means "ask staff for the amount at the point of
+  sale" instead of a fixed price — deliberately a sentinel on the existing required `price`
+  field rather than a new model field + checkbox in `item_form.html`'s preset table, which
+  has a documented history of exactly this kind of change causing subtle breakage (multiple
+  independent JS row-builders for bunch/keg/kitchen-batch/generic modes). Kitchen Board and
+  Quick Sell's preset tap handlers now show "Bei Yoyote" for a price=0 preset and `prompt()`
+  for the amount (never forces — cancelling adds nothing to cart); the backend already
+  trusted whatever `amount` a cart entry supplied with zero cross-check against the preset's
+  configured price, so this needed no backend validation change, only the frontend prompt
+  and display. Audited `add_transaction.html`'s preset picker (gated on `item.is_produce`,
+  which Kuku is not, so it never reaches the preset UI for this item — unaffected) and
+  `waitress_screen.html` (keg items only, kitchen items never reach the Order Desk —
+  unaffected) — confirmed no other selling surface needed the same guard. 16 new tests
+  (`TransactionPresetCostTest`, `KitchenBoardPresetCheckoutTest`,
+  `QuickSellPresetCheckoutTest`, `PresetAttributionLatentGapFixesTest` — the last locking in
+  all four latent-gap fixes). One migration (0133, additive). 839 tests pass (core +
+  accounts). Concrete setup given to Roy for Paja: Paja Nzima (250, qty 1.0), Paja Nusu (150,
+  qty 0.5), Paja Ndogo (price 0 → custom, qty 1.0) — all addable through the existing item
+  edit screen, no code change needed to configure. Leg stock backfill: both procedures he
+  asked for (count-what's-left-and-receive-only-that, or receive-the-full-original-amount-
+  then-Rekebisha-down) already work unmodified with existing tools (Kitchen Stock Receipt +
+  Rekebisha) — no new feature needed for either path.

@@ -609,11 +609,13 @@ def _settle_kitchen_order_from_payment(payment):
             elif item_id:
                 try:
                     item = Item.objects.get(id=item_id, store=kitchen_store)
+                    preset = ItemPortionPreset.objects.filter(id=preset_id, item=item).first() if preset_id else None
                     Transaction.objects.create(
                         business=business, item=item, type='Issue',
                         qty=-qty, sale_amount=amount,
                         payment_method='mpesa', recipient='',
                         date=timezone.localdate(),
+                        preset=preset,
                     )
                     receipt_lines.append({'name': desc, 'subtotal': float(amount), 'qty': float(qty)})
                     total += amount
@@ -708,6 +710,7 @@ def _settle_qs_from_payment(payment):
                 payment_method='mpesa',
                 recipient='',
                 date=today,
+                preset=preset,
             )
             receipt_lines.append({'name': desc, 'qty': float(qty), 'subtotal': float(amount)})
             total += amount
@@ -1263,6 +1266,7 @@ def confirm_prompt(request, prompt_id):
         invoice_no=prompt.mpesa_receipt or f"MPESA-{prompt.id}",
         recipient=prompt.phone,
         business=profile.business,
+        preset=preset,
     )
 
     # Issue a receipt so the transaction has a shareable record

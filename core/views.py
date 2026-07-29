@@ -3017,6 +3017,16 @@ def quick_sell(request):
             if entry.get("stock_qty") is not None and display_price:
                 sale_amt = Decimal(str(round(display_price * float(display_qty), 2)))
 
+            # 2026-07-28 — attribute the sale to its specific preset, if the cart
+            # entry carries one, so Transaction.cost() can use that preset's own
+            # cost_price instead of the item's blended one (same fix as Kitchen
+            # Board — presets that don't opt into per-preset costing are
+            # unaffected, cost() falls back to item.cost_price exactly as before).
+            sale_preset = None
+            entry_preset_id = entry.get("preset_id")
+            if entry_preset_id:
+                sale_preset = ItemPortionPreset.objects.filter(id=entry_preset_id, item=item).first()
+
             line_amount = Decimal(str(round(display_price * float(display_qty), 2)))
             last_transaction = Transaction.objects.create(
                 item=item,
@@ -3027,6 +3037,7 @@ def quick_sell(request):
                 sale_amount=sale_amt,
                 recipient=credit_recipient if payment_method_qs == "credit" else "",
                 recorded_by=request.user,
+                preset=sale_preset,
             )
             created_txn_ids.append(last_transaction.id)
             recorded.append(

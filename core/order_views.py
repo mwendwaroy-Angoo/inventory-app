@@ -343,6 +343,7 @@ def _create_transactions_for_order(order, up):
                 recipient=order.table_label,
                 date=timezone.localdate(),
                 recorded_by=order.waitress or request.user,
+                preset=oi.preset,
             )
         except Exception:
             continue

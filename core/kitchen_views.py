@@ -671,6 +671,14 @@ def _kitchen_checkout(request, up, business, is_owner):
             from core.stock_take_views import item_has_pending_variance
             if item_has_pending_variance(item.id):
                 continue
+            # 2026-07-28 — attribute the sale to its specific preset (e.g. "Paja
+            # Nusu" vs "Paja Nzima" on one shared "Kuku" item) so Transaction.cost()
+            # can use that preset's own cost_price instead of the item's blended
+            # one. Defensive item= filter so a preset_id can't be borrowed from a
+            # different item's row.
+            sale_preset = None
+            if preset_id:
+                sale_preset = ItemPortionPreset.objects.filter(id=preset_id, item=item).first()
             txn = Transaction.objects.create(
                 business=business,
                 item=item,
@@ -680,6 +688,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 payment_method=txn_pm,
                 recipient=txn_recipient,
                 recorded_by=request.user,
+                preset=sale_preset,
             )
             if active_tab:
                 BarTabEntry.objects.create(
