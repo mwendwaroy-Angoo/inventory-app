@@ -12,7 +12,7 @@ Reconciliation:
 import json
 import logging
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 logger = logging.getLogger(__name__)
 
@@ -1528,6 +1528,157 @@ def review_opening_variance(request, shift_id):
     return JsonResponse({'ok': True, 'message': msg, 'is_reversal': is_reversal})
 
 
+# ── Edit opening float (2026-07-30, live request) ──────────────────────────────
+# Roy's exact scenario: staff opens a shift and forgets to physically count and
+# type in the cash actually sitting at the counter — open_shift() then silently
+# defaults opening_float to 0 (see request.POST.get('opening_float', '0')),
+# which poisons this shift's own expected_cash/variance math in _reconcile()
+# with a number nobody actually meant. This is a genuine data-entry mistake
+# ("the float really was KES X, I just forgot to type it"), distinct from the
+# opening-variance flow above ("0 is correct, the cash was already banked
+# elsewhere") — that flow explains a number as legitimate; this one corrects a
+# number that was simply never entered. One shared view + two URL names (like
+# every other bar/kitchen-mirrored shift action in this file) covers both
+# counters, since Shift itself isn't split by station beyond the `station`
+# field already used everywhere else in this file.
+
+def _can_edit_opening_float(up, shift, user_id):
+    """While OPEN, the staffer who opened the shift may fix their own entry —
+    no different from re-typing a number before anything downstream relied on
+    it, and needs to work mid-shift without hunting down the owner (same
+    reasoning as split-transfer). Once CLOSED, this becomes a retroactive
+    correction touching figures other reports may already show (variance,
+    Z-report) — owner/manager only from that point, matching every other
+    financial-figure correction in this app. A CONFIRMED shift is treated as
+    fully signed off and not editable here."""
+    if not up or shift.status == 'CONFIRMED':
+        return False
+    if shift.status == 'OPEN':
+        return getattr(up, 'is_owner_or_manager', False) or shift.staff_id == user_id
+    if shift.status == 'CLOSED':
+        return getattr(up, 'is_owner_or_manager', False)
+    return False
+
+
+@login_required
+@require_POST
+def edit_shift_opening_float(request, shift_id):
+    """Correct a shift's opening float after the fact. Does NOT touch
+    till_expected_cash()'s running ledger — that anchors on
+    closing_cash_counted, never opening_float, so correcting a past shift's
+    float doesn't retroactively change the continuous till figure, only this
+    shift's own report. Recomputes the derived opening_variance so it stays
+    consistent with the corrected float, and — since a review already done
+    (opening-variance or close-side) was necessarily based on the OLD, wrong
+    number — resets any such review back to unreviewed rather than leaving a
+    stale "✓ Imethibitishwa" stamp sitting next to a figure that just changed;
+    the reset itself is named in the audit line so nobody has to guess why a
+    prior review disappeared."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    raw = (request.POST.get('opening_float') or '').strip()
+    try:
+        new_float = Decimal(raw)
+    except InvalidOperation:
+        return JsonResponse({'ok': False, 'error': 'Kiasi si sahihi'}, status=400)
+    if new_float < 0:
+        return JsonResponse({'ok': False, 'error': 'Kiasi hakiwezi kuwa hasi'}, status=400)
+
+    reason = (request.POST.get('reason') or '').strip()[:200]
+
+    from django.db import transaction as _db_txn
+    with _db_txn.atomic():
+        try:
+            shift = Shift.objects.select_for_update().get(id=shift_id, business=up.business)
+        except Shift.DoesNotExist:
+            return JsonResponse({'ok': False, 'error': 'Shift haikupatikana'}, status=404)
+
+        if not _can_edit_opening_float(up, shift, request.user.id):
+            return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kubadilisha float hii'}, status=403)
+
+        old_float = shift.opening_float
+        if new_float == old_float:
+            return JsonResponse({'ok': True, 'message': 'Hakuna mabadiliko.', 'unchanged': True})
+
+        update_fields = ['opening_float']
+        shift.opening_float = new_float
+
+        reset_notes = []
+        if shift.expected_opening_cash is not None:
+            shift.opening_variance = new_float - shift.expected_opening_cash
+            update_fields.append('opening_variance')
+            if shift.opening_variance_review_status:
+                reset_notes.append('ukaguzi wa tofauti ya ufunguzi')
+                shift.opening_variance_review_status = ''
+                shift.opening_variance_review_note = ''
+                shift.opening_variance_reviewed_by = None
+                shift.opening_variance_reviewed_at = None
+                update_fields += [
+                    'opening_variance_review_status', 'opening_variance_review_note',
+                    'opening_variance_reviewed_by', 'opening_variance_reviewed_at',
+                ]
+
+        # A close-side variance review already done was based on the OLD
+        # expected_cash (which depends on opening_float) — reset it too so it
+        # doesn't keep showing a stamp of approval on a number that just moved.
+        if shift.closing_cash_counted is not None and shift.variance_review_status:
+            reset_notes.append('ukaguzi wa tofauti ya kufunga')
+            shift.variance_review_status = ''
+            shift.variance_review_note = ''
+            shift.variance_reviewed_by = None
+            shift.variance_reviewed_at = None
+            update_fields += [
+                'variance_review_status', 'variance_review_note',
+                'variance_reviewed_by', 'variance_reviewed_at',
+            ]
+
+        editor_name = request.user.get_full_name() or request.user.username
+        when = timezone.localtime(timezone.now()).strftime('%d %b, %H:%M')
+        audit_line = (
+            f"Float ya ufunguzi ilibadilishwa kutoka KES {old_float:,.0f} kwenda "
+            f"KES {new_float:,.0f} na {editor_name} — {when}."
+        )
+        if reason:
+            audit_line += f' Sababu: "{reason}"'
+        if reset_notes:
+            audit_line += f" ({', '.join(reset_notes)} imefutwa, inahitaji kuangaliwa upya)"
+        shift.notes = (shift.notes + '\n' if shift.notes else '') + audit_line
+        update_fields.append('notes')
+
+        shift.save(update_fields=update_fields)
+
+    # Notify whoever else needs to know — the shift's own staff (if someone
+    # else made the correction) and owners/managers (if the staffer corrected
+    # their own entry) — same recipient pattern as every other shift-cash
+    # correction in this file.
+    try:
+        from django.contrib.auth.models import User as _User
+        from .models import Notification
+        from accounts.models import UserProfile as _UP
+        from .notifications import normalize_ke_phone, send_sms_notification
+        recipient_ids = set()
+        if shift.staff_id != request.user.id:
+            recipient_ids.add(shift.staff_id)
+        for op in _UP.objects.filter(business=up.business, role__in=['owner', 'manager']).select_related('user'):
+            if op.user_id != request.user.id:
+                recipient_ids.add(op.user_id)
+        for u in _User.objects.filter(id__in=recipient_ids):
+            Notification.objects.create(
+                user=u, title='✏️ Float ya Ufunguzi Imesahihishwa', message=audit_line,
+                notification_type='info', link_url='/bar/shift/history/',
+            )
+        if shift.staff_id != request.user.id:
+            staff_profile = _UP.objects.filter(user=shift.staff, business=up.business).first()
+            if staff_profile and staff_profile.phone:
+                send_sms_notification(audit_line, normalize_ke_phone(staff_profile.phone))
+    except Exception:
+        logger.exception('edit_shift_opening_float: notify failed for shift %s', shift.id)
+
+    return JsonResponse({'ok': True, 'message': audit_line})
+
+
 # ── Confirm barrel weights (incoming staff after opening their shift) ─────────
 
 @login_required
@@ -1750,6 +1901,10 @@ def shift_history(request):
             # owner's own button is never hidden, so this is only meaningful
             # to a manager looking at a CLOSED shift they can't touch.
             'needs_owner': shift.status == 'CLOSED' and shift_staff_role == 'manager' and not up.is_owner,
+            # 2026-07-30 — "staff forgot to input cash at hand" fix: lets the
+            # shift's own staffer correct opening_float themselves while OPEN,
+            # or owner/manager any time up to CLOSED (see _can_edit_opening_float).
+            'can_edit_float': _can_edit_opening_float(up, shift, request.user.id),
         })
 
     return render(request, 'core/bar/shift_history.html', {

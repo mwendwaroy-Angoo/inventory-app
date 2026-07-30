@@ -101,6 +101,7 @@ from core.shift_views import (
     review_shift_variance,
     add_opening_variance_note,
     review_opening_variance,
+    edit_shift_opening_float,
 )
 from core.order_views import (
     waitress_screen,
@@ -420,6 +421,7 @@ urlpatterns = [
     path("bar/shift/<int:shift_id>/variance-review/", review_shift_variance,   name="review_shift_variance"),
     path("bar/shift/<int:shift_id>/opening-variance-note/",   add_opening_variance_note, name="add_opening_variance_note"),
     path("bar/shift/<int:shift_id>/opening-variance-review/", review_opening_variance,   name="review_opening_variance"),
+    path("bar/shift/<int:shift_id>/edit-float/", edit_shift_opening_float, name="edit_shift_opening_float"),
     # ── Waitress Order Queue (Sprint 5) ──────────────────────────────────────
     path("bar/orders/",                       waitress_screen,        name="waitress_screen"),
     path("bar/orders/place/",                 place_table_order,      name="place_table_order"),
@@ -458,6 +460,7 @@ urlpatterns = [
     path("kitchen/shift/<int:shift_id>/variance-review/", review_shift_variance,   name="kitchen_review_shift_variance"),
     path("kitchen/shift/<int:shift_id>/opening-variance-note/",   add_opening_variance_note, name="kitchen_add_opening_variance_note"),
     path("kitchen/shift/<int:shift_id>/opening-variance-review/", review_opening_variance,   name="kitchen_review_opening_variance"),
+    path("kitchen/shift/<int:shift_id>/edit-float/", edit_shift_opening_float, name="kitchen_edit_shift_opening_float"),
 
     # ── Petty Cash / Counter Drawdown ────────────────────────────────────────
     path("petty-cash/",                           petty_cash_list,    name="petty_cash_list"),

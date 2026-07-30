@@ -3435,3 +3435,45 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   suite) and `manage.py check`/`makemigrations --check` are clean. No migrations (CSS/JS +
   template-only change). 877 tests pass (core + accounts, unchanged from before this
   sprint — no test-suite-affecting code touched).
+- Edit shift opening float — "staff forgot to input cash at hand" (2026-07-30). Roy's
+  exact scenario: `open_shift()` silently defaults `opening_float` to `Decimal('0')` when
+  nothing is typed (`request.POST.get('opening_float', '0')`), so a staffer who forgets to
+  physically count and enter the counter float leaves that shift's `_reconcile()` expected-
+  cash/variance math permanently wrong. Deliberately distinct from the existing opening-
+  variance acknowledge flow (`review_opening_variance`, 2026-07-27) — that flow EXPLAINS why
+  0 is legitimately correct (the cash was already banked elsewhere before the shift opened);
+  this new one CORRECTS a number that was simply never entered. New `_can_edit_opening_float`
+  +  `edit_shift_opening_float` (`core/shift_views.py`) — while a shift is OPEN, the staffer
+  who opened it may fix their own entry (needs to work mid-shift without hunting down the
+  owner, same reasoning as split-transfer); once CLOSED it becomes a retroactive correction
+  touching figures other reports may already show, so owner/manager only from that point,
+  matching every other financial-figure correction in this app; a CONFIRMED shift is treated
+  as fully signed off and not editable here. `select_for_update()` + `transaction.atomic()`
+  around the read-modify-write. Recomputes the derived `opening_variance` so it stays
+  consistent with the corrected float, and — since any review already done (opening-variance
+  OR the close-side `variance_review_status`) was necessarily based on the OLD, wrong number —
+  resets such a review back to unreviewed rather than leaving a stale "✓ Imethibitishwa" stamp
+  next to a figure that just changed, naming the reset in the audit line so nobody has to
+  guess why a prior review disappeared. Does NOT touch `till_expected_cash()`'s running
+  ledger — that anchors on `closing_cash_counted`, never `opening_float`, so correcting a past
+  shift's float doesn't retroactively move the continuous till figure, only that shift's own
+  report (locked in by a dedicated regression test). One shared view backs both counters via
+  the same dual-URL-name mirror convention already used for every other bar/kitchen shift
+  action in this file (`/bar/shift/<id>/edit-float/` and `/kitchen/shift/<id>/edit-float/`,
+  both routing to the identical station-agnostic view). Audit trail appended to `Shift.notes`
+  (old → new, who, when, optional reason) rather than a new model, matching the lightweight
+  in-place trail pattern already used for `KitchenBatch` cost corrections; notifies whoever
+  else needs to know (the shift's own staff if someone else corrected it, owners/managers if
+  the staffer corrected their own entry) via in-app + SMS, mirroring every other shift-cash
+  correction's recipient pattern. UI: a small ✏️ next to "Float" on the live shift panel in
+  both `bar_board.html` and `kitchen_board.html` (visible to the shift's own staffer while
+  OPEN, or owner/manager for any visible shift) — `prompt()` for the amount + the existing
+  `openReasonChips` popover for an optional reason, never blocking on either; plus a durable
+  ✏️ on `shift_history.html`'s "Float ya Kuanza" stat-box (gated per-row by the same
+  `can_edit_float` context, matching that page's own existing `window.prompt()` convention
+  rather than importing the chips component this page never had). 13 new tests
+  (`EditShiftOpeningFloatTest`) — self-edit while open, owner/manager-any-shift, unrelated-
+  staff blocked, closed-needs-owner, confirmed-not-editable, opening/closing review resets,
+  no-op on unchanged value, negative/invalid amount rejected, and the till-independence
+  regression lock. No migrations (uses existing `Shift.opening_float`/`opening_variance`
+  fields). 890 tests pass (core + accounts).

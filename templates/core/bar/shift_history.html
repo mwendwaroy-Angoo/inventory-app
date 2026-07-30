@@ -64,7 +64,7 @@
   {% endif %}
 
   {% for row in rows %}
-  {% with s=row.shift r=row.rec vc=row.var_class can_confirm_shift=row.can_confirm needs_owner=row.needs_owner %}
+  {% with s=row.shift r=row.rec vc=row.var_class can_confirm_shift=row.can_confirm needs_owner=row.needs_owner can_edit_float=row.can_edit_float %}
   <div class="shift-card">
     <div class="shift-header">
       <div>
@@ -95,7 +95,14 @@
       <div class="stat-row">
         <div class="stat-box">
           <div class="label">Float ya Kuanza</div>
-          <div class="value">KES {{ s.opening_float|floatformat:0 }}</div>
+          <div class="value">
+            KES {{ s.opening_float|floatformat:0 }}
+            {% if can_edit_float %}
+            <span onclick="editShiftFloatHist({{ s.id }}, {{ s.opening_float|floatformat:2 }}, this)"
+                  title="Sahihisha float — kwa mfano mfanyakazi alisahau kuweka fedha aliyohesabu"
+                  style="cursor:pointer; color:var(--gold); font-size:.78rem;">&#9998;</span>
+            {% endif %}
+          </div>
         </div>
         <div class="stat-box">
           <div class="label">Cash Sales</div>
@@ -327,6 +334,32 @@ function reviewOpeningVariance(shiftId, status, btn) {
       }
     })
     .catch(() => { alert('Network error'); btn.disabled = false; });
+}
+
+// 2026-07-30 — "staff forgot to input cash at hand" fix. This page renders
+// both bar and kitchen shifts for an owner/manager, but the URL prefix
+// doesn't matter here — /bar/shift/<id>/edit-float/ and
+// /kitchen/shift/<id>/edit-float/ are the same view (see core/shift_views.py,
+// edit_shift_opening_float), station-agnostic by design.
+function editShiftFloatHist(shiftId, currentFloat, el) {
+  var val = window.prompt('Weka float sahihi ya ufunguzi (KES):', currentFloat);
+  if (val === null) return;
+  val = val.trim();
+  if (val === '') return;
+  var reason = window.prompt('Sababu (hiari) — mfano: "Mfanyakazi alisahau kuweka float"');
+  if (reason === null) reason = '';
+  var body = new URLSearchParams({ opening_float: val, reason: reason, csrfmiddlewaretoken: '{{ csrf_token }}' });
+  fetch('/bar/shift/' + shiftId + '/edit-float/', { method: 'POST', body: body })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        if (d.unchanged) { alert('Hakuna mabadiliko.'); return; }
+        location.reload();
+      } else {
+        alert(d.error || 'Imeshindikana');
+      }
+    })
+    .catch(() => { alert('Network error'); });
 }
 </script>
 {% endblock %}

@@ -14582,6 +14582,172 @@ class AddOpeningVarianceNoteTest(TestCase):
         self.assertEqual(resp.status_code, 403)
 
 
+class EditShiftOpeningFloatTest(TestCase):
+    """2026-07-30 live request: "a way of editing counter float cash across
+    all counters assuming the staff opened shift and forgot to input the
+    cash at hand." open_shift() silently defaults opening_float to 0 when
+    nothing is typed — this is a genuine data-entry correction (the float
+    really was some amount, staff just forgot to type it), distinct from
+    the opening-variance acknowledge flow (which explains why 0 IS correct).
+    One shared view backs both /bar/shift/<id>/edit-float/ and
+    /kitchen/shift/<id>/edit-float/ since Shift isn't split by station
+    beyond the station field itself."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Edit Float Biz')
+        self.owner = User.objects.create_user(username='ef_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='ef_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='ef_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.other_staff = User.objects.create_user(username='ef_other', password='x')
+        UserProfile.objects.create(user=self.other_staff, business=self.biz, role='staff')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+
+        self.open_shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='OPEN', station='bar',
+            expected_opening_cash=Decimal('1000'), opening_variance=Decimal('-1000'),
+        )
+
+    def test_staff_can_fix_their_own_open_shift(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {
+            'opening_float': '2000', 'reason': 'Nilisahau kuweka float',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.opening_float, Decimal('2000'))
+        self.assertIn('KES 0', self.open_shift.notes)
+        self.assertIn('KES 2,000', self.open_shift.notes)
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Float ya Ufunguzi').first()
+        self.assertIsNotNone(notif)
+
+    def test_recomputes_opening_variance(self):
+        self.client.force_login(self.staff)
+        self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '900'})
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.opening_variance, Decimal('-100'))
+
+    def test_owner_can_fix_any_open_shift(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/kitchen/shift/{self.open_shift.id}/edit-float/', {'opening_float': '1000'})
+        self.assertTrue(resp.json()['ok'])
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.opening_float, Decimal('1000'))
+
+    def test_manager_can_fix_any_open_shift(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '500'})
+        self.assertTrue(resp.json()['ok'])
+
+    def test_unrelated_staff_cannot_edit(self):
+        self.client.force_login(self.other_staff)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '2000'})
+        self.assertEqual(resp.status_code, 403)
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.opening_float, Decimal('0'))
+
+    def test_closed_shift_needs_owner_or_manager(self):
+        self.open_shift.status = 'CLOSED'
+        self.open_shift.closing_cash_counted = Decimal('500')
+        self.open_shift.save()
+
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '2000'})
+        self.assertEqual(resp.status_code, 403)
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '2000'})
+        self.assertTrue(resp.json()['ok'])
+
+    def test_confirmed_shift_is_not_editable(self):
+        self.open_shift.status = 'CONFIRMED'
+        self.open_shift.closing_cash_counted = Decimal('500')
+        self.open_shift.save()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '2000'})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_resets_stale_opening_variance_review(self):
+        self.open_shift.opening_variance_review_status = 'acknowledged'
+        self.open_shift.opening_variance_reviewed_by = self.owner
+        self.open_shift.opening_variance_reviewed_at = timezone.now()
+        self.open_shift.save()
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '750'})
+        self.assertTrue(resp.json()['ok'])
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.opening_variance_review_status, '')
+        self.assertIsNone(self.open_shift.opening_variance_reviewed_by)
+
+    def test_resets_stale_closing_variance_review_once_closed(self):
+        self.open_shift.status = 'CLOSED'
+        self.open_shift.closing_cash_counted = Decimal('500')
+        self.open_shift.variance_review_status = 'acknowledged'
+        self.open_shift.variance_reviewed_by = self.owner
+        self.open_shift.variance_reviewed_at = timezone.now()
+        self.open_shift.save()
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '750'})
+        self.assertTrue(resp.json()['ok'])
+        self.open_shift.refresh_from_db()
+        self.assertEqual(self.open_shift.variance_review_status, '')
+
+    def test_unchanged_value_is_a_no_op(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertTrue(data.get('unchanged'))
+        self.assertEqual(
+            Notification.objects.filter(user=self.owner, title__icontains='Float ya Ufunguzi').count(), 0,
+        )
+
+    def test_negative_amount_rejected(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '-50'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_invalid_amount_rejected(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': 'abc'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_till_expected_cash_unaffected_by_editing_a_past_shift(self):
+        """opening_float only feeds this shift's OWN _reconcile() figure —
+        till_expected_cash()'s anchor is closing_cash_counted, never
+        opening_float, so correcting a closed shift's float must not
+        retroactively move the live running till."""
+        from core.shift_views import till_expected_cash
+        closed = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CONFIRMED', station='bar',
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('1500'),
+        )
+        before = till_expected_cash(self.biz, 'bar')
+
+        # Correct an even older, already-CLOSED shift's opening float.
+        older = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CLOSED', station='bar',
+            started_at=timezone.now() - timedelta(hours=8),
+            ended_at=timezone.now() - timedelta(hours=7),
+            closing_cash_counted=Decimal('300'),
+        )
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/shift/{older.id}/edit-float/', {'opening_float': '999'})
+
+        after = till_expected_cash(self.biz, 'bar')
+        self.assertEqual(before['expected_cash'], after['expected_cash'])
+
+
 class RecentSettledTabsStationScopingTest(TestCase):
     """2026-07-27 live report: "recent sales in the tabs drawer for either
     bar board or bar orders are showing kitchen sales... each counter

@@ -3574,7 +3574,12 @@
         '</div>' +
       '</div>' +
       '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
-        '<div class="shift-stat"><span class="s-label">Float</span><span class="s-val">' + _fmt(s.opening_float) + '</span></div>' +
+        '<div class="shift-stat"><span class="s-label">Float</span><span class="s-val">' + _fmt(s.opening_float) +
+          ((s.status === 'OPEN' && (s.is_mine || _isOwner)) ?
+            ' <span onclick="editShiftFloat(' + s.id + ', ' + parseFloat(s.opening_float || 0) + ', this)" ' +
+            'title="Sahihisha float — kwa mfano ulisahau kuweka fedha ulizohesabu" ' +
+            'style="cursor:pointer; color:#c9a84c; font-size:.75rem;">&#9998;</span>' : '') +
+        '</span></div>' +
         '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(s.cash_sales) + '</span></div>' +
         '<div class="shift-stat"><span class="s-label">M-Pesa</span><span class="s-val">' + _fmt(s.mpesa_sales) + '</span></div>' +
         (s.credit_sales > 0 ? '<div class="shift-stat" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa"><span class="s-label">Mikopo Mapya</span><span class="s-val">' + _fmt(s.credit_sales) + '</span></div>' : '') +
@@ -3586,6 +3591,37 @@
         varHtml +
       '</div>';
   }
+
+  // 2026-07-30 — "staff forgot to input cash at hand" fix: mirrors bar_board.html
+  // exactly (counter-parity rule) — see core/shift_views.py for the shared view.
+  window.editShiftFloat = function(shiftId, currentFloat, anchorEl) {
+    var val = prompt('Weka float sahihi ya ufunguzi (KES):', currentFloat);
+    if (val === null) return;
+    val = val.trim();
+    if (val === '') return;
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kwa nini inasahihishwa?',
+      chips: ['Nilisahau kuweka float', 'Niliandika kiasi kibaya', 'Fedha ziliongezwa baadaye'],
+      onSelect: function (reason) {
+        var body = new URLSearchParams();
+        body.append('csrfmiddlewaretoken', CSRF);
+        body.append('opening_float', val);
+        body.append('reason', reason || '');
+        fetch('/kitchen/shift/' + shiftId + '/edit-float/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d.ok) {
+              showToast(d.unchanged ? 'Hakuna mabadiliko.' : (d.message || '✓ Float imesahihishwa'));
+              if (!d.unchanged) setTimeout(function(){ location.reload(); }, 1200);
+            } else {
+              showToast('❌ ' + (d.error || 'Hitilafu'), 3000);
+            }
+          })
+          .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });
+      }
+    });
+  };
 
   var _prevClosing = null;
   var _justOpenedShiftId = null;  // 2026-07-30 — see bar_board.html's identical comment.
