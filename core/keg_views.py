@@ -2226,6 +2226,11 @@ def split_and_transfer_entry(request, entry_id):
     if err:
         return err
 
+    # source_kept_paid=0 (2026-07-30 live request): the portion staying on
+    # the source tab is NOT a payment — the source customer is taking it on
+    # debt (e.g. Roy's KES 225 Captain Morgan half, Bosco covers 100, Roy
+    # owes the remaining 125 as an ordinary unpaid balance, not a payment).
+    source_kept_paid = (request.POST.get('source_kept_paid', '1').strip() != '0')
     try:
         new_entry, tfr = BarTabEntry.split_and_transfer_locked(
             entry_id=entry.id,
@@ -2234,6 +2239,7 @@ def split_and_transfer_entry(request, entry_id):
             paid_method=(request.POST.get('paid_method') or 'cash').strip(),
             dest_tab_id=dest_tab.id,
             staff_user=request.user,
+            source_kept_paid=source_kept_paid,
         )
     except (InvalidOperation, ValueError) as e:
         return JsonResponse({'ok': False, 'error': str(e) or 'Nambari batili'}, status=400)
@@ -2821,6 +2827,174 @@ def convert_tab_to_debt(request, tab_id):
         'unpaid_total': unpaid_total,
         'debt_url': f'/debt/{customer.id}/',
     })
+
+
+# ── Revert a debt conversion back to an open tab (2026-07-30, urgent live
+# request) — "a way of reverting tabs sent to debt back to the tab drawers
+# they came from in case of a mistake." A tab converted via Geuza Deni
+# (convert_tab_to_debt/bulk_convert_tabs_to_debt/shift-close auto-convert)
+# keeps status='SETTLED' with its still-unpaid entries' Transaction.recipient
+# set to the customer's name — that's the ONLY thing conversion actually
+# changes (payment_method was already 'credit' on every ordinary open-tab
+# charge from the moment it was added, see KegBarrel.record_sale's
+# `pay = 'credit' if tab else ...`). Reverting is therefore a small,
+# well-scoped undo: clear recipient back to blank on those entries and flip
+# the tab back to OPEN — the exact inverse of what convert_tab_to_debt did.
+
+def _debt_converted_tabs_qs(business):
+    """SETTLED tabs that still carry an unpaid balance — the exact
+    'effective DEBT status' fingerprint _findable_tabs_qs()/
+    _get_live_tab_state() already use elsewhere in this app, reused here
+    as the discriminator between 'settled because everything got paid'
+    (nothing to revert) and 'settled via debt conversion' (revertible)."""
+    from django.db.models import Exists, OuterRef
+    unpaid_exists = BarTabEntry.objects.filter(
+        tab=OuterRef('pk'), is_paid=False,
+    ).exclude(payment_method='void')
+    return (
+        BarTab.objects.filter(business=business, status='SETTLED')
+        .annotate(_has_unpaid=Exists(unpaid_exists))
+        .filter(_has_unpaid=True)
+    )
+
+
+@login_required
+def debt_converted_tabs_api(request):
+    """JSON list of tabs currently sitting as converted debt (Geuza Deni),
+    still open to revert — powers the "↩️ Marejesho ya Deni" panel in all
+    three tabs drawers. Station-scoped like every other tabs endpoint;
+    ?station=bar|kitchen narrows display on top of (never instead of) the
+    permission check, same pattern as recent_settled_tabs_api."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'tabs': []})
+
+    allowed = _allowed_tab_sources(up)
+    station_param = (request.GET.get('station') or '').strip()
+    display_sources = allowed
+    if station_param in ('bar', 'kitchen'):
+        display_sources = {station_param} & allowed
+
+    tabs = (
+        _debt_converted_tabs_qs(up.business)
+        .filter(source__in=display_sources)
+        .select_related('customer')
+        .order_by('-settled_at')[:50]
+    )
+    return JsonResponse({'tabs': [
+        {
+            'id': t.id,
+            'customer_name': t.customer_name,
+            'source': t.source,
+            'unpaid_total': float(t.unpaid_total()),
+            'settled_at': timezone.localtime(t.settled_at).strftime('%d %b, %H:%M') if t.settled_at else '',
+            'customer_id': t.customer_id,
+        }
+        for t in tabs
+    ]})
+
+
+@login_required
+@require_POST
+def revert_tab_from_debt(request, tab_id):
+    """Reverse a Geuza Deni conversion — puts the tab back OPEN in its own
+    drawer, in case it was converted by mistake. Owner/manager only, same
+    tier as write-off approval / clear_defaulter (a debt-tracker-affecting
+    reversal), across all counters via one shared, station-agnostic view.
+
+    Refuses to revert once the customer has already made a debt payment
+    against this conversion (CustomerDebtPayment recorded since settled_at)
+    — CustomerDebtPayment is recorded generically against the customer, not
+    tied to specific transactions, so silently un-converting at that point
+    would desync the FIFO debt ledger for potentially unrelated debts too.
+    That's a real, if rare, case for the owner to resolve manually (e.g. a
+    write-off) rather than a blind auto-revert.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    if not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya mmiliki/meneja pekee'}, status=403)
+
+    from django.db import transaction as _db_txn
+    with _db_txn.atomic():
+        try:
+            tab = BarTab.objects.select_for_update().get(
+                id=tab_id, business=up.business, status='SETTLED',
+                source__in=_allowed_tab_sources(up),
+            )
+        except BarTab.DoesNotExist:
+            return JsonResponse({'ok': False, 'error': 'Tab haikupatikana au si deni tena'}, status=404)
+
+        unpaid_entries = list(
+            tab.entries.filter(is_paid=False).select_related('transaction')
+        )
+        if not unpaid_entries:
+            return JsonResponse({'ok': False, 'error': 'Tab hii si deni — hakuna cha kurudisha'}, status=400)
+
+        if tab.customer_id and tab.settled_at:
+            from .models import CustomerDebtPayment
+            already_paid = CustomerDebtPayment.objects.filter(
+                customer_id=tab.customer_id, business=up.business,
+                paid_at__gte=tab.settled_at,
+            ).exists()
+            if already_paid:
+                return JsonResponse({
+                    'ok': False,
+                    'error': ('Mteja tayari amelipa sehemu ya deni hili tangu ilipogeuzwa — '
+                              'huwezi kurudisha moja kwa moja. Tumia ukurasa wa deni kushughulikia.'),
+                }, status=409)
+
+        unpaid_total = sum((e.amount for e in unpaid_entries), Decimal('0'))
+        for entry in unpaid_entries:
+            txn = entry.transaction
+            if txn and txn.recipient:
+                txn.recipient = ''
+                txn.save(update_fields=['recipient'])
+
+        tab.status = 'OPEN'
+        tab.settled_at = None
+        tab.save(update_fields=['status', 'settled_at'])
+
+    # Mirror convert_tab_to_debt's own receipt sync (2026-07-25 fix) —
+    # otherwise /receipts/ would keep showing this tab's master receipt
+    # tagged 'credit' even after the conversion itself was undone.
+    _sync_master_receipt_payment_method(up.business, tab, 'tab')
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b, %H:%M')
+    board_by_source = {'bar': '/bar/', 'kitchen': '/kitchen/', 'qs': '/quick-sell/'}
+    tab_link = board_by_source.get(tab.source or 'bar', '/bar/')
+    msg = (
+        f"↩️ {who} amerudisha tab ya {tab.customer_name} (KES {unpaid_total:,.0f}) "
+        f"kutoka Deni kwenda kwenye tab wazi — {when}."
+    )
+
+    try:
+        from .models import Notification as _Notif
+        from accounts.models import UserProfile as _UP
+        from .notifications import normalize_ke_phone, send_sms_notification
+        from .views import scoped_on_shift_targets
+
+        notify_targets = scoped_on_shift_targets(up.business, {tab.source})
+        for op in _UP.objects.filter(business=up.business, role__in=['owner', 'manager']):
+            notify_targets[op.user_id] = op
+        for target in notify_targets.values():
+            if target.user_id == request.user.id:
+                continue
+            _Notif.objects.create(
+                user=target.user, title='↩️ Deni Imerudishwa kwenye Tab',
+                message=msg, notification_type='info', link_url=tab_link,
+            )
+            phone = (target.phone or '').strip()
+            if phone:
+                normalized = normalize_ke_phone(phone)
+                if normalized:
+                    send_sms_notification(msg, normalized)
+    except Exception:
+        logger.exception('revert_tab_from_debt: notify failed tab=%s', tab.id)
+
+    return JsonResponse({'ok': True, 'message': msg, 'tab_id': tab.id})
 
 
 @login_required

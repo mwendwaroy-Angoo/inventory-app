@@ -8102,6 +8102,107 @@ class RecordDebtPaymentIdempotencyTest(TestCase):
         self.assertNotEqual(resp.status_code, 400)
 
 
+class DuplicateDebtPaymentFlagTest(TestCase):
+    """2026-07-30 urgent live request: Roy wasn't sure if a KES 200 debt
+    payment was a genuine duplicate ("I remember ticking off the 200 in the
+    tabs drawer... fix it in a way that the system could identify if there
+    was a double entry"). record_debt_payment now flags (never blocks) a
+    second payment for the same customer+amount within 24 hours — matching
+    this app's own established 'warn, don't silently block' rule, since a
+    real second payment of the same round amount is not implausible (see
+    RecordDebtPaymentIdempotencyTest.test_different_tokens_both_go_through,
+    which this fix must not regress)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Dup Debt Pay Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='dupdebt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='dupdebt_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Dup Debt Item',
+            material_no='DUPDEBT-01', selling_price=Decimal('50'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Dup Debt Patron', credit_approved=True,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-10'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('1000'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_second_matching_payment_is_not_blocked(self):
+        from core.models import CustomerDebtPayment
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'mpesa', 'debt_source': 'bar',
+            'idempotency_token': 'dup-1',
+        })
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'mpesa', 'debt_source': 'bar',
+            'idempotency_token': 'dup-2',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            CustomerDebtPayment.objects.filter(customer=self.customer, amount_paid=Decimal('200')).count(), 2,
+            'A second genuine payment of the same amount must still go through',
+        )
+
+    def test_second_matching_payment_notifies_owner_manager(self):
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'mpesa', 'debt_source': 'bar',
+            'idempotency_token': 'dup-3',
+        })
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'mpesa', 'debt_source': 'bar',
+            'idempotency_token': 'dup-4',
+        })
+        self.assertTrue(
+            Notification.objects.filter(user=self.owner, title__icontains='Malipo Yanayofanana').exists()
+        )
+        self.assertTrue(
+            Notification.objects.filter(user=self.manager, title__icontains='Malipo Yanayofanana').exists()
+        )
+
+    def test_first_payment_of_its_kind_does_not_flag(self):
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '150', 'payment_method': 'cash', 'debt_source': 'bar',
+            'idempotency_token': 'dup-5',
+        })
+        self.assertFalse(
+            Notification.objects.filter(user=self.owner, title__icontains='Malipo Yanayofanana').exists()
+        )
+
+    def test_different_amounts_do_not_flag(self):
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'cash', 'debt_source': 'bar',
+            'idempotency_token': 'dup-6',
+        })
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '300', 'payment_method': 'cash', 'debt_source': 'bar',
+            'idempotency_token': 'dup-7',
+        })
+        self.assertFalse(
+            Notification.objects.filter(user=self.owner, title__icontains='Malipo Yanayofanana').exists()
+        )
+
+    def test_old_matching_payment_outside_24h_does_not_flag(self):
+        from core.models import CustomerDebtPayment
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('200'),
+            paid_at=timezone.now() - timedelta(hours=30),
+        )
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'cash', 'debt_source': 'bar',
+            'idempotency_token': 'dup-8',
+        })
+        self.assertFalse(
+            Notification.objects.filter(user=self.owner, title__icontains='Malipo Yanayofanana').exists()
+        )
+
+
 class DebtStkPushIdempotencyTest(TestCase):
     """debt_stk_push had no client-side button-disable AND no server-side guard at
     all — a rapid double-tap on "Send STK" could fire two separate STK Push prompts
@@ -8301,6 +8402,185 @@ class ConvertTabToDebtCreditApprovedTest(TestCase):
         cust = Customer.objects.filter(business=self.biz, name='New Tab Patron').first()
         self.assertIsNotNone(cust)
         self.assertTrue(cust.credit_approved)
+
+
+class RevertTabFromDebtTest(TestCase):
+    """2026-07-30 urgent live request: "a way of reverting tabs sent to
+    debt back to the tab drawers they came from in case of a mistake, more
+    so on the owner's and manager's side... across all counters."
+    convert_tab_to_debt only ever changes recipient (blank -> customer
+    name) on still-unpaid entries plus the tab's own status/settled_at —
+    payment_method was already 'credit' on every ordinary open-tab charge
+    from the moment it was added. Reverting is the precise inverse."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Revert Debt Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='rd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='rd_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='rd_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Revert Debt Item',
+            material_no='RD-01', selling_price=Decimal('480'), cost_price=Decimal('200'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chips',
+            material_no='RD-02', selling_price=Decimal('150'), cost_price=Decimal('60'),
+        )
+
+    def _make_tab(self, name, amount, item=None, source='bar'):
+        item = item or self.item
+        store = self.kitchen_store if item is self.kitchen_item else self.bar_store
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source=source, store=store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=item.description, amount=amount, is_paid=False,
+        )
+        return tab, entry
+
+    def test_owner_reverts_fully_converted_tab(self):
+        tab, entry = self._make_tab('Roy', Decimal('480'))
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Roy'})
+        tab.refresh_from_db()
+        entry.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+        self.assertEqual(entry.transaction.recipient, 'Roy')
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/revert-debt/')
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        tab.refresh_from_db()
+        entry.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+        self.assertIsNone(tab.settled_at)
+        self.assertEqual(entry.transaction.recipient, '')
+        self.assertFalse(entry.is_paid)
+        self.assertEqual(entry.transaction.payment_method, 'credit')  # untouched — correct baseline
+
+    def test_reverted_tab_no_longer_in_debt_tracker(self):
+        from core.debt_views import _get_customer_debt_data
+        tab, _entry = self._make_tab('Roy', Decimal('480'))
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Roy'})
+        customer = Customer.objects.get(business=self.biz, name='Roy')
+        before = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(before['outstanding'], 480.0)
+
+        self.client.post(f'/bar/tabs/{tab.id}/revert-debt/')
+        after = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(after['outstanding'], 0.0)
+
+    def test_partial_settle_then_convert_then_revert_only_touches_unpaid_portion(self):
+        """Roy's bug-2 scenario, exercised end to end: 480 bill, 200 paid
+        via mpesa (a real settle_tab call, splitting the entry), then the
+        remaining 280 converted to debt, then reverted — the already-paid
+        200 must be untouched throughout."""
+        tab, entry = self._make_tab('Roy', Decimal('480'))
+        self.client.force_login(self.owner)
+        settle_resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {
+            'entry_ids': [entry.id], 'payment_method': 'mpesa', 'amount': '200',
+        })
+        self.assertTrue(settle_resp.json()['ok'], settle_resp.json())
+        self.assertEqual(tab.unpaid_total(), Decimal('280'))
+
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Roy'})
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+        paid_entry = tab.entries.filter(is_paid=True).first()
+        self.assertEqual(paid_entry.amount, Decimal('200'))
+        self.assertEqual(paid_entry.payment_method, 'mpesa')
+
+        revert_resp = self.client.post(f'/bar/tabs/{tab.id}/revert-debt/')
+        self.assertTrue(revert_resp.json()['ok'], revert_resp.json())
+        tab.refresh_from_db()
+        paid_entry.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+        self.assertEqual(tab.unpaid_total(), Decimal('280'))
+        self.assertTrue(paid_entry.is_paid)
+        self.assertEqual(paid_entry.amount, Decimal('200'))
+        self.assertEqual(paid_entry.payment_method, 'mpesa')
+
+    def test_manager_can_revert(self):
+        tab, _entry = self._make_tab('Roy', Decimal('480'))
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Roy'})
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/revert-debt/')
+        self.assertTrue(resp.json()['ok'])
+
+    def test_staff_cannot_revert(self):
+        tab, _entry = self._make_tab('Roy', Decimal('480'))
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Roy'})
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/revert-debt/')
+        self.assertEqual(resp.status_code, 403)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+
+    def test_blocked_once_customer_has_already_paid_against_it(self):
+        tab, _entry = self._make_tab('Roy', Decimal('480'))
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Roy'})
+        customer = Customer.objects.get(business=self.biz, name='Roy')
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=customer, amount_paid=Decimal('100'),
+        )
+        resp = self.client.post(f'/bar/tabs/{tab.id}/revert-debt/')
+        self.assertEqual(resp.status_code, 409)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+
+    def test_fully_paid_tab_has_nothing_to_revert(self):
+        tab, entry = self._make_tab('Roy', Decimal('480'))
+        entry.is_paid = True
+        entry.payment_method = 'cash'
+        entry.save()
+        tab.status = 'SETTLED'
+        tab.settled_at = timezone.now()
+        tab.save()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/revert-debt/')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_debt_converted_tabs_api_lists_it_station_scoped(self):
+        bar_tab, _e1 = self._make_tab('Roy', Decimal('480'), source='bar')
+        kitchen_tab, _e2 = self._make_tab('Kim', Decimal('150'), item=self.kitchen_item, source='kitchen')
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{bar_tab.id}/debt/', {'customer_name': 'Roy'})
+        self.client.post(f'/bar/tabs/{kitchen_tab.id}/debt/', {'customer_name': 'Kim'})
+
+        resp = self.client.get('/bar/tabs/debt-converted/?station=bar')
+        ids = [t['id'] for t in resp.json()['tabs']]
+        self.assertIn(bar_tab.id, ids)
+        self.assertNotIn(kitchen_tab.id, ids)
+
+        resp = self.client.get('/bar/tabs/debt-converted/?station=kitchen')
+        ids = [t['id'] for t in resp.json()['tabs']]
+        self.assertIn(kitchen_tab.id, ids)
+        self.assertNotIn(bar_tab.id, ids)
+
+    def test_revert_does_not_touch_stock_or_qty(self):
+        """Money-position-only correction — the item was genuinely served
+        and stock genuinely left the shelf when it was added to the tab,
+        completely independent of debt conversion or its reversal."""
+        tab, entry = self._make_tab('Roy', Decimal('480'))
+        original_qty = entry.transaction.qty
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Roy'})
+        self.client.post(f'/bar/tabs/{tab.id}/revert-debt/')
+        entry.refresh_from_db()
+        self.assertEqual(entry.transaction.qty, original_qty)
 
 
 class TabToDebtConversionCreditRiskNotificationTest(TestCase):
@@ -9827,6 +10107,105 @@ class SplitAndTransferEntryTest(TestCase):
         remainder_entry = next(e for e in roy_json['entries'] if e['amount'] == 200.0)
         self.assertIn('Bosco', remainder_entry['transfer_note'])
         self.assertIn('alikataa', remainder_entry['transfer_note'])
+
+
+class SplitTransferKeptUnpaidTest(TestCase):
+    """2026-07-30 urgent live request: "Roy is drinking captain Morgan half
+    which is 225 but he is taking it on debt but at the same time bosco who
+    has a running bill has said that he will pay 100 shillings for Roy so
+    that Roy gets left with 125." Distinct from the existing paid_amount>0
+    case (a REAL payment by the source customer) — here NOBODY pays
+    anything at split time; the 125 simply stays as Roy's own unpaid
+    balance (source_kept_paid=False)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kept Unpaid Split Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ku_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='ku_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Captain Morgan Half',
+            material_no='KU-01', unit='Pcs', selling_price=Decimal('225'),
+            cost_price=Decimal('120'),
+        )
+
+    def _make_tab(self, name, amount, desc='Captain Morgan Half'):
+        tab = BarTab.objects.create(business=self.biz, customer_name=name, status='OPEN', source='bar')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=desc, amount=amount, is_paid=False,
+        )
+        return tab, entry
+
+    def test_kept_portion_stays_unpaid_not_marked_paid(self):
+        roy_tab, entry = self._make_tab('Roy', Decimal('225'))
+        bosco_tab, _bosco_entry = self._make_tab('Bosco', Decimal('50'))
+
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('125'),
+            paid_method='', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+            source_kept_paid=False,
+        )
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount, Decimal('125'))
+        self.assertFalse(entry.is_paid, "Roy hasn't paid — he's taking it on debt")
+        self.assertEqual(new_entry.amount, Decimal('100'))
+        self.assertFalse(new_entry.is_paid)
+        self.assertEqual(new_entry.tab_id, roy_tab.id, 'stays on source until Bosco accepts')
+        self.assertEqual(tfr.paid_amount, Decimal('0'))
+
+        # Total revenue for the item must still be exactly 225 (125 + 100).
+        total = entry.transaction.revenue() + new_entry.transaction.revenue()
+        self.assertEqual(total, 225.0)
+
+    def test_accept_moves_the_100_to_bosco_leaving_roy_owing_125(self):
+        roy_tab, entry = self._make_tab('Roy', Decimal('225'))
+        bosco_tab, _bosco_entry = self._make_tab('Bosco', Decimal('50'))
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('125'),
+            paid_method='', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+            source_kept_paid=False,
+        )
+        tfr.accept()
+        new_entry.refresh_from_db()
+        self.assertEqual(new_entry.tab_id, bosco_tab.id)
+        self.assertEqual(roy_tab.unpaid_total(), Decimal('125'))
+        self.assertEqual(bosco_tab.unpaid_total(), Decimal('150'))  # 50 own + 100 transferred
+
+    def test_view_end_to_end_with_source_kept_paid_flag(self):
+        roy_tab, entry = self._make_tab('Roy', Decimal('225'))
+        bosco_tab, _bosco_entry = self._make_tab('Bosco', Decimal('50'))
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '125', 'dest_tab_id': bosco_tab.id, 'source_kept_paid': '0',
+            'idempotency_token': 'ku-test-1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_paid)
+        self.assertEqual(entry.amount, Decimal('125'))
+
+    def test_default_still_marks_kept_portion_paid(self):
+        """Backward compatibility — omitting source_kept_paid (or sending 1)
+        must keep the original 'source pays now' behavior unchanged."""
+        _roy_tab, entry = self._make_tab('Roy', Decimal('225'))
+        bosco_tab, _ = self._make_tab('Bosco', Decimal('50'))
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/entries/{entry.id}/split-transfer/', {
+            'paid_amount': '125', 'paid_method': 'cash', 'dest_tab_id': bosco_tab.id,
+            'idempotency_token': 'ku-test-2',
+        })
+        self.assertTrue(resp.json()['ok'])
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(entry.payment_method, 'cash')
 
 
 class FullItemAndWholeTabTransferTest(TestCase):

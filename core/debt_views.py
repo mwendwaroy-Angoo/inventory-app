@@ -7,6 +7,7 @@ Owner (and cross-authorised staff) see both ledgers as separate sections.
 Discriminator: Transaction.item.store.is_kitchen == True → kitchen; False → bar.
 """
 
+import logging
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
@@ -20,6 +21,8 @@ from django.views.decorators.http import require_POST
 
 from core.models import Customer, CustomerDebtPayment, SalaryDeduction, Transaction, WriteOffRequest
 from core.views import get_user_profile, owner_required, owner_or_manager_required, _station_scope
+
+logger = logging.getLogger(__name__)
 
 
 # ── Scope helper ─────────────────────────────────────────────────────────────
@@ -483,6 +486,36 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
     return rcpt, post_data
 
 
+def _flag_possible_duplicate_debt_payment(business, customer, amount, earlier_payment):
+    """Non-blocking heads-up to owner/manager — a payment was just recorded
+    that matches another one for the same customer/amount within the last
+    24 hours. Never blocks (the second payment may well be genuine), just
+    surfaces it for a human to glance at, same 'warn, don't silently block'
+    pattern as evaluate_credit()'s WARN tier."""
+    try:
+        from .models import Notification
+        from accounts.models import UserProfile as _UP
+        from .notifications import normalize_ke_phone, send_sms_notification
+        when = timezone.localtime(earlier_payment.paid_at).strftime('%d %b, %H:%M')
+        msg = (
+            f"⚠️ {customer.name}: malipo mapya ya KES {amount:,.0f} yanafanana na malipo "
+            f"mengine ya kiasi hicho hicho yaliyorekodiwa {when}. Kagua kama hii ni malipo "
+            f"halisi mawili tofauti au kama ilirudiwa kimakosa."
+        )
+        for op in _UP.objects.filter(business=business, role__in=['owner', 'manager']).select_related('user'):
+            Notification.objects.create(
+                user=op.user, title='⚠️ Malipo Yanayofanana — Kagua',
+                message=msg, notification_type='warning',
+                link_url=f'/debt/{customer.id}/',
+            )
+            if op.phone:
+                normalized = normalize_ke_phone(op.phone)
+                if normalized:
+                    send_sms_notification(msg, normalized)
+    except Exception:
+        logger.exception('_flag_possible_duplicate_debt_payment failed customer=%s', customer.id)
+
+
 @login_required
 @require_POST
 def record_debt_payment(request, customer_id):
@@ -542,6 +575,29 @@ def record_debt_payment(request, customer_id):
         )
         return redirect('customer_debt_profile', customer_id=customer_id)
 
+    # Duplicate-payment detection (2026-07-30 urgent live request — Roy:
+    # "I am not sure if it became a double payment... fix it in a way that
+    # the system could identify if there was a double entry"). The existing
+    # idempotency token above only catches a double-click/resubmit of the
+    # SAME form load; it can't catch a staffer separately re-entering a
+    # payment that was already handled elsewhere (e.g. ticked off directly
+    # in the tabs drawer as a tab settlement, then also recorded here out
+    # of habit or confusion) — CustomerDebtPayment has no natural link back
+    # to a specific tab entry to check against, so the best available
+    # signal is: another payment of the SAME amount, for the SAME customer,
+    # recorded within the last 24 hours. Deliberately NEVER blocks — see
+    # RecordDebtPaymentIdempotencyTest.test_different_tokens_both_go_through,
+    # this app's own established rule that two genuinely separate payments
+    # of the same round amount must always both go through — this only
+    # flags the match for a human to glance at (in-app + SMS to owner/
+    # manager), the same 'warn, never silently block' pattern used
+    # throughout this app (e.g. evaluate_credit()'s WARN tier).
+    from datetime import timedelta
+    recent_match = CustomerDebtPayment.objects.filter(
+        customer=customer, business=business, amount_paid=amount,
+        paid_at__gte=timezone.now() - timedelta(hours=24),
+    ).order_by('-paid_at').first()
+
     site_url = request.build_absolute_uri('/')[:-1]
     try:
         rcpt, post_data = _do_settle_debt_payment(
@@ -550,6 +606,16 @@ def record_debt_payment(request, customer_id):
             source=payment_scope, notes=notes,
             recorded_by=request.user, site_url=site_url,
         )
+        if recent_match:
+            _flag_possible_duplicate_debt_payment(business, customer, amount, recent_match)
+            when = timezone.localtime(recent_match.paid_at).strftime('%d %b, %H:%M')
+            messages.warning(
+                request,
+                _('⚠️ Kumbuka: malipo mengine ya KES %(amount)s kwa %(customer)s yalirekodiwa '
+                  '%(when)s — kagua kwenye historia ya deni kama haya ni malipo mawili halisi '
+                  'au yalirudiwa kimakosa.')
+                % {'amount': f'{amount:,.2f}', 'customer': customer.name, 'when': when}
+            )
         messages.success(
             request,
             _('Payment of KES %(amount)s recorded for %(customer)s.')

@@ -3533,3 +3533,67 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   shift-close, later-shift-close-supersedes-an-older-confirmation, station independence,
   manager-can/staff-cannot, invalid station/negative amount rejected, and the station-scoped
   notification fan-out. One migration (0136, additive). 905 tests pass (core + accounts).
+- Partial debt transfer to an existing tab, verify partial-settle-to-debt flow, revert debt
+  to tab, duplicate-payment detection (2026-07-30, urgent same-day follow-up, four items).
+  **(1) "Unable to transfer partial tab payment to an existing tab"** — Roy's exact case: a
+  KES 225 Captain Morgan half, Roy takes it on debt (pays nothing right now), Bosco (who has
+  his own running tab) covers 100, leaving Roy owing 125. `BarTabEntry.
+  split_and_transfer_locked()` only ever supported two shapes — `paid_amount>0` (the SOURCE
+  customer pays that much NOW, a real payment) or `paid_amount=0` (destination covers the
+  WHOLE item) — neither fits "destination covers PART, the rest stays UNPAID on the source's
+  own tab." New `source_kept_paid` kwarg (default `True`, fully backward compatible) selects
+  between the existing `split_paid_unpaid_locked()` (marks the kept portion PAID) and new
+  `split_kept_unpaid_locked()` (leaves the kept portion exactly as unpaid as it already was —
+  reduced in amount only, `is_paid`/`payment_method` never touched). `TabTransferRequest.
+  paid_amount` is `0` in this mode (already correctly skips the "X alishalipa mwenyewe" phrase
+  in every notification that reads it, no changes needed there). `split_and_transfer_entry`
+  view reads `source_kept_paid` from POST (`'0'`/`'1'`); all three tabs drawers gained a
+  "Kiasi kinachobaki bado hakijalipwa (deni)" checkbox in the split-transfer modal, hiding the
+  now-irrelevant cash/mpesa method picker when checked, per the tabs-drawer-parity rule. 4 new
+  tests (`SplitTransferKeptUnpaidTest`) including an explicit backward-compat lock. **(2)
+  "Verify the flow"** — a KES 480 running tab, customer paid 200 via mpesa (a real partial
+  `settle_tab` call, splitting the boundary entry), Roy then found it in the debt tracker even
+  though the receipt already correctly showed 200 paid + 280 remaining, and wasn't sure if
+  that was a bug. Traced end to end: `convert_tab_to_debt()` only ever touches `tab.entries.
+  filter(is_paid=False)` — the already-paid 200 portion is untouched by design — and
+  `_get_customer_debt_data()`'s query already correctly reads only the unpaid 280 (`revenue()`
+  on the split remainder). This is CORRECT, DESIGNED behavior for a tab that was partially
+  settled and then separately converted to debt (most plausibly via a manual "→ Deni" click,
+  or the shift-close auto-convert sweep, sometime after the mpesa payment) — not a bug. Locked
+  in with `test_partial_settle_then_convert_then_revert_only_touches_unpaid_portion`, which
+  exercises the exact real sequence (settle 200 of 480 → convert 280 to debt → revert) end to
+  end through the real endpoints and asserts the paid 200 is untouched at every step. **(3) "A
+  way of reverting tabs sent to debt back to the tab drawers they came from in case of a
+  mistake... owner's and manager's side... all counters."** New `revert_tab_from_debt` view
+  (`core/keg_views.py`) — the exact inverse of `convert_tab_to_debt`: conversion's ONLY real
+  effect is setting `Transaction.recipient` on still-unpaid entries (payment_method was
+  already `'credit'` on every ordinary open-tab charge from the moment it was added, see
+  `KegBarrel.record_sale`'s `pay = 'credit' if tab else ...` — conversion doesn't actually
+  change it) plus `tab.status`/`settled_at`; revert clears `recipient` back to blank and flips
+  the tab back to `OPEN`. Owner/manager only (same tier as write-off approval), one shared
+  station-agnostic endpoint covers all three counters. Refuses to revert (409) once the
+  customer has already made a `CustomerDebtPayment` since the conversion — that model has no
+  natural link to specific transactions, so silently un-converting at that point risks
+  desyncing the FIFO ledger for potentially unrelated debts too; the owner resolves that case
+  manually. New `debt_converted_tabs_api` (mirrors `_findable_tabs_qs()`'s "effective DEBT
+  status" fingerprint — `status='SETTLED'` with a still-unpaid balance — the discriminator
+  between "settled because everything got paid" and "settled via debt conversion") powers a
+  new "↩️ Marejesho ya Deni" collapsible panel added to all three tabs drawers, owner/manager-
+  only, mirroring the existing "Recent Payments" panel pattern. Syncs the tab's master receipt
+  `payment_method` back to `'tab'` on revert (mirrors `_sync_master_receipt_payment_method`'s
+  own 2026-07-25 fix for the forward direction). 9 new tests (`RevertTabFromDebtTest`).
+  **(4) Duplicate-payment detection** — same-turn follow-up: Roy wasn't sure if the 200 above
+  became "a double payment" since he separately remembered ticking it off in the tabs drawer.
+  `record_debt_payment()`'s existing idempotency token only catches a resubmit of the SAME
+  form load, not a staffer separately re-entering a payment already handled elsewhere.
+  `CustomerDebtPayment` has no natural link back to a specific tab entry to check against, so
+  the best available signal is: another payment of the SAME amount, for the SAME customer,
+  within the last 24 hours. Deliberately NEVER blocks — an early draft hard-blocked a <2-minute
+  match, but that directly contradicted this app's own established rule (see
+  `RecordDebtPaymentIdempotencyTest.test_different_tokens_both_go_through`, already asserting
+  two genuinely separate payments of the same round amount must both succeed) — caught by
+  running that pre-existing test before pushing. Final version only flags: an immediate
+  `messages.warning()` to the recording staffer plus an in-app + SMS notification to owner/
+  manager (`_flag_possible_duplicate_debt_payment`), the payment itself always still records.
+  5 new tests (`DuplicateDebtPaymentFlagTest`). No migrations for any of the four items. 923
+  tests pass (core + accounts).

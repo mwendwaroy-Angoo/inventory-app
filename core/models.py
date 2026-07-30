@@ -2973,7 +2973,7 @@ class BarTabEntry(models.Model):
 
     @classmethod
     def split_and_transfer_locked(cls, entry_id, business, paid_amount, paid_method,
-                                   dest_tab_id, staff_user):
+                                   dest_tab_id, staff_user, source_kept_paid=True):
         """
         Split one entry into a paid portion (settled here, on its own tab) and an
         unpaid remainder proposed as a transfer onto a DIFFERENT customer's tab —
@@ -3007,6 +3007,18 @@ class BarTabEntry(models.Model):
         there's no "paid portion" to carve off; the original entry itself,
         unmodified, is what the pending request points at.
 
+        source_kept_paid (2026-07-30 live request) — Roy's exact scenario:
+        a KES 225 Captain Morgan half, Roy takes it on debt (pays nothing
+        right now), Bosco covers 100 of it, leaving Roy owing 125. This is
+        NOT the paid_amount>0 case above (which records a REAL payment by
+        the source customer) — the 125 that stays behind must remain an
+        ordinary UNPAID balance on Roy's own tab, not a payment. When
+        source_kept_paid=False, `paid_amount` is reinterpreted as "the
+        amount that stays on the source tab" (still unpaid, no method
+        required) rather than "the amount the source pays now" — the
+        transfer amount is still entry.amount - paid_amount either way.
+        See split_kept_unpaid_locked() for the mechanism.
+
         Raises ValueError on any validation failure (caller renders as a JSON
         error) — insufficient/invalid amount, tab not open, same tab picked
         twice, or an in-flight STK payment already referencing this entry.
@@ -3026,7 +3038,7 @@ class BarTabEntry(models.Model):
                 raise ValueError(
                     'Kiasi cha kulipa lazima kiwe 0 au zaidi, na pungufu ya jumla ya kiingilio.'
                 )
-            if paid_amount > 0 and paid_method not in ('cash', 'mpesa'):
+            if source_kept_paid and paid_amount > 0 and paid_method not in ('cash', 'mpesa'):
                 raise ValueError('Njia ya malipo si sahihi.')
 
             dest_tab = BarTab.objects.select_for_update().get(id=dest_tab_id, business=business)
@@ -3073,11 +3085,15 @@ class BarTabEntry(models.Model):
                 )
                 return entry, transfer
 
-            new_entry = cls.split_paid_unpaid_locked(entry, paid_amount, paid_method, staff_user)
+            if source_kept_paid:
+                new_entry = cls.split_paid_unpaid_locked(entry, paid_amount, paid_method, staff_user)
+            else:
+                new_entry = cls.split_kept_unpaid_locked(entry, paid_amount, staff_user)
             transfer = TabTransferRequest.objects.create(
                 business=business, entry=new_entry,
                 source_tab=entry.tab, dest_tab=dest_tab, amount=new_entry.amount,
-                paid_amount=paid_amount, requested_by=staff_user, note=entry.description,
+                paid_amount=(paid_amount if source_kept_paid else Decimal('0')),
+                requested_by=staff_user, note=entry.description,
             )
         return new_entry, transfer
 
@@ -3142,6 +3158,43 @@ class BarTabEntry(models.Model):
         return cls.objects.create(
             tab=entry.tab, transaction=new_txn,
             description=entry.description, amount=remainder, is_paid=False,
+        )
+
+    @classmethod
+    def split_kept_unpaid_locked(cls, entry, kept_amount, recorded_by=None):
+        """Mirror of split_paid_unpaid_locked, for the case where NOBODY
+        pays anything at split time — 2026-07-30 live request: Roy's KES
+        225 Captain Morgan half, taken entirely on debt; Bosco covers 100
+        of it, Roy is left owing 125. Unlike split_paid_unpaid_locked (which
+        marks the kept portion PAID), this leaves the kept portion exactly
+        as unpaid as it already was — reduced in amount only, no payment
+        flag ever touched. The carved-off transfer_amount becomes the new
+        unpaid entry proposed to the destination tab, same as the sibling
+        method. Caller must already hold the row lock and have validated
+        0 <= kept_amount < entry.amount.
+        """
+        transfer_amount = entry.amount - kept_amount
+        orig_txn = Transaction.objects.select_for_update().get(pk=entry.transaction_id)
+
+        orig_txn.sale_amount = kept_amount
+        orig_txn.save(update_fields=['sale_amount'])
+        entry.amount = kept_amount
+        entry.save(update_fields=['amount'])
+        # entry.is_paid / payment_method deliberately untouched — it was
+        # already an ordinary unpaid tab charge and stays exactly that,
+        # just for a smaller amount now that part of it has moved away.
+
+        new_txn = Transaction.objects.create(
+            item=orig_txn.item, business=orig_txn.business, type='Issue',
+            qty=Decimal('0'), sale_amount=transfer_amount, payment_method='credit',
+            keg_barrel=orig_txn.keg_barrel, produce_bunch=orig_txn.produce_bunch,
+            kitchen_batch=orig_txn.kitchen_batch,
+            date=orig_txn.date, created_at=orig_txn.created_at,
+            recorded_by=recorded_by,
+        )
+        return cls.objects.create(
+            tab=entry.tab, transaction=new_txn,
+            description=entry.description, amount=transfer_amount, is_paid=False,
         )
 
     @classmethod
