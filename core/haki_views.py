@@ -738,7 +738,21 @@ def my_work_and_pay(request):
         business=business, staff=user_profile,
     ).select_related('reviewed_by').order_by('-requested_at')[:10])
 
+    # 2026-07-30 — Maombi/Maagizo redesign: surface pending owner instructions
+    # right here too, not only on the /staff-requests/ page — Kazi Yangu is
+    # where a staffer already checks "what do I need to do," so a pending
+    # instruction belongs alongside it. Same query staff_request_list() uses
+    # for a staffer's own instructions tab (assigned to them, or broadcast).
+    from .models import StaffRequest
+    from .staff_request_views import _assigned_or_broadcast_q
+    pending_instructions = list(
+        StaffRequest.objects.filter(
+            business=business, direction=StaffRequest.DIRECTION_INSTRUCTION, status='pending',
+        ).filter(_assigned_or_broadcast_q(user_profile)).select_related('related_item').order_by('due_date', 'created_at')[:10]
+    )
+
     return render(request, 'core/haki_kazi_yangu.html', {
+        'pending_instructions': pending_instructions,
         **contrib,
         'salary': salary,
         'pay_history': pay_history,

@@ -82,6 +82,37 @@
     </a>
 </div>
 
+{% if pending_instructions %}
+<!-- 2026-07-30 — Maombi/Maagizo redesign: pending owner instructions surfaced
+     right where a staffer already checks "what do I need to do." -->
+<div class="kazi-card" style="border-left:3px solid #c9a84c;">
+    <div class="kazi-card-title">📋 {% trans 'Maagizo Kwangu' %}
+        <span style="color:#ff9800; font-size:.8rem; font-weight:600;">({{ pending_instructions|length }})</span>
+    </div>
+    {% for ins in pending_instructions %}
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:.6rem; flex-wrap:wrap;
+                padding:.5rem 0; {% if not forloop.last %}border-bottom:1px solid #2a2a2a;{% endif %}">
+        <div style="flex:1; min-width:180px;">
+            <div style="color:#f0ece4; font-weight:600; font-size:.88rem;">{{ ins.subject }}</div>
+            {% if ins.description %}
+            <div style="color:#888; font-size:.78rem; margin-top:.15rem;">{{ ins.description }}</div>
+            {% endif %}
+            <div style="color:#555; font-size:.72rem; margin-top:.2rem;">
+                {{ ins.get_task_type_display }}{% if ins.due_date %} · Ifikapo {{ ins.due_date|date:"d M Y" }}{% endif %}
+            </div>
+        </div>
+        {% with url=ins.action_url %}
+        {% if url %}
+        <a href="{{ url }}" class="btn btn-sm btn-gold" style="white-space:nowrap;">{{ ins.action_label }} →</a>
+        {% else %}
+        <a href="{% url 'staff_request_list' %}?tab=instructions" class="btn btn-sm btn-outline-secondary" style="white-space:nowrap;">Angalia →</a>
+        {% endif %}
+        {% endwith %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 <!-- Contribution this month -->
 <div class="kazi-card">
     <div class="kazi-card-title">📊 {% trans 'Mchango Wako Mwezi Huu' %}</div>

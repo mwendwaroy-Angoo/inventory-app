@@ -265,6 +265,7 @@ from core.staff_request_views import (
     submit_staff_request,
     staff_request_list,
     review_staff_request,
+    create_instruction,
 )
 from core.owner_consumption_views import record_owner_consumption
 from core.reset_views import (
@@ -336,6 +337,7 @@ urlpatterns = [
     path("stock/restock/<int:request_id>/ordered/", restock_mark_ordered, name="restock_mark_ordered"),
     path("staff-requests/",                         staff_request_list,   name="staff_request_list"),
     path("staff-requests/submit/",                  submit_staff_request, name="submit_staff_request"),
+    path("staff-requests/instruct/",                create_instruction,   name="create_instruction"),
     path("staff-requests/<int:request_id>/review/",  review_staff_request, name="review_staff_request"),
     path("stock/take/",                              start_stock_take,    name="start_stock_take"),
     path("stock/takes/",                             stock_take_history,  name="stock_take_history"),

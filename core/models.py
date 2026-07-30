@@ -4731,13 +4731,35 @@ class SupplierCatalogEntryPriceLog(models.Model):
 # ────────────────────────────────────────────────
 
 class StaffRequest(models.Model):
-    """A staff-initiated request that isn't already covered by a dedicated
-    flow (restock has StockRequest, debt write-off has WriteOffRequest, stock
-    variance has StockVarianceQuery) — a general "ask the owner something and
-    get a real answer" channel: permission overrides, corrections, or a plain
-    question/note. Deliberately NOT a generic FK to every possible model —
-    that would duplicate machinery those dedicated flows already have; this
-    is for everything else.
+    """The Maombi ↔ Maagizo channel — two directions sharing one model and
+    one review lifecycle, deliberately not two separate models (2026-07-30
+    redesign, folding in the original 2026-07-26 staff→owner-only version):
+
+      direction='request'     — staff asks the owner something (unchanged
+                                 from the original design): permission
+                                 overrides, corrections, a plain question,
+                                 or a stock-receipt confirmation.
+      direction='instruction' — the owner directs a staff member (or all
+                                 staff, if unassigned) to DO something
+                                 concrete: run a stock take, receive a
+                                 delivery, confirm the count on a specific
+                                 item. Still not a generic FK to every model
+                                 (restock/write-off/variance keep their own
+                                 dedicated flows) — this is for tasking real
+                                 people with real, boundable actions.
+
+    Reuses status/reviewed_by/reviewed_at/review_note for BOTH directions
+    rather than adding a parallel set of fields — 'approved' means
+    "granted" for a request and "done" for an instruction; 'rejected'
+    means "declined" for a request and "cancelled" for an instruction.
+    Only the WHO-can-transition-it and the on-screen label differ by
+    direction (see review_staff_request / staff_requests.html) — the
+    underlying state machine is identical, so one shared undo-friendly
+    lifecycle serves both without duplicating it.
+
+    Cause-and-effect wiring: every task_type maps to a real, already-built
+    screen in the app via action_url() below — an instruction is never a
+    disconnected to-do note. See that method's docstring for the mapping.
     """
     CATEGORY_RESTOCK       = 'restock'
     CATEGORY_PERMISSION    = 'permission'
@@ -4761,6 +4783,24 @@ class StaffRequest(models.Model):
         ('rejected', _('Imekataliwa')),
     ]
 
+    DIRECTION_REQUEST     = 'request'
+    DIRECTION_INSTRUCTION = 'instruction'
+    DIRECTION_CHOICES = [
+        ('request',     _('Ombi — kutoka kwa mfanyakazi')),
+        ('instruction', _('Agizo — kutoka kwa mmiliki')),
+    ]
+
+    TASK_GENERAL       = 'general'
+    TASK_STOCK_TAKE    = 'stock_take'
+    TASK_RECEIVE_GOODS = 'receive_goods'
+    TASK_CONFIRM_COUNT = 'confirm_count'
+    TASK_TYPE_CHOICES = [
+        ('general',       _('Maelezo / Kazi Nyingine')),
+        ('stock_take',    _('Fanya Hesabu ya Stock')),
+        ('receive_goods', _('Pokea Bidhaa')),
+        ('confirm_count', _('Thibitisha Idadi ya Bidhaa')),
+    ]
+
     business     = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='staff_requests')
     requested_by = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='staff_requests_made')
     category     = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='general')
@@ -4782,6 +4822,21 @@ class StaffRequest(models.Model):
         related_name='staff_requests',
     )
 
+    # ── 2026-07-30 redesign: owner-issued instructions ──────────────────────
+    direction = models.CharField(max_length=12, choices=DIRECTION_CHOICES, default='request')
+    task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES, default='general')
+    assigned_to = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='staff_requests_assigned',
+        help_text='Instruction only. Blank = every staff member sees it and any one of them may complete it (a broadcast task, e.g. "everyone do a stock count today").',
+    )
+    related_item = models.ForeignKey(
+        'Item', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='staff_requests',
+        help_text='For confirm_count / receive_goods instructions about a specific item.',
+    )
+    due_date = models.DateField(null=True, blank=True)
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = _('Staff Request')
@@ -4789,3 +4844,31 @@ class StaffRequest(models.Model):
 
     def __str__(self):
         return f"[{self.get_category_display()}] {self.subject} — {self.requested_by} ({self.status})"
+
+    def action_url(self):
+        """The real, already-built screen this instruction's task_type maps
+        to — cause and effect, not a floating to-do note. Empty string for
+        task_type='general' (nothing to deep-link; just acknowledge it) or
+        for a plain request (direction='request' has no action of its own —
+        it's the OWNER who acts, via review_staff_request)."""
+        if self.direction != self.DIRECTION_INSTRUCTION:
+            return ''
+        if self.task_type == self.TASK_CONFIRM_COUNT and self.related_item_id:
+            return f'/stock/?adjust_item={self.related_item_id}'
+        if self.task_type == self.TASK_RECEIVE_GOODS:
+            return f'/add-transaction/?item={self.related_item_id}' if self.related_item_id else '/add-transaction/'
+        if self.task_type == self.TASK_STOCK_TAKE:
+            profile = self.assigned_to
+            if profile and getattr(profile, 'is_kitchen_staff', False):
+                return '/kitchen/'
+            if getattr(self.business, 'has_keg', False):
+                return '/bar/'
+            return '/stock/'
+        return ''
+
+    def action_label(self):
+        return {
+            self.TASK_CONFIRM_COUNT: _('🔢 Thibitisha Sasa'),
+            self.TASK_RECEIVE_GOODS: _('📦 Pokea Sasa'),
+            self.TASK_STOCK_TAKE:    _('📊 Fanya Hesabu Sasa'),
+        }.get(self.task_type, '')

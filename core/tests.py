@@ -12531,6 +12531,261 @@ class StaffRequestTest(TestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+# ── Maombi ↔ Maagizo redesign (2026-07-30) ──────────────────────────────────
+# Owner-issued instructions sharing the StaffRequest model/lifecycle with the
+# original staff-issued requests. Cause-and-effect wiring: every task_type
+# maps to a real screen via StaffRequest.action_url() — locked in below.
+
+class StaffInstructionTest(TestCase):
+    """Owner/manager instructs a staff member (or all staff); the assignee
+    completes it themselves, owner/manager may complete-on-behalf-of or
+    cancel, a regular staffer can never cancel."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Instruction Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='in_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='in_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.other_staff = User.objects.create_user(username='in_other', password='x')
+        self.other_profile = UserProfile.objects.create(user=self.other_staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='IN-TUSKER', unit='Bottle', selling_price=Decimal('250'),
+        )
+
+    def test_owner_only_can_create_instruction(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/staff-requests/instruct/', {
+            'task_type': 'general', 'subject': 'Fanya usafi',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_owner_creates_assigned_instruction_notifies_only_assignee(self):
+        from core.models import StaffRequest
+        self.client.force_login(self.owner)
+        resp = self.client.post('/staff-requests/instruct/', {
+            'task_type': 'confirm_count', 'subject': 'Thibitisha Tusker',
+            'assigned_to': self.staff_profile.id, 'related_item': self.item.id,
+        })
+        self.assertTrue(resp.json()['ok'])
+        sr = StaffRequest.objects.get(business=self.biz, direction='instruction')
+        self.assertEqual(sr.assigned_to_id, self.staff_profile.id)
+        self.assertEqual(sr.related_item_id, self.item.id)
+        self.assertTrue(Notification.objects.filter(user=self.staff, title__icontains='Agizo Jipya').exists())
+        self.assertFalse(Notification.objects.filter(user=self.other_staff, title__icontains='Agizo Jipya').exists())
+
+    def test_broadcast_instruction_notifies_all_staff(self):
+        self.client.force_login(self.owner)
+        self.client.post('/staff-requests/instruct/', {
+            'task_type': 'stock_take', 'subject': 'Hesabu ya leo',
+        })
+        self.assertTrue(Notification.objects.filter(user=self.staff, title__icontains='Agizo Jipya').exists())
+        self.assertTrue(Notification.objects.filter(user=self.other_staff, title__icontains='Agizo Jipya').exists())
+
+    def test_confirm_count_action_url_points_to_stock_list_adjust(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='confirm_count', subject='Thibitisha', related_item=self.item,
+        )
+        self.assertEqual(sr.action_url(), f'/stock/?adjust_item={self.item.id}')
+
+    def test_receive_goods_action_url_points_to_add_transaction(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='receive_goods', subject='Pokea', related_item=self.item,
+        )
+        self.assertEqual(sr.action_url(), f'/add-transaction/?item={self.item.id}')
+
+    def test_general_task_has_no_action_url(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Fanya usafi',
+        )
+        self.assertEqual(sr.action_url(), '')
+
+    def test_plain_request_has_no_action_url(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.staff, direction='request',
+            task_type='confirm_count', subject='Should not matter', related_item=self.item,
+        )
+        self.assertEqual(sr.action_url(), '')
+
+    def test_assignee_can_complete_own_instruction(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Fanya X', assigned_to=self.staff_profile,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        sr.refresh_from_db()
+        self.assertEqual(sr.status, 'approved')
+        self.assertEqual(sr.reviewed_by_id, self.staff.id)
+
+    def test_non_assignee_cannot_complete_someone_elses_instruction(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Fanya X', assigned_to=self.staff_profile,
+        )
+        self.client.force_login(self.other_staff)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertEqual(resp.status_code, 403)
+        sr.refresh_from_db()
+        self.assertEqual(sr.status, 'pending')
+
+    def test_any_staff_can_complete_broadcast_instruction(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Fanya X', assigned_to=None,
+        )
+        self.client.force_login(self.other_staff)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_owner_can_complete_on_behalf_of_staff(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Fanya X', assigned_to=self.staff_profile,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_staff_cannot_cancel_instruction(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Fanya X', assigned_to=self.staff_profile,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'reject'})
+        self.assertEqual(resp.status_code, 403)
+        sr.refresh_from_db()
+        self.assertEqual(sr.status, 'pending')
+
+    def test_owner_can_cancel_instruction_and_notifies_nobody_extra(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Fanya X', assigned_to=self.staff_profile,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {
+            'action': 'reject', 'review_note': 'Halihitajiki tena',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        sr.refresh_from_db()
+        self.assertEqual(sr.status, 'rejected')
+
+    def test_cannot_review_already_decided_instruction(self):
+        from core.models import StaffRequest
+        sr = StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Fanya X', assigned_to=self.staff_profile,
+            status='approved',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_owner_list_splits_into_given_and_received_tabs(self):
+        from core.models import StaffRequest
+        StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Given one',
+        )
+        StaffRequest.objects.create(
+            business=self.biz, requested_by=self.staff, direction='request', subject='Received one',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/staff-requests/?tab=given')
+        self.assertEqual(len(resp.context['instructions']), 1)
+        self.assertEqual(resp.context['instructions'][0].subject, 'Given one')
+        resp2 = self.client.get('/staff-requests/?tab=received')
+        self.assertEqual(len(resp2.context['requests']), 1)
+        self.assertEqual(resp2.context['requests'][0].subject, 'Received one')
+
+    def test_staff_sees_assigned_and_broadcast_but_not_others_assigned(self):
+        from core.models import StaffRequest
+        StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Mine', assigned_to=self.staff_profile,
+        )
+        StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Broadcast', assigned_to=None,
+        )
+        StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Not mine', assigned_to=self.other_profile,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/staff-requests/?tab=instructions')
+        subjects = {r.subject for r in resp.context['instructions']}
+        self.assertEqual(subjects, {'Mine', 'Broadcast'})
+
+    def test_cross_tenant_instruction_review_returns_404(self):
+        from core.models import StaffRequest
+        other_biz = Business.objects.create(name='Other Instruction Biz')
+        other_owner = User.objects.create_user(username='in_foreign_owner', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        sr = StaffRequest.objects.create(
+            business=other_biz, requested_by=other_owner, direction='instruction',
+            task_type='general', subject='Foreign instruction',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/staff-requests/{sr.id}/review/', {'action': 'approve'})
+        self.assertEqual(resp.status_code, 404)
+
+
+class HakiPendingInstructionsTest(TestCase):
+    """Kazi Yangu surfaces the same 'instructions for me' set as the Maombi
+    page's staff instructions tab — assigned to this staffer, or broadcast."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Haki Instructions Biz', haki_enabled=True)
+        self.owner = User.objects.create_user(username='hi_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='hi_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.other_staff = User.objects.create_user(username='hi_other', password='x')
+        self.other_profile = UserProfile.objects.create(user=self.other_staff, business=self.biz, role='staff')
+
+    def test_kazi_yangu_shows_assigned_and_broadcast_pending_instructions(self):
+        from core.models import StaffRequest
+        StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='For me', assigned_to=self.staff_profile,
+        )
+        StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Broadcast', assigned_to=None,
+        )
+        StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Not for me', assigned_to=self.other_profile,
+        )
+        StaffRequest.objects.create(
+            business=self.biz, requested_by=self.owner, direction='instruction',
+            task_type='general', subject='Already done', assigned_to=self.staff_profile,
+            status='approved',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/me/')
+        subjects = {r.subject for r in resp.context['pending_instructions']}
+        self.assertEqual(subjects, {'For me', 'Broadcast'})
+
+
 class SalaryConfirmationAndPayrollRunTest(TestCase):
     """2026-07-26 (item 8): staff-side confirmation of a recorded salary
     payment, and a bulk payroll run across all pay-eligible staff for a

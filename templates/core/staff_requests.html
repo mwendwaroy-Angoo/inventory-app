@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load i18n %}
 
-{% block title %}Maombi{% endblock %}
+{% block title %}Maombi na Maagizo{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -10,6 +10,8 @@
   padding:.75rem 1rem; margin-bottom:.55rem;
   display:flex; align-items:flex-start; gap:.75rem; flex-wrap:wrap;
 }
+.sr-card.sr-instruction { border-left:3px solid #c9a84c; }
+.sr-card.sr-request     { border-left:3px solid #5da8f0; }
 .sr-badge {
   display:inline-block; border-radius:20px; padding:.2rem .65rem;
   font-size:.72rem; font-weight:600; white-space:nowrap;
@@ -20,6 +22,23 @@
 .sr-cat {
   display:inline-block; border-radius:6px; padding:.1rem .5rem; font-size:.68rem;
   background:rgba(93,168,240,.1); border:1px solid rgba(93,168,240,.3); color:#5da8f0;
+}
+.sr-cat.sr-task {
+  background:rgba(201,168,76,.1); border:1px solid rgba(201,168,76,.3); color:#c9a84c;
+}
+.sr-tabs {
+  display:flex; gap:.4rem; margin-bottom:1rem; flex-wrap:wrap;
+  border-bottom:1px solid #2a2a2a; padding-bottom:.6rem;
+}
+.sr-tab {
+  padding:.4rem .9rem; border-radius:8px; font-size:.85rem; text-decoration:none;
+  border:1px solid #3a3a3a; color:#b0b0b0; white-space:nowrap;
+}
+.sr-tab.active { background:rgba(201,168,76,.12); border-color:rgba(201,168,76,.4); color:#c9a84c; font-weight:600; }
+.sr-action-btn {
+  display:inline-block; background:rgba(76,175,80,.1); border:1px solid rgba(76,175,80,.35);
+  color:#4caf50; border-radius:8px; padding:.35rem .8rem; font-size:.8rem; font-weight:600;
+  text-decoration:none; white-space:nowrap;
 }
 #sr-toast {
   position:fixed; bottom:1.25rem; left:50%; transform:translateX(-50%) translateY(120%);
@@ -33,73 +52,162 @@
 {% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-3">
   <div>
-    <h1 class="page-title mb-1">📨 {% trans 'Maombi' %}</h1>
-    <div style="color:#b0b0b0; font-size:.85rem;">
-      {% if is_owner %}Maombi kutoka kwa wafanyakazi{% else %}Maombi yangu{% endif %}
-      {% if pending_count > 0 %}
-      — <span style="color:#ff9800; font-weight:600;">{{ pending_count }} yanasubiri</span>
-      {% endif %}
-    </div>
+    {% if is_owner %}
+    <h1 class="page-title mb-1">📋 {% trans 'Maagizo na Maombi' %}</h1>
+    <div style="color:#b0b0b0; font-size:.85rem;">{% trans 'Toa maagizo kwa wafanyakazi, kagua maombi yao' %}</div>
+    {% else %}
+    <h1 class="page-title mb-1">📨 {% trans 'Maombi Yangu' %}</h1>
+    <div style="color:#b0b0b0; font-size:.85rem;">{% trans 'Angalia maagizo ya mmiliki, tuma maombi yako' %}</div>
+    {% endif %}
   </div>
   <div class="d-flex gap-2 flex-wrap">
-    <button class="btn btn-sm btn-gold" onclick="window.openNewRequest()">➕ Ombi Jipya</button>
-    <a href="?status=all" class="btn btn-sm {% if status_filter == 'all' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yote</a>
-    <a href="?status=pending" class="btn btn-sm {% if status_filter == 'pending' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yanasubiri</a>
-    <a href="?status=approved" class="btn btn-sm {% if status_filter == 'approved' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yamekubaliwa</a>
-    <a href="?status=rejected" class="btn btn-sm {% if status_filter == 'rejected' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yamekataliwa</a>
+    {% if is_owner %}
+    <button class="btn btn-sm btn-gold" onclick="window.openNewInstruction()">📋 {% trans 'Toa Agizo' %}</button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="window.openNewRequest()">➕ {% trans 'Ombi Jipya' %}</button>
+    {% else %}
+    <button class="btn btn-sm btn-gold" onclick="window.openNewRequest()">➕ {% trans 'Ombi Jipya' %}</button>
+    {% endif %}
   </div>
 </div>
 
-{% if not requests %}
-<div class="text-center py-5" style="color:#555;">
-  <div style="font-size:2rem; margin-bottom:.5rem;">📨</div>
-  Hakuna maombi {% if status_filter != 'all' %}kwa filter hii{% endif %}.
+<div class="sr-tabs">
+  {% if is_owner %}
+  <a href="?tab=given&status={{ status_filter }}" class="sr-tab {% if active_tab == 'given' %}active{% endif %}">
+    📤 {% trans 'Maagizo Niliyotoa' %}
+  </a>
+  <a href="?tab=received&status={{ status_filter }}" class="sr-tab {% if active_tab == 'received' %}active{% endif %}">
+    📥 {% trans 'Maombi Niliyopokea' %}
+    {% if pending_count > 0 %}<span style="color:#ff9800;">({{ pending_count }})</span>{% endif %}
+  </a>
+  {% else %}
+  <a href="?tab=instructions&status={{ status_filter }}" class="sr-tab {% if active_tab == 'instructions' %}active{% endif %}">
+    📥 {% trans 'Maagizo Kwangu' %}
+    {% if pending_count > 0 %}<span style="color:#ff9800;">({{ pending_count }})</span>{% endif %}
+  </a>
+  <a href="?tab=mine&status={{ status_filter }}" class="sr-tab {% if active_tab == 'mine' %}active{% endif %}">
+    📤 {% trans 'Maombi Yangu' %}
+  </a>
+  {% endif %}
 </div>
+
+<div class="d-flex gap-2 flex-wrap mb-3">
+  <a href="?tab={{ active_tab }}&status=all" class="btn btn-sm {% if status_filter == 'all' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yote</a>
+  <a href="?tab={{ active_tab }}&status=pending" class="btn btn-sm {% if status_filter == 'pending' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yanasubiri</a>
+  <a href="?tab={{ active_tab }}&status=approved" class="btn btn-sm {% if status_filter == 'approved' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yamekamilika</a>
+  <a href="?tab={{ active_tab }}&status=rejected" class="btn btn-sm {% if status_filter == 'rejected' %}btn-gold{% else %}btn-outline-secondary{% endif %}">Yamefutwa/Yamekataliwa</a>
+</div>
+
+{% if active_tab == 'given' or active_tab == 'instructions' %}
+  {# ── INSTRUCTIONS ─────────────────────────────────────────────────── #}
+  {% if not instructions %}
+  <div class="text-center py-5" style="color:#555;">
+    <div style="font-size:2rem; margin-bottom:.5rem;">📋</div>
+    {% if is_owner %}Hujatoa agizo lolote {% if status_filter != 'all' %}kwa filter hii{% endif %}.
+    {% else %}Hakuna agizo kwako kwa sasa {% if status_filter != 'all' %}kwa filter hii{% endif %}.{% endif %}
+  </div>
+  {% else %}
+  {% for r in instructions %}
+  <div class="sr-card sr-instruction" id="sr-{{ r.id }}">
+    <div style="flex:1; min-width:200px;">
+      <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.2rem; flex-wrap:wrap;">
+        <span class="sr-cat sr-task">{{ r.get_task_type_display }}</span>
+        <span style="color:#f0ece4; font-weight:600; font-size:.92rem;">{{ r.subject }}</span>
+      </div>
+      {% if r.description %}
+      <div style="color:#888; font-size:.8rem; margin-top:.2rem;">{{ r.description }}</div>
+      {% endif %}
+      <div style="color:#555; font-size:.75rem; margin-top:.3rem;">
+        {% if is_owner %}
+          Kwa <strong style="color:#b0b0b0;">{% if r.assigned_to %}{{ r.assigned_to.user.get_full_name|default:r.assigned_to.user.username }}{% else %}Wafanyakazi Wote{% endif %}</strong> —
+        {% endif %}
+        {{ r.created_at|date:"d M Y, H:i" }}
+        {% if r.due_date %} · Ifikapo {{ r.due_date|date:"d M Y" }}{% endif %}
+      </div>
+      {% if r.reviewed_by %}
+      <div style="color:#555; font-size:.75rem; margin-top:.15rem;">
+        {% if r.status == 'approved' %}Imetimizwa{% else %}Imefutwa{% endif %} na
+        {{ r.reviewed_by.get_full_name|default:r.reviewed_by.username }}
+        — {{ r.reviewed_at|date:"d M Y, H:i" }}
+        {% if r.review_note %}: "{{ r.review_note }}"{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:.4rem;">
+      <span class="sr-badge {{ r.status }}">
+        {% if r.status == 'pending' %}⏳ Inasubiri{% elif r.status == 'approved' %}✓ Imetimizwa{% else %}✖ Imefutwa{% endif %}
+      </span>
+      {% if r.status == 'pending' %}
+        {% with url=r.action_url %}
+        {% if url %}
+        <a href="{{ url }}" class="sr-action-btn">{{ r.action_label }} →</a>
+        {% endif %}
+        {% endwith %}
+        <div style="display:flex; gap:.4rem;">
+          <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
+                  onclick="reviewRequest({{ r.id }}, 'approve')">✓ Nimetimiza</button>
+          {% if is_owner %}
+          <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
+                  onclick="reviewRequest({{ r.id }}, 'reject', this)">✕ Futa</button>
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
 {% else %}
-{% for r in requests %}
-<div class="sr-card" id="sr-{{ r.id }}">
-  <div style="flex:1; min-width:200px;">
-    <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.2rem;">
-      <span class="sr-cat">{{ r.get_category_display }}</span>
-      <span style="color:#f0ece4; font-weight:600; font-size:.92rem;">{{ r.subject }}</span>
-    </div>
-    {% if r.description %}
-    <div style="color:#888; font-size:.8rem; margin-top:.2rem;">{{ r.description }}</div>
-    {% endif %}
-    <div style="color:#555; font-size:.75rem; margin-top:.3rem;">
-      {% if is_owner %}Kutoka kwa <strong style="color:#b0b0b0;">{{ r.requested_by.get_full_name|default:r.requested_by.username }}</strong> — {% endif %}
-      {{ r.created_at|date:"d M Y, H:i" }}
-    </div>
-    {% if r.reviewed_by %}
-    <div style="color:#555; font-size:.75rem; margin-top:.15rem;">
-      Imepitiwa na {{ r.reviewed_by.get_full_name|default:r.reviewed_by.username }}
-      — {{ r.reviewed_at|date:"d M Y, H:i" }}
-      {% if r.review_note %}: "{{ r.review_note }}"{% endif %}
-    </div>
-    {% endif %}
+  {# ── REQUESTS ─────────────────────────────────────────────────────── #}
+  {% if not requests %}
+  <div class="text-center py-5" style="color:#555;">
+    <div style="font-size:2rem; margin-bottom:.5rem;">📨</div>
+    Hakuna maombi {% if status_filter != 'all' %}kwa filter hii{% endif %}.
   </div>
-  <div style="display:flex; flex-direction:column; align-items:flex-end; gap:.4rem;">
-    <span class="sr-badge {{ r.status }}">
-      {% if r.status == 'pending' %}⏳ Inasubiri{% elif r.status == 'approved' %}✓ Imekubaliwa{% else %}✕ Imekataliwa{% endif %}
-    </span>
-    {% if is_owner and r.status == 'pending' %}
-    <div style="display:flex; gap:.4rem;">
-      <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
-              onclick="reviewRequest({{ r.id }}, 'approve')">✓ Kubali</button>
-      <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
-              onclick="reviewRequest({{ r.id }}, 'reject', this)">✕ Kataa</button>
+  {% else %}
+  {% for r in requests %}
+  <div class="sr-card sr-request" id="sr-{{ r.id }}">
+    <div style="flex:1; min-width:200px;">
+      <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.2rem;">
+        <span class="sr-cat">{{ r.get_category_display }}</span>
+        <span style="color:#f0ece4; font-weight:600; font-size:.92rem;">{{ r.subject }}</span>
+      </div>
+      {% if r.description %}
+      <div style="color:#888; font-size:.8rem; margin-top:.2rem;">{{ r.description }}</div>
+      {% endif %}
+      <div style="color:#555; font-size:.75rem; margin-top:.3rem;">
+        {% if is_owner %}Kutoka kwa <strong style="color:#b0b0b0;">{{ r.requested_by.get_full_name|default:r.requested_by.username }}</strong> — {% endif %}
+        {{ r.created_at|date:"d M Y, H:i" }}
+      </div>
+      {% if r.reviewed_by %}
+      <div style="color:#555; font-size:.75rem; margin-top:.15rem;">
+        Imepitiwa na {{ r.reviewed_by.get_full_name|default:r.reviewed_by.username }}
+        — {{ r.reviewed_at|date:"d M Y, H:i" }}
+        {% if r.review_note %}: "{{ r.review_note }}"{% endif %}
+      </div>
+      {% endif %}
     </div>
-    {% endif %}
+    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:.4rem;">
+      <span class="sr-badge {{ r.status }}">
+        {% if r.status == 'pending' %}⏳ Inasubiri{% elif r.status == 'approved' %}✓ Imekubaliwa{% else %}✕ Imekataliwa{% endif %}
+      </span>
+      {% if is_owner and r.status == 'pending' %}
+      <div style="display:flex; gap:.4rem;">
+        <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
+                onclick="reviewRequest({{ r.id }}, 'approve')">✓ Kubali</button>
+        <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
+                onclick="reviewRequest({{ r.id }}, 'reject', this)">✕ Kataa</button>
+      </div>
+      {% endif %}
+    </div>
   </div>
-</div>
-{% endfor %}
+  {% endfor %}
+  {% endif %}
 {% endif %}
 
 <div id="sr-toast"></div>
 
-<!-- New request modal -->
+<!-- New request modal (staff → owner) -->
 <div class="modal fade" id="newRequestModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
@@ -137,6 +245,73 @@
     </div>
   </div>
 </div>
+
+{% if is_owner %}
+<!-- New instruction modal (owner → staff) -->
+<div class="modal fade" id="newInstructionModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#c9a84c;">📋 Toa Agizo</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.85rem;">
+        <div style="margin-bottom:.5rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Aina ya Kazi</label>
+          <select id="in-task-type" onchange="window._inTaskTypeChanged()"
+                  style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.85rem;">
+            {% for val, label in task_type_choices %}
+            <option value="{{ val }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+          <div style="color:#666; font-size:.72rem; margin-top:.25rem;">
+            Kila aina huelekeza mfanyakazi moja kwa moja kwenye sehemu husika ya app.
+          </div>
+        </div>
+        <div style="margin-bottom:.5rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Mpe Nani?</label>
+          <select id="in-assigned-to" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.85rem;">
+            <option value="">— Wafanyakazi Wote —</option>
+            {% for sp in staff_choices %}
+            <option value="{{ sp.id }}">{{ sp.user.get_full_name|default:sp.user.username }} ({{ sp.get_role_display }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div id="in-item-row" style="margin-bottom:.5rem; display:none;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Bidhaa</label>
+          <select id="in-related-item" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.85rem;">
+            <option value="">— Chagua Bidhaa —</option>
+            {% for it in item_choices %}
+            <option value="{{ it.id }}">{{ it.description }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div style="margin-bottom:.5rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Kichwa</label>
+          <input type="text" id="in-subject" placeholder="e.g. Hesabu ya Stock ya leo"
+                 style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.9rem;">
+        </div>
+        <div style="margin-bottom:.5rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Maelezo zaidi (hiari)</label>
+          <textarea id="in-description" rows="3" placeholder="Eleza zaidi..."
+                 style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.85rem;"></textarea>
+        </div>
+        <div style="margin-bottom:.4rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Ifikapo (hiari)</label>
+          <input type="date" id="in-due-date"
+                 style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.85rem;">
+        </div>
+        <div id="in-error" style="display:none;color:#c0395a;font-size:.8rem;margin-top:.35rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;padding:.75rem;">
+        <button id="in-submit-btn" class="btn btn-sm w-100"
+                style="background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.4);color:#c9a84c;font-weight:600;"
+                onclick="submitNewInstruction()">📋 Tuma Agizo</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
@@ -183,7 +358,7 @@ window.submitNewRequest = function () {
         var m = bootstrap.Modal.getInstance(document.getElementById('newRequestModal'));
         if (m) m.hide();
         srShowToast('✓ Ombi limetumwa.');
-        setTimeout(function () { location.reload(); }, 800);
+        setTimeout(function () { window.location = '?tab=mine'; }, 800);
       } else {
         errEl.textContent = d.error || 'Hitilafu.';
         errEl.style.display = 'block';
@@ -196,12 +371,74 @@ window.submitNewRequest = function () {
     });
 };
 
+{% if is_owner %}
+window._inTaskTypeChanged = function () {
+  var t = document.getElementById('in-task-type').value;
+  var row = document.getElementById('in-item-row');
+  row.style.display = (t === 'confirm_count' || t === 'receive_goods') ? 'block' : 'none';
+};
+
+window.openNewInstruction = function () {
+  document.getElementById('in-subject').value = '';
+  document.getElementById('in-description').value = '';
+  document.getElementById('in-due-date').value = '';
+  document.getElementById('in-assigned-to').value = '';
+  document.getElementById('in-related-item').value = '';
+  document.getElementById('in-task-type').value = 'general';
+  document.getElementById('in-error').style.display = 'none';
+  window._inTaskTypeChanged();
+  new bootstrap.Modal(document.getElementById('newInstructionModal')).show();
+};
+
+window.submitNewInstruction = function () {
+  var subject = document.getElementById('in-subject').value.trim();
+  var errEl = document.getElementById('in-error');
+  if (!subject) {
+    errEl.textContent = 'Andika kichwa cha agizo.';
+    errEl.style.display = 'block';
+    return;
+  }
+  var btn = document.getElementById('in-submit-btn');
+  btn.disabled = true; btn.textContent = 'Inatuma...';
+  var body = new URLSearchParams({
+    task_type: document.getElementById('in-task-type').value,
+    assigned_to: document.getElementById('in-assigned-to').value,
+    related_item: document.getElementById('in-related-item').value,
+    subject: subject,
+    description: document.getElementById('in-description').value.trim(),
+    due_date: document.getElementById('in-due-date').value,
+    csrfmiddlewaretoken: '{{ csrf_token }}',
+  });
+  fetch('/staff-requests/instruct/', {
+    method: 'POST', body: body, headers: {'X-CSRFToken': '{{ csrf_token }}'},
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      btn.disabled = false; btn.textContent = '📋 Tuma Agizo';
+      if (d.ok) {
+        var m = bootstrap.Modal.getInstance(document.getElementById('newInstructionModal'));
+        if (m) m.hide();
+        srShowToast('✓ Agizo limetumwa.');
+        setTimeout(function () { window.location = '?tab=given'; }, 800);
+      } else {
+        errEl.textContent = d.error || 'Hitilafu.';
+        errEl.style.display = 'block';
+      }
+    })
+    .catch(function () {
+      btn.disabled = false; btn.textContent = '📋 Tuma Agizo';
+      errEl.textContent = 'Hitilafu ya mtandao.';
+      errEl.style.display = 'block';
+    });
+};
+{% endif %}
+
 window.reviewRequest = function (requestId, action, anchorEl) {
   if (action === 'reject') {
     openReasonChips({
       anchorEl: anchorEl,
-      title: 'Kwa nini umekataa?',
-      chips: ['Haiwezekani kwa sasa', 'Hitaji maelezo zaidi'],
+      title: 'Kwa nini umekataa/umefuta?',
+      chips: ['Haiwezekani kwa sasa', 'Hitaji maelezo zaidi', 'Halihitajiki tena'],
       onSelect: function (reason) { _submitReviewRequest(requestId, 'reject', reason); },
     });
     return;

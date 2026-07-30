@@ -3329,3 +3329,67 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `ShiftStockCountPhaseTest`, `OpenShiftIncludesStockTakeAccessTest`,
   `ReceiptsListStationScopingTest`). Two migrations (accounts 0052, core 0134), both
   additive. 859 tests pass (core + accounts).
+- Maombi ↔ Maagizo redesign — owner-issued instructions (2026-07-30). Roy's ask: integrate
+  and redesign the existing staff→owner "Maombi" request channel (Sprint "Accountability
+  overhaul II," `StaffRequest`, 2026-07-26) so the owner can ALSO issue instructions to
+  staff — stock takes, goods receipt, item-count confirmations — with every instruction
+  type wired to a real cause-and-effect action in the app, not a disconnected to-do note;
+  asymmetric framing (owner's side reads as instructions going out, staff's side reads as
+  requests going up); and staff salaries/performance confirmed visible in Haki. **Design:
+  one model, two directions, not a parallel system.** `StaffRequest` gained `direction`
+  ('request'/'instruction', default 'request' — the original flow is direction='request'
+  unchanged), `task_type` ('general'/'stock_take'/'receive_goods'/'confirm_count'),
+  `assigned_to` (FK UserProfile, null=blank/broadcast to all staff), `related_item` (FK
+  Item, for count/receipt instructions), `due_date` (migration 0135). Deliberately reuses
+  status/reviewed_by/reviewed_at/review_note for BOTH directions instead of a parallel
+  field set — 'approved' means "granted" for a request and "done" for an instruction,
+  'rejected' means "declined" vs "cancelled" — only the label and the WHO-can-transition
+  rule differ by direction, so one shared undo-friendly lifecycle serves both. **Cause-
+  and-effect wiring**: `StaffRequest.action_url()` maps every task_type to a real,
+  already-built screen instead of leaving an instruction as text: `confirm_count` →
+  `/stock/?adjust_item=<id>` (the exact Rekebisha auto-open deep link the 2026-07-21
+  Reset sprint's Fresh Stock Count checklist already uses), `receive_goods` →
+  `/add-transaction/?item=<id>` (the same item-prefill query param the price-variance
+  report already uses), `stock_take` → the assignee's own board (`/kitchen/` for kitchen
+  staff, `/bar/` for a keg business, `/stock/` fallback — reusing this same session's
+  opening-shift stock-take work, not a new mechanism). `general` has no deep link — just
+  something to read and acknowledge. Every instruction card on the Maombi page and the new
+  Kazi Yangu widget render this as a "🚀 [Fanya Sasa]" button pointing straight at the
+  real action, not just a list entry. **Permission model**: `create_instruction`
+  (`/staff-requests/instruct/`) is owner/manager-only. Completing an instruction
+  (`action=approve`, relabeled "Nimetimiza" in the UI) is open to the specific assignee,
+  ANY staff member if broadcast (assigned_to blank), or owner/manager on a staff member's
+  behalf — self-declared completion, same trust model as any other staff-recorded action
+  in this app. Cancelling (`action=reject`, relabeled "Futa") is owner/manager only — a
+  regular staffer can complete an instruction but can never cancel one, matching Roy's
+  literal framing that instructions flow one direction in authority even though the
+  completion signal flows back. `review_staff_request` now branches its permission check
+  on `sr.direction` while keeping the REQUEST path (owner/manager-only approve/reject)
+  byte-for-byte unchanged — regression-locked by the pre-existing `StaffRequestTest`
+  suite, all of which passed unmodified against the new code. **Redesigned
+  `staff_requests.html`**: owner/manager see two tabs — "📤 Maagizo Niliyotoa" (given,
+  default landing tab) and "📥 Maombi Niliyopokea" (received) — with "📋 Toa Agizo" as the
+  prominent gold primary action and "➕ Ombi Jipya" demoted to a secondary outline button
+  (kept, since a manager may still need to ask the actual owner something — Roy's
+  "is_owner_or_manager" convention for this app doesn't collapse that need away). Staff
+  see the mirror image — "📥 Maagizo Kwangu" (default landing tab, assigned-to-them or
+  broadcast) and "📤 Maombi Yangu" — with "➕ Ombi Jipya" as the sole prominent action;
+  they never see a way to issue an instruction. Each instruction card shows who it's
+  assigned to (or "Wafanyakazi Wote"), an optional due date, the deep-link action button,
+  and — for owners — both Nimetimiza/Futa; staff only ever see Nimetimiza on their own
+  list, matching the one-directional-cancel-authority rule above. **Haki integration**:
+  `my_work_and_pay` (Kazi Yangu) gained a `pending_instructions` query — the exact same
+  assigned-or-broadcast filter the Maombi page's staff instructions tab uses — rendered as
+  a "📋 Maagizo Kwangu" card directly under the page header, above the existing
+  "📊 Mchango Wako Mwezi Huu" (revenue/hours/debts-recovered/milestones) and
+  "💵 Mshahara" (salary status/payment history/deductions/remaining balance/advance
+  requests) cards — both of which were already fully built (2026-07-26 "item 8" sprint)
+  and needed no rework, just confirmation they're genuinely there; this creative link
+  means a staffer checking "what am I owed and how am I doing" also immediately sees
+  "what does the owner need from me," in one place. Learned from the 2026-07-29
+  HTML-comment-breaks-template-parsing mistake (same day, earlier entry below): the new
+  template was smoke-tested via `get_template()` before the full suite ran this time,
+  catching any similar `{% %}`-in-comment slip before it could reach test collection. 27 new tests
+  (`StaffInstructionTest`, `HakiPendingInstructionsTest`) plus the full pre-existing
+  `StaffRequestTest` suite passing unmodified. One migration (0135, additive). 877 tests
+  pass (core + accounts).
