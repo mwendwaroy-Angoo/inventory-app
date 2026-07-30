@@ -1624,7 +1624,7 @@ def correct_transaction_payment_method(request, txn_id):
         f'kwenda {label.get(new_method, new_method)} — tarehe {when}.'
         + (f' Sababu: {reason}' if reason else '')
     )
-    _notify_direct_correction(up.business, message, request.user)
+    _notify_direct_correction(up.business, message, request.user, source=('kitchen' if is_kitchen else 'bar'))
 
     return JsonResponse({'ok': True, 'message': message, 'payment_method': new_method})
 
@@ -1689,7 +1689,7 @@ def split_transaction_payment_method(request, txn_id):
         f'KES {float(new_txn.revenue()):,.0f} {label.get(new_method, new_method)} — tarehe {when}.'
         + (f' Sababu: {reason}' if reason else '')
     )
-    _notify_direct_correction(up.business, message, request.user)
+    _notify_direct_correction(up.business, message, request.user, source=('kitchen' if is_kitchen else 'bar'))
 
     # 2026-07-26 (item 4) — best-effort receipt reflection. Receipt.lines is a
     # point-in-time snapshot with no stored link back to this Transaction, so
@@ -1939,18 +1939,18 @@ def _notify_tab_correction(tab, title, message, actor):
     """Shared fan-out for tab-correction actions any staff can now trigger
     (remove_tab_entry, revoke_entry_payment — both widened from owner/
     manager-only, 2026-07-25) — owners/managers plus everyone else
-    currently on shift, via in-app + SMS, so a correction one staff member
-    makes is visible to whoever else is running the till. Same recipient
-    pattern as _notify_tab_transfer_resolved (core/receipt_views.py)."""
-    from .models import Notification as _Notif, Shift as _Shift
+    currently on shift AT THIS TAB'S OWN COUNTER (2026-07-30 station-
+    scoping fix — see core.views.scoped_on_shift_targets), via in-app +
+    SMS, so a correction one staff member makes is visible to whoever else
+    is running that till, without also pinging the other counter's staff.
+    Same recipient pattern as _notify_tab_transfer_resolved
+    (core/receipt_views.py)."""
+    from .models import Notification as _Notif
     from accounts.models import UserProfile as _UP
     from .notifications import normalize_ke_phone, send_sms_notification
+    from .views import scoped_on_shift_targets
 
-    notify_targets = {}
-    for _sh in _Shift.objects.filter(business=tab.business, status='OPEN').select_related('staff'):
-        _up = _UP.objects.filter(user_id=_sh.staff_id, business=tab.business).first()
-        if _up:
-            notify_targets[_sh.staff_id] = _up
+    notify_targets = dict(scoped_on_shift_targets(tab.business, {tab.source}))
     for _up in _UP.objects.filter(business=tab.business, role__in=['owner', 'manager']):
         notify_targets[_up.user_id] = _up
 
@@ -1968,19 +1968,20 @@ def _notify_tab_correction(tab, title, message, actor):
                 send_sms_notification(message, _n)
 
 
-def _notify_direct_correction(business, message, actor):
+def _notify_direct_correction(business, message, actor, source=None):
     """Same recipient fan-out as _notify_tab_correction, but for a direct
     (non-tab) sale correction, which has no BarTab to key off — owners/
-    managers plus everyone else currently on shift, in-app + SMS."""
-    from .models import Notification as _Notif, Shift as _Shift
+    managers plus everyone else currently on shift AT THE SAME COUNTER as
+    the corrected sale (2026-07-30 station-scoping fix), in-app + SMS.
+    `source` is 'bar'/'kitchen' (the corrected Transaction's item's store);
+    left unscoped (every on-shift staffer) if not passed, same as before
+    this fix."""
+    from .models import Notification as _Notif
     from accounts.models import UserProfile as _UP
     from .notifications import normalize_ke_phone, send_sms_notification
+    from .views import scoped_on_shift_targets
 
-    notify_targets = {}
-    for _sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
-        _up = _UP.objects.filter(user_id=_sh.staff_id, business=business).first()
-        if _up:
-            notify_targets[_sh.staff_id] = _up
+    notify_targets = dict(scoped_on_shift_targets(business, {source} if source else None))
     for _up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
         notify_targets[_up.user_id] = _up
 

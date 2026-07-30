@@ -287,6 +287,29 @@
         </details>
         {% endif %}
         {% endif %}
+
+        <!-- 2026-07-30 live request — "ensure the owner can confirm cash at
+             counters at any given moment for the system to know": lets
+             owner/manager spot-check either counter's drawer right here,
+             at any time, not just when a shift happens to close. Becomes
+             the new anchor for this whole card going forward — see
+             core.models.TillCount and shift_views.till_expected_cash(). -->
+        {% if user.userprofile.is_owner_or_manager %}
+        <div style="margin-top:.6rem; display:flex; gap:.5rem; flex-wrap:wrap;">
+            {% if till_bar_expected %}
+            <button onclick="confirmTillCount('bar', 'Bar')" class="btn btn-sm"
+                    style="background:rgba(201,168,76,.1); border:1px solid rgba(201,168,76,.35); color:#c9a84c; font-size:.75rem;">
+                💰 Thibitisha Pesa ya Bar Sasa
+            </button>
+            {% endif %}
+            {% if till_kitchen_expected %}
+            <button onclick="confirmTillCount('kitchen', 'Kitchen')" class="btn btn-sm"
+                    style="background:rgba(255,152,0,.1); border:1px solid rgba(255,152,0,.35); color:#ff9800; font-size:.75rem;">
+                💰 Thibitisha Pesa ya Kitchen Sasa
+            </button>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -1068,6 +1091,33 @@ var HOME_SHOW_KITCHEN = {{ show_kitchen|yesno:"true,false" }};
 
     setInterval(_pollRevenue, 30000);
 })();
+</script>
+<script>
+// 2026-07-30 — "ensure the owner can confirm cash at counters at any given
+// moment" — see core.shift_views.confirm_till_count / core.models.TillCount.
+function confirmTillCount(station, label) {
+  var val = window.prompt('Kiasi cha fedha kilichopo kwenye counter ya ' + label + ' SASA (KES):');
+  if (val === null) return;
+  val = val.trim();
+  if (val === '') return;
+  var note = window.prompt('Maelezo (hiari):');
+  if (note === null) note = '';
+  var body = new URLSearchParams({
+    station: station, counted_amount: val, note: note,
+    csrfmiddlewaretoken: '{{ csrf_token }}',
+  });
+  fetch('/till/confirm/', { method: 'POST', body: body })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        alert(d.message || 'Imethibitishwa.');
+        location.reload();
+      } else {
+        alert(d.error || 'Imeshindikana');
+      }
+    })
+    .catch(function () { alert('Network error'); });
+}
 </script>
 {% endblock %}
 

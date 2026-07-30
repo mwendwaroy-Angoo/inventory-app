@@ -145,6 +145,55 @@ def _station_scope(up):
     return True, bool(getattr(up, 'can_access_kitchen', False))
 
 
+def scoped_on_shift_targets(business, sources=None):
+    """Return {user_id: UserProfile} for staff currently on an OPEN shift,
+    filtered through _station_scope() when `sources` narrows the event to
+    one or more counters ('bar'/'kitchen').
+
+    2026-07-30 live report (Roy): "kitchen staff is getting bar
+    notifications and vice versa." Root cause — several correction-fan-out
+    helpers across the app (_notify_tab_correction/_notify_direct_correction
+    in keg_views.py, _settle_receipt_entries_from_payment in mpesa_views.py,
+    _notify_tab_transfer_resolved in receipt_views.py) each independently
+    looped over EVERY on-shift staffer for the whole business with no
+    station filter at all — the exact Station Scoping Principle gap this
+    app has already found and fixed for individual features several times
+    (kitchen_wastage, kitchen_consumable_pool_api, etc.), just never swept
+    across this whole notification-fan-out family in one pass. One correct
+    reference implementation already existed
+    (_fire_cash_payment_request in receipt_views.py, 2026-07-25) — this
+    factors that same logic out so every caller shares it instead of each
+    hand-rolling (and occasionally forgetting) the same scoping check.
+
+    Owner/manager are NOT included here — every caller already adds them
+    separately, and _station_scope() always shows them both anyway, so
+    "only the business owner [and manager] sees everything" holds
+    regardless of which counter the event concerns. Unscoped (empty/
+    unknown sources, e.g. a Quick Sell 'qs' tab, which isn't tied to one
+    physical counter) returns every on-shift staffer, same as before this
+    fix — only a genuinely bar-only or kitchen-only event is narrowed.
+    """
+    from .models import Shift as _Shift
+    from accounts.models import UserProfile as _UP
+
+    scoped_sources = {s for s in (sources or []) if s in ('bar', 'kitchen')}
+    targets = {}
+    for sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
+        up = _UP.objects.filter(user_id=sh.staff_id, business=business).first()
+        if not up:
+            continue
+        if scoped_sources:
+            show_bar, show_kitchen = _station_scope(up)
+            relevant = (
+                ('bar' in scoped_sources and show_bar)
+                or ('kitchen' in scoped_sources and show_kitchen)
+            )
+            if not relevant:
+                continue
+        targets[sh.staff_id] = up
+    return targets
+
+
 def csrf_failure_view(request, reason=""):
     """Custom CSRF_FAILURE_VIEW (2026-07-28 live report — Roy: ~80% of client
     logins hit a raw "Forbidden (403) — CSRF verification failed" page, with

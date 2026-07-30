@@ -12,7 +12,8 @@ from core.models import (
     BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
     KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
     KitchenStockReceipt, KitchenStockReceiptLine,
-    Notification, Payment, PettyCash, Receipt, Shift, Store, TabTransferRequest, Transaction,
+    Notification, Payment, PettyCash, Receipt, Shift, Store, TabTransferRequest,
+    TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -14746,6 +14747,299 @@ class EditShiftOpeningFloatTest(TestCase):
 
         after = till_expected_cash(self.biz, 'bar')
         self.assertEqual(before['expected_cash'], after['expected_cash'])
+
+    def test_correction_applies_correctly_regardless_of_sales_already_made(self):
+        """2026-07-30 follow-up: "ensure that once I correct it, it will
+        adjust accordingly irrespective of cash sales made for that
+        counter." _reconcile()'s formula is
+        opening_float + cash_sales_for_the_whole_shift — cash_sales is
+        summed over the entire shift window regardless of WHEN within it
+        the float gets corrected, so fixing the float after several sales
+        have already happened must still land on the same total as if it
+        had been entered correctly from the start."""
+        item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='EF-ITEM-1',
+            description='Beer', unit='bottle', selling_price=Decimal('100'),
+        )
+        # Three cash sales happen BEFORE anyone notices the float was never entered.
+        for _i in range(3):
+            Transaction.objects.create(
+                business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+                sale_amount=Decimal('100'), payment_method='cash',
+            )
+
+        from core.shift_views import _reconcile
+        stale = _reconcile(self.open_shift)
+        self.assertEqual(stale['expected_cash'], 300.0)  # 0 (wrong float) + 300 sales
+
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.open_shift.id}/edit-float/', {'opening_float': '2000'})
+        self.assertTrue(resp.json()['ok'])
+
+        corrected = _reconcile(Shift.objects.get(id=self.open_shift.id))
+        self.assertEqual(corrected['expected_cash'], 2300.0)  # 2000 + the same 300 sales
+
+        # A FOURTH sale made AFTER the correction must still add on top cleanly.
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='cash',
+        )
+        final = _reconcile(Shift.objects.get(id=self.open_shift.id))
+        self.assertEqual(final['expected_cash'], 2350.0)
+
+
+class TillCountTest(TestCase):
+    """2026-07-30 live request: "ensure the owner can confirm cash at
+    counters at any given moment for the system to know." Before this, the
+    only way to reset till_expected_cash()'s running ledger was a shift
+    CLOSE — TillCount is a second, independent anchor source an owner/
+    manager can create at any time, from either counter, with no shift
+    involved at all."""
+
+    def setUp(self):
+        from core.shift_views import till_expected_cash
+        self.till_expected_cash = till_expected_cash
+        self.biz = Business.objects.create(name='Till Count Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='tc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='tc_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='tc_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+    def test_first_ever_confirmation_bootstraps_tracking(self):
+        """No shift has ever closed for this station — before this feature
+        that meant 'Bado haijawekwa' forever until someone closes a shift.
+        A spot confirmation must establish tracking immediately."""
+        before = self.till_expected_cash(self.biz, 'bar')
+        self.assertFalse(before['anchor_established'])
+
+        self.client.force_login(self.owner)
+        resp = self.client.post('/till/confirm/', {'station': 'bar', 'counted_amount': '1500'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertIsNone(data['expected_amount'])  # nothing to compare against yet
+
+        after = self.till_expected_cash(self.biz, 'bar')
+        self.assertTrue(after['anchor_established'])
+        self.assertEqual(after['expected_cash'], 1500.0)
+
+    def test_confirmation_becomes_new_anchor_over_an_older_shift_close(self):
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CONFIRMED', station='bar',
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('1000'),
+        )
+        item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='TC-BAR-1',
+            description='Beer', unit='bottle', selling_price=Decimal('100'),
+        )
+        # Two cash sales since that close — expected would be 1000 + 300 = 1300.
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-3'),
+            sale_amount=Decimal('300'), payment_method='cash',
+            created_at=timezone.now() - timedelta(hours=1),
+        )
+        before = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(before['expected_cash'], 1300.0)
+
+        # Owner physically counts and finds only 1250 — confirms it now.
+        self.client.force_login(self.owner)
+        resp = self.client.post('/till/confirm/', {'station': 'bar', 'counted_amount': '1250', 'note': 'Ilihesabiwa sasa'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['expected_amount'], 1300.0)
+        self.assertEqual(data['variance'], -50.0)
+
+        # Going forward, the till must reflect the fresh 1250 baseline —
+        # NOT the stale 1300 the old shift-close anchor implied — regardless
+        # of the cash sales that already happened before the confirmation.
+        after = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(after['expected_cash'], 1250.0)
+        self.assertIn('Thibitisho la Pesa', after['anchor_label'])
+
+        # A NEW cash sale after the confirmation still adds on top correctly.
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash',
+        )
+        final = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(final['expected_cash'], 1350.0)
+
+    def test_later_shift_close_supersedes_an_older_confirmation(self):
+        self.client.force_login(self.owner)
+        self.client.post('/till/confirm/', {'station': 'bar', 'counted_amount': '500'})
+        TillCount.objects.filter(business=self.biz).update(
+            counted_at=timezone.now() - timedelta(hours=3),
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CONFIRMED', station='bar',
+            started_at=timezone.now() - timedelta(hours=2),
+            ended_at=timezone.now() - timedelta(hours=1),
+            closing_cash_counted=Decimal('900'),
+        )
+        after = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(after['expected_cash'], 900.0)
+
+    def test_stations_are_independent(self):
+        self.client.force_login(self.owner)
+        self.client.post('/till/confirm/', {'station': 'bar', 'counted_amount': '400'})
+        bar_till = self.till_expected_cash(self.biz, 'bar')
+        kitchen_till = self.till_expected_cash(self.biz, 'kitchen')
+        self.assertEqual(bar_till['expected_cash'], 400.0)
+        self.assertFalse(kitchen_till['anchor_established'])
+
+    def test_manager_can_confirm(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post('/till/confirm/', {'station': 'kitchen', 'counted_amount': '250'})
+        self.assertTrue(resp.json()['ok'])
+
+    def test_staff_cannot_confirm(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/till/confirm/', {'station': 'bar', 'counted_amount': '250'})
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(TillCount.objects.filter(business=self.biz).exists())
+
+    def test_invalid_station_rejected(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/till/confirm/', {'station': 'lounge', 'counted_amount': '250'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_negative_amount_rejected(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/till/confirm/', {'station': 'bar', 'counted_amount': '-10'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_notifies_station_scoped_staff_and_owner_not_other_station(self):
+        bar_staff = User.objects.create_user(username='tc_barstaff', password='x')
+        UserProfile.objects.create(user=bar_staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=bar_staff, status='OPEN', station='bar')
+        kitchen_staff = User.objects.create_user(username='tc_kstaff', password='x')
+        UserProfile.objects.create(user=kitchen_staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=kitchen_staff, status='OPEN', station='kitchen')
+
+        self.client.force_login(self.owner)
+        self.client.post('/till/confirm/', {'station': 'bar', 'counted_amount': '600'})
+
+        self.assertTrue(Notification.objects.filter(user=bar_staff, title__icontains='Pesa ya Counter').exists())
+        self.assertFalse(Notification.objects.filter(user=kitchen_staff).exists())
+
+
+class NotificationStationScopingSweepTest(TestCase):
+    """2026-07-30 live report: "notifications are not pushed to their
+    respective counters, kitchen staff is getting bar notifications and
+    vice versa, only the business owner is supposed to get them all."
+
+    Root cause: several correction-fan-out helpers each independently
+    looped over EVERY on-shift staffer for the whole business with no
+    station filter at all — _notify_tab_correction/_notify_direct_
+    correction (core/keg_views.py), _settle_receipt_entries_from_payment
+    (core/mpesa_views.py), _notify_tab_transfer_resolved
+    (core/receipt_views.py). One correct reference implementation already
+    existed (_fire_cash_payment_request, 2026-07-25) — fixed by factoring
+    that logic into core.views.scoped_on_shift_targets() and routing every
+    caller through it. Owner (and manager) are unaffected — they always
+    see both stations, matching Roy's own framing."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Notif Scope Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='ns_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_staff = User.objects.create_user(username='ns_barstaff', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.bar_staff, status='OPEN', station='bar')
+
+        self.kitchen_staff = User.objects.create_user(username='ns_kstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=self.kitchen_staff, status='OPEN', station='kitchen')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Tusker',
+            material_no='NS-BAR-01', unit='Pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('120'), opening_bin_balance=Decimal('50'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chapati',
+            material_no='NS-KIT-01', unit='Pcs', selling_price=Decimal('50'),
+            cost_price=Decimal('20'), opening_bin_balance=Decimal('30'),
+        )
+
+    def _make_tab_with_entry(self, item, source):
+        store = self.kitchen_store if item is self.kitchen_item else self.bar_store
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source=source, store=store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=item.description,
+            amount=Decimal('200'), is_paid=False,
+        )
+        return tab, entry
+
+    def test_scoped_on_shift_targets_unit(self):
+        from core.views import scoped_on_shift_targets
+        bar_only = scoped_on_shift_targets(self.biz, {'bar'})
+        self.assertIn(self.bar_staff.id, bar_only)
+        self.assertNotIn(self.kitchen_staff.id, bar_only)
+
+        kitchen_only = scoped_on_shift_targets(self.biz, {'kitchen'})
+        self.assertIn(self.kitchen_staff.id, kitchen_only)
+        self.assertNotIn(self.bar_staff.id, kitchen_only)
+
+        unscoped = scoped_on_shift_targets(self.biz, None)
+        self.assertIn(self.bar_staff.id, unscoped)
+        self.assertIn(self.kitchen_staff.id, unscoped)
+
+    def test_remove_tab_entry_bar_does_not_notify_kitchen_staff(self):
+        tab, entry = self._make_tab_with_entry(self.bar_item, source='bar')
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {'reason': 'test'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertFalse(Notification.objects.filter(user=self.kitchen_staff).exists())
+        self.assertTrue(Notification.objects.filter(user=self.owner).exists())
+
+    def test_remove_tab_entry_kitchen_does_not_notify_bar_staff(self):
+        tab, entry = self._make_tab_with_entry(self.kitchen_item, source='kitchen')
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {'reason': 'test'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertFalse(Notification.objects.filter(user=self.bar_staff).exists())
+        self.assertTrue(Notification.objects.filter(user=self.owner).exists())
+
+    def test_correct_transaction_payment_method_bar_does_not_notify_kitchen(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash',
+        )
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-payment/', {'new_method': 'mpesa'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertFalse(Notification.objects.filter(user=self.kitchen_staff).exists())
+        self.assertTrue(Notification.objects.filter(user=self.owner).exists())
+
+    def test_notify_tab_transfer_resolved_scopes_by_both_sides(self):
+        from core.receipt_views import _notify_tab_transfer_resolved
+        source_tab, source_entry = self._make_tab_with_entry(self.bar_item, source='bar')
+        dest_tab, _unused_entry = self._make_tab_with_entry(self.bar_item, source='bar')
+        transfer = TabTransferRequest.objects.create(
+            business=self.biz, entry=source_entry, source_tab=source_tab, dest_tab=dest_tab,
+            amount=Decimal('100'), paid_amount=Decimal('100'), status='ACCEPTED',
+            requested_by=self.bar_staff, resolved_at=timezone.now(),
+        )
+        _notify_tab_transfer_resolved(transfer)
+        self.assertFalse(Notification.objects.filter(user=self.kitchen_staff).exists())
+        self.assertTrue(Notification.objects.filter(user=self.owner).exists())
 
 
 class RecentSettledTabsStationScopingTest(TestCase):

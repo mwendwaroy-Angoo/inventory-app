@@ -102,6 +102,7 @@ from core.shift_views import (
     add_opening_variance_note,
     review_opening_variance,
     edit_shift_opening_float,
+    confirm_till_count,
 )
 from core.order_views import (
     waitress_screen,
@@ -422,6 +423,10 @@ urlpatterns = [
     path("bar/shift/<int:shift_id>/opening-variance-note/",   add_opening_variance_note, name="add_opening_variance_note"),
     path("bar/shift/<int:shift_id>/opening-variance-review/", review_opening_variance,   name="review_opening_variance"),
     path("bar/shift/<int:shift_id>/edit-float/", edit_shift_opening_float, name="edit_shift_opening_float"),
+    # Owner/manager spot-confirms cash at a counter at any moment (2026-07-30) —
+    # station-agnostic single endpoint, `station` is a POST field, not part of
+    # the URL, since it isn't tied to any one board the way Shift actions are.
+    path("till/confirm/", confirm_till_count, name="confirm_till_count"),
     # ── Waitress Order Queue (Sprint 5) ──────────────────────────────────────
     path("bar/orders/",                       waitress_screen,        name="waitress_screen"),
     path("bar/orders/place/",                 place_table_order,      name="place_table_order"),

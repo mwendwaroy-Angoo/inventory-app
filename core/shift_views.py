@@ -391,6 +391,20 @@ def till_expected_cash(business, station, as_of=None):
     ).exclude(staff__userprofile__role='owner').filter(_station_q(is_kitchen)).select_related('staff')
     anchor = anchor_qs.order_by('-ended_at').first()
 
+    # 2026-07-30 live request — "ensure the owner can confirm cash at
+    # counters at any given moment": a shift CLOSE was, until now, the only
+    # way to reset this running ledger — see TillCount's own docstring for
+    # the full reasoning. Whichever of the two anchor sources is more
+    # recent wins; a spot confirmation always supersedes an older shift
+    # close, and a shift closed AFTER the last spot confirmation always
+    # supersedes that confirmation in turn.
+    from .models import TillCount
+    count_anchor = TillCount.objects.filter(
+        business=business, station=('kitchen' if is_kitchen else 'bar'),
+        counted_at__lte=as_of,
+    ).order_by('-counted_at').first()
+    use_count_anchor = bool(count_anchor) and (not anchor or count_anchor.counted_at > anchor.ended_at)
+
     # 2026-07-28 live report (Monsoon Inn: Bar tile showed KES 1400 with zero
     # bar sales that day). ROOT CAUSE: when a station has NEVER had a shift
     # close with a real physical cash count, `window_start` was None, which
@@ -406,7 +420,7 @@ def till_expected_cash(business, station, as_of=None):
     # signals every caller (home dashboard tile, open-shift variance check,
     # the open-shift modal's float suggestion) to show/treat this as
     # "not yet tracked" rather than a number to trust or alert on.
-    if not anchor:
+    if not anchor and not count_anchor:
         return {
             'expected_cash': None,
             'anchor_established': False,
@@ -418,12 +432,24 @@ def till_expected_cash(business, station, as_of=None):
             },
         }
 
-    base = float(anchor.closing_cash_counted or 0)
-    window_start = anchor.ended_at
-    anchor_label = (
-        f"{anchor.staff.get_full_name() or anchor.staff.username} — "
-        f"{timezone.localtime(anchor.ended_at).strftime('%d %b, %H:%M')}"
-    )
+    if use_count_anchor:
+        base = float(count_anchor.counted_amount)
+        window_start = count_anchor.counted_at
+        who = (
+            count_anchor.counted_by.get_full_name() or count_anchor.counted_by.username
+            if count_anchor.counted_by else 'Mmiliki'
+        )
+        anchor_label = (
+            f"{who} (Thibitisho la Pesa) — "
+            f"{timezone.localtime(count_anchor.counted_at).strftime('%d %b, %H:%M')}"
+        )
+    else:
+        base = float(anchor.closing_cash_counted or 0)
+        window_start = anchor.ended_at
+        anchor_label = (
+            f"{anchor.staff.get_full_name() or anchor.staff.username} — "
+            f"{timezone.localtime(anchor.ended_at).strftime('%d %b, %H:%M')}"
+        )
 
     _rev = Case(
         When(sale_amount__isnull=False, then=F('sale_amount')),
@@ -476,6 +502,101 @@ def till_expected_cash(business, station, as_of=None):
             'banked':         round(banked, 2),
         },
     }
+
+
+@login_required
+@require_POST
+def confirm_till_count(request):
+    """Owner/manager confirms the cash physically at a counter RIGHT NOW —
+    2026-07-30 live request. Independent of shift open/close: the owner can
+    walk up to either counter at any moment, count the drawer, and reset
+    what the system expects from that point forward. See TillCount's own
+    docstring for why this is a SEPARATE anchor source from a shift close,
+    not a replacement for it.
+
+    Deliberately owner/manager only (same tier as every other cash-figure
+    correction in this app) — unlike opening_float, which the shift's own
+    staffer may self-correct while OPEN, a till count is a spot-check BY
+    DESIGN meant to verify staff, not something staff verify themselves.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    if not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya mmiliki/meneja pekee'}, status=403)
+
+    station = (request.POST.get('station') or '').strip()
+    if station not in ('bar', 'kitchen'):
+        return JsonResponse({'ok': False, 'error': 'Counter si sahihi'}, status=400)
+
+    raw = (request.POST.get('counted_amount') or '').strip()
+    try:
+        counted = Decimal(raw)
+    except InvalidOperation:
+        return JsonResponse({'ok': False, 'error': 'Kiasi si sahihi'}, status=400)
+    if counted < 0:
+        return JsonResponse({'ok': False, 'error': 'Kiasi hakiwezi kuwa hasi'}, status=400)
+
+    note = (request.POST.get('note') or '').strip()[:300]
+
+    # Snapshot what the system expected BEFORE this confirmation becomes the
+    # new anchor — purely for this row's own audit trail.
+    before = till_expected_cash(up.business, station)
+    expected_amount = before['expected_cash']
+    variance = (float(counted) - expected_amount) if expected_amount is not None else None
+
+    from .models import TillCount
+    count = TillCount.objects.create(
+        business=up.business, station=station, counted_amount=counted,
+        expected_amount=expected_amount, variance=variance,
+        counted_by=request.user, note=note,
+    )
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(count.counted_at).strftime('%d %b, %H:%M')
+    station_label = 'Bar' if station == 'bar' else 'Kitchen'
+    if expected_amount is None:
+        msg = f"💰 {who} amethibitisha pesa ya {station_label}: KES {counted:,.0f} — {when}."
+    else:
+        diff = float(counted) - expected_amount
+        diff_txt = (
+            f"sawa na ilivyotarajiwa" if abs(diff) < 1 else
+            f"{'zaidi' if diff > 0 else 'pungufu'} kwa KES {abs(diff):,.0f} (mfumo ulitarajia KES {expected_amount:,.0f})"
+        )
+        msg = f"💰 {who} amethibitisha pesa ya {station_label}: KES {counted:,.0f} — {diff_txt} — {when}."
+    if note:
+        msg += f' "{note}"'
+
+    # Notify station-scoped on-shift staff + owners/managers — everyone
+    # whose accountability this fresh baseline affects.
+    try:
+        from .models import Notification as _Notif
+        from accounts.models import UserProfile as _UP
+        from .notifications import normalize_ke_phone, send_sms_notification
+        from .views import scoped_on_shift_targets
+
+        notify_targets = scoped_on_shift_targets(up.business, {station})
+        for op in _UP.objects.filter(business=up.business, role__in=['owner', 'manager']):
+            notify_targets[op.user_id] = op
+        for target in notify_targets.values():
+            if target.user_id == request.user.id:
+                continue
+            _Notif.objects.create(
+                user=target.user, title='💰 Pesa ya Counter Imethibitishwa',
+                message=msg, notification_type='info', link_url='/',
+            )
+            phone = (target.phone or '').strip()
+            if phone:
+                normalized = normalize_ke_phone(phone)
+                if normalized:
+                    send_sms_notification(msg, normalized)
+    except Exception:
+        logger.exception('confirm_till_count: notify failed business=%s station=%s', up.business_id, station)
+
+    return JsonResponse({
+        'ok': True, 'message': msg, 'counted_amount': float(counted),
+        'expected_amount': expected_amount, 'variance': variance,
+    })
 
 
 def _tapped_barrels_for_business(business):

@@ -2486,6 +2486,51 @@ class Shift(models.Model):
         return f"{self.staff.get_full_name() or self.staff.username} — {self.started_at.strftime('%d %b %Y %H:%M')} ({self.status})"
 
 
+class TillCount(models.Model):
+    """Owner/manager confirms the actual cash physically at a counter RIGHT
+    NOW — 2026-07-30 live request: "ensure the owner can confirm cash at
+    counters at any given moment for the system to know." Before this,
+    shift_views.till_expected_cash()'s only anchor source was a shift
+    CLOSE (Shift.closing_cash_counted) — the continuous till figure could
+    only ever be reset by someone closing a shift, never by the owner
+    simply walking up to a counter and counting the drawer mid-shift (or
+    with no shift open at all, since the owner sells freely with no gate).
+    This model is a second, independent anchor source: till_expected_cash()
+    picks whichever of (last shift close, last TillCount) is more recent
+    for a given station, so a spot confirmation immediately becomes the new
+    baseline for every later calculation — the running total resets
+    cleanly from that point forward regardless of how many cash sales had
+    already accumulated before the confirmation, since the formula is
+    always `this anchor's amount + movements strictly AFTER it`.
+
+    expected_amount/variance are a snapshot of what the system expected at
+    the moment of counting (before this row itself becomes the new
+    anchor) — purely for the audit trail on this SPECIFIC confirmation;
+    they play no role in any later calculation."""
+    STATION_CHOICES = [('bar', 'Bar'), ('kitchen', 'Kitchen')]
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='till_counts',
+    )
+    station = models.CharField(max_length=10, choices=STATION_CHOICES)
+    counted_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    expected_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    variance = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    counted_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, related_name='till_counts',
+    )
+    counted_at = models.DateTimeField(default=timezone.now)
+    note = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ['-counted_at']
+        verbose_name = 'Till Count'
+        verbose_name_plural = 'Till Counts'
+
+    def __str__(self):
+        who = self.counted_by.get_full_name() or self.counted_by.username if self.counted_by else '—'
+        return f"{self.get_station_display()} — KES {self.counted_amount} by {who} ({self.counted_at.strftime('%d %b %Y %H:%M')})"
+
+
 def _refresh_keg_baseline(barrel):
     """Recompute and cache the business loss baseline after a barrel becomes DEPLETED."""
     try:

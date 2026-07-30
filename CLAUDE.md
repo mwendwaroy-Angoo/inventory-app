@@ -3477,3 +3477,59 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   no-op on unchanged value, negative/invalid amount rejected, and the till-independence
   regression lock. No migrations (uses existing `Shift.opening_float`/`opening_variance`
   fields). 890 tests pass (core + accounts).
+- Notification cross-counter leak + owner spot-confirm cash (2026-07-30), same-day follow-up
+  to the opening-float sprint above, three live reports. **(1) "Kitchen staff is getting bar
+  notifications and vice versa, only the business owner is supposed to get them all."**
+  Traced to four correction-fan-out helpers that each independently looped over EVERY
+  on-shift staffer for the whole business with no station filter at all:
+  `_notify_tab_correction`/`_notify_direct_correction` (`core/keg_views.py`),
+  `_settle_receipt_entries_from_payment` (`core/mpesa_views.py`),
+  `_notify_tab_transfer_resolved` (`core/receipt_views.py`). One correct reference
+  implementation already existed — `_fire_cash_payment_request`
+  (`core/receipt_views.py`, 2026-07-25) — already station-scoping its "on-shift staff" fan-out
+  via `_station_scope()`. Factored that same logic into a new shared
+  `core.views.scoped_on_shift_targets(business, sources)` and routed all five call sites
+  through it (including `_fire_cash_payment_request` itself, de-duplicating what was there
+  before). `_notify_direct_correction` gained an optional `source` kwarg (both call sites in
+  `keg_views.py` already had `is_kitchen` computed right before calling it — threaded
+  straight through). `_notify_tab_transfer_resolved` scopes by BOTH `source_tab.source` and
+  `dest_tab.source` since a transfer can legitimately cross counters (Roy pays on his Bar tab,
+  Bosco covers it from his own Kitchen tab). Owner/manager unaffected — `_station_scope()`
+  always shows them both, matching "only the business owner [and manager] sees everything."
+  5 new tests (`NotificationStationScopingSweepTest`), including a direct unit test of the
+  new shared helper. **(2) "Ensure that once I correct [the opening float] it will adjust
+  accordingly irrespective of cash sales made for that counter."** Traced and confirmed
+  already mathematically true — `_reconcile()`'s `expected_cash = opening_float + cash_sales
+  + ...` sums `cash_sales` over the WHOLE shift window regardless of when within it the float
+  gets corrected, so the correction lands identically whether it happens before or after
+  sales have accumulated. Locked in with a dedicated regression test
+  (`test_correction_applies_correctly_regardless_of_sales_already_made`) proving the same
+  total lands whether 3 sales happen before the correction or a 4th happens after (caught and
+  fixed a real test-authoring bug while writing this: an artificially future `created_at` on
+  the fixture transactions pushed them outside `_reconcile()`'s own `[started_at, now()]`
+  window for a still-OPEN shift — the sale timestamps just needed to be real, not offset).
+  **(3) "Ensure the owner can confirm cash at counters at any given moment for the system to
+  know."** New `TillCount` model (migration 0136) — a SECOND, independent anchor source for
+  `shift_views.till_expected_cash()`'s running ledger, alongside the existing shift-close
+  anchor (`Shift.closing_cash_counted`). Before this, the only way to reset the continuous
+  till figure was closing a shift; now the owner/manager can walk up to either counter at any
+  moment, count the drawer, and establish a fresh baseline on the spot — `till_expected_cash()`
+  picks whichever of (last shift close, last TillCount) is more recent as the anchor, so a
+  spot confirmation immediately supersedes an older shift close, and a shift closed AFTER the
+  last confirmation supersedes it in turn; everything downstream (cash sales/debt
+  recovered/petty cash/banked since the anchor) was already written generically off
+  `window_start` and needed zero changes. New `confirm_till_count` view (owner/manager only —
+  deliberately stricter than the self-correctable `opening_float`, since a spot count is BY
+  DESIGN meant to verify staff, not something staff verify themselves) at a single
+  station-agnostic `/till/confirm/` endpoint (station is a POST field, not part of the URL,
+  since — unlike Shift actions — this isn't tied to one board). Snapshots what the system
+  expected just before the confirmation (for that row's own audit trail only, no role in any
+  later calculation) and notifies station-scoped on-shift staff (via the same
+  `scoped_on_shift_targets` helper from fix #1) plus owner/manager. Surfaced as a
+  "💰 Thibitisha Pesa Sasa" button per station right on the home dashboard's existing till
+  tiles (`home.html`) — also works as the FIRST-EVER confirmation for a station that has
+  never had a shift close with a real count, bootstrapping tracking immediately instead of
+  waiting on one. 9 new tests (`TillCountTest`) — bootstrap-from-nothing, supersedes-an-older-
+  shift-close, later-shift-close-supersedes-an-older-confirmation, station independence,
+  manager-can/staff-cannot, invalid station/negative amount rejected, and the station-scoped
+  notification fan-out. One migration (0136, additive). 905 tests pass (core + accounts).

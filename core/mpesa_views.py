@@ -465,7 +465,7 @@ def _settle_receipt_entries_from_payment(payment):
 
         # Notify original serving staff, current on-shift staff, owners, managers
         try:
-            from .models import Shift as _Shift, Notification as _Notif
+            from .models import Notification as _Notif
             from .notifications import normalize_ke_phone, send_sms_notification
             from accounts.models import UserProfile as _UP
 
@@ -498,19 +498,25 @@ def _settle_receipt_entries_from_payment(payment):
             notify_targets = {}  # user_pk → UserProfile
             business = payment.business
 
-            # Original servers (tab served_by)
+            # Original servers (tab served_by) + the counter(s) these tabs
+            # actually belong to, so "currently on-shift staff" below only
+            # reaches the relevant counter (2026-07-30 station-scoping fix —
+            # a debt payment against a bar tab must not also ping kitchen
+            # staff, and vice versa).
+            _paid_sources = set()
             for tab_id in tabs_affected:
                 tab_obj = BarTab.objects.filter(id=tab_id).select_related('served_by').first()
-                if tab_obj and tab_obj.served_by_id:
+                if not tab_obj:
+                    continue
+                _paid_sources.add(tab_obj.source)
+                if tab_obj.served_by_id:
                     up = _UP.objects.filter(user_id=tab_obj.served_by_id, business=business).first()
                     if up:
                         notify_targets[tab_obj.served_by_id] = up
 
-            # Currently on-shift staff
-            for sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
-                up = _UP.objects.filter(user_id=sh.staff_id, business=business).first()
-                if up:
-                    notify_targets[sh.staff_id] = up
+            # Currently on-shift staff (station-scoped)
+            from .views import scoped_on_shift_targets
+            notify_targets.update(scoped_on_shift_targets(business, _paid_sources))
 
             # Owners and managers
             for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):

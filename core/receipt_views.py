@@ -588,10 +588,10 @@ def _fire_cash_payment_request(business, tab_ids, customer_name, amount, sources
     tab) should pass the debt ledger's source explicitly. 'qs' and unknown/
     empty sources are left unscoped (Quick Sell tabs aren't station-specific).
     """
-    from .models import BarTab as _BarTab, Notification as _Notif, Shift as _Shift
+    from .models import BarTab as _BarTab, Notification as _Notif
     from .notifications import normalize_ke_phone, send_sms_notification
     from accounts.models import UserProfile as _UP
-    from .views import _station_scope
+    from .views import scoped_on_shift_targets
 
     msg = f"💵 {customer_name or 'Mteja'} anataka kulipa CASH — KES {amount:,.0f}. Mngoje kwenye counter."
 
@@ -608,20 +608,7 @@ def _fire_cash_payment_request(business, tab_ids, customer_name, amount, sources
             if up:
                 notify_targets[tab_obj.served_by_id] = up
 
-    scoped_sources = {s for s in sources if s in ('bar', 'kitchen')}
-    for sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
-        up = _UP.objects.filter(user_id=sh.staff_id, business=business).first()
-        if not up:
-            continue
-        if scoped_sources:
-            show_bar, show_kitchen = _station_scope(up)
-            relevant = (
-                ('bar' in scoped_sources and show_bar)
-                or ('kitchen' in scoped_sources and show_kitchen)
-            )
-            if not relevant:
-                continue
-        notify_targets[sh.staff_id] = up
+    notify_targets.update(scoped_on_shift_targets(business, sources))
 
     for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
         notify_targets[up.user_id] = up
@@ -687,11 +674,13 @@ def _notify_tab_transfer_resolved(transfer):
         if up:
             notify_targets[transfer.requested_by_id] = up
 
-    from .models import Shift as _Shift
-    for sh in _Shift.objects.filter(business=business, status='OPEN').select_related('staff'):
-        up = _UP.objects.filter(user_id=sh.staff_id, business=business).first()
-        if up:
-            notify_targets[sh.staff_id] = up
+    # A transfer can cross counters (Roy pays on his Bar tab, Bosco covers it
+    # on his own Kitchen tab) — station-scope against BOTH sides, so a
+    # bar-only staffer still hears about it if either tab touches their
+    # counter, matching this app's Station Scoping Principle.
+    from .views import scoped_on_shift_targets
+    _sources = {transfer.source_tab.source, transfer.dest_tab.source}
+    notify_targets.update(scoped_on_shift_targets(business, _sources))
 
     for up in _UP.objects.filter(business=business, role__in=['owner', 'manager']):
         notify_targets[up.user_id] = up
