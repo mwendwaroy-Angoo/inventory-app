@@ -501,6 +501,11 @@ def bar_board(request):
         if receipt_lines:
             # Checkout-time split payment — direct (non-tab) cash/mpesa sale
             # only. Never blocks the checkout: the pours already happened above.
+            # 2026-07-30 live report: "the receipt does not show the same
+            # information [as the split]" — carries the true final split
+            # forward into rcpt_meta below (see Transaction.
+            # payment_split_breakdown's docstring for the full reasoning).
+            _bar_split_breakdown = {}
             if (
                 payment_method in ('cash', 'mpesa')
                 and split_method in ('cash', 'mpesa')
@@ -509,9 +514,12 @@ def bar_board(request):
                 and created_txn_ids
             ):
                 try:
-                    Transaction.apply_split_payment_locked(
+                    _bar_all_split_ids = Transaction.apply_split_payment_locked(
                         created_txn_ids, business, split_amount, split_method,
                         staff_user=request.user,
+                    )
+                    _bar_split_breakdown = Transaction.payment_split_breakdown(
+                        _bar_all_split_ids or created_txn_ids, business,
                     )
                 except ValueError as _split_err:
                     from django.contrib import messages as _msg
@@ -524,6 +532,8 @@ def bar_board(request):
             try:
                 receipt_pm = payment_method
                 rcpt_meta = {}
+                if _bar_split_breakdown:
+                    rcpt_meta['split_payment'] = _bar_split_breakdown
                 if payment_method == 'tab' and active_tab:
                     if tab_customer and linked_customer:
                         try:

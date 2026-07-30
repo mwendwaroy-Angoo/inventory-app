@@ -707,6 +707,11 @@ def _kitchen_checkout(request, up, business, is_owner):
 
     # Checkout-time split payment — direct (no active_tab) cash/mpesa sale
     # only. Never blocks the checkout: the sale already happened above.
+    # 2026-07-30 live report: "the receipt does not show the same
+    # information [as the split]" — carries the true final split forward
+    # into kitchen_meta below (see Transaction.payment_split_breakdown's
+    # docstring for the full reasoning).
+    _kitchen_split_breakdown = {}
     if (
         active_tab is None
         and payment_method in ('cash', 'mpesa')
@@ -716,9 +721,12 @@ def _kitchen_checkout(request, up, business, is_owner):
         and created_txn_ids
     ):
         try:
-            Transaction.apply_split_payment_locked(
+            _kitchen_all_split_ids = Transaction.apply_split_payment_locked(
                 created_txn_ids, business, split_amount, split_method,
                 staff_user=request.user,
+            )
+            _kitchen_split_breakdown = Transaction.payment_split_breakdown(
+                _kitchen_all_split_ids or created_txn_ids, business,
             )
         except ValueError:
             # Sale already recorded above; a bad split amount (client already
@@ -784,6 +792,8 @@ def _kitchen_checkout(request, up, business, is_owner):
     if payment_method in ('cash', 'mpesa', 'credit', 'food_tab'):
         try:
             kitchen_meta = {}
+            if _kitchen_split_breakdown:
+                kitchen_meta['split_payment'] = _kitchen_split_breakdown
             if payment_method == 'credit' and credit_name:
                 try:
                     from .models import Customer as _CustMeta

@@ -526,6 +526,18 @@
             <span>
                 {% if receipt.meta.is_statement %}
                 <span class="payment-badge" style="background:rgba(201,168,76,0.12); color:#c9a84c;">📄 Taarifa</span>
+                {% elif receipt.meta.split_payment %}
+                <!-- 2026-07-30 live report: a checkout-time split (e.g. KES
+                     20 cash + KES 80 M-Pesa) previously showed as just one
+                     method — Receipt.meta.split_payment (set by
+                     Transaction.payment_split_breakdown) now shows each
+                     method's real share. -->
+                Malipo (yaligawanywa):
+                {% for pm, amt in receipt.meta.split_payment.items %}
+                <span class="payment-badge {% if pm == 'mpesa' %}pay-mpesa{% else %}pay-cash{% endif %}">
+                    {% if pm == 'mpesa' %}M-Pesa{% else %}Cash{% endif %} KES {{ amt|floatformat:0 }}
+                </span>
+                {% endfor %}
                 {% else %}
                 Malipo:
                 <span class="payment-badge {% if receipt.payment_method == 'mpesa' %}pay-mpesa{% elif receipt.payment_method == 'credit' %}pay-credit{% elif receipt.payment_method == 'tab' %}pay-tab{% else %}pay-cash{% endif %}">

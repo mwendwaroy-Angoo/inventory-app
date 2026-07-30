@@ -347,6 +347,38 @@
 </div>
 {% endif %}
 
+<!-- 2026-07-31 — duplicate-payment confirmation banner (Roy: "I would like
+     for the system to ask the user if that double payment detection...
+     is true or not, just a small confirmation just to be sure"). Shown
+     when record_debt_payment flagged a possible duplicate and stashed it
+     in the session, pending an explicit yes/no from a human. -->
+{% if pending_dup_confirm %}
+<div style="background:rgba(243,156,18,0.08); border:1px solid rgba(243,156,18,0.35); border-radius:10px;
+            padding:0.9rem 1rem; margin-bottom:1rem;">
+    <div style="color:#f39c12; font-weight:600; font-size:0.88rem; margin-bottom:0.5rem;">
+        ⚠️ {% trans 'Possible duplicate payment' %}
+    </div>
+    <div style="color:#e2c36e; font-size:0.82rem; margin-bottom:0.75rem;">
+        {% blocktrans with amount=pending_dup_confirm.amount_paid customer_name=customer.name when=pending_dup_confirm.matched_when %}
+        A payment of KES {{ amount }} for {{ customer_name }} looks the same as one already recorded {{ when }}. Is this a brand-new, separate payment?
+        {% endblocktrans %}
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <form method="post" action="{% url 'record_debt_payment' customer.id %}" style="display:inline;">
+            {% csrf_token %}
+            <input type="hidden" name="confirm_duplicate" value="1">
+            <input type="hidden" name="idempotency_token" value="dupconfirm-{{ customer.id }}-{{ pending_dup_confirm.amount_paid }}-{{ pending_dup_confirm.matched_when|slugify }}">
+            <button type="submit" class="btn btn-sm btn-warning">
+                ✓ {% trans 'Yes, this is a new payment — Record it' %}
+            </button>
+        </form>
+        <a href="{% url 'customer_debt_profile' customer.id %}?clear_dup_confirm=1" class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;">
+            ✕ {% trans 'No, cancel it' %}
+        </a>
+    </div>
+</div>
+{% endif %}
+
 <!-- Record Payment button + modal -->
 {% if outstanding > 0 %}
 <div class="d-flex justify-content-end mb-3">

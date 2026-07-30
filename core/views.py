@@ -3105,6 +3105,14 @@ def quick_sell(request):
             # Checkout-time split payment — only for a direct cash/mpesa sale
             # (never credit/tab). Never blocks the checkout itself: the sale
             # already happened above regardless of what happens here.
+            # 2026-07-30 live report: "the receipt does not show the same
+            # information [as the split]" — Receipt.lines/payment_method are
+            # a static snapshot taken at issue time, never re-read from the
+            # underlying Transactions, so a split was invisible on the
+            # receipt. _qs_split_breakdown carries the true final split
+            # (Transaction.payment_split_breakdown) forward into rcpt_meta
+            # below, whichever receipt branch actually issues it.
+            _qs_split_breakdown = {}
             if (
                 payment_method_qs in ("cash", "mpesa")
                 and split_method_qs in ("cash", "mpesa")
@@ -3112,9 +3120,12 @@ def quick_sell(request):
                 and split_amount_qs > 0
             ):
                 try:
-                    Transaction.apply_split_payment_locked(
+                    _qs_all_split_ids = Transaction.apply_split_payment_locked(
                         created_txn_ids, user_profile.business,
                         split_amount_qs, split_method_qs, staff_user=request.user,
+                    )
+                    _qs_split_breakdown = Transaction.payment_split_breakdown(
+                        _qs_all_split_ids or created_txn_ids, user_profile.business,
                     )
                 except ValueError as _split_err:
                     messages.warning(request, str(_split_err))
@@ -3301,6 +3312,8 @@ def quick_sell(request):
                     from .models import Receipt
                     from decimal import Decimal as _DecQS
                     rcpt_meta = {}
+                    if _qs_split_breakdown:
+                        rcpt_meta['split_payment'] = _qs_split_breakdown
                     if payment_method_qs == "credit" and credit_recipient:
                         # Dedup: reuse today's receipt for this customer instead of
                         # issuing a new one (prevents duplicate SMS + multiple receipt links).

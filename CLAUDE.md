@@ -3597,3 +3597,61 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   manager (`_flag_possible_duplicate_debt_payment`), the payment itself always still records.
   5 new tests (`DuplicateDebtPaymentFlagTest`). No migrations for any of the four items. 923
   tests pass (core + accounts).
+- Receipt split-payment display + duplicate-payment confirmation step (2026-07-31), same-day
+  live follow-up: "split payments are working well across all counters... but the receipt
+  does not show the same information, like the item was paid in split-form" and "on the
+  duplicate payment detection, I would like for the system to ask the user if that... is
+  true or not, basically just a small confirmation just to be sure." **(1) Receipt split
+  display**: `Receipt.lines`/`meta`/`payment_method` are a static snapshot taken at checkout,
+  never re-read from the underlying `Transaction` rows `apply_split_payment_locked()` later
+  modifies — so a split sale always showed only its primary payment method on the customer's
+  receipt. New `Transaction.payment_split_breakdown(txn_ids, business)` sums revenue per
+  `payment_method` across a set of txn ids, returning `{}` unless ≥2 methods are genuinely
+  represented; wired into `rcpt_meta['split_payment']`/`kitchen_meta['split_payment']` at all
+  three checkout call sites (`core/views.py` Quick Sell, `core/keg_views.py` Bar Board,
+  `core/kitchen_views.py` Kitchen) right after the split call succeeds.
+  `templates/core/receipt_public.html` gains a `{% elif receipt.meta.split_payment %}`
+  branch rendering one payment badge per method+amount instead of the single default badge;
+  `receipts_list.html` gets a small "✂️ Split" badge. **Real bug found and fixed while
+  wiring this up**: `apply_split_payment_locked()` calls `split_payment_method_locked()` for
+  any split that doesn't land exactly on a transaction boundary — which creates a NEW sibling
+  `Transaction` row for the split-off remainder — but discarded that new row's id, so a
+  caller feeding the ORIGINAL `txn_ids` back into `payment_split_breakdown()` would silently
+  miss it. This is the boundary-split path a lone-transaction cart (one item, split payment —
+  the single most common real-world case Roy described) hits every time, since there's no
+  whole transaction small enough to convert outright — meaning the receipt display would have
+  come back empty in the typical case. Fixed by having `apply_split_payment_locked()` return
+  the full list of transaction ids that now make up the sale (original ids plus any new
+  sibling row); all three checkout call sites updated to feed that return value (falling back
+  to the original list when no split happened) into `payment_split_breakdown()`. **(2)
+  Duplicate-payment confirmation**: the prior same-day fix only flagged a possible duplicate
+  debt payment via a background notification while still recording it immediately — Roy's
+  follow-up asked for an explicit human confirmation first. `record_debt_payment()`
+  (`core/debt_views.py`) now STASHES the pending payment in the session
+  (`request.session[f'debt_dup_pending_{customer.id}']`) instead of writing it, shows a
+  warning message, and redirects — no `CustomerDebtPayment` is created and no idempotency
+  token is claimed for that attempt. A new confirmation banner on
+  `customer_debt_profile.html` (rendered from a `pending_dup_confirm` context var) offers
+  "✓ Ndiyo, malipo mapya — Rekodi" (POSTs `confirm_duplicate=1`, nothing else — the amount/
+  method/notes are read back from the trusted session stash, never from the confirm form's
+  own fields, so a tampered hidden input can't record a different amount than what was
+  actually flagged) and "✕ Hapana, ghairi" (`?clear_dup_confirm=1`, discards the stash,
+  records nothing). New `_notify_confirmed_duplicate_debt_payment()` gives owner/manager a
+  background "this was double-checked and confirmed real" trail on confirm, mirroring
+  `_flag_possible_duplicate_debt_payment()`'s notification shape. **Real ordering bug found
+  by the test suite**: the confirm form only ever posts `confirm_duplicate=1` + an
+  idempotency token (no `amount_paid`), but the amount-parsing/validation block originally
+  ran BEFORE the `confirm_duplicate` session-pop override — so confirming always failed with
+  "Please enter a valid payment amount" before ever reaching the stashed values, in both the
+  test suite and production. Fixed by moving the session-pop (and its `debt_source` override
+  for multi-scope businesses) to run first, with an early "nothing to confirm" redirect when
+  the session stash is missing/already cleared (matches the cancel path's no-op contract).
+  Also fixed two purely test-authoring bugs surfaced by the same debugging pass, unrelated to
+  production code: hardcoded idempotency-token literals reused across every test method in a
+  class collide via Django's process-global `LocMemCache` (never reset between tests) when
+  combined with SQLite's tendency to reuse rowids after a rolled-back test transaction —
+  every new/updated test in this sprint now generates a fresh `uuid.uuid4()` token per call.
+  27 new tests (`PaymentSplitBreakdownTest`, `ReceiptSplitPaymentDisplayTest`,
+  `DebtPaymentDuplicateConfirmationTest`), plus `DuplicateDebtPaymentFlagTest`'s and
+  `RecordDebtPaymentIdempotencyTest`'s existing tests updated to match the new confirm-
+  required flow. No migrations. 938 tests pass (core + accounts).

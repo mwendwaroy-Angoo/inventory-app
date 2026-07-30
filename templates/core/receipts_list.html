@@ -136,6 +136,9 @@
             {% else %}
             <span class="pay-badge" style="background:rgba(176,176,176,0.15); color:#b0b0b0;">{{ r.payment_method|default:"—" }}</span>
             {% endif %}
+            {% if r.meta.split_payment %}
+            <span class="pay-badge" style="background:rgba(93,168,240,0.15); color:#5da8f0;" title="Malipo yaligawanywa kati ya njia mbili">✂️ Split</span>
+            {% endif %}
             {% if r.source == 'kitchen' %}<span class="src-badge src-kitchen">🍗 Kitchen</span>{% endif %}
             {% if r.created_by %}<span class="rct-server" title="Served by {{ r.created_by.get_full_name|default:r.created_by.username }}">{{ r.created_by.username }}</span>{% endif %}
         </a>

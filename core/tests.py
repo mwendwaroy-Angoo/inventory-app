@@ -8076,7 +8076,12 @@ class RecordDebtPaymentIdempotencyTest(TestCase):
             'Duplicate token must not create a second CustomerDebtPayment',
         )
 
-    def test_different_tokens_both_go_through(self):
+    def test_different_tokens_both_go_through_once_confirmed(self):
+        """2026-07-31: a second payment matching the same customer/amount
+        within 24h is now flagged and held for one explicit confirmation
+        (see DebtPaymentDuplicateConfirmationTest) rather than recorded
+        immediately — but a genuinely separate second payment must still
+        be ABLE to go through once confirmed, not permanently blocked."""
         from core.models import CustomerDebtPayment
         self.client.post(f'/debt/{self.customer.id}/payment/', {
             'amount_paid': '100', 'payment_method': 'cash', 'debt_source': 'bar',
@@ -8087,8 +8092,15 @@ class RecordDebtPaymentIdempotencyTest(TestCase):
             'idempotency_token': 'debt-pay-token-b',
         })
         self.assertEqual(
+            CustomerDebtPayment.objects.filter(customer=self.customer).count(), 1,
+            'The second matching payment is flagged and held, not recorded yet',
+        )
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'confirm_duplicate': '1', 'idempotency_token': 'debt-pay-confirm-1',
+        })
+        self.assertEqual(
             CustomerDebtPayment.objects.filter(customer=self.customer).count(), 2,
-            'Two distinct tokens must both be processed as real, separate payments',
+            'Once explicitly confirmed, the second genuine payment must go through',
         )
 
     def test_blank_token_still_works(self):
@@ -8106,12 +8118,17 @@ class DuplicateDebtPaymentFlagTest(TestCase):
     """2026-07-30 urgent live request: Roy wasn't sure if a KES 200 debt
     payment was a genuine duplicate ("I remember ticking off the 200 in the
     tabs drawer... fix it in a way that the system could identify if there
-    was a double entry"). record_debt_payment now flags (never blocks) a
-    second payment for the same customer+amount within 24 hours — matching
-    this app's own established 'warn, don't silently block' rule, since a
-    real second payment of the same round amount is not implausible (see
-    RecordDebtPaymentIdempotencyTest.test_different_tokens_both_go_through,
-    which this fix must not regress)."""
+    was a double entry"). record_debt_payment flags a second payment for
+    the same customer+amount within 24 hours and holds it pending one
+    explicit confirmation (2026-07-31 follow-up: "I would like for the
+    system to ask the user if that double payment detection... is true or
+    not, just a small confirmation just to be sure") — never silently
+    auto-records it, and never permanently blocks it either, since a real
+    second payment of the same round amount is not implausible (see
+    RecordDebtPaymentIdempotencyTest.
+    test_different_tokens_both_go_through_once_confirmed, which this fix
+    must not regress). See DebtPaymentDuplicateConfirmationTest for the
+    full confirm/cancel mechanics."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='Dup Debt Pay Biz')
@@ -8134,7 +8151,7 @@ class DuplicateDebtPaymentFlagTest(TestCase):
         )
         self.client.force_login(self.owner)
 
-    def test_second_matching_payment_is_not_blocked(self):
+    def test_second_matching_payment_is_held_not_auto_recorded(self):
         from core.models import CustomerDebtPayment
         self.client.post(f'/debt/{self.customer.id}/payment/', {
             'amount_paid': '200', 'payment_method': 'mpesa', 'debt_source': 'bar',
@@ -8146,8 +8163,8 @@ class DuplicateDebtPaymentFlagTest(TestCase):
         })
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(
-            CustomerDebtPayment.objects.filter(customer=self.customer, amount_paid=Decimal('200')).count(), 2,
-            'A second genuine payment of the same amount must still go through',
+            CustomerDebtPayment.objects.filter(customer=self.customer, amount_paid=Decimal('200')).count(), 1,
+            'The second matching payment must be held pending confirmation, not auto-recorded',
         )
 
     def test_second_matching_payment_notifies_owner_manager(self):
@@ -8200,6 +8217,136 @@ class DuplicateDebtPaymentFlagTest(TestCase):
         })
         self.assertFalse(
             Notification.objects.filter(user=self.owner, title__icontains='Malipo Yanayofanana').exists()
+        )
+
+
+class DebtPaymentDuplicateConfirmationTest(TestCase):
+    """2026-07-31 live follow-up: "I would like for the system to ask the
+    user if that double payment detection... is true or not, basically just
+    a small confirmation just to be sure." The flag from
+    DuplicateDebtPaymentFlagTest stashes the pending payment in the session
+    (never writes it) and record_debt_payment only completes the write once
+    confirm_duplicate=1 is posted — at which point it trusts the STASHED
+    session values, not whatever the confirm form itself resubmits, so a
+    tampered hidden field can't record a different amount than what was
+    actually flagged."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Dup Confirm Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='dupconfirm_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='dupconfirm_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Dup Confirm Item',
+            material_no='DUPCONFIRM-01', selling_price=Decimal('50'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Dup Confirm Patron', credit_approved=True,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-10'), recipient=self.customer.name,
+            payment_method='credit', sale_amount=Decimal('1000'),
+        )
+        self.client.force_login(self.owner)
+
+    def _flag_first_then_second(self, amount='200', method='mpesa', notes=''):
+        # claim_checkout_token uses Django's process-global cache, never reset
+        # between test methods — a hardcoded literal token reused across every
+        # test in this class would collide (the second test to claim it sees
+        # a false "already recorded"), so each call gets its own uuid4 tokens.
+        import uuid
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': amount, 'payment_method': method, 'debt_source': 'bar',
+            'idempotency_token': f'dc-first-{uuid.uuid4()}',
+        })
+        return self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': amount, 'payment_method': method, 'notes': notes,
+            'debt_source': 'bar', 'idempotency_token': f'dc-second-{uuid.uuid4()}',
+        })
+
+    def test_flagged_payment_creates_no_record_until_confirmed(self):
+        from core.models import CustomerDebtPayment
+        self._flag_first_then_second()
+        self.assertEqual(
+            CustomerDebtPayment.objects.filter(customer=self.customer, amount_paid=Decimal('200')).count(),
+            1, 'Only the first payment should exist — the second is held pending confirmation',
+        )
+
+    def test_confirm_records_the_stashed_payment(self):
+        import uuid
+        from core.models import CustomerDebtPayment
+        self._flag_first_then_second()
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'confirm_duplicate': '1', 'idempotency_token': f'dc-confirm-{uuid.uuid4()}',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            CustomerDebtPayment.objects.filter(customer=self.customer, amount_paid=Decimal('200')).count(),
+            2, 'Confirming must record the second, genuinely separate payment',
+        )
+
+    def test_confirm_uses_stashed_values_not_resubmitted_ones(self):
+        """The confirm form only ever needs to POST confirm_duplicate=1 — even
+        if a tampered/mismatched amount_paid is resubmitted alongside it, the
+        server must use the trusted session-stashed amount, not the resubmit."""
+        import uuid
+        from core.models import CustomerDebtPayment
+        self._flag_first_then_second(amount='200', method='mpesa')
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'confirm_duplicate': '1', 'amount_paid': '99999', 'payment_method': 'cash',
+            'idempotency_token': f'dc-confirm-{uuid.uuid4()}',
+        })
+        second = CustomerDebtPayment.objects.filter(
+            customer=self.customer, amount_paid=Decimal('200'),
+        )
+        self.assertEqual(second.count(), 2, 'The confirmed payment must use the stashed KES 200, not the tampered 99999')
+
+    def test_cancel_clears_session_and_records_nothing(self):
+        import uuid
+        from core.models import CustomerDebtPayment
+        self._flag_first_then_second()
+        resp = self.client.get(f'/debt/{self.customer.id}/?clear_dup_confirm=1')
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            CustomerDebtPayment.objects.filter(customer=self.customer, amount_paid=Decimal('200')).count(),
+            1, 'Cancelling must never record the flagged payment',
+        )
+        # Confirming after cancel must no-op (session key already cleared) rather
+        # than resurrecting the discarded payment.
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'confirm_duplicate': '1', 'idempotency_token': f'dc-confirm-{uuid.uuid4()}',
+        })
+        self.assertEqual(
+            CustomerDebtPayment.objects.filter(customer=self.customer, amount_paid=Decimal('200')).count(),
+            1, 'Confirming with no stashed session data must not create a payment',
+        )
+
+    def test_pending_confirmation_appears_in_debt_profile_context(self):
+        self._flag_first_then_second()
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertIsNotNone(resp.context['pending_dup_confirm'])
+        self.assertEqual(resp.context['pending_dup_confirm']['amount_paid'], '200')
+
+    def test_no_pending_confirmation_by_default(self):
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertIsNone(resp.context['pending_dup_confirm'])
+
+    def test_confirmation_notifies_owner_and_manager_excluding_confirmer(self):
+        import uuid
+        self._flag_first_then_second()
+        Notification.objects.all().delete()
+        self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'confirm_duplicate': '1', 'idempotency_token': f'dc-confirm-{uuid.uuid4()}',
+        })
+        self.assertFalse(
+            Notification.objects.filter(user=self.owner, title__icontains='Yamethibitishwa').exists(),
+            'The confirming user (owner) should not be notified about their own confirmation',
+        )
+        self.assertTrue(
+            Notification.objects.filter(user=self.manager, title__icontains='Yamethibitishwa').exists(),
         )
 
 
@@ -15971,6 +16118,149 @@ class KitchenBoardCheckoutSplitPaymentTest(TestCase):
         self.assertEqual(
             Transaction.objects.filter(business=self.biz, item=self.item, payment_method='mpesa').count(), 0,
         )
+
+
+class PaymentSplitBreakdownTest(TestCase):
+    """Unit tests for Transaction.payment_split_breakdown() — the helper that
+    reads back the TRUE final split after apply_split_payment_locked() has
+    run, so it can be embedded in Receipt.meta (2026-07-30 live report: "the
+    receipt does not show the same information [as the split]")."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Split Breakdown Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Breakdown Item',
+            material_no='SPLITBD-01', unit='pcs', selling_price=Decimal('100'),
+        )
+
+    def test_empty_for_no_txn_ids(self):
+        self.assertEqual(Transaction.payment_split_breakdown([], self.biz), {})
+
+    def test_empty_when_only_one_method_present(self):
+        t = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), payment_method='cash', sale_amount=Decimal('100'),
+        )
+        self.assertEqual(Transaction.payment_split_breakdown([t.id], self.biz), {})
+
+    def test_returns_real_two_way_split(self):
+        """The lone-transaction case ALWAYS lands via the boundary-split path
+        (split_payment_method_locked, which creates a new sibling row) since
+        there's no whole transaction small enough to convert outright — this
+        is also the single most common real-world case (one item, split
+        payment). apply_split_payment_locked's return value (not the
+        original txn_ids) is what the caller must feed into
+        payment_split_breakdown() (2026-07-31 fix)."""
+        created_ids = []
+        cash_t = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), payment_method='cash', sale_amount=Decimal('100'),
+        )
+        created_ids.append(cash_t.id)
+        all_ids = Transaction.apply_split_payment_locked(created_ids, self.biz, 40, 'mpesa')
+        breakdown = Transaction.payment_split_breakdown(all_ids, self.biz)
+        self.assertEqual(breakdown.get('cash'), 60.0)
+        self.assertEqual(breakdown.get('mpesa'), 40.0)
+
+    def test_multi_item_split_spanning_boundary(self):
+        """Two lines in one checkout (e.g. two different items) — split lands
+        mid-way through the second, spanning both a whole-transaction
+        conversion and a boundary split."""
+        created_ids = []
+        for amt in ('30', '70'):
+            t = Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('-1'), payment_method='cash', sale_amount=Decimal(amt),
+            )
+            created_ids.append(t.id)
+        # Total 100; split 50 to mpesa — converts the whole 30 txn, then
+        # splits 20/50 of the 70 txn.
+        all_ids = Transaction.apply_split_payment_locked(created_ids, self.biz, 50, 'mpesa')
+        breakdown = Transaction.payment_split_breakdown(all_ids, self.biz)
+        self.assertEqual(breakdown.get('cash'), 50.0)
+        self.assertEqual(breakdown.get('mpesa'), 50.0)
+        self.assertEqual(round(sum(breakdown.values()), 2), 100.0)
+
+
+class ReceiptSplitPaymentDisplayTest(TestCase):
+    """End-to-end: a split checkout on each of the three counters must embed
+    the real split in Receipt.meta['split_payment'] so receipt_public.html
+    and receipts_list.html can show it (2026-07-30 live report)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Rcpt Split Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='rcptsplit_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Rcpt Split Item',
+            material_no='RCPTSPLIT-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Rcpt Split Chipo',
+            material_no='RCPTSPLITK-01', unit='Plate', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'))
+        Transaction.objects.create(business=self.biz, item=self.kitchen_item, type='Receipt', qty=Decimal('20'))
+        self.client.force_login(self.owner)
+
+    def test_quick_sell_receipt_shows_split(self):
+        import json
+        from core.models import Receipt
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        self.client.post('/quick-sell/', {
+            'cart': cart, 'payment_method': 'cash',
+            'split_amount': '40', 'split_method': 'mpesa',
+        })
+        rcpt = Receipt.objects.filter(business=self.biz).order_by('-created_at').first()
+        self.assertIsNotNone(rcpt)
+        self.assertEqual(rcpt.meta.get('split_payment', {}).get('cash'), 60.0)
+        self.assertEqual(rcpt.meta.get('split_payment', {}).get('mpesa'), 40.0)
+
+    def test_bar_board_receipt_shows_split(self):
+        import json
+        from core.models import Receipt
+        _biz, _store, _staff, _item, _barrel, _preset = _make_keg_fixtures('Rcpt Split Bar Biz')
+        owner2 = User.objects.create_user(username='rcptsplit_bar_owner', password='x')
+        UserProfile.objects.create(user=owner2, business=_biz, role='owner')
+        self.client.force_login(owner2)
+        cart = json.dumps([{'barrel_id': _barrel.id, 'preset_id': _preset.id, 'qty': 1}])
+        self.client.post('/bar/', {
+            'keg_cart': cart, 'payment_method': 'cash',
+            'split_amount': '80', 'split_method': 'mpesa',
+            'idempotency_token': 'rcpt-bar-split-1',
+        })
+        rcpt = Receipt.objects.filter(business=_biz).order_by('-created_at').first()
+        self.assertIsNotNone(rcpt)
+        self.assertEqual(rcpt.meta.get('split_payment', {}).get('mpesa'), 80.0)
+        self.assertEqual(rcpt.meta.get('split_payment', {}).get('cash'), 120.0)
+
+    def test_kitchen_board_receipt_shows_split(self):
+        import json
+        from core.models import Receipt
+        cart = json.dumps([{
+            'item_id': self.kitchen_item.id, 'qty': 1, 'amount': 100,
+            'description': 'Rcpt Split Chipo',
+        }])
+        self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash',
+            'split_amount': '40', 'split_method': 'mpesa',
+        })
+        rcpt = Receipt.objects.filter(business=self.biz).order_by('-created_at').first()
+        self.assertIsNotNone(rcpt)
+        self.assertEqual(rcpt.meta.get('split_payment', {}).get('cash'), 60.0)
+        self.assertEqual(rcpt.meta.get('split_payment', {}).get('mpesa'), 40.0)
+
+    def test_no_split_leaves_meta_without_split_payment_key(self):
+        import json
+        from core.models import Receipt
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        self.client.post('/quick-sell/', {'cart': cart, 'payment_method': 'cash'})
+        rcpt = Receipt.objects.filter(business=self.biz).order_by('-created_at').first()
+        self.assertIsNotNone(rcpt)
+        self.assertNotIn('split_payment', rcpt.meta)
 
 
 # ── Home dashboard till breakdown disclosure (2026-07-28) ──────────────────

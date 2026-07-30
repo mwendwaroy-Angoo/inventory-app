@@ -296,6 +296,13 @@ def customer_debt_profile(request, customer_id):
 
     customer = get_object_or_404(Customer, id=customer_id, business=business)
 
+    # 2026-07-31 — "No, cancel it" on the duplicate-payment confirmation
+    # banner just discards the stashed pending payment; nothing was ever
+    # recorded for it in the first place, so there's nothing else to undo.
+    if request.GET.get('clear_dup_confirm') == '1':
+        request.session.pop(f'debt_dup_pending_{customer.id}', None)
+        return redirect('customer_debt_profile', customer_id=customer_id)
+
     if scope == 'all':
         # Owner sees two separate sub-ledger sections plus a combined total
         bar_data     = _get_customer_debt_data(customer, business, scope='bar')
@@ -333,6 +340,10 @@ def customer_debt_profile(request, customer_id):
         status=WriteOffRequest.STATUS_PENDING,
     ).count() if is_owner else 0
 
+    # 2026-07-31 — duplicate-payment confirmation banner (see
+    # record_debt_payment's session-stashed pending payment).
+    pending_dup_confirm = request.session.get(f'debt_dup_pending_{customer.id}')
+
     return render(request, 'core/customer_debt_profile.html', {
         **data,
         'is_owner':        is_owner,
@@ -344,6 +355,7 @@ def customer_debt_profile(request, customer_id):
         'payment_methods': CustomerDebtPayment.PAYMENT_METHOD_CHOICES,
         'credit_standing': credit_standing,
         'pending_wo_count': pending_wo_count,
+        'pending_dup_confirm': pending_dup_confirm,
     })
 
 
@@ -487,11 +499,13 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
 
 
 def _flag_possible_duplicate_debt_payment(business, customer, amount, earlier_payment):
-    """Non-blocking heads-up to owner/manager — a payment was just recorded
-    that matches another one for the same customer/amount within the last
-    24 hours. Never blocks (the second payment may well be genuine), just
-    surfaces it for a human to glance at, same 'warn, don't silently block'
-    pattern as evaluate_credit()'s WARN tier."""
+    """Non-blocking heads-up to owner/manager the MOMENT a possible
+    duplicate is detected (before the staffer has even decided whether to
+    confirm it) — so owner/manager have visibility into a flagged payment
+    regardless of what the recording staffer does next. Never blocks (the
+    second payment may well be genuine), matches the 'warn, don't silently
+    block' pattern used throughout this app (e.g. evaluate_credit()'s WARN
+    tier)."""
     try:
         from .models import Notification
         from accounts.models import UserProfile as _UP
@@ -499,12 +513,13 @@ def _flag_possible_duplicate_debt_payment(business, customer, amount, earlier_pa
         when = timezone.localtime(earlier_payment.paid_at).strftime('%d %b, %H:%M')
         msg = (
             f"⚠️ {customer.name}: malipo mapya ya KES {amount:,.0f} yanafanana na malipo "
-            f"mengine ya kiasi hicho hicho yaliyorekodiwa {when}. Kagua kama hii ni malipo "
-            f"halisi mawili tofauti au kama ilirudiwa kimakosa."
+            f"mengine ya kiasi hicho hicho yaliyorekodiwa {when}. Mfanyakazi anaulizwa "
+            f"kuthibitisha kabla ya kurekodiwa — kagua kama hii ni malipo halisi mawili "
+            f"tofauti au ilirudiwa kimakosa."
         )
         for op in _UP.objects.filter(business=business, role__in=['owner', 'manager']).select_related('user'):
             Notification.objects.create(
-                user=op.user, title='⚠️ Malipo Yanayofanana — Kagua',
+                user=op.user, title='⚠️ Malipo Yanayofanana — Yanasubiri Uthibitisho',
                 message=msg, notification_type='warning',
                 link_url=f'/debt/{customer.id}/',
             )
@@ -514,6 +529,38 @@ def _flag_possible_duplicate_debt_payment(business, customer, amount, earlier_pa
                     send_sms_notification(msg, normalized)
     except Exception:
         logger.exception('_flag_possible_duplicate_debt_payment failed customer=%s', customer.id)
+
+
+def _notify_confirmed_duplicate_debt_payment(business, customer, amount, confirmed_by):
+    """Owner/manager heads-up once a flagged possible-duplicate payment was
+    explicitly confirmed as real and recorded anyway — closes the loop on
+    the flag above with who made the call, matching this app's wording/
+    accountability standard of explaining decisions, not just flagging
+    them."""
+    try:
+        from .models import Notification
+        from accounts.models import UserProfile as _UP
+        from .notifications import normalize_ke_phone, send_sms_notification
+        who = confirmed_by.get_full_name() or confirmed_by.username
+        when = timezone.localtime(timezone.now()).strftime('%d %b, %H:%M')
+        msg = (
+            f"✓ {who} amethibitisha malipo ya KES {amount:,.0f} kwa {customer.name} kuwa "
+            f"halisi (si marudio) — yamerekodiwa — {when}."
+        )
+        for op in _UP.objects.filter(business=business, role__in=['owner', 'manager']).select_related('user'):
+            if op.user_id == confirmed_by.id:
+                continue
+            Notification.objects.create(
+                user=op.user, title='✓ Malipo Yanayofanana — Yamethibitishwa',
+                message=msg, notification_type='info',
+                link_url=f'/debt/{customer.id}/',
+            )
+            if op.phone:
+                normalized = normalize_ke_phone(op.phone)
+                if normalized:
+                    send_sms_notification(msg, normalized)
+    except Exception:
+        logger.exception('_notify_confirmed_duplicate_debt_payment failed customer=%s', customer.id)
 
 
 @login_required
@@ -534,19 +581,36 @@ def record_debt_payment(request, customer_id):
     amount_raw = request.POST.get('amount_paid', '').strip()
     method     = request.POST.get('payment_method', 'cash')
     notes      = request.POST.get('notes', '').strip()
+    confirm_duplicate = request.POST.get('confirm_duplicate') == '1'
+    session_key = f'debt_dup_pending_{customer.id}'
 
-    # Server-side double-submit backstop — see core/idempotency.py. This is a
-    # real <form> POST/redirect (no AJAX guard), so a double-click on "Record
-    # Payment" or a back-button resubmission would otherwise create a second,
-    # real CustomerDebtPayment for the same cash/mpesa payment.
-    from core.idempotency import claim_checkout_token
-    idem_token = (request.POST.get('idempotency_token') or '').strip()
-    if not claim_checkout_token(business.id, idem_token):
-        messages.info(request, _('Malipo haya tayari yamerekodiwa.'))
-        return redirect('customer_debt_profile', customer_id=customer_id)
+    # Confirming a flagged duplicate re-uses the ORIGINAL amount/method/
+    # notes/scope stashed in the session at flag time (2026-07-31 follow-up
+    # to the duplicate-detection fix — Roy asked for "a small confirmation
+    # just to be sure" instead of only a background flag), not whatever was
+    # resubmitted in the confirm form's own fields — the confirm button only
+    # ever sends confirm_duplicate=1 plus an idempotency token, nothing a
+    # user could tamper with to change what actually gets recorded. This
+    # MUST run before amount_raw is parsed below and before the scope='all'
+    # debt_source lookup — the confirm form posts neither field, so parsing
+    # amount_raw='' first would always fail before ever reaching the
+    # override (found and fixed 2026-07-31, caught by the test suite).
+    debt_source_override = None
+    if confirm_duplicate:
+        pending = request.session.pop(session_key, None)
+        if not pending:
+            messages.info(
+                request,
+                _('Hakuna malipo yanayosubiri uthibitisho — huenda tayari yamefutwa au muda umeisha.'),
+            )
+            return redirect('customer_debt_profile', customer_id=customer_id)
+        amount_raw = pending['amount_paid']
+        method = pending['payment_method']
+        notes = pending['notes']
+        debt_source_override = pending['debt_source']
 
     if scope == 'all':
-        debt_source = request.POST.get('debt_source', 'bar')
+        debt_source = debt_source_override or request.POST.get('debt_source', 'bar')
         if debt_source not in ('bar', 'kitchen'):
             messages.error(request, _('Please specify whether this payment is for Bar or Kitchen debt.'))
             return redirect('customer_debt_profile', customer_id=customer_id)
@@ -577,26 +641,53 @@ def record_debt_payment(request, customer_id):
 
     # Duplicate-payment detection (2026-07-30 urgent live request — Roy:
     # "I am not sure if it became a double payment... fix it in a way that
-    # the system could identify if there was a double entry"). The existing
-    # idempotency token above only catches a double-click/resubmit of the
-    # SAME form load; it can't catch a staffer separately re-entering a
-    # payment that was already handled elsewhere (e.g. ticked off directly
-    # in the tabs drawer as a tab settlement, then also recorded here out
-    # of habit or confusion) — CustomerDebtPayment has no natural link back
-    # to a specific tab entry to check against, so the best available
-    # signal is: another payment of the SAME amount, for the SAME customer,
-    # recorded within the last 24 hours. Deliberately NEVER blocks — see
-    # RecordDebtPaymentIdempotencyTest.test_different_tokens_both_go_through,
-    # this app's own established rule that two genuinely separate payments
-    # of the same round amount must always both go through — this only
-    # flags the match for a human to glance at (in-app + SMS to owner/
-    # manager), the same 'warn, never silently block' pattern used
-    # throughout this app (e.g. evaluate_credit()'s WARN tier).
+    # the system could identify if there was a double entry"; 2026-07-31
+    # follow-up: "I would like for the system to ask the user if that
+    # double payment detection... is true or not, just a small confirmation
+    # just to be sure"). CustomerDebtPayment has no natural link back to a
+    # specific tab entry to check against, so the best available signal is:
+    # another payment of the SAME amount, for the SAME customer, recorded
+    # within the last 24 hours. Deliberately never auto-blocks the payment
+    # outright (see RecordDebtPaymentRequiresConfirmationTest — two
+    # genuinely separate payments of the same round amount must always be
+    # ABLE to both go through) — instead requires one explicit human
+    # confirmation before recording a second matching payment, rather than
+    # silently recording it in the background as the first version of this
+    # fix did.
     from datetime import timedelta
-    recent_match = CustomerDebtPayment.objects.filter(
-        customer=customer, business=business, amount_paid=amount,
-        paid_at__gte=timezone.now() - timedelta(hours=24),
-    ).order_by('-paid_at').first()
+    if not confirm_duplicate:
+        recent_match = CustomerDebtPayment.objects.filter(
+            customer=customer, business=business, amount_paid=amount,
+            paid_at__gte=timezone.now() - timedelta(hours=24),
+        ).order_by('-paid_at').first()
+        if recent_match:
+            when = timezone.localtime(recent_match.paid_at).strftime('%d %b, %H:%M')
+            request.session[session_key] = {
+                'amount_paid': str(amount), 'payment_method': method,
+                'notes': notes, 'debt_source': payment_scope, 'matched_when': when,
+            }
+            _flag_possible_duplicate_debt_payment(business, customer, amount, recent_match)
+            messages.warning(
+                request,
+                _('⚠️ Malipo ya KES %(amount)s kwa %(customer)s yanafanana na mengine '
+                  'yaliyorekodiwa %(when)s. Thibitisha hapa chini kama hii ni malipo '
+                  'MAPYA kabisa (si yaleyale yaliyorudiwa kimakosa).')
+                % {'amount': f'{amount:,.2f}', 'customer': customer.name, 'when': when}
+            )
+            return redirect('customer_debt_profile', customer_id=customer_id)
+
+    # Server-side double-submit backstop — see core/idempotency.py. This is a
+    # real <form> POST/redirect (no AJAX guard), so a double-click on "Record
+    # Payment"/"Ndiyo, Rekodi" or a back-button resubmission would otherwise
+    # create a second, real CustomerDebtPayment for the same cash/mpesa
+    # payment. Claimed only right before the actual write — not earlier —
+    # so a flagged-but-not-yet-confirmed attempt never burns a token for
+    # nothing.
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        messages.info(request, _('Malipo haya tayari yamerekodiwa.'))
+        return redirect('customer_debt_profile', customer_id=customer_id)
 
     site_url = request.build_absolute_uri('/')[:-1]
     try:
@@ -606,16 +697,13 @@ def record_debt_payment(request, customer_id):
             source=payment_scope, notes=notes,
             recorded_by=request.user, site_url=site_url,
         )
-        if recent_match:
-            _flag_possible_duplicate_debt_payment(business, customer, amount, recent_match)
-            when = timezone.localtime(recent_match.paid_at).strftime('%d %b, %H:%M')
-            messages.warning(
-                request,
-                _('⚠️ Kumbuka: malipo mengine ya KES %(amount)s kwa %(customer)s yalirekodiwa '
-                  '%(when)s — kagua kwenye historia ya deni kama haya ni malipo mawili halisi '
-                  'au yalirudiwa kimakosa.')
-                % {'amount': f'{amount:,.2f}', 'customer': customer.name, 'when': when}
-            )
+        if confirm_duplicate:
+            # Confirmed despite the flag — still worth a background note to
+            # owner/manager (not a block, just a "this was double-checked
+            # and confirmed real" trail), matching this app's wording/
+            # accountability standard of explaining decisions to everyone
+            # the outcome affects.
+            _notify_confirmed_duplicate_debt_payment(business, customer, amount, request.user)
         messages.success(
             request,
             _('Payment of KES %(amount)s recorded for %(customer)s.')

@@ -808,12 +808,25 @@ class Transaction(models.Model):
         split requested; every checkout calls this, most will pass nothing).
         Raises ValueError if split_amount >= the batch total (would leave
         nothing on the primary method — not a genuine split).
+
+        Returns the full list of transaction ids that now make up this sale
+        — the original txn_ids PLUS any new sibling row created by the
+        boundary split (found and fixed 2026-07-31, while wiring up receipt
+        split-payment display: split_payment_method_locked() creates a NEW
+        Transaction row for the split-off remainder rather than reusing an
+        existing id, so a caller that keeps using the original txn_ids list
+        for payment_split_breakdown() would silently miss that new row —
+        the exact case a single-item cart hits every time, since a lone
+        transaction can only be split via the boundary path, never the
+        whole-transaction-conversion path). Callers MUST use this return
+        value (falling back to the original txn_ids when None/no split
+        happened) rather than their own original list.
         """
         if not txn_ids or split_amount is None:
-            return
+            return None
         split_amount = float(split_amount)
         if split_amount <= 0:
-            return
+            return None
         from django.db import transaction as _txn
         with _txn.atomic():
             txns = list(
@@ -825,6 +838,7 @@ class Transaction(models.Model):
             if split_amount >= total:
                 raise ValueError('Kiasi cha mgawanyo lazima kiwe kidogo kuliko jumla ya mauzo.')
 
+            all_ids = [t.id for t in txns]
             remaining = split_amount
             for t in txns:
                 if remaining <= 0:
@@ -839,12 +853,43 @@ class Transaction(models.Model):
                     t.save(update_fields=['payment_method'])
                     remaining = round(remaining - amt, 2)
                 else:
-                    cls.split_payment_method_locked(
+                    _orig, new_txn = cls.split_payment_method_locked(
                         txn_id=t.id, business=business,
                         split_amount=Decimal(str(remaining)), new_method=split_method,
                         staff_user=staff_user,
                     )
+                    all_ids.append(new_txn.id)
                     remaining = 0
+            return all_ids
+
+    @classmethod
+    def payment_split_breakdown(cls, txn_ids, business):
+        """Sum revenue per payment_method across the given transaction ids —
+        2026-07-30 live report: "split payments are working well... but the
+        receipt does not show the same information." apply_split_payment_
+        locked() only ever touches the underlying Transaction rows; Receipt
+        itself is a static snapshot (lines + one overall payment_method)
+        taken at checkout time and never re-reads them, so a split was
+        completely invisible on the receipt. Called right after apply_
+        split_payment_locked() succeeds so the true final split (however
+        the walk-and-split algorithm distributed it across possibly
+        several items) can be embedded in Receipt.meta. Returns {} when
+        there's nothing to show (no split happened) — {'cash': 20.0,
+        'mpesa': 80.0} style dict otherwise, only methods with a positive
+        total included.
+        """
+        if not txn_ids:
+            return {}
+        txns = cls.objects.filter(id__in=txn_ids, business=business, type='Issue')
+        breakdown = {}
+        for t in txns:
+            amt = float(t.revenue())
+            if amt <= 0:
+                continue
+            breakdown[t.payment_method] = breakdown.get(t.payment_method, 0.0) + amt
+        if len(breakdown) < 2:
+            return {}  # no real split to show — one method covered everything
+        return {k: round(v, 2) for k, v in breakdown.items()}
 
     def __str__(self):
         return f"{self.type} {abs(self.qty)} {self.item.unit} - {self.item.description}"
