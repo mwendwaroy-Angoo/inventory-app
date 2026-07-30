@@ -343,7 +343,8 @@ def staff_shrinkage(business, date_from: date_type, date_to: date_type) -> list[
         .filter(shift__business=business,
                 shift__started_at__gte=start_dt,
                 shift__started_at__lt=end_dt,
-                item__bottle_envelope=True)
+                item__bottle_envelope=True,
+                phase='closing')
         .select_related('shift__staff', 'item')
         .prefetch_related('item__portion_presets')
     )

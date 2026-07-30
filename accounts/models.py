@@ -390,6 +390,23 @@ class UserProfile(models.Model):
         help_text='Staff may approve tab orders for customers who already have outstanding debt. Owner-only by default.'
     )
 
+    # ── Manager-only delegated oversight (2026-07-30) ──────────────────
+    can_review_petty_cash = models.BooleanField(
+        default=False,
+        help_text=(
+            'Manager may approve/reject petty cash entries. Owner-only by default. '
+            'A manager can never review their own submitted entry regardless of this flag.'
+        ),
+    )
+    can_confirm_shifts = models.BooleanField(
+        default=False,
+        help_text=(
+            'Manager may confirm (Thibitisha) a CLOSED shift for staff/waitress/kitchen roles. '
+            "Does not extend to a manager's own shift, or another manager's shift — those "
+            'always require the owner to confirm.'
+        ),
+    )
+
     # ── Session Control ────────────────────────────────────────────────
     current_session_key = models.CharField(
         max_length=40, blank=True,

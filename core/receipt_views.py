@@ -62,10 +62,20 @@ def receipts_list(request):
     if search:
         qs = qs.filter(customer_name__icontains=search)
 
-    # Kitchen-only staff see only kitchen receipts unless they also have bar access
-    if not user_profile.is_owner and getattr(user_profile, 'is_kitchen_staff', False):
-        if not getattr(user_profile, 'can_access_bar', False):
+    # Station Scoping Principle (2026-07-30 audit finding while adding a direct
+    # "Mauzo ya Karibuni" button to Bar Board — this filter only ever excluded
+    # bar/QS receipts for kitchen-only staff; a bar-only staffer had no
+    # complementary exclusion and could see kitchen receipts too. Receipt.source
+    # is 'kitchen' for kitchen sales, '' (blank) for everything else — bar and
+    # Quick Sell share the same blank value, so there's no separate 'bar' value
+    # to exclude; a bar-only view is just "not kitchen".
+    from .views import _station_scope
+    _show_bar, _show_kitchen = _station_scope(user_profile)
+    if not user_profile.is_owner_or_manager:
+        if _show_kitchen and not _show_bar:
             qs = qs.filter(source='kitchen')
+        elif _show_bar and not _show_kitchen:
+            qs = qs.exclude(source='kitchen')
 
     all_receipts = list(qs.order_by('-created_at'))
 

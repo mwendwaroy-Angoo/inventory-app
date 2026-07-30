@@ -3265,3 +3265,67 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   its site cache / reinstall the "Add to Home Screen" icon and reload on better signal —
   matches this app's own established pattern for single-device stale-cache symptoms (see
   the SW cache-related entries in Known Issues). No migrations (template-only change).
+- Manager delegated-oversight toggles + opening-shift stock take + Recent Sales access
+  (2026-07-30). Two live requests handled together. **(1) Manager toggles**: Roy wants
+  petty cash review and shift-closing confirmation delegable to specific managers, not
+  automatic for the whole role, with one rule: a manager's own shift close — and any other
+  manager's — must always go through the owner. New `UserProfile.can_review_petty_cash` +
+  `can_confirm_shifts` (accounts migration 0052, both default False). `review_petty_cash()`
+  widened from strict `is_owner` to `_can_review_petty_cash(up)` (owner, or a toggled
+  manager) with an explicit self-review block (`entry.recorded_by_id == request.user.id`)
+  that applies regardless of the toggle — the whole point of delegated review is a second
+  pair of eyes. `petty_cash_list()` widened the same way for business-wide visibility;
+  `petty_cash_list.html`'s Kubali/Kataa buttons now key off the new `can_review` context var
+  AND a per-row self-entry check, falling through to the existing staff self-service
+  (edit/explain) block when it's the viewer's own entry. `confirm_shift()` gained
+  `_can_confirm_shift(up, shift)` — owner always; a toggled manager may confirm CLOSED
+  staff/waitress/kitchen shifts, but never a shift whose staff is ALSO a manager (covers
+  both "their own" and "another manager's" in one check, matching Roy's literal
+  instruction). `shift_history()` now computes `can_confirm`/`needs_owner` per row instead
+  of the previous page-wide `is_owner_or_manager` gate; `shift_history.html`'s Thibitisha
+  button is per-row now, with a "🔒 Inahitaji mmiliki" hint explaining an absent button to a
+  manager rather than silent dead space. Both toggles surface in Staff Permissions only for
+  `role == 'manager'`, following the same opt-in pattern as every other per-staff toggle in
+  this app. **(2) Opening-shift stock take**: "Hesabu ya Stock" (the physical item-count
+  form, `stock_take_api` / `ShiftStockCount`) was only ever reachable from a button inserted
+  after CLOSING a shift — no equivalent existed at OPEN time. Naively reusing the same
+  form/endpoint would have silently clobbered data: `ShiftStockCount` had
+  `unique_together=(shift, item)`, so an opening count and a closing count for the same item
+  in the same shift would overwrite each other. New `ShiftStockCount.phase`
+  ('opening'/'closing', default 'closing', core migration 0134) with
+  `unique_together=(shift, item, phase)` lets both coexist. Every consumer that SUMS these
+  rows into a loss/variance figure — `keg_metrics.staff_shrinkage()`'s bottle loss,
+  `bar_z_report`'s `day_bottle_variance_kes` — now filters `phase='closing'` explicitly,
+  since those are built around "book balance vs what's left after a day's sales"; an opening
+  count is a baseline with nothing sold yet and would double-count the same shift if left
+  unfiltered. `_missed_tasks_for_shift`'s "did you do your stock take" reminder (fires on an
+  auto-closed shift) is about the closing count specifically, same fix. `stock_take_api`'s
+  POST now accepts an optional `phase` param defaulting to 'closing' — every pre-existing
+  caller (the close-shift modal) keeps writing exactly what it always has, zero behavior
+  change there. Bar Board and Kitchen Board's open-shift flow: instead of closing the modal
+  immediately on a successful open (across all three exit paths — no tapped barrels, barrel
+  weigh-in skipped, or barrel weights confirmed — now unified through one
+  `_showOpenShiftDoneScreen()` helper), shows a brief "✓ Shift Imefunguliwa" screen with a
+  "📦 Hesabu Stock" button (opens the same modal/JS as close-shift, `openStockTake()` now
+  takes a `phase` param and relabels the modal title/intro text accordingly) alongside
+  "Maliza". **(3) Recent Sales access**: added a direct "🧾 Mauzo ya Karibuni" / "Recent
+  Sales" button to the Bar Board, Kitchen Board, and Quick Sell headers (in the section
+  already visible to all staff, not gated to owner) linking to the existing Receipts page
+  (`/receipts/` — already staff-accessible, already has a date filter) — previously only
+  reachable through the hamburger nav, which staff found cumbersome to navigate to
+  mid-shift. Auditing `receipts_list()` while adding this surfaced a real pre-existing
+  Station Scoping Principle gap: kitchen-only staff were already correctly restricted to
+  `source='kitchen'` receipts, but a bar-only staffer had no complementary exclusion and
+  could see kitchen receipts too (`Receipt.source` is `'kitchen'` for kitchen sales and
+  blank for bar/Quick Sell — there's no separate `'bar'` value, so "bar-only" is simply "not
+  kitchen"). Fixed using the existing `_station_scope(up)` helper instead of the narrower
+  ad-hoc check that was there before. One caught-and-fixed mistake during this session: an
+  HTML comment added to `bar_board.html` literally contained the text `{% if is_owner %}` as
+  plain English inside `<!-- -->` — Django's template parser doesn't respect HTML comment
+  boundaries and read it as a real, never-closed tag, breaking every view that renders that
+  template; caught by the full test suite (5 failures, `TemplateSyntaxError`) before push,
+  fixed by rewording the comment to avoid literal `{% %}` syntax. 21 new tests
+  (`ManagerPettyCashReviewToggleTest`, `ManagerConfirmShiftToggleTest`,
+  `ShiftStockCountPhaseTest`, `OpenShiftIncludesStockTakeAccessTest`,
+  `ReceiptsListStationScopingTest`). Two migrations (accounts 0052, core 0134), both
+  additive. 859 tests pass (core + accounts).

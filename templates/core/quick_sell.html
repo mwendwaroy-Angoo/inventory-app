@@ -663,6 +663,12 @@
             <button type="button" id="btn-owner-took"
                     style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.3);color:#e87c96;border-radius:8px;padding:4px 12px;font-size:0.82rem;cursor:pointer;"
                     onclick="openOwnerTookModal()">🥃 Mmiliki Alichukua</button>
+            <!-- 2026-07-30 — counter-parity with bar_board.html/kitchen_board.html's
+                 identical addition: direct "recent sales" access. -->
+            <a href="{% url 'receipts_list' %}"
+               style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.35);color:#5da8f0;border-radius:8px;padding:4px 12px;font-size:0.82rem;text-decoration:none;">
+                🧾 {% trans 'Recent Sales' %}
+            </a>
             <a href="{% url 'add_transaction' %}" class="btn btn-sm btn-secondary">{% trans 'Full Form' %} →</a>
         </div>
     </div>

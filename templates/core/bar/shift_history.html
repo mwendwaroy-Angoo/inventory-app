@@ -64,7 +64,7 @@
   {% endif %}
 
   {% for row in rows %}
-  {% with s=row.shift r=row.rec vc=row.var_class %}
+  {% with s=row.shift r=row.rec vc=row.var_class can_confirm_shift=row.can_confirm needs_owner=row.needs_owner %}
   <div class="shift-card">
     <div class="shift-header">
       <div>
@@ -81,8 +81,10 @@
           <span class="badge badge-open px-2 py-1 rounded-pill" style="font-size:.75rem;">OPEN</span>
         {% elif s.status == 'CLOSED' %}
           <span class="badge badge-closed px-2 py-1 rounded-pill" style="font-size:.75rem;">CLOSED</span>
-          {% if is_owner %}
+          {% if can_confirm_shift %}
           <button class="confirm-btn" onclick="doConfirm({{ s.id }}, this)">Thibitisha</button>
+          {% elif needs_owner %}
+          <span style="color:#888; font-size:.72rem;" title="Zamu za meneja zinahitaji mmiliki">🔒 Inahitaji mmiliki</span>
           {% endif %}
         {% else %}
           <span class="badge badge-confirmed px-2 py-1 rounded-pill" style="font-size:.75rem;">CONFIRMED</span>

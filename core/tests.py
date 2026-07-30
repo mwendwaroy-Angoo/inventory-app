@@ -12,7 +12,7 @@ from core.models import (
     BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
     KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
     KitchenStockReceipt, KitchenStockReceiptLine,
-    Notification, Payment, Receipt, Shift, Store, TabTransferRequest, Transaction,
+    Notification, Payment, PettyCash, Receipt, Shift, Store, TabTransferRequest, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -15236,3 +15236,335 @@ class PresetAttributionLatentGapFixesTest(TestCase):
         txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
         self.assertIsNotNone(txn)
         self.assertEqual(txn.preset_id, self.preset.id)
+
+
+# ── Manager-only delegated oversight toggles (2026-07-30) ──────────────────
+# Roy's request: a per-manager toggle for petty cash review and shift-closing
+# confirmation — both off by default, owner grants explicitly per manager.
+# Shift confirmation has an extra rule Roy was explicit about: a manager's
+# own shift close (and any other manager's) always needs the OWNER, no
+# matter the toggle — only staff/waitress/kitchen shifts are delegable.
+
+class ManagerPettyCashReviewToggleTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Manager PC Review Biz')
+        self.owner = User.objects.create_user(username='mpcr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='mpcr_manager', password='x')
+        self.manager_profile = UserProfile.objects.create(
+            user=self.manager, business=self.biz, role='manager',
+        )
+        self.staff = User.objects.create_user(username='mpcr_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+        self.staff_entry = PettyCash.objects.create(
+            business=self.biz, amount=Decimal('200'), recorded_by=self.staff,
+        )
+        self.manager_own_entry = PettyCash.objects.create(
+            business=self.biz, amount=Decimal('300'), recorded_by=self.manager,
+        )
+
+    def _review(self, user, entry, action='approve'):
+        self.client.force_login(user)
+        return self.client.post(f'/petty-cash/{entry.id}/review/', {'action': action})
+
+    def test_manager_without_toggle_cannot_review(self):
+        resp = self._review(self.manager, self.staff_entry)
+        self.assertEqual(resp.status_code, 403)
+        self.staff_entry.refresh_from_db()
+        self.assertEqual(self.staff_entry.status, 'pending')
+
+    def test_manager_with_toggle_can_review_others_entry(self):
+        self.manager_profile.can_review_petty_cash = True
+        self.manager_profile.save(update_fields=['can_review_petty_cash'])
+        resp = self._review(self.manager, self.staff_entry)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        self.staff_entry.refresh_from_db()
+        self.assertEqual(self.staff_entry.status, 'approved')
+
+    def test_manager_with_toggle_cannot_review_own_entry(self):
+        self.manager_profile.can_review_petty_cash = True
+        self.manager_profile.save(update_fields=['can_review_petty_cash'])
+        resp = self._review(self.manager, self.manager_own_entry)
+        self.assertEqual(resp.status_code, 403)
+        self.manager_own_entry.refresh_from_db()
+        self.assertEqual(self.manager_own_entry.status, 'pending')
+
+    def test_owner_can_always_review_anything(self):
+        resp = self._review(self.owner, self.manager_own_entry)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'), resp.json())
+
+    def test_petty_cash_list_business_wide_only_with_toggle(self):
+        # Without the toggle, a manager only sees their own entries.
+        self.client.force_login(self.manager)
+        resp = self.client.get('/petty-cash/')
+        self.assertNotContains(resp, 'mpcr_staff')
+
+        self.manager_profile.can_review_petty_cash = True
+        self.manager_profile.save(update_fields=['can_review_petty_cash'])
+        resp = self.client.get('/petty-cash/')
+        # Business-wide view now includes the staff entry's amount.
+        self.assertContains(resp, '200')
+
+
+class ManagerConfirmShiftToggleTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Manager Confirm Shift Biz')
+        self.owner = User.objects.create_user(username='mcs_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='mcs_manager', password='x')
+        self.manager_profile = UserProfile.objects.create(
+            user=self.manager, business=self.biz, role='manager',
+        )
+        self.manager2 = User.objects.create_user(username='mcs_manager2', password='x')
+        UserProfile.objects.create(user=self.manager2, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='mcs_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+        self.staff_shift = Shift.objects.create(
+            business=self.biz, staff=self.staff, status='CLOSED',
+        )
+        self.manager_shift = Shift.objects.create(
+            business=self.biz, staff=self.manager, status='CLOSED',
+        )
+        self.manager2_shift = Shift.objects.create(
+            business=self.biz, staff=self.manager2, status='CLOSED',
+        )
+
+    def _confirm(self, user, shift):
+        self.client.force_login(user)
+        return self.client.post(f'/bar/shift/{shift.id}/confirm/', {})
+
+    def test_manager_without_toggle_cannot_confirm_staff_shift(self):
+        resp = self._confirm(self.manager, self.staff_shift)
+        self.assertEqual(resp.status_code, 403)
+        self.staff_shift.refresh_from_db()
+        self.assertEqual(self.staff_shift.status, 'CLOSED')
+
+    def test_manager_with_toggle_can_confirm_staff_shift(self):
+        self.manager_profile.can_confirm_shifts = True
+        self.manager_profile.save(update_fields=['can_confirm_shifts'])
+        resp = self._confirm(self.manager, self.staff_shift)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        self.staff_shift.refresh_from_db()
+        self.assertEqual(self.staff_shift.status, 'CONFIRMED')
+
+    def test_manager_with_toggle_cannot_confirm_own_shift(self):
+        self.manager_profile.can_confirm_shifts = True
+        self.manager_profile.save(update_fields=['can_confirm_shifts'])
+        resp = self._confirm(self.manager, self.manager_shift)
+        self.assertEqual(resp.status_code, 403)
+        self.manager_shift.refresh_from_db()
+        self.assertEqual(self.manager_shift.status, 'CLOSED')
+
+    def test_manager_with_toggle_cannot_confirm_another_managers_shift(self):
+        self.manager_profile.can_confirm_shifts = True
+        self.manager_profile.save(update_fields=['can_confirm_shifts'])
+        resp = self._confirm(self.manager, self.manager2_shift)
+        self.assertEqual(resp.status_code, 403)
+        self.manager2_shift.refresh_from_db()
+        self.assertEqual(self.manager2_shift.status, 'CLOSED')
+
+    def test_owner_can_confirm_managers_own_shift(self):
+        resp = self._confirm(self.owner, self.manager_shift)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        self.manager_shift.refresh_from_db()
+        self.assertEqual(self.manager_shift.status, 'CONFIRMED')
+
+    def test_owner_can_confirm_staff_shift(self):
+        resp = self._confirm(self.owner, self.staff_shift)
+        self.assertEqual(resp.status_code, 200)
+        self.staff_shift.refresh_from_db()
+        self.assertEqual(self.staff_shift.status, 'CONFIRMED')
+
+    def test_shift_history_hides_button_but_shows_lock_hint_for_manager_shift(self):
+        self.manager_profile.can_confirm_shifts = True
+        self.manager_profile.save(update_fields=['can_confirm_shifts'])
+        self.client.force_login(self.manager)
+        resp = self.client.get('/bar/shift/history/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Inahitaji mmiliki')
+
+
+# ── Opening-shift stock take + Receipts station scoping (2026-07-30) ───────
+# Roy's live request: "Hesabu ya Stock" (the shift stock-take form) was only
+# ever reachable from the CLOSE-shift flow — add it to opening too. Doing so
+# safely required ShiftStockCount.phase (opening/closing), since the model
+# previously had unique_together=(shift, item) — a closing count would have
+# silently clobbered that shift's own opening count for the same item.
+# Second ask: "a better way of staff accessing recent sales" — added a
+# direct Receipts button to all three counters (previously only reachable
+# via the hamburger nav), which surfaced a real pre-existing Station Scoping
+# gap while auditing receipts_list(): kitchen-only staff were already
+# correctly restricted to source='kitchen', but a bar-only staffer had no
+# complementary exclusion and could see kitchen receipts too.
+
+class ShiftStockCountPhaseTest(TestCase):
+    """Opening and closing counts for the same item in the same shift must
+    coexist as separate rows, and each consumer that sums these into a
+    loss/variance figure must only ever look at the closing phase."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Stock Phase Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='sp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Whisky',
+            material_no='SP-WHISKY', unit='Bottle', selling_price=Decimal('500'),
+            opening_bin_balance=Decimal('10'),
+        )
+        self.shift = Shift.objects.create(business=self.biz, staff=self.owner, status='OPEN')
+        self.client.force_login(self.owner)
+
+    def _post_count(self, phase, actual):
+        import json
+        return self.client.post(f'/bar/shift/{self.shift.id}/stock-take/', {
+            'counts': json.dumps([{'item_id': self.item.id, 'actual_count': actual}]),
+            'phase': phase,
+        })
+
+    def test_opening_and_closing_counts_coexist(self):
+        from core.models import ShiftStockCount
+        self._post_count('opening', 10)
+        self._post_count('closing', 7)
+        self.assertEqual(ShiftStockCount.objects.filter(shift=self.shift).count(), 2)
+        opening = ShiftStockCount.objects.get(shift=self.shift, phase='opening')
+        closing = ShiftStockCount.objects.get(shift=self.shift, phase='closing')
+        self.assertEqual(opening.actual_count, Decimal('10'))
+        self.assertEqual(closing.actual_count, Decimal('7'))
+
+    def test_missing_phase_defaults_to_closing(self):
+        """Every pre-existing caller (the close-shift modal) never sent a
+        phase param — must keep writing exactly what it always has."""
+        import json
+        from core.models import ShiftStockCount
+        self.client.post(f'/bar/shift/{self.shift.id}/stock-take/', {
+            'counts': json.dumps([{'item_id': self.item.id, 'actual_count': 8}]),
+        })
+        row = ShiftStockCount.objects.get(shift=self.shift)
+        self.assertEqual(row.phase, 'closing')
+
+    def test_bottle_loss_only_counts_closing_phase(self):
+        from core import keg_metrics as km
+        bottle = Item.objects.create(
+            business=self.biz, store=self.store, description='Gin 750ml',
+            material_no='SP-GIN', selling_price=Decimal('300'),
+            bottle_envelope=True, tots_per_unit=Decimal('30'),
+        )
+        from core.models import ShiftStockCount
+        # Opening count shows a "loss" that must NOT be counted (nothing has
+        # been sold yet — an opening count is a baseline, not a reconciliation).
+        ShiftStockCount.objects.create(
+            shift=self.shift, item=bottle, phase='opening',
+            book_balance=Decimal('5'), actual_count=Decimal('2'), recorded_by=self.owner,
+        )
+        # Closing count shows the real, smaller loss that SHOULD be counted.
+        self.shift.status = 'CLOSED'
+        self.shift.save(update_fields=['status'])
+        ShiftStockCount.objects.create(
+            shift=self.shift, item=bottle, phase='closing',
+            book_balance=Decimal('5'), actual_count=Decimal('4'), recorded_by=self.owner,
+        )
+        today = timezone.localdate()
+        rows = km.staff_shrinkage(self.biz, today, today)
+        self.assertGreater(len(rows), 0)
+        # 1 bottle missing (closing only) × 30 tots × 300 = 9000, NOT
+        # (3 opening + 1 closing) × 30 × 300 = 36000.
+        self.assertAlmostEqual(rows[0].bottle_loss_kes, 9000.0, places=1)
+
+    def test_missed_tasks_ignores_opening_only_count(self):
+        """_missed_tasks_for_shift's 'did you do your stock take' reminder is
+        about the CLOSING count specifically — an opening-only count must not
+        silently satisfy it."""
+        from core.shift_views import _missed_tasks_for_shift
+        self._post_count('opening', 10)
+        missed = _missed_tasks_for_shift(self.shift, self.biz)
+        self.assertIn('Hesabu ya bidhaa (stock take) haikufanywa', missed)
+        self._post_count('closing', 7)
+        missed = _missed_tasks_for_shift(self.shift, self.biz)
+        self.assertNotIn('Hesabu ya bidhaa (stock take) haikufanywa', missed)
+
+
+class OpenShiftIncludesStockTakeAccessTest(TestCase):
+    """The open-shift endpoint returns a shift_id staff can immediately use
+    to open the (now phase-aware) stock-take form — end-to-end smoke test
+    that the two pieces (open_shift response, stock-take POST) connect."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Open Shift Stock Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.staff = User.objects.create_user(username='oss_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Beer',
+            material_no='OSS-BEER', unit='Bottle', selling_price=Decimal('200'),
+            opening_bin_balance=Decimal('20'),
+        )
+        self.client.force_login(self.staff)
+
+    def test_open_shift_response_shift_id_accepts_opening_stock_take(self):
+        import json
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '500'})
+        self.assertEqual(resp.status_code, 200)
+        shift_id = resp.json().get('shift_id')
+        self.assertIsNotNone(shift_id)
+        resp2 = self.client.post(f'/bar/shift/{shift_id}/stock-take/', {
+            'counts': json.dumps([{'item_id': self.item.id, 'actual_count': 20}]),
+            'phase': 'opening',
+        })
+        self.assertEqual(resp2.status_code, 200)
+        self.assertTrue(resp2.json().get('ok'))
+        from core.models import ShiftStockCount
+        row = ShiftStockCount.objects.get(shift_id=shift_id, item=self.item)
+        self.assertEqual(row.phase, 'opening')
+
+
+class ReceiptsListStationScopingTest(TestCase):
+    """2026-07-30 audit finding: bar-only staff had no exclusion for kitchen
+    receipts (only the reverse direction existed). Receipt.source is
+    'kitchen' for kitchen sales, blank for bar/QS — so a bar-only view is
+    "not kitchen"."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Receipts Scope Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='rsc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_staff = User.objects.create_user(username='rsc_bar_staff', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='rsc_kitchen_staff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+
+        from core.models import Receipt
+        Receipt.objects.create(
+            business=self.biz, receipt_number=1, token='rsc-bar-tok',
+            total=Decimal('500'), source='', customer_name='Bar Sale',
+        )
+        Receipt.objects.create(
+            business=self.biz, receipt_number=2, token='rsc-kitchen-tok',
+            total=Decimal('700'), source='kitchen', customer_name='Kitchen Sale',
+        )
+
+    def test_bar_only_staff_does_not_see_kitchen_receipt(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/receipts/?status=all')
+        self.assertContains(resp, 'Bar Sale')
+        self.assertNotContains(resp, 'Kitchen Sale')
+
+    def test_kitchen_only_staff_does_not_see_bar_receipt(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.get('/receipts/?status=all')
+        self.assertContains(resp, 'Kitchen Sale')
+        self.assertNotContains(resp, 'Bar Sale')
+
+    def test_owner_sees_both(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/receipts/?status=all')
+        self.assertContains(resp, 'Bar Sale')
+        self.assertContains(resp, 'Kitchen Sale')

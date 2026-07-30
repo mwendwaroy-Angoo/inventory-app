@@ -3515,9 +3515,28 @@ class BarCupLog(models.Model):
 
 
 class ShiftStockCount(models.Model):
-    """End-of-shift stock take: staff records physical item counts for peace-of-mind reconciliation."""
+    """Shift stock take: staff records physical item counts for peace-of-mind reconciliation.
+
+    2026-07-30: gained `phase` (opening/closing) so a shift can carry BOTH an
+    opening-time baseline count AND a closing-time count for the same item
+    without one silently overwriting the other (previously unique_together
+    was just (shift, item) — a closing count would clobber that shift's own
+    opening count for the same item). Every consumer that sums these rows
+    into a loss/variance figure (keg_metrics.staff_shrinkage's bottle loss,
+    bar_z_report's day_bottle_variance_kes) is built around a CLOSING count
+    specifically — comparing book balance against what's physically left
+    after a day's sales — so those queries filter to phase='closing' only;
+    an opening count would be a meaningless (usually ~zero) input there and
+    double-count the same shift if left unfiltered. _missed_tasks_for_shift's
+    "did you do your stock take" reminder is about the closing count too.
+    """
+    PHASE_CHOICES = [
+        ('opening', 'Opening'),
+        ('closing', 'Closing'),
+    ]
     shift       = models.ForeignKey(Shift, on_delete=models.CASCADE, related_name='stock_counts')
     item        = models.ForeignKey('Item', on_delete=models.SET_NULL, null=True, related_name='stock_counts')
+    phase       = models.CharField(max_length=10, choices=PHASE_CHOICES, default='closing')
     book_balance = models.DecimalField(max_digits=10, decimal_places=2)
     actual_count = models.DecimalField(max_digits=10, decimal_places=2)
     recorded_by = models.ForeignKey(
@@ -3529,10 +3548,10 @@ class ShiftStockCount(models.Model):
         ordering = ['item__description']
         verbose_name = 'Shift Stock Count'
         verbose_name_plural = 'Shift Stock Counts'
-        unique_together = [('shift', 'item')]
+        unique_together = [('shift', 'item', 'phase')]
 
     def __str__(self):
-        return f"Shift #{self.shift_id} — {self.item} ({self.actual_count} / book {self.book_balance})"
+        return f"Shift #{self.shift_id} — {self.item} ({self.phase}: {self.actual_count} / book {self.book_balance})"
 
     @property
     def variance(self):

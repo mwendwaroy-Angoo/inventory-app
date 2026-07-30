@@ -197,6 +197,18 @@ def respond_petty_cash(request, entry_id):
 
 # ── Owner review list ─────────────────────────────────────────────────────────
 
+def _can_review_petty_cash(up):
+    """Owner always. A manager only with the explicit can_review_petty_cash
+    toggle — off by default, granted per-manager via Staff Permissions
+    (2026-07-30). Self-review is blocked separately in review_petty_cash()
+    regardless of this flag."""
+    if not up:
+        return False
+    if up.is_owner:
+        return True
+    return up.role == 'manager' and getattr(up, 'can_review_petty_cash', False)
+
+
 @login_required
 def petty_cash_list(request):
     up = _get_up(request)
@@ -204,14 +216,16 @@ def petty_cash_list(request):
         return redirect('home')
 
     business = up.business
+    can_review = _can_review_petty_cash(up)
     entries = PettyCash.objects.filter(business=business).select_related('recorded_by', 'reviewed_by')
 
     # 2026-07-26 (item 1) — staff now have somewhere to see, edit (while pending),
     # and respond to (once rejected) their OWN entries — previously this whole
     # page was owner-only, so a staffer had no way to correct a mistaken amount
     # or explain themselves after a rejection at all. Staff only ever see their
-    # own entries here; the owner still sees everyone's.
-    if not up.is_owner:
+    # own entries here; the owner (or a manager granted can_review_petty_cash,
+    # 2026-07-30) sees everyone's.
+    if not can_review:
         entries = entries.filter(recorded_by=request.user)
 
     # Filter by status
@@ -226,20 +240,29 @@ def petty_cash_list(request):
         'status_filter': status_filter,
         'pending_count': pending_count,
         'is_owner': up.is_owner,
+        'can_review': can_review,
         'my_user_id': request.user.id,
     })
 
 
-# ── Approve / reject a petty cash entry (owner only, AJAX POST) ───────────────
+# ── Approve / reject a petty cash entry (owner, or a manager granted
+#    can_review_petty_cash, AJAX POST) ─────────────────────────────────────
 
 @login_required
 @require_POST
 def review_petty_cash(request, entry_id):
     up = _get_up(request)
-    if not up or not up.is_owner:
+    if not up or not _can_review_petty_cash(up):
         return JsonResponse({'ok': False, 'error': 'Owner only'}, status=403)
 
     entry = get_object_or_404(PettyCash, id=entry_id, business=up.business)
+
+    # A manager can never review their own submitted entry, even when granted
+    # can_review_petty_cash — the whole point of delegated review is a second
+    # pair of eyes; the owner is the one role trusted to self-approve.
+    if not up.is_owner and entry.recorded_by_id == request.user.id:
+        return JsonResponse({'ok': False, 'error': 'Huwezi kukagua ombi lako mwenyewe la petty cash.'}, status=403)
+
     action = request.POST.get('action')  # 'approve' or 'reject'
     review_note = (request.POST.get('review_note') or '').strip()
 

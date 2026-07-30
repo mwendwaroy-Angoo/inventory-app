@@ -107,7 +107,7 @@
     <span class="pc-badge {{ entry.status }}">
       {% if entry.status == 'pending' %}⏳ Inasubiri{% elif entry.status == 'approved' %}✓ Imekubaliwa{% else %}✕ Imekataliwa{% endif %}
     </span>
-    {% if is_owner %}
+    {% if can_review and entry.recorded_by_id != my_user_id %}
     <div class="pc-actions"{% if entry.status != 'pending' %} style="display:none;"{% endif %}>
       <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
               onclick="reviewEntry({{ entry.id }}, 'approve')">✓ Kubali</button>
@@ -122,13 +122,15 @@
             style="background:transparent;border:1px dashed #555;color:#999;font-size:.7rem;padding:.15rem .5rem;"
             onclick="toggleReconsider(this)">↺ Badilisha uamuzi</button>
     {% endif %}
-    {% else %}
+    {% elif entry.recorded_by_id == my_user_id %}
     <!-- 2026-07-26 (item 1) — staff self-service: edit while still pending
-         (before the owner has reviewed), or explain themselves once rejected. -->
-    {% if entry.status == 'pending' and entry.recorded_by_id == my_user_id %}
+         (before review), or explain themselves once rejected. Also covers a
+         manager with can_review_petty_cash looking at their OWN entry — they
+         can never review that one regardless of the toggle (2026-07-30). -->
+    {% if entry.status == 'pending' %}
     <button class="btn btn-sm" style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);color:#5da8f0;"
             onclick="openEditPetty({{ entry.id }}, {{ entry.amount|floatformat:0 }}, '{{ entry.description|escapejs }}')">✏️ Hariri</button>
-    {% elif entry.status == 'rejected' and entry.recorded_by_id == my_user_id and not entry.staff_note %}
+    {% elif entry.status == 'rejected' and not entry.staff_note %}
     <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
             onclick="openRespondPetty({{ entry.id }}, this)">💬 Eleza</button>
     {% endif %}

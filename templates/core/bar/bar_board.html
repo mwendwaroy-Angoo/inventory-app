@@ -679,6 +679,18 @@
               style="display:none; position:absolute; top:-4px; right:-4px;
                      width:8px; height:8px; border-radius:50%; background:#4caf50;"></span>
       </button>
+      <!-- 2026-07-30 — Roy's live request: staff had no direct way to see recent
+           sales from the board itself — Receipts (/receipts/) already exists and
+           is staff-accessible (date filter, station-scoped), but was only ever
+           reachable through the hamburger nav. Same button set as every other
+           staff action here (Orders/Tabs/Breakage/Counter Cash/DJ-MC) —
+           deliberately placed OUTSIDE the owner-only block below. -->
+      <a href="{% url 'receipts_list' %}"
+         style="background:rgba(93,168,240,0.1); border:1px solid rgba(93,168,240,0.35);
+                color:#5da8f0; border-radius:8px; padding:4px 12px; font-size:0.82rem;
+                text-decoration:none; white-space:nowrap;">
+        🧾 Mauzo ya Karibuni
+      </a>
       {% if is_owner %}
       <a href="{% url 'bar_daily_report' %}"
          style="background:rgba(76,175,80,0.1); border:1px solid rgba(76,175,80,0.3);
@@ -1557,7 +1569,7 @@
                 style="background:none; border:none; color:#b0b0b0; font-size:1.3rem;">✕</button>
       </div>
       <div class="modal-body" style="max-height:65vh; overflow-y:auto;">
-        <p style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.75rem;">
+        <p id="stock-take-intro" style="font-size:0.78rem; color:#b0b0b0; margin-bottom:0.75rem;">
           Hesabu bidhaa zilizobaki. Ingiza idadi halisi — mfumo utaonyesha tofauti.
         </p>
         <div id="stock-take-loading" style="text-align:center; padding:1.5rem 0; color:#b0b0b0;">
@@ -4234,6 +4246,9 @@
   }
 
   var _prevClosing = null;   // last confirmed shift's closing_cash_counted
+  var _justOpenedShiftId = null;  // 2026-07-30 — set as soon as open response arrives, so the
+                                    // Hesabu Stock offer below can reach it regardless of which
+                                    // exit path (no barrels / skip / confirmed weights) is taken.
 
   function _resetOpenShiftModal() {
     document.getElementById('open-shift-float').value = '0';
@@ -4243,6 +4258,38 @@
     var errEl = document.getElementById('open-shift-error');
     if (errEl) errEl.style.display = 'none';
     _prevClosing = null;
+  }
+
+  // 2026-07-30 — Roy's live request: "Hesabu ya Stock" (the shift stock-take
+  // form) was only ever reachable from the CLOSE-shift flow, via a button
+  // inserted after closing succeeds. Staff had no way to do a baseline count
+  // when OPENING a shift either. Same window.openStockTake()/submitStockTake()
+  // machinery already used at close now takes a phase ('opening'/'closing')
+  // so both counts are kept as separate rows per item (see ShiftStockCount.phase)
+  // instead of one clobbering the other. This screen is the open-shift
+  // equivalent of close-shift's post-success "📦 Hesabu Stock" button —
+  // shown after EVERY successful open-shift exit path (no tapped barrels,
+  // barrel-confirm skipped, or barrel weights confirmed).
+  function _showOpenShiftDoneScreen(openingFloat) {
+    var modalBody  = document.querySelector('#openShiftModal .modal-body');
+    var modalTitle = document.querySelector('#openShiftModal .modal-title');
+    var footer     = document.querySelector('#openShiftModal .modal-footer');
+    if (modalTitle) modalTitle.textContent = 'Shift Imefunguliwa';
+    if (modalBody) {
+      modalBody.innerHTML =
+        '<div style="color:#4caf50; font-size:.9rem; font-weight:600;">✓ Umefungua shift na float ya KES ' +
+        Math.round(parseFloat(openingFloat)) + '</div>' +
+        '<p style="font-size:.78rem; color:#888; margin-top:.5rem;">Unaweza hesabu bidhaa zilizopo sasa kama ' +
+        'kianzio (hiari) — hii itasaidia kulinganisha na hesabu ya mwisho wa shift.</p>';
+    }
+    if (footer) {
+      footer.innerHTML =
+        '<button type="button" class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;"' +
+        ' onclick="hideModal(\'openShiftModal\'); loadShift();">Maliza</button>' +
+        '<button type="button" class="btn btn-gold btn-sm"' +
+        ' onclick="hideModal(\'openShiftModal\'); loadShift(); window.openStockTake(' +
+        _justOpenedShiftId + ', \'opening\');">📦 Hesabu Stock</button>';
+    }
   }
 
   window.openShiftModal = function () {
@@ -4342,8 +4389,7 @@
   }
 
   window._skipBarrelConfirm = function (openingFloat) {
-    hideModal('openShiftModal');
-    loadShift();
+    _showOpenShiftDoneScreen(openingFloat);
     showToast('✓ Shift imefunguliwa na float ya KES ' + Math.round(parseFloat(openingFloat)));
   };
 
@@ -4423,12 +4469,12 @@
       .then(function (d) {
         btn.disabled = false; btn.textContent = 'Fungua Shift';
         if (d.ok) {
+          _justOpenedShiftId = d.shift_id;
           // If there are tapped barrels, show step 2 — confirm barrel weights
           if (d.tapped_barrels && d.tapped_barrels.length > 0) {
             _showBarrelConfirmStep(d.tapped_barrels, d.opening_float);
           } else {
-            hideModal('openShiftModal');
-            loadShift();
+            _showOpenShiftDoneScreen(d.opening_float);
             showToast('✓ Shift imefunguliwa na float ya KES ' + Math.round(parseFloat(d.opening_float)));
           }
           if (d.overlap_warning) {
@@ -4813,10 +4859,24 @@
   ════════════════════════════════════════════════════════ */
   var _stockTakeShiftId = null;
   var _stockTakeItems   = [];
+  var _stockTakePhase   = 'closing';  // 'opening' or 'closing' — see ShiftStockCount.phase
 
-  window.openStockTake = function (shiftId) {
+  window.openStockTake = function (shiftId, phase) {
     _stockTakeShiftId = shiftId;
+    _stockTakePhase   = (phase === 'opening') ? 'opening' : 'closing';
     _stockTakeItems   = [];
+    var titleEl = document.querySelector('#stockTakeModal .modal-title');
+    var introEl = document.getElementById('stock-take-intro');
+    if (titleEl) {
+      titleEl.textContent = _stockTakePhase === 'opening'
+        ? '📦 Hesabu Stock — Mwanzo wa Shift'
+        : '📦 Hesabu Stock — Mwisho wa Shift';
+    }
+    if (introEl) {
+      introEl.textContent = _stockTakePhase === 'opening'
+        ? 'Hesabu bidhaa zilizopo sasa, kabla hujaanza kuuza. Ingiza idadi halisi — mfumo utaonyesha tofauti.'
+        : 'Hesabu bidhaa zilizobaki. Ingiza idadi halisi — mfumo utaonyesha tofauti.';
+    }
     var loadEl   = document.getElementById('stock-take-loading');
     var formEl   = document.getElementById('stock-take-form');
     var resEl    = document.getElementById('stock-take-results');
@@ -4890,6 +4950,7 @@
 
     var fd = new FormData();
     fd.append('counts', JSON.stringify(counts));
+    fd.append('phase', _stockTakePhase);
     fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
     fetch('/bar/shift/' + _stockTakeShiftId + '/stock-take/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })

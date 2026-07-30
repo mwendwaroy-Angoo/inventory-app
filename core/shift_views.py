@@ -711,7 +711,7 @@ def _missed_tasks_for_shift(shift, business):
     from .models import ShiftStockCount, KegWeightReading, KegBarrel
     missed = []
 
-    if not ShiftStockCount.objects.filter(shift=shift).exists():
+    if not ShiftStockCount.objects.filter(shift=shift, phase='closing').exists():
         missed.append('Hesabu ya bidhaa (stock take) haikufanywa')
 
     has_keg = getattr(business, 'has_keg', False)
@@ -1637,6 +1637,22 @@ def confirm_barrel_weights(request):
 
 # ── Confirm shift (incoming staff / owner) ────────────────────────────────────
 
+def _can_confirm_shift(up, shift):
+    """Owner always. A manager only with the explicit can_confirm_shifts
+    toggle (2026-07-30, off by default) — and even then never for another
+    manager's shift, including their own: Roy's explicit call is that a
+    manager's own shift close, and any other manager's, always needs the
+    owner. Staff/waitress/kitchen shifts are fair game for a toggled manager."""
+    if not up:
+        return False
+    if up.is_owner:
+        return True
+    if up.role != 'manager' or not getattr(up, 'can_confirm_shifts', False):
+        return False
+    shift_staff_role = getattr(getattr(shift.staff, 'userprofile', None), 'role', None)
+    return shift_staff_role != 'manager'
+
+
 @login_required
 @require_POST
 def confirm_shift(request, shift_id):
@@ -1645,6 +1661,12 @@ def confirm_shift(request, shift_id):
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
     shift = get_object_or_404(Shift, id=shift_id, business=up.business)
+
+    if not _can_confirm_shift(up, shift):
+        return JsonResponse(
+            {'ok': False, 'error': 'Huna ruhusa ya kuthibitisha zamu hii — inahitaji mmiliki.'},
+            status=403,
+        )
 
     if shift.status != 'CLOSED':
         return JsonResponse({'ok': False, 'error': 'Shift si CLOSED — haiwezi kuthibitishwa'}, status=400)
@@ -1700,7 +1722,7 @@ def shift_history(request):
     if not _is_owner:
         _base_qs = _base_qs.filter(staff=request.user)
 
-    shifts_qs = _base_qs.select_related('staff', 'confirmed_by').order_by('-started_at')[:60]
+    shifts_qs = _base_qs.select_related('staff__userprofile', 'confirmed_by').order_by('-started_at')[:60]
 
     rows = []
     for shift in shifts_qs:
@@ -1714,10 +1736,20 @@ def shift_history(request):
             var_class = 'warn'
         else:
             var_class = 'danger'
+        shift_staff_role = getattr(getattr(shift.staff, 'userprofile', None), 'role', None)
         rows.append({
-            'shift':     shift,
-            'rec':       rec,
-            'var_class': var_class,
+            'shift':       shift,
+            'rec':         rec,
+            'var_class':   var_class,
+            # 2026-07-30 — Thibitisha (Confirm Shift) is now per-row: a manager
+            # granted can_confirm_shifts can confirm staff/waitress/kitchen
+            # shifts, but never their own or another manager's (see
+            # _can_confirm_shift's docstring). Owner is unaffected.
+            'can_confirm': _can_confirm_shift(up, shift),
+            # Explains an absent Confirm button to a non-owner viewer — the
+            # owner's own button is never hidden, so this is only meaningful
+            # to a manager looking at a CLOSED shift they can't touch.
+            'needs_owner': shift.status == 'CLOSED' and shift_staff_role == 'manager' and not up.is_owner,
         })
 
     return render(request, 'core/bar/shift_history.html', {
@@ -1771,6 +1803,14 @@ def stock_take_api(request, shift_id):
         except Exception:
             return JsonResponse({'ok': False, 'error': 'Invalid data'}, status=400)
 
+        # 2026-07-30 — opening-shift stock take (Roy's request: staff should be
+        # able to do the same count when OPENING a shift, not just closing).
+        # Defaults to 'closing' so every pre-existing caller (the close-shift
+        # modal) keeps writing exactly what it always has.
+        phase = request.POST.get('phase') or 'closing'
+        if phase not in ('opening', 'closing'):
+            phase = 'closing'
+
         _shift_store = shift.store
         results = []
         for entry in counts:
@@ -1788,7 +1828,7 @@ def stock_take_api(request, shift_id):
                         continue
                 book = item.current_balance()
                 ShiftStockCount.objects.update_or_create(
-                    shift=shift, item=item,
+                    shift=shift, item=item, phase=phase,
                     defaults={
                         'book_balance': book,
                         'actual_count': actual,

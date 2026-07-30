@@ -197,6 +197,55 @@
         <!-- Fallback row when neither module is active (no cross-module toggles needed) -->
         {% endif %}
 
+        <!-- Manager-only delegated oversight (2026-07-30) -->
+        {% if staff_profile.role == 'manager' %}
+        <div class="p-4" style="border-top:1px solid #2a2a2a;">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        🪙 {% trans 'Review Petty Cash' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans 'Allow this manager to approve or reject petty cash entries. Owner-only by default.' %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'This manager can never review an entry they submitted themselves, even with this on.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_review_petty_cash"
+                           id="can_review_petty_cash"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_review_petty_cash %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-4" style="border-top:1px solid #2a2a2a;">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        🕐 {% trans 'Confirm Shift Closings' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans 'Allow this manager to confirm (Thibitisha) a closed shift for staff, waitress, and kitchen roles.' %}
+                    </div>
+                    <div style="color:#f0ad4e; font-size:0.78rem; margin-top:0.3rem;">
+                        ⚠️ {% trans "This manager's own shift closings — and any other manager's — always require the business owner to confirm, regardless of this setting." %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_confirm_shifts"
+                           id="can_confirm_shifts"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_confirm_shifts %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
     </div>
 
     <!-- K5.D — Debt visibility (read-only, computed from role + access flags) -->

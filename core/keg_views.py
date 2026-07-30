@@ -3741,6 +3741,7 @@ def bar_z_report(request):
         shift__started_at__gte=day_start,
         shift__started_at__lte=day_end,
         item__bottle_envelope=True,
+        phase='closing',
     ).select_related('item').prefetch_related('item__portion_presets')
     day_bottle_variance_kes = 0.0
     for sc in bottle_counts_today:
