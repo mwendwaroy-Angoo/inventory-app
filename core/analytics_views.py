@@ -1877,7 +1877,15 @@ def daily_sales(request):
         else:
             row['cash'] += rev
 
-    total_rev = cash_rev + mpesa_rev + credit_rev
+    # 2026-07-31 live report — "cash sales and mpesa for the daily sales does
+    # not include confirmed unpaid bills and debts, only what was confirmed
+    # ... there is a huge gap". confirmed_rev (cash+mpesa) is what was
+    # ACTUALLY collected; credit_rev is stock given out on a tab/deni that's
+    # still owed — a stock-reduction event, not money in hand. The headline
+    # figure on this page must be confirmed_rev, never a silent sum that
+    # folds unpaid credit into what reads as "Total Revenue".
+    confirmed_rev = cash_rev + mpesa_rev
+    total_rev = confirmed_rev + credit_rev
     item_rows = sorted(item_map.values(), key=lambda x: -x['revenue'])
 
     # ── Wastage (station-scoped) ──
@@ -1925,6 +1933,7 @@ def daily_sales(request):
         'show_bar':       show_bar,
         'show_kitchen':   show_kitchen,
         'total_rev':      round(total_rev, 2),
+        'confirmed_rev':  round(confirmed_rev, 2),
         'cash_rev':       round(cash_rev, 2),
         'mpesa_rev':      round(mpesa_rev, 2),
         'credit_rev':     round(credit_rev, 2),

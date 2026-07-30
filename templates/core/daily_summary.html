@@ -135,9 +135,9 @@
 <div class="row g-3 mb-3">
     <div class="col-6 col-md-3">
         <div class="ds-tile">
-            <div class="ds-label">{% trans 'Total Revenue' %}</div>
-            <div class="ds-value" style="color:var(--gold);">KES {{ total_rev|floatformat:0 }}</div>
-            <div class="ds-sub">{{ txn_count }} {% trans 'sale' %}{{ txn_count|pluralize }}</div>
+            <div class="ds-label">✅ {% trans 'Confirmed Sales' %}</div>
+            <div class="ds-value" style="color:var(--gold);">KES {{ confirmed_rev|floatformat:0 }}</div>
+            <div class="ds-sub">{% trans 'Cash + M-Pesa actually collected' %}</div>
         </div>
     </div>
     <div class="col-6 col-md-3">
@@ -154,13 +154,20 @@
     </div>
     <div class="col-6 col-md-3">
         <div class="ds-tile">
-            <div class="ds-label">💳 {% trans 'Credit / Deni' %}</div>
+            <div class="ds-label">💳 {% trans 'Credit / Deni (unpaid)' %}</div>
             <div class="ds-value" style="color:{% if credit_rev > 0 %}#f87171{% else %}#b0b0b0{% endif %};">
                 KES {{ credit_rev|floatformat:0 }}
             </div>
+            <div class="ds-sub">{% trans 'Stock given out — not yet collected' %}</div>
         </div>
     </div>
 </div>
+{% if credit_rev > 0 %}
+<div class="mb-3" style="font-size:0.78rem; color:#888; padding:0 0.25rem;">
+    {% trans 'Total including unpaid credit/tabs:' %} <strong style="color:#b0b0b0;">KES {{ total_rev|floatformat:0 }}</strong>
+    — {% trans 'this money has not been collected yet; it only reduced stock.' %}
+</div>
+{% endif %}
 
 {% if is_owner and has_kitchen %}
 <!-- Bar / Kitchen split -->

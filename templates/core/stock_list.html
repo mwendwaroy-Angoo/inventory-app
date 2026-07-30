@@ -534,7 +534,8 @@
                     '<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center;">' +
                     '<span style="font-size:.78rem; color:#b0b0b0;">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong></span>' +
                     '<span style="font-size:.78rem; color:#b0b0b0;">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong></span>' +
-                    '<span style="font-size:.78rem; color:#c9a84c; font-weight:700;">Jumla KES ' + Math.round(s.total_sales) + '</span>' +
+                    (s.credit_sales > 0 ? '<span style="font-size:.78rem; color:#f87171;" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa">Deni <strong>KES ' + Math.round(s.credit_sales) + '</strong></span>' : '') +
+                    '<span style="font-size:.78rem; color:#c9a84c; font-weight:700;" title="Confirmed cash + M-Pesa only">Jumla KES ' + Math.round(s.confirmed_sales) + '</span>' +
                     '<a href="/bar/" style="font-size:.75rem; color:#888; text-decoration:none;">Bar Board ›</a>' +
                     '</div>';
             })

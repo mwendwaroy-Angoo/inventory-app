@@ -122,6 +122,29 @@
             style="background:transparent;border:1px dashed #555;color:#999;font-size:.7rem;padding:.15rem .5rem;"
             onclick="toggleReconsider(this)">↺ Badilisha uamuzi</button>
     {% endif %}
+    {% elif is_owner and entry.recorded_by_id == my_user_id %}
+    <!-- 2026-07-31 live report: the owner sells solo all day (shift bypass —
+         see get_active_staff_shift) and records his own petty cash. The
+         backend (review_petty_cash) has ALWAYS allowed the owner to
+         self-review — only a manager is blocked from reviewing their own
+         entry ("the owner is the one role trusted to self-approve"). This
+         template branch was the actual gap: it unconditionally routed the
+         owner's own entries into the staff-only edit/explain branch below,
+         with no approve/reject ever rendered — so an owner working alone had
+         NO way to confirm his own withdrawal, it sat 'pending' forever, and
+         till_expected_cash()'s petty_qs (status='approved' only) never
+         deducted it — the till stayed inflated by exactly that amount. -->
+    <div class="pc-actions"{% if entry.status != 'pending' %} style="display:none;"{% endif %}>
+      <button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50;"
+              onclick="reviewEntry({{ entry.id }}, 'approve')">✓ Thibitisha (wewe mwenyewe)</button>
+      <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
+              onclick="reviewEntry({{ entry.id }}, 'reject', this)">✕ Kataa</button>
+    </div>
+    {% if entry.status != 'pending' %}
+    <button type="button" class="btn btn-sm pc-reconsider-btn"
+            style="background:transparent;border:1px dashed #555;color:#999;font-size:.7rem;padding:.15rem .5rem;"
+            onclick="toggleReconsider(this)">↺ Badilisha uamuzi</button>
+    {% endif %}
     {% elif entry.recorded_by_id == my_user_id %}
     <!-- 2026-07-26 (item 1) — staff self-service: edit while still pending
          (before review), or explain themselves once rejected. Also covers a

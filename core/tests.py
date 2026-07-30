@@ -9234,6 +9234,124 @@ class DailySalesWastageCostGateTest(TestCase):
         self.assertIn(b'cost lost', resp.content)
 
 
+class DailySalesConfirmedRevenueTest(TestCase):
+    """2026-07-31 urgent live report: "cash sales and mpesa for the daily
+    sales does not include confirmed unpaid bills and debts, only what was
+    confirmed ... there is a huge gap". daily_sales()'s headline "Total
+    Revenue" tile used to be cash_rev + mpesa_rev + credit_rev — an unpaid
+    tab/deni sale (stock given out, not yet collected) silently inflated
+    the figure a viewer reads as "how much have we actually taken in
+    today". confirmed_rev (cash+mpesa only) must be the headline; credit_rev
+    stays visible but clearly separate, never folded in silently."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Daily Sales Confirmed Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='dsconf_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Daily Confirmed Item',
+            material_no='DSCONF-01', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            payment_method='cash', sale_amount=Decimal('100'), date=timezone.localdate(),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            payment_method='mpesa', sale_amount=Decimal('200'), date=timezone.localdate(),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            payment_method='credit', recipient='Deni Patron', sale_amount=Decimal('500'),
+            date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner)
+
+    def test_confirmed_rev_excludes_credit(self):
+        resp = self.client.get('/daily/')
+        self.assertEqual(resp.context['confirmed_rev'], 300.0)
+        self.assertEqual(resp.context['cash_rev'], 100.0)
+        self.assertEqual(resp.context['mpesa_rev'], 200.0)
+        self.assertEqual(resp.context['credit_rev'], 500.0)
+
+    def test_total_rev_still_includes_credit_for_the_incl_note(self):
+        resp = self.client.get('/daily/')
+        self.assertEqual(resp.context['total_rev'], 800.0)
+
+    def test_headline_tile_shows_confirmed_not_credit_inflated_total(self):
+        resp = self.client.get('/daily/')
+        self.assertContains(resp, 'Confirmed Sales')
+        self.assertContains(resp, 'KES 300')
+        # The credit-inflated grand total must still appear, but only in the
+        # explicitly-labeled note, never as the headline figure.
+        self.assertContains(resp, 'Total including unpaid credit/tabs')
+
+    def test_no_credit_note_when_nothing_on_credit(self):
+        Transaction.objects.filter(payment_method='credit').delete()
+        resp = self.client.get('/daily/')
+        self.assertNotContains(resp, 'Total including unpaid credit/tabs')
+
+
+class ShiftReconcileConfirmedSalesTest(TestCase):
+    """confirmed_sales (cash+mpesa, excluding credit) must be threaded
+    through _reconcile(), active_shift_api(), and close_shift() the same
+    way total_sales already is, so every consumer of these JSON payloads
+    (home.html's Active Shifts widget, stock_list.html's shift meter,
+    bar_board.html/kitchen_board.html's close-shift result panel) can show
+    a headline figure that isn't silently inflated by unpaid credit."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Reconcile Confirmed Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rcsale_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='rcsale_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Reconcile Confirmed Item',
+            material_no='RCSALE-01', selling_price=Decimal('100'),
+        )
+        self.shift = Shift.objects.create(
+            business=self.biz, staff=self.staff, status='OPEN',
+            started_at=timezone.now() - timedelta(hours=1),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            payment_method='cash', sale_amount=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            payment_method='mpesa', sale_amount=Decimal('50'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            payment_method='credit', recipient='Deni', sale_amount=Decimal('300'),
+        )
+
+    def test_reconcile_confirmed_sales_excludes_credit(self):
+        from core.shift_views import _reconcile
+        rec = _reconcile(self.shift)
+        self.assertEqual(rec['confirmed_sales'], 150.0)
+        self.assertEqual(rec['total_sales'], 450.0)
+
+    def test_active_shift_api_returns_confirmed_sales(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/bar/shift/active/')
+        data = resp.json()
+        self.assertEqual(data['shift']['confirmed_sales'], 150.0)
+
+    def test_close_shift_returns_confirmed_sales(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/close/', {
+            'closing_cash_counted': '100',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['confirmed_sales'], 150.0)
+        self.assertEqual(data['credit_sales'], 300.0)
+
+
 class KegBarrelsPeriodStationScopingTest(TestCase):
     """keg_barrels_period (feeding the Bar/Keg Analytics + Per-barrel P&L
     tables) had no item__store__is_kitchen exclusion, unlike the sibling
@@ -16628,6 +16746,87 @@ class PresetAttributionLatentGapFixesTest(TestCase):
 # Shift confirmation has an extra rule Roy was explicit about: a manager's
 # own shift close (and any other manager's) always needs the OWNER, no
 # matter the toggle — only staff/waitress/kitchen shifts are delegable.
+
+class OwnerSelfReviewPettyCashTillDeductionTest(TestCase):
+    """2026-07-31 live urgent report: "petty cash confirmation when the
+    owner was the one selling throughout the whole day of which he has a
+    shift bypass so he just sells, ensure that the petty cash deducts
+    accordingly ... and that the petty cash review section disappear once
+    the owner confirms his petty cash withdrawals." review_petty_cash() has
+    ALWAYS allowed the owner to self-review (only a manager is blocked from
+    reviewing their own entry) — the actual gap was petty_cash_list.html,
+    which unconditionally routed the owner's OWN entries into the
+    staff-only edit/explain branch, rendering no approve/reject button at
+    all. Since till_expected_cash() only ever counts status='approved'
+    petty cash, an owner working solo had no way to ever get his own
+    withdrawal out of 'pending' — the till stayed permanently inflated by
+    that amount."""
+
+    def setUp(self):
+        from core.shift_views import till_expected_cash
+        self.till_expected_cash = till_expected_cash
+        self.biz = Business.objects.create(name='Owner Self Review PC Biz')
+        self.owner = User.objects.create_user(username='osrpc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+        # Bootstrap a till anchor via the spot-confirm endpoint (2026-07-30
+        # feature) so till_expected_cash() has something to deduct from.
+        self.client.post('/till/confirm/', {'station': 'bar', 'counted_amount': '1000'})
+        self.entry = PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.owner, date=timezone.localdate(), station='bar',
+        )
+
+    def test_owners_own_pending_entry_renders_approve_button(self):
+        """Regression lock for the template gap itself — the page must
+        actually offer the owner a way to confirm his own entry."""
+        resp = self.client.get('/petty-cash/')
+        self.assertContains(resp, 'Thibitisha (wewe mwenyewe)')
+        self.assertContains(resp, f"reviewEntry({self.entry.id}, 'approve')")
+
+    def test_owner_can_approve_own_entry(self):
+        resp = self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        self.entry.refresh_from_db()
+        self.assertEqual(self.entry.status, 'approved')
+
+    def test_approving_own_entry_deducts_from_till(self):
+        before = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(before['expected_cash'], 1000.0)
+
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+
+        after = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(
+            after['expected_cash'], 850.0,
+            'Approving the owner\'s own petty cash must deduct it from the running till, '
+            'exactly like any other approved entry — the shift-bypass sale path is not special.',
+        )
+
+    def test_pending_review_indicator_disappears_once_confirmed(self):
+        resp = self.client.get('/petty-cash/')
+        self.assertIn(b'1 pending review', resp.content)
+
+        self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'approve'})
+
+        resp = self.client.get('/petty-cash/')
+        self.assertNotIn(b'pending review', resp.content)
+        # The Kubali/Kataa buttons stay in the markup (so "↺ Badilisha uamuzi"
+        # can re-show them for the undo feature) but are rendered hidden —
+        # the badge now reads Imekubaliwa instead of Inasubiri.
+        self.assertContains(resp, '✓ Imekubaliwa')
+        self.assertNotContains(resp, '⏳ Inasubiri')
+
+    def test_owner_can_still_reject_own_mistaken_entry(self):
+        resp = self.client.post(f'/petty-cash/{self.entry.id}/review/', {'action': 'reject'})
+        self.assertEqual(resp.status_code, 200)
+        self.entry.refresh_from_db()
+        self.assertEqual(self.entry.status, 'rejected')
+        # A rejected entry was never approved, so it must never be deducted.
+        after = self.till_expected_cash(self.biz, 'bar')
+        self.assertEqual(after['expected_cash'], 1000.0)
+
 
 class ManagerPettyCashReviewToggleTest(TestCase):
     def setUp(self):

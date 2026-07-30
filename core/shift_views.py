@@ -236,6 +236,16 @@ def _reconcile(shift):
     cash_sales   = float(txns.filter(payment_method='cash'  ).aggregate(t=Sum(_rev))['t'] or 0)
     mpesa_sales  = float(txns.filter(payment_method='mpesa' ).aggregate(t=Sum(_rev))['t'] or 0)
     credit_sales = float(txns.filter(payment_method='credit').aggregate(t=Sum(_rev))['t'] or 0)
+    # 2026-07-31 live report — "cash sales and mpesa ... should not include
+    # confirmed unpaid bills and debts, only what was confirmed". credit_sales
+    # is stock given out on a tab/deni that hasn't been collected yet — it's a
+    # real stock-reduction event, not money in hand. confirmed_sales is the
+    # one figure every "how much have we actually collected" surface should
+    # show as its headline, with credit_sales called out separately (never
+    # silently folded into a "total" a viewer would read as fully confirmed).
+    # total_sales is kept for the few surfaces that intentionally show every
+    # component broken out side by side (e.g. shift_history.html's stat row).
+    confirmed_sales = cash_sales + mpesa_sales
     total_sales  = cash_sales + mpesa_sales + credit_sales
     offline_adj  = float(shift.offline_sales_amount or 0)
 
@@ -304,6 +314,7 @@ def _reconcile(shift):
         'cash_sales':    round(cash_sales, 2),
         'mpesa_sales':   round(mpesa_sales, 2),
         'credit_sales':  round(credit_sales, 2),
+        'confirmed_sales': round(confirmed_sales, 2),
         'total_sales':   round(total_sales, 2),
         'petty_cash':    round(petty_total, 2),
         'petty_cash_pending':  round(petty_pending, 2),
@@ -912,6 +923,7 @@ def active_shift_api(request):
             'cash_sales':  rec['cash_sales'],
             'mpesa_sales': rec['mpesa_sales'],
             'total_sales': rec['total_sales'],
+            'confirmed_sales': rec['confirmed_sales'],
             'credit_sales': rec['credit_sales'],
             'debt_recovered_cash':  rec['debt_recovered_cash'],
             'debt_recovered_mpesa': rec['debt_recovered_mpesa'],
@@ -948,6 +960,7 @@ def active_shift_api(request):
                         'cash_sales':    proxy_rec['cash_sales'],
                         'mpesa_sales':   proxy_rec['mpesa_sales'],
                         'credit_sales':  proxy_rec['credit_sales'],
+                        'confirmed_sales': proxy_rec['confirmed_sales'],
                         'total_sales':   proxy_rec['total_sales'],
                         'expected_cash': proxy_rec['expected_cash'],
                         'expected_cash_if_pending_approved': proxy_rec['expected_cash_if_pending_approved'],
@@ -1014,6 +1027,7 @@ def active_shift_api(request):
             'cash_sales':     rec['cash_sales'],
             'mpesa_sales':    rec['mpesa_sales'],
             'credit_sales':   rec['credit_sales'],
+            'confirmed_sales': rec['confirmed_sales'],
             'total_sales':    rec['total_sales'],
             'expected_cash':  rec['expected_cash'],
             'expected_cash_if_pending_approved': rec['expected_cash_if_pending_approved'],
@@ -1391,8 +1405,10 @@ def close_shift(request, shift_id):
         'expected_cash':        rec['expected_cash'],
         'variance':             rec['variance'],
         'total_sales':          rec['total_sales'],
+        'confirmed_sales':      rec['confirmed_sales'],
         'cash_sales':           rec['cash_sales'],
         'mpesa_sales':          rec['mpesa_sales'],
+        'credit_sales':         rec['credit_sales'],
         # 2026-07-25 live report (Monsoon Inn): _reconcile() has correctly netted
         # approved petty cash out of expected_cash since the previous session's
         # fix, but the amount itself was never sent to the frontend — staff saw

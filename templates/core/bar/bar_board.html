@@ -4845,11 +4845,15 @@
                 '<span style="color:#4caf50; font-size:.76rem;">💵 Deni zilizolipwa (si mauzo mapya): Cash KES ' + Math.round(d.debt_recovered_cash) +
                 ' · M-Pesa KES ' + Math.round(d.debt_recovered_mpesa) + ' — tayari zimeongezwa kwenye Inayotarajiwa.</span></div>';
             }
+            var creditHtml = (parseFloat(d.credit_sales) > 0
+              ? '<div class="shift-stat" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa"><span class="s-label">Mikopo Mapya</span><span class="s-val" style="color:#f87171;">' + _fmt(d.credit_sales) + '</span></div>'
+              : '');
             resEl.innerHTML =
               '<div style="background:#111; border-radius:8px; padding:.75rem; margin-bottom:.75rem;">' +
               '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
-              '<div class="shift-stat"><span class="s-label">Mauzo Yote</span><span class="s-val">' + _fmt(d.total_sales) + '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">Mauzo Yaliyothibitishwa</span><span class="s-val" title="Cash + M-Pesa pekee — si Mikopo Mapya">' + _fmt(d.confirmed_sales) + '</span></div>' +
               '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(d.cash_sales) + '</span></div>' +
+              creditHtml +
               '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(d.expected_cash) + '</span></div>' +
               '<div class="shift-stat"><span class="s-label">Tofauti</span><span class="s-val ' + vc + '">' + sign + 'KES ' + Math.round(parseFloat(d.variance)) + '</span></div>' +
               '</div>' +

@@ -3655,3 +3655,66 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `DebtPaymentDuplicateConfirmationTest`), plus `DuplicateDebtPaymentFlagTest`'s and
   `RecordDebtPaymentIdempotencyTest`'s existing tests updated to match the new confirm-
   required flow. No migrations. 938 tests pass (core + accounts).
+- Confirmed-vs-unpaid revenue conflation + owner petty-cash self-review gap (2026-07-31),
+  urgent live report with screenshots: "cash sales and mpesa for the daily sales does not
+  include confirmed unpaid bills and debts, only what was confirmed... there is a huge gap",
+  plus "petty cash confirmation when the owner was the one selling throughout the whole day
+  ... has a shift bypass so he just sells, ensure that the petty cash deducts accordingly...
+  and that the petty cash review section disappear once the owner confirms." Mid-fix, Roy
+  sent a live counter-count screenshot (physical KES 2900 vs a system figure he expected to
+  be slightly LOWER, not higher) confirming the second bug live in production. **Bug 1 —
+  `daily_sales()` (`/daily/`) "Total Revenue" headline tile was `cash_rev + mpesa_rev +
+  credit_rev`** — an unpaid tab/deni sale (stock given out, not yet collected) silently
+  inflated the figure a viewer reads as "how much have we actually taken in today," with no
+  visual cue it included unpaid credit. New `confirmed_rev = cash_rev + mpesa_rev` is now the
+  headline ("✅ Confirmed Sales"); `credit_rev` stays visible in its own tile, relabeled
+  "Credit / Deni (unpaid)" with a "stock given out — not yet collected" sub-line; a small note
+  below the tiles shows the credit-inclusive grand total only when `credit_rev > 0`, explicitly
+  labeled as not-yet-collected. Same conflation pattern found and fixed on every other surface
+  that reads `_reconcile()`'s `total_sales` (cash+mpesa+credit) as an unlabeled headline
+  figure: `shift_views._reconcile()` gained `confirmed_sales` (cash+mpesa only) alongside the
+  existing `total_sales`, threaded through `active_shift_api()`'s `all_shifts_data`/proxy/
+  my-shift JSON blocks and `close_shift()`'s JSON response (which was also missing
+  `credit_sales` entirely — added). `home.html`'s owner-dashboard "Active Shifts" live meter
+  and `stock_list.html`'s shift-running-meter widget both showed Cash + M-Pesa + an unlabeled
+  gold "total" figure with **zero indication credit was baked in** (worse than bar_board.html/
+  kitchen_board.html's live shift panel, which already showed a "Mikopo Mapya" line with an
+  explanatory tooltip before its own Jumla) — both fixed to show `s.confirmed_sales` as the
+  gold headline and add the same conditionally-shown "Deni" line with the same tooltip
+  ("Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa"). `bar_board.html`'s and
+  `kitchen_board.html`'s close-shift RESULT panel (rendered right after clicking Funga Shift)
+  had the identical gap — "Mauzo Yote" showed `d.total_sales` with no credit breakdown visible
+  anywhere in that panel; relabeled to "Mauzo Yaliyothibitishwa" using the new
+  `d.confirmed_sales`, with a conditional "Mikopo Mapya" stat box added alongside it.
+  `shift_history.html` and the live (not-yet-closed) shift status panel in bar_board.html/
+  kitchen_board.html were audited and left unchanged — both already show Cash/M-Pesa/Credit as
+  separate, clearly-labeled stat boxes immediately before "Jumla," so nothing was silently
+  hidden there. **Bug 2 — `petty_cash_list.html` template gap blocking the owner's own
+  petty-cash confirmation**: `review_petty_cash()` (`core/petty_cash_views.py`) has ALWAYS
+  correctly allowed the owner to self-review their own entry — the self-review block only
+  applies `if not up.is_owner and entry.recorded_by_id == request.user.id` — but the TEMPLATE
+  unconditionally routed any entry where `entry.recorded_by_id == my_user_id` into the
+  staff-only edit/explain branch (`{% elif entry.recorded_by_id == my_user_id %}`), with no
+  approve/reject ever rendered for that case, regardless of whether the viewer was the owner.
+  An owner selling solo all day (shift bypass — `get_active_staff_shift()` never gates the
+  owner) who also records his own petty cash therefore had **no way through the UI to ever
+  confirm his own withdrawal** — it sat `status='pending'` forever, and since
+  `till_expected_cash()`'s petty_qs only ever counts `status='approved'` rows, the till stayed
+  permanently inflated by exactly that amount, with the "N pending review" banner never
+  clearing either. Added a new template branch (`{% elif is_owner and
+  entry.recorded_by_id == my_user_id %}`) that renders the same Kubali/Kataa buttons (worded
+  "✓ Thibitisha (wewe mwenyewe)" to make clear it's a self-confirmation) plus the existing
+  "↺ Badilisha uamuzi" reconsider toggle — reusing the exact same `reviewEntry()`/
+  `_pcApplyResult()` JS and `/petty-cash/<id>/review/` endpoint already used for reviewing
+  someone else's entry, so no backend change was needed at all. Explained to Roy live: the
+  physical-vs-system cash gap in his screenshot (physical 2900, system higher than expected)
+  is best explained by six of Bosco's petty-cash entries (KES 310 total — Karao, Maji,
+  scrubber, straws, etc.) sitting unapproved — real money that had already left the drawer but
+  wasn't yet subtracted from the system's expected-cash figure; reviewing those (a completely
+  separate, already-working owner-reviewing-someone-else's-entry path) should close most of
+  that gap, on top of this session's self-review fix for the owner's own entries. 12 new tests
+  (`OwnerSelfReviewPettyCashTillDeductionTest`, `DailySalesConfirmedRevenueTest`,
+  `ShiftReconcileConfirmedSalesTest`) — template-gap regression lock, till-deduction-on-
+  approval, pending-indicator-clears, reject-never-deducts, confirmed_rev/credit_rev
+  separation on `/daily/`, and `confirmed_sales` threading through `_reconcile()`/
+  `active_shift_api()`/`close_shift()`. No migrations. 950 tests pass (core + accounts).

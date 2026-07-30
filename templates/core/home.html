@@ -1057,7 +1057,8 @@ var HOME_SHOW_KITCHEN = {{ show_kitchen|yesno:"true,false" }};
                     '<div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:center;">' +
                         '<span style="font-size:.75rem; color:#b0b0b0;">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong></span>' +
                         '<span style="font-size:.75rem; color:#b0b0b0;">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong></span>' +
-                        '<span style="font-size:.75rem; color:#c9a84c; font-weight:700;">KES ' + Math.round(s.total_sales) + '</span>' +
+                        (s.credit_sales > 0 ? '<span style="font-size:.75rem; color:#f87171;" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa">Deni <strong>KES ' + Math.round(s.credit_sales) + '</strong></span>' : '') +
+                        '<span style="font-size:.75rem; color:#c9a84c; font-weight:700;" title="Confirmed cash + M-Pesa only">KES ' + Math.round(s.confirmed_sales) + '</span>' +
                         '<a href="' + link + '" style="font-size:.72rem; color:#888; text-decoration:none;">' + linkTxt + '</a>' +
                     '</div>' +
                 '</div>';
