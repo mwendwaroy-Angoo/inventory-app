@@ -43,7 +43,7 @@
     {% if entries %}
     <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem;">
         <h6 style="color:var(--gold-light); margin-bottom:0.8rem;">{% trans "Your catalogue" %} ({{ entries|length }})</h6>
-        <div class="table-responsive" style="max-height:400px; overflow-y:auto;">
+        <div class="table-responsive table-responsive-scroll" style="max-height:400px; overflow-y:auto;">
             <table class="table table-sm" style="color:var(--pearl);">
                 <thead><tr><th>{% trans "Name" %}</th><th>{% trans "Category" %}</th><th>{% trans "Cost" %}</th><th></th></tr></thead>
                 <tbody>

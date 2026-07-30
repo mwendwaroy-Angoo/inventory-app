@@ -3393,3 +3393,45 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`StaffInstructionTest`, `HakiPendingInstructionsTest`) plus the full pre-existing
   `StaffRequestTest` suite passing unmodified. One migration (0135, additive). 877 tests
   pass (core + accounts).
+- Sticky list headers + store-scoped analytics navigation (2026-07-30). Two UX requests
+  from Roy. **(1) Sticky headers**: rather than touch all 28 templates with a `<thead>`
+  individually (high blast-radius, and this codebase's own history shows per-template
+  edits are where mistakes creep in), found that `.table thead th` in `base.html` is
+  ALREADY a single global rule styling every `.table` header cell app-wide — adding
+  `position: sticky` there once covers stock list, receipts, transaction history, sales/
+  analytics, and every other data table in the app for free, present and future, with one
+  change. The correct `top` offset can't be hardcoded — `.site-header` (navbar +
+  `.secondary-header`, itself already `position: sticky; top: 0`) is a different height on
+  mobile (no secondary-header row, `d-none d-lg-flex`) vs desktop — so a small script at
+  the bottom of `base.html` measures `.site-header.offsetHeight` on load/resize and writes
+  it to a new `--sticky-top` CSS custom property, which `.table thead th` reads. Two
+  deliberate opt-outs, both real edge cases found by grepping for non-page-scroll
+  scenarios rather than guessed: `.modal-body .table thead th { position: static; }` (a
+  table inside a Bootstrap modal scrolls within the modal, not the page — a page-relative
+  sticky offset there looks broken) and a new `.table-responsive-scroll` class (added to
+  the two `catalog_upload_form.html`/`catalog_upload_batch_detail.html` preview tables,
+  the only tables in the app with their own fixed `max-height + overflow-y:auto` —
+  `.table-responsive-scroll thead th { top: 0; }` sticks to THAT box's own top, not the
+  page's, since sticky's `top` is relative to the nearest scrolling ancestor).
+  `receipts_list.html` (a card list, not a `<table>` — confirmed by grep before assuming
+  it needed the same treatment) got its own `.filter-bar { position: sticky; top:
+  var(--sticky-top); }` instead, the closest analogue to a table header for that layout.
+  **(2) Store-scoped analytics navigation**: `analytics.html` already had four
+  conditionally-rendered sections — Kibanda Produce Performance (`{% if greens_items %}`),
+  Bar Performance — Keg Analytics (`{% if keg_item_rows %}`), Kitchen Performance (`{% if
+  kitchen_rows %}`), and a Store Performance revenue-by-store table (`{% if store_list %}`
+  — this one's per-`Store` breakdown is the literal answer to "which store is making
+  what") — confirmed via `analytics_views.py` that `store_list` needed zero view changes,
+  it was already built and simply never surfaced as a jump target. Added an `id` anchor to
+  each section-title and a `.store-jump-nav` button row right under the period filter,
+  each button wrapped in the SAME `{% if %}` guard as its target section so a business
+  without a bar/kitchen/produce module never sees a dead link. `.section-title` gained
+  `scroll-margin-top: calc(var(--sticky-top) + 0.5rem)` so the anchor-jump (native browser
+  `#anchor` + this app's existing global `html { scroll-behavior: smooth; }`) doesn't tuck
+  the section title under the sticky header — no new JS needed, this app already had
+  smooth-scroll enabled site-wide. Verified every template in `templates/` still parses
+  (`get_template()` sweep across all `.html` files, zero errors — the lesson from the
+  2026-07-29 HTML-comment mistake applied proactively this time before running the full
+  suite) and `manage.py check`/`makemigrations --check` are clean. No migrations (CSS/JS +
+  template-only change). 877 tests pass (core + accounts, unchanged from before this
+  sprint — no test-suite-affecting code touched).

@@ -104,6 +104,34 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    /* so jumping to a section via the store-nav buttons below doesn't tuck
+       the title under the sticky site-header */
+    scroll-margin-top: calc(var(--sticky-top) + 0.5rem);
+  }
+  .store-jump-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .store-jump-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: rgba(201, 168, 76, 0.08);
+    border: 1px solid rgba(201, 168, 76, 0.3);
+    color: var(--gold-light);
+    border-radius: 20px;
+    padding: 0.4rem 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.15s;
+  }
+  .store-jump-btn:hover {
+    background: var(--gold);
+    color: var(--onyx);
+    border-color: var(--gold);
   }
 </style>
 {% endblock %} {% block content %}
@@ -162,6 +190,25 @@
   <span style="color: var(--gold)">{{ start_date }} → {{ end_date }}</span>
   · {% blocktrans with p=period %}Compared to previous {{ p }} days{% endblocktrans %}
 </div>
+
+{% if greens_items or keg_item_rows or kitchen_rows or store_list %}
+<!-- ═══ JUMP TO STORE/MODULE ANALYTICS ═══ -->
+<div class="store-jump-nav">
+  <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; align-self:center;">{% trans 'Jump to:' %}</span>
+  {% if keg_item_rows %}
+  <a href="#section-bar" class="store-jump-btn">🍺 {% trans 'Liquor / Bar Store' %} →</a>
+  {% endif %}
+  {% if kitchen_rows %}
+  <a href="#section-kitchen" class="store-jump-btn">🍗 {% trans 'Kitchen Store' %} →</a>
+  {% endif %}
+  {% if greens_items %}
+  <a href="#section-produce" class="store-jump-btn">🛒 {% trans 'Kibanda / Produce' %} →</a>
+  {% endif %}
+  {% if store_list %}
+  <a href="#section-store-performance" class="store-jump-btn">🏪 {% trans 'All Stores — Revenue Table' %} →</a>
+  {% endif %}
+</div>
+{% endif %}
 
 <!-- ═══ KEY METRICS ═══ -->
 <div class="row g-3 mb-4" id="analytics-stats">
@@ -523,7 +570,7 @@
 <!-- ═══ MARKET DAY INTELLIGENCE ═══ -->
 <!-- ── GREENS (Kibanda Produce) PERFORMANCE ─────────────────────────── -->
 {% if greens_items %}
-<div class="section-title">🛒 {% trans "Kibanda Produce Performance" %}</div>
+<div class="section-title" id="section-produce">🛒 {% trans "Kibanda Produce Performance" %}</div>
 <div class="row g-3 mb-4">
 
   <!-- Summary cards -->
@@ -665,7 +712,7 @@
 {% endif %}
 <!-- ── Bar / Keg Performance ─────────────────────────────────────────── -->
 {% if keg_item_rows %}
-<div class="section-title">🍺 {% trans "Bar Performance — Keg Analytics" %}</div>
+<div class="section-title" id="section-bar">🍺 {% trans "Bar Performance — Keg Analytics" %}</div>
 <div class="row g-3 mb-4">
   <div class="col-6 col-md-3">
     <div style="background:var(--onyx-card);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:1rem;text-align:center;">
@@ -1217,7 +1264,7 @@
 {% if kitchen_rows %}
 <hr class="gold-divider" />
 <!-- ── Kitchen / Grill Performance ─────────────────────────────────────── -->
-<div class="section-title">🍗 {% trans "Kitchen Performance" %}</div>
+<div class="section-title" id="section-kitchen">🍗 {% trans "Kitchen Performance" %}</div>
 <div class="row g-3 mb-4">
   <div class="col-6 col-md-3">
     <div style="background:var(--onyx-card);border:1px solid rgba(255,165,0,0.3);border-radius:10px;padding:1rem;text-align:center;">
@@ -1374,7 +1421,7 @@
 
 <!-- ═══ STORE PERFORMANCE ═══ -->
 {% if store_list %}
-<div class="section-title">🏪 {% trans 'Store Performance' %}</div>
+<div class="section-title" id="section-store-performance">🏪 {% trans 'Store Performance' %}</div>
 <div class="table-responsive mb-4">
   <table class="table table-hover">
     <thead>

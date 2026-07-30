@@ -42,6 +42,10 @@
     padding: 0.75rem 1rem;
     margin-bottom: 1rem;
     display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;
+    /* stays visible while scrolling a long receipts list */
+    position: sticky;
+    top: var(--sticky-top);
+    z-index: 20;
 }
 .filter-bar select, .filter-bar input[type=text], .filter-bar input[type=date] {
     background: #111; border: 1px solid #333; border-radius: 6px;

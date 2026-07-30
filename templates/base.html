@@ -39,6 +39,9 @@
             --success: #2ecc71;
             --warning: #f39c12;
             --danger: #e74c3c;
+            /* actual site-header height, measured by JS at the bottom of this file —
+               table headers and list filter bars stick just below it */
+            --sticky-top: 64px;
             /* business-type accent — overridden per body.biz-* below */
             --biz-accent: var(--gold);
             --biz-accent-glow: rgba(201,168,76,0.3);
@@ -277,7 +280,19 @@
             text-transform: uppercase;
             font-weight: 500;
             padding: 1rem 0.75rem;
+            /* stays visible while scrolling a long list — stock, receipts, sales,
+               transaction history, and every other data table in the app share
+               this one rule so it never needs re-adding per template */
+            position: sticky;
+            top: var(--sticky-top);
+            z-index: 15;
         }
+        /* a table inside a modal scrolls within the modal itself, not the page —
+           a page-relative sticky offset there just looks broken, so opt out */
+        .modal-body .table thead th { position: static; }
+        /* same story for a small fixed-height preview table (its own
+           max-height + overflow-y:auto) — stick to ITS top (0), not the page's */
+        .table-responsive-scroll thead th { top: 0; }
         .table tbody tr {
             background: var(--onyx-card) !important;
             border-color: #2e2e2e !important;
@@ -1114,6 +1129,23 @@
                 link.classList.add('biz-active');
             }
         });
+    })();
+    </script>
+
+    <!-- Sticky table-header offset — measures the real header height (varies by
+         breakpoint: secondary-header only shows on desktop) so sticky thead/filter
+         bars land just below it instead of a hardcoded guess -->
+    <script>
+    (function () {
+        var header = document.querySelector('.site-header');
+        function setStickyTop() {
+            if (header) {
+                document.documentElement.style.setProperty('--sticky-top', header.offsetHeight + 'px');
+            }
+        }
+        setStickyTop();
+        window.addEventListener('resize', setStickyTop);
+        window.addEventListener('load', setStickyTop);
     })();
     </script>
 
