@@ -97,6 +97,14 @@
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
   white-space: nowrap;
+  /* Untapped-keg tile row ("Hariri" + "Fungua Barrel (N sealed)") measured
+     with zero horizontal slack at narrow widths — nowrap text with no
+     overflow guard visually spills past a flex-shrunk button's own edge
+     and overlaps its neighbour instead of wrapping. Ellipsis-truncate as a
+     safety net; buttons never had visible overflow before this, so no
+     legitimate label is ever actually hidden in normal use. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .keg-owner-btn:hover               { border-color: #c9a84c; color: #c9a84c; }
 .keg-owner-btn.btn-rs              { border-color: rgba(192,57,90,0.35); color: #c0395a; }
@@ -1995,6 +2003,8 @@
             actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openTapModal(' +
               kg.item_id + ',' + kg.next_sealed_barrel_id + ')">+ Barrel</button>';
           }
+          actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.markBarrelDepleted(' +
+            kg.item_id + ',' + kg.tapped_barrel_id + ')">Imekwisha</button>';
           actionHtml += '<button class="keg-owner-btn btn-rs" onclick="event.stopPropagation();window.openDiscardModal(' +
             kg.item_id + ',' + kg.tapped_barrel_id + ',this)">Tupa</button>';
         }
@@ -2522,6 +2532,31 @@
       .catch(function () {
         btn.disabled    = false;
         btn.textContent = 'Fungua';
+      });
+  };
+
+  /* ════════════════════════════════════════════════════════
+     IMEKWISHA — barrel is physically finished (kicked), whether or not it
+     reached its revenue target. Distinct from Tupa: this records NO wastage
+     (the shortfall against target isn't a loss to write off, it's just how
+     much liquid the keg actually yielded) — same /stock/bar/deplete/
+     endpoint the sell-modal's "target reached" confirm already uses, now
+     also reachable directly from the tile for a barrel that's finished
+     early, before hitting target.
+  ════════════════════════════════════════════════════════ */
+  window.markBarrelDepleted = function (itemId, barrelId) {
+    var kg   = _boardData[itemId];
+    var name = kg ? kg.name : 'barrel hii';
+    if (!confirm('✓ ' + name + ' imekwisha — funga pipa hii?')) return;
+    post('/stock/bar/deplete/' + barrelId + '/', {})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          loadBarBoard();
+          showToast('✓ Barrel imefungwa. Unaweza tap barrel mpya.');
+        } else {
+          alert(d.error || 'Hitilafu ya kufunga barrel.');
+        }
       });
   };
 

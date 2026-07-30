@@ -3225,3 +3225,43 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   asked for (count-what's-left-and-receive-only-that, or receive-the-full-original-amount-
   then-Rekebisha-down) already work unmodified with existing tools (Kitchen Stock Receipt +
   Rekebisha) — no new feature needed for either path.
+- Bar Board: Imekwisha button + owner-action-row overflow hardening (2026-07-29). Two live
+  reports. (1) A barrel that physically kicks BEFORE reaching its revenue target had no
+  direct way to close it out — `deplete_barrel()` (`/stock/bar/deplete/<id>/`) already
+  existed and is the correct mechanism (closes with NO wastage transaction, unlike Tupa/
+  discard which writes off the shortfall as a loss), but was only reachable indirectly, via
+  a confirm dialog buried inside the sell-modal's `envelope_reached` gate — i.e. only once
+  the barrel had ALREADY hit target. Added a direct "Imekwisha" button to the tapped-barrel
+  action row (owner/manager only, next to Hariri/+Barrel/Tupa) calling the same endpoint
+  directly — this brings KegBarrel to parity with KitchenBatch, which already has its own
+  unconditional Imekwisha/Tupa pair (see the 2026-07-25 Kitchen Batch cost-correction
+  entry). No backend change — `deplete_barrel()` already had no `envelope_reached`
+  requirement of its own, only the JS confirm flow did. (2) Roy reported the action-button
+  row overlapping on an untapped keg tile ("Hariri" + "Fungua Barrel (N sealed)"). Traced
+  via a live Playwright render at a 360px viewport (device screenshot showed an itel
+  A675L, 720×1600 physical): `.keg-owner-btn` uses `white-space:nowrap` with NO
+  `overflow:hidden` — measured the two buttons filling their container with the two
+  buttons landing at 171.6px + 149.4px = 321px inside a 326px container (zero slack).
+  Confirmed the offcanvas-drawer width itself is NOT the bug on Bar Board — `#tabsDrawer`
+  already uses `width:min(440px,100vw)`, correctly capped for narrow viewports. While
+  auditing this, found `quick_sell.html`'s `#qsTabsDrawer` still using an uncapped
+  `max-width:420px` with no 100vw guard (`kitchen_board.html`'s `#kbTabsDrawer` was already
+  correct at `width:340px;max-width:95vw`) — fixed to the same `width:min(420px,100vw)`
+  pattern for parity, even though it wasn't the reported symptom, since it's the exact same
+  latent bug on a narrower device. With effectively zero horizontal margin, a longer sealed-count label, a slightly wider
+  system font, or a marginally narrower real device pushes this over into the text
+  overflowing its own flex-shrunk box and visually spilling onto the neighbouring button —
+  the exact overlap Roy described. Added `overflow:hidden; text-overflow:ellipsis` to
+  `.keg-owner-btn` as a safety net (never triggers in the normal case, only truncates under
+  genuine space pressure instead of overlapping). Separately investigated the reported
+  Tabs-drawer text-clipping on that same itel device (customer names showing "arley"
+  instead of "Marley", "b #196" instead of "Tab #196") — found no CSS bug in `.tab-card`/
+  `.tab-cust-name` or the drawer width (already correctly responsive); the device's status
+  bar showed a very slow connection (5.57 KB/s), and `sw.js`'s HTML-navigation handler is
+  network-first with a cache fallback only on a failed/timed-out fetch — the more likely
+  explanation is a stale cached snapshot of the page from before an earlier tabs-drawer fix,
+  served because that one device's fetch failed on poor signal, not a live code bug. No fix
+  applied for that one (nothing to fix in current code); told Roy to have that device clear
+  its site cache / reinstall the "Add to Home Screen" icon and reload on better signal —
+  matches this app's own established pattern for single-device stale-cache symptoms (see
+  the SW cache-related entries in Known Issues). No migrations (template-only change).
