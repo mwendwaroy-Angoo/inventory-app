@@ -810,6 +810,58 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- Shift cash/mpesa completeness audit (2026-07-31), same-day follow-up. Roy:
+  "make sure that all items in the kitchen counter be it chipo smokies or
+  kuku... are factored in, in the sales... what is displayed in cash and
+  mpesa for in the staff shift modal up there is what is actually there
+  physically... small variances unaccounted for... irregardless of the
+  staff's compliance all along the app." Audited every kitchen sale
+  mechanism (portion items/Kuku, KitchenBatch/Chipo, ProduceBunch/grill-
+  batch items like smokies) against `shift_views._reconcile()` (the ONE
+  function every live shift panel and close-shift modal in bar_board.html/
+  kitchen_board.html actually reads — confirmed all three funnel through
+  `active_shift_api()`/`close_shift()`, no drift between "different
+  modals") — all three sale mechanisms already create ordinary `type=
+  'Issue'` Transactions with `item` set, and `_reconcile()`'s own `_rev`
+  Case/When expression (`sale_amount` when set, else `abs(qty) *
+  item.selling_price`) already covers all of them with no per-item-type
+  gap. **Found two REAL, separate completeness bugs elsewhere, matching
+  "all along the app" precisely — both hand-rolled, INCOMPLETE
+  reimplementations of the one correct `_reconcile()` logic, not new
+  bugs in `_reconcile()` itself:** (1) `haki_views.staff_duty_log()`'s
+  shift-variance figure (the Duty Log / staff-accountability report) was a
+  literal inline copy ("Replicate _reconcile logic inline (no import
+  needed)") missing THREE things the real reconciliation always has — no
+  `item__store__is_kitchen` station scoping at all (on a combo bar+kitchen
+  business, a kitchen staffer's variance here was computed against the
+  WHOLE business's cash sales, bar included, and vice versa), a raw
+  `Sum('sale_amount')` with no fallback to `abs(qty)*item.selling_price`
+  (SQL `SUM` skips NULLs, so any Issue transaction that never set
+  `sale_amount` — every plain non-preset item sale — silently contributed
+  KES 0), and no petty-cash/debt-recovered/offline-sales adjustment at all.
+  Same file's `txn_revenue`/`txn_by_method` aggregates had the identical
+  `sale_amount`-with-no-fallback gap. Fixed by calling the real
+  `_reconcile(sh)` directly (local import, matching the established
+  lazy-import convention already used by `petty_cash_views.py` for the
+  same function) and using `Transaction.revenue()` (the canonical
+  per-instance method with the same fallback) instead of raw
+  `t.sale_amount`. (2) `bar_daily_report()`'s "Staff / shift performance"
+  table — documented (2026-07-08 owner-reporting-audit entry, this file)
+  as covering ALL bar Issue transactions during a shift window, tab AND
+  walk-up cash/mpesa alike — had the same raw `Sum('sale_amount')` with no
+  fallback, silently under-counting every plain (non-preset) Quick Sell
+  item sale in a staffer's own daily-report revenue figure. Fixed with the
+  same `_rev` Case/When pattern `_reconcile()` uses. Swept every other
+  `Sum('sale_amount')` occurrence in the codebase
+  (`analytics_views.py`, `keg_metrics.py`, two other `keg_views.py` sites)
+  and confirmed each is legitimately scoped to a sale type that ALWAYS
+  sets `sale_amount` (bunch/keg pours) — not a bug. Also confirmed Kitchen
+  Performance analytics (`analytics_views.py`) already correctly uses
+  `t.revenue()`, not raw `sale_amount` — not part of this gap. 4 new tests
+  (`StaffDutyLogVarianceUsesRealReconcileTest`,
+  `BarDailyReportStaffRevenueFallbackTest`) — including a direct
+  regression lock asserting the Duty Log's variance now equals
+  `_reconcile()`'s own output exactly. No migrations.
 - Four-item live audit: split-payment debt bug, customer merge, similar-name
   detection, partial-payment-now/remainder-as-debt checkout (2026-07-31). Roy's
   own framing: "everything is connected... cross-check basic functionalities."

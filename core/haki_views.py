@@ -911,25 +911,38 @@ def staff_duty_log(request, profile_id):
         started_at__date=report_date,
     ).select_related('store').order_by('started_at'))
 
+    # 2026-07-31 live report — Roy: "small variances unaccounted for by the
+    # system irregardless of the staff's compliance all along the app." Root
+    # cause found here: this shift-variance calculation used to be a
+    # hand-rolled, INCOMPLETE reimplementation of shift_views._reconcile()
+    # ("Replicate _reconcile logic inline (no import needed)") that silently
+    # dropped three things the real reconciliation always accounts for —
+    # (a) no item__store__is_kitchen station scoping at all, so on a combo
+    # bar+kitchen business a kitchen staffer's variance here was computed
+    # against the WHOLE business's cash sales, bar included, and vice versa;
+    # (b) `Sum('sale_amount')` with no fallback to abs(qty)*item.selling_price
+    # — SQL SUM skips NULLs, so any Issue transaction that never set
+    # sale_amount (any plain sale outside a preset/batch/bunch envelope —
+    # exactly the class covering chipo/smokies/kuku sold through different
+    # mechanisms) silently contributed KES 0 instead of its real amount; (c)
+    # no petty-cash/debt-recovered/offline-sales adjustment, so this figure
+    # could never match the real close-shift variance even when (a) and (b)
+    # didn't apply. Every other surface in this app already computes this
+    # through the one real `_reconcile()` function — using it here instead
+    # closes the gap for free, with no separate per-item-type coverage list
+    # to maintain (every kitchen sale mechanism — KitchenBatch, ProduceBunch,
+    # portion items — already funnels through the SAME Transaction/type=
+    # 'Issue' shape _reconcile() reads).
+    from core.shift_views import _reconcile
     shift_summaries = []
     for sh in shifts:
         duration_mins = None
         if sh.ended_at:
             delta = sh.ended_at - sh.started_at
             duration_mins = int(delta.total_seconds() / 60)
-        # Cash variance
         variance = None
         if sh.closing_cash_counted is not None:
-            # Replicate _reconcile logic inline (no import needed)
-            cash_sales = Transaction.objects.filter(
-                business=business,
-                type='Issue',
-                payment_method='cash',
-                created_at__gte=sh.started_at,
-                created_at__lte=sh.ended_at or timezone.now(),
-            ).aggregate(total=Sum('sale_amount'))['total'] or Decimal('0')
-            expected = sh.opening_float + cash_sales
-            variance = float(sh.closing_cash_counted) - float(expected)
+            variance = _reconcile(sh)['variance']
         shift_summaries.append({
             'shift': sh,
             'duration_mins': duration_mins,
@@ -944,15 +957,15 @@ def staff_duty_log(request, profile_id):
         date=report_date,
     ).select_related('item__store').order_by('created_at'))
 
-    txn_revenue = sum(
-        float(t.sale_amount or 0) if t.type == 'Issue' else 0
-        for t in transactions
-    )
+    # Same NULL-sale_amount gap as above — Transaction.revenue() is this
+    # app's one canonical figure (sale_amount when set, else
+    # abs(qty)*item.selling_price), not a raw sale_amount read.
+    txn_revenue = sum(t.revenue() for t in transactions)
     txn_by_method = {}
     for t in transactions:
         if t.type == 'Issue' and t.payment_method not in ('void', 'tab', ''):
             txn_by_method[t.payment_method] = (
-                txn_by_method.get(t.payment_method, 0) + float(t.sale_amount or 0)
+                txn_by_method.get(t.payment_method, 0) + t.revenue()
             )
 
     # ── Receipts issued ───────────────────────────────────────────────────────

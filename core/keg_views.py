@@ -3399,6 +3399,23 @@ def bar_daily_report(request):
         h, rem  = divmod(int(delta.total_seconds()), 3600)
         m       = rem // 60
         dur_str = f"{h}h {m:02d}m{' (ongoing)' if not shift.ended_at else ''}"
+        # 2026-07-31 live report (Roy: "small variances unaccounted for...
+        # all along the app") — this "revenue" figure is documented as
+        # covering ALL bar Issue transactions during the shift window (tab
+        # AND walk-up cash/mpesa — see the 2026-07-08 owner-reporting-audit
+        # entry in CLAUDE.md), not keg pours alone, but summed raw
+        # sale_amount with no fallback. Any plain (non-preset) item sale —
+        # Quick Sell's own checkout leaves sale_amount=None for those,
+        # relying entirely on Transaction.revenue()'s abs(qty)*selling_price
+        # fallback — silently contributed KES 0 here instead of its real
+        # amount. Same _rev pattern shift_views._reconcile() already uses.
+        from django.db.models import Case, DecimalField as _DF2, F as _F2, Value as _V2, When
+        from django.db.models.functions import Abs as _Abs2, Coalesce as _Coalesce2
+        _rev = Case(
+            When(sale_amount__isnull=False, then=_F2('sale_amount')),
+            default=_Abs2(_F2('qty')) * _Coalesce2(_F2('item__selling_price'), _V2(0)),
+            output_field=_DF2(max_digits=12, decimal_places=2),
+        )
         staff_data.append({
             'name':    shift.staff.get_full_name() or shift.staff.username,
             'started': shift.started_at,
@@ -3407,7 +3424,7 @@ def bar_daily_report(request):
             'cups':    st.filter(keg_serving='cup').aggregate(n=Sum('keg_qty'))['n'] or 0,
             'pints':   st.filter(keg_serving='pint').aggregate(n=Sum('keg_qty'))['n'] or 0,
             'jugs':    st.filter(keg_serving='jug').aggregate(n=Sum('keg_qty'))['n'] or 0,
-            'revenue': float(st.exclude(payment_method='void').aggregate(r=Sum('sale_amount'))['r'] or 0),
+            'revenue': float(st.exclude(payment_method='void').aggregate(r=Sum(_rev))['r'] or 0),
         })
 
     return render(request, 'core/bar/bar_daily_report.html', {

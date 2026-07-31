@@ -18438,3 +18438,146 @@ class PartialPaymentDebtCheckoutTest(TestCase):
         from core.debt_views import _get_customer_debt_data
         debt_data = _get_customer_debt_data(customer, self.biz, scope='kitchen')
         self.assertEqual(debt_data['outstanding'], 80.0)
+
+
+# ── Shift cash/mpesa completeness across surfaces (2026-07-31) ──────────────
+
+class StaffDutyLogVarianceUsesRealReconcileTest(TestCase):
+    """Live report: "make sure all items in the kitchen counter... are
+    factored in, in the sales... what is displayed in cash and mpesa...
+    is what is actually there physically... small variances unaccounted
+    for... irregardless of the staff's compliance all along the app."
+
+    Root cause found in staff_duty_log() (the Duty Log / staff-accountability
+    report): its shift-variance figure was a hand-rolled, INCOMPLETE
+    reimplementation of shift_views._reconcile() — no bar/kitchen station
+    scoping at all, and Sum('sale_amount') with no fallback to
+    abs(qty)*item.selling_price for any Issue transaction that never set
+    sale_amount (every plain, non-preset item sale). On a combo business this
+    silently mixed bar and kitchen sales into one figure and understated
+    revenue for non-preset sales — producing a variance here that never
+    matched the real shift-close reconciliation shown everywhere else in the
+    app. Fixed to call the real _reconcile() directly."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Duty Log Variance Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='dlv_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='dlv_staff', password='x')
+        self.staff_up = UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            material_no='DLV-KIT-01', unit='Plate', selling_price=Decimal('100'),
+        )
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Soda',
+            material_no='DLV-BAR-01', unit='Bottle', selling_price=Decimal('50'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_kitchen_staff_variance_excludes_bar_sales_during_same_window(self):
+        shift = Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.staff,
+            status='CLOSED', station='kitchen',
+            opening_float=Decimal('0'), closing_cash_counted=Decimal('100'),
+        )
+        # Kitchen sale (belongs to this staffer's shift) — matches the counted cash.
+        # created_at pinned to shift.started_at (not offset into the future) —
+        # _reconcile()'s window ends at shift.ended_at or real timezone.now(),
+        # so a timestamp artificially ahead of wall-clock "now" would fall
+        # OUTSIDE the window on a still-open (ended_at=None) shift.
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+            created_at=shift.started_at,
+        )
+        # Concurrent BAR sale during the SAME time window (e.g. the owner
+        # selling directly at the bar) — must NOT bleed into a kitchen
+        # staffer's own duty-log variance.
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('50'), payment_method='cash',
+            created_at=shift.started_at,
+        )
+        resp = self.client.get(f'/staff/{self.staff_up.id}/duty-log/?date={shift.started_at.date().isoformat()}')
+        self.assertEqual(resp.status_code, 200)
+        summary = next(s for s in resp.context['shift_summaries'] if s['shift'].id == shift.id)
+        # expected_cash = 0 (float) + 100 (kitchen only) = 100; counted 100 -> variance 0.
+        # The old buggy code would have included the bar's 50 too, showing a
+        # false KES -50 variance for a staffer who did nothing wrong.
+        self.assertEqual(summary['variance'], 0.0)
+
+    def test_variance_includes_non_preset_sale_via_fallback(self):
+        """A plain (no preset) sale leaves Transaction.sale_amount=None —
+        the old Sum('sale_amount') would have silently dropped it."""
+        shift = Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.staff,
+            status='CLOSED', station='kitchen',
+            opening_float=Decimal('0'), closing_cash_counted=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=None, payment_method='cash',
+            created_at=shift.started_at,
+        )
+        resp = self.client.get(f'/staff/{self.staff_up.id}/duty-log/?date={shift.started_at.date().isoformat()}')
+        summary = next(s for s in resp.context['shift_summaries'] if s['shift'].id == shift.id)
+        # expected_cash = 100 (qty=1 * selling_price=100 via the revenue() fallback)
+        # counted 100 -> variance 0, not -100 as the old buggy code would show.
+        self.assertEqual(summary['variance'], 0.0)
+
+    def test_variance_matches_real_reconcile_exactly(self):
+        from core.shift_views import _reconcile
+        shift = Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.staff,
+            status='CLOSED', station='kitchen',
+            opening_float=Decimal('50'), closing_cash_counted=Decimal('130'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('80'), payment_method='cash',
+            created_at=shift.started_at,
+        )
+        resp = self.client.get(f'/staff/{self.staff_up.id}/duty-log/?date={shift.started_at.date().isoformat()}')
+        summary = next(s for s in resp.context['shift_summaries'] if s['shift'].id == shift.id)
+        self.assertEqual(summary['variance'], _reconcile(shift)['variance'])
+
+
+class BarDailyReportStaffRevenueFallbackTest(TestCase):
+    """bar_daily_report()'s "Staff / shift performance" revenue is
+    documented as covering ALL bar Issue transactions during the shift
+    window (tab AND walk-up cash/mpesa), but summed raw sale_amount with no
+    fallback — a plain (non-preset) Quick Sell item sale leaves
+    sale_amount=None, so it silently contributed KES 0 instead of its real
+    qty*selling_price value."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Bar Daily Report Fallback Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='bdrf_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='bdrf_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Whiskey Shot',
+            material_no='BDRF-01', unit='Tot', selling_price=Decimal('150'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_non_preset_sale_counted_in_staff_revenue(self):
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=None, payment_method='cash',
+            created_at=shift.started_at,
+            date=shift.started_at.date(),
+        )
+        resp = self.client.get(f'/bar/daily-report/?date={shift.started_at.date().isoformat()}')
+        self.assertEqual(resp.status_code, 200)
+        row = next(r for r in resp.context['staff_data'] if r['name'] == 'bdrf_staff')
+        self.assertEqual(row['revenue'], 150.0)
