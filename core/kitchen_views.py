@@ -467,6 +467,18 @@ def _kitchen_checkout(request, up, business, is_owner):
         except Exception:
             split_amount = Decimal('0')
         split_method = (request.POST.get('split_method') or '').strip()
+        # 2026-07-31 live request — "customer paid cash 120... there is a
+        # remainder" / "mpesa 100 then 20 cash and there is a remainder" —
+        # part of a food_tab sale paid now, the rest becomes debt in the
+        # SAME checkout. See BarTab.settle_and_partial_convert_to_debt().
+        try:
+            partial_cash = Decimal(str(request.POST.get('partial_cash', '') or '0'))
+        except Exception:
+            partial_cash = Decimal('0')
+        try:
+            partial_mpesa = Decimal(str(request.POST.get('partial_mpesa', '') or '0'))
+        except Exception:
+            partial_mpesa = Decimal('0')
     except (json.JSONDecodeError, Exception):
         return JsonResponse({'ok': False, 'error': 'Invalid request'}, status=400)
 
@@ -713,6 +725,35 @@ def _kitchen_checkout(request, up, business, is_owner):
     if not receipt_lines:
         return JsonResponse({'ok': False, 'error': 'No valid items'}, status=400)
 
+    # 2026-07-31 — partial payment now / remainder as debt (food_tab only).
+    # Chained right after the tab has all its entries but BEFORE the
+    # receipt is issued below, so the receipt's own debt/outstanding
+    # metadata reflects the true post-settlement state from the start.
+    # Never blocks the checkout on failure — the sale already happened
+    # above; a bad partial amount just leaves it as an ordinary open tab
+    # (still fully correctable via the tabs drawer).
+    is_partial_debt_checkout = (
+        payment_method == 'food_tab' and bool(tab_customer)
+        and (partial_cash > 0 or partial_mpesa > 0)
+    )
+    partial_debt_result = None
+    if is_partial_debt_checkout and active_tab:
+        try:
+            active_tab.settle_and_partial_convert_to_debt(
+                partial_cash, partial_mpesa, tab_customer, tab_phone, request.user,
+            )
+            partial_debt_result = {
+                'cash': float(partial_cash), 'mpesa': float(partial_mpesa),
+                'remainder': float(total) - float(partial_cash) - float(partial_mpesa),
+                'customer_name': tab_customer,
+            }
+        except ValueError as _partial_err:
+            is_partial_debt_checkout = False
+            logger.warning(
+                'kitchen checkout: partial-debt rejected for tab %s: %s',
+                active_tab.id, _partial_err,
+            )
+
     # Checkout-time split payment — direct (no active_tab) cash/mpesa sale
     # only. Never blocks the checkout: the sale already happened above.
     # 2026-07-30 live report: "the receipt does not show the same
@@ -838,7 +879,7 @@ def _kitchen_checkout(request, up, business, is_owner):
     #  _is_new_bar_link → food just linked to bar tab receipt, send "chakula kimeongezwa"
     #  master_rcpt None → brand new standalone food tab receipt, send first-time SMS
     #  Otherwise        → subsequent round on existing receipt, no SMS
-    if payment_method == 'food_tab' and active_tab and receipt_url:
+    if payment_method == 'food_tab' and not is_partial_debt_checkout and active_tab and receipt_url:
         try:
             from .notifications import normalize_ke_phone, send_sms_notification
             _sms_phone_raw = tab_phone or (active_tab.customer.phone if active_tab.customer else '')
@@ -937,6 +978,7 @@ def _kitchen_checkout(request, up, business, is_owner):
         'receipt_url': receipt_url,
         'receipt_number': receipt_number,
         'merged_tab': bool(merge_tab_id and active_tab),
+        'partial_debt': partial_debt_result,
     })
 
 
@@ -1362,20 +1404,39 @@ def tab_check_api(request):
                 'is_defaulter': getattr(customer, 'is_defaulter', False),
             }
 
-    # Detect other open tabs with similar (but not identical) names — possible duplicates
+    # Detect similar (but not identical) existing names — possible duplicates.
+    # 2026-07-31 live report (Roy: McKenzie's bar debt and kitchen debt split
+    # across two differently-spelled records; his wall-QR receipt only ever
+    # showed one of them) — this used to only compare against OPEN tabs, so
+    # once a tab converts to debt (status leaves OPEN) it silently stopped
+    # being checked against at all, even though the whole point is to catch
+    # the split BEFORE it happens again. Now also checks every Customer this
+    # business has ever recorded (debt history survives regardless of tab
+    # status). Same cheap prefix heuristic as before — genuinely catches
+    # typos/case variants ("Mckenzie" vs "McKenzie"), but a real alias
+    # ("Jenerali" vs "Genro" — a different string for the same person, not a
+    # typo) cannot be auto-detected by any string-similarity check; that
+    # case is what Customer.merge_locked (the "🔀 Unganisha na Mteja
+    # Mwingine" button on the debt profile) is for.
     all_open_tabs = BarTab.objects.filter(
         business=up.business, status='OPEN',
-    ).exclude(customer_name__iexact=name).values_list('customer_name', flat=True).distinct()
+    ).exclude(customer_name__iexact=name).values_list('customer_name', flat=True)
+    all_customers = Customer.objects.filter(
+        business=up.business,
+    ).exclude(name__iexact=name).values_list('name', flat=True)
     name_lower = name.lower()
     similar_names = []
-    for other_name in all_open_tabs:
+    seen_lower = set()
+    for other_name in list(all_open_tabs) + list(all_customers):
         if not other_name:
             continue
         other_lower = other_name.lower()
+        if other_lower in seen_lower or other_lower == name_lower:
+            continue
         # Flag if one name is a prefix of the other, or they share ≥4 chars from the start
         if (other_lower.startswith(name_lower[:4]) or name_lower.startswith(other_lower[:4])):
-            if other_lower != name_lower:
-                similar_names.append(other_name)
+            similar_names.append(other_name)
+            seen_lower.add(other_lower)
 
     return JsonResponse({
         'tabs': result,

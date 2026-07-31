@@ -105,8 +105,54 @@
             </button>
         </form>
         {% endif %}
+
+        <!-- Merge with another customer record (2026-07-31: same person under
+             a different name spelling — separate bar/kitchen debts, separate
+             receipts) -->
+        {% if is_owner %}
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#mergeCustomerModal">
+            🔀 Unganisha na Mteja Mwingine
+        </button>
+        {% endif %}
     </div>
 </div>
+
+{% if is_owner %}
+<div class="modal fade" id="mergeCustomerModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:var(--onyx-card); border:1px solid rgba(255,255,255,0.08);">
+            <form method="post" action="{% url 'merge_customer' customer.id %}" id="mergeCustomerForm">
+                {% csrf_token %}
+                <input type="hidden" name="absorb_id" id="mergeAbsorbId" value="">
+                <div class="modal-header border-0">
+                    <h5 class="modal-title">🔀 Unganisha na Mteja Mwingine</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p style="font-size:0.85rem; color:#b0b0b0;">
+                        Kama <strong>{{ customer.name }}</strong> na mteja mwingine ni mtu mmoja
+                        (jina liliandikwa tofauti kwenye counter tofauti), tafuta na uchague hapa —
+                        deni, risiti na tabs zote za mteja huyo mwingine zitahamishwa chini ya
+                        <strong>{{ customer.name }}</strong>, na jina lake litafutwa. Hatua hii haiwezi
+                        kutenguliwa.
+                    </p>
+                    <input type="text" class="form-control" id="mergeSearchInput"
+                           placeholder="Andika jina la mteja mwingine..." autocomplete="off">
+                    <div id="mergeSearchResults" style="margin-top:0.5rem; max-height:220px; overflow-y:auto;"></div>
+                    <div id="mergeSelectedName" style="display:none; margin-top:0.75rem; padding:0.6rem; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3); border-radius:8px; font-size:0.85rem;"></div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">{% trans 'Cancel' %}</button>
+                    <button type="submit" class="btn btn-sm" id="mergeCustomerSubmitBtn" disabled
+                            style="background:rgba(192,57,90,0.15); color:#c0395a; border:1px solid rgba(192,57,90,0.35);">
+                        Unganisha
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <!-- Defaulter alert banner (shown when tab was voided / bad debt written off) -->
 {% if customer.is_defaulter %}
@@ -1029,6 +1075,56 @@ function woReject(reqId, itemName, amount, staffName, requestType) {
     })
     .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
 }
+{% endif %}
+
+{% if is_owner %}
+(function() {
+    var input = document.getElementById('mergeSearchInput');
+    var results = document.getElementById('mergeSearchResults');
+    var selected = document.getElementById('mergeSelectedName');
+    var absorbField = document.getElementById('mergeAbsorbId');
+    var submitBtn = document.getElementById('mergeCustomerSubmitBtn');
+    if (!input) return;
+    var timer = null;
+    input.addEventListener('input', function() {
+        var q = this.value.trim();
+        clearTimeout(timer);
+        if (q.length < 2) { results.innerHTML = ''; return; }
+        timer = setTimeout(function() {
+            fetch('/debt/customers/search/?q=' + encodeURIComponent(q))
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    var rows = (d.results || []).filter(function(c) { return c.id !== {{ customer.id }}; });
+                    if (!rows.length) {
+                        results.innerHTML = '<div style="padding:0.4rem; color:#888; font-size:0.8rem;">Hakuna aliyepatikana.</div>';
+                        return;
+                    }
+                    results.innerHTML = rows.map(function(c) {
+                        return '<div class="merge-result-row" data-id="' + c.id + '" data-name="' +
+                            c.name.replace(/"/g, '&quot;') + '" style="padding:0.5rem 0.6rem; cursor:pointer; border-radius:6px; font-size:0.85rem;" ' +
+                            'onmouseover="this.style.background=\'rgba(255,255,255,0.05)\'" onmouseout="this.style.background=\'\'">' +
+                            c.name + (c.phone ? ' <span style="color:#888;">(' + c.phone + ')</span>' : '') + '</div>';
+                    }).join('');
+                    Array.prototype.forEach.call(results.querySelectorAll('.merge-result-row'), function(row) {
+                        row.addEventListener('click', function() {
+                            absorbField.value = this.getAttribute('data-id');
+                            var absorbName = this.getAttribute('data-name');
+                            selected.style.display = 'block';
+                            selected.textContent = '✓ ' + absorbName + ' → itaunganishwa na {{ customer.name|escapejs }}';
+                            results.innerHTML = '';
+                            input.value = '';
+                            submitBtn.disabled = false;
+                        });
+                    });
+                })
+                .catch(function() {});
+        }, 250);
+    });
+    document.getElementById('mergeCustomerForm').addEventListener('submit', function(e) {
+        if (!absorbField.value) { e.preventDefault(); return; }
+        if (!confirm('Una uhakika? Hatua hii haiwezi kutenguliwa.')) { e.preventDefault(); }
+    });
+})();
 {% endif %}
 </script>
 {% endblock %}

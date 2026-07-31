@@ -18001,3 +18001,440 @@ class StaffReceiveStockPermissionTest(TestCase):
         })
         up.refresh_from_db()
         self.assertTrue(up.can_receive_stock)
+
+
+# ── Split-paid entry Transaction.payment_method sync (2026-07-31) ───────────
+
+class SplitPaidTransactionPaymentMethodSyncTest(TestCase):
+    """Live report: Hezzy's tab — KES 50 total, 40 paid via mpesa, 10 left
+    owing — showed BOTH 40 and 10 as still-owed once converted to debt.
+    Root cause: BarTabEntry.split_paid_unpaid_locked() correctly marked the
+    kept/paid portion's BarTabEntry.is_paid=True and .payment_method='mpesa',
+    but never updated the underlying Transaction.payment_method away from
+    'credit' — which is what both the debt tracker (credit_qs) and
+    shift_views._reconcile()'s cash/mpesa/credit totals read directly,
+    independent of BarTabEntry.is_paid."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Hezzy Debt Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='hezzy_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Blue Ice',
+            material_no='HEZZY-01', unit='Tot', selling_price=Decimal('50'),
+        )
+        self.client.force_login(self.owner)
+
+    def _make_tab(self, amount=Decimal('50')):
+        tab = BarTab.objects.create(business=self.biz, customer_name='Hezzy', status='OPEN')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(tab=tab, transaction=txn, description='Blue Ice', amount=amount)
+        return tab, entry
+
+    def test_split_paid_portion_transaction_payment_method_updated(self):
+        tab, entry = self._make_tab(Decimal('50'))
+        self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '40'},
+        )
+        entry.refresh_from_db()
+        entry.transaction.refresh_from_db()
+        self.assertEqual(entry.payment_method, 'mpesa')
+        self.assertEqual(
+            entry.transaction.payment_method, 'mpesa',
+            'The underlying Transaction must move off credit too, not just the BarTabEntry',
+        )
+
+    def test_debt_tracker_shows_only_the_true_remainder_after_conversion(self):
+        tab, entry = self._make_tab(Decimal('50'))
+        self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '40'},
+        )
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Hezzy'})
+
+        from core.debt_views import _get_customer_debt_data
+        customer = Customer.objects.get(business=self.biz, name__iexact='Hezzy')
+        data = _get_customer_debt_data(customer, self.biz, scope='bar')
+        self.assertEqual(
+            data['outstanding'], 10.0,
+            'Debt tracker must show only the true KES 10 remainder, not 40+10=50',
+        )
+        self.assertEqual(len(data['unpaid_transactions']), 1)
+
+    def test_paid_portion_counts_as_mpesa_in_shift_reconcile(self):
+        from core.shift_views import _reconcile
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        tab, entry = self._make_tab(Decimal('50'))
+        self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '40'},
+        )
+        data = _reconcile(shift)
+        self.assertEqual(data['mpesa_sales'], 40.0)
+        self.assertEqual(data['credit_sales'], 10.0)
+
+
+class BackfillSplitPaidTxnPaymentMethodTest(TestCase):
+    """core/management/commands/backfill_split_paid_txn_payment_method.py —
+    retroactively fixes historical BarTabEntry/Transaction rows already
+    stuck in the pre-fix state (is_paid=True with a real payment_method,
+    but the underlying Transaction still 'credit')."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Backfill Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Backfill Item',
+            material_no='BF-01', unit='Pcs', selling_price=Decimal('50'),
+        )
+
+    def _make_stale_paid_entry(self):
+        tab = BarTab.objects.create(business=self.biz, customer_name='Stale', status='OPEN')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('40'), payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Backfill Item', amount=Decimal('40'),
+            is_paid=True, payment_method='mpesa',
+        )
+        return entry
+
+    def test_backfill_fixes_stale_transaction(self):
+        from django.core.management import call_command
+        entry = self._make_stale_paid_entry()
+        call_command('backfill_split_paid_txn_payment_method')
+        entry.transaction.refresh_from_db()
+        self.assertEqual(entry.transaction.payment_method, 'mpesa')
+
+    def test_dry_run_does_not_save(self):
+        from django.core.management import call_command
+        entry = self._make_stale_paid_entry()
+        call_command('backfill_split_paid_txn_payment_method', '--dry-run')
+        entry.transaction.refresh_from_db()
+        self.assertEqual(entry.transaction.payment_method, 'credit')
+
+    def test_already_correct_rows_untouched(self):
+        from django.core.management import call_command
+        tab = BarTab.objects.create(business=self.biz, customer_name='Fine', status='OPEN')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('40'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Backfill Item', amount=Decimal('40'),
+            is_paid=True, payment_method='cash',
+        )
+        call_command('backfill_split_paid_txn_payment_method')
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')  # unchanged, not double-touched
+
+
+# ── Customer merge (2026-07-31) ──────────────────────────────────────────────
+
+class CustomerMergeTest(TestCase):
+    """Live report: McKenzie has both a kitchen debt and a bar debt, but his
+    wall-QR receipt only ever showed one of them — the two were recorded
+    under two differently-spelled Customer records. Customer.merge_locked()
+    (via the "🔀 Unganisha na Mteja Mwingine" button) reassigns every
+    reference — Transaction.recipient, BarTab, CustomerDebtPayment,
+    Payment.debt_customer, Receipt — onto one kept identity."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Merge Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='merge_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Lemonade',
+            material_no='MRG-BAR-01', unit='Bottle', selling_price=Decimal('60'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            material_no='MRG-KIT-01', unit='Plate', selling_price=Decimal('100'),
+        )
+        self.keep = Customer.objects.create(business=self.biz, name='McKenzie', credit_approved=True)
+        self.absorb = Customer.objects.create(business=self.biz, name='Mckenzie', phone='0712345678', credit_approved=True)
+        self.client.force_login(self.owner)
+
+    def test_merge_reassigns_transaction_recipient(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Mckenzie',
+        )
+        Customer.merge_locked(self.keep.id, self.absorb.id, self.biz)
+        txn = Transaction.objects.get(item=self.bar_item)
+        self.assertEqual(txn.recipient, 'McKenzie')
+
+    def test_merge_reassigns_debt_payments_and_deletes_absorbed(self):
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.absorb, amount_paid=Decimal('20'), source='kitchen',
+        )
+        keep, absorbed_id, old_name = Customer.merge_locked(self.keep.id, self.absorb.id, self.biz)
+        self.assertEqual(old_name, 'Mckenzie')
+        self.assertFalse(Customer.objects.filter(id=absorbed_id).exists())
+        payment = CustomerDebtPayment.objects.get(amount_paid=Decimal('20'))
+        self.assertEqual(payment.customer_id, self.keep.id)
+
+    def test_merge_combines_receipts_bar_and_kitchen_debt_now_visible_on_both(self):
+        bar_txn = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='McKenzie',
+        )
+        kitchen_txn = Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Mckenzie',
+        )
+        bar_rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Lemonade', 'subtotal': 60.0}],
+            payment_method='credit', user=self.owner, customer_name='McKenzie',
+            meta={'tab_id': 9001},
+        )
+        kitchen_rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Chipo', 'subtotal': 100.0}],
+            payment_method='credit', user=self.owner, customer_name='Mckenzie',
+            meta={'tab_id': 9002}, source='kitchen',
+        )
+        Customer.merge_locked(self.keep.id, self.absorb.id, self.biz)
+
+        from core.receipt_views import _receipt_all_tab_ids
+        bar_rcpt.refresh_from_db()
+        kitchen_rcpt.refresh_from_db()
+        # Both receipts must now resolve to the SAME combined tab-id set —
+        # regardless of which QR the customer actually scans.
+        self.assertEqual(set(_receipt_all_tab_ids(bar_rcpt)), {9001, 9002})
+        self.assertEqual(set(_receipt_all_tab_ids(kitchen_rcpt)), {9001, 9002})
+        self.assertEqual(bar_rcpt.customer_name, 'McKenzie')
+        self.assertEqual(kitchen_rcpt.customer_name, 'McKenzie')
+
+    def test_merge_view_owner_only(self):
+        staff = User.objects.create_user(username='merge_staff', password='x')
+        UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        self.client.force_login(staff)
+        resp = self.client.post(f'/debt/{self.keep.id}/merge/', {'absorb_id': str(self.absorb.id)})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Customer.objects.filter(id=self.absorb.id).exists(), 'Staff must not be able to merge')
+
+    def test_merge_view_owner_succeeds(self):
+        resp = self.client.post(f'/debt/{self.keep.id}/merge/', {'absorb_id': str(self.absorb.id)})
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Customer.objects.filter(id=self.absorb.id).exists())
+
+    def test_cannot_merge_customer_with_self(self):
+        with self.assertRaises(ValueError):
+            Customer.merge_locked(self.keep.id, self.keep.id, self.biz)
+
+    def test_customer_search_api_owner_only(self):
+        staff = User.objects.create_user(username='merge_search_staff', password='x')
+        UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        self.client.force_login(staff)
+        resp = self.client.get('/debt/customers/search/?q=Mck')
+        self.assertEqual(resp.status_code, 302)  # redirected by owner_or_manager_required
+
+        self.client.force_login(self.owner)
+        resp2 = self.client.get('/debt/customers/search/?q=Mck')
+        self.assertEqual(resp2.status_code, 200)
+        names = [r['name'] for r in resp2.json()['results']]
+        self.assertIn('McKenzie', names)
+        self.assertIn('Mckenzie', names)
+
+
+# ── Widened similar-name detection (2026-07-31) ─────────────────────────────
+
+class TabCheckApiSimilarNamesWidenedTest(TestCase):
+    """similar_names used to only compare against currently-OPEN tabs — once
+    a tab converts to debt (status leaves OPEN) it silently stopped being
+    checked against, even though catching the split BEFORE it happens again
+    is the whole point. Now also checks every Customer this business has
+    ever recorded."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Similar Names Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='simnames_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_similar_name_from_past_customer_detected_even_with_no_open_tab(self):
+        # A genuine near-typo (dropped final letter), not merely a case
+        # difference — "Mckenzie" vs "McKenzie" are the SAME string under
+        # this app's own __iexact convention everywhere else, so a pure-case
+        # pair is deliberately excluded here (self-match), not a real test
+        # of the widened corpus.
+        Customer.objects.create(business=self.biz, name='Mckenzi')
+        resp = self.client.get('/kitchen/tab/check/?customer=Mckenzie')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('Mckenzi', data['similar_names'])
+
+    def test_open_tab_names_still_detected(self):
+        BarTab.objects.create(business=self.biz, customer_name='Bosco', status='OPEN', source='bar')
+        resp = self.client.get('/kitchen/tab/check/?customer=Boscoh')
+        data = resp.json()
+        self.assertIn('Bosco', data['similar_names'])
+
+    def test_no_duplicate_when_name_in_both_tab_and_customer(self):
+        Customer.objects.create(business=self.biz, name='Bosco')
+        BarTab.objects.create(business=self.biz, customer_name='Bosco', status='OPEN', source='bar')
+        resp = self.client.get('/kitchen/tab/check/?customer=Boscoh')
+        data = resp.json()
+        self.assertEqual(data['similar_names'].count('Bosco'), 1)
+
+    def test_exact_case_insensitive_match_excluded(self):
+        Customer.objects.create(business=self.biz, name='mckenzie')
+        resp = self.client.get('/kitchen/tab/check/?customer=McKenzie')
+        data = resp.json()
+        self.assertNotIn('mckenzie', data['similar_names'])
+
+
+# ── Partial payment now / remainder as debt at direct checkout (2026-07-31) ─
+
+class PartialPaymentDebtCheckoutTest(TestCase):
+    """Live request: "customer paid cash 120... there is a remainder" /
+    "mpesa 100 then 20 cash and there is a remainder" — Bar Board and
+    Kitchen Board's direct checkout had no way to record this in one
+    action. BarTab.settle_and_partial_convert_to_debt() chains the same
+    proven settle_entries_amount_locked() + _convert_tab_to_debt_core()
+    mechanisms already used elsewhere, rather than a new splitting
+    mechanism."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Partial Debt Checkout Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='pdc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def _make_tab(self, amount=Decimal('180'), business=None, store=None):
+        biz = business or self.biz
+        item = Item.objects.create(
+            business=biz, store=store or self.bar_store, description='PDC Item',
+            material_no=f'PDC-{Item.objects.count()}', unit='Pcs', selling_price=amount,
+        )
+        tab = BarTab.objects.create(business=biz, customer_name='PDC Customer', status='OPEN', source='bar')
+        txn = Transaction.objects.create(
+            business=biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=amount, payment_method='credit',
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='PDC Item', amount=amount)
+        return tab
+
+    # ── model-level ──────────────────────────────────────────────────────
+
+    def test_settle_and_partial_convert_leaves_correct_remainder_as_debt(self):
+        tab = self._make_tab(Decimal('180'))
+        customer, unpaid = tab.settle_and_partial_convert_to_debt(
+            Decimal('120'), Decimal('0'), 'PDC Customer', '', self.owner,
+        )
+        self.assertEqual(unpaid, 60.0)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+        from core.debt_views import _get_customer_debt_data
+        data = _get_customer_debt_data(customer, self.biz, scope='bar')
+        self.assertEqual(data['outstanding'], 60.0)
+
+    def test_dual_method_partial_mpesa_then_cash(self):
+        tab = self._make_tab(Decimal('180'))
+        customer, unpaid = tab.settle_and_partial_convert_to_debt(
+            Decimal('20'), Decimal('100'), 'PDC Customer', '', self.owner,
+        )
+        self.assertEqual(unpaid, 60.0)
+        # BarTabEntry.payment_method only reflects HOW a PAID entry was
+        # settled (blank while still unpaid) — the real per-channel tag
+        # lives on the underlying Transaction, which is what the debt
+        # tracker and shift reconciliation both read from directly.
+        methods = sorted(tab.entries.values_list('transaction__payment_method', flat=True))
+        self.assertEqual(methods, ['cash', 'credit', 'mpesa'])
+        amounts = sorted(tab.entries.values_list('amount', flat=True))
+        self.assertEqual(amounts, [Decimal('20'), Decimal('60'), Decimal('100')])
+
+    def test_collected_gte_total_raises(self):
+        tab = self._make_tab(Decimal('180'))
+        with self.assertRaises(ValueError):
+            tab.settle_and_partial_convert_to_debt(Decimal('180'), Decimal('0'), 'PDC Customer', '', self.owner)
+
+    def test_zero_collected_raises(self):
+        tab = self._make_tab(Decimal('180'))
+        with self.assertRaises(ValueError):
+            tab.settle_and_partial_convert_to_debt(Decimal('0'), Decimal('0'), 'PDC Customer', '', self.owner)
+
+    def test_blank_name_raises(self):
+        tab = self._make_tab(Decimal('180'))
+        with self.assertRaises(ValueError):
+            tab.settle_and_partial_convert_to_debt(Decimal('120'), Decimal('0'), '', '', self.owner)
+
+    # ── bar_board() end-to-end ───────────────────────────────────────────
+
+    def test_bar_board_checkout_partial_debt_end_to_end(self):
+        barrel_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='PDC Keg Item',
+            material_no='PDC-KEG-01', unit='Cup', selling_price=Decimal('100'), is_keg=True,
+        )
+        barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.bar_store, item=barrel_item, status='TAPPED',
+            cost_price=Decimal('1000'), target_revenue=Decimal('2000'),
+            tare_weight_kg=Decimal('5'), gross_weight_kg=Decimal('15'),
+        )
+        preset = ItemPortionPreset.objects.create(
+            item=barrel_item, label='Cup', price=Decimal('180'), quantity_consumed=Decimal('0.3'),
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.owner,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        resp = self.client.post('/bar/', {
+            'keg_cart': json.dumps([{'barrel_id': barrel.id, 'preset_id': preset.id, 'qty': 1}]),
+            'payment_method': 'tab',
+            'tab_customer': 'Roy PDC',
+            'partial_cash': '120',
+            'partial_mpesa': '0',
+            'idempotency_token': 'pdc-bar-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        tab = BarTab.objects.get(business=self.biz, customer_name='Roy PDC')
+        self.assertEqual(tab.status, 'SETTLED')
+        customer = Customer.objects.get(business=self.biz, name__iexact='Roy PDC')
+        from core.debt_views import _get_customer_debt_data
+        data = _get_customer_debt_data(customer, self.biz, scope='bar')
+        self.assertEqual(data['outstanding'], 60.0)
+
+    # ── kitchen checkout end-to-end ───────────────────────────────────────
+
+    def test_kitchen_checkout_partial_debt_end_to_end(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='PDC Chipo',
+            material_no='PDC-KIT-01', unit='Plate', selling_price=Decimal('180'),
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.owner,
+            status='OPEN', opening_float=Decimal('0'), station='kitchen',
+        )
+        resp = self.client.post('/kitchen/', {
+            'cart': json.dumps([{'item_id': item.id, 'amount': '180', 'qty': '1', 'description': 'PDC Chipo'}]),
+            'payment_method': 'food_tab',
+            'tab_customer': 'Roy Kitchen PDC',
+            'partial_cash': '0',
+            'partial_mpesa': '100',
+            'idempotency_token': 'pdc-kit-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIsNotNone(data['partial_debt'])
+        self.assertEqual(data['partial_debt']['remainder'], 80.0)
+        tab = BarTab.objects.get(business=self.biz, customer_name='Roy Kitchen PDC')
+        self.assertEqual(tab.status, 'SETTLED')
+        customer = Customer.objects.get(business=self.biz, name__iexact='Roy Kitchen PDC')
+        from core.debt_views import _get_customer_debt_data
+        debt_data = _get_customer_debt_data(customer, self.biz, scope='kitchen')
+        self.assertEqual(debt_data['outstanding'], 80.0)

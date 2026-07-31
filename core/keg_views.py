@@ -364,6 +364,27 @@ def bar_board(request):
             split_amount = Decimal('0')
         split_method = (request.POST.get('split_method') or '').strip()
 
+        # 2026-07-31 live request — Roy: "customer paid cash 120... there is
+        # a remainder" / "mpesa 100 then 20 cash and there is a remainder" —
+        # no way to record a direct-sale checkout that's only PARTIALLY paid,
+        # with the rest becoming debt, in one action (previously needed 3
+        # manual steps: open as a tab, partially settle it, then separately
+        # convert the rest to debt). Only meaningful when a tab_customer name
+        # is given — piggybacks entirely on the existing 'tab' cart-creation
+        # path below (unchanged), then settles+converts right after.
+        try:
+            partial_cash = Decimal(str(request.POST.get('partial_cash', '') or '0'))
+        except Exception:
+            partial_cash = Decimal('0')
+        try:
+            partial_mpesa = Decimal(str(request.POST.get('partial_mpesa', '') or '0'))
+        except Exception:
+            partial_mpesa = Decimal('0')
+        is_partial_debt_checkout = (
+            payment_method == 'tab' and bool(tab_customer)
+            and (partial_cash > 0 or partial_mpesa > 0)
+        )
+
         try:
             cart = json.loads(cart_json)
         except Exception:
@@ -498,6 +519,24 @@ def bar_board(request):
                 'barrel_id': barrel.id,
             })
 
+        # Partial-payment-now / remainder-as-debt (see is_partial_debt_checkout
+        # above) — chained right after the tab has all its entries but BEFORE
+        # the receipt is issued below, so the receipt's own debt/outstanding
+        # metadata reflects the true post-settlement state from the start
+        # rather than a stale "tab, not debt yet" snapshot. Never blocks the
+        # checkout on failure — the pours already happened above; a bad
+        # partial amount just leaves it as an ordinary open tab instead
+        # (still fully correctable via the tabs drawer).
+        if is_partial_debt_checkout and active_tab:
+            try:
+                active_tab.settle_and_partial_convert_to_debt(
+                    partial_cash, partial_mpesa, tab_customer, tab_phone, request.user,
+                )
+            except ValueError as _partial_err:
+                from django.contrib import messages as _msg
+                _msg.warning(request, str(_partial_err))
+                is_partial_debt_checkout = False
+
         if receipt_lines:
             # Checkout-time split payment — direct (non-tab) cash/mpesa sale
             # only. Never blocks the checkout: the pours already happened above.
@@ -600,10 +639,23 @@ def bar_board(request):
                 'receipt_number': receipt_number,
                 'receipt_url': receipt_url,
                 'receipt_id': receipt_id,
+                'partial_debt': (
+                    {
+                        'cash': float(partial_cash), 'mpesa': float(partial_mpesa),
+                        'remainder': float(total_revenue) - float(partial_cash) - float(partial_mpesa),
+                        'customer_name': tab_customer,
+                    } if is_partial_debt_checkout else None
+                ),
             }
 
-            # SMS: brand-new bar tab receipt (customer has no receipt yet)
-            if payment_method == 'tab' and master_rcpt is None and receipt_url and active_tab:
+            # SMS: brand-new bar tab receipt (customer has no receipt yet).
+            # Skipped for a partial-debt checkout — settle_and_partial_convert_to_debt()
+            # already sent its own "Deni limeandikwa" SMS; a second "Tab imefunguliwa"
+            # SMS right after would be confusing (the tab is already SETTLED by then).
+            if (
+                payment_method == 'tab' and not is_partial_debt_checkout
+                and master_rcpt is None and receipt_url and active_tab
+            ):
                 try:
                     from .notifications import normalize_ke_phone, send_sms_notification
                     _sms_phone_raw = tab_phone or (linked_customer.phone if linked_customer else '')
@@ -623,8 +675,12 @@ def bar_board(request):
                     )
 
             # SMS: bar item freshly linked into an existing tab/receipt from another
-            # counter (kitchen or Quick Sell) — update the customer.
-            if payment_method == 'tab' and _is_freshly_linked and receipt_url and active_tab:
+            # counter (kitchen or Quick Sell) — update the customer. Same
+            # partial-debt-checkout skip as above.
+            if (
+                payment_method == 'tab' and not is_partial_debt_checkout
+                and _is_freshly_linked and receipt_url and active_tab
+            ):
                 try:
                     from .notifications import normalize_ke_phone, send_sms_notification
                     _sms_phone_link = normalize_ke_phone(
@@ -2737,6 +2793,97 @@ def void_tab(request, tab_id):
     return JsonResponse({'ok': True, 'reason': reason})
 
 
+def _convert_tab_to_debt_core(tab, business, customer_name, phone=''):
+    """Shared core of a tab→debt conversion — customer resolution, entry
+    relabeling, tab closure, and the notify/SMS side-effects. Factored out
+    of convert_tab_to_debt() (2026-07-31) so the new one-shot "partial
+    payment now, remainder as debt" direct-sale checkout
+    (settle_and_partial_convert_to_debt, BarTab classmethod) gets the exact
+    same customer/SMS/notify behaviour as every other conversion path,
+    instead of a hand-rolled duplicate that could quietly drift from it.
+    bulk_convert_tabs_to_debt / shift_views._convert_open_tabs_to_debt_for_shift
+    still have their own inline copies — not touched here, to keep this a
+    contained extraction rather than a wider refactor.
+
+    customer_name is required (falls back to tab.customer_name at call
+    sites that have one). Returns (customer, unpaid_total).
+    """
+    customer_name = (customer_name or '').strip()
+    phone = (phone or '').strip()
+
+    # Find or create the Customer record.
+    # Customer has no unique_together on (business, name/phone) so get_or_create raises
+    # MultipleObjectsReturned when duplicate rows exist — always use filter().first().
+    customer = None
+    if phone:
+        customer = Customer.objects.filter(business=business, phone=phone).first()
+    if customer is None:
+        customer = Customer.objects.filter(
+            business=business, name__iexact=customer_name,
+        ).first()
+    if customer is None:
+        # credit_approved=True — matches bulk_convert_tabs_to_debt and
+        # shift_views._convert_open_tabs_to_debt_for_shift (the other two
+        # tab-to-debt conversion sites). Without this, evaluate_credit()'s
+        # check #1 (credit_approved) would trivially "block" every brand-new
+        # customer created here, which is meaningless noise — they were never
+        # asked to pre-approve credit, they just have an unpaid tab.
+        customer = Customer.objects.create(
+            business=business, name=customer_name, phone=phone,
+            credit_approved=True,
+        )
+
+    unpaid_total = float(tab.unpaid_total())
+
+    # Link the transactions to this customer so the debt tracker sees them.
+    # Must set payment_method='credit' — debt tracker queries by that value.
+    for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
+        txn = entry.transaction
+        txn.recipient = customer.name
+        txn.payment_method = 'credit'
+        txn.save(update_fields=['recipient', 'payment_method'])
+
+    tab.customer = customer
+    tab.status = 'SETTLED'
+    tab.settled_at = timezone.now()
+    tab.cash_requested_at = None
+    tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
+    _cancel_pending_transfers_for_tab(tab)
+    _sync_master_receipt_payment_method(business, tab, 'credit')
+
+    # Heads-up (not a block — goods already served) if this customer is
+    # already credit-risky per the K3 policy gate.
+    try:
+        from core.credit_policy import notify_owners_of_conversion_risk
+        notify_owners_of_conversion_risk(
+            business, customer, 'kitchen' if tab.source == 'kitchen' else 'bar', unpaid_total,
+        )
+    except Exception:
+        logger.exception('_convert_tab_to_debt_core credit-risk notify failed (customer=%s)', customer.id)
+
+    # SMS to customer confirming the debt (mirrors Quick Sell credit flow)
+    if customer.phone:
+        try:
+            from .notifications import normalize_ke_phone, send_sms_notification
+            _norm = normalize_ke_phone(customer.phone)
+            if _norm:
+                _source_label = 'Kitchen' if tab.source == 'kitchen' else 'Bar'
+                _sms = (
+                    f"Habari {customer.name},\n"
+                    f"{business.name}: Deni la KES {unpaid_total:,.0f} "
+                    f"limeandikwa ({_source_label}).\n"
+                    f"Tafadhali lipa ndani ya siku {business.credit_window_days}."
+                )
+                send_sms_notification(_sms, _norm)
+        except Exception:
+            logger.exception(
+                '_convert_tab_to_debt_core SMS failed (business=%s customer=%s)',
+                business.id, customer.id,
+            )
+
+    return customer, unpaid_total
+
+
 @login_required
 @require_POST
 def convert_tab_to_debt(request, tab_id):
@@ -2761,75 +2908,7 @@ def convert_tab_to_debt(request, tab_id):
     customer_name = (request.POST.get('customer_name') or tab.customer_name).strip()
     phone = (request.POST.get('phone') or '').strip()
 
-    # Find or create the Customer record.
-    # Customer has no unique_together on (business, name/phone) so get_or_create raises
-    # MultipleObjectsReturned when duplicate rows exist — always use filter().first().
-    customer = None
-    if phone:
-        customer = Customer.objects.filter(business=up.business, phone=phone).first()
-    if customer is None:
-        customer = Customer.objects.filter(
-            business=up.business, name__iexact=customer_name,
-        ).first()
-    if customer is None:
-        # credit_approved=True — matches bulk_convert_tabs_to_debt and
-        # shift_views._convert_open_tabs_to_debt_for_shift (the other two
-        # tab-to-debt conversion sites). Without this, evaluate_credit()'s
-        # check #1 (credit_approved) would trivially "block" every brand-new
-        # customer created here, which is meaningless noise — they were never
-        # asked to pre-approve credit, they just have an unpaid tab.
-        customer = Customer.objects.create(
-            business=up.business, name=customer_name, phone=phone,
-            credit_approved=True,
-        )
-
-    unpaid_total = float(tab.unpaid_total())
-
-    # Link the transactions to this customer so the debt tracker sees them.
-    # Must set payment_method='credit' — debt tracker queries by that value.
-    for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
-        txn = entry.transaction
-        txn.recipient = customer.name
-        txn.payment_method = 'credit'
-        txn.save(update_fields=['recipient', 'payment_method'])
-
-    tab.customer = customer
-    tab.status = 'SETTLED'
-    tab.settled_at = timezone.now()
-    tab.cash_requested_at = None
-    tab.save(update_fields=['customer', 'status', 'settled_at', 'cash_requested_at'])
-    _cancel_pending_transfers_for_tab(tab)
-    _sync_master_receipt_payment_method(up.business, tab, 'credit')
-
-    # Heads-up (not a block — goods already served) if this customer is
-    # already credit-risky per the K3 policy gate.
-    try:
-        from core.credit_policy import notify_owners_of_conversion_risk
-        notify_owners_of_conversion_risk(
-            up.business, customer, 'kitchen' if tab.source == 'kitchen' else 'bar', unpaid_total,
-        )
-    except Exception:
-        logger.exception('convert_tab_to_debt credit-risk notify failed (customer=%s)', customer.id)
-
-    # SMS to customer confirming the debt (mirrors Quick Sell credit flow)
-    if customer.phone:
-        try:
-            from .notifications import normalize_ke_phone, send_sms_notification
-            _norm = normalize_ke_phone(customer.phone)
-            if _norm:
-                _source_label = 'Kitchen' if tab.source == 'kitchen' else 'Bar'
-                _sms = (
-                    f"Habari {customer.name},\n"
-                    f"{up.business.name}: Deni la KES {unpaid_total:,.0f} "
-                    f"limeandikwa ({_source_label}).\n"
-                    f"Tafadhali lipa ndani ya siku {up.business.credit_window_days}."
-                )
-                send_sms_notification(_sms, _norm)
-        except Exception:
-            logger.exception(
-                'convert_tab_to_debt SMS failed (business=%s customer=%s)',
-                up.business.id, customer.id,
-            )
+    customer, unpaid_total = _convert_tab_to_debt_core(tab, up.business, customer_name, phone)
 
     return JsonResponse({
         'ok': True,

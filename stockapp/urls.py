@@ -247,6 +247,8 @@ from core.debt_views import (
     reject_write_off,
     manager_review_write_off,
     pending_write_offs,
+    customer_search_api,
+    merge_customer,
 )
 from core.haki_views import (
     staff_contribution_report,
@@ -552,6 +554,8 @@ urlpatterns = [
     path("debt/write-off/<int:req_id>/manager-review/", manager_review_write_off, name="manager_review_write_off"),
     path("debt/write-offs/pending/", pending_write_offs, name="pending_write_offs"),
     path("debt/<int:customer_id>/clear-defaulter/", clear_defaulter, name="clear_defaulter"),
+    path("debt/customers/search/", customer_search_api, name="customer_search_api"),
+    path("debt/<int:customer_id>/merge/", merge_customer, name="merge_customer"),
     # ── Haki (Staff Contribution + Salary) ──
     path("staff/contribution/", staff_contribution_report, name="staff_contribution_report"),
     path("staff/<int:profile_id>/salary/", record_salary_payment, name="record_salary_payment"),

@@ -703,6 +703,19 @@
             <div id="kb-merge-hint" style="display:none; font-size:.75rem; margin-top:.35rem; padding:.35rem .6rem;
                  background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.25); border-radius:6px;
                  color:#e2c36e; line-height:1.5;"></div>
+            <!-- 2026-07-31 live request — food_tab only: part paid now, rest becomes debt -->
+            <div id="kb-partial-debt-row" style="display:none; margin-top:0.5rem;">
+              <label style="display:flex; align-items:center; gap:6px; font-size:.78rem; color:#b0b0b0; cursor:pointer;">
+                <input type="checkbox" id="kb-partial-debt-toggle" onchange="kbTogglePartialDebt()">
+                Sehemu inalipwa sasa — iliyobaki ni deni
+              </label>
+              <div id="kb-partial-debt-fields" style="display:none; margin-top:6px;">
+                <div class="d-flex gap-2">
+                  <input type="number" id="kb-partial-cash-input" min="0" step="1" placeholder="Cash (KES)" class="form-control form-control-sm">
+                  <input type="number" id="kb-partial-mpesa-input" min="0" step="1" placeholder="M-Pesa (KES)" class="form-control form-control-sm">
+                </div>
+              </div>
+            </div>
           </div>
           <!-- Credit (Deni) customer fields -->
           <div id="kb-credit-row" style="display:none; margin-top:0.5rem;">
@@ -1836,12 +1849,17 @@
             hintParts.push(debtMsg);
           }
 
-          // Duplicate name warning
+          // Duplicate/similar name check — 2026-07-31 live report (McKenzie's
+          // bar and kitchen debt split across two spellings, receipt only
+          // showed one) — now genuinely asks "is this the same person?"
+          // instead of a passive text-only warning nobody could act on.
           if (similarNames.length) {
-            hintParts.push(
-              '🔍 Majina yanayofanana kwenye tab zilizo wazi: <strong>' +
-              similarNames.join(', ') + '</strong> — hakikisha ni mteja sahihi.'
-            );
+            var simMsg = '🔍 Je, ni mtu huyu huyu? ';
+            similarNames.forEach(function(sn) {
+              simMsg += '<a href="#" style="color:#c9a84c;" onclick="kbConfirmSameName(\'' +
+                sn.replace(/'/g, "\\'") + '\'); return false;">' + sn + '</a> &nbsp; ';
+            });
+            hintParts.push(simMsg);
           }
 
           if (hintParts.length) {
@@ -1856,6 +1874,23 @@
         .catch(function(){});
     });
   })();
+
+  window.kbTogglePartialDebt = function() {
+    var toggle = document.getElementById('kb-partial-debt-toggle');
+    var fields = document.getElementById('kb-partial-debt-fields');
+    fields.style.display = toggle.checked ? 'block' : 'none';
+    if (!toggle.checked) {
+      document.getElementById('kb-partial-cash-input').value = '';
+      document.getElementById('kb-partial-mpesa-input').value = '';
+    }
+  };
+
+  window.kbConfirmSameName = function(correctName) {
+    var nameInput = document.getElementById('kb-tab-name');
+    if (!nameInput) return;
+    nameInput.value = correctName;
+    nameInput.dispatchEvent(new Event('blur'));
+  };
 
   window.kbAcceptMerge = function(tabId, custName) {
     document.getElementById('kb-merge-tab-id').value = tabId;
@@ -1889,6 +1924,15 @@
     creditRow.style.display = (pm === 'credit') ? 'block' : 'none';
     stkRow.style.display    = (pm === 'stk') ? 'block' : 'none';
     document.getElementById('kb-receipt-banner').style.display = 'none';
+    // Partial-payment-now/remainder-as-debt only makes sense for a NEW
+    // food_tab (not a merge into an existing bar_tab) — reset on every
+    // method change so a stale toggle never carries through.
+    var pdRow = document.getElementById('kb-partial-debt-row');
+    var pdToggle = document.getElementById('kb-partial-debt-toggle');
+    if (pdToggle) pdToggle.checked = false;
+    var pdFields = document.getElementById('kb-partial-debt-fields');
+    if (pdFields) pdFields.style.display = 'none';
+    if (pdRow) pdRow.style.display = (pm === 'food_tab') ? 'block' : 'none';
     // 2026-07-28 — split payment only makes sense for a direct Cash/M-Pesa
     // sale. Reset it on every method change so a stale split never carries
     // through to a different payment method.
@@ -2134,6 +2178,15 @@
         splitMethodVal = pm === 'cash' ? 'mpesa' : 'cash';
       }
     }
+    // 2026-07-31 — partial payment now / remainder as debt (food_tab only).
+    var partialCashVal = '', partialMpesaVal = '';
+    if (pm === 'food_tab') {
+      var pdToggle = document.getElementById('kb-partial-debt-toggle');
+      if (pdToggle && pdToggle.checked) {
+        partialCashVal  = document.getElementById('kb-partial-cash-input').value || '0';
+        partialMpesaVal = document.getElementById('kb-partial-mpesa-input').value || '0';
+      }
+    }
     var body = new URLSearchParams({
       cart: JSON.stringify(_cart),
       payment_method: pm,
@@ -2144,6 +2197,8 @@
       merge_tab_id: mergeTabId,
       split_amount: splitAmountVal,
       split_method: splitMethodVal,
+      partial_cash: partialCashVal,
+      partial_mpesa: partialMpesaVal,
       stk_payment_id: (meta && meta.stk_payment_id) ? String(meta.stk_payment_id) : '',
       idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
       csrfmiddlewaretoken: CSRF,
@@ -2165,7 +2220,20 @@
           var msg = '✓ KES ' + fmt(d.total) + ' — ' + (_pmLabels[pm] || pm);
           if (d.tab_customer) msg += ' · ' + d.tab_customer;
           if (d.credit_name)  msg += ' · Deni: ' + d.credit_name;
+          if (d.partial_debt) {
+            msg = '💰 Sasa: KES ' + fmt(d.partial_debt.cash) +
+              (d.partial_debt.mpesa ? ' + KES ' + fmt(d.partial_debt.mpesa) + ' M-Pesa' : '') +
+              ' · 🔴 Deni: KES ' + fmt(d.partial_debt.remainder) + ' — ' + d.partial_debt.customer_name;
+          }
           showToast(msg, 3500);
+          var pdToggleReset = document.getElementById('kb-partial-debt-toggle');
+          if (pdToggleReset) { pdToggleReset.checked = false; }
+          var pdFieldsReset = document.getElementById('kb-partial-debt-fields');
+          if (pdFieldsReset) { pdFieldsReset.style.display = 'none'; }
+          var pcReset = document.getElementById('kb-partial-cash-input');
+          var pmReset = document.getElementById('kb-partial-mpesa-input');
+          if (pcReset) pcReset.value = '';
+          if (pmReset) pmReset.value = '';
           if (d.receipt_url) {
             var banner = document.getElementById('kb-receipt-banner');
             var link   = document.getElementById('kb-receipt-link');
@@ -2202,6 +2270,29 @@
     if (window._kbTabBlocked && (_pm==='food_tab'||_pm==='bar_tab')) {
       showToast('Siwezi kuendelea — angalia onyo la deni.');
       return;
+    }
+    // 2026-07-31 — partial payment now / remainder as debt (food_tab only).
+    if (_pm === 'food_tab') {
+      var pdToggle = document.getElementById('kb-partial-debt-toggle');
+      if (pdToggle && pdToggle.checked) {
+        if (!tabName) {
+          document.getElementById('kb-tab-name').focus();
+          showToast('Andika jina la mteja anayedaiwa deni.');
+          return;
+        }
+        var pCash  = parseFloat(document.getElementById('kb-partial-cash-input').value)  || 0;
+        var pMpesa = parseFloat(document.getElementById('kb-partial-mpesa-input').value) || 0;
+        var pCollected = pCash + pMpesa;
+        var pCartTotal = _cart.reduce(function(s,e){ return s + e.amount; }, 0);
+        if (pCollected <= 0) {
+          showToast('Weka kiasi kilicholipwa (Cash na/au M-Pesa).');
+          return;
+        }
+        if (pCollected >= pCartTotal) {
+          showToast('Kiasi kilicholipwa hakiwezi kuwa sawa au zaidi ya jumla (KES ' + Math.round(pCartTotal) + ') — hakuna deni la kubaki.');
+          return;
+        }
+      }
     }
     if (_pm === 'credit' && !creditName) {
       document.getElementById('kb-credit-name').focus();

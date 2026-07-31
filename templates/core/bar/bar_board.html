@@ -1056,6 +1056,25 @@
     <div id="bar-merge-hint" style="display:none; font-size:.75rem; margin-top:.35rem; padding:.35rem .6rem;
          background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.25); border-radius:6px;
          color:#e2c36e; line-height:1.5;"></div>
+    <!-- 2026-07-31 live request — "customer paid cash 120... there is a
+         remainder" / "mpesa 100 then 20 cash and there is a remainder" —
+         part of this Tab sale is paid right now, the rest becomes debt in
+         the SAME checkout, instead of 3 separate manual steps. -->
+    <label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:.78rem; color:#b0b0b0; cursor:pointer;">
+      <input type="checkbox" id="partial-debt-toggle" onchange="window.togglePartialDebt()">
+      Sehemu inalipwa sasa — iliyobaki ni deni
+    </label>
+    <div id="partial-debt-fields" style="display:none; margin-top:6px;">
+      <div class="d-flex gap-2">
+        <input type="number" id="partial-cash-input" min="0" step="1" placeholder="Cash (KES)"
+               style="background:#111; border:1px solid #444; color:#f0ece4; border-radius:8px;
+                      padding:5px 10px; font-size:0.83rem; width:50%;">
+        <input type="number" id="partial-mpesa-input" min="0" step="1" placeholder="M-Pesa (KES)"
+               style="background:#111; border:1px solid #444; color:#f0ece4; border-radius:8px;
+                      padding:5px 10px; font-size:0.83rem; width:50%;">
+      </div>
+      <div style="font-size:.7rem; color:#888; margin-top:3px;">Kiasi kilichobaki kitawekwa kama deni la jina lililoandikwa hapo juu.</div>
+    </div>
   </div>
   <!-- 2026-07-28 live request — checkout-time split payment (e.g. a KES 100
        pour paid as 40 cash + 60 mpesa), at the point of sale rather than
@@ -1085,6 +1104,8 @@
   <input type="hidden" name="merge_tab_id"   id="keg-merge-tab-id" value="">
   <input type="hidden" name="split_amount"   id="keg-split-amount-input" value="">
   <input type="hidden" name="split_method"   id="keg-split-method-input" value="">
+  <input type="hidden" name="partial_cash"   id="keg-partial-cash-input" value="">
+  <input type="hidden" name="partial_mpesa"  id="keg-partial-mpesa-input" value="">
   <input type="hidden" name="idempotency_token" id="keg-idem-token" value="">
 </form>
 
@@ -1433,6 +1454,13 @@
           {% elif success_data.payment_method == 'mpesa' %}M-Pesa
           {% else %}Cash{% endif %}
         </div>
+        {% if success_data.partial_debt %}
+        <div class="mt-2 p-2" style="background:rgba(192,57,90,0.08); border:1px solid rgba(192,57,90,0.3); border-radius:8px; font-size:0.8rem; color:#e2c36e;">
+          💰 Sasa: KES {{ success_data.partial_debt.cash|floatformat:0 }} Cash
+          {% if success_data.partial_debt.mpesa %}+ KES {{ success_data.partial_debt.mpesa|floatformat:0 }} M-Pesa{% endif %}
+          &nbsp;·&nbsp; 🔴 Deni: KES {{ success_data.partial_debt.remainder|floatformat:0 }} — {{ success_data.partial_debt.customer_name }}
+        </div>
+        {% endif %}
       </div>
       {% if success_data.receipt_url %}
       <div class="modal-body" style="padding-top:0; border-top:1px solid #2a2a2a;">
@@ -2420,6 +2448,36 @@
     }
     document.getElementById('keg-split-amount-input').value = splitAmountVal;
     document.getElementById('keg-split-method-input').value = splitMethodVal;
+
+    // 2026-07-31 — partial payment now / remainder as debt (Tab only).
+    var partialCashVal = '', partialMpesaVal = '';
+    if (method === 'tab') {
+      var pdToggle = document.getElementById('partial-debt-toggle');
+      if (pdToggle && pdToggle.checked) {
+        if (!custName) {
+          showToast('Andika jina la mteja anayedaiwa deni.', true);
+          document.getElementById('tab-customer-input').focus();
+          return;
+        }
+        var pCash  = parseFloat(document.getElementById('partial-cash-input').value)  || 0;
+        var pMpesa = parseFloat(document.getElementById('partial-mpesa-input').value) || 0;
+        var pCollected = pCash + pMpesa;
+        var pCartTotal = 0;
+        Object.values(kegCart).forEach(function (l) { pCartTotal += l.price * l.qty; });
+        if (pCollected <= 0) {
+          showToast('Weka kiasi kilicholipwa (Cash na/au M-Pesa).', true);
+          return;
+        }
+        if (pCollected >= pCartTotal) {
+          showToast('Kiasi kilicholipwa hakiwezi kuwa sawa au zaidi ya jumla (KES ' + Math.round(pCartTotal) + ') — hakuna deni la kubaki.', true);
+          return;
+        }
+        partialCashVal = String(pCash);
+        partialMpesaVal = String(pMpesa);
+      }
+    }
+    document.getElementById('keg-partial-cash-input').value = partialCashVal;
+    document.getElementById('keg-partial-mpesa-input').value = partialMpesaVal;
 
     document.getElementById('keg-cart-input').value    = JSON.stringify(cartArray);
     document.getElementById('keg-payment-input').value = method;
@@ -5595,12 +5653,18 @@ window._barMergeTabId = '';
           hintParts.push(debtMsg);
         }
 
-        // Duplicate name warning
+        // Duplicate/similar name check — 2026-07-31 live report (McKenzie's bar
+        // and kitchen debt split across two spellings, receipt only showed one)
+        // — this used to be a passive text-only warning with nothing to click;
+        // now genuinely asks "is this the same person?" so picking one corrects
+        // the spelling immediately, instead of just hoping staff notices.
         if (similarNames.length) {
-          hintParts.push(
-            '🔍 Majina yanayofanana kwenye tab zilizo wazi: <strong>' +
-            similarNames.join(', ') + '</strong> — hakikisha ni mteja sahihi.'
-          );
+          var simMsg = '🔍 Je, ni mtu huyu huyu? ';
+          similarNames.forEach(function(sn) {
+            simMsg += '<a href="#" style="color:#c9a84c;" onclick="barConfirmSameName(\'' +
+              sn.replace(/'/g, "\\'") + '\'); return false;">' + sn + '</a> &nbsp; ';
+          });
+          hintParts.push(simMsg);
         }
 
         if (hintParts.length) {
@@ -5615,6 +5679,25 @@ window._barMergeTabId = '';
       .catch(function(){});
   });
 })();
+
+window.togglePartialDebt = function() {
+  var toggle = document.getElementById('partial-debt-toggle');
+  var fields = document.getElementById('partial-debt-fields');
+  fields.style.display = toggle.checked ? 'block' : 'none';
+  if (!toggle.checked) {
+    document.getElementById('partial-cash-input').value = '';
+    document.getElementById('partial-mpesa-input').value = '';
+  }
+};
+
+window.barConfirmSameName = function(correctName) {
+  var tabInput = document.getElementById('tab-customer-input');
+  if (!tabInput) return;
+  tabInput.value = correctName;
+  // Re-run the blur check under the corrected spelling so any kitchen-tab
+  // merge / prior-debt hint updates for the right (now-canonical) name.
+  tabInput.dispatchEvent(new Event('blur'));
+};
 
 window.barAcceptMerge = function(tabId, custName) {
   window._barMergeTabId = String(tabId);

@@ -810,6 +810,93 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- Four-item live audit: split-payment debt bug, customer merge, similar-name
+  detection, partial-payment-now/remainder-as-debt checkout (2026-07-31). Roy's
+  own framing: "everything is connected... cross-check basic functionalities."
+  **(1) CRITICAL — split-paid entry's Transaction.payment_method stuck on
+  'credit' forever.** Live report: Hezzy's tab — KES 50 total, 40 paid via
+  mpesa, 10 left owing — showed BOTH 40 AND 10 as still-owed once converted to
+  debt (should only show 10). Root cause: `BarTabEntry.split_paid_unpaid_locked()`
+  (the 2026-07-25 partial-tab-settle split) correctly marked the kept/paid
+  portion's `BarTabEntry.is_paid=True` + `.payment_method=<real method>`, but
+  NEVER updated the underlying `Transaction.payment_method` away from 'credit'
+  — every tab-item Transaction starts as `payment_method='credit'`
+  (`KegBarrel.record_sale`'s `pay = 'credit' if tab else ...`), and the debt
+  tracker's `credit_qs` plus `shift_views._reconcile()`'s cash/mpesa/credit
+  totals both read `Transaction.payment_method` directly, completely
+  independent of `BarTabEntry.is_paid`. A genuinely-settled mpesa/cash payment
+  therefore kept counting as unpaid debt AND kept understating the shift's real
+  cash/mpesa collected — for EVERY historical split-paid tab entry across every
+  business, not just Hezzy's, whether or not it was later converted to debt.
+  Fixed by also setting `orig_txn.payment_method = paid_method` in
+  `split_paid_unpaid_locked()` — matching the sibling non-split branch in
+  `settle_entries_amount_locked()` a few lines up, which already got this
+  right. New `backfill_split_paid_txn_payment_method` management command
+  retroactively fixes every historical row still stuck in the broken state
+  (matched via `BarTabEntry.is_paid=True` + real `payment_method` but
+  `transaction.payment_method` still 'credit') — run once per deployed
+  environment. **(2) Customer merge — "🔀 Unganisha na Mteja Mwingine".** Live
+  report: McKenzie has both a kitchen debt and a bar debt, but his wall-QR
+  receipt only ever showed the bar item — the two were recorded under two
+  differently-spelled Customer records (this app's own `__iexact` matching
+  only catches a pure case difference, never a genuine spelling variant like
+  "Jenerali" vs "Genro" from the same report). New `Customer.merge_locked(keep_id,
+  absorb_id, business)` classmethod — owner-confirmed (the owner picks the two
+  records by id, not auto-detected) — reassigns every place a customer is
+  referenced onto the kept identity: `Transaction.recipient`,
+  `BarTab.customer`/`.customer_name`, `CustomerDebtPayment.customer` (CASCADE —
+  would be destroyed by a bare delete otherwise), `Payment.debt_customer`, and
+  `Receipt.customer_name` PLUS a symmetric `linked_tab_ids` union across every
+  receipt either name ever received (a receipt only shows the tabs listed in
+  ITS OWN meta — `core.receipt_views._receipt_all_tab_ids` — so renaming alone
+  wouldn't make an already-issued receipt start showing the other counter's
+  tab too; every receipt in the merged group ends up pointing at the same
+  combined tab set, so it no longer matters which specific QR/PIN the customer
+  has). New "🔀 Unganisha na Mteja Mwingine" button + inline search modal on
+  `customer_debt_profile.html` (owner-only), new `customer_search_api`/
+  `merge_customer` views at `/debt/customers/search/` and `/debt/<id>/merge/`.
+  **(3) Similar-name detection widened + made actionable.** `tab_check_api`'s
+  `similar_names` check used to only compare against currently-OPEN tabs — the
+  moment a tab converts to debt (status leaves OPEN) it silently stopped being
+  checked against, even though catching the split BEFORE it recurs is the
+  whole point; now also checks every `Customer` this business has ever
+  recorded. The hint itself used to be a passive, unclickable text warning
+  ("majina yanayofanana... hakikisha ni mteja sahihi") — now genuinely asks
+  "Je, ni mtu huyu huyu?" with a clickable name that overwrites the
+  customer-name field with the exact canonical spelling and re-triggers the
+  blur check, in both `bar_board.html` and `kitchen_board.html`
+  (`barConfirmSameName`/`kbConfirmSameName`). A real alias like
+  "Jenerali"/"Genro" still can't be auto-detected by any string-similarity
+  check (no shared characters worth matching on) — that case is what the new
+  merge tool is for. **(4) Partial payment now / remainder as debt, one-shot
+  checkout (Bar Board + Kitchen Board).** Live request: "customer paid cash
+  120... there is a remainder" / "mpesa 100 then 20 cash and there is a
+  remainder" — no way to record a direct-sale checkout that's only partially
+  paid, with the rest becoming debt, without 3 separate manual steps (open as
+  tab, partially settle via the tabs drawer, separately convert the rest to
+  debt). New `BarTab.settle_and_partial_convert_to_debt()` instance method
+  deliberately CHAINS the exact same already-proven primitives — `settle_
+  entries_amount_locked()` (the fixed-this-session partial-tab-settle) and a
+  newly-extracted `core.keg_views._convert_tab_to_debt_core()` (factored out
+  of `convert_tab_to_debt()`'s body so the new path gets the identical
+  customer/SMS/notify behaviour instead of a hand-rolled duplicate) — rather
+  than inventing a new payment-splitting mechanism, precisely because a new
+  ad-hoc splitting mechanism is how bug (1) above was introduced in the first
+  place. Wired into `bar_board()`'s keg-cart checkout and `_kitchen_checkout()`
+  behind a "Sehemu inalipwa sasa — iliyobaki ni deni" checkbox shown only when
+  Tab/food_tab is selected — piggybacks entirely on the existing tab-creation
+  cart path, then settles+converts right after the tab has all its entries but
+  before the receipt is issued (so the receipt's own debt metadata reflects
+  the true post-settlement state from the start). The tab's own "just opened"
+  SMS is suppressed for this path (`_convert_tab_to_debt_core` already sends
+  its own "Deni limeandikwa" SMS — firing both would be confusing). Quick Sell
+  deliberately NOT covered this pass (Roy's report named bar board + kitchen
+  specifically) — flagged as a fast-follow if wanted. 27 new tests
+  (`SplitPaidTransactionPaymentMethodSyncTest`,
+  `BackfillSplitPaidTxnPaymentMethodTest`, `CustomerMergeTest`,
+  `TabCheckApiSimilarNamesWidenedTest`, `PartialPaymentDebtCheckoutTest`),
+  plus the full pre-existing debt/tab/split-payment/anonymous-tab test
+  classes re-run and confirmed passing unmodified. No migrations.
 - Fix: plain Add Transaction form could double a stock receipt on a network drop
   (2026-07-31), live report: Chrome Brandy 250ml received as 5 came in as 10, Gilbey's
   received as 1 came in as 2 — both exactly doubled — during "an internet disruption"

@@ -1105,6 +1105,62 @@ def toggle_credit_approval(request, customer_id):
     return redirect('customer_debt_profile', customer_id=customer_id)
 
 
+@owner_or_manager_required
+def customer_search_api(request):
+    """AJAX GET — search this business's customers by name (owner/manager
+    only; used by the "🔀 Unganisha na Mteja Mwingine" merge picker, 2026-07-31
+    live request: "similar name flow ... user should be able to change and
+    edit the customer's [identity] anywhere it appears in the system"). Plain
+    substring match — the OWNER is the one confirming two spellings are the
+    same real person, so this only needs to help them FIND the other record,
+    not auto-detect the match itself (see Customer.merge_locked's docstring).
+    """
+    user_profile = get_user_profile(request)
+    q = (request.GET.get('q') or '').strip()
+    if len(q) < 2:
+        return JsonResponse({'results': []})
+    customers = Customer.objects.filter(
+        business=user_profile.business, name__icontains=q,
+    ).order_by('name')[:10]
+    return JsonResponse({
+        'results': [{'id': c.id, 'name': c.name, 'phone': c.phone} for c in customers],
+    })
+
+
+@owner_or_manager_required
+@require_POST
+def merge_customer(request, customer_id):
+    """Merge another customer record into this one — see Customer.
+    merge_locked's docstring for the full reasoning and reassignment list.
+    `customer_id` in the URL is always the KEPT identity (the profile page
+    the owner is standing on when they trigger this); `absorb_id` (POST) is
+    the duplicate being folded in and deleted.
+    """
+    user_profile = get_user_profile(request)
+    business = user_profile.business
+    keep = get_object_or_404(Customer, id=customer_id, business=business)
+
+    absorb_id = request.POST.get('absorb_id', '').strip()
+    if not absorb_id.isdigit():
+        messages.error(request, 'Chagua mteja wa kuunganisha naye.')
+        return redirect('customer_debt_profile', customer_id=customer_id)
+
+    try:
+        keep, absorbed_id, old_name = Customer.merge_locked(keep.id, int(absorb_id), business)
+    except ValueError as e:
+        messages.error(request, str(e))
+        return redirect('customer_debt_profile', customer_id=customer_id)
+
+    reviewer_name = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    messages.success(
+        request,
+        f"{old_name} ameunganishwa na {keep.name} na {reviewer_name} tarehe {when} — "
+        f"deni, risiti na tabs zote za {old_name} sasa ziko chini ya {keep.name}.",
+    )
+    return redirect('customer_debt_profile', customer_id=keep.id)
+
+
 @login_required
 @require_POST
 def update_customer_credit_settings(request, customer_id):

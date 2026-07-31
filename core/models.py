@@ -181,6 +181,93 @@ class Customer(models.Model):
     class Meta:
         ordering = ['name']
 
+    @classmethod
+    def merge_locked(cls, keep_id, absorb_id, business):
+        """Merge `absorb` into `keep` — the SAME real person recorded under two
+        different name spellings (2026-07-31 live report: "Jenerali" vs "Genro"
+        for one customer, and separately "McKenzie"/"Mckenzie" split a bar debt
+        and a kitchen debt across two Customer rows so the customer's own
+        wall-QR receipt only ever showed one of them). `Customer` has no
+        unique_together on name and this app's own convention is exact/iexact
+        matching only — a genuine spelling difference (not just case) has never
+        been auto-reconciled anywhere, so this is a deliberate, owner-confirmed
+        action: the owner picks the two records by id, not by fuzzy name match,
+        so it works regardless of how different the two spellings are.
+
+        Reassigns every place a customer is referenced, by FK or by name
+        string, onto the kept identity:
+          - Transaction.recipient (credit sales / debt — the field the whole
+            debt tracker is built on)
+          - BarTab.customer (FK) and .customer_name (display string)
+          - CustomerDebtPayment.customer (FK, CASCADE — must move or the
+            absorbed customer's whole payment history is destroyed by the
+            delete below)
+          - Payment.debt_customer (FK, SET_NULL — a pending/completed debt
+            STK Push would otherwise silently lose its customer link)
+          - Receipt.customer_name, PLUS a symmetric linked_tab_ids union
+            across every receipt either name ever received — a receipt only
+            shows the tabs listed in ITS OWN meta (core.receipt_views.
+            _receipt_all_tab_ids), so simply renaming customer_name would NOT
+            make an already-issued "Jenerali" receipt start showing the
+            "Genro" tab too; every receipt in the merged group ends up
+            pointing at the same combined tab set, so it no longer matters
+            which specific QR/PIN the customer happens to use.
+
+        Caller must be the one enforcing owner/manager-only — this is a
+        financial-identity correction, same tier as every other correction
+        tool in this app (Rekebisha, petty cash review, split-payment
+        correction). Returns `keep`. Raises ValueError if keep == absorb or
+        either id doesn't belong to this business.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            keep = cls.objects.select_for_update().filter(id=keep_id, business=business).first()
+            absorb = cls.objects.select_for_update().filter(id=absorb_id, business=business).first()
+            if not keep or not absorb:
+                raise ValueError('Mteja hakupatikana.')
+            if keep.id == absorb.id:
+                raise ValueError('Huwezi kuunganisha mteja na yeye mwenyewe.')
+
+            old_name = absorb.name
+            new_name = keep.name
+
+            Transaction.objects.filter(
+                business=business, recipient__iexact=old_name,
+            ).update(recipient=new_name)
+
+            BarTab.objects.filter(business=business, customer_id=absorb.id).update(customer=keep)
+            BarTab.objects.filter(
+                business=business, customer_name__iexact=old_name,
+            ).update(customer_name=new_name)
+
+            CustomerDebtPayment.objects.filter(business=business, customer=absorb).update(customer=keep)
+            Payment.objects.filter(debt_customer=absorb).update(debt_customer=keep)
+
+            receipts = list(
+                Receipt.objects.filter(
+                    business=business, customer_name__iexact=new_name,
+                ) | Receipt.objects.filter(
+                    business=business, customer_name__iexact=old_name,
+                )
+            )
+            if receipts:
+                combined = set()
+                for r in receipts:
+                    meta = r.meta or {}
+                    if meta.get('tab_id'):
+                        combined.add(meta['tab_id'])
+                    combined.update(meta.get('linked_tab_ids') or [])
+                for r in receipts:
+                    own_tab_id = (r.meta or {}).get('tab_id')
+                    r.meta = r.meta or {}
+                    r.meta['linked_tab_ids'] = sorted(combined - {own_tab_id})
+                    r.customer_name = new_name
+                    r.save(update_fields=['meta', 'customer_name'])
+
+            absorbed_id = absorb.id
+            absorb.delete()
+        return keep, absorbed_id, old_name
+
 
 # ────────────────────────────────────────────────
 # NOTIFICATION MODEL
@@ -3011,6 +3098,66 @@ class BarTab(models.Model):
                     remaining = Decimal('0')
         return fully_paid, split_remainder
 
+    def settle_and_partial_convert_to_debt(self, cash_amount, mpesa_amount, customer_name, phone='', staff_user=None):
+        """One-shot "partial payment now, remainder becomes debt" for a tab
+        that was just created for a single walk-up sale (2026-07-31 live
+        request — Roy: "customer paid cash 120... there is a remainder",
+        "mpesa 100 then 20 cash and there is a remainder" — Bar Board and
+        Kitchen Board's direct checkout had no way to record this without
+        first opening a tab, partially settling it via the tabs drawer, and
+        separately converting the rest to debt — three separate manual
+        steps for what should be one checkout action).
+
+        Deliberately built by CHAINING the exact same, already-proven
+        mechanisms used everywhere else in this app for these two steps —
+        settle_entries_amount_locked() (the 2026-07-25 theft-prevention
+        partial-tab-payment feature, itself just fixed 2026-07-31 for the
+        Transaction.payment_method-stuck-on-'credit' bug) and
+        core.keg_views._convert_tab_to_debt_core() (the same customer/SMS/
+        notify behaviour convert_tab_to_debt's own "→ Deni" button uses) —
+        never a new, separately-invented payment-splitting mechanism. That
+        reuse is deliberate: a NEW ad-hoc splitting mechanism is exactly how
+        the Transaction.payment_method bug fixed this same session was
+        introduced in the first place.
+
+        Settles up to cash_amount then mpesa_amount across every unpaid
+        entry on this tab (oldest-first, same walk order
+        settle_entries_amount_locked already uses), then converts whatever
+        remains unpaid to debt under customer_name/phone.
+
+        Raises ValueError if cash_amount+mpesa_amount <= 0 (nothing
+        collected — use the plain Deni checkout instead) or >= the tab's
+        current unpaid total (nothing left to convert — use the plain
+        cash/mpesa/split checkout instead), or if customer_name is blank.
+        Returns (customer, unpaid_total_left_as_debt).
+        """
+        cash_amount = Decimal(str(cash_amount or 0))
+        mpesa_amount = Decimal(str(mpesa_amount or 0))
+        collected = cash_amount + mpesa_amount
+        if collected <= 0:
+            raise ValueError('Kiasi kilicholipwa lazima kiwe zaidi ya 0.')
+        if not (customer_name or '').strip():
+            raise ValueError('Jina la mteja anayedaiwa deni linahitajika.')
+
+        total_unpaid = self.unpaid_total()
+        if collected >= total_unpaid:
+            raise ValueError('Kiasi kilicholipwa hakiwezi kuwa sawa au zaidi ya jumla — hakuna deni la kubaki.')
+
+        entry_ids = list(self.entries.filter(is_paid=False).values_list('id', flat=True))
+        if cash_amount > 0:
+            BarTab.settle_entries_amount_locked(
+                self.id, self.business, entry_ids, cash_amount, 'cash', staff_user,
+            )
+        if mpesa_amount > 0:
+            entry_ids = list(self.entries.filter(is_paid=False).values_list('id', flat=True))
+            BarTab.settle_entries_amount_locked(
+                self.id, self.business, entry_ids, mpesa_amount, 'mpesa', staff_user,
+            )
+
+        from core.keg_views import _convert_tab_to_debt_core
+        self.refresh_from_db()
+        return _convert_tab_to_debt_core(self, self.business, customer_name, phone)
+
 
 class BarTabEntry(models.Model):
     tab         = models.ForeignKey(BarTab, on_delete=models.CASCADE, related_name='entries')
@@ -3183,8 +3330,27 @@ class BarTabEntry(models.Model):
         remainder = entry.amount - paid_amount
         orig_txn = Transaction.objects.select_for_update().get(pk=entry.transaction_id)
 
+        # payment_method MUST move off 'credit' here too (found 2026-07-31,
+        # live report: Hezzy's tab — 50 total, 40 paid via mpesa, 10 left
+        # owing — showed BOTH 40 and 10 as still-owed once converted to
+        # debt). Every tab-item Transaction starts as payment_method='credit'
+        # (see KegBarrel.record_sale's `pay = 'credit' if tab else ...`) —
+        # this method only ever updated the BarTabEntry's own payment_method
+        # below, leaving the underlying Transaction (what the debt tracker's
+        # credit_qs and _reconcile()'s cash/mpesa/credit aggregates both read
+        # directly, independent of BarTabEntry.is_paid) stuck reporting
+        # 'credit' forever for the KEPT/PAID portion — so a genuinely-settled
+        # mpesa/cash payment kept counting as unpaid debt AND kept
+        # understating the shift's real cash/mpesa collected. The sibling
+        # non-split branch in settle_entries_amount_locked() (a few lines up)
+        # already gets this right (`entry.transaction.payment_method =
+        # payment_method`); revoke_payment_locked() also depends on the two
+        # staying in sync. split_kept_unpaid_locked() is correctly NOT
+        # touched here — its kept portion is still genuinely unpaid, so
+        # 'credit' remains the right tag for it.
         orig_txn.sale_amount = paid_amount
-        orig_txn.save(update_fields=['sale_amount'])
+        orig_txn.payment_method = paid_method
+        orig_txn.save(update_fields=['sale_amount', 'payment_method'])
 
         entry.amount = paid_amount
         entry.is_paid = True
