@@ -3913,3 +3913,15 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   the `border-collapse` line is new. No way to visually verify this in this environment
   (no browser); Roy needs to confirm on the same device that showed the original overlap.
   Verified 0 template parse errors. No migrations (CSS-only).
+- Sticky table headers — permanently abandoned (2026-07-31, same day, third report). Roy's
+  own screenshots after the `border-collapse:separate` fix showed the header STILL not
+  staying pinned while scrolling, plus a new partial-row visual artifact just below it. This
+  was the second distinct live failure of the same feature in one day, both attempts reasoned
+  from documented CSS/WebKit behavior rather than actually seen — this environment has no
+  browser. Roy explicitly offered the out ("if this thing will prove to be a challenge we
+  could just revert"), and two wrong blind guesses in a row is that signal. Reverted
+  `.table thead th`'s `position: sticky` and the `border-collapse: separate` change in
+  `base.html` back to plain scrolling headers, with a comment explaining why this should not
+  be re-attempted without real browser access or a screen recording to actually see the
+  failure. The `--sticky-top` CSS var + JS measurement script were left in place (harmless,
+  unused) since other code may reference the var. No migrations (CSS-only).

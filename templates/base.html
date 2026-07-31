@@ -270,31 +270,26 @@
         }
 
         /* ── TABLES ── */
-        /* 2026-07-31 follow-up (Roy, second live report with a screenshot):
-           re-requested the same "frozen header row" behaviour he's used to
-           from Excel — the column headers should stay pinned at the top of
-           the screen while scrolling down a long list, so it's always clear
-           which column a figure belongs to. This is the same feature
-           reverted earlier the same day after it corrupted table rendering
-           on one device. Root-caused this time instead of just re-adding
-           the old code: Bootstrap's Reboot sets `border-collapse: collapse`
-           on every <table>, and WebKit (Safari / all iOS browsers, which
-           are Safari under the hood) has a well-documented bug where
-           `position: sticky` on a <th> is unreliable under
-           border-collapse:collapse — the sticky row's height can collapse
-           to ~0 and render on top of the first data row instead of above
-           it, exactly matching the original screenshots. The fix is
-           border-collapse:separate + border-spacing:0, which restores
-           correct sticky behaviour in WebKit. This introduces no visual
-           change here specifically because every row/cell border below
-           only ever sets border-bottom (never border-top), so there is
-           nothing for separate borders to double up. */
-        .table {
-            color: var(--pearl);
-            border-color: #333;
-            border-collapse: separate;
-            border-spacing: 0;
-        }
+        /* 2026-07-31 — sticky table headers permanently abandoned after TWO
+           separate live-device failures in the same day. Attempt 1 (plain
+           position:sticky on <th>) corrupted table rendering outright —
+           header cells drawn on top of the first data row. Attempt 2 added
+           border-collapse:separate as the documented WebKit fix for that
+           exact failure mode; Roy's follow-up screenshots showed it was
+           STILL not staying pinned while scrolling, plus a new partial-row
+           overlap artifact just below the header. Both attempts were built
+           and shipped blind — this environment has no browser, so every fix
+           here was reasoned from documented CSS behavior, not seen. Two
+           wrong guesses in one day on the same feature is the signal to
+           stop rather than ship a third blind attempt; Roy offered this
+           exact option ("if this thing will prove to be a challenge we
+           could just revert"). Do not re-attempt sticky headers without
+           first getting real browser access (or Roy's own screen-recorded
+           reproduction) to actually see what's failing — reasoning about
+           WebKit quirks from documentation alone has now been tried twice
+           and failed twice. Headers scroll with the table, as before any of
+           this started. */
+        .table { color: var(--pearl); border-color: #333; }
         .table thead th {
             background: linear-gradient(135deg, #111, #1f1f1f);
             color: var(--gold);
@@ -304,23 +299,7 @@
             text-transform: uppercase;
             font-weight: 500;
             padding: 1rem 0.75rem;
-            /* stays visible while scrolling a long list — stock, receipts,
-               sales, transaction history, and every other data table in the
-               app share this one rule so it never needs re-adding per
-               template. Depends on border-collapse:separate above. */
-            position: -webkit-sticky;
-            position: sticky;
-            top: var(--sticky-top);
-            z-index: 15;
         }
-        /* a table inside a modal scrolls within the modal itself, not the
-           page — a page-relative sticky offset there just looks broken, so
-           opt out */
-        .modal-body .table thead th { position: static; }
-        /* same story for a small fixed-height preview table (its own
-           max-height + overflow-y:auto) — stick to ITS top (0), not the
-           page's */
-        .table-responsive-scroll thead th { top: 0; }
         .table tbody tr {
             background: var(--onyx-card) !important;
             border-color: #2e2e2e !important;
