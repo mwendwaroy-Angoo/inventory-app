@@ -209,6 +209,7 @@
 
         <form method="post" id="transactionForm">
             {% csrf_token %}
+            <input type="hidden" name="idempotency_token" id="transactionIdemToken" value="">
 
             <!-- ── Item Details ── -->
             <div class="section-divider"><span>📦 {% trans 'Item Details' %}</span></div>
@@ -1160,6 +1161,19 @@ $(document).ready(function () {
     toggleRecipient();
 
     // ── Double-submit guard ───────────────────────────────────────────────
+    // Token set ONCE at page load (not per-submit) so it stays identical for
+    // the lifetime of this page render — this is what makes it work against
+    // a real network-level resubmission (a slow-connection retry, or the
+    // browser's own "resend the data you submitted?" prompt after a dropped
+    // connection reconnects), which replays the exact same form body rather
+    // than triggering a fresh 'submit' event this JS could see. The
+    // _txnFormSubmitted flag below only stops a second live click on this
+    // same page; core/views.py's claim_checkout_token() is the real
+    // backstop for everything else (2026-07-31 live report — a stock
+    // receipt doubled during an internet disruption).
+    document.getElementById('transactionIdemToken').value =
+        (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+
     var _txnFormSubmitted = false;
     document.getElementById('transactionForm').addEventListener('submit', function (e) {
         if (_txnFormSubmitted) { e.preventDefault(); return; }

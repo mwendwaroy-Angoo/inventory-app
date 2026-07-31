@@ -953,18 +953,27 @@ def add_transaction(request):
         is_quick = request.GET.get('quick') == '1'
         restock_resolved = False
 
-        # Server-side double-submit backstop for the fast AJAX path only (Quick
-        # Sell's "+📦 Pata Stok" modal — built precisely for restocking mid-shift
-        # under time pressure, the same busy-counter conditions that motivated
-        # every other idempotency fix in this app). The normal full-page form
-        # already has page-reload friction against accidental resubmission, so
-        # it's left untouched — see core/idempotency.py. (Quick-Sell-module
-        # audit finding, 2026-07-19.)
-        if is_quick:
-            from core.idempotency import claim_checkout_token
-            idem_token = (request.POST.get('idempotency_token') or '').strip()
-            if not claim_checkout_token(user_profile.business_id, idem_token):
+        # Server-side double-submit backstop (core/idempotency.py). Originally
+        # only applied to the fast AJAX path (Quick Sell's "+📦 Pata Stok"
+        # modal) on the assumption that the normal full-page form already had
+        # enough "page-reload friction" against accidental resubmission —
+        # 2026-07-31 live report (Roy: Chrome Brandy received as 5 came in as
+        # 10, Gilbey's received as 1 came in as 2 — both exactly doubled,
+        # "there was an internet disruption") proved that assumption wrong. A
+        # connection drop mid-submit doesn't reload the page — it leaves the
+        # form sitting there, and the browser's own "resend the data you
+        # submitted?" prompt after reconnecting resubmits the exact same POST
+        # body, including the token below, which the client-side JS guard
+        # (_txnFormSubmitted flag / disabled button in add_transaction.html)
+        # cannot see or stop since it only guards a second live click, not a
+        # browser-level resend. Now applied to every submission, quick or not.
+        from core.idempotency import claim_checkout_token
+        idem_token = (request.POST.get('idempotency_token') or '').strip()
+        if not claim_checkout_token(user_profile.business_id, idem_token):
+            if is_quick:
                 return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+            messages.info(request, 'Muamala huu tayari umehifadhiwa.')
+            return redirect('add_transaction')
 
         item_id = request.POST["item"]
         trans_type = request.POST["type"]

@@ -6315,8 +6315,21 @@ class OwnerConsumptionIdempotencyTest(TestCase):
 class AddTransactionQuickIdempotencyTest(TestCase):
     """add_transaction's AJAX quick=1 branch (Quick Sell's "+📦 Pata Stok" modal) had
     no double-submit guard — the only checkout-adjacent write path in the app that
-    still lacked one. Scoped to the AJAX branch only; the normal full-page form is
-    untouched."""
+    still lacked one at the time this was originally fixed.
+
+    2026-07-31 live report (Roy): a stock receipt doubled on the NORMAL full-page
+    form too — Chrome Brandy received as 5 came in as 10, Gilbey's received as 1
+    came in as 2, both exactly doubled, during "an internet disruption." The
+    original reasoning for leaving the plain form unprotected ("page-reload
+    friction against accidental resubmission") doesn't hold up against a
+    connection drop mid-submit — the page never reloads, and a browser's own
+    "resend the data you submitted?" prompt after reconnecting replays the exact
+    same POST body, which the client-side _txnFormSubmitted JS guard can't see
+    since it only stops a second live click, not a browser-level resend. The
+    claim_checkout_token() backstop now applies to every submission through this
+    view, quick or not; add_transaction.html gained the same hidden
+    idempotency_token field (set once at page load) that receive_goods.html and
+    every other protected form already use."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='Quick Receive Idem Biz')
@@ -6352,6 +6365,52 @@ class AddTransactionQuickIdempotencyTest(TestCase):
         })
         self.assertEqual(
             Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').count(), 2,
+        )
+
+    def test_plain_form_duplicate_token_does_not_double_the_receipt(self):
+        """The literal reported scenario — the same browser-resend token
+        reaching the server twice on the normal (non-AJAX) Add Transaction
+        form — must not double the Receipt."""
+        payload = {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '5',
+            'idempotency_token': 'plain-dup-1',
+        }
+        resp1 = self.client.post('/add-transaction/', payload)
+        resp2 = self.client.post('/add-transaction/', payload)
+        self.assertEqual(resp1.status_code, 302)
+        self.assertEqual(resp2.status_code, 302)
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').count(), 1,
+            'Duplicate token must not double the plain-form Receipt',
+        )
+        self.assertEqual(self.item.current_balance(), Decimal('5'))
+
+    def test_plain_form_different_tokens_both_go_through(self):
+        """Two genuinely separate deliveries (different tokens) must both
+        record — the guard must never suppress a real repeat."""
+        self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '5',
+            'idempotency_token': 'plain-a',
+        })
+        self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '5',
+            'idempotency_token': 'plain-b',
+        })
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').count(), 2,
+        )
+        self.assertEqual(self.item.current_balance(), Decimal('10'))
+
+    def test_plain_form_blank_token_is_not_blocked(self):
+        """A caller with no token at all (JS disabled, or an older cached
+        page) must get NO protection rather than being hard-blocked —
+        matching claim_checkout_token()'s own documented contract."""
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '5',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt').count(), 1,
         )
 
 

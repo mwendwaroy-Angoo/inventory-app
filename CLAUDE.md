@@ -810,6 +810,38 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- Fix: plain Add Transaction form could double a stock receipt on a network drop
+  (2026-07-31), live report: Chrome Brandy 250ml received as 5 came in as 10, Gilbey's
+  received as 1 came in as 2 — both exactly doubled — during "an internet disruption"
+  while the owner was recording the delivery. Root cause: `add_transaction()`'s
+  double-submit protection (`claim_checkout_token`, `core/idempotency.py`) was
+  deliberately scoped ONLY to the `?quick=1` AJAX branch (Quick Sell's "+📦 Pata Stok"
+  modal) — the 2026-07-19 Quick-Sell-module audit that added it reasoned the normal
+  full-page form already had enough "page-reload friction" against accidental
+  resubmission. That assumption doesn't hold against a connection drop mid-POST: the
+  page never reloads, and many mobile browsers show their own native "resend the data
+  you submitted?" prompt on reconnect — tapping through replays the exact same POST
+  body, invisible to the client-side `_txnFormSubmitted` JS guard (which only stops a
+  second LIVE click, not a browser-level resend, per this app's own documented
+  `claim_checkout_token` contract). The clean 2x on both items is strong corroborating
+  evidence for a literal duplicate submission, not a data-entry mistake. Fix: the
+  `claim_checkout_token` guard in `add_transaction()` now applies to every POST through
+  the view, not just the AJAX branch; `add_transaction.html` gained the same
+  page-load-scoped hidden `idempotency_token` field (generated ONCE via
+  `crypto.randomUUID()` at page load, not per-click — critical, since a browser resend
+  must carry the SAME token as the original attempt to be caught) that every other
+  protected checkout surface in this app already uses (e.g. `receive_goods.html`). A
+  blank/missing token (JS disabled, stale cached page) still gets no protection rather
+  than being hard-blocked, matching `claim_checkout_token()`'s documented contract.
+  Immediate correction path given to Roy for the two already-doubled balances: use the
+  existing "⚖️ Rekebisha" (Adjust Stock Balance) tool on Stock List — enter the real
+  physical count and the system auto-creates the correct adjusting transaction
+  (`invoice_no='[ADJ]'`), with zero need to touch the item form's opening stock, which
+  is exactly the correction mechanism this feature was already built for
+  (`core/stock_take_views.py:adjust_stock_balance`, 2026-07-13). 5 new tests
+  (`AddTransactionQuickIdempotencyTest` — 3 new plain-form cases alongside the 2
+  pre-existing quick=1 cases: duplicate token blocks a second Receipt, different tokens
+  both go through, a blank token is never hard-blocked). No migrations.
 - Sprint 4 (2026-06-13): Shift Handover Module complete — middleware enforcement, barrel weigh-in at shift change (SHIFT_CLOSE/SHIFT_OPEN), offline sales capture (Option A: shift-level adjustment), backdated transaction entry (Option B: created_at override), shift history with reconciliation. Next: Waitress Order Queue.
 - Sprint 5 (2026-06-13): Waitress Order Queue complete — TableOrder + TableOrderItem models, 'waitress' role, mobile Order Desk screen (table chips, item/preset tiles, cart, place order), bar board queue drawer (Accept→Ready→Served, auto-poll 20s, badge count), SERVED auto-creates Issue transactions. Next: Expiry Date Tracking or Business-type aware UI.
 - Sprint 5 fixes (2026-06-14): Jug tracking (ItemPortionPreset.is_jug + KegBarrel.jugs_dispensed, position-based save, bar board panel); add-staff role field rendered (fixed blank-password validation loop); Quick Sell preset modal for non-produce items with presets (spirits quarters/halves); selling_price auto-fills full-unit preset price on item form.
