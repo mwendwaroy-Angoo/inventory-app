@@ -679,6 +679,14 @@ def _kitchen_checkout(request, up, business, is_owner):
             sale_preset = None
             if preset_id:
                 sale_preset = ItemPortionPreset.objects.filter(id=preset_id, item=item).first()
+            # 2026-07-31 live report (Roy — half-bottle tab entry, physical
+            # stock count off by exactly that half): a preset tap's stock
+            # deduction must come from the database's own current
+            # quantity_consumed, never the client-supplied qty — same
+            # authoritative-server fix applied to Quick Sell's checkout for
+            # the identical client-trust gap.
+            if sale_preset is not None:
+                qty = Decimal(str(sale_preset.quantity_consumed))
             txn = Transaction.objects.create(
                 business=business,
                 item=item,

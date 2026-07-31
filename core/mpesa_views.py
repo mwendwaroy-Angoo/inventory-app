@@ -616,6 +616,11 @@ def _settle_kitchen_order_from_payment(payment):
                 try:
                     item = Item.objects.get(id=item_id, store=kitchen_store)
                     preset = ItemPortionPreset.objects.filter(id=preset_id, item=item).first() if preset_id else None
+                    # 2026-07-31 — authoritative server-side stock deduction
+                    # for a preset tap (same fix as the direct Kitchen Board
+                    # checkout and Quick Sell's STK settlement, above).
+                    if preset is not None:
+                        qty = Decimal(str(preset.quantity_consumed))
                     Transaction.objects.create(
                         business=business, item=item, type='Issue',
                         qty=-qty, sale_amount=amount,
@@ -706,6 +711,12 @@ def _settle_qs_from_payment(payment):
 
             preset = ItemPortionPreset.objects.filter(id=preset_id, item=item).first() if preset_id else None
             sale_amount = amount if (preset or amount != qty * item.selling_price) else None
+            # 2026-07-31 — authoritative server-side stock deduction for a
+            # preset tap, same fix as the direct Quick Sell checkout path
+            # (Roy's live report — this STK settlement callback creates the
+            # identical shape of Transaction and had the identical gap).
+            if preset is not None:
+                qty = Decimal(str(preset.quantity_consumed))
 
             Transaction.objects.create(
                 business=business,

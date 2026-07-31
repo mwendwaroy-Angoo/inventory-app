@@ -16964,6 +16964,255 @@ class PresetAttributionLatentGapFixesTest(TestCase):
         self.assertEqual(txn.preset_id, self.preset.id)
 
 
+class AuthoritativePresetStockDeductionTest(TestCase):
+    """2026-07-31 live urgent report (Roy, KC Ginger 250ml — physical count
+    4.25 bottles, system showed 4.75, a discrepancy of exactly one
+    half-bottle preset tap): every sale-recording path that accepts a
+    preset_id from the client also accepted a client-supplied stock
+    quantity for that same line, with no server-side check against the
+    preset's own quantity_consumed — a stale cached preset in the browser,
+    or any future client bug, could silently under- or over-deduct real
+    stock. Bar Board's keg path (KegBarrel.record_sale) already derived ml
+    server-side from the DB preset; this class locks in the same guarantee
+    for Quick Sell, Kitchen Board, both STK settlement callbacks, and
+    SERVED table-order conversion — in each case the TEST sends a wrong
+    stock_qty/qty on purpose and asserts the preset's real
+    quantity_consumed wins."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Authoritative Preset Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Liquor Store')
+        self.owner = User.objects.create_user(username='apsd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='KC Ginger 250ML',
+            material_no='APSD-KCG-01', unit='250ml', selling_price=Decimal('400'),
+        )
+        self.preset = ItemPortionPreset.objects.create(
+            item=self.item, label='Nusu', price=Decimal('200'), quantity_consumed=Decimal('0.5'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_quick_sell_checkout_ignores_wrong_client_stock_qty(self):
+        import json
+        cart = json.dumps([{
+            'id': self.item.id, 'qty': 1, 'price': 200,
+            'stock_qty': 5,  # wildly wrong — real deduction must be 0.5, not 5
+            'preset_id': self.preset.id,
+        }])
+        before = self.item.current_balance()
+        self.client.post('/quick-sell/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertEqual(self.item.current_balance(), before - Decimal('0.5'))
+
+    def test_quick_sell_checkout_multiplies_preset_qty_by_cart_taps(self):
+        """Two taps of the same preset (cart qty=2) must deduct 2 × 0.5 = 1.0,
+        not 2 × the (wrong) client stock_qty."""
+        import json
+        cart = json.dumps([{
+            'id': self.item.id, 'qty': 2, 'price': 200,
+            'stock_qty': 5, 'preset_id': self.preset.id,
+        }])
+        before = self.item.current_balance()
+        self.client.post('/quick-sell/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertEqual(self.item.current_balance(), before - Decimal('1.0'))
+
+    def test_kitchen_checkout_ignores_wrong_client_qty(self):
+        import json
+        kuku = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku',
+            material_no='APSD-KUKU-01', unit='Pcs', selling_price=Decimal('150'),
+        )
+        preset = ItemPortionPreset.objects.create(
+            item=kuku, label='Paja Nusu', price=Decimal('150'), quantity_consumed=Decimal('0.5'),
+        )
+        Transaction.objects.create(business=self.biz, item=kuku, type='Receipt', qty=Decimal('20'))
+        before = kuku.current_balance()
+        cart = json.dumps([{
+            'item_id': kuku.id, 'qty': 5, 'amount': 150,  # wrong — real is 0.5
+            'preset_id': preset.id, 'description': 'Kuku — Paja Nusu',
+        }])
+        self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertEqual(kuku.current_balance(), before - Decimal('0.5'))
+
+    def test_settle_qs_from_payment_ignores_wrong_client_qty(self):
+        from core.mpesa_views import _settle_qs_from_payment
+        from core.models import Payment
+        before = self.item.current_balance()
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('200'), phone='0700000000',
+            status='completed',
+            qs_cart=[{
+                'item_id': self.item.id, 'qty': 5, 'amount': 200,  # wrong — real is 0.5
+                'preset_id': self.preset.id, 'description': 'KC Ginger — Nusu',
+            }],
+        )
+        _settle_qs_from_payment(payment)
+        self.assertEqual(self.item.current_balance(), before - Decimal('0.5'))
+
+    def test_settle_kitchen_order_from_payment_ignores_wrong_client_qty(self):
+        from core.mpesa_views import _settle_kitchen_order_from_payment
+        from core.models import Payment
+        kuku = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku 2',
+            material_no='APSD-KUKU-02', unit='Pcs', selling_price=Decimal('150'),
+        )
+        preset = ItemPortionPreset.objects.create(
+            item=kuku, label='Paja Nusu', price=Decimal('150'), quantity_consumed=Decimal('0.5'),
+        )
+        Transaction.objects.create(business=self.biz, item=kuku, type='Receipt', qty=Decimal('20'))
+        before = kuku.current_balance()
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('150'), phone='0700000000',
+            status='completed',
+            kitchen_cart=[{
+                'item_id': kuku.id, 'qty': 5, 'amount': 150,  # wrong — real is 0.5
+                'preset_id': preset.id, 'description': 'Kuku — Paja Nusu',
+            }],
+        )
+        _settle_kitchen_order_from_payment(payment)
+        self.assertEqual(kuku.current_balance(), before - Decimal('0.5'))
+
+    def test_served_table_order_multiplies_count_by_preset_quantity(self):
+        """A waitress order line's quantity is a COUNT of preset taps (e.g.
+        '2 half-portions'), not the fractional stock amount directly — the
+        real stock deduction must be count × quantity_consumed."""
+        from core.models import TableOrder, TableOrderItem
+        from core.order_views import _create_transactions_for_order
+        kuku = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku 3',
+            material_no='APSD-KUKU-03', unit='Pcs', selling_price=Decimal('150'),
+        )
+        preset = ItemPortionPreset.objects.create(
+            item=kuku, label='Paja Nusu', price=Decimal('150'), quantity_consumed=Decimal('0.5'),
+        )
+        Transaction.objects.create(business=self.biz, item=kuku, type='Receipt', qty=Decimal('20'))
+        before = kuku.current_balance()
+        waitress = User.objects.create_user(username='apsd_waitress', password='x')
+        up = UserProfile.objects.create(user=waitress, business=self.biz, role='waitress')
+        order = TableOrder.objects.create(
+            business=self.biz, table_label='Table 9', waitress=waitress,
+            status='ACCEPTED', payment_method='cash',
+        )
+        TableOrderItem.objects.create(
+            order=order, item=kuku, preset=preset,
+            quantity=Decimal('2'), unit_price=Decimal('150'),
+            preset_label='Paja Nusu', item_name='Kuku',
+        )
+        _create_transactions_for_order(order, up)
+        self.assertEqual(kuku.current_balance(), before - Decimal('1.0'))
+
+    def test_served_table_order_does_not_crash_when_recording(self):
+        """Regression lock for a real NameError: _create_transactions_for_
+        order(order, up) used to reference an undefined `request` variable
+        in its recorded_by fallback — caught silently by the loop's own
+        try/except, which would have skipped the whole Transaction (zero
+        stock effect) for that order line. Locked in by asserting the
+        Transaction actually gets created with a real recorded_by."""
+        from core.models import TableOrder, TableOrderItem
+        from core.order_views import _create_transactions_for_order
+        regular_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Soda',
+            material_no='APSD-SODA-01', unit='Bottle', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(business=self.biz, item=regular_item, type='Receipt', qty=Decimal('10'))
+        waitress = User.objects.create_user(username='apsd_waitress2', password='x')
+        up = UserProfile.objects.create(user=waitress, business=self.biz, role='waitress')
+        order = TableOrder.objects.create(
+            business=self.biz, table_label='Table 10', waitress=waitress,
+            status='ACCEPTED', payment_method='cash',
+        )
+        TableOrderItem.objects.create(
+            order=order, item=regular_item, preset=None,
+            quantity=Decimal('2'), unit_price=Decimal('50'),
+            item_name='Soda',
+        )
+        _create_transactions_for_order(order, up)
+        txn = Transaction.objects.filter(business=self.biz, item=regular_item, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.recorded_by_id, waitress.id)
+
+
+class KitchenCustomPriceTest(TestCase):
+    """2026-07-31 live request: "in the kitchen section... kitchen staff can
+    input a custom selling price of a commodity in situations where the
+    item been sold does not physically meet the quantity or size needed to
+    sell at set price" (e.g. a chicken leg cut smaller than usual). The
+    frontend ✏️ Bei Maalum affordance (kitchen_board.html) submits the exact
+    same cart shape _kitchen_checkout() already parses for a normal preset
+    tap — no backend change was needed, only a UI path that always prompts
+    for the price instead of using the preset's configured one. These tests
+    lock in the contract the frontend now relies on: the submitted `amount`
+    becomes sale_amount verbatim (even when it doesn't match the preset's
+    own price), while stock deduction still comes from the preset's own
+    quantity_consumed regardless of the custom price entered — proving the
+    two are correctly decoupled."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Custom Price Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kcp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku',
+            material_no='KCP-KUKU-01', unit='Pcs', selling_price=Decimal('150'),
+        )
+        self.preset = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Paja Nusu', price=Decimal('150'), quantity_consumed=Decimal('0.5'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('20'))
+        self.client.force_login(self.owner)
+
+    def test_custom_price_overrides_configured_preset_price(self):
+        """A smaller-than-usual leg sold via Bei Maalum for KES 100 instead
+        of the configured KES 150 — sale_amount must reflect the entered
+        100, not the preset's own 150."""
+        import json
+        cart = json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': self.preset.id,
+            'description': 'Kuku — Paja Nusu (Bei Maalum)', 'amount': 100, 'qty': 0.5,
+        }])
+        self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.sale_amount, Decimal('100'))
+
+    def test_custom_price_does_not_change_stock_deduction(self):
+        """The custom price must never influence how much stock the sale
+        deducts — that still comes solely from the preset's own
+        quantity_consumed, exactly like an ordinary preset tap."""
+        import json
+        before = self.kuku.current_balance()
+        cart = json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': self.preset.id,
+            'description': 'Kuku — Paja Nusu (Bei Maalum)', 'amount': 100, 'qty': 0.5,
+        }])
+        self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertEqual(self.kuku.current_balance(), before - Decimal('0.5'))
+
+    def test_custom_price_with_no_preset_deducts_whole_item(self):
+        """An item with no presets at all (customPriceTileClick's p=None
+        branch) sells as a plain qty=1 custom-price line."""
+        import json
+        soda = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Soda Maalum',
+            material_no='KCP-SODA-01', unit='Bottle', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(business=self.biz, item=soda, type='Receipt', qty=Decimal('10'))
+        before = soda.current_balance()
+        cart = json.dumps([{
+            'item_id': soda.id, 'description': 'Soda Maalum (Bei Maalum)', 'amount': 70, 'qty': 1,
+        }])
+        self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        txn = Transaction.objects.filter(business=self.biz, item=soda, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.sale_amount, Decimal('70'))
+        self.assertEqual(soda.current_balance(), before - Decimal('1'))
+
+
 # ── Manager-only delegated oversight toggles (2026-07-30) ──────────────────
 # Roy's request: a per-manager toggle for petty cash review and shift-closing
 # confirmation — both off by default, owner grants explicitly per manager.

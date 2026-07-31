@@ -3776,3 +3776,61 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   everything from it. All work for the rest of this session, starting with this entry, goes
   directly to `main`. Two migrations (core 0137, accounts 0053), both additive. 962 tests
   pass (core + accounts).
+- Sticky-header revert + authoritative preset stock deduction + kitchen custom-price
+  (2026-07-31), live urgent report with 3 screenshots. **(1) Header/row overlap "across all
+  templates."** Root cause confirmed from the Daily Sales + Transaction History screenshots:
+  `position: sticky` on `.table thead th` (the 2026-07-30 "sticky list headers" sprint) is a
+  well-known cross-browser landmine — on the affected mobile device the `<thead>` row's
+  height collapsed and its cells rendered floating on top of the first `<tbody>` row instead
+  of sitting above it, corrupting every `.table` in the app at once (this one global CSS rule
+  was exactly why it hit "all templates" simultaneously). Fixed by fully reverting the sticky
+  behavior in `base.html` (headers scroll with the table again, as before that sprint) rather
+  than chase a per-browser workaround — a broken convenience feature hiding real sales/stock
+  data is worse than no sticky header. **(2) Client-trusted stock quantity on preset sales —
+  root cause of the KC Ginger 250ml half-bottle discrepancy class.** Roy's screenshot showed
+  system stock 0.5 bottle higher than his own physical count, tracing to exactly one tab entry
+  for a half-bottle preset sale. Audited every sale-recording path that accepts a `preset_id`
+  from the client and found four (of five) trusted a client-supplied stock quantity instead of
+  deriving it from the preset's own `quantity_consumed` — unlike `KegBarrel.record_sale()`
+  (Bar Board's keg path), which already did this correctly. Fixed all four to resolve the
+  preset from the database FIRST and use `preset.quantity_consumed × cart-tap-count` as the
+  authoritative deduction, client value only as a fallback when no preset applies:
+  `quick_sell()` checkout (`core/views.py`), `_kitchen_checkout()`'s portion-item branch
+  (`core/kitchen_views.py`), and both STK settlement callbacks `_settle_qs_from_payment()` /
+  `_settle_kitchen_order_from_payment()` (`core/mpesa_views.py`) — `confirm_prompt()` was
+  audited and found already correct, no change needed. **Separate real bug found in the same
+  sweep**: `core/order_views.py`'s `_create_transactions_for_order(order, up)` — the function
+  that converts a SERVED waitress table-order into real stock-deducting Transactions — (a) had
+  the identical client-trust gap for a non-keg preset (now multiplies the ordered count by
+  `preset.quantity_consumed`), and (b) referenced an undefined `request` variable in its
+  `recorded_by` fallback (`order.waitress or request.user` — the function's actual signature
+  is `(order, up)`, `request` was never in scope) — silently swallowed by the loop's own
+  `try/except Exception: continue`, meaning a served preset-tap order line could get ZERO
+  stock effect if `order.waitress` were ever falsy; fixed to `order.waitress or up.user`,
+  locked in by a dedicated regression test. Framed honestly to Roy: this closes the general
+  class of risk matching the reported symptom shape across every plausible code path, not a
+  certain diagnosis of that one incident's exact trigger (stale browser cache vs. a client JS
+  bug can't be confirmed without direct production log access). **(3) Kitchen custom-price
+  sale ("✏️ Bei Maalum")** — new feature, live request: "kitchen staff can input a custom
+  selling price... when the item sold does not physically meet the quantity or size needed to
+  sell at set price" (e.g. a chicken leg cut smaller than usual). Deliberately separate from
+  the existing `price=0` custom-price-preset sentinel (2026-07-29, Kuku cuts) — that only
+  applies to a preset explicitly configured with no fixed price; this new affordance lets
+  staff override the price on ANY in-stock portion tile, preset-configured or not, without
+  reconfiguring the item. New small ✏️ button on the top-right corner of every in-stock
+  kitchen tile (mutually exclusive with the out-of-stock 🔔 Notify button — never both at
+  once), calling `customPriceTileClick(itemId)`: a single-preset or no-preset item goes
+  straight to a `prompt()` for the amount; a multi-preset item opens the existing preset modal
+  via a new `openPresetModal(item, forceCustomPrice=true)` parameter, which shows "Bei Yoyote"
+  for every preset regardless of its own configured price and always prompts on selection
+  (`addPreset()` reads and resets a new `_presetModalForceCustom` flag). No backend change
+  needed at all — the cart entry this pushes (`{item_id, preset_id, description, amount,
+  qty}`) is byte-identical in shape to an ordinary preset tap's, and `_kitchen_checkout()`
+  already treats the submitted `amount` as `sale_amount` verbatim while re-deriving the real
+  stock deduction from the preset's own `quantity_consumed` regardless of price — i.e. fix
+  (2) above is exactly what makes this feature safe: the custom price can never accidentally
+  perturb how much stock the sale actually deducts. 10 new tests
+  (`KitchenCustomPriceTest` ×3, `AuthoritativePresetStockDeductionTest` ×7 — the latter
+  covering all five fixed/audited call sites plus the NameError regression lock). No
+  migrations (CSS + client-trust hardening + a client-shape-compatible frontend feature only).
+  972 tests pass (core + accounts).

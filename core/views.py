@@ -2998,14 +2998,33 @@ def quick_sell(request):
             if not item:
                 continue
 
+            # 2026-07-31 live report (Roy — a KC Ginger 250ml half-bottle tab
+            # entry, physical count off by exactly that half bottle):
+            # resolve the preset FIRST so its quantity_consumed — the
+            # database's own current value — is authoritative for how much
+            # stock this line actually deducts, never the client-supplied
+            # stock_qty. Mirrors how KegBarrel.record_sale() already derives
+            # ml server-side from preset.quantity_consumed rather than
+            # trusting anything the browser sent — a stale cached preset in
+            # the browser's cart state, or any future client bug, must never
+            # be able to under- or over-deduct real stock.
+            entry_preset_id = entry.get("preset_id")
+            sale_preset = None
+            if entry_preset_id:
+                sale_preset = ItemPortionPreset.objects.filter(id=entry_preset_id, item=item).first()
+
             # stock_qty = actual stock consumed (may be fractional for produce)
             # display_qty = what to show on receipt (1 for produce portions, integer for normal)
             # For preset entries, stock_qty is per-serving and must be multiplied by cart qty.
             # For regular items, stock_qty is absent and entry["qty"] IS the total qty.
             try:
-                raw_stock_qty = Decimal(str(entry.get("stock_qty", entry.get("qty", 0))))
                 cart_qty = Decimal(str(entry.get("qty", 1)))
-                stock_qty = raw_stock_qty * cart_qty if entry.get("stock_qty") is not None else raw_stock_qty
+                if sale_preset is not None:
+                    stock_qty = Decimal(str(sale_preset.quantity_consumed)) * cart_qty
+                elif entry.get("stock_qty") is not None:
+                    stock_qty = Decimal(str(entry.get("stock_qty"))) * cart_qty
+                else:
+                    stock_qty = cart_qty
             except Exception:
                 stock_qty = Decimal('0')
             if stock_qty <= 0:
@@ -3060,21 +3079,12 @@ def quick_sell(request):
             # For portion-preset sales the cart supplies an explicit price that may
             # differ from selling_price × stock_qty (e.g. Tatu mbao: 3 onions for KES 20
             # instead of 3 × KES 10 = KES 30). Store it as sale_amount so revenue() is
-            # correct. Only set when stock_qty is explicitly in the cart entry (i.e. a
-            # preset tap) — normal item taps omit stock_qty.
+            # correct. Only set for a preset tap — normal item taps have no preset
+            # and never override selling_price × qty this way.
+            # (sale_preset itself was already resolved above, before stock_qty.)
             sale_amt = None
-            if entry.get("stock_qty") is not None and display_price:
+            if (sale_preset is not None or entry.get("stock_qty") is not None) and display_price:
                 sale_amt = Decimal(str(round(display_price * float(display_qty), 2)))
-
-            # 2026-07-28 — attribute the sale to its specific preset, if the cart
-            # entry carries one, so Transaction.cost() can use that preset's own
-            # cost_price instead of the item's blended one (same fix as Kitchen
-            # Board — presets that don't opt into per-preset costing are
-            # unaffected, cost() falls back to item.cost_price exactly as before).
-            sale_preset = None
-            entry_preset_id = entry.get("preset_id")
-            if entry_preset_id:
-                sale_preset = ItemPortionPreset.objects.filter(id=entry_preset_id, item=item).first()
 
             line_amount = Decimal(str(round(display_price * float(display_qty), 2)))
             last_transaction = Transaction.objects.create(

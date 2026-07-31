@@ -153,6 +153,11 @@ def place_table_order(request):
             preset_obj = None
             if preset_id:
                 preset_obj = ItemPortionPreset.objects.filter(id=preset_id, item=item_obj).first()
+            # quantity here is a genuine "how many ordered" count (e.g. 2
+            # pints) — the actual stock deduction (ml for a keg pour, or
+            # count × quantity_consumed for a non-keg preset) is derived
+            # server-side from the preset at SERVED time, see
+            # _create_transactions_for_order() below — never here.
 
             TableOrderItem.objects.create(
                 order=order,
@@ -331,18 +336,35 @@ def _create_transactions_for_order(order, up):
                     except KegBarrel.DoesNotExist:
                         pass  # barrel depleted between fetch and lock — skip
                     continue
-            # Non-keg or no barrel found — create Transaction directly
+            # Non-keg or no barrel found — create Transaction directly.
+            # 2026-07-31 — a non-keg preset (e.g. a half-portion spirit)
+            # must deduct count × quantity_consumed, not the raw ordered
+            # count — same authoritative-preset fix applied to Quick Sell/
+            # Kitchen checkout and their STK settlement callbacks; this was
+            # the one remaining sale-recording path still trusting the
+            # ordered count alone as the stock amount for a preset line.
+            stock_qty = qty
+            if oi.preset:
+                stock_qty = qty * Decimal(str(oi.preset.quantity_consumed))
             amount = qty * oi.unit_price
             Transaction.objects.create(
                 business=up.business,
                 item=oi.item,
                 type='Issue',
-                qty=-qty,
+                qty=-stock_qty,
                 sale_amount=amount,
                 payment_method=order.payment_method,
                 recipient=order.table_label,
                 date=timezone.localdate(),
-                recorded_by=order.waitress or request.user,
+                # order.waitress is set from request.user at TableOrder
+                # creation and should always be present, but this function
+                # only ever receives (order, up) — 'request' was never in
+                # scope here, so a bare `or request.user` fallback was
+                # actually a NameError waiting to fire, silently swallowed
+                # by this loop's own try/except and skipping the whole
+                # Transaction (zero stock effect) for that order line. up
+                # (the caller's own resolved profile) is always available.
+                recorded_by=order.waitress or up.user,
                 preset=oi.preset,
             )
         except Exception:

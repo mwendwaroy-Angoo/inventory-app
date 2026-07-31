@@ -1525,6 +1525,7 @@
 
   var _cart = [];            // [{item_id, bunch_id, preset_id, description, amount, qty}]
   var _activePresetItem = null;   // portion item whose preset modal is open
+  var _presetModalForceCustom = false;  // 2026-07-31 — ✏️ Bei Maalum tap forces a price prompt for every preset in the modal, even one with its own configured price
   var _settleTabId = null;        // food tab being settled via kbSettleModal
   var _settleTabAmount = 0;       // unpaid total for the tab being settled (used by STK push)
   var _pm   = 'cash';
@@ -1577,8 +1578,21 @@
           'onclick="event.stopPropagation(); kbNotifyRestock(' + item.id + ',\'' + (item.name || '').replace(/'/g, "\\'") + '\')">' +
           '🔔 Notify Owner</button>'
         : '';
+      // 2026-07-31 live request: "kitchen staff can input a custom selling
+      // price... when the item sold does not physically meet the quantity
+      // or size needed to sell at set price" — e.g. a smaller-than-usual
+      // cut. A separate, deliberate ✏️ tap (not the tile itself, which stays
+      // the fast one-tap standard-price sale) opens the same add-to-cart
+      // flow but always asks for the price instead of using the configured
+      // one. Hidden when out of stock — nothing to sell at any price.
+      var customPriceBtn = oos ? '' :
+        '<button class="btn btn-sm" style="position:absolute; top:.35rem; right:.35rem; width:1.6rem; height:1.6rem; ' +
+        'padding:0; line-height:1; font-size:.75rem; background:rgba(201,168,76,.12); color:#c9a84c; ' +
+        'border:1px solid rgba(201,168,76,.3); border-radius:50%;" title="Bei Maalum — kiasi/ukubwa tofauti na kawaida" ' +
+        'onclick="event.stopPropagation(); customPriceTileClick(' + item.id + ')">✏️</button>';
       html += '<div class="kb-tile' + (oos?' out-of-stock':'') + '" onclick="tileClick(' + item.id + ')"' +
-              ' data-item-id="' + item.id + '">' +
+              ' data-item-id="' + item.id + '" style="position:relative;">' +
+              customPriceBtn +
               '<div class="kb-tile-name">' + item.name + '</div>' +
               '<div class="kb-tile-price">' + priceStr + '</div>' +
               '<div class="kb-tile-stock ' + stockCls + '">' + stockLbl + '</div>' +
@@ -1934,16 +1948,47 @@
     openBatchModal(item);
   };
 
+  /* ── ✏️ Bei Maalum — 2026-07-31 live request: "kitchen staff can input a
+     custom selling price... when the item sold does not physically meet
+     the quantity or size needed to sell at set price" (e.g. a smaller-
+     than-usual cut). Deliberately separate from the fast one-tap standard
+     sale — the stock deduction still follows the chosen preset's own
+     quantity_consumed (the size CATEGORY, e.g. "half a leg"), only the
+     PRICE is overridden; for a no-preset item, qty stays 1. */
+  window.customPriceTileClick = function(itemId) {
+    var item = _portionItems.find(function(i){ return i.id === itemId; });
+    if (!item) return;
+    if (item.balance <= 0) { showToast('Hakuna stok ya ' + item.name + '.'); return; }
+    if (item.presets && item.presets.length > 1) {
+      openPresetModal(item, /*forceCustomPrice=*/true);
+      return;
+    }
+    var p = (item.presets && item.presets.length === 1) ? item.presets[0] : null;
+    var label = p ? (item.name + ' — ' + p.label) : item.name;
+    var typed = prompt('Bei maalum kwa ' + label + ' (KES)?');
+    if (typed === null) return;
+    var amount = parseFloat(typed);
+    if (!amount || amount <= 0 || isNaN(amount)) { showToast('Bei si sahihi.'); return; }
+    addToCart({
+      item_id: item.id, preset_id: p ? p.id : undefined,
+      description: label + ' (Bei Maalum)', amount: amount, qty: p ? p.qty : 1,
+    });
+  };
+
   /* ── Preset modal ── */
-  function openPresetModal(item) {
+  function openPresetModal(item, forceCustomPrice) {
     _activePresetItem = item;
-    document.getElementById('kb-preset-modal-title').textContent = item.name;
+    _presetModalForceCustom = !!forceCustomPrice;
+    document.getElementById('kb-preset-modal-title').textContent =
+      item.name + (forceCustomPrice ? ' — Bei Maalum' : '');
     var body = document.getElementById('kb-preset-modal-body');
     body.innerHTML = item.presets.map(function(p, idx){
       // 2026-07-28 — price=0 is the "custom price" sentinel: some cuts (e.g. a
       // small chicken leg, too small to split) don't have one fixed price —
-      // staff is asked for the amount at the point of sale instead.
-      var priceLabel = (p.price && p.price > 0) ? ('KES ' + fmt(p.price)) : 'Bei Yoyote';
+      // staff is asked for the amount at the point of sale instead. In
+      // forceCustomPrice mode (✏️ Bei Maalum) every preset is treated this
+      // way regardless of its own configured price.
+      var priceLabel = (!forceCustomPrice && p.price && p.price > 0) ? ('KES ' + fmt(p.price)) : 'Bei Yoyote';
       return '<div class="kb-preset-item" onclick="addPreset(' + item.id + ',' + idx + ')">' +
              '<span class="kb-preset-label">' + p.label + '</span>' +
              '<span class="kb-preset-price">' + priceLabel + '</span>' +
@@ -1962,8 +2007,10 @@
     if (!item) return;
     var p = item.presets[presetIdx];
     if (!p) return;
+    var forceCustom = _presetModalForceCustom;
+    _presetModalForceCustom = false;
     var amount = p.price;
-    if (!amount || amount <= 0) {
+    if (forceCustom || !amount || amount <= 0) {
       // Custom-price preset — ask, never force. Cancelling adds nothing to cart.
       var typed = prompt('Bei ya ' + p.label + ' (KES)?');
       if (typed === null) return;
@@ -1971,7 +2018,8 @@
       if (!amount || amount <= 0 || isNaN(amount)) { showToast('Bei si sahihi.'); return; }
     }
     addToCart({item_id: itemId, preset_id: p.id,
-               description: item.name + ' — ' + p.label, amount: amount, qty: p.qty});
+               description: item.name + ' — ' + p.label + (forceCustom ? ' (Bei Maalum)' : ''),
+               amount: amount, qty: p.qty});
   };
 
   /* ── Batch modal ── */
