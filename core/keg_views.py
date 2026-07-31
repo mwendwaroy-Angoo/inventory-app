@@ -2852,19 +2852,45 @@ def convert_tab_to_debt(request, tab_id):
 # the tab back to OPEN — the exact inverse of what convert_tab_to_debt did.
 
 def _debt_converted_tabs_qs(business):
-    """SETTLED tabs that still carry an unpaid balance — the exact
-    'effective DEBT status' fingerprint _findable_tabs_qs()/
-    _get_live_tab_state() already use elsewhere in this app, reused here
-    as the discriminator between 'settled because everything got paid'
-    (nothing to revert) and 'settled via debt conversion' (revertible)."""
+    """SETTLED tabs that still carry an unpaid balance AND have never had a
+    debt-tracker payment recorded against them since conversion — i.e.
+    tabs that are still ACTUALLY revertible via revert_tab_from_debt (which
+    itself refuses to revert once any CustomerDebtPayment exists since
+    settled_at — see that view's own docstring). Once a single payment
+    lands, the tab drops out of this panel entirely; its remaining balance
+    belongs to the debt tracker's own customer profile page from then on,
+    which is the one correct place to track a genuinely in-progress debt
+    repayment.
+
+    2026-07-31 live report (Roy — "when the debt payment is recorded, the
+    order goes back to the tabs drawer... showing that payment was not
+    recorded"): before this fix, the query only checked _has_unpaid — a
+    tab with ANY debt-tracker payment against it (partial or full) kept
+    showing here with its ORIGINAL, un-reduced BarTab.unpaid_total(), which
+    only reads BarTabEntry.is_paid. That flag is per-LINE-ITEM and only
+    flips once payments have cumulatively covered a line's FULL original
+    amount (see BarTabEntry docstring / _get_live_tab_state's DEBT-status
+    outstanding correction, which already does the equivalent fix for the
+    CUSTOMER-facing receipt page but was never applied to this STAFF-facing
+    panel) — so a real partial payment left this panel's own figures
+    completely unchanged, looking exactly like the payment vanished.
+    Excluding any tab with a recorded payment — matching revert's own
+    block — closes the gap without needing to keep two different 'true
+    outstanding' computations in sync here."""
     from django.db.models import Exists, OuterRef
+    from .models import CustomerDebtPayment
     unpaid_exists = BarTabEntry.objects.filter(
         tab=OuterRef('pk'), is_paid=False,
     ).exclude(payment_method='void')
+    payment_exists = CustomerDebtPayment.objects.filter(
+        customer_id=OuterRef('customer_id'),
+        business_id=OuterRef('business_id'),
+        paid_at__gte=OuterRef('settled_at'),
+    )
     return (
         BarTab.objects.filter(business=business, status='SETTLED')
-        .annotate(_has_unpaid=Exists(unpaid_exists))
-        .filter(_has_unpaid=True)
+        .annotate(_has_unpaid=Exists(unpaid_exists), _has_payment=Exists(payment_exists))
+        .filter(_has_unpaid=True, _has_payment=False)
     )
 
 

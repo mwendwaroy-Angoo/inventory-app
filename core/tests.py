@@ -8730,6 +8730,104 @@ class RevertTabFromDebtTest(TestCase):
         self.assertEqual(entry.transaction.qty, original_qty)
 
 
+class DebtConvertedTabsPanelPaymentExclusionTest(TestCase):
+    """2026-07-31 live report (Roy): "when the debt payment is recorded,
+    the order goes back to the tabs drawer it came from... showing that
+    payment was not recorded, or as if it was not just from the debt
+    tracker." Root cause: BarTab.unpaid_total() reads only
+    BarTabEntry.is_paid, a per-LINE-ITEM flag that only flips once a
+    payment has cumulatively covered a line's FULL original amount (see
+    _get_customer_debt_data's FIFO walk in core/debt_views.py). A real
+    debt-tracker payment (partial OR — depending on timing — even full)
+    reduces the customer's TRUE aggregate outstanding balance immediately,
+    but the "↩️ Marejesho ya Deni" (revert-from-debt) panel kept showing
+    the tab with its stale, un-reduced unpaid_total() regardless, because
+    its query (_debt_converted_tabs_qs) only checked for the EXISTENCE of
+    an unpaid entry, never whether a payment had actually landed against
+    it. Fixed by excluding any tab with a CustomerDebtPayment recorded
+    since settled_at — the same condition revert_tab_from_debt itself
+    already uses to refuse a revert, so panel visibility and revert
+    possibility can never drift apart again."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Panel Exclusion Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='dpe_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Debt Panel Item',
+            material_no='DPE-01', selling_price=Decimal('500'), cost_price=Decimal('200'),
+        )
+        self.tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source='bar', store=self.store,
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='credit',
+        )
+        self.entry = BarTabEntry.objects.create(
+            tab=self.tab, transaction=self.txn, description=self.item.description,
+            amount=Decimal('500'), is_paid=False,
+        )
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{self.tab.id}/debt/', {'customer_name': 'Roy'})
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.status, 'SETTLED')
+
+    def test_panel_shows_freshly_converted_tab(self):
+        resp = self.client.get('/bar/tabs/debt-converted/?station=bar')
+        ids = [t['id'] for t in resp.json()['tabs']]
+        self.assertIn(self.tab.id, ids)
+
+    def test_partial_debt_payment_drops_tab_from_panel_immediately(self):
+        """The exact live scenario Roy reported: a genuine partial payment
+        recorded via the debt tracker — before this fix, the panel kept
+        showing the tab with its FULL original 500, unchanged."""
+        customer = Customer.objects.get(business=self.biz, name='Roy')
+        resp = self.client.post(f'/debt/{customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'cash',
+            'idempotency_token': 'dpe-partial-1',
+        })
+        self.assertEqual(resp.status_code, 302)
+
+        panel_resp = self.client.get('/bar/tabs/debt-converted/?station=bar')
+        ids = [t['id'] for t in panel_resp.json()['tabs']]
+        self.assertNotIn(
+            self.tab.id, ids,
+            "tab still shown as revertible/unpaid after a real partial payment",
+        )
+
+        # The debt tracker's own aggregate is correctly reduced — proves
+        # the payment really was recorded, it just wasn't reflected in the
+        # per-line is_paid flag this panel used to rely on.
+        from core.debt_views import _get_customer_debt_data
+        data = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(data['outstanding'], 300.0)
+
+    def test_full_debt_payment_drops_tab_from_panel(self):
+        customer = Customer.objects.get(business=self.biz, name='Roy')
+        resp = self.client.post(f'/debt/{customer.id}/payment/', {
+            'amount_paid': '500', 'payment_method': 'mpesa',
+            'idempotency_token': 'dpe-full-1',
+        })
+        self.assertEqual(resp.status_code, 302)
+
+        panel_resp = self.client.get('/bar/tabs/debt-converted/?station=bar')
+        ids = [t['id'] for t in panel_resp.json()['tabs']]
+        self.assertNotIn(self.tab.id, ids)
+
+        self.entry.refresh_from_db()
+        self.assertTrue(self.entry.is_paid)
+
+    def test_unpaid_tab_still_correctly_blocks_revert_after_exclusion_fix(self):
+        """Sanity check the two mechanisms stay in sync: a tab with no
+        payment yet is still both listed AND revertible."""
+        panel_resp = self.client.get('/bar/tabs/debt-converted/?station=bar')
+        self.assertIn(self.tab.id, [t['id'] for t in panel_resp.json()['tabs']])
+        revert_resp = self.client.post(f'/bar/tabs/{self.tab.id}/revert-debt/')
+        self.assertTrue(revert_resp.json()['ok'])
+
+
 class TabToDebtConversionCreditRiskNotificationTest(TestCase):
     """New: a tab-to-debt conversion that adds MORE debt for an already
     credit-risky customer (revoked/permanent defaulter/etc.) now fires a

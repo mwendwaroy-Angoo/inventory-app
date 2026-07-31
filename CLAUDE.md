@@ -3834,3 +3834,34 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   covering all five fixed/audited call sites plus the NameError regression lock). No
   migrations (CSS + client-trust hardening + a client-shape-compatible frontend feature only).
   972 tests pass (core + accounts).
+- Fix: paid-off debt tabs kept "coming back" to the tabs drawer (2026-07-31), live report:
+  "when the debt payment is recorded... it goes back to the tabs drawer... showing that
+  payment was not recorded, or as if it was not just from the debt tracker." Root-caused via
+  full code trace, not guessed: `BarTab.unpaid_total()` sums `BarTabEntry.is_paid=False`
+  entries — a per-LINE-ITEM flag that only flips once a payment has cumulatively covered a
+  line's FULL original amount (`_do_settle_debt_payment`'s FIFO reconciliation in
+  `core/debt_views.py`, correct on its own terms). A genuine PARTIAL debt-tracker payment —
+  the normal case for a single-line tab — never completes any one line, so `is_paid` never
+  flips, leaving the tab's own `unpaid_total()` completely unchanged at its FULL original
+  amount no matter how much was actually paid. This app already closed the equivalent gap for
+  the CUSTOMER-facing receipt page once before (`_get_live_tab_state`'s DEBT-status
+  `outstanding` correction, reading the true `_get_customer_debt_data` aggregate instead of
+  the stale entry-level sum) — but the STAFF-facing "↩️ Marejesho ya Deni" (revert-from-debt)
+  panel (`debt_converted_tabs_api`/`_debt_converted_tabs_qs`, `core/keg_views.py`) was never
+  given the same fix, and it's the only place in the tabs drawer a debt-converted (SETTLED-
+  with-unpaid-entries) tab is ever displayed — confirmed by grep that `tabs_list()`/
+  `kitchen_tabs_list()`'s main "open tabs" listings strictly filter `status='OPEN'`, so a
+  SETTLED tab can never resurface there. Fixed by narrowing `_debt_converted_tabs_qs()` to
+  exclude any tab with a `CustomerDebtPayment` recorded since `settled_at` — the EXACT same
+  condition `revert_tab_from_debt()` already uses to refuse a revert once real money has
+  landed against a conversion — so panel visibility and revert-possibility can never drift
+  apart again, and a tab drops out of the panel the instant the first real payment (partial
+  or full) is recorded, whether via staff-recorded cash/mpesa or an STK callback (both share
+  `_do_settle_debt_payment`). Regression swept every other `.unpaid_total()` call site in the
+  app (`shift_views.py`, `keg_views.py` ×6 more, `kitchen_views.py`) — all operate on `OPEN`
+  tabs or compute the figure fresh right after directly modifying the entries themselves, none
+  share this staleness class. 4 new tests (`DebtConvertedTabsPanelPaymentExclusionTest`) —
+  partial payment drops the tab from the panel immediately (the literal live scenario), full
+  payment does too, an unpaid tab is still both listed and revertible, plus all 6 pre-existing
+  `RevertTabFromDebtTest` tests confirmed passing unmodified. No migrations. 976 tests pass
+  (core + accounts).
