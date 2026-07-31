@@ -3925,3 +3925,20 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   be re-attempted without real browser access or a screen recording to actually see the
   failure. The `--sticky-top` CSS var + JS measurement script were left in place (harmless,
   unused) since other code may reference the var. No migrations (CSS-only).
+- Kitchen Batch "Bei Maalum" (2026-07-31, same-day follow-up): the ✏️ Bei Maalum feature
+  shipped earlier the same day only covered PORTION-mode items (e.g. Kuku cuts) — Roy's
+  actual example was Chipo, a `KitchenBatch` revenue-envelope item: "sometimes the fries left
+  by the day's end might be so little that it cannot be sold at 100." `KitchenBatch` tiles
+  had no custom-price affordance at all — only fixed preset tiles ("Ya 100") plus
+  Imekwisha/Tupa/Hariri Gharama. New "✏️ Bei Maalum" button added to the batch tile's action
+  row (`kitchen_board.html`, `buildKitchenBatchGrid()`), calling a new `kbBatchCustomPrice()`
+  which prompts for an amount and forwards to the existing `kbBatchSell()` with `preset_id:
+  null`. No backend change needed — `KitchenBatch.record_sale()` (called from
+  `_kitchen_checkout()`'s `batch_id` branch) already accepts any amount with an optional
+  preset purely for khaki-label bookkeeping; omitting `preset_id` was already valid. Any
+  staff with an open shift can use it (a sale action, like Imekwisha/Tupa — not an
+  owner-only correction like Hariri Gharama, which corrects the batch's COST rather than
+  what one sale collects). 3 new tests (`KitchenBatchCustomPriceTest`) — an amount below
+  every configured preset price is accepted and credited exactly (the literal reported
+  scenario), no preset/khaki bookkeeping is attached to a no-preset sale, and it accumulates
+  correctly alongside ordinary preset sales on the same batch. No migrations.

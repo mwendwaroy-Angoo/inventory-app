@@ -17311,6 +17311,95 @@ class KitchenCustomPriceTest(TestCase):
         self.assertEqual(soda.current_balance(), before - Decimal('1'))
 
 
+class KitchenBatchCustomPriceTest(TestCase):
+    """2026-07-31 follow-up live report: the ✏️ Bei Maalum feature above only
+    covered PORTION-mode items (Kuku cuts) — Roy's actual example was Chipo,
+    a KitchenBatch revenue-envelope item ("sometimes the fries left by the
+    day's end might be so little that it cannot be sold at 100"), which had
+    no custom-price affordance at all. Fixed with a new "✏️ Bei Maalum"
+    button on the batch tile's action row (kitchen_board.html), calling
+    kbBatchSell() with preset_id=null and a staff-entered amount — no
+    backend change needed, since KitchenBatch.record_sale() already accepts
+    any amount with an optional preset purely for khaki-label bookkeeping.
+    These tests lock in that a batch sale with no preset_id still correctly
+    credits the exact custom amount to the envelope, including an amount
+    BELOW every configured preset price (the actual scenario reported)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Custom Price Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbcp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            material_no='KBCP-CHIPO-01', unit='Batch', selling_price=Decimal('100'),
+            is_kitchen_batch=True,
+        )
+        self.preset = ItemPortionPreset.objects.create(
+            item=self.chipo, label='Ya 100', price=Decimal('100'), quantity_consumed=Decimal('1'),
+        )
+        self.batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.chipo, cost_total=Decimal('1083'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_custom_price_below_every_preset_price_is_accepted(self):
+        """The literal reported scenario: a near-empty batch sold for KES 40
+        — below the KES 100 preset — must credit exactly 40, not be blocked
+        or clamped to the preset's price."""
+        import json
+        cart = json.dumps([{
+            'batch_id': self.batch.id, 'amount': 40,
+            'description': 'Chipo (Bei Maalum)',
+        }])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash', 'idempotency_token': 'kbcp-below-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.revenue_collected, Decimal('40'))
+
+    def test_custom_price_sale_has_no_preset_and_no_khaki_count(self):
+        """No preset_id sent means no khaki/label bookkeeping — must not
+        silently attach or increment a preset's counters."""
+        import json
+        cart = json.dumps([{
+            'batch_id': self.batch.id, 'amount': 40,
+            'description': 'Chipo (Bei Maalum)',
+        }])
+        self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash', 'idempotency_token': 'kbcp-nopreset-1',
+        })
+        txn = Transaction.objects.filter(business=self.biz, kitchen_batch=self.batch, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertIsNone(txn.preset)
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.khaki_small_used, 0)
+        self.assertEqual(self.batch.khaki_large_used, 0)
+
+    def test_custom_price_sale_combines_correctly_with_normal_preset_sales(self):
+        """A mix of ordinary Ya 100 taps and a reduced Bei Maalum sale on
+        the same batch must accumulate to the correct total, exactly as if
+        the reduced sale were just another preset tap at a different price."""
+        import json
+        normal_cart = json.dumps([{
+            'batch_id': self.batch.id, 'preset_id': self.preset.id,
+            'amount': 100, 'description': 'Ya 100',
+        }])
+        self.client.post('/kitchen/', {
+            'cart': normal_cart, 'payment_method': 'cash', 'idempotency_token': 'kbcp-mix-1',
+        })
+        custom_cart = json.dumps([{
+            'batch_id': self.batch.id, 'amount': 40,
+            'description': 'Chipo (Bei Maalum)',
+        }])
+        self.client.post('/kitchen/', {
+            'cart': custom_cart, 'payment_method': 'cash', 'idempotency_token': 'kbcp-mix-2',
+        })
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.revenue_collected, Decimal('140'))
+
+
 # ── Manager-only delegated oversight toggles (2026-07-30) ──────────────────
 # Roy's request: a per-manager toggle for petty cash review and shift-closing
 # confirmation — both off by default, owner grants explicitly per manager.

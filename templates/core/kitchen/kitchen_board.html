@@ -1695,6 +1695,8 @@
 
       if (hasOpen) {
         html += '<div style="display:flex;gap:.3rem;margin-top:.4rem;flex-wrap:wrap;">' +
+          '<button onclick="kbBatchCustomPrice(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\'); event.stopPropagation();" ' +
+          'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(93,168,240,.08);border:1px solid rgba(93,168,240,.3);border-radius:5px;color:#5da8f0;cursor:pointer;">✏️ Bei Maalum</button>' +
           '<button onclick="kbDepleteBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\'); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(255,255,255,.04);border:1px solid #555;border-radius:5px;color:#b0b0b0;cursor:pointer;">✓ Imekwisha</button>' +
           '<button onclick="kbDiscardBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\', this); event.stopPropagation();" ' +
@@ -4442,6 +4444,31 @@
       amount: amount,
       qty: 1,
     });
+  };
+
+  /* ── Bei Maalum for a batch (2026-07-31 live request): "sometimes the
+     fries left by the day's end might be so little that it cannot be sold
+     at 100" — a near-empty Chipo/batch envelope needs to be sold below its
+     usual preset price. Deliberately no preset_id — this is a plain custom
+     revenue credit against the batch, exactly what KitchenBatch.record_sale
+     already accepts for any ordinary preset tap; sending no preset_id is
+     already valid and supported server-side (_kitchen_checkout's batch_id
+     branch treats a missing preset_id as simply "no khaki/label context",
+     nothing more). Available to any staff with an open shift — this is a
+     sale action like Imekwisha/Tupa, not an owner-only correction like
+     Hariri Gharama (which corrects the batch's COST, not what one sale
+     collects). */
+  window.kbBatchCustomPrice = function(batchId, itemName) {
+    if (!IS_OWNER && !_myShiftOpen) {
+      showToast('⚠ Fungua shift kwanza!', 2500);
+      document.getElementById('shift-no-shift-banner').style.display = 'block';
+      return;
+    }
+    var typed = prompt('Bei maalum kwa ' + itemName + ' (KES)?');
+    if (typed === null) return;
+    var amount = parseFloat(typed);
+    if (!amount || amount <= 0 || isNaN(amount)) { showToast('Bei si sahihi.'); return; }
+    kbBatchSell(batchId, null, amount, itemName + ' (Bei Maalum)', 'NONE');
   };
 
   window.kbDepleteBatch = function(batchId, itemName) {
