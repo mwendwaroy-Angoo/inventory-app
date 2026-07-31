@@ -144,47 +144,59 @@ def _station_q(is_kitchen):
 def station_revenue_window_start(business, is_kitchen, now=None):
     """Start of the "today's revenue" tile window for one station.
 
-    2026-08-01 live request — Roy: a business closing at midnight (Monsoon
-    Inn) saw its dashboard revenue tiles silently reset to KES 0 the moment
-    the calendar day rolled over, even while a shift was still open and
-    actively selling — "the revenue should still continue until the
-    business owner or manager signs off officially regardless of the
-    time." The tile previously filtered `Transaction.date ==
-    timezone.localdate()`, a pure calendar-day boundary with no awareness
-    of whether the station's trading session was actually still open.
+    2026-08-01, same-day follow-up to the original midnight-extension fix
+    below — Roy clarified the actual rule: "regardless of continuity of
+    sales and business closing time setting, once either section is
+    confirmed in the shift closing modal the revenue resets to 0 in
+    regards to that section." The first version reset the window the
+    moment a NEW shift opened, even if the PRIOR shift for that station had
+    never been signed off (Thibitisha/confirm) — exactly the live
+    situation he flagged: kitchen staff had already CLOSED their shift but
+    the owner/manager had not yet CONFIRMED it, and the window must keep
+    including that unconfirmed shift's revenue regardless of midnight, the
+    business's configured closing time, or whether a newer shift has since
+    opened.
 
-    Normally returns today's local midnight (unchanged default behaviour —
-    a station that opens fresh each day still resets exactly as before).
-    Extended backward only when this station's MOST RECENT shift started
-    before midnight: if that shift is `latest.started_at < midnight`, then
-    by construction no NEWER shift has been opened for this station since
-    (a newer one would itself be "most recent" instead) — meaning EITHER
-    it's still OPEN and actively trading (bar, in Roy's example: keep
-    counting), OR it already closed and nothing new has started yet
-    (kitchen, in Roy's example: the tile freezes at its final total instead
-    of vanishing to 0 — it only genuinely resets once a NEW shift opens for
-    that station, the deliberate "starting today's shift" signal).
+    New rule: the window starts right after this station's most recently
+    CONFIRMED shift (`Shift.confirmed_at`) — everything sold since that
+    actual sign-off moment counts, no matter how many calendar days or
+    shift-open/close cycles have passed since. The tile only ever resets
+    to 0 at the instant someone actually taps Thibitisha for that station.
 
-    Known scope limit: a station with NO shifts at all (the owner selling
-    personally with no shift ever opened for it) still resets at plain
-    midnight — there is no shift record to anchor an extension on, and no
-    other explicit "the owner is still trading" signal exists in this app
-    today. The owner opening even a nominal shift for that station gets
-    them the same continuity for free.
+    If this station has never had a shift confirmed at all, falls back to
+    the station's very first shift ever (so an owner who has simply never
+    used the confirm feature yet still sees their full accrued, unreviewed
+    total — deliberately not silently capped, since the whole point is
+    "nothing has been signed off yet"). If the station has no shift record
+    at all — pure owner-only selling with no shift ever opened — falls
+    back to plain local midnight, the same documented scope limit as
+    before: there's no shift to anchor a real accountability window on,
+    and opening even a nominal shift for that station is what unlocks this
+    behaviour.
     """
     from .models import Shift
     now = now or timezone.now()
-    midnight = timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    latest = (
-        Shift.objects.filter(business=business)
+    last_confirmed = (
+        Shift.objects.filter(business=business, status='CONFIRMED')
         .filter(_station_q(is_kitchen))
-        .order_by('-started_at')
+        .exclude(confirmed_at__isnull=True)
+        .order_by('-confirmed_at')
         .first()
     )
-    if latest and latest.started_at < midnight:
-        return latest.started_at
-    return midnight
+    if last_confirmed:
+        return last_confirmed.confirmed_at
+
+    earliest = (
+        Shift.objects.filter(business=business)
+        .filter(_station_q(is_kitchen))
+        .order_by('started_at')
+        .first()
+    )
+    if earliest:
+        return earliest.started_at
+
+    return timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 # ── Variance attribution ──────────────────────────────────────────────────────
@@ -2007,10 +2019,11 @@ def confirm_shift(request, shift_id):
 
     notes_add = (request.POST.get('notes') or '').strip()
     shift.confirmed_by = request.user
+    shift.confirmed_at = timezone.now()
     shift.status = 'CONFIRMED'
     if notes_add:
         shift.notes = (shift.notes + '\n✓ ' + notes_add).strip()
-    shift.save(update_fields=['confirmed_by', 'status', 'notes'])
+    shift.save(update_fields=['confirmed_by', 'confirmed_at', 'status', 'notes'])
     return JsonResponse({'ok': True})
 
 

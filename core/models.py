@@ -2520,6 +2520,13 @@ class Shift(models.Model):
         'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='shifts_confirmed'
     )
+    confirmed_at  = models.DateTimeField(
+        null=True, blank=True,
+        help_text='When this shift was actually confirmed (Thibitisha) — used by '
+                   'station_revenue_window_start() as the reset point for the live '
+                   "dashboard revenue tile, so a station's revenue keeps accruing "
+                   'past midnight/closing time until someone actually signs off.',
+    )
     notes         = models.TextField(blank=True)
     auto_closed   = models.BooleanField(
         default=False,

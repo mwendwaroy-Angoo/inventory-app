@@ -4206,3 +4206,38 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   reset, station independence; `HomeDashboardRevenueSurvivesMidnightTest` — end-to-end
   through `/` and `/dashboard/revenue/` for a sale recorded under a shift that started the
   prior day). No migrations.
+- Dashboard revenue reset gated on shift CONFIRMATION, not midnight or a new shift opening
+  (2026-08-01, same-day follow-up to the fix above). Roy's precise clarification, using the
+  exact live Monsoon Inn situation: "ensure that regardless of continuity of sales and
+  business closing time setting, once either section is confirmed in the shift closing
+  modal the revenue resets to 0 in regards to that section... the kitchen staff closing
+  shift modal was not confirmed, so the revenue should still store on that kitchen side
+  until confirmed." The first version of `station_revenue_window_start()` reset the window
+  the instant a NEW shift opened for a station — which meant an unconfirmed CLOSED shift's
+  revenue could still be silently swallowed the moment the next shift started, well before
+  anyone actually signed off on it (Thibitisha/confirm is a separate, later step from
+  close — see `confirm_shift()`, `Shift.status` CLOSED→CONFIRMED). Rewrote the function's
+  rule entirely: the window now anchors on that station's most recently CONFIRMED shift's
+  `confirmed_at` — a NEW `Shift.confirmed_at` field (migration 0138), stamped by
+  `confirm_shift()` alongside the existing `confirmed_by`/`status` flip, since the model
+  previously had no timestamp for the confirm act itself, only who did it. Everything sold
+  since that last real sign-off counts toward the tile, no matter how many midnights or
+  shift-open/close cycles pass in between — a station left unconfirmed for several days
+  keeps accruing the whole span, exactly matching "regardless of... business closing time
+  setting." If a station has never had ANY shift confirmed yet, falls back to that
+  station's very first shift ever (not midnight) — deliberately unbounded, since "nothing
+  has been signed off yet" is the whole point; only a station with literally NO shift
+  record at all (pure owner-only selling, no shift ever opened) still falls back to plain
+  local midnight — the same documented scope limit as before, unchanged. Flagged to Roy as
+  a known tradeoff of this design: if a business habitually skips the confirm step for a
+  station for days at a time, that station's "today's revenue" tile will keep climbing
+  across that whole unconfirmed span rather than resetting daily — by design, since confirm
+  is now the only reset signal, but worth knowing if a station's tile ever looks
+  unexpectedly large. 5 new/rewritten tests in `StationRevenueWindowStartTest`
+  (`test_confirming_shift_resets_window_to_confirm_time`,
+  `test_unconfirmed_shift_spans_multiple_days_regardless_of_midnight`,
+  `test_most_recent_confirmation_wins_over_an_older_one`,
+  `test_new_shift_without_confirming_prior_does_not_reset_window` — rewritten from the old
+  "new shift resets the window" assertion to its opposite) plus 1 new test on
+  `ManagerConfirmShiftToggleTest` (`test_confirm_stamps_confirmed_at`) locking in that
+  `confirm_shift()` actually stamps the new field. One migration (0138, additive).
