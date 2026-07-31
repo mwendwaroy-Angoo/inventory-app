@@ -433,20 +433,24 @@
                     <td class="pe-3 text-end" style="white-space:nowrap;">
                         {% if entry.write_off %}
                             {% if entry.write_off.status == 'approved' %}
-                            <span style="color:#6ee7b7; font-size:0.72rem;">✅ Imefutwa</span>
+                            <span style="color:#6ee7b7; font-size:0.72rem;">
+                                ✅ Imefutwa{% if entry.write_off.request_type == 'erase_mistake' %} (kosa — stock imerejeshwa){% endif %}
+                            </span>
                             {% elif entry.write_off.status == 'rejected' %}
                             <span style="color:#f87171; font-size:0.72rem;">❌ Ilikataliwa</span>
                             {% else %}
-                            <span style="color:#fbbf24; font-size:0.72rem;">⏳ Inasubiri</span>
-                            {% if is_owner %}
+                            <span style="color:#fbbf24; font-size:0.72rem;">
+                                ⏳ Inasubiri{% if entry.write_off.request_type == 'erase_mistake' %} (Kosa){% endif %}
+                            </span>
+                            {% if entry.write_off.can_i_approve %}
                             <button onclick="woApprove({{ entry.write_off.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
                                 style="background:rgba(110,231,183,0.08);border:1px solid rgba(110,231,183,0.3);border-radius:5px;
                                        color:#6ee7b7;font-size:0.68rem;padding:0.12rem 0.45rem;cursor:pointer;margin-left:0.3rem;"
                                 title="Idhinisha kufutwa">✅</button>
-                            <button onclick="woReject({{ entry.write_off.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }}, '{{ entry.write_off.requested_by.get_full_name|default:entry.write_off.requested_by.username|escapejs }}')"
+                            <button onclick="woReject({{ entry.write_off.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }}, '{{ entry.write_off.requested_by.get_full_name|default:entry.write_off.requested_by.username|escapejs }}', '{{ entry.write_off.request_type }}')"
                                 style="background:rgba(192,57,90,0.08);border:1px solid rgba(192,57,90,0.3);border-radius:5px;
                                        color:#c0395a;font-size:0.68rem;padding:0.12rem 0.45rem;cursor:pointer;margin-left:0.15rem;"
-                                title="Kataa — Haki deduction">❌</button>
+                                title="Kataa{% if entry.write_off.request_type != 'erase_mistake' %} — Haki deduction{% endif %}">❌</button>
                             {% endif %}
                             {% endif %}
                         {% else %}
@@ -585,6 +589,22 @@
                 {% endif %}
                 <form id="woForm">
                     <input type="hidden" id="woTxnId" name="txn_id">
+                    <!-- 2026-07-31 — "when an item is out on a running tab or debt
+                         section... when the item is erased the system should append
+                         the balances accordingly." A real Write-off means the goods
+                         genuinely left the shelf and the debt is just uncollectable —
+                         stock stays deducted. "Ilikuwa Kosa" means the entry itself was
+                         wrong (wrong item/customer) — the item was never actually given
+                         out, so stock must be restored. -->
+                    <div class="mb-3" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:0.65rem 0.8rem;">
+                        <label style="display:flex; align-items:flex-start; gap:0.5rem; cursor:pointer; margin:0;">
+                            <input type="checkbox" id="woIsMistake" style="margin-top:0.2rem;">
+                            <span style="font-size:0.82rem; color:#f0ece4;">
+                                🗑 Ilikuwa Kosa — bidhaa haikutolewa kabisa (rejesha stock)
+                                <span id="woMistakeHint" style="display:block; color:#888; font-size:0.74rem; margin-top:0.15rem;"></span>
+                            </span>
+                        </label>
+                    </div>
                     <div class="mb-3">
                         <label style="font-size:0.8rem; color:#b0b0b0; display:block; margin-bottom:0.35rem;">Sababu ya Kuomba Kufutwa <span style="color:#c0395a;">*</span></label>
                         <textarea id="woReason" name="reason" rows="3" required
@@ -903,14 +923,32 @@ var _woCsrf = function() {
     return el ? el.value : '';
 };
 
+var _woRequiresApproval = {{ debt_erase_requires_approval|yesno:"true,false" }};
+
+function _woUpdateMistakeHint() {
+    var checked = document.getElementById('woIsMistake').checked;
+    var hint = document.getElementById('woMistakeHint');
+    if (!checked) { hint.textContent = ''; return; }
+    hint.textContent = _woRequiresApproval
+        ? 'Itasubiri idhini ya mmiliki/meneja kabla stock kurejeshwa.'
+        : 'Itatekelezwa mara moja — stock itarejeshwa papo hapo.';
+}
+
 function openWriteOffModal(txnId, itemName, amount) {
     document.getElementById('woTxnId').value   = txnId;
     document.getElementById('woItemName').textContent = itemName + ' — KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0});
     document.getElementById('woReason').value  = '';
+    document.getElementById('woIsMistake').checked = false;
     document.getElementById('woError').textContent = '';
+    _woUpdateMistakeHint();
     var modal = new bootstrap.Modal(document.getElementById('writeOffModal'));
     modal.show();
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    var cb = document.getElementById('woIsMistake');
+    if (cb) cb.addEventListener('change', _woUpdateMistakeHint);
+});
 
 document.addEventListener('DOMContentLoaded', function() {
     var form = document.getElementById('woForm');
@@ -921,6 +959,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (_woSubmitted) return;
         var txnId  = document.getElementById('woTxnId').value;
         var reason = document.getElementById('woReason').value.trim();
+        var isMistake = document.getElementById('woIsMistake').checked;
         if (!reason) { document.getElementById('woError').textContent = 'Andika sababu kwanza.'; return; }
         _woSubmitted = true;
         var btn = document.getElementById('woSubmitBtn');
@@ -928,12 +967,17 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/debt/write-off/request/' + txnId + '/', {
             method: 'POST',
             headers: {'X-CSRFToken': _woCsrf(), 'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'csrfmiddlewaretoken=' + encodeURIComponent(_woCsrf()) + '&reason=' + encodeURIComponent(reason),
+            body: 'csrfmiddlewaretoken=' + encodeURIComponent(_woCsrf()) + '&reason=' + encodeURIComponent(reason)
+                + '&is_mistake=' + (isMistake ? '1' : '0'),
         })
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (d.ok) {
                 bootstrap.Modal.getInstance(document.getElementById('writeOffModal')).hide();
+                if (d.executed) {
+                    // Self-service — already done, no approval step to wait on.
+                    alert(d.message || 'Imefutwa — stock imerejeshwa.');
+                }
                 setTimeout(function() { location.reload(); }, 400);
             } else {
                 document.getElementById('woError').textContent = d.error || 'Hitilafu. Jaribu tena.';
@@ -965,9 +1009,13 @@ function woApprove(reqId, itemName, amount) {
     .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
 }
 
-function woReject(reqId, itemName, amount, staffName) {
+function woReject(reqId, itemName, amount, staffName, requestType) {
     var msg = 'Kataa ombi la kufuta:\n' + itemName + ' — KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0});
-    if (staffName) msg += '\n\nOmbi lilitoka kwa: ' + staffName + '\nHaki deduction ya KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0}) + ' itaundwa kwa ajili yake.';
+    if (requestType === 'erase_mistake') {
+        msg += '\n\nKiingilio kitabaki kwenye deni — hakuna Haki deduction kwa ombi hili la "kosa".';
+    } else if (staffName) {
+        msg += '\n\nOmbi lilitoka kwa: ' + staffName + '\nHaki deduction ya KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0}) + ' itaundwa kwa ajili yake.';
+    }
     if (!confirm(msg)) return;
     fetch('/debt/write-off/' + reqId + '/reject/', {
         method: 'POST',

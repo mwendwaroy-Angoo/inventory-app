@@ -3718,3 +3718,61 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   approval, pending-indicator-clears, reject-never-deducts, confirmed_rev/credit_rev
   separation on `/daily/`, and `confirmed_sales` threading through `_reconcile()`/
   `active_shift_api()`/`close_shift()`. No migrations. 950 tests pass (core + accounts).
+- Debt-erase-mistake feature + branch reconciliation onto main (2026-07-31). Roy: "when an
+  item is out on a running tab or debt section, the system should consider it as a stock
+  deduction... and when the item is erased the system should append the balances
+  accordingly." Confirmed already true on the tab side (any Issue transaction deducts stock
+  regardless of payment method; "✕ Futa" — `remove_tab_entry` — already zeroes qty to
+  restore the balance, shared identically across all three counters). Found a real gap once
+  a tab converts to debt: the only correction tool there was Write-off, which deliberately
+  does NOT restore stock (a real, uncollectable debt — the goods really left the shelf).
+  There was no way to correct a genuinely mistaken debt-section entry (wrong item/customer)
+  without permanently leaving stock wrong. Asked Roy whether the fix should be self-service
+  or approval-gated; his answer: self-service by default, with an owner-activatable
+  approval-gated option that can also be delegated to specific managers. **Model**:
+  `WriteOffRequest.request_type` (core migration 0137, default `'writeoff'` — fully backward
+  compatible with every existing write-off test) distinguishes a real Write-off from
+  `'erase_mistake'`. `Business.debt_erase_requires_approval` (accounts migration 0053,
+  default False = self-service) and `UserProfile.can_approve_debt_erase` (same migration,
+  manager opt-in, owner always) mirror the exact pattern already established by
+  `can_review_petty_cash`/`can_confirm_shifts`. **Execution**: `_execute_write_off_approval()`
+  extracted from `approve_write_off`'s body as a shared core — called either immediately
+  (self-service, `request_write_off` when `is_mistake=1` and approval isn't required) or from
+  the approval endpoint later; for `erase_mistake` it additionally zeroes `txn.qty` (restoring
+  stock, exactly like `remove_tab_entry`) and skips flagging the customer as a defaulter
+  (not their fault). `reject_write_off` skips the Haki salary-deduction penalty for
+  `erase_mistake` rejections — being told a flagged "mistake" was actually real debt isn't
+  the same failure as trying to write off real money. `_can_approve_debt_action(up, wo)` is
+  the one permission check used by both `approve_write_off`/`reject_write_off`: owner always;
+  a manager only for `erase_mistake` AND only with `can_approve_debt_erase` — never for a
+  real Write-off, which stays owner-only exactly as before. Self-service execution still
+  shift-gates non-owner/manager staff (matching `remove_tab_entry`'s own gate) and still
+  creates a `WriteOffRequest` row (immediately `status='approved'`, `reviewed_by=self`) so it
+  leaves the same audit trail an approved request would, rather than a silent, untracked
+  mutation. **UI**: `customer_debt_profile.html`'s write-off modal gained a "🗑 Ilikuwa Kosa"
+  checkbox with a live hint (self-service vs needs-approval, driven by the business setting);
+  per-row approve/reject buttons now key off a per-request `can_i_approve` flag instead of a
+  blanket owner/manager check. `write_offs_pending.html` got the same per-request permission
+  branching (a manager with the erase permission now sees the FINAL Idhinisha/Kataa buttons
+  for `erase_mistake` cards, but still only the advisory Pendekeza buttons for real Write-offs)
+  plus a distinct "🗑 Ilikuwa Kosa" badge. New toggles: Payment Settings' Sera ya Deni section
+  (business-wide approval requirement) and Staff Permissions' manager-only section (per-manager
+  approval delegation), both following this app's exact existing toggle conventions. 19 new
+  tests (`DebtEraseMistakeTest`) covering self-service execution + stock restoration, the
+  shift gate, no-defaulter-flag, approval-gated pending state, manager-permission scoping in
+  both directions (can approve erase_mistake, cannot approve a real write-off), owner-always,
+  and the Haki-deduction distinction on rejection — plus all pre-existing write-off tests
+  confirmed passing unmodified. **Branch reconciliation**: Roy flagged that nothing from this
+  session (6 commits — sticky headers, opening-float correction, cross-counter notification
+  fixes, split-transfer/revert-to-tab/duplicate-detection, receipt split-payment display,
+  confirmed-sales/petty-cash-self-review) had ever reached `main`, all sitting on
+  `claude/laptop-screen-damage-4r21vp` instead. Fast-forward merged the branch into `main`
+  (zero divergence — main had no commits the branch didn't already contain), pushed, and
+  confirmed all three refs (`main`, `origin/main`, `origin/claude/laptop-screen-damage-4r21vp`)
+  point to the identical commit before touching anything. Deleted the now-fully-merged branch
+  locally; the remote copy could not be deleted through git push (a 403 from this session's
+  proxy — an organization egress-policy block on that operation, not a bug to route around)
+  — reported to Roy to remove manually on GitHub if desired, since main already has
+  everything from it. All work for the rest of this session, starting with this entry, goes
+  directly to `main`. Two migrations (core 0137, accounts 0053), both additive. 962 tests
+  pass (core + accounts).

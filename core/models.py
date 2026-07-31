@@ -1911,6 +1911,22 @@ class WriteOffRequest(models.Model):
         ('rejected', _('Imekataliwa')),
     ]
 
+    # 2026-07-31 — a genuinely mistaken debt-section entry (wrong item/
+    # customer, item never actually given out) is a DIFFERENT situation from
+    # a real, uncollectable debt: it must restore stock on approval, must
+    # never flag the customer as a defaulter, and (per Roy's explicit call)
+    # is approvable by a manager granted UserProfile.can_approve_debt_erase,
+    # not owner-only like a real write-off. Reuses this same model/request/
+    # approve/reject lifecycle rather than a parallel one — the only
+    # behavioral differences are branched on this field in approve_write_off.
+    TYPE_WRITEOFF      = 'writeoff'
+    TYPE_ERASE_MISTAKE = 'erase_mistake'
+    TYPE_CHOICES = [
+        ('writeoff',      _('Write-off — Deni Halisi')),
+        ('erase_mistake', _('Ilikuwa Kosa — Bidhaa Haikutolewa')),
+    ]
+    request_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_WRITEOFF)
+
     transaction = models.OneToOneField(
         'Transaction',
         on_delete=models.CASCADE,

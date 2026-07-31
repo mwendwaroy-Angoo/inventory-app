@@ -146,6 +146,17 @@ class Business(models.Model):
                    'subject to the other credit policy gates). A per-customer limit on Customer.'
                    'credit_limit always overrides this default for that one customer.',
     )
+    debt_erase_requires_approval = models.BooleanField(
+        default=False,
+        help_text="2026-07-31 — for a genuinely mistaken debt-section entry (wrong item/"
+                  "customer, not a real uncollectable debt), staff can mark it 'Ilikuwa "
+                  "Kosa' to restore stock the same way removing a tab entry already does. "
+                  "Default False = self-service (any staff with an open shift can execute "
+                  "it immediately, matching the tab-side Futa behavior). True = the same "
+                  "request goes through owner/manager approval first (see UserProfile."
+                  "can_approve_debt_erase) before stock is restored — an owner-activated "
+                  "opt-in for tighter oversight, not the default.",
+    )
 
     last_txn_sms_at = models.DateTimeField(
         null=True, blank=True,
@@ -404,6 +415,15 @@ class UserProfile(models.Model):
             'Manager may confirm (Thibitisha) a CLOSED shift for staff/waitress/kitchen roles. '
             "Does not extend to a manager's own shift, or another manager's shift — those "
             'always require the owner to confirm.'
+        ),
+    )
+    can_approve_debt_erase = models.BooleanField(
+        default=False,
+        help_text=(
+            "Manager may approve/reject a debt-section 'Ilikuwa Kosa' (mistaken entry) "
+            'erase request when Business.debt_erase_requires_approval is enabled. Owner-only '
+            'by default. Never extends to a real Write-off (uncollectable debt) request — '
+            'that final decision always requires the owner.'
         ),
     )
 

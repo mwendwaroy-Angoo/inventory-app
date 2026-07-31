@@ -65,6 +65,9 @@
             </span>
         </div>
         <div class="d-flex align-items-center gap-2 flex-wrap">
+            {% if wo.request_type == 'erase_mistake' %}
+            <span class="manager-badge" style="border-color:rgba(93,168,240,0.3); color:#5da8f0;">🗑 Ilikuwa Kosa</span>
+            {% endif %}
             {% if wo.manager_verdict %}
             <span class="manager-badge">
                 {% if wo.manager_verdict == 'approved' %}✅ Meneja Aidhinisha{% else %}❌ Meneja Akataa{% endif %}
@@ -92,20 +95,20 @@
         <div class="wo-field" style="color:#f0ece4; background:rgba(255,255,255,0.02); padding:0.4rem 0.7rem; border-radius:6px; border:1px solid #2a2a2a;">
             {{ wo.reason }}
         </div>
-        {% if is_owner %}
+        {% if wo.can_i_approve %}
         <div class="d-flex gap-2 mt-3 flex-wrap">
             <button onclick="woApprove({{ wo.id }}, '{{ wo.transaction.item.description|escapejs }}')"
                 class="btn btn-sm"
                 style="background:rgba(110,231,183,0.1); border:1px solid rgba(110,231,183,0.35); color:#6ee7b7;">
-                ✅ {% trans 'Idhinisha — Futa Kiingilio' %}
+                ✅ {% if wo.request_type == 'erase_mistake' %}{% trans 'Idhinisha — Futa na Rejesha Stock' %}{% else %}{% trans 'Idhinisha — Futa Kiingilio' %}{% endif %}
             </button>
-            <button onclick="woReject({{ wo.id }}, '{{ wo.transaction.item.description|escapejs }}', '{{ wo.requested_by.get_full_name|default:wo.requested_by.username|escapejs }}')"
+            <button onclick="woReject({{ wo.id }}, '{{ wo.transaction.item.description|escapejs }}', '{{ wo.requested_by.get_full_name|default:wo.requested_by.username|escapejs }}', '{{ wo.request_type }}')"
                 class="btn btn-sm"
                 style="background:rgba(192,57,90,0.1); border:1px solid rgba(192,57,90,0.35); color:#c0395a;">
-                ❌ {% trans 'Kataa — Haki Deduction' %}
+                ❌ {% if wo.request_type == 'erase_mistake' %}{% trans 'Kataa' %}{% else %}{% trans 'Kataa — Haki Deduction' %}{% endif %}
             </button>
         </div>
-        {% else %}
+        {% elif wo.request_type != 'erase_mistake' %}
         <div style="margin-top:0.75rem;">
             <div class="d-flex gap-2 flex-wrap">
                 <button onclick="woManagerReview({{ wo.id }}, 'approved', '{{ wo.transaction.item.description|escapejs }}')"
@@ -123,6 +126,10 @@
                 💡 {% trans 'Your recommendation is advisory — owner makes the final decision.' %}
             </p>
         </div>
+        {% else %}
+        <p style="color:#888; font-size:0.78rem; margin-top:0.6rem;">
+            🔒 {% trans 'Only the owner, or a manager granted the debt-erase permission, can decide this.' %}
+        </p>
         {% endif %}
     </div>
 </div>
@@ -176,7 +183,6 @@ function _post(url, onOk, onErr) {
     .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
 }
 
-{% if is_owner %}
 function woApprove(reqId, itemName) {
     if (!confirm('Idhinisha kufutwa kwa:\n' + itemName + '\n\nKiingilio kitafutwa kabisa kutoka kwa deni.')) return;
     _post('/debt/write-off/' + reqId + '/approve/', function(d) {
@@ -184,16 +190,19 @@ function woApprove(reqId, itemName) {
         location.reload();
     });
 }
-function woReject(reqId, itemName, staffName) {
+function woReject(reqId, itemName, staffName, requestType) {
     var msg = 'Kataa kufutwa kwa:\n' + itemName;
-    if (staffName) msg += '\n\nHaki deduction itaundwa kwa: ' + staffName;
+    if (requestType === 'erase_mistake') {
+        msg += '\n\nHakuna Haki deduction kwa ombi hili la "kosa".';
+    } else if (staffName) {
+        msg += '\n\nHaki deduction itaundwa kwa: ' + staffName;
+    }
     if (!confirm(msg)) return;
     _post('/debt/write-off/' + reqId + '/reject/', function(d) {
         alert('❌ ' + (d.message || 'Imekataliwa.'));
         location.reload();
     });
 }
-{% else %}
 function woManagerReview(reqId, verdict, itemName) {
     var label = verdict === 'approved' ? 'Pendekeza iidhinishwe' : 'Pendekeza ikataliwe';
     if (!confirm(label + ':\n' + itemName + '\n\nMmiliki ataona pendekezo lako.')) return;
@@ -209,6 +218,5 @@ function woManagerReview(reqId, verdict, itemName) {
     })
     .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
 }
-{% endif %}
 </script>
 {% endblock %}

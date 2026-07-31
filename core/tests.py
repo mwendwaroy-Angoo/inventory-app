@@ -9056,6 +9056,230 @@ class RequestWriteOffStationScopingTest(TestCase):
         self.assertEqual(resp2.json().get('ok'), True)
 
 
+class DebtEraseMistakeTest(TestCase):
+    """2026-07-31 live request: "when an item is out on a running tab or debt
+    section, the system should consider it as a stock deduction... and when
+    the item is erased the system should append the balances accordingly."
+    A genuinely mistaken debt entry (wrong item/customer) is different from
+    a real, uncollectable Write-off — 'Ilikuwa Kosa' restores stock the same
+    way removing a live tab entry already does, is self-service by default
+    (Roy's explicit call), and never flags the customer as a defaulter."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Erase Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='derase_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='derase_manager', password='x')
+        self.manager_profile = UserProfile.objects.create(
+            user=self.manager, business=self.biz, role='manager',
+        )
+        self.staff = User.objects.create_user(username='derase_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Debt Erase Item',
+            material_no='DERASE-01', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+
+    def _make_credit_txn(self, customer_name='Erase Patron'):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), recipient=customer_name,
+            payment_method='credit', sale_amount=Decimal('200'),
+        )
+
+    def _open_shift(self, user):
+        return Shift.objects.create(
+            business=self.biz, staff=user, status='OPEN',
+            started_at=timezone.now() - timedelta(hours=1),
+        )
+
+    # ── Self-service default (Business.debt_erase_requires_approval=False) ──
+
+    def test_owner_self_service_erase_executes_immediately_and_restores_stock(self):
+        txn = self._make_credit_txn()
+        before = self.item.current_balance()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Wrong customer entirely', 'is_mistake': '1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data.get('executed'))
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'void')
+        self.assertEqual(txn.qty, Decimal('0'))
+        self.assertEqual(self.item.current_balance(), before + 2)
+
+    def test_self_service_erase_never_flags_customer_as_defaulter(self):
+        customer = Customer.objects.create(business=self.biz, name='Erase Patron', credit_approved=True)
+        txn = self._make_credit_txn(customer_name='Erase Patron')
+        self.client.force_login(self.owner)
+        self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Data entry mistake', 'is_mistake': '1',
+        })
+        customer.refresh_from_db()
+        self.assertFalse(customer.is_defaulter)
+
+    def test_staff_with_open_shift_can_self_service_erase(self):
+        self._open_shift(self.staff)
+        txn = self._make_credit_txn()
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Mistake', 'is_mistake': '1',
+        })
+        self.assertTrue(resp.json().get('ok'))
+        self.assertTrue(resp.json().get('executed'))
+
+    def test_staff_without_open_shift_cannot_self_service_erase(self):
+        txn = self._make_credit_txn()
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Mistake', 'is_mistake': '1',
+        })
+        self.assertEqual(resp.status_code, 403)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'credit')
+
+    def test_regular_writeoff_request_unaffected_by_default(self):
+        """is_mistake omitted/false — behaves exactly as before this feature:
+        creates a pending request, does not execute, no shift required."""
+        txn = self._make_credit_txn()
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {'reason': 'Real debt'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertNotIn('executed', data)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'credit')
+
+    # ── Approval-gated opt-in (Business.debt_erase_requires_approval=True) ──
+
+    def test_approval_gated_erase_creates_pending_request_not_executed(self):
+        self.biz.debt_erase_requires_approval = True
+        self.biz.save(update_fields=['debt_erase_requires_approval'])
+        self._open_shift(self.staff)
+        txn = self._make_credit_txn()
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Mistake', 'is_mistake': '1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertNotIn('executed', data)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'credit')
+
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.get(transaction=txn)
+        self.assertEqual(wo.status, WriteOffRequest.STATUS_PENDING)
+        self.assertEqual(wo.request_type, WriteOffRequest.TYPE_ERASE_MISTAKE)
+
+    def test_manager_without_permission_cannot_approve_erase_mistake(self):
+        self.biz.debt_erase_requires_approval = True
+        self.biz.save(update_fields=['debt_erase_requires_approval'])
+        txn = self._make_credit_txn()
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.create(
+            transaction=txn, requested_by=self.staff, reason='Mistake',
+            customer_name_cache='Erase Patron', request_type=WriteOffRequest.TYPE_ERASE_MISTAKE,
+        )
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/debt/write-off/{wo.id}/approve/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_manager_with_permission_can_approve_erase_mistake_and_restores_stock(self):
+        self.biz.debt_erase_requires_approval = True
+        self.biz.save(update_fields=['debt_erase_requires_approval'])
+        self.manager_profile.can_approve_debt_erase = True
+        self.manager_profile.save(update_fields=['can_approve_debt_erase'])
+        txn = self._make_credit_txn()
+        before = self.item.current_balance()
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.create(
+            transaction=txn, requested_by=self.staff, reason='Mistake',
+            customer_name_cache='Erase Patron', request_type=WriteOffRequest.TYPE_ERASE_MISTAKE,
+        )
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/debt/write-off/{wo.id}/approve/')
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'void')
+        self.assertEqual(txn.qty, Decimal('0'))
+        self.assertEqual(self.item.current_balance(), before + 2)
+
+    def test_manager_with_erase_permission_still_cannot_approve_real_writeoff(self):
+        """The permission never extends to a real, uncollectable debt —
+        that final decision always stays owner-only."""
+        self.manager_profile.can_approve_debt_erase = True
+        self.manager_profile.save(update_fields=['can_approve_debt_erase'])
+        txn = self._make_credit_txn()
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.create(
+            transaction=txn, requested_by=self.staff, reason='Real debt, uncollectable',
+            customer_name_cache='Erase Patron',
+        )
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/debt/write-off/{wo.id}/approve/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_owner_can_always_approve_either_type(self):
+        self.biz.debt_erase_requires_approval = True
+        self.biz.save(update_fields=['debt_erase_requires_approval'])
+        txn1 = self._make_credit_txn(customer_name='Patron A')
+        txn2 = self._make_credit_txn(customer_name='Patron B')
+        from core.models import WriteOffRequest
+        wo_mistake = WriteOffRequest.objects.create(
+            transaction=txn1, requested_by=self.staff, reason='Mistake',
+            customer_name_cache='Patron A', request_type=WriteOffRequest.TYPE_ERASE_MISTAKE,
+        )
+        wo_real = WriteOffRequest.objects.create(
+            transaction=txn2, requested_by=self.staff, reason='Real debt',
+            customer_name_cache='Patron B',
+        )
+        self.client.force_login(self.owner)
+        resp1 = self.client.post(f'/debt/write-off/{wo_mistake.id}/approve/')
+        resp2 = self.client.post(f'/debt/write-off/{wo_real.id}/approve/')
+        self.assertTrue(resp1.json().get('ok'), resp1.json())
+        self.assertTrue(resp2.json().get('ok'), resp2.json())
+
+    def test_rejecting_erase_mistake_creates_no_haki_deduction(self):
+        """Unlike rejecting a real write-off (which penalises the requester
+        for asking to forgive real money), being told a flagged 'mistake' is
+        actually a real debt is not the same failure — no salary deduction."""
+        txn = self._make_credit_txn()
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.create(
+            transaction=txn, requested_by=self.staff, reason='Mistake',
+            customer_name_cache='Erase Patron', request_type=WriteOffRequest.TYPE_ERASE_MISTAKE,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/{wo.id}/reject/')
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        from core.models import SalaryDeduction
+        self.assertEqual(SalaryDeduction.objects.filter(write_off=wo).count(), 0)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'credit')
+
+    def test_rejecting_real_writeoff_still_creates_haki_deduction(self):
+        """Regression lock: the pre-existing real-write-off rejection penalty
+        must be completely unaffected by this feature."""
+        txn = self._make_credit_txn()
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.create(
+            transaction=txn, requested_by=self.staff, reason='Real debt',
+            customer_name_cache='Erase Patron',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/{wo.id}/reject/')
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        from core.models import SalaryDeduction
+        self.assertEqual(SalaryDeduction.objects.filter(write_off=wo).count(), 1)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Analytics Module Audit — Theme 1 (money-path idempotency), 2026-07-21
 # ══════════════════════════════════════════════════════════════════════════════

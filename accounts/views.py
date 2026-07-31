@@ -246,11 +246,12 @@ def staff_permissions(request, staff_id):
         # a non-manager who could never reach these controls anyway.
         staff_profile.can_review_petty_cash = request.POST.get('can_review_petty_cash') == 'on'
         staff_profile.can_confirm_shifts = request.POST.get('can_confirm_shifts') == 'on'
+        staff_profile.can_approve_debt_erase = request.POST.get('can_approve_debt_erase') == 'on'
         staff_profile.save(update_fields=[
             'can_input_cost_price', 'can_override_restrictions',
             'can_access_kitchen', 'can_access_bar', 'kitchen_requires_shift',
             'can_receive_kitchen_stock', 'can_authorize_tab_accumulation',
-            'can_review_petty_cash', 'can_confirm_shifts',
+            'can_review_petty_cash', 'can_confirm_shifts', 'can_approve_debt_erase',
         ])
         staff_name = staff_profile.user.get_full_name() or staff_profile.user.username
         messages.success(request, _(f'Permissions updated for {staff_name}.'))
@@ -1010,6 +1011,7 @@ def payment_settings(request):
                     late_threshold_days=max(1, int(request.POST.get('late_threshold_days') or 7)),
                     defaulter_permanent=request.POST.get('defaulter_permanent') == '1',
                     cooldown_days=max(0, int(request.POST.get('cooldown_days') or 14)),
+                    debt_erase_requires_approval=request.POST.get('debt_erase_requires_approval') == '1',
                 )
                 messages.success(request, _("Sera ya Deni imehifadhiwa."))
             except (ValueError, TypeError, InvalidOperation):

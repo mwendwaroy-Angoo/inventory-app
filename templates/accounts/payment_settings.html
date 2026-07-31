@@ -608,6 +608,17 @@
                 {% trans 'Zuia kabisa wateja walioandikwa vibaya' %}
               </label>
             </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="debt_erase_requires_approval"
+                     id="debt_erase_requires_approval" value="1"
+                     {% if business.debt_erase_requires_approval %}checked{% endif %}>
+              <label class="form-check-label" for="debt_erase_requires_approval" style="color:var(--pearl);">
+                {% trans '"Ilikuwa Kosa" (kufuta kiingilio cha deni) inahitaji idhini yako' %}
+              </label>
+            </div>
+          </div>
+          <div class="mt-2" style="color:#888; font-size:0.76rem; max-width:600px;">
+            {% trans 'Ikiwa hazijawashwa (default), mfanyakazi yeyote aliye na shift wazi anaweza kurekebisha kiingilio cha deni kilichoingizwa kimakosa mara moja — sawa na kufuta kwenye tab. Ikiwashwa, itahitaji idhini yako au ya meneja mwenye ruhusa maalum (Staff Permissions).' %}
           </div>
 
           <div class="mt-3">

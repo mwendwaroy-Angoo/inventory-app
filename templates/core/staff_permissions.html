@@ -244,6 +244,29 @@
                 </div>
             </div>
         </div>
+
+        <div class="p-4" style="border-top:1px solid #2a2a2a;">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        🗑 {% trans 'Approve Debt-Erase Requests' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans "Allow this manager to approve/reject a debt-section \"Ilikuwa Kosa\" (mistaken entry) request — only relevant when the business setting requiring approval is on. Owner-only by default." %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'Never extends to a real Write-off (uncollectable debt) — that final decision always requires the owner.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_approve_debt_erase"
+                           id="can_approve_debt_erase"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_approve_debt_erase %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
         {% endif %}
 
     </div>

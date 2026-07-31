@@ -20,7 +20,7 @@ from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 from core.models import Customer, CustomerDebtPayment, SalaryDeduction, Transaction, WriteOffRequest
-from core.views import get_user_profile, owner_required, owner_or_manager_required, _station_scope
+from core.views import get_user_profile, owner_or_manager_required, _station_scope
 
 logger = logging.getLogger(__name__)
 
@@ -331,9 +331,21 @@ def customer_debt_profile(request, customer_id):
         for wo_obj in WriteOffRequest.objects.filter(
             transaction_id__in=all_txn_ids,
         ).select_related('requested_by', 'manager_by', 'reviewed_by'):
+            # Ad-hoc attribute for the template — see the app-wide rule that
+            # Django templates reject any name starting with '_'; this is
+            # deliberately a plain name, not a model field.
+            wo_obj.can_i_approve = _can_approve_debt_action(user_profile, wo_obj)
             wo_map[wo_obj.transaction_id] = wo_obj
         for entry in data.get('unpaid_transactions', []):
             entry['write_off'] = wo_map.get(entry['txn'].id)
+
+    # 2026-07-31 — debt-section "Ilikuwa Kosa" (erase a mistaken entry)
+    # feature: whether it executes immediately (self-service, default) or
+    # needs owner/manager approval, and whether THIS viewer could approve
+    # one if it did need approval — both drive the write-off modal's copy.
+    can_approve_debt_erase = user_profile.is_owner or (
+        user_profile.role == 'manager' and getattr(user_profile, 'can_approve_debt_erase', False)
+    )
 
     pending_wo_count = WriteOffRequest.objects.filter(
         transaction__business=business,
@@ -356,6 +368,8 @@ def customer_debt_profile(request, customer_id):
         'credit_standing': credit_standing,
         'pending_wo_count': pending_wo_count,
         'pending_dup_confirm': pending_dup_confirm,
+        'debt_erase_requires_approval': business.debt_erase_requires_approval,
+        'can_approve_debt_erase': can_approve_debt_erase,
     })
 
 
@@ -1165,6 +1179,21 @@ def request_write_off(request, txn_id):
     if (txn_is_kitchen and not show_kitchen) or (not txn_is_kitchen and not show_bar):
         return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kiingilio hiki.'}, status=403)
 
+    # Self-service "Ilikuwa Kosa" executes with real, immediate effect (stock
+    # restored right away) — matching remove_tab_entry's own shift gate for
+    # non-owner/manager staff, since it's the same class of correction. The
+    # plain write-off REQUEST step (this endpoint's original behavior) has
+    # never required a shift — unaffected, only the self-service erase branch
+    # gets this check.
+    if (
+        request.POST.get('is_mistake') == '1'
+        and not up.business.debt_erase_requires_approval
+        and not up.is_owner_or_manager
+    ):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse({'ok': False, 'error': 'Fungua shift yako kwanza.'}, status=403)
+
     # Check for an existing pending request on this transaction
     existing = WriteOffRequest.objects.filter(transaction=txn).first()
     if existing:
@@ -1179,6 +1208,21 @@ def request_write_off(request, txn_id):
     if not reason:
         return JsonResponse({'ok': False, 'error': 'Andika sababu ya kuomba kufuta.'}, status=400)
 
+    # 2026-07-31 live request: "when an item is out on a running tab or debt
+    # section... when the item is erased the system should append the
+    # balances accordingly." A genuinely mistaken debt entry (wrong item/
+    # customer, item never actually given out) is different from a real,
+    # uncollectable debt — it must restore stock, unlike an ordinary
+    # write-off. Roy's explicit call: self-service by default (any staff
+    # with an open shift executes it immediately, matching the tab-side
+    # "✕ Futa" behavior), with an owner-activatable opt-in
+    # (Business.debt_erase_requires_approval) that routes it through the
+    # same request/approve/reject lifecycle as a real write-off instead —
+    # approvable by a manager granted UserProfile.can_approve_debt_erase
+    # (never owner-only like a real write-off's final decision).
+    is_mistake = request.POST.get('is_mistake') == '1'
+    request_type = WriteOffRequest.TYPE_ERASE_MISTAKE if is_mistake else WriteOffRequest.TYPE_WRITEOFF
+
     customer_name = txn.recipient or ''
     item_name = txn.item.description if txn.item_id else '?'
     amount = float(txn.revenue())
@@ -1189,7 +1233,21 @@ def request_write_off(request, txn_id):
         requested_by=request.user,
         reason=reason,
         customer_name_cache=customer_name,
+        request_type=request_type,
     )
+
+    if is_mistake and not up.business.debt_erase_requires_approval:
+        # Self-service — no approval needed, execute right now. Still goes
+        # through _execute_write_off_approval() (the same code approve_write_off
+        # uses) so a self-executed erase is indistinguishable in its effect
+        # from an approved one — only who/when differs.
+        result = _execute_write_off_approval(wo, request.user, self_service=True)
+        return JsonResponse({
+            'ok': True,
+            'request_id': wo.id,
+            'executed': True,
+            'message': result['message'],
+        })
 
     # Notify all owners and managers (not the requester themselves)
     from .models import Notification
@@ -1200,12 +1258,13 @@ def request_write_off(request, txn_id):
         business=up.business, role__in=['owner', 'manager'],
     ).exclude(user=request.user).select_related('user')
 
+    type_label = 'kosa (rejesha stock)' if is_mistake else 'deni'
     for om in targets:
         Notification.objects.create(
             user=om.user,
             title='📝 Ombi la Kufuta Kiingilio',
             message=(
-                f"{requester_name} anaomba kufuta: {item_name} "
+                f"{requester_name} anaomba kufuta kama {type_label}: {item_name} "
                 f"KES {amount:,.0f} ({customer_name}). Sababu: {reason}"
             ),
             notification_type='warning',
@@ -1215,8 +1274,8 @@ def request_write_off(request, txn_id):
             normalized = normalize_ke_phone(om.phone)
             if normalized:
                 sms = (
-                    f"{up.business.name}: {requester_name} anaomba kufuta kiingilio: "
-                    f"{item_name} KES {amount:,.0f} ({customer_name}). "
+                    f"{up.business.name}: {requester_name} anaomba kufuta kiingilio kama "
+                    f"{type_label}: {item_name} KES {amount:,.0f} ({customer_name}). "
                     f"Sababu: {reason}. Angalia app kuidhinisha au kukataa."
                 )
                 send_sms_notification(sms, normalized)
@@ -1292,11 +1351,128 @@ def manager_review_write_off(request, req_id):
     return JsonResponse({'ok': True, 'verdict': verdict, 'label': label})
 
 
+def _can_approve_debt_action(up, wo):
+    """Who may approve/reject a WriteOffRequest — owner always; a manager
+    only for an 'erase_mistake' request AND only when explicitly granted
+    UserProfile.can_approve_debt_erase (2026-07-31). A real 'writeoff' (real,
+    uncollectable debt) request's final decision always stays owner-only,
+    exactly as before this feature — unchanged for every pre-existing test.
+    """
+    if up.is_owner:
+        return True
+    if (
+        wo.request_type == WriteOffRequest.TYPE_ERASE_MISTAKE
+        and up.role == 'manager'
+        and getattr(up, 'can_approve_debt_erase', False)
+    ):
+        return True
+    return False
+
+
+def _execute_write_off_approval(wo, approver, self_service=False):
+    """Shared execution core for approve_write_off — also called directly by
+    request_write_off() for the self-service 'erase_mistake' path (Business.
+    debt_erase_requires_approval=False), so a self-executed erase produces
+    byte-for-byte the same effect as an approved one, just with no separate
+    approval step. Returns {item_name, customer_name, amount, message}.
+    """
+    txn = wo.transaction
+    item_name = txn.item.description if txn.item_id else '?'
+    customer_name = wo.customer_name_cache or txn.recipient or '—'
+    amount = float(txn.revenue())
+    reviewer_name = approver.get_full_name() or approver.username
+    is_mistake = wo.request_type == WriteOffRequest.TYPE_ERASE_MISTAKE
+
+    # Execute the void
+    txn.payment_method = 'void'
+    txn.recipient = ''
+    update_fields = ['payment_method', 'recipient']
+    if is_mistake:
+        # 2026-07-31 live request: "when the item is erased the system
+        # should append the balances accordingly" — unlike a real write-off
+        # (goods really left the shelf, only the receivable is forgiven),
+        # a mistaken entry never should have deducted stock in the first
+        # place — zeroing qty restores the balance exactly the way removing
+        # a live tab entry already does (remove_tab_entry, same mechanism).
+        txn.qty = Decimal('0')
+        update_fields.append('qty')
+    txn.save(update_fields=update_fields)
+
+    wo.status = WriteOffRequest.STATUS_APPROVED
+    wo.reviewed_by = approver
+    wo.reviewed_at = timezone.now()
+    wo.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
+
+    # Same signal as void_tab: this credit is unrecoverable and the business
+    # is eating the loss, so flag the customer the same way a voided debt tab
+    # does — was previously only done for void_tab, leaving this equally-final
+    # "written off, uncollectable" path invisible to future credit decisions.
+    # Never fair to flag the customer for a data-entry mistake that wasn't
+    # their fault — skipped entirely for the erase_mistake type.
+    if not is_mistake and customer_name and customer_name != '—':
+        cust_obj = Customer.objects.filter(business=wo.transaction.business, name=customer_name).first()
+        if cust_obj:
+            Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
+
+    # Remove any Haki deduction the manager may have already created (owner overrides)
+    SalaryDeduction.objects.filter(write_off=wo).delete()
+
+    # Update recent receipts so the line explains itself on the public receipt page
+    _mark_receipt_write_off(wo.transaction.business, customer_name, item_name, amount, when=wo.reviewed_at)
+
+    from .models import Notification
+    from core.notifications import normalize_ke_phone, send_sms_notification
+
+    verb = 'amefuta (kosa — stock imerejeshwa)' if is_mistake else 'amefuta'
+    if self_service:
+        message = f'Imefutwa — KES {amount:,.0f} ({item_name}) kutoka kwa deni la {customer_name}. Stock imerejeshwa.'
+    else:
+        title_verb = '✅ Kosa Limefutwa' if is_mistake else '✅ Write-off Imeidhinishwa'
+        Notification.objects.create(
+            user=approver,
+            title=title_verb,
+            message=f"{reviewer_name} {verb}: {item_name} KES {amount:,.0f} ({customer_name}).",
+            notification_type='info',
+            link_url='/debt/write-offs/pending/',
+        )
+        # Notify the requesting staff member
+        if wo.requested_by and wo.requested_by_id != approver.id:
+            Notification.objects.create(
+                user=wo.requested_by,
+                title=title_verb,
+                message=f"{reviewer_name} ame{('idhinisha' if not is_mistake else 'idhinisha ombi lako la kosa')}: "
+                        f"{item_name} KES {amount:,.0f} ({customer_name}) imefutwa"
+                        + (' — stock imerejeshwa.' if is_mistake else '.'),
+                notification_type='info',
+                link_url='/debt/write-offs/pending/',
+            )
+            from accounts.models import UserProfile as _UP
+            sp = _UP.objects.filter(user=wo.requested_by, business=wo.transaction.business).first()
+            if sp and sp.phone:
+                normalized = normalize_ke_phone(sp.phone)
+                if normalized:
+                    send_sms_notification(
+                        f"{wo.transaction.business.name}: {reviewer_name} ameidhinisha ombi lako — "
+                        f"{item_name} KES {amount:,.0f} imefutwa kutoka kwa deni."
+                        + (' Stock imerejeshwa.' if is_mistake else ''),
+                        normalized,
+                    )
+        message = f'Imeidhinishwa — KES {amount:,.0f} ({item_name}) imefutwa kutoka kwa deni la {customer_name}.'
+
+    return {
+        'item_name': item_name,
+        'customer_name': customer_name,
+        'amount': amount,
+        'message': message,
+    }
+
+
 @login_required
-@owner_required
 @require_POST
 def approve_write_off(request, req_id):
-    """Owner approves a write-off request — executes the void immediately.
+    """Owner (always) or a permitted manager (erase_mistake requests only —
+    see _can_approve_debt_action) approves a write-off/erase request —
+    executes the void immediately via _execute_write_off_approval().
 
     This is the FINAL decision. The transaction's payment_method is set to 'void',
     removing it from the debt tracker and revenue. The customer's receipt meta is
@@ -1310,91 +1486,39 @@ def approve_write_off(request, req_id):
 
     wo = get_object_or_404(WriteOffRequest, id=req_id, transaction__business=up.business)
 
+    if not _can_approve_debt_action(up, wo):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kuidhinisha ombi hili.'}, status=403)
+
     if wo.status == WriteOffRequest.STATUS_APPROVED:
         return JsonResponse({'ok': False, 'error': 'Ombi hili lishaidhinishwa tayari.'}, status=400)
     if wo.status == WriteOffRequest.STATUS_REJECTED:
         return JsonResponse({'ok': False, 'error': 'Ombi hili lilikataliwa — haliwezi kuidhinishwa tena.'}, status=400)
 
-    txn = wo.transaction
-    item_name = txn.item.description if txn.item_id else '?'
-    customer_name = wo.customer_name_cache or txn.recipient or '—'
-    amount = float(txn.revenue())
-    reviewer_name = request.user.get_full_name() or request.user.username
-
-    # Execute the void
-    txn.payment_method = 'void'
-    txn.recipient = ''
-    txn.save(update_fields=['payment_method', 'recipient'])
-
-    wo.status = WriteOffRequest.STATUS_APPROVED
-    wo.reviewed_by = request.user
-    wo.reviewed_at = timezone.now()
-    wo.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
-
-    # Same signal as void_tab: this credit is unrecoverable and the business
-    # is eating the loss, so flag the customer the same way a voided debt tab
-    # does — was previously only done for void_tab, leaving this equally-final
-    # "written off, uncollectable" path invisible to future credit decisions.
-    if customer_name and customer_name != '—':
-        cust_obj = Customer.objects.filter(business=up.business, name=customer_name).first()
-        if cust_obj:
-            Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
-
-    # Remove any Haki deduction the manager may have already created (owner overrides)
-    SalaryDeduction.objects.filter(write_off=wo).delete()
-
-    # Update recent receipts so the line explains itself on the public receipt page
-    _mark_receipt_write_off(up.business, customer_name, item_name, amount, when=wo.reviewed_at)
-
-    from .models import Notification
-    from core.notifications import normalize_ke_phone, send_sms_notification
-
-    Notification.objects.create(
-        user=request.user,
-        title='✅ Write-off Imeidhinishwa',
-        message=f"{reviewer_name} amefuta: {item_name} KES {amount:,.0f} ({customer_name}).",
-        notification_type='info',
-        link_url='/debt/write-offs/pending/',
-    )
-
-    # Notify the requesting staff member
-    if wo.requested_by:
-        Notification.objects.create(
-            user=wo.requested_by,
-            title='✅ Ombi la Write-off Limeidhinishwa',
-            message=f"Mmiliki ameidhinisha: {item_name} KES {amount:,.0f} ({customer_name}) imefutwa.",
-            notification_type='info',
-            link_url='/debt/write-offs/pending/',
-        )
-        from accounts.models import UserProfile as _UP
-        sp = _UP.objects.filter(user=wo.requested_by, business=up.business).first()
-        if sp and sp.phone:
-            normalized = normalize_ke_phone(sp.phone)
-            if normalized:
-                send_sms_notification(
-                    f"{up.business.name}: Mmiliki ameidhinisha ombi lako — "
-                    f"{item_name} KES {amount:,.0f} imefutwa kutoka kwa deni.",
-                    normalized,
-                )
+    result = _execute_write_off_approval(wo, request.user)
 
     return JsonResponse({
         'ok': True,
         'status': 'approved',
-        'voided_amount': amount,
-        'customer': customer_name,
-        'message': f'Imeidhinishwa — KES {amount:,.0f} ({item_name}) imefutwa kutoka kwa deni la {customer_name}.',
+        'voided_amount': result['amount'],
+        'customer': result['customer_name'],
+        'message': result['message'],
     })
 
 
 @login_required
-@owner_required
 @require_POST
 def reject_write_off(request, req_id):
-    """Owner rejects a write-off request — creates a Haki salary deduction.
+    """Owner (always) or a permitted manager (erase_mistake requests only —
+    see _can_approve_debt_action) rejects a request.
 
-    FINAL decision. The transaction stays as a credit (not voided).
-    A SalaryDeduction is created for the requesting staff member for this period.
-    The staff member is notified via in-app + SMS.
+    For a real 'writeoff' request (unchanged): FINAL decision, creates a Haki
+    salary deduction against the requesting staff member — asking to forgive
+    real money that should have been collected is a real cost to flag.
+    For an 'erase_mistake' request (2026-07-31): no Haki deduction — flagging
+    something as a possible data-entry mistake and being told it's actually a
+    real debt is not the same failure as trying to write off real money, so
+    it is not penalised the same way. The transaction stays as a credit
+    either way (never voided by a rejection).
     """
     up = get_user_profile(request)
     if not up:
@@ -1402,11 +1526,15 @@ def reject_write_off(request, req_id):
 
     wo = get_object_or_404(WriteOffRequest, id=req_id, transaction__business=up.business)
 
+    if not _can_approve_debt_action(up, wo):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kukataa ombi hili.'}, status=403)
+
     if wo.status == WriteOffRequest.STATUS_REJECTED:
         return JsonResponse({'ok': False, 'error': 'Ombi hili lilikataliwa tayari.'}, status=400)
     if wo.status == WriteOffRequest.STATUS_APPROVED:
         return JsonResponse({'ok': False, 'error': 'Ombi hili lishaidhinishwa — haliwezi kukataliwa tena.'}, status=400)
 
+    is_mistake = wo.request_type == WriteOffRequest.TYPE_ERASE_MISTAKE
     txn = wo.transaction
     item_name = txn.item.description if txn.item_id else '?'
     customer_name = wo.customer_name_cache or txn.recipient or '—'
@@ -1424,11 +1552,35 @@ def reject_write_off(request, req_id):
     wo.reviewed_at = timezone.now()
     wo.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
 
-    # Create Haki deduction for the requesting staff member
     from accounts.models import UserProfile as _UP
     from core.notifications import normalize_ke_phone, send_sms_notification
+    from .models import Notification
 
-    if wo.requested_by and not wo.haki_deduction_created:
+    deducted_from = ''
+    if is_mistake:
+        # No Haki penalty — see docstring. Still explains the outcome to the
+        # requester so the debt line's status isn't a silent surprise.
+        if wo.requested_by:
+            Notification.objects.create(
+                user=wo.requested_by,
+                title='❌ Ombi la Kosa Limekataliwa',
+                message=(
+                    f"{reviewer_name} amekataa ombi lako — {item_name} KES {amount:,.0f} "
+                    f"({customer_name}) inabaki kwenye deni kama iliyokuwa."
+                ),
+                notification_type='warning',
+                link_url='/debt/write-offs/pending/',
+            )
+            staff_profile = _UP.objects.filter(user=wo.requested_by, business=up.business).first()
+            if staff_profile and staff_profile.phone:
+                normalized = normalize_ke_phone(staff_profile.phone)
+                if normalized:
+                    send_sms_notification(
+                        f"{up.business.name}: Ombi lako la 'ilikuwa kosa' kwa {item_name} "
+                        f"KES {amount:,.0f} limekataliwa — inabaki kwenye deni.",
+                        normalized,
+                    )
+    elif wo.requested_by and not wo.haki_deduction_created:
         staff_profile = _UP.objects.filter(user=wo.requested_by, business=up.business).first()
         if staff_profile:
             period = timezone.localdate().strftime('%Y-%m')
@@ -1446,8 +1598,8 @@ def reject_write_off(request, req_id):
             )
             wo.haki_deduction_created = True
             wo.save(update_fields=['haki_deduction_created'])
+            deducted_from = staff_profile.user.get_full_name() or staff_profile.user.username
 
-            from .models import Notification
             Notification.objects.create(
                 user=wo.requested_by,
                 title='❌ Ombi la Write-off Limekataliwa',
@@ -1468,23 +1620,25 @@ def reject_write_off(request, req_id):
                         normalized,
                     )
 
-    from .models import Notification
     Notification.objects.create(
         user=request.user,
-        title='❌ Write-off Imekataliwa',
-        message=f"{reviewer_name} alikataa: {item_name} KES {amount:,.0f} ({customer_name}). Haki deduction imetumwa.",
+        title='❌ Ombi Limekataliwa',
+        message=(
+            f"{reviewer_name} alikataa: {item_name} KES {amount:,.0f} ({customer_name})."
+            + (' Haki deduction imetumwa.' if deducted_from else '')
+        ),
         notification_type='warning',
         link_url='/debt/write-offs/pending/',
     )
 
-    deducted_from = ''
-    if wo.requested_by:
-        deducted_from = wo.requested_by.get_full_name() or wo.requested_by.username
-
     return JsonResponse({
         'ok': True,
         'status': 'rejected',
-        'message': f'Imekataliwa — Haki deduction ya KES {amount:,.0f} imetumwa kwa {deducted_from}.',
+        'message': (
+            f'Imekataliwa — Haki deduction ya KES {amount:,.0f} imetumwa kwa {deducted_from}.'
+            if deducted_from else
+            f'Imekataliwa — {item_name} inabaki kwenye deni la {customer_name}.'
+        ),
     })
 
 
@@ -1496,7 +1650,7 @@ def pending_write_offs(request):
     if not up:
         return redirect('login')
 
-    pending = (
+    pending = list(
         WriteOffRequest.objects
         .filter(transaction__business=up.business, status=WriteOffRequest.STATUS_PENDING)
         .select_related(
@@ -1505,6 +1659,15 @@ def pending_write_offs(request):
         )
         .order_by('-created_at')
     )
+    # 2026-07-31 — a manager granted can_approve_debt_erase gets the FINAL
+    # Idhinisha/Kataa buttons for an 'erase_mistake' request specifically
+    # (see _can_approve_debt_action), never for a real 'writeoff' — those
+    # keep the existing owner-only-final / manager-advisory-only split
+    # completely unchanged. Ad-hoc plain-name attribute, per this app's own
+    # rule against leading-underscore template attributes.
+    for wo in pending:
+        wo.can_i_approve = _can_approve_debt_action(up, wo)
+
     recent = (
         WriteOffRequest.objects
         .filter(transaction__business=up.business)
