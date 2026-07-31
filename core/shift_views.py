@@ -141,6 +141,52 @@ def _station_q(is_kitchen):
     return Q(station=target) | (Q(station='') & role_fallback)
 
 
+def station_revenue_window_start(business, is_kitchen, now=None):
+    """Start of the "today's revenue" tile window for one station.
+
+    2026-08-01 live request — Roy: a business closing at midnight (Monsoon
+    Inn) saw its dashboard revenue tiles silently reset to KES 0 the moment
+    the calendar day rolled over, even while a shift was still open and
+    actively selling — "the revenue should still continue until the
+    business owner or manager signs off officially regardless of the
+    time." The tile previously filtered `Transaction.date ==
+    timezone.localdate()`, a pure calendar-day boundary with no awareness
+    of whether the station's trading session was actually still open.
+
+    Normally returns today's local midnight (unchanged default behaviour —
+    a station that opens fresh each day still resets exactly as before).
+    Extended backward only when this station's MOST RECENT shift started
+    before midnight: if that shift is `latest.started_at < midnight`, then
+    by construction no NEWER shift has been opened for this station since
+    (a newer one would itself be "most recent" instead) — meaning EITHER
+    it's still OPEN and actively trading (bar, in Roy's example: keep
+    counting), OR it already closed and nothing new has started yet
+    (kitchen, in Roy's example: the tile freezes at its final total instead
+    of vanishing to 0 — it only genuinely resets once a NEW shift opens for
+    that station, the deliberate "starting today's shift" signal).
+
+    Known scope limit: a station with NO shifts at all (the owner selling
+    personally with no shift ever opened for it) still resets at plain
+    midnight — there is no shift record to anchor an extension on, and no
+    other explicit "the owner is still trading" signal exists in this app
+    today. The owner opening even a nominal shift for that station gets
+    them the same continuity for free.
+    """
+    from .models import Shift
+    now = now or timezone.now()
+    midnight = timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    latest = (
+        Shift.objects.filter(business=business)
+        .filter(_station_q(is_kitchen))
+        .order_by('-started_at')
+        .first()
+    )
+    if latest and latest.started_at < midnight:
+        return latest.started_at
+    return midnight
+
+
 # ── Variance attribution ──────────────────────────────────────────────────────
 
 def attribute_variance_shift(business, current_shift, item=None, keg_barrel=None):

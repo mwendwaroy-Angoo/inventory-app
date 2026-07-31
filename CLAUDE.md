@@ -810,6 +810,49 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- Rekebisha "not a real loss" (2026-08-01), same-day follow-up. Live report
+  with screenshots: Roy corrected Chrome Brandy 250ml (10→5) and Gilbey's
+  (2→1) via ⚖️ Rekebisha, reversing the duplicate-receipt idempotency bug
+  fixed earlier the same day — but both corrections showed up on Daily Sales
+  as "⚠ Wastage — KES 2430 cost lost", reading as if real stock had spoiled
+  or broken. Root cause: `adjust_stock_balance()`'s shortage branch has
+  always tagged EVERY downward correction `invoice_no='[ADJ]'` and
+  `type='Wastage'` uniformly, with no way to distinguish two fundamentally
+  different real-world causes that both land on "physical count is lower
+  than book" — (a) a genuine recount discovering REAL loss never logged
+  (breakage, theft, spoilage) — this legitimately IS a real cost and must
+  count; vs (b) correcting a book balance that was NEVER physically real to
+  begin with, because a software bug (or a data-entry mistake) inflated it —
+  no real money was ever spent on the phantom units, so it should NOT count
+  as a loss. `analytics_dashboard`'s `wastage_loss` (net profit),
+  `daily_sales`'s wastage tile, and `haki_views._staff_contribution`'s
+  `wastage_kes` (staff accountability) all blindly summed every `[ADJ]`
+  Wastage transaction with no such distinction — despite Transaction
+  History's OWN badge already describing `[ADJ]` as "not a real
+  delivery/loss," the three cost-facing reports never honored that framing.
+  Fixed: `adjust_stock_balance()` gains an explicit `no_real_loss` checkbox
+  on the Rekebisha modal (shown only for a shortage, never inferred/
+  auto-detected — an owner/manager decision every time) that tags the
+  correction `[ADJ-NOLOSS]` instead of plain `[ADJ]`; all three cost
+  aggregates now `.exclude(invoice_no='[ADJ-NOLOSS]')` while a plain
+  `[ADJ]` shortage (the genuine-loss case) still counts exactly as before —
+  the stock BALANCE correction itself is byte-identical either way, only
+  whether it's treated as a financial loss differs. For entries already
+  recorded before this existed (Roy's actual Chrome Brandy/Gilbey's rows),
+  new `toggle_adjustment_no_loss` (owner/manager only, `/stock/adjustment/
+  <txn_id>/toggle-no-loss/`) flips an existing `[ADJ]`↔`[ADJ-NOLOSS]`
+  Wastage transaction after the fact, reversible either direction; strictly
+  scoped to `type='Wastage'` + `invoice_no in ('[ADJ]','[ADJ-NOLOSS]')` so
+  it can never touch a genuine Wastage entry or unrelated transaction. New
+  "sio hasara halisi?" (not a real loss?) toggle link added next to every
+  `[ADJ]`-tagged Wastage row in Transaction History (owner/manager only),
+  and `[ADJ-NOLOSS]` rows get their own distinct green badge. 9 new tests
+  (`AdjustmentNoRealLossTest`) — checkbox tagging both ways, exclusion from
+  all three cost surfaces, the genuine-loss case still counting, the
+  retroactive toggle both directions, staff blocked, and the toggle
+  refusing to touch an unrelated transaction. No migrations (reuses the
+  existing `invoice_no` string-tag convention already established for
+  `[ADJ]`/`[SVQ]`/`[KBDRAW]`).
 - Shift cash/mpesa completeness audit (2026-07-31), same-day follow-up. Roy:
   "make sure that all items in the kitchen counter be it chipo smokies or
   kuku... are factored in, in the sales... what is displayed in cash and
@@ -862,6 +905,22 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `BarDailyReportStaffRevenueFallbackTest`) — including a direct
   regression lock asserting the Duty Log's variance now equals
   `_reconcile()`'s own output exactly. No migrations.
+  **Test-authoring bug found the same day, same file**: these 4 tests
+  passed in isolation but failed when the full suite ran during the
+  UTC/Nairobi day-straddle window (`TIME_ZONE='Africa/Nairobi'`, UTC+3 —
+  roughly 21:00-24:00 UTC, when the UTC calendar day and the Nairobi
+  calendar day disagree). Root cause: the tests built their `?date=`
+  query param from `shift.started_at.date()` — Python's naive `.date()`
+  on a UTC-stored aware datetime extracts the UTC calendar day — while
+  the view's own `Shift.objects.filter(started_at__date=report_date)`
+  lookup, under `USE_TZ=True`, converts to the Nairobi-configured
+  `TIME_ZONE` before extracting the date for the SQL comparison; during
+  the straddle window these disagree by one day, so the view found zero
+  matching shifts and `next(...)` raised `StopIteration`. Same bug class
+  already documented twice before in this file (`PettyCashReviewUndoTest`,
+  `BarZReportOverlappingShiftsTest`) — fixed by using
+  `timezone.localtime(shift.started_at).date()` instead, matching this
+  project's own established convention for "today" everywhere else.
 - Four-item live audit: split-payment debt bug, customer merge, similar-name
   detection, partial-payment-now/remainder-as-debt checkout (2026-07-31). Roy's
   own framing: "everything is connected... cross-check basic functionalities."
@@ -4113,3 +4172,37 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   every configured preset price is accepted and credited exactly (the literal reported
   scenario), no preset/khaki bookkeeping is attached to a no-preset sale, and it accumulates
   correctly alongside ordinary preset sales on the same batch. No migrations.
+- Dashboard revenue survives past midnight while a station's shift is still open
+  (2026-07-31/08-01), live request with a concrete example: Monsoon Inn's business closing
+  time is midnight; kitchen staff had already closed their shift, but bar sales were still
+  happening past midnight, and the dashboard's "today's revenue" tiles reset to 0 at plain
+  calendar midnight regardless — Roy's ask: revenue should keep counting for whichever
+  station is still actively selling (shift open, or the owner/manager themselves selling)
+  until that station is officially signed off, "regardless of the time." Root cause:
+  `home()`'s `bar_today_revenue`/`kitchen_today_revenue` tiles and
+  `dashboard_revenue_api()`'s live poll (the same endpoint those tiles refresh from every
+  few seconds) both filtered strictly on `date=timezone.localdate()` — a hard reset at
+  00:00 Nairobi time with no awareness of whether a "trading day" for that station was
+  still actually in progress. New `station_revenue_window_start(business, is_kitchen,
+  now=None)` (`core/shift_views.py`, right after `_station_q()`) generalizes this with one
+  simple rule: find that station's most recently STARTED `Shift` (via the existing
+  `_station_q()` discriminator); if it started before today's midnight, the revenue window
+  extends backward to that shift's own `started_at` — covering both "still open, sales
+  should keep counting" AND "closed, but nothing NEWER has started yet, so the tile stays
+  frozen at its final total instead of snapping back to 0" (Monsoon Inn's exact kitchen-vs-
+  bar scenario: kitchen's shift closed before midnight with nothing new opened, so its tile
+  correctly freezes; bar's shift is still open, so its tile keeps counting). If the most
+  recent shift for that station started AFTER today's midnight (the ordinary case), the
+  window is just today's midnight as before — zero behavior change on a normal day.
+  `home()` and `dashboard_revenue_api()` both switched from `date=today` to
+  `created_at__gte=<window_start>` for cash+mpesa Issue transactions per station (still
+  excluding void and `[SVQ]`-tagged corrective transactions, unchanged). **Known, explicitly
+  disclosed scope limit**: a station with literally ZERO `Shift` rows ever created — pure
+  owner-only selling with no shift ever opened on that counter — has no shift to anchor an
+  extension on, so it still resets at plain midnight; the owner/manager should open even a
+  nominal shift on that counter if they want the same continuity for their own late-night
+  sales. 6 new tests (`StationRevenueWindowStartTest` — no-shift fallback, open-shift-
+  spanning-midnight extension, closed-shift-frozen-not-reset, new-shift-after-midnight
+  reset, station independence; `HomeDashboardRevenueSurvivesMidnightTest` — end-to-end
+  through `/` and `/dashboard/revenue/` for a sale recorded under a shift that started the
+  prior day). No migrations.

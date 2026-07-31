@@ -661,6 +661,7 @@ def adjust_stock_balance(request, item_id):
 
     actual_str = request.POST.get('actual_count', '').strip()
     note = request.POST.get('note', '').strip()
+    no_real_loss = request.POST.get('no_real_loss') in ('1', 'true', 'on')
 
     if not actual_str:
         return JsonResponse({'ok': False, 'error': 'Taja hesabu halisi.'}, status=400)
@@ -689,6 +690,23 @@ def adjust_stock_balance(request, item_id):
         # branch was tagged, an inconsistency found while fixing the
         # display (Roy's report: a surplus correction showed as a plain
         # "Receipt" with no visible distinction from a real delivery).
+        #
+        # 2026-07-31 live report — a Rekebisha shortage correcting a
+        # PHANTOM prior receipt (Chrome Brandy/Gilbey's — a duplicate
+        # stock receipt from the network-disruption double-submit bug)
+        # showed up as real "Wastage — KES X cost lost" on Daily Sales,
+        # net profit, and Haki wastage attribution — overstating a loss
+        # that never actually happened (no real money was ever spent on
+        # phantom units that were never really received). `[ADJ]` alone
+        # can't distinguish this from a GENUINE shortage correction (e.g.
+        # a recount discovering real breakage never logged) — that case
+        # legitimately IS a real cost and must still count. `no_real_loss`
+        # (an explicit owner/manager choice at correction time, never
+        # inferred) tags the transaction `[ADJ-NOLOSS]` instead, which
+        # analytics_dashboard's wastage_loss, daily_sales's wastage tile,
+        # and haki_views._staff_contribution's wastage_kes all exclude —
+        # the stock BALANCE correction itself is identical either way,
+        # only whether it counts as a financial loss differs.
         Transaction.objects.create(
             business=business,
             item=item,
@@ -697,7 +715,7 @@ def adjust_stock_balance(request, item_id):
             date=timezone.localdate(),
             recorded_by=request.user,
             recipient=txn_note,
-            invoice_no='[ADJ]',
+            invoice_no='[ADJ-NOLOSS]' if no_real_loss else '[ADJ]',
             payment_method='',
         )
         direction_label = f'Punguzo la {abs(variance):g} {item.unit}'
@@ -724,3 +742,48 @@ def adjust_stock_balance(request, item_id):
         'message': f'{item.description}: {direction_label}. Salio jipya: {new_balance:g} {item.unit}.',
         'new_balance': str(new_balance),
     })
+
+
+@owner_or_manager_required
+def toggle_adjustment_no_loss(request, txn_id):
+    """Retroactively mark an already-recorded Rekebisha shortage correction
+    as "not a real loss" (or revert that) — 2026-07-31 live report: Roy
+    corrected Chrome Brandy/Gilbey's balances via Rekebisha (reversing the
+    duplicate-receipt idempotency bug fixed the same day) and the shortfall
+    showed up as real "Wastage — cost lost", overstating a loss that never
+    happened. adjust_stock_balance() now captures this choice AT correction
+    time via the no_real_loss checkbox — this endpoint is for entries
+    already recorded before that existed, or for correcting the choice
+    later either direction. Only ever touches a Transaction this SAME
+    mechanism created (type='Wastage', invoice_no in ('[ADJ]',
+    '[ADJ-NOLOSS]')) — never a genuine Wastage entry, and never the stock
+    balance itself (qty is untouched either way — only invoice_no flips).
+    """
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'error': 'POST required.'}, status=405)
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Not authenticated.'}, status=403)
+
+    txn = Transaction.objects.filter(
+        id=txn_id, business=up.business, type='Wastage',
+        invoice_no__in=['[ADJ]', '[ADJ-NOLOSS]'],
+    ).select_related('item').first()
+    if not txn:
+        return JsonResponse({'ok': False, 'error': 'Muamala huu haupatikani au si marekebisho ya Rekebisha.'}, status=404)
+
+    if txn.invoice_no == '[ADJ]':
+        txn.invoice_no = '[ADJ-NOLOSS]'
+        txn.save(update_fields=['invoice_no'])
+        msg = (
+            f'{txn.item.description}: marekebisho haya sasa YAMEWEKWA kama si hasara halisi — '
+            f'hayatahesabiwa tena kwenye upotevu/gharama.'
+        )
+    else:
+        txn.invoice_no = '[ADJ]'
+        txn.save(update_fields=['invoice_no'])
+        msg = (
+            f'{txn.item.description}: marekebisho haya sasa yanahesabika kama hasara halisi tena.'
+        )
+
+    return JsonResponse({'ok': True, 'message': msg, 'invoice_no': txn.invoice_no})

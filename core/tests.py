@@ -18501,7 +18501,7 @@ class StaffDutyLogVarianceUsesRealReconcileTest(TestCase):
             qty=Decimal('-1'), sale_amount=Decimal('50'), payment_method='cash',
             created_at=shift.started_at,
         )
-        resp = self.client.get(f'/staff/{self.staff_up.id}/duty-log/?date={shift.started_at.date().isoformat()}')
+        resp = self.client.get(f'/staff/{self.staff_up.id}/duty-log/?date={timezone.localtime(shift.started_at).date().isoformat()}')
         self.assertEqual(resp.status_code, 200)
         summary = next(s for s in resp.context['shift_summaries'] if s['shift'].id == shift.id)
         # expected_cash = 0 (float) + 100 (kitchen only) = 100; counted 100 -> variance 0.
@@ -18522,7 +18522,7 @@ class StaffDutyLogVarianceUsesRealReconcileTest(TestCase):
             qty=Decimal('-1'), sale_amount=None, payment_method='cash',
             created_at=shift.started_at,
         )
-        resp = self.client.get(f'/staff/{self.staff_up.id}/duty-log/?date={shift.started_at.date().isoformat()}')
+        resp = self.client.get(f'/staff/{self.staff_up.id}/duty-log/?date={timezone.localtime(shift.started_at).date().isoformat()}')
         summary = next(s for s in resp.context['shift_summaries'] if s['shift'].id == shift.id)
         # expected_cash = 100 (qty=1 * selling_price=100 via the revenue() fallback)
         # counted 100 -> variance 0, not -100 as the old buggy code would show.
@@ -18540,7 +18540,7 @@ class StaffDutyLogVarianceUsesRealReconcileTest(TestCase):
             qty=Decimal('-1'), sale_amount=Decimal('80'), payment_method='cash',
             created_at=shift.started_at,
         )
-        resp = self.client.get(f'/staff/{self.staff_up.id}/duty-log/?date={shift.started_at.date().isoformat()}')
+        resp = self.client.get(f'/staff/{self.staff_up.id}/duty-log/?date={timezone.localtime(shift.started_at).date().isoformat()}')
         summary = next(s for s in resp.context['shift_summaries'] if s['shift'].id == shift.id)
         self.assertEqual(summary['variance'], _reconcile(shift)['variance'])
 
@@ -18575,9 +18575,285 @@ class BarDailyReportStaffRevenueFallbackTest(TestCase):
             business=self.biz, item=self.item, type='Issue',
             qty=Decimal('-1'), sale_amount=None, payment_method='cash',
             created_at=shift.started_at,
-            date=shift.started_at.date(),
+            date=timezone.localtime(shift.started_at).date(),
         )
-        resp = self.client.get(f'/bar/daily-report/?date={shift.started_at.date().isoformat()}')
+        resp = self.client.get(f'/bar/daily-report/?date={timezone.localtime(shift.started_at).date().isoformat()}')
         self.assertEqual(resp.status_code, 200)
         row = next(r for r in resp.context['staff_data'] if r['name'] == 'bdrf_staff')
         self.assertEqual(row['revenue'], 150.0)
+
+
+# ── Rekebisha "not a real loss" (2026-07-31) ─────────────────────────────────
+
+class AdjustmentNoRealLossTest(TestCase):
+    """Live report: Roy corrected Chrome Brandy/Gilbey's balances via
+    Rekebisha (reversing the duplicate-receipt idempotency bug) and the
+    shortfall showed up as real "Wastage — cost lost" on Daily Sales, net
+    profit, and Haki wastage attribution — overstating a loss that never
+    happened, since no real money was ever spent on the phantom units.
+    adjust_stock_balance() now accepts no_real_loss to tag the correction
+    '[ADJ-NOLOSS]' instead of '[ADJ]', excluded from every wastage-cost
+    aggregate; a genuine shortage (real breakage discovered late, still
+    plain '[ADJ]') correctly still counts. toggle_adjustment_no_loss lets
+    an owner/manager retroactively fix an already-recorded entry."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='NoLoss Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='noloss_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chrome Brandy 250ml',
+            material_no='NOLOSS-01', unit='Bottle', selling_price=Decimal('300'),
+            cost_price=Decimal('200'),
+        )
+        # Book balance = 10 (matches the doubled-receipt scenario)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('10'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_no_real_loss_checkbox_tags_adj_noloss(self):
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '5', 'no_real_loss': '1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.get(business=self.biz, type='Wastage')
+        self.assertEqual(txn.invoice_no, '[ADJ-NOLOSS]')
+        self.assertEqual(self.item.current_balance(), Decimal('5'))
+
+    def test_without_checkbox_tags_plain_adj(self):
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '5',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.get(business=self.biz, type='Wastage')
+        self.assertEqual(txn.invoice_no, '[ADJ]')
+
+    def test_noloss_excluded_from_wastage_loss_and_daily_sales(self):
+        self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '5', 'no_real_loss': '1',
+        })
+        resp = self.client.get('/analytics/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['wastage_loss'], 0.0)
+
+        today = timezone.localdate().isoformat()
+        resp2 = self.client.get(f'/daily/?date={today}')
+        self.assertEqual(resp2.status_code, 200)
+        self.assertEqual(resp2.context['wastage_value'], 0.0)
+
+    def test_plain_adj_still_counts_as_real_loss(self):
+        """A genuine shortage correction (real breakage discovered late)
+        must still count — only the explicit no_real_loss choice excludes it."""
+        self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '5',
+        })
+        resp = self.client.get('/analytics/')
+        # 5 units * KES 200 cost_price = 1000
+        self.assertEqual(resp.context['wastage_loss'], 1000.0)
+
+    def test_toggle_retroactively_excludes_from_wastage(self):
+        self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '5'})
+        txn = Transaction.objects.get(business=self.biz, type='Wastage')
+        self.assertEqual(txn.invoice_no, '[ADJ]')
+
+        resp = self.client.get('/analytics/')
+        self.assertEqual(resp.context['wastage_loss'], 1000.0)
+
+        toggle_resp = self.client.post(f'/stock/adjustment/{txn.id}/toggle-no-loss/')
+        self.assertEqual(toggle_resp.status_code, 200)
+        txn.refresh_from_db()
+        self.assertEqual(txn.invoice_no, '[ADJ-NOLOSS]')
+
+        resp2 = self.client.get('/analytics/')
+        self.assertEqual(resp2.context['wastage_loss'], 0.0)
+
+    def test_toggle_reverts_back_to_real_loss(self):
+        self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '5', 'no_real_loss': '1',
+        })
+        txn = Transaction.objects.get(business=self.biz, type='Wastage')
+        self.client.post(f'/stock/adjustment/{txn.id}/toggle-no-loss/')
+        txn.refresh_from_db()
+        self.assertEqual(txn.invoice_no, '[ADJ]')
+
+    def test_toggle_staff_cannot(self):
+        staff = User.objects.create_user(username='noloss_staff', password='x')
+        UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '5'})
+        txn = Transaction.objects.get(business=self.biz, type='Wastage')
+        self.client.force_login(staff)
+        resp = self.client.post(f'/stock/adjustment/{txn.id}/toggle-no-loss/')
+        self.assertEqual(resp.status_code, 302)  # redirected by owner_or_manager_required
+        txn.refresh_from_db()
+        self.assertEqual(txn.invoice_no, '[ADJ]')
+
+    def test_toggle_rejects_unrelated_transaction(self):
+        """Must never touch a real Wastage entry or another item's Issue txn."""
+        real_wastage = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Wastage', qty=Decimal('-2'),
+            recipient='Broken bottle',
+        )
+        resp = self.client.post(f'/stock/adjustment/{real_wastage.id}/toggle-no-loss/')
+        self.assertEqual(resp.status_code, 404)
+        real_wastage.refresh_from_db()
+        self.assertEqual(real_wastage.invoice_no, '')
+
+    def test_haki_wastage_kes_excludes_noloss(self):
+        self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '5', 'no_real_loss': '1',
+        })
+        from core.haki_views import _staff_contribution
+        owner_profile = UserProfile.objects.get(user=self.owner)
+        today = timezone.localdate()
+        contrib = _staff_contribution(owner_profile, self.biz, today, today)
+        self.assertEqual(contrib['wastage_kes'], 0.0)
+
+
+# ── Revenue tile survives midnight while a shift stays open (2026-08-01) ────
+
+class StationRevenueWindowStartTest(TestCase):
+    """Live request: a business closing at midnight (Monsoon Inn) saw its
+    dashboard revenue tiles reset to KES 0 the instant the calendar day
+    rolled over, even while a shift was still open and actively selling —
+    "the revenue should still continue until the business owner or manager
+    signs off." station_revenue_window_start() extends the tile's window
+    backward past midnight while a station's shift hasn't been signed off;
+    it resets cleanly to fresh midnight once a NEW shift opens."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Midnight Window Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='mw_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='mw_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def _midnight(self, day_offset=0):
+        base = timezone.localtime(timezone.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+        return base + timedelta(days=day_offset)
+
+    def test_no_shift_at_all_falls_back_to_plain_midnight(self):
+        from core.shift_views import station_revenue_window_start
+        now = self._midnight() + timedelta(hours=1)  # 1am — just past midnight
+        result = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
+        self.assertEqual(result, self._midnight())
+
+    def test_open_shift_spanning_midnight_extends_window_backward(self):
+        from core.shift_views import station_revenue_window_start
+        shift_start = self._midnight(-1) + timedelta(hours=18)  # 6pm yesterday
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='OPEN', station='bar', opening_float=Decimal('0'),
+            started_at=shift_start,
+        )
+        now = self._midnight() + timedelta(hours=1)  # 1am today, shift still open
+        result = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
+        self.assertEqual(result, shift_start, 'Window must extend back to when the still-open shift began, not reset at midnight')
+
+    def test_closed_shift_with_no_newer_one_stays_frozen_not_reset(self):
+        """Kitchen staff closed their shift just after midnight — no NEW
+        kitchen shift has opened yet — the tile must keep reading from
+        when that shift began (so it shows the final total), not silently
+        reset to a fresh, empty midnight window."""
+        from core.shift_views import station_revenue_window_start
+        shift_start = self._midnight(-1) + timedelta(hours=18)  # 6pm yesterday
+        shift_end = self._midnight() + timedelta(minutes=15)    # 00:15 today
+        Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.staff,
+            status='CLOSED', station='kitchen', opening_float=Decimal('0'),
+            started_at=shift_start, ended_at=shift_end,
+        )
+        now = self._midnight() + timedelta(hours=1)  # 1am, after the close
+        result = station_revenue_window_start(self.biz, is_kitchen=True, now=now)
+        self.assertEqual(result, shift_start)
+
+    def test_new_shift_after_midnight_resets_window(self):
+        """Once a genuinely NEW shift opens for a station (the deliberate
+        'starting today's shift' signal), the window must reset to fresh
+        midnight — a stale prior shift must not keep suppressing it."""
+        from core.shift_views import station_revenue_window_start
+        yesterday_start = self._midnight(-1) + timedelta(hours=18)
+        yesterday_end = self._midnight() + timedelta(minutes=10)
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+            started_at=yesterday_start, ended_at=yesterday_end,
+        )
+        new_shift_start = self._midnight() + timedelta(hours=9)  # 9am today
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='OPEN', station='bar', opening_float=Decimal('0'),
+            started_at=new_shift_start,
+        )
+        now = self._midnight() + timedelta(hours=10)
+        result = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
+        self.assertEqual(result, self._midnight(), 'A fresh shift starting after midnight must reset the window')
+
+    def test_stations_are_independent(self):
+        """Kitchen closed (frozen at its final total), bar still open
+        (still counting) — each station's window must be computed
+        independently, matching Roy's exact live scenario."""
+        from core.shift_views import station_revenue_window_start
+        bar_start = self._midnight(-1) + timedelta(hours=18)
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='OPEN', station='bar', opening_float=Decimal('0'),
+            started_at=bar_start,
+        )
+        kitchen_start = self._midnight(-1) + timedelta(hours=17)
+        kitchen_end = self._midnight() + timedelta(minutes=5)
+        Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.staff,
+            status='CLOSED', station='kitchen', opening_float=Decimal('0'),
+            started_at=kitchen_start, ended_at=kitchen_end,
+        )
+        now = self._midnight() + timedelta(hours=1)
+        bar_window = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
+        kitchen_window = station_revenue_window_start(self.biz, is_kitchen=True, now=now)
+        self.assertEqual(bar_window, bar_start)
+        self.assertEqual(kitchen_window, kitchen_start)
+        self.assertNotEqual(bar_window, kitchen_window)
+
+
+class HomeDashboardRevenueSurvivesMidnightTest(TestCase):
+    """End-to-end: home()'s bar_today_revenue and dashboard_revenue_api's
+    live poll both use station_revenue_window_start() so a sale made
+    against an overnight-spanning shift shows up on the tile, not just in
+    the unit-level window calculation."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Midnight E2E Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='mwe2e_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='mwe2e_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Overnight Beer',
+            material_no='MWE2E-01', unit='Bottle', selling_price=Decimal('200'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_sale_from_shift_spanning_a_prior_day_still_counts(self):
+        # Shift began safely more than a day ago and is still open — this
+        # is true regardless of what time-of-day the test actually runs,
+        # unlike anchoring to "today's midnight" directly.
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='OPEN', station='bar', opening_float=Decimal('0'),
+            started_at=timezone.now() - timedelta(hours=25),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['bar_today_revenue'], 200)
+
+        api_resp = self.client.get('/dashboard/revenue/')
+        self.assertEqual(api_resp.status_code, 200)
+        self.assertEqual(api_resp.json()['bar_revenue'], 200)

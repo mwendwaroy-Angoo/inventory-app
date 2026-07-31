@@ -320,6 +320,18 @@
                                   border-radius:8px; padding:0.55rem 0.9rem; font-size:0.9rem; outline:none;"
                            placeholder="{% trans 'Mf: Hesabu ya mwisho wa mwezi' %}">
                 </div>
+                <!-- 2026-07-31 live report — a Rekebisha shortage correcting a
+                     PHANTOM prior receipt (e.g. reversing a duplicate-submission
+                     bug) was showing as real "Wastage — cost lost", overstating
+                     an actual financial loss that never happened. Shown only for
+                     a shortage (negative variance) — a surplus never counts
+                     toward wastage cost in the first place. -->
+                <div class="mb-1" id="adj-noloss-row" style="display:none;">
+                    <label style="display:flex; align-items:flex-start; gap:8px; font-size:0.8rem; color:#b0b0b0; cursor:pointer;">
+                        <input type="checkbox" id="adj-no-real-loss" style="margin-top:0.2rem;">
+                        <span>{% trans 'Hii sio hasara halisi — inarekebisha kosa la awali la kuandika (k.m. hitilafu ya mfumo), si upotevu wa bidhaa. Haitahesabiwa kama gharama iliyopotea.' %}</span>
+                    </label>
+                </div>
             </div>
             <div class="modal-footer" style="border-top:1px solid #2a2a2a; gap:0.5rem;">
                 <button type="button" class="btn btn-sm" data-bs-dismiss="modal"
@@ -439,6 +451,8 @@
         document.getElementById('adj-note').value                = '';
         document.getElementById('adj-variance-preview').textContent = '—';
         document.getElementById('adj-variance-preview').style.color = '#888';
+        document.getElementById('adj-no-real-loss').checked      = false;
+        document.getElementById('adj-noloss-row').style.display  = 'none';
         document.getElementById('adj-submit-btn').disabled       = false;
         document.getElementById('adj-submit-btn').textContent    = '{% trans "Rekebisha Salio" %}';
         var modal = new bootstrap.Modal(document.getElementById('adjustStockModal'));
@@ -468,15 +482,20 @@
             var preview = document.getElementById('adj-variance-preview');
             if (isNaN(actual)) { preview.textContent = '—'; preview.style.color = '#888'; return; }
             var diff = actual - _adjBookBal;
+            var noLossRow = document.getElementById('adj-noloss-row');
             if (diff === 0) {
                 preview.textContent = '± 0 (hakuna mabadiliko)';
                 preview.style.color = '#888';
+                noLossRow.style.display = 'none';
             } else if (diff < 0) {
                 preview.textContent = '▼ ' + Math.abs(diff).toFixed(2).replace(/\.?0+$/, '');
                 preview.style.color = '#f87171';
+                noLossRow.style.display = 'block';
             } else {
                 preview.textContent = '▲ +' + diff.toFixed(2).replace(/\.?0+$/, '');
                 preview.style.color = '#6ee7b7';
+                noLossRow.style.display = 'none';
+                document.getElementById('adj-no-real-loss').checked = false;
             }
         });
     });
@@ -484,6 +503,7 @@
     function submitAdjustment() {
         var actual = document.getElementById('adj-actual-count').value.trim();
         var note   = document.getElementById('adj-note').value.trim();
+        var noRealLoss = document.getElementById('adj-no-real-loss').checked;
         var btn    = document.getElementById('adj-submit-btn');
         if (!actual) { alert('{% trans "Ingiza hesabu halisi kwanza." %}'); return; }
         btn.disabled = true;
@@ -491,6 +511,7 @@
         var fd = new FormData();
         fd.append('actual_count', actual);
         fd.append('note', note);
+        fd.append('no_real_loss', noRealLoss ? '1' : '0');
         fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
         fetch('/stock/items/' + _adjItemId + '/adjust/', { method: 'POST', body: fd })
             .then(function(r) { return r.json(); })

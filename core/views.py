@@ -416,11 +416,25 @@ def home(request):
             # that revenue predates its discovery, it's a correction not a fresh POS
             # sale, so it must not appear on the real-time trading tile (still counted
             # everywhere else — analytics/P&L, item history, debt tracker).
+            #
+            # 2026-08-01 live request — a midnight-closing business (Monsoon Inn)
+            # saw this tile reset to KES 0 the instant the calendar day rolled
+            # over, even with a shift still open and actively selling — "the
+            # revenue should still continue until the business owner or manager
+            # signs off." Switched from a plain calendar-date filter to
+            # created_at__gte=<station_revenue_window_start()> — normally still
+            # today's midnight (unchanged for the common case), but extended
+            # backward across midnight while this station's shift hasn't been
+            # signed off yet. See that function's docstring for the full rule
+            # and its known scope limit (a station with no shift record at all
+            # still resets at plain midnight).
             try:
                 if show_bar:
+                    from core.shift_views import station_revenue_window_start
+                    _bar_window_start = station_revenue_window_start(business, is_kitchen=False)
                     _bar_txns = Transaction.objects.filter(
                         business=business, type='Issue',
-                        date=timezone.localdate(),
+                        created_at__gte=_bar_window_start,
                         payment_method__in=['cash', 'mpesa'],
                         item__store__is_kitchen=False,
                     ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
@@ -464,14 +478,17 @@ def home(request):
                 context['active_dj_sessions'] = []
 
             # Kitchen-specific today revenue (separate from bar)
-            # Same [SVQ] exclusion as bar_today_revenue above — see that comment.
+            # Same [SVQ] exclusion, and same midnight-rollover extension via
+            # station_revenue_window_start(), as bar_today_revenue above.
             _has_kitchen = getattr(business, 'has_kitchen', False)
             context['has_kitchen'] = _has_kitchen
             try:
                 if _has_kitchen and show_kitchen:
+                    from core.shift_views import station_revenue_window_start
+                    _kitchen_window_start = station_revenue_window_start(business, is_kitchen=True)
                     _kitchen_txns = Transaction.objects.filter(
                         business=business, type='Issue',
-                        date=timezone.localdate(),
+                        created_at__gte=_kitchen_window_start,
                         payment_method__in=['cash', 'mpesa'],
                         item__store__is_kitchen=True,
                     ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
@@ -708,29 +725,34 @@ def dashboard_revenue_api(request):
     seconds, so it needed the identical fix (2026-07-25 live report, Monsoon
     Inn) or the tile would have flashed the correct number on page load then
     silently drifted back to including stock-take-correction revenue on the
-    next poll.
+    next poll. Same reasoning applies to the 2026-08-01 midnight-rollover fix
+    (station_revenue_window_start()) — this poll is what would otherwise
+    silently snap the tile back to KES 0 a few seconds after midnight even
+    though home()'s own initial render got it right.
     """
     if not request.user.is_authenticated:
         return JsonResponse({'bar_revenue': 0, 'kitchen_revenue': 0, 'has_kitchen': False})
     try:
+        from core.shift_views import station_revenue_window_start
         up = request.user.userprofile
         business = up.business
         show_bar, show_kitchen = _station_scope(up)
-        today = timezone.localdate()
         bar_rev = 0
         kitchen_rev = 0
         if show_bar:
+            _bar_window_start = station_revenue_window_start(business, is_kitchen=False)
             _bar_txns = Transaction.objects.filter(
                 business=business, type='Issue',
-                date=today,
+                created_at__gte=_bar_window_start,
                 payment_method__in=['cash', 'mpesa'],
                 item__store__is_kitchen=False,
             ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
             bar_rev = sum(t.revenue() for t in _bar_txns)
         if show_kitchen and getattr(business, 'has_kitchen', False):
+            _kitchen_window_start = station_revenue_window_start(business, is_kitchen=True)
             _kit_txns = Transaction.objects.filter(
                 business=business, type='Issue',
-                date=today,
+                created_at__gte=_kitchen_window_start,
                 payment_method__in=['cash', 'mpesa'],
                 item__store__is_kitchen=True,
             ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
@@ -1508,6 +1530,7 @@ def transaction_history(request):
     context = {
         "transactions": transactions,
         "today": timezone.now().strftime("%B %d, %Y"),
+        "is_owner_or_manager": getattr(user_profile, "is_owner_or_manager", False),
     }
     return render(request, "core/transaction_history.html", context)
 

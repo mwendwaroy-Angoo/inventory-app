@@ -402,12 +402,19 @@ def analytics_dashboard(request):
 
     # Wastage loss: cost of stock discarded, broken, or adjusted out — no revenue received.
     # Uses cost_price × |qty| for each Wastage transaction in the period.
+    # invoice_no='[ADJ-NOLOSS]' excludes a Rekebisha shortage correction the
+    # owner/manager explicitly marked as NOT a real loss (2026-07-31 live
+    # report — reversing a duplicate-receipt bug via Rekebisha showed up as
+    # real "Wastage — cost lost" for phantom units that were never actually
+    # received; no real money was ever spent on them). A genuine shortage
+    # correction (real breakage/theft discovered late, still plain '[ADJ]')
+    # correctly still counts here.
     wastage_txns = Transaction.objects.filter(
         business=business,
         type='Wastage',
         date__gte=start_date,
         date__lte=today,
-    ).select_related('item')
+    ).exclude(invoice_no='[ADJ-NOLOSS]').select_related('item')
     wastage_loss = round(sum(
         abs(float(t.qty or 0)) * float(t.item.cost_price or 0)
         for t in wastage_txns
@@ -1889,9 +1896,12 @@ def daily_sales(request):
     item_rows = sorted(item_map.values(), key=lambda x: -x['revenue'])
 
     # ── Wastage (station-scoped) ──
+    # invoice_no='[ADJ-NOLOSS]' excluded — see analytics_dashboard's
+    # wastage_loss for the full reasoning (2026-07-31 live report).
     wastage_qs = (
         Transaction.objects
         .filter(business=business, type='Wastage', date=selected_date)
+        .exclude(invoice_no='[ADJ-NOLOSS]')
         .select_related('item', 'item__store')
     )
     if not (show_bar and show_kitchen):

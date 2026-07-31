@@ -178,10 +178,14 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
     # they logged or stock variances attributed to their shift, an incomplete
     # accountability picture in either direction (it can also clear them, when
     # StockVarianceQuery.attributed_shift correctly points elsewhere).
+    # invoice_no='[ADJ-NOLOSS]' excluded — a Rekebisha shortage correction
+    # explicitly marked "not a real loss" (e.g. reversing a duplicate-receipt
+    # bug) must not be attributed to a staffer's own accountability record
+    # as if it were a real handling loss (2026-07-31 live report).
     wastage_kes = float(Transaction.objects.filter(
         business=business, type='Wastage', recorded_by=user,
         date__gte=date_from, date__lte=date_to,
-    ).aggregate(
+    ).exclude(invoice_no='[ADJ-NOLOSS]').aggregate(
         t=Sum(
             Abs(F('qty')) * Coalesce(F('item__cost_price'), Value(0)),
             output_field=DecimalField(max_digits=12, decimal_places=2),

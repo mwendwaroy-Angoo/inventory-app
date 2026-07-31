@@ -192,10 +192,22 @@
                 </td>
                 <td>{{ trans.item.store.name }}</td>
                 <td>
-                    {% if trans.invoice_no == '[ADJ]' %}
+                    {% if trans.invoice_no == '[ADJ-NOLOSS]' %}
+                    <span class="type-pill type-adjustment" style="background:rgba(110,231,183,0.12); color:#6ee7b7;" title="{% trans 'Stock-count correction — explicitly marked as not a real financial loss' %}">
+                        🔧 {% trans 'Rekebisho' %} ({% trans 'hakuna hasara' %})
+                    </span>
+                    {% if is_owner_or_manager and trans.type == 'Wastage' %}
+                    <br>
+                    <a href="#" onclick="toggleAdjNoLoss({{ trans.id }}, this); return false;" style="font-size:0.68rem; color:#888;">{% trans 'geuza kuwa hasara halisi' %}</a>
+                    {% endif %}
+                    {% elif trans.invoice_no == '[ADJ]' %}
                     <span class="type-pill type-adjustment" title="{% trans 'Stock-count correction, not a real delivery/loss' %}">
                         🔧 {% trans 'Rekebisho' %}
                     </span>
+                    {% if is_owner_or_manager and trans.type == 'Wastage' %}
+                    <br>
+                    <a href="#" onclick="toggleAdjNoLoss({{ trans.id }}, this); return false;" style="font-size:0.68rem; color:#c9a84c;" title="{% trans 'Mark this correction as NOT a real financial loss (e.g. it reverses a data-entry or software error)' %}">{% trans 'sio hasara halisi?' %}</a>
+                    {% endif %}
                     {% elif trans.type == 'Draw' %}
                     <span class="type-pill type-draw" title="{% trans 'Raw material drawn into a kitchen batch — not a sale' %}">
                         🥔 {% trans 'Batch Draw' %}
@@ -366,5 +378,27 @@
             suggestionsBox.style.display = 'none';
         }
     });
+
+    // 2026-07-31 live report — retroactively mark a Rekebisha shortage
+    // correction as "not a real loss" (or revert that), for entries
+    // recorded before adjust_stock_balance() could capture this choice.
+    window.toggleAdjNoLoss = function(txnId, linkEl) {
+        if (!confirm('{% trans "Una uhakika unataka kubadilisha hali ya marekebisho haya?" %}')) return;
+        var body = new URLSearchParams();
+        body.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        fetch('/stock/adjustment/' + txnId + '/toggle-no-loss/', {
+            method: 'POST', body: body,
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.ok) {
+                alert('✅ ' + d.message);
+                location.reload();
+            } else {
+                alert('❌ ' + (d.error || 'Hitilafu. Jaribu tena.'));
+            }
+        })
+        .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho.'); });
+    };
 </script>
 {% endblock %}
