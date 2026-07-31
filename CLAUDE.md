@@ -3894,3 +3894,22 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   confirmed already owner/manager-only, so no new gate was needed there. 7 new tests
   (`StaffReceiveStockPermissionTest`). One migration (0054, additive). 983 tests pass
   (core + accounts).
+- Sticky list headers, re-fix (2026-07-31), same-day follow-up: Roy re-requested the frozen-
+  header-row behavior ("the same functionality I use in Excel — headers stay with you as you
+  scroll") after the earlier same-day revert of the 2026-07-30 sticky-header feature. Root-
+  caused this time instead of re-adding the same code: Bootstrap's Reboot sets
+  `border-collapse: collapse` on every `<table>`, and WebKit (Safari, and every iOS browser —
+  all of which are Safari under the hood on iOS) has a well-documented rendering bug where
+  `position: sticky` on a `<th>` is unreliable specifically under `border-collapse: collapse`
+  — the sticky row's height can collapse and render on top of the first data row instead of
+  above it, matching the original screenshots exactly. Fixed with the standard, documented
+  workaround: `border-collapse: separate; border-spacing: 0;` on `.table` in `base.html`,
+  which restores correct sticky behavior in WebKit. Confirmed this introduces no visual
+  change on its own — every row/cell border rule in this app's `.table` CSS only ever sets
+  `border-bottom` (never `border-top`), so there is nothing for separate borders to double
+  up at row boundaries. Re-added `position: sticky` (plus a `-webkit-sticky` fallback line)
+  on `.table thead th`, keeping the same `--sticky-top` JS-measured offset and the
+  `.modal-body`/`.table-responsive-scroll` opt-outs from the original sprint unchanged — only
+  the `border-collapse` line is new. No way to visually verify this in this environment
+  (no browser); Roy needs to confirm on the same device that showed the original overlap.
+  Verified 0 template parse errors. No migrations (CSS-only).
