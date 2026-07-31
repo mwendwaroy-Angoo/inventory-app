@@ -17722,3 +17722,134 @@ class ReceiptsListStationScopingTest(TestCase):
         resp = self.client.get('/receipts/?status=all')
         self.assertContains(resp, 'Bar Sale')
         self.assertContains(resp, 'Kitchen Sale')
+
+
+class StaffReceiveStockPermissionTest(TestCase):
+    """2026-07-31 live request: "add this small permission for staff, the
+    ability for them to receive stock/add transaction receipt, we have
+    noticed some staff might add transactions that do not exist when it
+    comes to receiving stock so we need to leave it to the business owners
+    to allow which staff can receive stock and which can't."
+    UserProfile.can_receive_stock (default True — matches how every
+    business has always worked; only Add Transaction's Receipt-type
+    submissions are gated, both the full-page form and Quick Sell's own
+    "+ Pata Stok" ?quick=1 shortcut, since both route through the same
+    add_transaction() view). Owner and manager are always exempt, matching
+    every other staff-permission gate in this app. Distinct from the
+    pre-existing can_receive_kitchen_stock (kitchen board's own separate
+    receive flow) — not touched by this permission."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Receive Stock Perm Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rsp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='rsp_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Receive Perm Item',
+            material_no='RSP-01', unit='pcs', selling_price=Decimal('100'),
+        )
+
+    def _staff_with_open_shift(self, username, can_receive_stock):
+        user = User.objects.create_user(username=username, password='x')
+        up = UserProfile.objects.create(
+            user=user, business=self.biz, role='staff', can_receive_stock=can_receive_stock,
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=user,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        return user, up
+
+    def test_default_is_true_new_staff_can_receive_stock(self):
+        """A freshly-created staff profile with no explicit setting must
+        keep working exactly as before this permission existed."""
+        staff, up = self._staff_with_open_shift('rsp_default', can_receive_stock=True)
+        self.assertTrue(UserProfile.objects.get(user=staff).can_receive_stock)
+        self.client.force_login(staff)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+        })
+        self.assertIn(resp.status_code, (200, 302))
+        self.assertTrue(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt', qty=Decimal('10')).exists(),
+        )
+
+    def test_staff_without_permission_is_blocked(self):
+        staff, up = self._staff_with_open_shift('rsp_blocked', can_receive_stock=False)
+        self.client.force_login(staff)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt', qty=Decimal('10')).exists(),
+            "staff without can_receive_stock must not be able to record a Receipt",
+        )
+
+    def test_staff_without_permission_can_still_sell(self):
+        """Issue (sell) transactions are a completely separate action from
+        receiving stock and must be unaffected by this toggle."""
+        Transaction.objects.create(business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'))
+        staff, up = self._staff_with_open_shift('rsp_sell', can_receive_stock=False)
+        self.client.force_login(staff)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Issue', 'quantity': '2',
+        })
+        self.assertIn(resp.status_code, (200, 302))
+        self.assertTrue(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Issue', qty=Decimal('-2')).exists(),
+        )
+
+    def test_quick_sell_pata_stok_path_also_blocked(self):
+        staff, up = self._staff_with_open_shift('rsp_quick', can_receive_stock=False)
+        self.client.force_login(staff)
+        resp = self.client.post('/add-transaction/?quick=1', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'idempotency_token': 'rsp-quick-1',
+        })
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt', qty=Decimal('10')).exists(),
+        )
+
+    def test_owner_always_allowed_regardless_of_flag(self):
+        # Owner has no can_receive_stock row-level concept — the gate checks
+        # is_owner_or_manager first, so this must succeed unconditionally.
+        self.client.force_login(self.owner)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '5',
+        })
+        self.assertIn(resp.status_code, (200, 302))
+        self.assertTrue(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt', qty=Decimal('5')).exists(),
+        )
+
+    def test_manager_always_allowed_regardless_of_flag(self):
+        UserProfile.objects.filter(user=self.manager).update(can_receive_stock=False)
+        self.client.force_login(self.manager)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '5',
+        })
+        self.assertIn(resp.status_code, (200, 302))
+        self.assertTrue(
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Receipt', qty=Decimal('5')).exists(),
+        )
+
+    def test_owner_can_toggle_via_staff_permissions_view(self):
+        staff, up = self._staff_with_open_shift('rsp_toggle', can_receive_stock=True)
+        self.client.force_login(self.owner)
+
+        # Checkbox omitted entirely from the POST = unchecked = False,
+        # matching every other toggle on this form (only 'on' counts as
+        # checked — see staff_permissions()'s == 'on' pattern).
+        self.client.post(f'/business/staff/{up.id}/permissions/', {})
+        up.refresh_from_db()
+        self.assertFalse(up.can_receive_stock)
+
+        self.client.post(f'/business/staff/{up.id}/permissions/', {
+            'can_receive_stock': 'on',
+        })
+        up.refresh_from_db()
+        self.assertTrue(up.can_receive_stock)

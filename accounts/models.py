@@ -395,6 +395,17 @@ class UserProfile(models.Model):
         default=False,
         help_text='Kitchen staff may receive stock (Pata Stok) on the kitchen board. Off by default — grant explicitly when owner trusts staff with stock intake.'
     )
+    can_receive_stock = models.BooleanField(
+        default=True,
+        help_text=(
+            'Staff may record a Receipt (stock-in) via Add Transaction — the bar/general '
+            "stock intake flow, and Quick Sell's own \"+ Pata Stok\" shortcut, which share "
+            'this one gate. On by default (matches how every business has always worked); '
+            'revoke for a specific staff member the owner does not trust to log deliveries '
+            'accurately. Owner and manager are always exempt from this gate. Distinct from '
+            "can_receive_kitchen_stock, which is the kitchen board's own separate toggle."
+        ),
+    )
 
     can_authorize_tab_accumulation = models.BooleanField(
         default=False,

@@ -240,6 +240,7 @@ def staff_permissions(request, staff_id):
         staff_profile.can_access_bar = request.POST.get('can_access_bar') == 'on'
         staff_profile.kitchen_requires_shift = request.POST.get('kitchen_requires_shift') == 'on'
         staff_profile.can_receive_kitchen_stock = request.POST.get('can_receive_kitchen_stock') == 'on'
+        staff_profile.can_receive_stock = request.POST.get('can_receive_stock') == 'on'
         staff_profile.can_authorize_tab_accumulation = request.POST.get('can_authorize_tab_accumulation') == 'on'
         # Manager-only toggles — template only renders these two for role='manager',
         # but the fields exist on every profile; harmless no-op to save 'off' for
@@ -250,7 +251,7 @@ def staff_permissions(request, staff_id):
         staff_profile.save(update_fields=[
             'can_input_cost_price', 'can_override_restrictions',
             'can_access_kitchen', 'can_access_bar', 'kitchen_requires_shift',
-            'can_receive_kitchen_stock', 'can_authorize_tab_accumulation',
+            'can_receive_kitchen_stock', 'can_receive_stock', 'can_authorize_tab_accumulation',
             'can_review_petty_cash', 'can_confirm_shifts', 'can_approve_debt_erase',
         ])
         staff_name = staff_profile.user.get_full_name() or staff_profile.user.username

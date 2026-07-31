@@ -246,6 +246,10 @@ Analytics section "🛒 Kibanda Produce Performance":
 Per-staff toggles at /staff/<id>/permissions/:
 - can_input_cost_price: staff sees cost input on Receipt (not previous cost)
 - can_override_restrictions: staff bypasses ItemSaleApproval workflow
+- can_receive_stock: staff may record a Receipt via Add Transaction (bar/general stock
+  intake + Quick Sell's "+ Pata Stok"). Default True — revoke per-staff if the owner
+  doesn't trust them to log deliveries accurately. Owner/manager always exempt. Distinct
+  from can_receive_kitchen_stock (kitchen board's own separate receive flow).
 
 ---
 
@@ -3864,4 +3868,29 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   partial payment drops the tab from the panel immediately (the literal live scenario), full
   payment does too, an unpaid tab is still both listed and revertible, plus all 6 pre-existing
   `RevertTabFromDebtTest` tests confirmed passing unmodified. No migrations. 976 tests pass
+  (core + accounts).
+- Staff permission: stock receiving (2026-07-31), live request: "we have noticed some staff
+  might add transactions that do not exist when it comes to receiving stock so we need to
+  leave it to the business owners to allow which staff can receive stock and which can't."
+  New `UserProfile.can_receive_stock` (accounts migration 0054, default **True** — a
+  deliberate departure from every other staff-permission toggle in this app, which default
+  to False/off. Add Transaction's Receipt flow has been open to every staff member since the
+  app's earliest days with no gate at all; defaulting this to False would have silently
+  locked every current staff member at every live business out of receiving stock the moment
+  this deployed. Default True preserves existing behavior everywhere until the owner
+  explicitly revokes it for a specific staff member — matching the request's own framing,
+  "allow which staff can... and which can't," not "block everyone until re-enabled"). Gated
+  in `add_transaction()` (`core/views.py`) for `trans_type == 'Receipt'` only — Issue/
+  Wastage/OwnerConsumption are completely unaffected, so a restricted staffer can still sell
+  normally. One gate covers both surfaces that route through this view: the full-page Add
+  Transaction form and Quick Sell's own "+ Pata Stok" `?quick=1` AJAX shortcut (returns a
+  JSON 403 there instead of a redirect, matching that path's existing error-response shape).
+  Owner and manager are always exempt, matching every other staff-permission gate in the
+  app. New "📦 Stock Receiving Access" toggle on `staff_permissions.html`, wired through the
+  existing `staff_profile.can_receive_stock = request.POST.get(...) == 'on'` pattern shared
+  by every other toggle on that form. Distinct from the pre-existing `can_receive_kitchen_
+  stock` (the kitchen board's own separate receive flow, already owner-controlled) — not
+  touched by this change. `receive_barrel`/`receive_bunches` (bar/produce receiving) were
+  confirmed already owner/manager-only, so no new gate was needed there. 7 new tests
+  (`StaffReceiveStockPermissionTest`). One migration (0054, additive). 983 tests pass
   (core + accounts).

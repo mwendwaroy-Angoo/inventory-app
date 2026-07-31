@@ -985,6 +985,30 @@ def add_transaction(request):
                     'Fungua shift yako kwanza kabla ya kuingiza muamala.'
                 )
                 return redirect('add_transaction')
+
+        # Stock-receiving gate (2026-07-31 live request — Roy: "some staff
+        # might add transactions that do not exist when it comes to
+        # receiving stock... leave it to the business owners to allow which
+        # staff can receive stock and which can't"). Gates Receipt-type
+        # submissions only — Issue/Wastage/OwnerConsumption are unaffected,
+        # matching the request's specific scope ("receive stock/add
+        # transaction receipt"). Covers both surfaces that route through
+        # this one view: the normal Add Transaction form and Quick Sell's
+        # own "+ Pata Stok" AJAX shortcut (?quick=1) — one gate, no separate
+        # plumbing needed for the second surface. Owner and manager always
+        # exempt, matching every other staff-permission gate in this app.
+        # can_receive_kitchen_stock is a distinct, pre-existing toggle for
+        # the kitchen board's own separate receive flow — not touched here.
+        if trans_type == 'Receipt' and not user_profile.is_owner_or_manager \
+                and not getattr(user_profile, 'can_receive_stock', True):
+            if is_quick:
+                return JsonResponse(
+                    {'ok': False, 'error': 'Huna ruhusa ya kupokea stock. Muulize mmiliki.'},
+                    status=403,
+                )
+            messages.error(request, 'Huna ruhusa ya kupokea stock. Muulize mmiliki wa biashara.')
+            return redirect('add_transaction')
+
         try:
             quantity = Decimal(request.POST.get('quantity', '0'))
         except InvalidOperation:
