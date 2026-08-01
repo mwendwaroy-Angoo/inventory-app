@@ -199,6 +199,81 @@ def station_revenue_window_start(business, is_kitchen, now=None):
     return timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def station_revenue_window_info(business, is_kitchen, now=None):
+    """Explains *why* a station's live revenue tile on the home dashboard
+    shows what it shows — the human-facing sibling to
+    station_revenue_window_start(), matching the same "vipi hesabu hii
+    ilipatikana?" transparency this app already gives the continuous-till
+    tile (see till_expected_cash()).
+
+    2026-08-01, same-day live report: Roy saw the Bar revenue tile at
+    KES 7300+ with the bar counter fully closed and "no sales that side"
+    happening right now, and said he "could not trace the cause." The
+    figure was correct — an auto-closed, still-unconfirmed shift's whole
+    12-hour total, exactly the behaviour just requested and shipped a few
+    minutes earlier — but nothing on the dashboard explained where it came
+    from, so a legitimate, working number looked alarming. This gives the
+    owner/manager the same self-service answer the till tile already has:
+    the anchor point, and exactly which shift(s) are still holding the
+    total open (haven't been Thibitisha'd yet).
+    """
+    from .models import Shift
+    now = now or timezone.now()
+
+    last_confirmed = (
+        Shift.objects.filter(business=business, status='CONFIRMED')
+        .filter(_station_q(is_kitchen))
+        .exclude(confirmed_at__isnull=True)
+        .order_by('-confirmed_at')
+        .first()
+    )
+    if last_confirmed:
+        window_start = last_confirmed.confirmed_at
+        who = last_confirmed.staff.get_full_name() or last_confirmed.staff.username
+        anchor_label = (
+            f"Tangu shift ya {who} ilivyothibitishwa "
+            f"{timezone.localtime(window_start).strftime('%d %b, %H:%M')}"
+        )
+    else:
+        earliest = (
+            Shift.objects.filter(business=business)
+            .filter(_station_q(is_kitchen))
+            .order_by('started_at')
+            .first()
+        )
+        if earliest:
+            window_start = earliest.started_at
+            anchor_label = (
+                "Bado hakuna shift iliyothibitishwa kwenye counter hii — tangu shift "
+                f"ya kwanza kabisa ({timezone.localtime(window_start).strftime('%d %b, %H:%M')})"
+            )
+        else:
+            window_start = timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
+            anchor_label = "Tangu usiku wa manane wa leo (hakuna shift bado kwenye counter hii)"
+
+    pending = list(
+        Shift.objects.filter(business=business, started_at__gte=window_start)
+        .filter(_station_q(is_kitchen))
+        .exclude(status='CONFIRMED')
+        .select_related('staff')
+        .order_by('started_at')
+    )
+    return {
+        'window_start': window_start,
+        'anchor_label': anchor_label,
+        'pending_shifts': [
+            {
+                'id': s.id,
+                'staff_name': s.staff.get_full_name() or s.staff.username,
+                'started_at': timezone.localtime(s.started_at),
+                'ended_at': timezone.localtime(s.ended_at) if s.ended_at else None,
+                'status': s.status,
+            }
+            for s in pending
+        ],
+    }
+
+
 # ── Variance attribution ──────────────────────────────────────────────────────
 
 def attribute_variance_shift(business, current_shift, item=None, keg_barrel=None):

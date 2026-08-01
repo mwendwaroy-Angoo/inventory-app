@@ -520,6 +520,64 @@
         </div>
         <div class="hero-date" style="margin-top:1.2rem;">{{ today }}</div>
     </div>
+
+    <!-- 2026-08-01 live report — Roy saw Bar Revenue at KES 7300+ with the bar
+         counter fully closed and no live sales, and could not tell why. The
+         figure was correct (an auto-closed, still-unconfirmed shift's whole
+         total — station_revenue_window_start() only resets on Thibitisha, not
+         at midnight or shift-close) but nothing on the dashboard explained it.
+         Same disclosure-details pattern as the continuous-till tile above,
+         plus a direct list of which shift(s) are still holding the total
+         open so it's obvious what to go confirm. Rendered only when the
+         view supplies bar_revenue_info/kitchen_revenue_info (owner/manager
+         only — see home() in core/views.py). -->
+    {% if bar_revenue_info or kitchen_revenue_info %}
+    <div style="background:#1a1a1a; border:1px solid #333; border-radius:10px;
+                padding:.6rem 1rem; margin-bottom:1rem;">
+        {% if bar_revenue_info %}
+        <details style="margin-top:.2rem;">
+            <summary style="font-size:.7rem; color:var(--biz-accent); cursor:pointer;">🍺 Bar Revenue — vipi hesabu hii ilipatikana?</summary>
+            <div style="font-size:.7rem; color:#999; margin-top:.35rem; line-height:1.6;">
+                {{ bar_revenue_info.anchor_label }}
+                {% if bar_revenue_info.pending_shifts %}
+                <div style="margin-top:.4rem; color:#f39c12;">
+                    ⏳ Shift {{ bar_revenue_info.pending_shifts|length }} bado
+                    {% if bar_revenue_info.pending_shifts|length == 1 %}haijathibitishwa{% else %}hazijathibitishwa{% endif %}
+                    — kiasi hiki kitaendelea kuonekana hadi ithibitishwe:
+                </div>
+                <ul style="margin:.25rem 0 0 1.1rem; padding:0;">
+                    {% for sh in bar_revenue_info.pending_shifts %}
+                    <li>{{ sh.staff_name }} — {{ sh.started_at|date:"d M, H:i" }}{% if sh.ended_at %} – {{ sh.ended_at|date:"H:i" }}{% endif %} ({{ sh.status }})</li>
+                    {% endfor %}
+                </ul>
+                <a href="{% url 'shift_history' %}" style="color:var(--biz-accent); font-size:.7rem;">Nenda uthibitishe →</a>
+                {% endif %}
+            </div>
+        </details>
+        {% endif %}
+        {% if kitchen_revenue_info %}
+        <details style="margin-top:.5rem;">
+            <summary style="font-size:.7rem; color:#ff9800; cursor:pointer;">🍗 Kitchen Revenue — vipi hesabu hii ilipatikana?</summary>
+            <div style="font-size:.7rem; color:#999; margin-top:.35rem; line-height:1.6;">
+                {{ kitchen_revenue_info.anchor_label }}
+                {% if kitchen_revenue_info.pending_shifts %}
+                <div style="margin-top:.4rem; color:#f39c12;">
+                    ⏳ Shift {{ kitchen_revenue_info.pending_shifts|length }} bado
+                    {% if kitchen_revenue_info.pending_shifts|length == 1 %}haijathibitishwa{% else %}hazijathibitishwa{% endif %}
+                    — kiasi hiki kitaendelea kuonekana hadi ithibitishwe:
+                </div>
+                <ul style="margin:.25rem 0 0 1.1rem; padding:0;">
+                    {% for sh in kitchen_revenue_info.pending_shifts %}
+                    <li>{{ sh.staff_name }} — {{ sh.started_at|date:"d M, H:i" }}{% if sh.ended_at %} – {{ sh.ended_at|date:"H:i" }}{% endif %} ({{ sh.status }})</li>
+                    {% endfor %}
+                </ul>
+                <a href="{% url 'kitchen_shift_history' %}" style="color:#ff9800; font-size:.7rem;">Nenda uthibitishe →</a>
+                {% endif %}
+            </div>
+        </details>
+        {% endif %}
+    </div>
+    {% endif %}
     {% else %}
     <div class="hero">
         <div class="hero-subtitle">

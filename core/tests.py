@@ -18891,6 +18891,93 @@ class StationRevenueWindowStartTest(TestCase):
         self.assertNotEqual(bar_window, kitchen_window)
 
 
+class StationRevenueWindowInfoTest(TestCase):
+    """2026-08-01 live report: Roy saw the Bar Revenue tile at KES 7300+
+    with the bar counter fully closed and "no sales that side" happening,
+    and said he "could not trace the cause." station_revenue_window_info()
+    is the human-facing explanation — same anchor rule as
+    station_revenue_window_start(), plus which shift(s) are still holding
+    the total open — surfaced on the home dashboard for owner/manager."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Window Info Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='wi_owner', password='x', first_name='Roy')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='wi_staff', password='x', first_name='Dush')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def _midnight(self, day_offset=0):
+        base = timezone.localtime(timezone.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+        return base + timedelta(days=day_offset)
+
+    def test_no_shift_anchor_label_mentions_midnight(self):
+        from core.shift_views import station_revenue_window_info
+        info = station_revenue_window_info(self.biz, is_kitchen=False)
+        self.assertEqual(info['pending_shifts'], [])
+        self.assertIn('manane', info['anchor_label'])
+
+    def test_unconfirmed_closed_shift_appears_in_pending_list(self):
+        from core.shift_views import station_revenue_window_info
+        shift_start = self._midnight(-1) + timedelta(hours=11, minutes=49)
+        shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+            started_at=shift_start, ended_at=self._midnight(),
+        )
+        info = station_revenue_window_info(self.biz, is_kitchen=False)
+        self.assertEqual(info['window_start'], shift_start)
+        self.assertEqual(len(info['pending_shifts']), 1)
+        self.assertEqual(info['pending_shifts'][0]['id'], shift.id)
+        self.assertEqual(info['pending_shifts'][0]['staff_name'], 'Dush')
+        self.assertEqual(info['pending_shifts'][0]['status'], 'CLOSED')
+
+    def test_confirmed_shift_never_appears_in_pending_list(self):
+        from core.shift_views import station_revenue_window_info
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='CONFIRMED', station='bar', opening_float=Decimal('0'),
+            started_at=self._midnight(-1), ended_at=self._midnight(-1) + timedelta(hours=1),
+            confirmed_at=self._midnight(-1) + timedelta(hours=2),
+        )
+        info = station_revenue_window_info(self.biz, is_kitchen=False)
+        self.assertEqual(info['pending_shifts'], [])
+        self.assertIn('Dush', info['anchor_label'])
+
+    def test_home_dashboard_shows_disclosure_with_pending_shift_to_owner(self):
+        from core.models import BusinessType
+        bar_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz.business_type = bar_type
+        self.biz.save(update_fields=['business_type'])
+        shift_start = self._midnight(-1) + timedelta(hours=11, minutes=49)
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+            started_at=shift_start, ended_at=self._midnight(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'vipi hesabu hii ilipatikana')
+        self.assertContains(resp, 'Nenda uthibitishe')
+
+    def test_home_dashboard_hides_disclosure_from_ordinary_staff(self):
+        from core.models import BusinessType
+        bar_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz.business_type = bar_type
+        self.biz.save(update_fields=['business_type'])
+        shift_start = self._midnight(-1) + timedelta(hours=11, minutes=49)
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+            started_at=shift_start, ended_at=self._midnight(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'vipi hesabu hii ilipatikana')
+
+
 class HomeDashboardRevenueSurvivesMidnightTest(TestCase):
     """End-to-end: home()'s bar_today_revenue and dashboard_revenue_api's
     live poll both use station_revenue_window_start() so a sale made

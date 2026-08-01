@@ -428,9 +428,10 @@ def home(request):
             # signed off yet. See that function's docstring for the full rule
             # and its known scope limit (a station with no shift record at all
             # still resets at plain midnight).
+            context['bar_revenue_info'] = None
             try:
                 if show_bar:
-                    from core.shift_views import station_revenue_window_start
+                    from core.shift_views import station_revenue_window_start, station_revenue_window_info
                     _bar_window_start = station_revenue_window_start(business, is_kitchen=False)
                     _bar_txns = Transaction.objects.filter(
                         business=business, type='Issue',
@@ -439,6 +440,8 @@ def home(request):
                         item__store__is_kitchen=False,
                     ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
                     context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
+                    if getattr(user_profile, 'is_owner_or_manager', False):
+                        context['bar_revenue_info'] = station_revenue_window_info(business, is_kitchen=False)
             except Exception:
                 context['bar_today_revenue'] = 0
 
@@ -482,9 +485,10 @@ def home(request):
             # station_revenue_window_start(), as bar_today_revenue above.
             _has_kitchen = getattr(business, 'has_kitchen', False)
             context['has_kitchen'] = _has_kitchen
+            context['kitchen_revenue_info'] = None
             try:
                 if _has_kitchen and show_kitchen:
-                    from core.shift_views import station_revenue_window_start
+                    from core.shift_views import station_revenue_window_start, station_revenue_window_info
                     _kitchen_window_start = station_revenue_window_start(business, is_kitchen=True)
                     _kitchen_txns = Transaction.objects.filter(
                         business=business, type='Issue',
@@ -493,6 +497,8 @@ def home(request):
                         item__store__is_kitchen=True,
                     ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
                     context['kitchen_today_revenue'] = sum(t.revenue() for t in _kitchen_txns)
+                    if getattr(user_profile, 'is_owner_or_manager', False):
+                        context['kitchen_revenue_info'] = station_revenue_window_info(business, is_kitchen=True)
                 else:
                     context['kitchen_today_revenue'] = 0
             except Exception:

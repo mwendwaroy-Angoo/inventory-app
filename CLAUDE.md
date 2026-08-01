@@ -4241,3 +4241,32 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   "new shift resets the window" assertion to its opposite) plus 1 new test on
   `ManagerConfirmShiftToggleTest` (`test_confirm_stamps_confirmed_at`) locking in that
   `confirm_shift()` actually stamps the new field. One migration (0138, additive).
+- Dashboard revenue transparency disclosure (2026-08-01, same-day follow-up, live
+  screenshots). Roy saw Bar Revenue at KES 7300+ with the bar counter fully closed and "no
+  sales that side" happening right now, and said he "cannot trace the cause." Traced by
+  hand against Shift History: the figure was CORRECT — an auto-closed 12-hour bar shift
+  (cash 1775 + mpesa 5475 ≈ 7250) sitting unconfirmed, exactly the confirm-gated behaviour
+  shipped minutes earlier in this same session — but nothing on the dashboard explained
+  where the number came from, so a legitimate, working figure looked alarming. Not a bug;
+  a transparency gap. New `station_revenue_window_info(business, is_kitchen, now=None)`
+  (`core/shift_views.py`) is the human-facing sibling of `station_revenue_window_start()` —
+  same anchor rule, but also returns an `anchor_label` (who confirmed what, when, or "never
+  confirmed — since first shift ever," or "since midnight — no shift yet") and a
+  `pending_shifts` list of every not-yet-CONFIRMED shift within the window that's holding
+  the total open. Wired into `home()` (owner/manager only, matching the till breakdown's
+  existing gate) as `bar_revenue_info`/`kitchen_revenue_info`; `home.html` gains a
+  disclosure block right under the "Tonight at the Bar" hero — same `<details>`/`<summary>`
+  "vipi hesabu hii ilipatikana?" pattern already used for the continuous-till tile — listing
+  each pending shift's staff/time/status plus a "Nenda uthibitishe →" link straight to Shift
+  History. Test-authoring bug caught by the suite itself: an HTML comment explaining this
+  feature was written containing the literal phrase "vipi hesabu hii ilipatikana?" in its
+  prose, which — being a plain `<!-- -->` comment, not a stripped `{# #}` Django comment —
+  rendered into every page regardless of the owner/manager gate, causing
+  `assertNotContains` to fail for a staff viewer; reworded the comment to avoid the
+  collision (same lesson as the 2026-07-30 HTML-comment-breaks-template-parsing entry, a
+  different failure mode of the same root cause: don't let prose inside HTML comments
+  echo strings the app or its tests treat as meaningful). 5 new tests
+  (`StationRevenueWindowInfoTest`) — no-shift anchor wording, pending shift appears with
+  correct staff/status, a confirmed shift never appears in the pending list, the
+  end-to-end home-page disclosure renders for owner with the confirm link, and is
+  completely absent for ordinary staff. No migrations.
