@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Sahihisha Jina la Mteja{% endblock %}
+
+{% block extra_css %}
+<style>
+    .section-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        padding: 1.1rem 1.25rem;
+        margin-bottom: 1.25rem;
+    }
+    .ic-result-row {
+        padding: 0.5rem 0.6rem;
+        cursor: pointer;
+        border-radius: 6px;
+        font-size: 0.85rem;
+    }
+    .ic-result-row:hover { background: rgba(255,255,255,0.05); }
+    .ic-selected-box {
+        margin-top: 0.75rem;
+        padding: 0.6rem;
+        background: rgba(201,168,76,0.08);
+        border: 1px solid rgba(201,168,76,0.3);
+        border-radius: 8px;
+        font-size: 0.85rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Breadcrumb -->
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'debt_dashboard' %}" style="color:var(--gold);">{% trans 'Debt Tracker' %}</a>
+    <span class="mx-1">›</span>
+    <span>Sahihisha Jina la Mteja</span>
+</nav>
+
+<h1 class="page-title mb-2">🔀 Sahihisha na Unganisha Jina la Mteja</h1>
+<p style="color:#b0b0b0; font-size:0.85rem; max-width:640px; margin-bottom:1.5rem;">
+    Kama jina la mteja mmoja limeandikwa tofauti kwenye counter tofauti (mfano "Genro" na
+    "Jenerali" — mtu mmoja), tafuta hapa chini, sahihisha jina lake, na uunganishe na jina
+    lingine — deni, risiti na tabs zote zitahamishwa na kuunganishwa pamoja, popote
+    zilipoandikwa kwenye mfumo. Hatua hii inaweza kufanywa kwa hatua moja tu.
+</p>
+
+<!-- Step 1: find the primary customer -->
+<div class="section-card">
+    <h6 style="color:var(--gold); font-family:'Playfair Display',serif; font-size:0.95rem; margin-bottom:0.75rem;">
+        1. Tafuta Mteja
+    </h6>
+    <input type="text" class="form-control" id="icPrimaryInput"
+           placeholder="Andika jina, mfano: Genro..." autocomplete="off">
+    <div id="icPrimaryResults" style="margin-top:0.5rem; max-height:220px; overflow-y:auto;"></div>
+    <div id="icPrimarySelected" class="ic-selected-box" style="display:none;"></div>
+</div>
+
+<!-- Step 2: correct / consolidate — only shown once a primary customer is picked -->
+<div class="section-card" id="icDetailsSection" style="display:none;">
+    <h6 style="color:var(--gold); font-family:'Playfair Display',serif; font-size:0.95rem; margin-bottom:0.75rem;">
+        2. Sahihisha Jina na/au Unganisha
+    </h6>
+
+    <form method="post" id="icForm">
+        {% csrf_token %}
+        <input type="hidden" name="absorb_id" id="icAbsorbId" value="">
+
+        <label style="font-size:0.8rem; color:#b0b0b0; margin-bottom:0.25rem; display:block;">
+            Jina Sahihi (hiari — badilisha kama jina lina makosa)
+        </label>
+        <input type="text" class="form-control" name="new_name" id="icNewName" style="margin-bottom:1rem;">
+
+        <label style="font-size:0.8rem; color:#b0b0b0; margin-bottom:0.25rem; display:block;">
+            Unganisha na Jina Lingine (hiari — kama ni mtu mmoja aliyeandikwa tofauti)
+        </label>
+        <input type="text" class="form-control" id="icMatchInput"
+               placeholder="Andika jina, mfano: Jenerali..." autocomplete="off">
+        <div id="icMatchResults" style="margin-top:0.5rem; max-height:220px; overflow-y:auto;"></div>
+        <div id="icMatchSelected" class="ic-selected-box" style="display:none;"></div>
+
+        <button type="submit" class="btn btn-gold mt-3" id="icSubmitBtn" disabled>
+            Hifadhi Marekebisho
+        </button>
+    </form>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    var primaryInput    = document.getElementById('icPrimaryInput');
+    var primaryResults  = document.getElementById('icPrimaryResults');
+    var primarySelected = document.getElementById('icPrimarySelected');
+    var detailsSection  = document.getElementById('icDetailsSection');
+    var newNameInput    = document.getElementById('icNewName');
+    var matchInput      = document.getElementById('icMatchInput');
+    var matchResults    = document.getElementById('icMatchResults');
+    var matchSelected   = document.getElementById('icMatchSelected');
+    var absorbField     = document.getElementById('icAbsorbId');
+    var submitBtn       = document.getElementById('icSubmitBtn');
+    var icForm          = document.getElementById('icForm');
+
+    var primaryId = null;
+    var primaryName = '';
+    var matchName = '';
+
+    function updateSubmitState() {
+        var nameChanged = newNameInput.value.trim() && newNameInput.value.trim() !== primaryName;
+        submitBtn.disabled = !primaryId || !(nameChanged || absorbField.value);
+    }
+
+    function searchInto(inputEl, resultsEl, excludeId, onPick) {
+        var timer = null;
+        inputEl.addEventListener('input', function() {
+            var q = this.value.trim();
+            clearTimeout(timer);
+            if (q.length < 2) { resultsEl.innerHTML = ''; return; }
+            timer = setTimeout(function() {
+                fetch('/debt/customers/search/?q=' + encodeURIComponent(q))
+                    .then(function(r) { return r.json(); })
+                    .then(function(d) {
+                        var rows = (d.results || []).filter(function(c) {
+                            return !excludeId || c.id !== excludeId();
+                        });
+                        if (!rows.length) {
+                            resultsEl.innerHTML = '<div style="padding:0.4rem; color:#888; font-size:0.8rem;">Hakuna aliyepatikana.</div>';
+                            return;
+                        }
+                        resultsEl.innerHTML = rows.map(function(c) {
+                            return '<div class="ic-result-row" data-id="' + c.id + '" data-name="' +
+                                c.name.replace(/"/g, '&quot;') + '">' +
+                                c.name + (c.phone ? ' <span style="color:#888;">(' + c.phone + ')</span>' : '') + '</div>';
+                        }).join('');
+                        Array.prototype.forEach.call(resultsEl.querySelectorAll('.ic-result-row'), function(row) {
+                            row.addEventListener('click', function() {
+                                onPick(parseInt(this.getAttribute('data-id'), 10), this.getAttribute('data-name'));
+                                resultsEl.innerHTML = '';
+                                inputEl.value = '';
+                            });
+                        });
+                    })
+                    .catch(function() {});
+            }, 250);
+        });
+    }
+
+    searchInto(primaryInput, primaryResults, null, function(id, name) {
+        primaryId = id;
+        primaryName = name;
+        primarySelected.style.display = 'block';
+        primarySelected.textContent = '✓ ' + name + ' imechaguliwa';
+        icForm.action = '/debt/' + id + '/merge/';
+        newNameInput.value = name;
+        detailsSection.style.display = 'block';
+        updateSubmitState();
+    });
+
+    searchInto(matchInput, matchResults, function() { return primaryId; }, function(id, name) {
+        absorbField.value = id;
+        matchName = name;
+        matchSelected.style.display = 'block';
+        matchSelected.textContent = '✓ ' + name + ' → itaunganishwa na ' + (newNameInput.value.trim() || primaryName);
+        updateSubmitState();
+    });
+
+    newNameInput.addEventListener('input', updateSubmitState);
+
+    icForm.addEventListener('submit', function(e) {
+        if (!primaryId) { e.preventDefault(); return; }
+        if (!confirm('Una uhakika? Hatua hii haiwezi kutenguliwa.')) { e.preventDefault(); }
+    });
+})();
+</script>
+{% endblock %}

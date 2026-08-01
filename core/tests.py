@@ -4062,6 +4062,78 @@ class LinkedOnlyReceiptLiveStateTest(TestCase):
         )
 
 
+class ReceiptTotalPaidSoFarTest(TestCase):
+    """2026-08-01 live request — Roy: "I need the customer to see a total of
+    what he has paid so far regardless of any additions to the running
+    tab." The live receipt's own "Jumla" only ever showed what's still
+    UNPAID right now; there was nothing showing the cumulative amount
+    already settled on that same tab. public_receipt() now computes
+    total_paid_so_far from receipt.lines (live-recomputed for a live tab),
+    and the JS live-poll (renderLines() in receipt_public.html) keeps it in
+    sync as more of the tab gets paid, exactly the same way the outstanding
+    total already does."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Paid So Far Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='psf_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kikombe',
+            material_no='PSF-01', unit='Pcs', selling_price=Decimal('80'),
+        )
+        self.tab = BarTab.objects.create(
+            business=self.biz, customer_name='Biggie', status='OPEN', source='bar',
+        )
+        self.receipt = Receipt.issue(
+            business=self.biz, lines=[], payment_method='tab',
+            customer_name='Biggie', meta={'tab_id': self.tab.id},
+        )
+
+    def _add_entry(self, amount, is_paid):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal(str(amount)),
+            payment_method='mpesa' if is_paid else 'credit',
+        )
+        return BarTabEntry.objects.create(
+            tab=self.tab, transaction=txn, description='Kikombe',
+            amount=Decimal(str(amount)), is_paid=is_paid,
+        )
+
+    def test_total_paid_so_far_sums_only_paid_lines(self):
+        self._add_entry(80, is_paid=True)
+        self._add_entry(80, is_paid=True)
+        self._add_entry(80, is_paid=False)
+        from core.tab_receipts import resolve_master_receipt
+        receipt, _created = resolve_master_receipt(self.biz, self.tab)
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['total_paid_so_far'], 160.0)
+        self.assertContains(resp, 'Umeshalipa Hadi Sasa')
+        self.assertContains(resp, 'KES 160')
+
+    def test_paid_so_far_grows_after_more_items_added_and_paid(self):
+        self._add_entry(80, is_paid=True)
+        from core.tab_receipts import resolve_master_receipt
+        receipt, _created = resolve_master_receipt(self.biz, self.tab)
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertEqual(resp.context['total_paid_so_far'], 80.0)
+
+        # New items added to the SAME running tab afterward, one paid, one not.
+        self._add_entry(80, is_paid=True)
+        self._add_entry(80, is_paid=False)
+        resp2 = self.client.get(f'/r/{receipt.token}/')
+        self.assertEqual(resp2.context['total_paid_so_far'], 160.0)
+
+    def test_zero_when_nothing_paid_yet(self):
+        self._add_entry(80, is_paid=False)
+        from core.tab_receipts import resolve_master_receipt
+        receipt, _created = resolve_master_receipt(self.biz, self.tab)
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertEqual(resp.context['total_paid_so_far'], 0)
+
+
 class SettleTabFromPaymentReusesReceiptTest(TestCase):
     """Post-K9 audit of the STK flow: mpesa_views._settle_tab_from_payment (the
     handler for a STAFF-initiated full-tab '📲 STK Push') used to unconditionally
@@ -18448,6 +18520,103 @@ class CustomerMergeTest(TestCase):
         names = [r['name'] for r in resp2.json()['results']]
         self.assertIn('McKenzie', names)
         self.assertIn('Mckenzie', names)
+
+
+class CustomerRenameAndCombinedCorrectionTest(TestCase):
+    """2026-08-01 live request — Roy: "search for Genro and edit his name to
+    General ... and match it to Jenerali ... and consolidate the two, just
+    that simple regardless of where the names appear in the system."
+    Customer.rename_locked() is the standalone name-correction sibling of
+    merge_locked() (no second record absorbed, just this one customer's
+    identity corrected, propagated everywhere the old name string appears);
+    merge_customer() now accepts an optional new_name so a single POST can
+    rename AND merge together."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Rename Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='rename_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Beer',
+            material_no='RNM-01', unit='Bottle', selling_price=Decimal('80'),
+        )
+        self.genro = Customer.objects.create(business=self.biz, name='Genro', credit_approved=True)
+        self.jenerali = Customer.objects.create(business=self.biz, name='Jenerali', credit_approved=True)
+        self.client.force_login(self.owner)
+
+    def test_rename_locked_propagates_to_transaction_and_bartab(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Genro',
+        )
+        tab = BarTab.objects.create(
+            business=self.biz, customer=self.genro, customer_name='Genro',
+            status='OPEN', source='bar',
+        )
+        Customer.rename_locked(self.genro.id, self.biz, 'General')
+        self.genro.refresh_from_db()
+        tab.refresh_from_db()
+        self.assertEqual(self.genro.name, 'General')
+        self.assertEqual(Transaction.objects.get(item=self.item).recipient, 'General')
+        self.assertEqual(tab.customer_name, 'General')
+
+    def test_rename_locked_rejects_blank_name(self):
+        with self.assertRaises(ValueError):
+            Customer.rename_locked(self.genro.id, self.biz, '   ')
+
+    def test_rename_locked_wrong_business_raises(self):
+        other_biz = Business.objects.create(name='Other Biz')
+        with self.assertRaises(ValueError):
+            Customer.rename_locked(self.genro.id, other_biz, 'General')
+
+    def test_rename_locked_noop_when_name_unchanged(self):
+        result = Customer.rename_locked(self.genro.id, self.biz, 'Genro')
+        self.assertEqual(result.id, self.genro.id)
+        self.assertEqual(result.name, 'Genro')
+
+    def test_merge_view_combined_rename_and_match_in_one_submit(self):
+        """The literal live scenario: Genro renamed to General AND
+        consolidated with Jenerali in one POST."""
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Jenerali',
+        )
+        resp = self.client.post(f'/debt/{self.genro.id}/merge/', {
+            'absorb_id': str(self.jenerali.id),
+            'new_name': 'General',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.genro.refresh_from_db()
+        self.assertEqual(self.genro.name, 'General')
+        self.assertFalse(Customer.objects.filter(id=self.jenerali.id).exists())
+        self.assertEqual(Transaction.objects.get(item=self.item).recipient, 'General')
+
+    def test_merge_view_rename_only_no_match(self):
+        resp = self.client.post(f'/debt/{self.genro.id}/merge/', {'new_name': 'General'})
+        self.assertEqual(resp.status_code, 302)
+        self.genro.refresh_from_db()
+        self.assertEqual(self.genro.name, 'General')
+        # Jenerali untouched — no merge requested
+        self.assertTrue(Customer.objects.filter(id=self.jenerali.id, name='Jenerali').exists())
+
+    def test_merge_view_requires_at_least_one_field(self):
+        resp = self.client.post(f'/debt/{self.genro.id}/merge/', {})
+        self.assertEqual(resp.status_code, 302)
+        self.genro.refresh_from_db()
+        self.assertEqual(self.genro.name, 'Genro')
+
+    def test_customer_identity_correct_page_owner_only(self):
+        staff = User.objects.create_user(username='rename_staff', password='x')
+        UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        self.client.force_login(staff)
+        resp = self.client.get('/debt/customers/correct/')
+        self.assertEqual(resp.status_code, 302)
+
+        self.client.force_login(self.owner)
+        resp2 = self.client.get('/debt/customers/correct/')
+        self.assertEqual(resp2.status_code, 200)
+        self.assertContains(resp2, 'Sahihisha')
 
 
 # ── Widened similar-name detection (2026-07-31) ─────────────────────────────

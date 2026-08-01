@@ -4353,3 +4353,58 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`KitchenPerformancePerPresetBreakdownTest`) — presets of the same item get separate,
   correctly-costed rows and are never blended into an averaged item-level row; a plain
   item with no presets still groups as one row. No migrations.
+- Customer identity correction: search, rename, and match in one action (2026-08-01).
+  Live report with screenshots — Genro (KES 800 outstanding, debt tracker) is the same
+  real customer as Jenerali (a receipt from 30 Jul, "Tab imekuwa Deni"). Roy: "create a
+  name search, match and correct modal somewhere in the system whereby I can search for
+  Genro and edit his name to General ... and match it to Jenerali ... and consolidate the
+  two, just that simple." The merge tool from 2026-07-31 (`Customer.merge_locked()`,
+  `🔀 Unganisha na Mteja Mwingine`) already did the search+match+consolidate part —
+  its own docstring literally cites this exact Genro/Jenerali pair as the motivating
+  case — but it only reused whichever of the two existing names was "kept," couldn't
+  rename to a brand-new third spelling in the same action, and was only reachable by
+  first navigating to one specific customer's own profile page. Closed both gaps.
+  Extracted `Customer._propagate_name_change(business, old_name, new_name)` — the
+  shared name-string-rewrite engine (`Transaction.recipient`, `BarTab.customer_name`,
+  `Receipt.customer_name` + symmetric `linked_tab_ids` union) previously inlined only
+  inside `merge_locked()` — and built `Customer.rename_locked(customer_id, business,
+  new_name)` on top of it: a standalone correction with no second record absorbed,
+  raising `ValueError` on a blank name or wrong business, no-op when unchanged.
+  `merge_customer()` (the view) now accepts an optional `new_name` POST field alongside
+  the existing `absorb_id` — either, both, or neither (error) in one submit: merges
+  first if a match is given, then renames the resulting identity if `new_name` differs.
+  New standalone page `/debt/customers/correct/` (`customer_identity_correct.html`,
+  owner/manager-only, linked from the Debt Tracker dashboard toolbar as
+  "🔀 Sahihisha Jina la Mteja") lets Roy search-first rather than requiring pre-
+  navigation to a specific profile: pick a primary customer, edit their name inline
+  (prefilled, editable), optionally search and pick a second record to consolidate,
+  submit once — the form POSTs to the existing `merge_customer` endpoint with its
+  action set dynamically once a primary is chosen, so no new POST handler was needed.
+  The existing per-profile modal (`customer_debt_profile.html`) also gained the same
+  "Jina Sahihi" field for the combined action when already on a specific profile.
+  8 new tests (`CustomerRenameAndCombinedCorrectionTest`) — rename propagation to
+  Transaction/BarTab, blank-name and wrong-business rejection, no-op on unchanged name,
+  the combined rename+merge submit (the literal live scenario), rename-only with no
+  match, requiring at least one field, and the new page's owner-only gate — plus all 7
+  pre-existing `CustomerMergeTest` tests confirmed passing unmodified against the
+  refactored `merge_locked()`. No migrations.
+- Live receipt: "total paid so far" on a running tab (2026-08-01), same-day live
+  request with a screenshot (Receipt #140 — 8 already-paid Kikombe rounds struck
+  through, KES 800 worth, with only the current unpaid round showing in "Jumla"). Roy:
+  "I need the customer to see a total of what he has paid so far regardless of any
+  additions to the running tab." The live receipt's "Jumla" figure only ever shows
+  what's still unpaid RIGHT NOW (by design, for the payment flow) — nothing summed the
+  cumulative amount already settled across every round added to that same tab over
+  time. `public_receipt()` (`core/receipt_views.py`) now computes `total_paid_so_far`
+  from `receipt.lines` (already recomputed live for an open tab via
+  `_get_live_tab_state`) — sum of every `is_paid` line's subtotal — and passes it to
+  the template. `receipt_public.html` renders a new "Umeshalipa Hadi Sasa" row (green,
+  above the existing Jumla row) whenever it's non-zero; the live-poll JS
+  (`renderLines()`, already re-rendering `Jumla`/checkboxes every 20s from
+  `receipt_live_status`) now also recomputes this figure from each fresh payload and
+  toggles the row's visibility — so it keeps growing correctly as more rounds get added
+  and paid, exactly mirroring how the outstanding total already stays live. Purely
+  additive — no changes to payment logic, existing `Jumla`/checkbox behaviour untouched.
+  3 new tests (`ReceiptTotalPaidSoFarTest`) — sums only paid lines, grows correctly
+  after new items are added and paid to the same tab (the literal "regardless of any
+  additions" scenario), and stays zero before anything's been paid. No migrations.

@@ -405,6 +405,20 @@ def public_receipt(request, token):
 
     pending_transfers_in = _pending_transfers_in(receipt) if is_live_tab else []
 
+    # 2026-08-01 live request — Roy: the customer should see a running total
+    # of what they've ALREADY paid on this tab, regardless of new items
+    # being added since (a running tab's own "Jumla" only ever shows what's
+    # still unpaid RIGHT NOW, per the DEBT-block wording above — there was
+    # nothing showing the cumulative paid figure). Purely additive: sums
+    # every already-paid line on the receipt as currently known; the live
+    # poll (receipt_live_status → renderLines() in receipt_public.html)
+    # recomputes the same figure from each fresh d.lines payload so it
+    # keeps growing correctly as more of the tab gets settled over time.
+    total_paid_so_far = round(
+        sum(float(l.get('subtotal') or 0) for l in (receipt.lines or []) if l.get('is_paid')),
+        2,
+    )
+
     return render(request, 'core/receipt_public.html', {
         'receipt':      receipt,
         'receipt_url':  receipt_url,
@@ -412,6 +426,7 @@ def public_receipt(request, token):
         'tab_status':   tab_status,
         'station_debt': station_debt,
         'pending_transfers_in': pending_transfers_in,
+        'total_paid_so_far': total_paid_so_far,
     })
 
 

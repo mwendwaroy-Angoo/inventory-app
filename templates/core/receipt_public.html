@@ -487,6 +487,21 @@
         </div>
         {% endif %}
 
+        {% if total_paid_so_far > 0 %}
+        <!-- 2026-08-01 live request — running total of what's ALREADY been
+             paid on this tab, regardless of new items added since. Kept
+             live in sync by renderLines() below (id="paid-so-far-row"). -->
+        <div class="receipt-total" id="paid-so-far-row" style="border-top:none; padding-top:0;">
+            <span class="total-label" style="color:#6ee7b7;">Umeshalipa Hadi Sasa</span>
+            <span class="total-amount" id="paid-so-far-amount" style="color:#6ee7b7;">KES {{ total_paid_so_far|floatformat:"0" }}</span>
+        </div>
+        {% else %}
+        <div class="receipt-total" id="paid-so-far-row" style="display:none; border-top:none; padding-top:0;">
+            <span class="total-label" style="color:#6ee7b7;">Umeshalipa Hadi Sasa</span>
+            <span class="total-amount" id="paid-so-far-amount" style="color:#6ee7b7;">KES 0</span>
+        </div>
+        {% endif %}
+
         <div class="receipt-total">
             <span class="total-label">{% if tab_status == 'DEBT' %}Bado Kulipa{% else %}Jumla{% endif %}</span>
             <span class="total-amount">KES {{ receipt.total|floatformat:"0" }}</span>
@@ -1162,6 +1177,16 @@
             var outstanding = payableLines.filter(function(l) { return !l.is_paid; })
                 .reduce(function(s, l) { return s + (parseFloat(l.subtotal) || 0); }, 0);
             totalEl.textContent = fmt(outstanding);
+        }
+        // "Umeshalipa Hadi Sasa" — cumulative paid-so-far, regardless of new
+        // items added to the tab since (2026-08-01 live request).
+        var paidRow = document.getElementById('paid-so-far-row');
+        var paidEl  = document.getElementById('paid-so-far-amount');
+        if (paidRow && paidEl) {
+            var paidSoFar = payableLines.filter(function(l) { return l.is_paid; })
+                .reduce(function(s, l) { return s + (parseFloat(l.subtotal) || 0); }, 0);
+            paidEl.textContent = fmt(paidSoFar);
+            paidRow.style.display = paidSoFar > 0 ? '' : 'none';
         }
     }
 

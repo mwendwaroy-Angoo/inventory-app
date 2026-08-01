@@ -125,17 +125,25 @@
                 {% csrf_token %}
                 <input type="hidden" name="absorb_id" id="mergeAbsorbId" value="">
                 <div class="modal-header border-0">
-                    <h5 class="modal-title">🔀 Unganisha na Mteja Mwingine</h5>
+                    <h5 class="modal-title">🔀 Sahihisha / Unganisha Jina</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
                     <p style="font-size:0.85rem; color:#b0b0b0;">
-                        Kama <strong>{{ customer.name }}</strong> na mteja mwingine ni mtu mmoja
-                        (jina liliandikwa tofauti kwenye counter tofauti), tafuta na uchague hapa —
-                        deni, risiti na tabs zote za mteja huyo mwingine zitahamishwa chini ya
-                        <strong>{{ customer.name }}</strong>, na jina lake litafutwa. Hatua hii haiwezi
+                        Sahihisha jina la <strong>{{ customer.name }}</strong> hapa chini, na/au — kama
+                        yeye na mteja mwingine ni mtu mmoja (jina liliandikwa tofauti kwenye counter
+                        tofauti) — tafuta na uunganishe naye. Deni, risiti na tabs zote zitahamishwa
+                        na kuunganishwa, popote zilipoandikwa kwenye mfumo. Hatua hii haiwezi
                         kutenguliwa.
                     </p>
+                    <label style="font-size:0.8rem; color:#b0b0b0; margin-bottom:0.25rem; display:block;">
+                        Jina Sahihi (hiari)
+                    </label>
+                    <input type="text" class="form-control" name="new_name" id="mergeNewName"
+                           value="{{ customer.name }}" style="margin-bottom:1rem;">
+                    <label style="font-size:0.8rem; color:#b0b0b0; margin-bottom:0.25rem; display:block;">
+                        Unganisha na Mteja Mwingine (hiari)
+                    </label>
                     <input type="text" class="form-control" id="mergeSearchInput"
                            placeholder="Andika jina la mteja mwingine..." autocomplete="off">
                     <div id="mergeSearchResults" style="margin-top:0.5rem; max-height:220px; overflow-y:auto;"></div>
@@ -145,7 +153,7 @@
                     <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">{% trans 'Cancel' %}</button>
                     <button type="submit" class="btn btn-sm" id="mergeCustomerSubmitBtn" disabled
                             style="background:rgba(192,57,90,0.15); color:#c0395a; border:1px solid rgba(192,57,90,0.35);">
-                        Unganisha
+                        Hifadhi
                     </button>
                 </div>
             </form>
@@ -1084,7 +1092,15 @@ function woReject(reqId, itemName, amount, staffName, requestType) {
     var selected = document.getElementById('mergeSelectedName');
     var absorbField = document.getElementById('mergeAbsorbId');
     var submitBtn = document.getElementById('mergeCustomerSubmitBtn');
+    var newNameInput = document.getElementById('mergeNewName');
     if (!input) return;
+
+    function updateSubmitState() {
+        var nameChanged = newNameInput.value.trim() && newNameInput.value.trim() !== '{{ customer.name|escapejs }}';
+        submitBtn.disabled = !(nameChanged || absorbField.value);
+    }
+    newNameInput.addEventListener('input', updateSubmitState);
+
     var timer = null;
     input.addEventListener('input', function() {
         var q = this.value.trim();
@@ -1110,10 +1126,10 @@ function woReject(reqId, itemName, amount, staffName, requestType) {
                             absorbField.value = this.getAttribute('data-id');
                             var absorbName = this.getAttribute('data-name');
                             selected.style.display = 'block';
-                            selected.textContent = '✓ ' + absorbName + ' → itaunganishwa na {{ customer.name|escapejs }}';
+                            selected.textContent = '✓ ' + absorbName + ' → itaunganishwa na ' + (newNameInput.value.trim() || '{{ customer.name|escapejs }}');
                             results.innerHTML = '';
                             input.value = '';
-                            submitBtn.disabled = false;
+                            updateSubmitState();
                         });
                     });
                 })
@@ -1121,7 +1137,7 @@ function woReject(reqId, itemName, amount, staffName, requestType) {
         }, 250);
     });
     document.getElementById('mergeCustomerForm').addEventListener('submit', function(e) {
-        if (!absorbField.value) { e.preventDefault(); return; }
+        if (submitBtn.disabled) { e.preventDefault(); return; }
         if (!confirm('Una uhakika? Hatua hii haiwezi kutenguliwa.')) { e.preventDefault(); }
     });
 })();

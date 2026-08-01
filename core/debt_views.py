@@ -1106,6 +1106,26 @@ def toggle_credit_approval(request, customer_id):
 
 
 @owner_or_manager_required
+def customer_identity_correct(request):
+    """Standalone "search, rename, match, consolidate" entry point — 2026-08-01
+    live request: Roy wanted to fix a name mistaken-identity case ("Genro" in
+    the debt tracker vs "Jenerali" on an old receipt, the same real customer)
+    WITHOUT first having to already be on one specific customer's profile
+    page. The per-profile "🔀 Unganisha na Mteja Mwingine" modal
+    (customer_debt_profile.html) already did exactly this search+merge+rename
+    action, just anchored to whichever profile you happened to be viewing —
+    this page is the same flow with search as the FIRST step instead.
+    Renders a plain page; POSTs go straight to the existing merge_customer
+    endpoint (dynamically targeted at whichever record the owner picks as
+    primary), so no separate POST handler is needed here — same backend
+    logic (Customer.merge_locked / rename_locked), same audit trail.
+    """
+    return render(request, 'core/customer_identity_correct.html', {
+        'is_owner': getattr(get_user_profile(request), 'is_owner_or_manager', False),
+    })
+
+
+@owner_or_manager_required
 def customer_search_api(request):
     """AJAX GET — search this business's customers by name (owner/manager
     only; used by the "🔀 Unganisha na Mteja Mwingine" merge picker, 2026-07-31
@@ -1130,34 +1150,48 @@ def customer_search_api(request):
 @owner_or_manager_required
 @require_POST
 def merge_customer(request, customer_id):
-    """Merge another customer record into this one — see Customer.
-    merge_locked's docstring for the full reasoning and reassignment list.
-    `customer_id` in the URL is always the KEPT identity (the profile page
-    the owner is standing on when they trigger this); `absorb_id` (POST) is
-    the duplicate being folded in and deleted.
+    """Merge another customer record into this one, optionally ALSO
+    correcting the resulting name in the same submit (2026-08-01 live
+    request — Roy: "search for Genro and edit his name to General ... and
+    match it to Jenerali ... and consolidate the two, just that simple").
+    See Customer.merge_locked's / rename_locked's docstrings for the full
+    reasoning and reassignment list. `customer_id` in the URL is always the
+    KEPT identity (the profile page the owner is standing on when they
+    trigger this); `absorb_id` (POST, optional) is a duplicate being folded
+    in and deleted; `new_name` (POST, optional) renames the resulting
+    identity. At least one of the two must be given.
     """
     user_profile = get_user_profile(request)
     business = user_profile.business
     keep = get_object_or_404(Customer, id=customer_id, business=business)
 
     absorb_id = request.POST.get('absorb_id', '').strip()
-    if not absorb_id.isdigit():
-        messages.error(request, 'Chagua mteja wa kuunganisha naye.')
+    new_name = (request.POST.get('new_name') or '').strip()
+
+    if not absorb_id.isdigit() and not new_name:
+        messages.error(request, 'Chagua mteja wa kuunganisha naye, au andika jina sahihi.')
         return redirect('customer_debt_profile', customer_id=customer_id)
 
+    old_name = None
     try:
-        keep, absorbed_id, old_name = Customer.merge_locked(keep.id, int(absorb_id), business)
+        if absorb_id.isdigit():
+            keep, absorbed_id, old_name = Customer.merge_locked(keep.id, int(absorb_id), business)
+        if new_name and new_name != keep.name:
+            keep = Customer.rename_locked(keep.id, business, new_name)
     except ValueError as e:
         messages.error(request, str(e))
         return redirect('customer_debt_profile', customer_id=customer_id)
 
     reviewer_name = request.user.get_full_name() or request.user.username
     when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
-    messages.success(
-        request,
-        f"{old_name} ameunganishwa na {keep.name} na {reviewer_name} tarehe {when} — "
-        f"deni, risiti na tabs zote za {old_name} sasa ziko chini ya {keep.name}.",
-    )
+    if old_name:
+        msg = (
+            f"{old_name} ameunganishwa na {keep.name} na {reviewer_name} tarehe {when} — "
+            f"deni, risiti na tabs zote za {old_name} sasa ziko chini ya {keep.name}."
+        )
+    else:
+        msg = f"Jina limesahihishwa kuwa {keep.name} na {reviewer_name} tarehe {when}."
+    messages.success(request, msg)
     return redirect('customer_debt_profile', customer_id=keep.id)
 
 

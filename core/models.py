@@ -181,6 +181,72 @@ class Customer(models.Model):
     class Meta:
         ordering = ['name']
 
+    @staticmethod
+    def _propagate_name_change(business, old_name, new_name):
+        """Rewrite every place a customer is referenced BY NAME STRING (not
+        FK) from old_name to new_name — the shared engine behind both
+        merge_locked (folding a second record's name into the kept one) and
+        rename_locked (correcting one record's own name in place). Extracted
+        2026-08-01 so a plain rename gets exactly the same "regardless of
+        where the name appears in the system" guarantee merge already had:
+        Transaction.recipient (the field the whole debt tracker is built
+        on), BarTab.customer_name, and Receipt.customer_name — the last
+        PLUS a symmetric linked_tab_ids union across every receipt either
+        name ever received (see merge_locked's docstring for why a bare
+        rename of customer_name alone would not be enough on its own).
+        """
+        if old_name == new_name:
+            return
+        Transaction.objects.filter(
+            business=business, recipient__iexact=old_name,
+        ).update(recipient=new_name)
+        BarTab.objects.filter(
+            business=business, customer_name__iexact=old_name,
+        ).update(customer_name=new_name)
+        receipts = list(
+            Receipt.objects.filter(business=business, customer_name__iexact=new_name)
+            | Receipt.objects.filter(business=business, customer_name__iexact=old_name)
+        )
+        if receipts:
+            combined = set()
+            for r in receipts:
+                meta = r.meta or {}
+                if meta.get('tab_id'):
+                    combined.add(meta['tab_id'])
+                combined.update(meta.get('linked_tab_ids') or [])
+            for r in receipts:
+                own_tab_id = (r.meta or {}).get('tab_id')
+                r.meta = r.meta or {}
+                r.meta['linked_tab_ids'] = sorted(combined - {own_tab_id})
+                r.customer_name = new_name
+                r.save(update_fields=['meta', 'customer_name'])
+
+    @classmethod
+    def rename_locked(cls, customer_id, business, new_name):
+        """Correct one customer's own name in place — e.g. a plain typo, or
+        settling on a canonical spelling ("General" instead of "Genro") —
+        propagated everywhere that name appears via _propagate_name_change.
+        Distinct from merge_locked: no second record is absorbed/deleted,
+        just this one customer's identity is corrected. Returns the
+        customer. Raises ValueError for a blank name or a customer that
+        doesn't belong to this business.
+        """
+        new_name = (new_name or '').strip()
+        if not new_name:
+            raise ValueError('Jina jipya haliwezi kuwa tupu.')
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            customer = cls.objects.select_for_update().filter(id=customer_id, business=business).first()
+            if not customer:
+                raise ValueError('Mteja hakupatikana.')
+            old_name = customer.name
+            if old_name == new_name:
+                return customer
+            cls._propagate_name_change(business, old_name, new_name)
+            customer.name = new_name
+            customer.save(update_fields=['name'])
+        return customer
+
     @classmethod
     def merge_locked(cls, keep_id, absorb_id, business):
         """Merge `absorb` into `keep` — the SAME real person recorded under two
@@ -231,38 +297,11 @@ class Customer(models.Model):
             old_name = absorb.name
             new_name = keep.name
 
-            Transaction.objects.filter(
-                business=business, recipient__iexact=old_name,
-            ).update(recipient=new_name)
-
             BarTab.objects.filter(business=business, customer_id=absorb.id).update(customer=keep)
-            BarTab.objects.filter(
-                business=business, customer_name__iexact=old_name,
-            ).update(customer_name=new_name)
-
             CustomerDebtPayment.objects.filter(business=business, customer=absorb).update(customer=keep)
             Payment.objects.filter(debt_customer=absorb).update(debt_customer=keep)
 
-            receipts = list(
-                Receipt.objects.filter(
-                    business=business, customer_name__iexact=new_name,
-                ) | Receipt.objects.filter(
-                    business=business, customer_name__iexact=old_name,
-                )
-            )
-            if receipts:
-                combined = set()
-                for r in receipts:
-                    meta = r.meta or {}
-                    if meta.get('tab_id'):
-                        combined.add(meta['tab_id'])
-                    combined.update(meta.get('linked_tab_ids') or [])
-                for r in receipts:
-                    own_tab_id = (r.meta or {}).get('tab_id')
-                    r.meta = r.meta or {}
-                    r.meta['linked_tab_ids'] = sorted(combined - {own_tab_id})
-                    r.customer_name = new_name
-                    r.save(update_fields=['meta', 'customer_name'])
+            cls._propagate_name_change(business, old_name, new_name)
 
             absorbed_id = absorb.id
             absorb.delete()
