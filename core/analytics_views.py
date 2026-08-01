@@ -845,6 +845,18 @@ def analytics_dashboard(request):
     total_tabs_owed = round(total_tabs_owed, 2)
 
     # ── Kitchen Performance Analytics ─────────────────────────────────────────
+    # 2026-08-01 live request — Roy explicitly asked for BOTH: one shared "Kuku"
+    # item (so stock/selling/general reporting stays unified across suppliers)
+    # AND per-supplier accountability/profit tracking (so a new cut/supplier's
+    # true margin is never blended into another's). Grouping used to be by
+    # item_id alone, silently averaging every preset sold under one item into a
+    # single row — e.g. Meatco-costed wings and a new supplier's legs, both
+    # tagged "Kuku", would report one blended margin, hiding exactly the
+    # per-supplier discrepancy this business is trying to watch for. Now groups
+    # by (item_id, preset_id): a preset-attributed sale (Transaction.preset,
+    # 2026-07-28) gets its own row named "Item — Preset", so each cut/supplier
+    # shows its own units/revenue/cost/margin; a plain item sale with no preset
+    # keeps exactly the old single-row-per-item behaviour.
     kitchen_rows = []
     total_kitchen_revenue = 0.0
     kitchen_share = 0.0
@@ -854,14 +866,17 @@ def analytics_dashboard(request):
                 business=business, type='Issue',
                 item__store__is_kitchen=True,
                 date__gte=start_date, date__lte=today,
-            ).select_related('item', 'produce_bunch')
+            ).select_related('item', 'produce_bunch', 'preset')
         )
         _km = {}
         for t in _kitchen_txns:
-            k = t.item_id
+            k = (t.item_id, t.preset_id)
             if k not in _km:
+                name = t.item.description
+                if t.preset_id and t.preset:
+                    name = f'{name} — {t.preset.label}'
                 _km[k] = {
-                    'name':    t.item.description,
+                    'name':    name,
                     'units':   0.0,
                     'revenue': 0.0,
                     'cost':    0.0,

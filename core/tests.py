@@ -19266,3 +19266,78 @@ class HomeDashboardRevenueSurvivesMidnightTest(TestCase):
         api_resp = self.client.get('/dashboard/revenue/')
         self.assertEqual(api_resp.status_code, 200)
         self.assertEqual(api_resp.json()['bar_revenue'], 200)
+
+
+class KitchenPerformancePerPresetBreakdownTest(TestCase):
+    """2026-08-01 live request — Roy wants BOTH a single shared "Kuku" item
+    (unified stock/selling) AND per-supplier accountability/profit
+    tracking (a new cut/supplier's true margin must never blend into
+    another's). Kitchen Performance analytics used to group purely by
+    item_id, averaging every preset's revenue/cost into one row — exactly
+    the case here: Meatco-costed cuts and a new supplier's "Legi Nzima"
+    both tagged "Kuku" would report one blended margin. Now groups by
+    (item_id, preset_id) so a preset-attributed sale gets its own row."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Preset Analytics Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kpa_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku',
+            material_no='KPA-1', unit='Pcs', is_produce=True, produce_mode='PORTION',
+            cost_price=Decimal('60'), selling_price=Decimal('100'),
+        )
+        from core.models import ItemPortionPreset
+        self.bawa = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Bawa', price=Decimal('80'),
+            quantity_consumed=Decimal('1'), cost_price=Decimal('50'),
+        )
+        self.legi_nzima = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Legi Nzima', price=Decimal('250'),
+            quantity_consumed=Decimal('1'), cost_price=Decimal('123.33'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_presets_of_the_same_item_get_separate_rows(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, preset=self.bawa, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('80'), payment_method='cash',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, preset=self.legi_nzima, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='cash',
+        )
+        resp = self.client.get('/analytics/')
+        self.assertEqual(resp.status_code, 200)
+        rows = {r['name']: r for r in resp.context['kitchen_rows']}
+        self.assertIn('Kuku — Bawa', rows)
+        self.assertIn('Kuku — Legi Nzima', rows)
+        self.assertEqual(rows['Kuku — Bawa']['revenue'], 80.0)
+        self.assertEqual(rows['Kuku — Bawa']['cost'], 50.0)
+        self.assertEqual(rows['Kuku — Legi Nzima']['revenue'], 250.0)
+        self.assertEqual(rows['Kuku — Legi Nzima']['cost'], 123.33)
+        # Not blended into one averaged "Kuku" row
+        self.assertNotIn('Kuku', rows)
+
+    def test_plain_no_preset_sale_still_groups_as_one_item_row(self):
+        """Backward compatible: an item with no presets, or a sale with no
+        preset_id, keeps the original single-row-per-item behaviour."""
+        plain_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chips',
+            material_no='KPA-2', unit='Plate', cost_price=Decimal('30'),
+            selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=plain_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=plain_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        resp = self.client.get('/analytics/')
+        rows = {r['name']: r for r in resp.context['kitchen_rows']}
+        self.assertIn('Chips', rows)
+        self.assertEqual(rows['Chips']['revenue'], 200.0)
+        self.assertEqual(rows['Chips']['units'], 2.0)

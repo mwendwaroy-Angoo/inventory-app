@@ -4332,3 +4332,24 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`test_other_revenue_bucket_captures_sales_outside_any_shift`, plus the existing
   single-shift test extended to assert the new fields), 1 existing test extended
   (`AutoCloseRevenueContinuityTest`). No migrations.
+- Kitchen Performance analytics: per-preset breakdown (2026-08-01). Live scenario:
+  Monsoon Inn switched chicken suppliers away from Meatco over piece-size discrepancies;
+  the new supplier delivers legs-only, sold whole via a new "Legi Nzima" preset on the
+  existing shared `Kuku` item (the same per-cut-preset pattern built 2026-07-29 for Bawa/
+  Paja/Kifua). Roy explicitly asked to keep ONE shared item (unified stock/selling/
+  reporting) while ALSO getting per-supplier accountability/profit tracking — both, wired
+  logically, not a choice between them. Root gap: Kitchen Performance
+  (`core/analytics_views.py`) grouped strictly by `item_id`, so every preset sold under one
+  item (Meatco-costed cuts and the new supplier's legs alike) was averaged into a single
+  blended "Kuku" row — silently hiding exactly the per-supplier margin discrepancy this
+  business is trying to watch for, despite `Transaction.preset` (built 2026-07-28
+  specifically to fix per-preset COST attribution) already carrying the data needed to
+  split it. Fixed by grouping on `(item_id, preset_id)` instead: a preset-attributed sale
+  now gets its own row named "Item — Preset" (e.g. "Kuku — Legi Nzima"), with its own
+  units/revenue/cost/margin, completely un-blended from the item's other presets; a plain
+  item sale with no `preset_id` (the vast majority of non-Kuku items) keeps the exact
+  original single-row-per-item behaviour — fully backward compatible, template needed no
+  changes since `row.name` was already a plain display string. 2 new tests
+  (`KitchenPerformancePerPresetBreakdownTest`) — presets of the same item get separate,
+  correctly-costed rows and are never blended into an averaged item-level row; a plain
+  item with no presets still groups as one row. No migrations.
