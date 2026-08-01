@@ -306,9 +306,14 @@ class FeedbackAdmin(admin.ModelAdmin):
 
 @admin.register(DeliveryRating)
 class DeliveryRatingAdmin(admin.ModelAdmin):
-    list_display = ('rider', 'order', 'rating', 'on_time', 'item_condition', 'created_at')
-    list_filter = ('on_time', 'rating')
-    search_fields = ('rated_by', 'comment')
+    list_display = ('rider', 'get_business', 'order', 'rating', 'on_time', 'item_condition', 'created_at')
+    list_filter = ('on_time', 'rating', 'order__business')
+    search_fields = ('rated_by', 'comment', 'order__business__name')
+
+    def get_business(self, obj):
+        return obj.order.business
+    get_business.short_description = 'Business'
+    get_business.admin_order_field = 'order__business'
 
 
 @admin.register(PendingTransactionPrompt)
@@ -332,7 +337,14 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
 
 @admin.register(PurchaseOrderLine)
 class PurchaseOrderLineAdmin(admin.ModelAdmin):
-    list_display = ('po', 'item', 'quantity_ordered', 'quantity_received', 'unit_price')
+    list_display = ('po', 'get_business', 'item', 'quantity_ordered', 'quantity_received', 'unit_price')
+    list_filter = ('po__business',)
+    search_fields = ('po__business__name', 'item__description')
+
+    def get_business(self, obj):
+        return obj.po.business
+    get_business.short_description = 'Business'
+    get_business.admin_order_field = 'po__business'
 
 # ────────────────────────────────────────────────
 # KIBANDA PRODUCE MODULE — greens bunches & presets
@@ -365,10 +377,15 @@ class ProduceBunchAdmin(admin.ModelAdmin):
 
 @admin.register(ItemPortionPreset)
 class ItemPortionPresetAdmin(admin.ModelAdmin):
-    list_display = ('item', 'label', 'price', 'quantity_consumed', 'display_order')
+    list_display = ('item', 'get_business', 'label', 'price', 'quantity_consumed', 'display_order')
     list_filter = ('item__business',)
     search_fields = ('item__description', 'label')
     ordering = ('item', 'display_order', 'price')
+
+    def get_business(self, obj):
+        return obj.item.business
+    get_business.short_description = 'Business'
+    get_business.admin_order_field = 'item__business'
 
 
 # ────────────────────────────────────────────────
@@ -410,10 +427,15 @@ class KegBarrelAdmin(admin.ModelAdmin):
 
 @admin.register(KegWeightReading)
 class KegWeightReadingAdmin(admin.ModelAdmin):
-    list_display = ('barrel', 'weight_kg', 'reading_type', 'recorded_by', 'confirmed_by', 'recorded_at')
+    list_display = ('barrel', 'get_business', 'weight_kg', 'reading_type', 'recorded_by', 'confirmed_by', 'recorded_at')
     list_filter = ('reading_type', 'barrel__business')
     search_fields = ('barrel__item__description',)
     readonly_fields = ('recorded_at',)
+
+    def get_business(self, obj):
+        return obj.barrel.business
+    get_business.short_description = 'Business'
+    get_business.admin_order_field = 'barrel__business'
 
 
 class BarTabEntryInline(admin.TabularInline):
@@ -442,6 +464,11 @@ class BarTabAdmin(admin.ModelAdmin):
 
 @admin.register(BarTabEntry)
 class BarTabEntryAdmin(admin.ModelAdmin):
-    list_display = ('tab', 'description', 'amount', 'is_paid', 'payment_method', 'paid_at')
+    list_display = ('tab', 'get_business', 'description', 'amount', 'is_paid', 'payment_method', 'paid_at')
     list_filter = ('is_paid', 'payment_method', 'tab__business')
     search_fields = ('description', 'tab__customer_name')
+
+    def get_business(self, obj):
+        return obj.tab.business
+    get_business.short_description = 'Business'
+    get_business.admin_order_field = 'tab__business'

@@ -558,6 +558,7 @@ class AccountDeletionLog(models.Model):
         ('privacy', _('Privacy / data concerns')),
         ('temporary', _('Just taking a break')),
         ('other', _('Other')),
+        ('admin_removed', _('Removed by platform admin')),
     ]
 
     username = models.CharField(max_length=150)

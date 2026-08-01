@@ -3,6 +3,7 @@ from django.contrib.auth import views as auth_views
 from django.urls import path, include
 from accounts.forms import LocalizedAuthenticationForm
 from accounts.views import logout_view
+from stockapp.admin_site import duka_admin_site
 from core.views import (
     home,
     dashboard_revenue_api,
@@ -323,7 +324,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
+    path("admin/", duka_admin_site.urls),
     path(
         "accounts/login/",
         auth_views.LoginView.as_view(authentication_form=LocalizedAuthenticationForm),

@@ -394,3 +394,88 @@ class DeactivatedStaffMiddlewareTest(TestCase):
         resp2 = self.client.get('/', follow=True)
         # Session should no longer be authenticated — middleware must have logged them out
         self.assertFalse(resp2.wsgi_request.user.is_authenticated)
+
+
+class SafeBusinessDeleteTest(TestCase):
+    """2026-08-01: Django admin (/admin/) previously had no way to remove a
+    business, and Django's default bulk delete would have destructively
+    CASCADE-deleted every OTHER staff member's UserProfile (UserProfile.
+    business is CASCADE) — the same trap accounts.views.delete_account's
+    detach-then-delete sequence already avoids for a self-service deletion.
+    BusinessAdmin.delete_business_view adapts that exact sequence for a
+    platform-admin-triggered deletion, and per Roy's explicit choice, also
+    deletes the owner's own User login (not just the business)."""
+
+    def setUp(self):
+        from accounts.models import AccountDeletionLog
+        self.AccountDeletionLog = AccountDeletionLog
+
+        self.superuser = User.objects.create_superuser(
+            username='platform_admin', email='admin@example.com', password='x',
+        )
+        self.owner = User.objects.create_user(username='del_biz_owner', password='x')
+        self.biz = Business.objects.create(name='Doomed Business', owner=self.owner)
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.other_staff = User.objects.create_user(username='del_biz_staff', password='x')
+        self.other_staff_profile = UserProfile.objects.create(
+            user=self.other_staff, business=self.biz, role='staff',
+        )
+        self.client.force_login(self.superuser)
+
+    def _delete_url(self):
+        return reverse('admin:accounts_business_delete_business', args=[self.biz.id])
+
+    def test_wrong_confirm_text_does_not_delete(self):
+        resp = self.client.post(self._delete_url(), {'confirm_text': 'not the right name'})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Business.objects.filter(id=self.biz.id).exists())
+        self.assertTrue(User.objects.filter(id=self.owner.id).exists())
+
+    def test_correct_confirm_text_deletes_business_and_owner_login(self):
+        resp = self.client.post(self._delete_url(), {'confirm_text': self.biz.name})
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Business.objects.filter(id=self.biz.id).exists())
+        self.assertFalse(User.objects.filter(id=self.owner.id).exists())
+
+    def test_other_staff_is_detached_not_deleted(self):
+        self.client.post(self._delete_url(), {'confirm_text': self.biz.name})
+        self.assertTrue(User.objects.filter(id=self.other_staff.id).exists())
+        self.other_staff_profile.refresh_from_db()
+        self.assertIsNone(self.other_staff_profile.business_id)
+
+    def test_writes_account_deletion_log_with_admin_removed_reason(self):
+        self.client.post(self._delete_url(), {'confirm_text': self.biz.name})
+        log = self.AccountDeletionLog.objects.filter(
+            business_name='Doomed Business', reason='admin_removed',
+        ).first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.username, 'del_biz_owner')
+        self.assertIn('platform_admin', log.details)
+
+    def test_non_staff_user_cannot_reach_delete_view(self):
+        self.client.logout()
+        random_user = User.objects.create_user(username='rando', password='x')
+        self.client.force_login(random_user)
+        resp = self.client.post(self._delete_url(), {'confirm_text': self.biz.name})
+        # Django admin's own login-required gate redirects a non-staff user
+        # to the admin login page rather than ever reaching the view.
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Business.objects.filter(id=self.biz.id).exists())
+
+    def test_get_shows_impact_preview_without_deleting(self):
+        from core.models import Item, Store
+        store = Store.objects.create(name='Main', business=self.biz)
+        Item.objects.create(
+            business=self.biz, store=store, description='Widget', material_no='TEST-DEL-001',
+            unit='pcs', selling_price=100, cost_price=50,
+        )
+        resp = self.client.get(self._delete_url())
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Doomed Business')
+        self.assertTrue(Business.objects.filter(id=self.biz.id).exists())
+
+    def test_bulk_delete_action_is_unavailable(self):
+        resp = self.client.get('/admin/accounts/business/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn(b'value="delete_selected"', resp.content)

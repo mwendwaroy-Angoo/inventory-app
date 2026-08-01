@@ -1,0 +1,35 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<h1>⚠️ Delete business: {{ business.name }}</h1>
+
+<p style="color:#8b1a35;font-weight:bold;">
+  This permanently deletes the business AND its owner's login
+  ({% if business.owner %}{{ business.owner.username }}{% else %}no owner set{% endif %}).
+  This cannot be undone.
+</p>
+
+<h2>What will be deleted</h2>
+<ul>
+  <li>Items: {{ item_count }}</li>
+  <li>Stores: {{ store_count }}</li>
+  <li>Transactions: {{ transaction_count }}</li>
+  <li>Orders: {{ order_count }}</li>
+</ul>
+
+<h2>What survives</h2>
+<ul>
+  <li>Other staff logins on this business ({{ staff_count }}) — detached, not deleted. They can log in but will have no business attached.</li>
+</ul>
+
+<form method="post">{% csrf_token %}
+  <p>
+    <label for="confirm_text">Type the business name exactly to confirm: <strong>{{ business.name }}</strong></label><br>
+    <input type="text" id="confirm_text" name="confirm_text" size="60" autocomplete="off">
+  </p>
+  <input type="submit" value="Permanently delete this business" class="default" style="background:#8b1a35;">
+</form>
+
+<p><a href="{% url 'admin:accounts_business_change' business.pk %}">Cancel — back to {{ business.name }}</a></p>
+{% endblock %}
