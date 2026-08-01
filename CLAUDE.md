@@ -4270,3 +4270,38 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   correct staff/status, a confirmed shift never appears in the pending list, the
   end-to-end home-page disclosure renders for owner with the confirm link, and is
   completely absent for ordinary staff. No migrations.
+- Manager shifts exempt from business-hours auto-close (2026-08-01, same-day follow-up).
+  Roy: a manager is often the one physically still running the counter after the
+  configured closing time when the owner isn't around (a bar running late, an after-hours
+  event) — the auto-close sweep (`_auto_close_expired_shifts()`) is a safety net for staff
+  who genuinely forgot, not a rule that should force a manager off the till the instant the
+  clock says so, especially since `manager_must_have_shift=True` (2026-07-30) already blocks
+  a manager from ringing up a NEW sale once their shift is gone — auto-closing them just
+  means friction (forced re-open, fragmented cash float) with no real benefit. Fixed by
+  excluding `staff__userprofile__role='manager'` from the sweep's queryset — a manager's
+  shift now stays OPEN indefinitely past business hours until they deliberately close it
+  themselves, at which point the ordinary manual-close consequences (tab-to-debt sweep,
+  owner-must-confirm per the existing manager-shift-needs-owner rule) apply exactly as
+  before. Staff/waitress/kitchen shifts are completely unaffected — still swept exactly as
+  before; owner shifts were never affected by this friction in the first place since owners
+  always bypass the "must have an open shift to sell" gate regardless. One real nuance found
+  while testing: tab-to-debt conversion is STATION-scoped, not shift-scoped
+  (`_convert_open_tabs_to_debt_for_shift` converts every open tab on that counter, not just
+  the closing shift's own) — so a manager's open tabs stay untouched only when no OTHER
+  (non-exempt) shift on the same counter is also expiring at the same sweep; if a plain
+  staff shift on the same counter genuinely did expire alongside them, those tabs still
+  convert exactly as they should (that staff really did forget). Roy's second ask —
+  "the shift auto close balances/transactional information adjusts automatically regardless
+  of the auto shift close" — was verified already true for BOTH accountability surfaces
+  built earlier the same day: `till_expected_cash()`'s anchor already requires
+  `closing_cash_counted__isnull=False` (an auto-close's uncounted `None` never anchors it —
+  locked in by the pre-existing `TillAnchorSkipsAutoClosedShiftTest`), and
+  `station_revenue_window_start()`'s anchor is purely `Shift.confirmed_at` — an auto-close
+  never confirms anything, so the revenue tile keeps extending back to the auto-closed
+  shift's own start regardless. New `AutoCloseRevenueContinuityTest` runs the REAL
+  `_auto_close_expired_shifts()` production path end to end (not a hand-built CLOSED shift)
+  to prove this concretely: both sales made during an auto-closed, unconfirmed shift still
+  count on the dashboard tile, the shift correctly appears in the new
+  `station_revenue_window_info()` pending list, and confirming it afterward correctly
+  clears the tile. 7 new tests (`ManagerShiftExemptFromAutoCloseTest` ×4,
+  `AutoCloseRevenueContinuityTest` ×3). No migrations.

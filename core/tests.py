@@ -4506,6 +4506,106 @@ class AutoCloseShiftConvertsOpenTabsTest(TestCase):
         self.assertEqual(self.shift.status, 'CLOSED')
 
 
+class ManagerShiftExemptFromAutoCloseTest(TestCase):
+    """2026-08-01 live request — Roy: a manager is often the one physically
+    still running the counter after the configured closing time when the
+    owner isn't around (a bar running late, an after-hours event) — the
+    auto-close sweep is a safety net for staff who forgot, not a rule that
+    forces a manager off the till the instant the clock says so, especially
+    since manager_must_have_shift blocks them from ringing up a NEW sale
+    once their shift is gone. Manager-role shifts are now exempt from
+    _auto_close_expired_shifts() — they stay OPEN indefinitely past
+    business hours until the manager deliberately closes out themselves,
+    at which point the ordinary manual-close consequences (tab-to-debt
+    sweep, owner-must-confirm) apply exactly as before. Staff/waitress/
+    kitchen shifts are unaffected — still swept exactly as before."""
+
+    def setUp(self):
+        from datetime import time as _time, datetime as _datetime
+        self.biz = Business.objects.create(
+            name='Manager Exempt Biz',
+            opening_time=_time(8, 0), closing_time=_time(20, 0),
+        )
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.manager = User.objects.create_user(username='mgrexempt_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='mgrexempt_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        yesterday = timezone.localdate() - timedelta(days=1)
+        started = timezone.make_aware(_datetime.combine(yesterday, _time(10, 0)))
+        self.manager_shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.manager,
+            status='OPEN', opening_float=Decimal('0'), started_at=started,
+        )
+        self.staff_shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'), started_at=started,
+        )
+
+    def test_manager_shift_stays_open_past_closing_time(self):
+        from core.shift_views import _auto_close_expired_shifts
+        result = _auto_close_expired_shifts(self.biz)
+        closed_ids = [r['shift_id'] for r in result]
+        self.assertNotIn(self.manager_shift.id, closed_ids)
+        self.manager_shift.refresh_from_db()
+        self.assertEqual(self.manager_shift.status, 'OPEN')
+        self.assertFalse(self.manager_shift.auto_closed)
+
+    def test_staff_shift_still_auto_closes_as_before(self):
+        from core.shift_views import _auto_close_expired_shifts
+        result = _auto_close_expired_shifts(self.biz)
+        closed_ids = [r['shift_id'] for r in result]
+        self.assertIn(self.staff_shift.id, closed_ids)
+        self.staff_shift.refresh_from_db()
+        self.assertEqual(self.staff_shift.status, 'CLOSED')
+        self.assertTrue(self.staff_shift.auto_closed)
+
+    def test_managers_open_tab_untouched_since_shift_never_auto_closes(self):
+        """Tab-to-debt conversion is station-scoped, not shift-scoped — it's
+        triggered by ANY expired shift on that station auto-closing, not
+        specifically the tab's own opener. So this isolates the real
+        scenario Roy described (manager is the only one still on duty):
+        no OTHER shift on this station is also expiring alongside the
+        exempt manager one."""
+        from core.shift_views import _auto_close_expired_shifts
+        self.staff_shift.delete()
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Mgr Exempt Beer',
+            material_no='MGREXEMPT-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Still Being Served', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Mgr Exempt Beer', amount=Decimal('100'),
+        )
+        _auto_close_expired_shifts(self.biz)
+        tab.refresh_from_db()
+        self.assertEqual(
+            tab.status, 'OPEN',
+            "A manager's open tab must not be silently converted to debt while "
+            "they're demonstrably still working — only a real close should trigger that",
+        )
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')
+
+    def test_manager_can_keep_selling_under_the_same_shift_past_closing_time(self):
+        """The whole point: manager_must_have_shift must still find this
+        shift OPEN and let a sale through, well past the configured
+        closing time, with no forced re-open — even after the auto-close
+        sweep has already run for this business (as every real checkout
+        view runs it before checking for an active shift)."""
+        from core.shift_views import _auto_close_expired_shifts, get_active_staff_shift
+        _auto_close_expired_shifts(self.biz)
+        up = self.manager.userprofile
+        result = get_active_staff_shift(up, self.biz, manager_must_have_shift=True)
+        self.assertEqual(result.id, self.manager_shift.id)
+
+
 class CloseShiftAutoConvertedNamesResponseTest(TestCase):
     """2026-07-24 wording/accountability audit: close_shift() already computed and
     returned auto_converted_names (customers whose open tab was silently converted
@@ -15467,6 +15567,95 @@ class TillAnchorSkipsAutoClosedShiftTest(TestCase):
         till = self.till_expected_cash(self.biz, 'bar')
         self.assertEqual(till['expected_cash'], 0.0)
         self.assertIsNotNone(till['anchor_at'])
+
+
+class AutoCloseRevenueContinuityTest(TestCase):
+    """2026-08-01 live follow-up — Roy asked explicitly that "the shift
+    auto close balances/transactional information adjusts automatically
+    regardless of the auto shift close." Runs the REAL production
+    auto-close path (_auto_close_expired_shifts(), not a hand-built CLOSED
+    shift) end to end and confirms both the continuous till
+    (till_expected_cash — already locked in for a hand-built shift by
+    TillAnchorSkipsAutoClosedShiftTest above) and the confirm-gated
+    dashboard revenue window (station_revenue_window_start/_info) come out
+    correct once the sweep has actually run: nothing resets or drops a
+    sale just because the shift got force-closed by the business-hours
+    sweep instead of a deliberate manual close."""
+
+    def setUp(self):
+        from datetime import time as _time, datetime as _datetime
+        self.biz = Business.objects.create(
+            name='AutoClose Continuity Biz',
+            opening_time=_time(8, 0), closing_time=_time(20, 0),
+        )
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.staff = User.objects.create_user(username='acc_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='ACC-1',
+            description='Continuity Beer', unit='bottle', selling_price=Decimal('100'),
+        )
+        yesterday = timezone.localdate() - timedelta(days=1)
+        self.started_at = timezone.make_aware(_datetime.combine(yesterday, _time(10, 0)))
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'), started_at=self.started_at,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('750'), payment_method='cash',
+            created_at=self.started_at + timedelta(hours=1),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='mpesa',
+            created_at=self.started_at + timedelta(hours=2),
+        )
+
+    def test_revenue_window_still_reaches_the_auto_closed_shift(self):
+        from core.shift_views import _auto_close_expired_shifts, station_revenue_window_start
+        result = _auto_close_expired_shifts(self.biz)
+        self.assertEqual(len(result), 1)
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.status, 'CLOSED')
+        self.assertTrue(self.shift.auto_closed)
+
+        window_start = station_revenue_window_start(self.biz, is_kitchen=False)
+        self.assertEqual(window_start, self.started_at)
+
+        total = sum(
+            t.revenue() for t in Transaction.objects.filter(
+                business=self.biz, type='Issue', created_at__gte=window_start,
+                payment_method__in=['cash', 'mpesa'], item__store__is_kitchen=False,
+            )
+        )
+        self.assertEqual(total, 1000.0, 'Both sales made during the auto-closed shift must still count')
+
+    def test_pending_shifts_list_names_the_auto_closed_shift(self):
+        from core.shift_views import _auto_close_expired_shifts, station_revenue_window_info
+        _auto_close_expired_shifts(self.biz)
+        info = station_revenue_window_info(self.biz, is_kitchen=False)
+        self.assertEqual(len(info['pending_shifts']), 1)
+        self.assertEqual(info['pending_shifts'][0]['id'], self.shift.id)
+        self.assertEqual(info['pending_shifts'][0]['status'], 'CLOSED')
+
+    def test_confirming_the_auto_closed_shift_resets_the_window(self):
+        from core.shift_views import _auto_close_expired_shifts, station_revenue_window_start
+        _auto_close_expired_shifts(self.biz)
+        self.shift.refresh_from_db()
+        self.shift.status = 'CONFIRMED'
+        self.shift.confirmed_at = timezone.now()
+        self.shift.save(update_fields=['status', 'confirmed_at'])
+
+        window_start = station_revenue_window_start(self.biz, is_kitchen=False)
+        self.assertEqual(window_start, self.shift.confirmed_at)
+        total = sum(
+            t.revenue() for t in Transaction.objects.filter(
+                business=self.biz, type='Issue', created_at__gte=window_start,
+                payment_method__in=['cash', 'mpesa'], item__store__is_kitchen=False,
+            )
+        )
+        self.assertEqual(total, 0.0, 'Confirming must clear the tile — the old sales predate the confirm moment')
 
 
 class OpeningVarianceReviewTest(TestCase):

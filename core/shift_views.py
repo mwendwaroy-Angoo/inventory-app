@@ -876,6 +876,21 @@ def _auto_close_expired_shifts(business):
       - closing_time == opening_time (ambiguous — also treated as 24-hour)
     Handles overnight businesses (opening_time > closing_time, e.g. bar opens
     22:00, closes 02:00) by projecting the close onto the following calendar day.
+
+    2026-08-01 live request — Roy: a manager is often the one physically still
+    running the counter after the configured closing time when the owner isn't
+    around (a bar running late, an after-hours event) — this sweep is a safety
+    net for staff who genuinely forgot, not a rule that a manager's shift must
+    end the moment the clock says so. MANAGER-role shifts are exempt: they stay
+    OPEN past business hours so a manager can keep selling under the same
+    continuous shift (no forced re-open, no fragmented cash float) instead of
+    being auto-closed and then blocked from ringing up new sales by the
+    manager_must_have_shift gate (see get_active_staff_shift()). Open tabs on
+    an exempt manager shift are correspondingly left alone too — they'll only
+    convert to debt when the manager actually, deliberately closes out, same as
+    any manual close. Owner shifts were never subject to this sweep's
+    consequence in the first place (owners always bypass the "must have an
+    open shift to sell" gate), so no change was needed there.
     """
     closing_time = getattr(business, 'closing_time', None)
     opening_time = getattr(business, 'opening_time', None)
@@ -889,7 +904,9 @@ def _auto_close_expired_shifts(business):
     is_overnight = closing_time < opening_time  # e.g. opens 22:00, closes 02:00
 
     open_shifts = list(
-        Shift.objects.filter(business=business, status='OPEN').select_related('staff')
+        Shift.objects.filter(business=business, status='OPEN')
+        .exclude(staff__userprofile__role='manager')
+        .select_related('staff')
     )
     auto_closed = []
 
