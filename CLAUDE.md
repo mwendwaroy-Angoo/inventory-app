@@ -4408,3 +4408,40 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   3 new tests (`ReceiptTotalPaidSoFarTest`) — sums only paid lines, grows correctly
   after new items are added and paid to the same tab (the literal "regardless of any
   additions" scenario), and stays zero before anything's been paid. No migrations.
+- Correct which preset/cut was actually sold, already-issued receipt included (2026-08-01),
+  live report with screenshots: kitchen staff mistakenly rang up "Wing" instead of "Leg" on
+  the shared `Kuku` item (no wings that day, only legs — the new-supplier switch from
+  2026-08-01 earlier this session) — left the item's combined balance fractional/wrong
+  (27.75 pcs) since Wing's `quantity_consumed` (0.25) differs from Legi Nzima's (1). Roy:
+  "the receipt to show the correct item even though it is already sold and the balance to
+  adjust automatically." New `correct_transaction_preset()` (`core/keg_views.py`) —
+  reassigns BOTH `Transaction.preset` AND `Transaction.qty` together, never one without the
+  other: `cost()` prices a preset-attributed sale as `abs(qty) * preset.cost_price`
+  (2026-07-28), so leaving qty at the old preset's `quantity_consumed` while only swapping
+  preset would misprice the sale under its new cut. Fixing both together also makes "the
+  balance adjusts automatically" true for free — `current_balance()` just sums
+  `Transaction.qty` directly, no separate `[ADJ]` Rekebisha-style correction transaction
+  needed, since nothing was ever physically missing (the piece really was sold, just
+  mislabeled). Also updates the display text everywhere it's cached as a string: a live
+  `BarTabEntry.description` when tab-linked, and — same precise-match-or-skip heuristic
+  already established by `split_transaction_payment_method` — a same-day Receipt line for a
+  direct sale, so an already-printed/shared receipt shows the correct item. "Bei Maalum"
+  (custom price) suffix detection compares what was actually charged against the OLD
+  preset's own configured price (a mismatch, or price=0, means custom-priced) rather than
+  reading `tab_entry.description` — the original approach silently failed for BOTH direct
+  AND tab sales: `Transaction` has no `tab_entry_id` shadow field for a reverse OneToOne
+  (only `BarTabEntry.transaction_id` exists forward), so that attribute access always raised
+  and fell through to a swallowed exception, caught by the test suite. Any staff with an
+  open shift may self-correct their own mistake — same permission tier as
+  `remove_tab_entry`/`revoke_entry_payment`, not owner-only, since Roy explicitly asked for
+  "kitchen staff" to be able to do this themselves. Wired into Kitchen Board's existing
+  "🕐 Malipo ya Hivi Karibuni" panel as a new "🔄 Kipande" button (reuses `_portionItems`,
+  already loaded client-side for the tile grid, for the preset picker — no extra fetch);
+  `recent_settled_tabs_api`'s direct-sales query widened from cash/mpesa-only to also
+  include `credit`, since Roy's actual sale was a Kitchen Deni receipt and the panel
+  couldn't surface it at all before — the existing payment-method-correction/split buttons
+  stay cash/mpesa-only (a credit sale isn't "paid" yet in the sense those assume). 10 new
+  tests (`TransactionPresetCorrectionTest`) — preset+qty reassignment, balance auto-adjusts,
+  cost reflects the new preset, receipt line renamed (custom-price suffix preserved), tab
+  entry description renamed, kitchen staff self-correct, no-shift blocked, no-op on same
+  preset, cross-item preset rejected, and the widened recent-settled API. No migrations.

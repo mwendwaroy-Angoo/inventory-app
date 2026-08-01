@@ -13373,6 +13373,158 @@ class DirectSalePaymentCorrectionTest(TestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+class TransactionPresetCorrectionTest(TestCase):
+    """2026-08-01 live request (Monsoon Inn, screenshots): kitchen staff
+    mistakenly rang up "Wing" instead of "Leg" on a shared "Kuku" item —
+    there were no wings that day, only legs — leaving the item's combined
+    balance fractional/wrong (27.75 pcs) because Wing's quantity_consumed
+    differs from Legi Nzima's. correct_transaction_preset() lets staff
+    self-correct which preset/cut was actually sold; reassigns BOTH
+    preset AND qty together so cost() prices correctly under the new cut
+    AND the balance "adjusts automatically" (current_balance() just sums
+    Transaction.qty — no separate adjustment transaction needed), plus
+    best-effort renames the matching receipt line so an already-issued
+    receipt shows the correct item too."""
+
+    def setUp(self):
+        from core.models import ItemPortionPreset
+        self.biz = Business.objects.create(name='Preset Correction Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='pc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='pc_staff', password='x', first_name='Shavel')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN', station='kitchen')
+
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku',
+            material_no='PC-1', unit='Pcs', is_produce=True, produce_mode='PORTION',
+            opening_bin_balance=Decimal('30'), selling_price=Decimal('100'),
+        )
+        self.wing = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Wing', price=Decimal('80'),
+            quantity_consumed=Decimal('0.25'), cost_price=Decimal('20'),
+        )
+        self.leg = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Legi Nzima', price=Decimal('250'),
+            quantity_consumed=Decimal('1'), cost_price=Decimal('123.33'),
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.kuku, preset=self.wing, type='Issue',
+            qty=Decimal('-0.25'), sale_amount=Decimal('100'), payment_method='credit',
+            recipient='Lilian',
+        )
+
+    def test_correction_reassigns_preset_and_qty(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/correct-preset/', {
+            'new_preset_id': str(self.leg.id),
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        self.txn.refresh_from_db()
+        self.assertEqual(self.txn.preset_id, self.leg.id)
+        self.assertEqual(self.txn.qty, Decimal('-1'))
+
+    def test_balance_adjusts_automatically(self):
+        before = self.kuku.current_balance()
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{self.txn.id}/correct-preset/', {
+            'new_preset_id': str(self.leg.id),
+        })
+        after = self.kuku.current_balance()
+        # Was deducted 0.25 (Wing); should now be deducted 1 (Leg) — an
+        # additional 0.75 comes off the balance, with no separate [ADJ] txn.
+        self.assertEqual(after, before - Decimal('0.75'))
+
+    def test_cost_reflects_new_preset_after_correction(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{self.txn.id}/correct-preset/', {
+            'new_preset_id': str(self.leg.id),
+        })
+        self.txn.refresh_from_db()
+        self.assertEqual(self.txn.cost(), 123.33)
+
+    def test_receipt_line_renamed_best_effort(self):
+        Receipt.issue(
+            business=self.biz, lines=[{'name': 'Kuku — Wing (Bei Maalum)', 'subtotal': 100.0}],
+            payment_method='credit', customer_name='Lilian', source='kitchen',
+        )
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{self.txn.id}/correct-preset/', {
+            'new_preset_id': str(self.leg.id),
+        })
+        rcpt = Receipt.objects.get(business=self.biz)
+        self.assertEqual(rcpt.lines[0]['name'], 'Kuku — Legi Nzima (Bei Maalum)')
+        self.assertEqual(rcpt.lines[0]['subtotal'], 100.0, 'Amount must never change, only the label')
+
+    def test_tab_entry_description_renamed(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Table 4', status='OPEN', source='kitchen',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=self.txn, description='Kuku — Wing (Bei Maalum)',
+            amount=Decimal('100'),
+        )
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{self.txn.id}/correct-preset/', {
+            'new_preset_id': str(self.leg.id),
+        })
+        entry.refresh_from_db()
+        self.assertEqual(entry.description, 'Kuku — Legi Nzima (Bei Maalum)')
+
+    def test_kitchen_staff_with_open_shift_can_self_correct(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/correct-preset/', {
+            'new_preset_id': str(self.leg.id),
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_staff_without_open_shift_blocked(self):
+        staff2 = User.objects.create_user(username='pc_staff2', password='x')
+        UserProfile.objects.create(user=staff2, business=self.biz, role='kitchen')
+        self.client.force_login(staff2)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/correct-preset/', {
+            'new_preset_id': str(self.leg.id),
+        })
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json()['shift_required'])
+
+    def test_noop_when_same_preset_selected(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/correct-preset/', {
+            'new_preset_id': str(self.wing.id),
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.txn.refresh_from_db()
+        self.assertEqual(self.txn.qty, Decimal('-0.25'))
+
+    def test_preset_from_different_item_rejected(self):
+        other_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chips',
+            material_no='PC-2', unit='Plate', selling_price=Decimal('100'),
+        )
+        from core.models import ItemPortionPreset
+        foreign_preset = ItemPortionPreset.objects.create(
+            item=other_item, label='Normal', price=Decimal('100'), quantity_consumed=Decimal('1'),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/correct-preset/', {
+            'new_preset_id': str(foreign_preset.id),
+        })
+        self.assertEqual(resp.json()['ok'], False)
+
+    def test_recent_settled_api_includes_credit_direct_sale_with_preset_info(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/recent-settled/?station=kitchen')
+        data = resp.json()
+        self.assertEqual(len(data['direct']), 1)
+        self.assertEqual(data['direct'][0]['payment_method'], 'credit')
+        self.assertEqual(data['direct'][0]['preset_id'], self.wing.id)
+        self.assertEqual(data['direct'][0]['item_id'], self.kuku.id)
+
+
 class DirectSalePaymentSplitTest(TestCase):
     """2026-07-26 (items 2+4, live request): a bill of 500 paid as 200 cash +
     300 mpesa but mistakenly entered entirely as mpesa must be splittable

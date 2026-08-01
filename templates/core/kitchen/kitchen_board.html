@@ -2691,13 +2691,21 @@
           direct.forEach(function (e) {
             var other = e.payment_method === 'cash' ? 'mpesa' : 'cash';
             var otherLabel = other === 'cash' ? 'Cash' : 'M-Pesa';
-            html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
-              '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ') — ' + e.time + '</span>' +
-              '<button onclick="window.kbCorrectDirectPayment(' + e.id + ',\'' + other + '\',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
-              'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
-              '<button onclick="window.kbSplitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
-              'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
-              '</div>';
+            html += '<div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
+              '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ') — ' + e.time + '</span>';
+            if (e.payment_method !== 'credit') {
+              html +=
+                '<button onclick="window.kbCorrectDirectPayment(' + e.id + ',\'' + other + '\',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+                'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
+                '<button onclick="window.kbSplitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
+                'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>';
+            }
+            if (e.preset_id) {
+              html +=
+                '<button onclick="window.kbCorrectPreset(' + e.id + ',' + e.item_id + ',' + e.preset_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+                'style="background:rgba(110,231,183,.1);border:1px solid rgba(110,231,183,.3);border-radius:4px;color:#6ee7b7;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 Kipande</button>';
+            }
+            html += '</div>';
           });
         }
         panel.innerHTML = html;
@@ -2817,6 +2825,45 @@
           .then(function(d){
             if (d.ok) {
               showToast(d.message || '✓ Imerekebishwa');
+              window.kbLoadRecentPayments();
+            } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
+            else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
+          })
+          .catch(function(){ showToast('Hitilafu ya mtandao'); });
+      },
+    });
+  };
+
+  /* ── Correct which preset/cut was actually sold (2026-08-01 live request):
+     staff tapped "Wing" but the piece served (and physically in stock
+     today) was a "Leg" — item balance goes fractional/wrong because the
+     two presets don't consume the same quantity. Reuses openReasonChips
+     purely as a labelled-option picker (chips = preset labels, not
+     reasons); the item's own presets come from _portionItems, already
+     loaded client-side for the tile grid — no extra fetch needed. ── */
+  window.kbCorrectPreset = function (txnId, itemId, oldPresetId, desc, anchorEl) {
+    var item = _portionItems.find(function (i) { return i.id === itemId; });
+    var choices = (item && item.presets ? item.presets : []).filter(function (p) { return p.id !== oldPresetId; });
+    if (!choices.length) { showToast('Hakuna kipande kingine cha kuchagua kwa bidhaa hii.'); return; }
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kipande sahihi kilichouzwa badala ya "' + desc + '"?',
+      chips: choices.map(function (p) { return p.label; }),
+      skipLabel: 'Ghairi',
+      onSelect: function (label) {
+        if (!label) return;
+        var picked = choices.find(function (p) { return p.label === label; });
+        if (!picked) return;
+        var fd = new URLSearchParams();
+        fd.append('new_preset_id', picked.id);
+        fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+        fetch('/bar/transactions/' + txnId + '/correct-preset/', {
+          method: 'POST', credentials: 'same-origin', body: fd
+        })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d.ok) {
+              showToast(d.message || '✓ Kipande kimerekebishwa');
               window.kbLoadRecentPayments();
             } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
             else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }

@@ -1594,17 +1594,24 @@ def recent_settled_tabs_api(request):
         b['settled_at'] = timezone.localtime(b['_latest']).strftime('%H:%M') if b['_latest'] else ''
         del b['_latest']
 
-    # Direct (non-tab) cash/mpesa sales — Quick Sell, bar board, and kitchen
-    # board all also support a plain direct checkout with no BarTab at all,
-    # which the entry-based query above can never see (there's no
-    # BarTabEntry to query). Found 2026-07-25, live report: Roy could see a
-    # "Viceroy" sale in Receipts and Transaction History but not here — the
-    # panel was silently BarTabEntry-only the whole time, so a mistaken cash/
-    # mpesa label on a direct (non-tab) sale had no correction path at all.
+    # Direct (non-tab) sales — Quick Sell, bar board, and kitchen board all
+    # also support a plain direct checkout with no BarTab at all, which the
+    # entry-based query above can never see (there's no BarTabEntry to
+    # query). Found 2026-07-25, live report: Roy could see a "Viceroy" sale
+    # in Receipts and Transaction History but not here — the panel was
+    # silently BarTabEntry-only the whole time, so a mistaken cash/mpesa
+    # label on a direct (non-tab) sale had no correction path at all.
+    #
+    # 2026-08-01: widened from cash/mpesa-only to also include credit — a
+    # real Kitchen credit/Deni sale (staff mis-tapped "Wing" preset instead
+    # of "Leg") needed to be findable here too so its PRESET could be
+    # corrected (see correct_transaction_preset). The payment-method
+    # correction/split buttons stay cash/mpesa-only on the frontend — a
+    # credit sale hasn't been "paid" yet in the sense those actions assume.
     direct_txns = (
         Transaction.objects.filter(
             business=up.business, type='Issue',
-            payment_method__in=['cash', 'mpesa'],
+            payment_method__in=['cash', 'mpesa', 'credit'],
             created_at__gte=day_start, created_at__lte=day_end,
             tab_entry__isnull=True,
         )
@@ -1621,6 +1628,8 @@ def recent_settled_tabs_api(request):
             continue
         direct.append({
             'id': t.id,
+            'item_id': t.item_id,
+            'preset_id': t.preset_id,
             'description': t.item.description if t.item else '',
             'amount': float(t.revenue()),
             'payment_method': t.payment_method,
@@ -1795,6 +1804,151 @@ def split_transaction_payment_method(request, txn_id):
         'ok': True, 'message': message,
         'remaining_amount': float(_orig.revenue()), 'remaining_method': old_method,
         'new_amount': float(new_txn.revenue()), 'new_method': new_method,
+    })
+
+
+@login_required
+@require_POST
+def correct_transaction_preset(request, txn_id):
+    """Correct WHICH preset/cut was actually sold on an already-recorded
+    sale — e.g. staff tapped "Wing" but the piece actually served (and
+    physically in stock today) was a "Leg" (2026-08-01 live request: a real
+    Meatco→new-supplier mix-up left the shared "Kuku" item's balance
+    fractional and wrong because Wing's quantity_consumed differs from
+    Legi Nzima's). Any staff with an open shift on the item's own station
+    may self-correct their own mistake — same tier as remove_tab_entry/
+    revoke_entry_payment, not owner-only, since this is exactly the
+    "correcting an in-progress mistake without hunting down the owner"
+    case those were built for.
+
+    Reassigns BOTH transaction.preset AND transaction.qty together — never
+    one without the other. Transaction.cost() prices a preset-attributed
+    sale as abs(qty) * preset.cost_price (2026-07-28), so leaving qty at
+    the OLD preset's quantity_consumed while only swapping preset would
+    silently misprice the sale under its new cut; leaving preset unchanged
+    while only fixing qty would silently misattribute the cost. Fixing
+    both together is also what makes "the balance adjusts automatically"
+    true for free — Item.current_balance() sums Transaction.qty directly,
+    no separate stock-adjustment transaction needed, unlike the [ADJ]
+    Rekebisha convention (that tool is for a GENUINE physical recount
+    discrepancy, not a same-item mislabel where the piece was never
+    actually missing — see the Item.raw_material_source docstring for the
+    parallel reasoning on when a second corrective transaction is/isn't
+    warranted).
+
+    Also updates the display text everywhere it's cached as a string: the
+    live BarTabEntry.description if this was a tab sale, and — best-effort,
+    same precise-match-or-skip heuristic as split_transaction_payment_method
+    above — a same-day Receipt line for a direct sale, so an
+    already-issued/printed receipt reflects the correct item too.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    txn = get_object_or_404(
+        Transaction.objects.select_related('item__store', 'preset'),
+        id=txn_id, business=up.business, type='Issue',
+    )
+    try:
+        is_kitchen = bool(txn.item.store.is_kitchen)
+    except Exception:
+        is_kitchen = False
+    if ('kitchen' if is_kitchen else 'bar') not in _allowed_tab_sources(up):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kurekebisha mauzo haya.'}, status=403)
+
+    if not txn.preset_id:
+        return JsonResponse({'ok': False, 'error': 'Muamala huu hauna kipande cha kubadilisha.'}, status=400)
+
+    from core.models import ItemPortionPreset
+    new_preset_id = (request.POST.get('new_preset_id') or '').strip()
+    new_preset = ItemPortionPreset.objects.filter(
+        id=new_preset_id, item_id=txn.item_id,
+    ).first()
+    if not new_preset:
+        return JsonResponse({'ok': False, 'error': 'Chagua kipande sahihi cha bidhaa hii.'}, status=400)
+
+    old_preset = txn.preset
+    if old_preset.id == new_preset.id:
+        return JsonResponse({'ok': True, 'message': f'Haijabadilika — tayari ilikuwa {new_preset.label}.'})
+
+    reason = (request.POST.get('reason') or '').strip()
+    old_qty = txn.qty
+    new_qty = -abs(new_preset.quantity_consumed)
+
+    # "Bei Maalum" (custom price) detection: reading it off tab_entry.description
+    # doesn't work for a direct (non-tab) sale, which has no BarTabEntry at all —
+    # instead compare what was actually charged against the OLD preset's own
+    # configured price. A mismatch (or price=0, the custom-price sentinel) means
+    # the sale was custom-priced regardless of whether it went through a tab.
+    is_custom = (
+        txn.sale_amount is not None and old_preset.price is not None
+        and (old_preset.price == 0 or abs(float(txn.sale_amount) - float(old_preset.price)) > 0.01)
+    )
+    old_desc = f'{txn.item.description} — {old_preset.label}' + (' (Bei Maalum)' if is_custom else '')
+    new_desc = f'{txn.item.description} — {new_preset.label}' + (' (Bei Maalum)' if is_custom else '')
+
+    txn.preset = new_preset
+    txn.qty = new_qty
+    txn.save(update_fields=['preset', 'qty'])
+
+    try:
+        entry = txn.tab_entry
+        entry.description = new_desc
+        entry.save(update_fields=['description'])
+    except Exception:
+        pass
+
+    # Best-effort receipt reflection — same precise-match-or-skip heuristic as
+    # split_transaction_payment_method above. Only renames the line; the
+    # displayed amount (custom-priced or preset price) never changes here.
+    amount = float(txn.revenue())
+    try:
+        candidates = Receipt.objects.filter(
+            business=up.business, created_at__date=txn.date,
+        )
+        match = None
+        match_idx = None
+        for r in candidates:
+            hits = [
+                (i, l) for i, l in enumerate(r.lines or [])
+                if l.get('name') == old_desc and abs(float(l.get('subtotal', 0)) - amount) < 0.01
+            ]
+            if len(hits) == 1:
+                if match is not None:
+                    match = None
+                    break
+                match = r
+                match_idx = hits[0][0]
+        if match is not None:
+            lines = list(match.lines)
+            lines[match_idx] = dict(lines[match_idx], name=new_desc)
+            match.lines = lines
+            match.save(update_fields=['lines'])
+    except Exception:
+        logger.exception('correct_transaction_preset: receipt reflection best-effort failed for txn %s', txn.id)
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    message = (
+        f'🔄 {who} amerekebisha "{old_desc}" (KES {amount:,.0f}) kuwa "{new_desc}" — '
+        f'salio la {txn.item.description} limerekebishwa kiotomatiki — tarehe {when}.'
+        + (f' Sababu: {reason}' if reason else '')
+    )
+    _notify_direct_correction(up.business, message, request.user, source=('kitchen' if is_kitchen else 'bar'))
+
+    return JsonResponse({
+        'ok': True, 'message': message,
+        'new_preset_id': new_preset.id, 'new_preset_label': new_preset.label,
+        'new_description': new_desc, 'old_qty': float(old_qty), 'new_qty': float(new_qty),
     })
 
 
