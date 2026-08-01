@@ -199,6 +199,20 @@ def station_revenue_window_start(business, is_kitchen, now=None):
     return timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def _window_revenue(business, is_kitchen, start, end):
+    """Cash+mpesa Issue revenue for one station, strictly within [start, end).
+    Same filter shape as home()'s bar_today_revenue/kitchen_today_revenue —
+    kept as one shared helper so the tile total and its own breakdown can
+    never silently drift apart from each other."""
+    txns = Transaction.objects.filter(
+        business=business, type='Issue',
+        created_at__gte=start, created_at__lt=end,
+        payment_method__in=['cash', 'mpesa'],
+        item__store__is_kitchen=is_kitchen,
+    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
+    return sum(t.revenue() for t in txns)
+
+
 def station_revenue_window_info(business, is_kitchen, now=None):
     """Explains *why* a station's live revenue tile on the home dashboard
     shows what it shows — the human-facing sibling to
@@ -216,6 +230,19 @@ def station_revenue_window_info(business, is_kitchen, now=None):
     owner/manager the same self-service answer the till tile already has:
     the anchor point, and exactly which shift(s) are still holding the
     total open (haven't been Thibitisha'd yet).
+
+    2026-08-01, same-day second follow-up: listing the pending shifts by
+    name wasn't enough — Roy compared the tile (KES 1770) against one
+    listed shift's own Shift History card (cash 100 + mpesa 770 = 870) and
+    couldn't account for the missing 900. Every pending shift now carries
+    its own `revenue` figure (computed the identical way, over its own
+    [started_at, ended_at-or-now] window, clipped to the overall anchor
+    window) so it can be checked directly against Shift History, and a new
+    `other_revenue` bucket captures whatever's left over — cash/mpesa sales
+    that happened in the window but weren't covered by any of the listed
+    shifts at all (the most common cause: the owner or an exempt manager
+    selling directly with no shift open, or a genuine gap between two
+    shifts) — so every shilling in the tile is now accounted for somewhere.
     """
     from .models import Shift
     now = now or timezone.now()
@@ -251,26 +278,40 @@ def station_revenue_window_info(business, is_kitchen, now=None):
             window_start = timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
             anchor_label = "Tangu usiku wa manane wa leo (hakuna shift bado kwenye counter hii)"
 
-    pending = list(
+    pending_qs = list(
         Shift.objects.filter(business=business, started_at__gte=window_start)
         .filter(_station_q(is_kitchen))
         .exclude(status='CONFIRMED')
         .select_related('staff')
         .order_by('started_at')
     )
+
+    total_revenue = _window_revenue(business, is_kitchen, window_start, now)
+
+    pending_shifts = []
+    shifts_revenue_sum = 0
+    for s in pending_qs:
+        s_start = max(s.started_at, window_start)
+        s_end = s.ended_at or now
+        s_revenue = _window_revenue(business, is_kitchen, s_start, s_end) if s_end > s_start else 0
+        shifts_revenue_sum += s_revenue
+        pending_shifts.append({
+            'id': s.id,
+            'staff_name': s.staff.get_full_name() or s.staff.username,
+            'started_at': timezone.localtime(s.started_at),
+            'ended_at': timezone.localtime(s.ended_at) if s.ended_at else None,
+            'status': s.status,
+            'revenue': s_revenue,
+        })
+
+    other_revenue = max(0, total_revenue - shifts_revenue_sum)
+
     return {
         'window_start': window_start,
         'anchor_label': anchor_label,
-        'pending_shifts': [
-            {
-                'id': s.id,
-                'staff_name': s.staff.get_full_name() or s.staff.username,
-                'started_at': timezone.localtime(s.started_at),
-                'ended_at': timezone.localtime(s.ended_at) if s.ended_at else None,
-                'status': s.status,
-            }
-            for s in pending
-        ],
+        'total_revenue': total_revenue,
+        'other_revenue': other_revenue,
+        'pending_shifts': pending_shifts,
     }
 
 

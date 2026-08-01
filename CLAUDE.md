@@ -4305,3 +4305,30 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `station_revenue_window_info()` pending list, and confirming it afterward correctly
   clears the tile. 7 new tests (`ManagerShiftExemptFromAutoCloseTest` ×4,
   `AutoCloseRevenueContinuityTest` ×3). No migrations.
+- Dashboard revenue disclosure, per-shift breakdown (2026-08-01, same-day second
+  follow-up, live screenshots). Roy pushed back on the first disclosure: it named
+  "Shavel Atis" as the one pending kitchen shift, but that shift's own Shift History card
+  showed cash 100 + mpesa 770 = KES 870, while the dashboard tile showed KES 1770 — "where
+  the hell is this 1770 coming from, from 870." The disclosure listed WHICH shifts were
+  pending but never showed each one's OWN revenue figure, so there was no way to check the
+  tile's math against Shift History the way Roy just tried to. New `_window_revenue()`
+  helper (`core/shift_views.py`) computes cash+mpesa Issue revenue for one station over an
+  arbitrary `[start, end)` window, using the identical filter shape as the tile itself (so
+  the total and its own breakdown can never drift apart). `station_revenue_window_info()`
+  now uses it three ways: `total_revenue` (the same figure the tile shows), a `revenue`
+  field on every pending shift (computed over that shift's own `[started_at, ended_at-or-
+  now]`, clipped to the overall anchor window), and a new `other_revenue` bucket —
+  `total_revenue` minus the sum of all listed shifts' revenue, floored at 0 — capturing
+  cash/mpesa sales that happened in the window but weren't covered by any listed shift at
+  all (the most common cause: the owner or an exempt manager selling directly with no
+  shift open, or a genuine gap between two shifts). `home.html`'s disclosure now shows each
+  pending shift's own KES figure inline (directly comparable to its Shift History card) plus
+  an explicit "Mauzo mengine bila shift iliyofunguliwa" line for the remainder, and a
+  "Jumla" total tying it all together. New regression test reproduces Roy's exact live
+  numbers end to end: a shift with 100+770=870 in its own window, plus a 900 sale made
+  after that shift ended with no shift open at all, correctly splits into
+  `pending_shifts[0].revenue=870` / `other_revenue=900` / `total_revenue=1770` — proving the
+  mechanism was always correct, just never shown broken down. 2 new tests
+  (`test_other_revenue_bucket_captures_sales_outside_any_shift`, plus the existing
+  single-shift test extended to assert the new fields), 1 existing test extended
+  (`AutoCloseRevenueContinuityTest`). No migrations.

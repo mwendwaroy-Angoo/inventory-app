@@ -15638,6 +15638,9 @@ class AutoCloseRevenueContinuityTest(TestCase):
         self.assertEqual(len(info['pending_shifts']), 1)
         self.assertEqual(info['pending_shifts'][0]['id'], self.shift.id)
         self.assertEqual(info['pending_shifts'][0]['status'], 'CLOSED')
+        self.assertEqual(info['pending_shifts'][0]['revenue'], 1000.0)
+        self.assertEqual(info['total_revenue'], 1000.0)
+        self.assertEqual(info['other_revenue'], 0)
 
     def test_confirming_the_auto_closed_shift_resets_the_window(self):
         from core.shift_views import _auto_close_expired_shifts, station_revenue_window_start
@@ -19095,6 +19098,10 @@ class StationRevenueWindowInfoTest(TestCase):
         UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
         self.staff = User.objects.create_user(username='wi_staff', password='x', first_name='Dush')
         UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='WI-1',
+            description='Window Info Beer', unit='bottle', selling_price=Decimal('100'),
+        )
 
     def _midnight(self, day_offset=0):
         base = timezone.localtime(timezone.now()).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -19109,10 +19116,21 @@ class StationRevenueWindowInfoTest(TestCase):
     def test_unconfirmed_closed_shift_appears_in_pending_list(self):
         from core.shift_views import station_revenue_window_info
         shift_start = self._midnight(-1) + timedelta(hours=11, minutes=49)
+        shift_end = self._midnight()
         shift = Shift.objects.create(
             business=self.biz, store=self.bar_store, staff=self.staff,
             status='CLOSED', station='bar', opening_float=Decimal('0'),
-            started_at=shift_start, ended_at=self._midnight(),
+            started_at=shift_start, ended_at=shift_end,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+            created_at=shift_start + timedelta(hours=1),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('770'), payment_method='mpesa',
+            created_at=shift_start + timedelta(hours=2),
         )
         info = station_revenue_window_info(self.biz, is_kitchen=False)
         self.assertEqual(info['window_start'], shift_start)
@@ -19120,6 +19138,48 @@ class StationRevenueWindowInfoTest(TestCase):
         self.assertEqual(info['pending_shifts'][0]['id'], shift.id)
         self.assertEqual(info['pending_shifts'][0]['staff_name'], 'Dush')
         self.assertEqual(info['pending_shifts'][0]['status'], 'CLOSED')
+        self.assertEqual(info['pending_shifts'][0]['revenue'], 870.0)
+        self.assertEqual(info['total_revenue'], 870.0)
+        self.assertEqual(info['other_revenue'], 0)
+
+    def test_other_revenue_bucket_captures_sales_outside_any_shift(self):
+        """The exact live gap Roy reported: a listed shift's own total
+        (870) didn't match the tile total (1770) — the missing 900 was
+        real cash/mpesa sales that happened outside that shift's own time
+        window (e.g. the owner selling directly with no shift open). The
+        breakdown must surface that remainder explicitly, not silently
+        fold it into the listed shift's own figure."""
+        from core.shift_views import station_revenue_window_info
+        shift_start = self._midnight(-1) + timedelta(hours=11, minutes=23)
+        shift_end = self._midnight(-1) + timedelta(hours=22, minutes=47)
+        shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+            started_at=shift_start, ended_at=shift_end,
+        )
+        # Inside the shift's own window: 100 + 770 = 870
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+            created_at=shift_start + timedelta(hours=1),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('770'), payment_method='mpesa',
+            created_at=shift_start + timedelta(hours=2),
+        )
+        # AFTER the shift ended, no shift open at all (e.g. owner selling directly)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('900'), payment_method='mpesa',
+            created_at=shift_end + timedelta(hours=1),
+        )
+        info = station_revenue_window_info(self.biz, is_kitchen=False)
+        self.assertEqual(len(info['pending_shifts']), 1)
+        self.assertEqual(info['pending_shifts'][0]['id'], shift.id)
+        self.assertEqual(info['pending_shifts'][0]['revenue'], 870.0)
+        self.assertEqual(info['other_revenue'], 900.0)
+        self.assertEqual(info['total_revenue'], 1770.0)
 
     def test_confirmed_shift_never_appears_in_pending_list(self):
         from core.shift_views import station_revenue_window_info
