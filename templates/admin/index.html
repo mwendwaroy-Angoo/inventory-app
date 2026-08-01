@@ -17,6 +17,19 @@
       text-align:left; white-space:nowrap; }
     #duka-dashboard .duka-empty { color:#888; font-style:italic; }
     #duka-dashboard .duka-quiet td { color:#8b1a35; }
+    #duka-dashboard .duka-charts { display:flex; flex-wrap:wrap; gap:1em; margin:0.5em 0 1.5em; }
+    #duka-dashboard .duka-chart-card { background:#fff; border:1px solid #ddd; border-radius:6px;
+      padding:0.75em 1em 0.5em; flex:1 1 320px; min-width:280px; }
+    #duka-dashboard .duka-chart-card h3 { font-size:0.95em; margin:0 0 0.5em; font-weight:600; }
+    #duka-dashboard .duka-chart-card canvas { max-width:100%; }
+    #duka-dashboard .duka-chart-card details { margin-top:0.5em; font-size:0.85em; }
+    #duka-dashboard .duka-chart-card details table { font-size:0.85em; }
+    @media (prefers-color-scheme: dark) {
+      #duka-dashboard .duka-stat { background:#2a2a29; border-color:#3a3a38; }
+      #duka-dashboard .duka-stat .label { color:#a9a89f; }
+      #duka-dashboard table th, #duka-dashboard table td { border-bottom-color:#3a3a38; }
+      #duka-dashboard .duka-chart-card { background:#1e1e1d; border-color:#3a3a38; }
+    }
   </style>
 
   <h1>📊 Platform Overview</h1>
@@ -50,6 +63,60 @@
         <span class="label">Quiet 7+ days</span>
       </div>
     </div>
+
+    <div class="duka-charts">
+      <div class="duka-chart-card">
+        <h3>New businesses per week (last 12 weeks)</h3>
+        <canvas id="dukaChartRegistrations" height="160"></canvas>
+        {% if duka_chart_weekly_registrations %}
+        <details>
+          <summary>Table view</summary>
+          <table>
+            <tr><th>Week of</th><th>New businesses</th></tr>
+            {% for row in duka_chart_weekly_registrations %}
+            <tr><td>{{ row.label }}</td><td>{{ row.value }}</td></tr>
+            {% endfor %}
+          </table>
+        </details>
+        {% endif %}
+      </div>
+
+      <div class="duka-chart-card">
+        <h3>Businesses by type</h3>
+        <canvas id="dukaChartTypes" height="160"></canvas>
+        {% if duka_chart_business_types %}
+        <details>
+          <summary>Table view</summary>
+          <table>
+            <tr><th>Type</th><th>Businesses</th></tr>
+            {% for row in duka_chart_business_types %}
+            <tr><td>{{ row.label }}</td><td>{{ row.value }}</td></tr>
+            {% endfor %}
+          </table>
+        </details>
+        {% endif %}
+      </div>
+
+      <div class="duka-chart-card">
+        <h3>Platform-wide daily revenue (last 14 days)</h3>
+        <canvas id="dukaChartRevenue" height="160"></canvas>
+        {% if duka_chart_daily_revenue %}
+        <details>
+          <summary>Table view</summary>
+          <table>
+            <tr><th>Date</th><th>Revenue (KES)</th></tr>
+            {% for row in duka_chart_daily_revenue %}
+            <tr><td>{{ row.label }}</td><td>{{ row.value }}</td></tr>
+            {% endfor %}
+          </table>
+        </details>
+        {% endif %}
+      </div>
+    </div>
+
+    {{ duka_chart_weekly_registrations|json_script:"duka-data-registrations" }}
+    {{ duka_chart_business_types|json_script:"duka-data-types" }}
+    {{ duka_chart_daily_revenue|json_script:"duka-data-revenue" }}
 
     <div class="duka-section">
       <h2>🟢 Live activity feed (latest 20 transactions, all businesses)</h2>
@@ -134,6 +201,112 @@
     </div>
   {% endif %}
 </div>
+
+{% if not duka_dashboard_error %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+(function () {
+  var isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var accent = isDark ? '#3987e5' : '#2a78d6';
+  var gridColor = isDark ? '#2c2c2a' : '#e1e0d9';
+  var tickColor = isDark ? '#c3c2b7' : '#52514e';
+
+  function readData(elId) {
+    var el = document.getElementById(elId);
+    if (!el) return [];
+    try { return JSON.parse(el.textContent); } catch (e) { return []; }
+  }
+
+  var commonScales = {
+    x: { grid: { display: false }, ticks: { color: tickColor, maxRotation: 0, autoSkip: true } },
+    y: { beginAtZero: true, grid: { color: gridColor, drawBorder: false }, ticks: { color: tickColor } },
+  };
+
+  var registrations = readData('duka-data-registrations');
+  var regCanvas = document.getElementById('dukaChartRegistrations');
+  if (regCanvas && registrations.length) {
+    new Chart(regCanvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: registrations.map(function (r) { return r.label; }),
+        datasets: [{
+          data: registrations.map(function (r) { return r.value; }),
+          borderColor: accent,
+          backgroundColor: accent + '1a',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+          pointBackgroundColor: accent,
+        }],
+      },
+      options: {
+        plugins: { legend: { display: false }, tooltip: { intersect: false, mode: 'index' } },
+        interaction: { mode: 'nearest', intersect: false },
+        scales: commonScales,
+      },
+    });
+  }
+
+  var types = readData('duka-data-types');
+  var typesCanvas = document.getElementById('dukaChartTypes');
+  if (typesCanvas && types.length) {
+    new Chart(typesCanvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: types.map(function (r) { return r.label; }),
+        datasets: [{
+          data: types.map(function (r) { return r.value; }),
+          backgroundColor: accent,
+          borderRadius: 4,
+          maxBarThickness: 24,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, grid: { color: gridColor, drawBorder: false }, ticks: { color: tickColor } },
+          y: { grid: { display: false }, ticks: { color: tickColor } },
+        },
+      },
+    });
+  }
+
+  var revenue = readData('duka-data-revenue');
+  var revCanvas = document.getElementById('dukaChartRevenue');
+  if (revCanvas && revenue.length) {
+    new Chart(revCanvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: revenue.map(function (r) { return r.label; }),
+        datasets: [{
+          data: revenue.map(function (r) { return r.value; }),
+          borderColor: accent,
+          backgroundColor: accent + '1a',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+          pointBackgroundColor: accent,
+        }],
+      },
+      options: {
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            intersect: false, mode: 'index',
+            callbacks: { label: function (ctx) { return 'KES ' + ctx.parsed.y.toLocaleString(); } },
+          },
+        },
+        interaction: { mode: 'nearest', intersect: false },
+        scales: commonScales,
+      },
+    });
+  }
+})();
+</script>
+{% endif %}
 
 {{ block.super }}
 {% endblock %}

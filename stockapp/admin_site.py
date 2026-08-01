@@ -13,6 +13,7 @@ mutates that dict in place rather than replacing it, the alias is safe
 regardless of whether this module is imported before or after
 accounts/admin.py and core/admin.py have run.
 """
+from collections import defaultdict
 from datetime import timedelta
 
 from django.contrib import admin
@@ -105,6 +106,51 @@ def _build_dashboard_context():
         .order_by('last_txn')
     )
 
+    # ── Chart data ──────────────────────────────────────────────────────
+    today = timezone.localdate()
+
+    # New business registrations, last 12 weeks (Mon-Sun buckets), reusing
+    # the already-fetched `businesses` list rather than re-querying.
+    weekly_registrations = []
+    for i in range(11, -1, -1):
+        week_start = today - timedelta(days=today.weekday() + 7 * i)
+        week_end = week_start + timedelta(days=6)
+        count = sum(
+            1 for b in businesses
+            if b.created_at and week_start <= timezone.localtime(b.created_at).date() <= week_end
+        )
+        weekly_registrations.append({'label': week_start.strftime('%b %d'), 'value': count})
+
+    # Businesses by type — single-hue magnitude-by-category, no color-class
+    # limit applies since only one bar color is used throughout.
+    type_counts = defaultdict(int)
+    for b in businesses:
+        label = b.business_type.name if b.business_type else 'Unspecified'
+        type_counts[label] += 1
+    business_type_breakdown = sorted(
+        ({'label': k, 'value': v} for k, v in type_counts.items()),
+        key=lambda r: -r['value'],
+    )
+
+    # Platform-wide daily revenue, last 14 days — Transaction.revenue() per
+    # row (never raw Sum('sale_amount'), see CLAUDE.md), bucketed by date.
+    window_start = today - timedelta(days=13)
+    daily_txns = (
+        Transaction.objects.filter(type='Issue', date__gte=window_start, date__lte=today)
+        .select_related('item')
+    )
+    daily_totals = defaultdict(float)
+    for t in daily_txns:
+        try:
+            daily_totals[t.date] += (t.revenue() or 0)
+        except Exception:
+            pass
+    daily_revenue = []
+    d = window_start
+    while d <= today:
+        daily_revenue.append({'label': d.strftime('%b %d'), 'value': round(daily_totals.get(d, 0))})
+        d += timedelta(days=1)
+
     return {
         'duka_total_businesses': total_businesses,
         'duka_new_this_week': new_this_week,
@@ -118,4 +164,7 @@ def _build_dashboard_context():
         ),
         'duka_open_tabs_count': open_tabs_count,
         'duka_quiet_businesses': list(quiet_businesses[:30]),
+        'duka_chart_weekly_registrations': weekly_registrations,
+        'duka_chart_business_types': business_type_breakdown,
+        'duka_chart_daily_revenue': daily_revenue,
     }
