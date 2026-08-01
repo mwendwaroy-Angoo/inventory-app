@@ -4445,3 +4445,30 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   cost reflects the new preset, receipt line renamed (custom-price suffix preserved), tab
   entry description renamed, kitchen staff self-correct, no-shift blocked, no-op on same
   preset, cross-item preset rejected, and the widened recent-settled API. No migrations.
+- Haki navbar discoverability + app-wide `business` context bug (2026-08-01). Roy asked
+  whether the owner has to keep going into Business Settings to view Haki. Traced two
+  layered issues. **(1)** The "🌟 Haki — Staff" navbar link did already exist in the Manage
+  dropdown, but was positioned far from the Staff/Waliohama/Add Staff group — buried past
+  promo tools, right before Business Settings — making it easy to never notice. Moved to
+  sit directly after "Add Staff" in both navbar copies (mobile + desktop), so it's grouped
+  with the rest of staff management. **(2)** While testing the move, found the real root
+  cause of why it wasn't rendering at all on the home page: `base.html` gates 8 navbar link
+  instances — Kazi Yangu ×6, Haki — Staff/Payroll Run ×2 — on `{% if business.haki_enabled
+  %}`, but **no context processor ever supplied a top-level `business` variable** — only
+  ~18 individual views across the whole app happen to pass `'business': business` in their
+  own context dict (`core/context_processors.py` only ever injected `biz_profile`). Every
+  other view, including `home()` — the very first page after login — rendered with
+  `business` undefined, so these links silently never appeared there regardless of
+  `haki_enabled`'s real value, for every business, the whole time. Fixed by extending
+  `business_profile()` (the existing context processor) to also inject `business` —
+  Django context processors run first and any view's own explicit `'business'` key in its
+  context dict still wins, so this only fills the gap for the majority of views that don't
+  set it, never overrides the ~18 that already do. **(3)** Confirmed unrelated to this
+  report but already working: staff-side salary-payment confirmation ("✓ Nimepokea" on
+  Kazi Yangu, `SalaryPayment.confirmed_by_staff`) already exists from the 2026-07-26
+  Accountability overhaul II sprint — no new work needed there, just verified and explained
+  back to Roy. 5 new tests (`HakiNavbarGroupedWithStaffTest` — link present+grouped when
+  enabled, absent when disabled; `BusinessProfileContextProcessorTest` — context processor
+  returns the right business for an authenticated user, `None` for anonymous, and the Kazi
+  Yangu link now actually appears on the home page for staff, the literal previously-broken
+  case). No migrations.

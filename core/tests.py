@@ -5514,6 +5514,90 @@ class KitchenNavbarOwnerVisibilityTest(TestCase):
         self.assertIn(reverse('kitchen_board').encode(), resp.content)
 
 
+class HakiNavbarGroupedWithStaffTest(TestCase):
+    """2026-08-01 live report: Roy asked whether the owner has to keep going
+    into Business Settings to reach Haki — traced to a real discoverability
+    gap: the "🌟 Haki — Staff" link DID already exist in the Manage
+    dropdown, but was positioned far from the Staff/Waliohama/Add Staff
+    group (way down near promo tools and Business Settings instead),
+    making it easy to never notice. Moved to sit directly after Add Staff
+    so it's grouped with the rest of staff management."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Haki Navbar Biz', haki_enabled=True)
+        self.owner = User.objects.create_user(username='hn_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+    def test_haki_link_present_and_grouped_after_staff_links(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        from django.urls import reverse
+        content = resp.content.decode()
+        haki_url = reverse('staff_contribution_report')
+        add_staff_url = reverse('add_staff')
+        edit_business_url = reverse('edit_business')
+        self.assertIn(haki_url, content)
+        # Grouped with staff management: appears after "Add Staff" and
+        # before "Business Settings", not buried past the promo tools.
+        self.assertLess(content.index(add_staff_url), content.index(haki_url))
+        self.assertLess(content.index(haki_url), content.index(edit_business_url))
+
+    def test_haki_link_absent_when_disabled(self):
+        self.biz.haki_enabled = False
+        self.biz.save(update_fields=['haki_enabled'])
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        from django.urls import reverse
+        self.assertNotIn(reverse('staff_contribution_report').encode(), resp.content)
+
+
+class BusinessProfileContextProcessorTest(TestCase):
+    """2026-08-01 — the actual root cause behind HakiNavbarGroupedWithStaffTest:
+    base.html gates 8 navbar link instances (Kazi Yangu ×6, Haki — Staff/
+    Payroll Run ×2) on `{% if business.haki_enabled %}`, but no context
+    processor ever supplied a top-level `business` variable — only a
+    minority of views (~18 across the whole app) happened to pass
+    'business' in their own context dict. Every other view, including
+    home(), rendered with business undefined, so these links silently
+    never appeared there. core.context_processors.business_profile() now
+    also injects `business`, fixing every page that doesn't set its own."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Ctx Proc Biz', haki_enabled=True)
+        self.owner = User.objects.create_user(username='ctxp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='ctxp_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def test_context_processor_returns_business_for_authenticated_user(self):
+        from core.context_processors import business_profile
+        from django.test import RequestFactory
+        rf = RequestFactory()
+        req = rf.get('/')
+        req.user = self.owner
+        ctx = business_profile(req)
+        self.assertEqual(ctx['business'].id, self.biz.id)
+
+    def test_context_processor_returns_none_for_anonymous_user(self):
+        from core.context_processors import business_profile
+        from django.contrib.auth.models import AnonymousUser
+        from django.test import RequestFactory
+        rf = RequestFactory()
+        req = rf.get('/')
+        req.user = AnonymousUser()
+        ctx = business_profile(req)
+        self.assertIsNone(ctx['business'])
+
+    def test_kazi_yangu_link_now_appears_on_home_page(self):
+        """Previously broken: home() never passes 'business' in its own
+        context, so this link never rendered there regardless of
+        haki_enabled's real value."""
+        self.client.force_login(self.staff)
+        resp = self.client.get('/')
+        from django.urls import reverse
+        self.assertIn(reverse('my_work_and_pay').encode(), resp.content)
+
+
 class KitchenBatchGateStationScopingTest(TestCase):
     """Kitchen-module audit, Theme 3 (access-control scoping), 2026-07-19: _kb_gate()
     — the shared gate for kitchen_batch_receive, deplete_kitchen_batch,

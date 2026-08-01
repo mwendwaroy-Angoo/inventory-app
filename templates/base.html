@@ -566,6 +566,8 @@
                                 <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'departed_staff_list' %}">🕰 {% trans 'Waliohama' %}</a></li>
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>{% endif %}
+                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
+                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'run_payroll' %}">💰 {% trans 'Payroll Run' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 {% trans 'Fulfillment' %}</a></li>
@@ -582,8 +584,6 @@
                                 <li><a class="dropdown-item" href="{% url 'promo_customer_db' %}">👥 {% trans 'Wateja Database' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'promo_compose' %}">📢 {% trans 'Tuma Promo / SMS' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
-                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
-                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'run_payroll' %}">💰 {% trans 'Payroll Run' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'reset_sales_intro' %}" style="color:var(--danger);">🧹 {% trans 'Reset Sales & Analytics' %}</a></li>{% endif %}
                             </ul>
@@ -780,6 +780,8 @@
                                 <li><a class="dropdown-item" href="{% url 'staff_list' %}">👥 {% trans 'Staff' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'departed_staff_list' %}">🕰 {% trans 'Waliohama' %}</a></li>
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'add_staff' %}">➕ {% trans 'Add Staff' %}</a></li>{% endif %}
+                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
+                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'run_payroll' %}">💰 {% trans 'Payroll Run' %}</a></li>{% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'order_list' %}">📦 {% trans 'Orders' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'fulfillment_list' %}">📋 {% trans 'Fulfillment' %}</a></li>
@@ -796,8 +798,6 @@
                                 <li><a class="dropdown-item" href="{% url 'promo_customer_db' %}">👥 {% trans 'Wateja Database' %}</a></li>
                                 <li><a class="dropdown-item" href="{% url 'promo_compose' %}">📢 {% trans 'Tuma Promo / SMS' %}</a></li>
                                 <li><hr class="dropdown-divider"></li>
-                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'staff_contribution_report' %}">🌟 {% trans 'Haki — Staff' %}</a></li>{% endif %}
-                                {% if business.haki_enabled %}<li><a class="dropdown-item" href="{% url 'run_payroll' %}">💰 {% trans 'Payroll Run' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'reset_sales_intro' %}" style="color:var(--danger);">🧹 {% trans 'Reset Sales & Analytics' %}</a></li>{% endif %}
                             </ul>
