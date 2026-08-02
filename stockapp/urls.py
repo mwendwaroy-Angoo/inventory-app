@@ -225,6 +225,9 @@ from core.analytics_views import (
 from core.maduka_views import maduka_dashboard, maduka_acknowledge_exception
 from core.barcode_views import barcode_lookup, add_item_by_barcode
 from core.returns_views import process_return, approve_return, reject_return, apply_suggested_price
+from core.cycle_count_views import (
+    todays_cycle_count_list, start_cycle_count, submit_cycle_count_line, close_cycle_count_session,
+)
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -772,6 +775,11 @@ urlpatterns = [
     path("stock/returns/<int:return_id>/approve/", approve_return, name="approve_return"),
     path("stock/returns/<int:return_id>/reject/", reject_return, name="reject_return"),
     path("stock/items/<int:item_id>/apply-suggested-price/", apply_suggested_price, name="apply_suggested_price"),
+    # ── UBA R3 — cycle counting (ABC) ──────────────────────────────────────────
+    path("stock/cycle-count/today/", todays_cycle_count_list, name="todays_cycle_count_list"),
+    path("stock/cycle-count/start/", start_cycle_count, name="start_cycle_count"),
+    path("stock/cycle-count/line/<int:line_id>/submit/", submit_cycle_count_line, name="submit_cycle_count_line"),
+    path("stock/cycle-count/session/<int:session_id>/close/", close_cycle_count_session, name="close_cycle_count_session"),
 ]
 
 if settings.DEBUG:

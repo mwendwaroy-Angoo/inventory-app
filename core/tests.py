@@ -13,8 +13,9 @@ from core.models import (
     GlobalProduct, Item, ItemPortionPreset, ItemPriceHistory, KegBarrel,
     KegWeightReading, KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
     KitchenStockReceiptLine, MarketPriceIndex, Notification, Payment,
-    PettyCash, Receipt, Return, RevenueTarget, Shift, Store, StockTransfer,
-    StockTransferLine, TabTransferRequest, TillCount, Transaction,
+    PettyCash, Receipt, Return, RevenueTarget, Shift, StockCountLine,
+    StockCountSession, Store, StockTransfer, StockTransferLine,
+    TabTransferRequest, TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -22788,3 +22789,139 @@ class SaleBelowCostTest(TestCase):
             'payment_method': 'cash',
         })
         self.assertEqual(BusinessException.objects.filter(business=self.biz, kind='below_cost').count(), 0)
+
+
+class AbcClassificationTest(TestCase):
+    """UBA R3 §7.4 — classify_abc_all: top 80% of 90-day revenue = A, next 15% = B, rest = C."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='ABC Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+
+    def _item_with_revenue(self, name, revenue):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description=name,
+            material_no=f'ABC-{name}', unit='pcs', selling_price=Decimal('100'),
+        )
+        if revenue > 0:
+            Transaction.objects.create(
+                business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+                sale_amount=Decimal(str(revenue)), payment_method='cash',
+                date=timezone.localdate(),
+            )
+        return item
+
+    def test_top_revenue_item_classified_a(self):
+        from core.cycle_count import classify_abc_all
+        big = self._item_with_revenue('Big', 10000)
+        small = self._item_with_revenue('Small', 50)
+        classify_abc_all(self.biz)
+        big.refresh_from_db()
+        small.refresh_from_db()
+        self.assertEqual(big.abc_class, 'A')
+
+    def test_zero_revenue_item_left_unclassified(self):
+        from core.cycle_count import classify_abc_all
+        dormant = self._item_with_revenue('Dormant', 0)
+        classify_abc_all(self.biz)
+        dormant.refresh_from_db()
+        self.assertEqual(dormant.abc_class, '')
+
+    def test_c_class_low_contribution_item(self):
+        from core.cycle_count import classify_abc_all
+        # One dominant item (96%) pushes a tiny one past the 95% cumulative mark into C.
+        self._item_with_revenue('Dominant', 9600)
+        tiny = self._item_with_revenue('Tiny', 400)
+        classify_abc_all(self.biz)
+        tiny.refresh_from_db()
+        self.assertEqual(tiny.abc_class, 'C')
+
+
+class CycleCountSessionTest(TestCase):
+    """UBA R3 §7.4 — StockCountSession/StockCountLine lifecycle, high-risk
+    force-inclusion, variance attribution, and item.balance_confirmed_at."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Cycle Count Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='cc_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='cc_staff', password='x')
+        self.staff = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Batteries AA',
+            material_no='CC-01', unit='pcs', selling_price=Decimal('20'),
+            cost_price=Decimal('10'), opening_bin_balance=100, is_high_risk=True,
+        )
+        self.normal_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Ordinary Item',
+            material_no='CC-02', unit='pcs', selling_price=Decimal('50'),
+            cost_price=Decimal('30'), opening_bin_balance=20,
+        )
+
+    def test_high_risk_item_always_selected(self):
+        from core.cycle_count import select_items_for_cycle_count
+        selected = select_items_for_cycle_count(self.biz, limit=1)
+        self.assertIn(self.item, selected)
+
+    def test_start_session_snapshots_book_qty(self):
+        from core.cycle_count import start_cycle_count_session
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        line = session.lines.first()
+        self.assertEqual(line.book_qty, Decimal('100'))
+
+    def test_record_count_line_computes_variance_and_confirms_balance(self):
+        from core.cycle_count import record_count_line, start_cycle_count_session
+        self.assertIsNone(self.item.balance_confirmed_at)
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        line = session.lines.first()
+        record_count_line(line.id, self.biz, counted_qty='95', counted_by=self.owner, reason='Imeibiwa')
+        line.refresh_from_db()
+        self.assertEqual(line.variance_qty, Decimal('-5'))
+        self.assertEqual(line.variance_kes, Decimal('-50'))
+        self.item.refresh_from_db()
+        self.assertIsNotNone(self.item.balance_confirmed_at)
+
+    def test_record_count_line_attributes_to_active_shift_with_activity(self):
+        from core.cycle_count import record_count_line, start_cycle_count_session
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user, status='OPEN',
+            opening_float=Decimal('0'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('20'), payment_method='cash', date=timezone.localdate(),
+        )
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        line = session.lines.first()
+        record_count_line(line.id, self.biz, counted_qty='95', counted_by=self.owner, current_shift=shift)
+        line.refresh_from_db()
+        self.assertEqual(line.attributed_shift_id, shift.id)
+
+    def test_no_variance_no_attribution(self):
+        from core.cycle_count import record_count_line, start_cycle_count_session
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        line = session.lines.first()
+        record_count_line(line.id, self.biz, counted_qty='100', counted_by=self.owner)
+        line.refresh_from_db()
+        self.assertEqual(line.variance_qty, Decimal('0'))
+        self.assertIsNone(line.attributed_shift_id)
+
+    def test_close_session_marks_closed(self):
+        from core.cycle_count import close_session, start_cycle_count_session
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        close_session(session.id, self.biz)
+        session.refresh_from_db()
+        self.assertEqual(session.status, StockCountSession.STATUS_CLOSED)
+        self.assertIsNotNone(session.closed_at)
+
+    def test_start_and_submit_views_end_to_end(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/cycle-count/start/', {'store': self.store.id})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        line_id = data['lines'][0]['line_id']
+        resp2 = self.client.post(f'/stock/cycle-count/line/{line_id}/submit/', {
+            'counted_qty': '18', 'reason': 'kosa la kuandika',
+        })
+        self.assertTrue(resp2.json()['ok'])

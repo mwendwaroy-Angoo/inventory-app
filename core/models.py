@@ -629,6 +629,23 @@ class Item(models.Model):
                   'in stock_list as "Haijahesabiwa" rather than silently assumed.'
     )
 
+    # ── UBA §7.4 (Sprint R3) — cycle counting / ABC classification ─────────
+    ABC_CLASS_CHOICES = [
+        ('A', 'A — juu ya thamani (hesabu kila wiki)'),
+        ('B', 'B — wastani (hesabu kila mwezi)'),
+        ('C', 'C — chini ya thamani (hesabu kila robo mwaka)'),
+    ]
+    abc_class = models.CharField(
+        max_length=1, choices=ABC_CLASS_CHOICES, blank=True,
+        help_text='Set by core.cycle_count.classify_abc_all() from 90-day revenue contribution '
+                  '— top 80% of value=A, next 15%=B, rest=C. Blank until first classified.'
+    )
+    is_high_risk = models.BooleanField(
+        default=False,
+        help_text='High value × small size (razors, batteries, phone accessories, spirits '
+                  'miniatures...) — force-included in every cycle count regardless of ABC class.'
+    )
+
     # ── Greens / bunch-based produce (Kibanda Produce Module) ──────────────
     PRODUCE_MODE_CHOICES = [
         ('PORTION', _('Portion / fraction (cabbage, gorogoro)')),
@@ -2650,6 +2667,60 @@ class ItemPriceHistory(models.Model):
 
     def __str__(self):
         return f"{self.item.description}: {self.old_price} → {self.new_price}"
+
+
+# ────────────────────────────────────────────────
+# UBA §7.4 (Sprint R3) — cycle counting (ABC) + retail shrinkage
+# ────────────────────────────────────────────────
+
+class StockCountSession(models.Model):
+    KIND_CYCLE = 'CYCLE'
+    KIND_FULL = 'FULL'
+    KIND_SPOT = 'SPOT'
+    KIND_CHOICES = [
+        (KIND_CYCLE, 'Hesabu ya kila siku'),
+        (KIND_FULL, 'Hesabu kamili'),
+        (KIND_SPOT, 'Hesabu ya ghafla'),
+    ]
+    STATUS_OPEN = 'OPEN'
+    STATUS_CLOSED = 'CLOSED'
+    STATUS_CHOICES = [(STATUS_OPEN, 'Wazi'), (STATUS_CLOSED, 'Imefungwa')]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stock_count_sessions')
+    store = models.ForeignKey(Store, on_delete=models.CASCADE, null=True, blank=True)
+    kind = models.CharField(max_length=6, choices=KIND_CHOICES, default=KIND_CYCLE)
+    scope_note = models.CharField(max_length=100, blank=True, help_text="e.g. 'Class A — 12 items'")
+    started_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=6, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    shift = models.ForeignKey('Shift', on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return f"{self.get_kind_display()} — {self.started_at:%Y-%m-%d}"
+
+
+class StockCountLine(models.Model):
+    session = models.ForeignKey(StockCountSession, on_delete=models.CASCADE, related_name='lines')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    book_qty = models.DecimalField(max_digits=12, decimal_places=3, help_text='Snapshot at count time — never recomputed later.')
+    counted_qty = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    variance_qty = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    variance_kes = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    reason = models.CharField(max_length=100, blank=True, help_text="'imeharibika' | 'imeibiwa' | 'kosa la kuandika' | ...")
+    attributed_shift = models.ForeignKey(
+        'Shift', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+        help_text='Which shift is believed accountable for this variance — see '
+                  'core.cycle_count.record_count_line(), reuses shift_views.attribute_variance_shift().'
+    )
+    counted_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    counted_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.item.description}: book {self.book_qty}, counted {self.counted_qty}"
 
 
 # ────────────────────────────────────────────────

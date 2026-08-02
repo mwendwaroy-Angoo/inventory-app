@@ -814,6 +814,32 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA R3 (2026-08-02): Cycle counting (ABC) + retail shrinkage (spec §7.4).
+  New `Item.abc_class` (A/B/C) + `Item.is_high_risk` fields; new
+  `StockCountSession`/`StockCountLine` models. `core/cycle_count.py::
+  classify_abc_all()` ranks items by 90-day revenue. **Real bug caught by
+  the test suite**: the first draft classified by cumulative-percentage
+  AFTER adding each item, which wrongly put a single dominant item (96% of
+  all revenue alone) into class C, since adding its own share immediately
+  blew past every threshold — fixed to check the cumulative percentage
+  BEFORE the item (where it STARTS in the curve, not where it ends).
+  Zero-revenue items are left unclassified rather than force-set to C —
+  dead stock is R4's separate concern. New `classify_items_abc`
+  management command, not auto-scheduled (same deferred-cron pattern as
+  R1/M3). `select_items_for_cycle_count()` builds "today's N items"
+  (high-risk items first unconditionally, then ABC-due items). `record_
+  count_line()` computes variance from a book_qty snapshot and — for
+  attribution — reuses `shift_views.attribute_variance_shift()`
+  completely unchanged, finally giving that function's `item=` parameter
+  a second real caller exactly as its own docstring anticipated. Also
+  stamps `Item.balance_confirmed_at` per counted line (R1's "a real
+  physical count" mechanism). Deliberately scoped down and documented:
+  the spec's fuller "variance weighted across every shift since last
+  count" is NOT built — single-shift attribution is used as-is, flagged
+  as a separate future mechanism. New `core/cycle_count_views.py`
+  endpoints; a dedicated UI page deferred (same discipline as
+  `retail_board.html`). 10 new tests including the classification-bug
+  regression lock. 1290 tests pass. See `docs/UBA_PROGRESS.md`.
 - UBA R2 (2026-08-02): Retail POS board + margin guard (spec §7.3).
   `retail_board.html` itself deferred and documented (needs visual
   verification) — Quick Sell already serves as the de-facto general POS
