@@ -721,6 +721,28 @@
 </div>
 {% endif %}
 
+{% if cash_position %}
+<div class="card mb-4 border-0" id="dash-cash-position" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important;">
+    <div class="card-body py-3 px-4">
+        <h6 style="color:var(--gold); font-family:'Playfair Display',serif; margin:0 0 0.6rem;">💰 {% trans 'Hali Halisi ya Pesa' %}</h6>
+        <div class="row g-3">
+            <div class="col-4">
+                <div style="font-size:0.72rem; color:#b0b0b0;">{% trans 'Wanaodaiwa (Deni)' %}</div>
+                <div style="font-weight:700; color:#6ee7b7;">KES {{ cash_position.receivables|floatformat:0 }}</div>
+            </div>
+            <div class="col-4">
+                <div style="font-size:0.72rem; color:#b0b0b0;">{% trans 'Unaodaiwa (Wauzaji)' %}</div>
+                <div style="font-weight:700; color:#f87171;">KES {{ cash_position.payables|floatformat:0 }}</div>
+            </div>
+            <div class="col-4">
+                <div style="font-size:0.72rem; color:#b0b0b0;">{% trans 'Hali Halisi' %}</div>
+                <div style="font-weight:700; color:{% if cash_position.net >= 0 %}#6ee7b7{% else %}#f87171{% endif %};">KES {{ cash_position.net|floatformat:0 }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% if revenue_targets %}
 <div class="card mb-4 border-0" id="dash-targets" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important;">
     <div class="card-body py-3 px-4">

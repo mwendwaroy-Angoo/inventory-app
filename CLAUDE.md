@@ -814,6 +814,32 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA X1 (2026-08-02): Payables — the missing half of the cash picture
+  (spec §12.1). New `SupplierInvoice`/`SupplierPayment` models —
+  deliberately the mirror image of the debt tracker's `Customer`/
+  `CustomerDebtPayment`, same aging bucket boundaries (current/30/60/90+),
+  opposite direction. `core/payables.py::payables_aging_summary()` reuses
+  the EXACT same threshold logic `debt_views.py`'s `_get_customer_debt_
+  data()` already uses. `SupplierInvoice.record_payment_locked()`
+  (select_for_update) flips status DUE→PARTIAL→PAID as payments
+  accumulate. **Cash position tile** ("Hali Halisi ya Pesa" — Receivables
+  − Payables, the spec's own "most honest number in the app"): reuses
+  `debt_dashboard()`'s existing per-customer iteration for the
+  receivables side. Wired directly into `home()` AND `home.html` this
+  pass — unlike most prior UBA dashboard work this was NOT deferred,
+  since the spec explicitly calls it out as a priority dashboard-visible
+  figure and the addition is a small, self-contained stat card with no
+  other page changes. New `core/payables_views.py` — owner/manager only
+  (recording what the business owes suppliers is a step above an
+  everyday counter action, matching the tier used for Rekebisha/petty-
+  cash-review, not ordinary sales/returns). Payment due reminders go to
+  the OWNER, never the supplier (spec's own explicit framing — missing a
+  distributor payment is existential for a shop's credit line); new
+  bulk management command, not auto-scheduled — same deferred-cron
+  pattern as R1/R3/M3. A dedicated payables dashboard UI page is
+  deferred (same discipline as `retail_board.html`) — JSON endpoints
+  only, fully testable without it. 10 new tests. 1300 tests pass. See
+  `docs/UBA_PROGRESS.md`.
 - UBA R3 (2026-08-02): Cycle counting (ABC) + retail shrinkage (spec §7.4).
   New `Item.abc_class` (A/B/C) + `Item.is_high_risk` fields; new
   `StockCountSession`/`StockCountLine` models. `core/cycle_count.py::

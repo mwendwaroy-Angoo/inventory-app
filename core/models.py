@@ -2724,6 +2724,90 @@ class StockCountLine(models.Model):
 
 
 # ────────────────────────────────────────────────
+# UBA §12.1 (Sprint X1) — Payables: the missing half of the cash picture
+# ────────────────────────────────────────────────
+
+class SupplierInvoice(models.Model):
+    """What THIS business owes a supplier — the mirror image of the debt
+    tracker's Customer/CustomerDebtPayment (receivables). Same aging
+    buckets, same UI patterns, opposite direction — see core/payables.py,
+    which deliberately reuses the debt tracker's own bucket boundaries
+    (current / 30 / 60 / 90+) rather than inventing new ones."""
+    STATUS_DUE = 'DUE'
+    STATUS_PARTIAL = 'PARTIAL'
+    STATUS_PAID = 'PAID'
+    STATUS_DISPUTED = 'DISPUTED'
+    STATUS_CHOICES = [
+        (STATUS_DUE, 'Inadaiwa'), (STATUS_PARTIAL, 'Imelipwa Kiasi'),
+        (STATUS_PAID, 'Imelipwa'), (STATUS_DISPUTED, 'Ina Utata'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='supplier_invoices')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True)
+    supplier = models.ForeignKey(
+        'accounts.Business', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='issued_invoices', help_text='A platform supplier, if this business trades with one via the marketplace.'
+    )
+    supplier_name = models.CharField(max_length=200, blank=True, help_text='Off-platform distributor name — most cases.')
+    invoice_no = models.CharField(max_length=60, blank=True)
+    purchase_order = models.ForeignKey(
+        'PurchaseOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='supplier_invoices'
+    )
+    invoice_date = models.DateField(default=timezone.localdate)
+    due_date = models.DateField(null=True, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_DUE)
+    note = models.TextField(blank=True)
+    recorded_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['due_date', '-invoice_date']
+
+    def __str__(self):
+        return f"{self.supplier_name or self.supplier}: KES {self.amount} ({self.get_status_display()})"
+
+    @property
+    def outstanding(self):
+        return max(Decimal('0'), self.amount - self.paid_amount)
+
+    def record_payment_locked(self, amount, method, recorded_by, reference='', paid_on=None):
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            inv = SupplierInvoice.objects.select_for_update().get(pk=self.pk)
+            SupplierPayment.objects.create(
+                invoice=inv, amount=amount, method=method, reference=reference,
+                paid_on=paid_on or timezone.localdate(), recorded_by=recorded_by,
+            )
+            inv.paid_amount = inv.paid_amount + Decimal(str(amount))
+            if inv.paid_amount >= inv.amount:
+                inv.status = SupplierInvoice.STATUS_PAID
+            elif inv.paid_amount > 0:
+                inv.status = SupplierInvoice.STATUS_PARTIAL
+            inv.save(update_fields=['paid_amount', 'status'])
+            self.paid_amount = inv.paid_amount
+            self.status = inv.status
+            return inv
+
+
+class SupplierPayment(models.Model):
+    METHOD_CHOICES = [('cash', 'Cash'), ('mpesa', 'M-Pesa'), ('bank', 'Bank'), ('other', 'Nyingine')]
+    invoice = models.ForeignKey(SupplierInvoice, on_delete=models.CASCADE, related_name='payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=10, choices=METHOD_CHOICES, default='cash')
+    reference = models.CharField(max_length=100, blank=True)
+    paid_on = models.DateField(default=timezone.localdate)
+    recorded_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-paid_on']
+
+    def __str__(self):
+        return f"KES {self.amount} on {self.invoice}"
+
+
+# ────────────────────────────────────────────────
 # SALARY DEDUCTIONS  (Sprint WO1)
 # ────────────────────────────────────────────────
 

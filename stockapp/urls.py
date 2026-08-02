@@ -228,6 +228,7 @@ from core.returns_views import process_return, approve_return, reject_return, ap
 from core.cycle_count_views import (
     todays_cycle_count_list, start_cycle_count, submit_cycle_count_line, close_cycle_count_session,
 )
+from core.payables_views import payables_dashboard, record_supplier_invoice, record_supplier_payment
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -780,6 +781,10 @@ urlpatterns = [
     path("stock/cycle-count/start/", start_cycle_count, name="start_cycle_count"),
     path("stock/cycle-count/line/<int:line_id>/submit/", submit_cycle_count_line, name="submit_cycle_count_line"),
     path("stock/cycle-count/session/<int:session_id>/close/", close_cycle_count_session, name="close_cycle_count_session"),
+    # ── UBA X1 — payables ───────────────────────────────────────────────────────
+    path("payables/", payables_dashboard, name="payables_dashboard"),
+    path("payables/invoices/record/", record_supplier_invoice, name="record_supplier_invoice"),
+    path("payables/invoices/<int:invoice_id>/pay/", record_supplier_payment, name="record_supplier_payment"),
 ]
 
 if settings.DEBUG:

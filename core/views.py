@@ -691,6 +691,19 @@ def home(request):
             except Exception:
                 context['revenue_targets'] = None
 
+            # UBA X1 §12.1 — cash position tile: Receivables − Payables, "the
+            # most honest number in the app". Owner/manager only (the same
+            # figures the debt tracker and a future payables dashboard would
+            # show, just netted into one number).
+            if user_profile.is_owner_or_manager:
+                try:
+                    from core.payables import cash_position as _cash_position
+                    context['cash_position'] = _cash_position(business)
+                except Exception:
+                    context['cash_position'] = None
+            else:
+                context['cash_position'] = None
+
         except Exception:
             context["error"] = _("Profile not found. Please contact support.")
     else:

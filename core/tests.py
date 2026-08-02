@@ -15,7 +15,7 @@ from core.models import (
     KitchenStockReceiptLine, MarketPriceIndex, Notification, Payment,
     PettyCash, Receipt, Return, RevenueTarget, Shift, StockCountLine,
     StockCountSession, Store, StockTransfer, StockTransferLine,
-    TabTransferRequest, TillCount, Transaction,
+    SupplierInvoice, SupplierPayment, TabTransferRequest, TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -22925,3 +22925,111 @@ class CycleCountSessionTest(TestCase):
             'counted_qty': '18', 'reason': 'kosa la kuandika',
         })
         self.assertTrue(resp2.json()['ok'])
+
+
+class PayablesTest(TestCase):
+    """UBA X1 §12.1 — payables: the missing half of the cash picture."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Payables Biz')
+        self.owner_user = User.objects.create_user(username='pay_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='pay_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_outstanding_property(self):
+        inv = SupplierInvoice.objects.create(business=self.biz, supplier_name='Mumias Sugar', amount=Decimal('10000'))
+        self.assertEqual(inv.outstanding, Decimal('10000'))
+        inv.record_payment_locked(Decimal('4000'), 'cash', self.owner)
+        inv.refresh_from_db()
+        self.assertEqual(inv.outstanding, Decimal('6000'))
+        self.assertEqual(inv.status, SupplierInvoice.STATUS_PARTIAL)
+
+    def test_full_payment_marks_paid(self):
+        inv = SupplierInvoice.objects.create(business=self.biz, supplier_name='Bidco', amount=Decimal('5000'))
+        inv.record_payment_locked(Decimal('5000'), 'mpesa', self.owner)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, SupplierInvoice.STATUS_PAID)
+        self.assertEqual(inv.outstanding, Decimal('0'))
+
+    def test_payment_creates_payment_row(self):
+        inv = SupplierInvoice.objects.create(business=self.biz, supplier_name='Unga Ltd', amount=Decimal('3000'))
+        inv.record_payment_locked(Decimal('1000'), 'cash', self.owner, reference='REF001')
+        self.assertEqual(SupplierPayment.objects.filter(invoice=inv).count(), 1)
+        payment = SupplierPayment.objects.get(invoice=inv)
+        self.assertEqual(payment.reference, 'REF001')
+
+    def test_aging_buckets(self):
+        from core.payables import payables_aging_summary
+        today = timezone.localdate()
+        SupplierInvoice.objects.create(
+            business=self.biz, supplier_name='Current Supplier', amount=Decimal('1000'),
+            due_date=today,
+        )
+        SupplierInvoice.objects.create(
+            business=self.biz, supplier_name='Overdue90 Supplier', amount=Decimal('2000'),
+            due_date=today - timedelta(days=100),
+        )
+        summary = payables_aging_summary(self.biz)
+        self.assertEqual(summary['aged']['current'], 1000.0)
+        self.assertEqual(summary['aged']['overdue_90'], 2000.0)
+        self.assertEqual(summary['total_outstanding'], 3000.0)
+
+    def test_paid_invoices_excluded_from_aging(self):
+        from core.payables import payables_aging_summary
+        inv = SupplierInvoice.objects.create(business=self.biz, supplier_name='Paid Supplier', amount=Decimal('500'))
+        inv.record_payment_locked(Decimal('500'), 'cash', self.owner)
+        summary = payables_aging_summary(self.biz)
+        self.assertEqual(summary['total_outstanding'], 0.0)
+
+    def test_cash_position_nets_receivables_and_payables(self):
+        from core.payables import cash_position
+        SupplierInvoice.objects.create(business=self.biz, supplier_name='X', amount=Decimal('3000'))
+        store = Store.objects.create(business=self.biz, name='Shop')
+        item = Item.objects.create(
+            business=self.biz, store=store, description='Item', material_no='PAY-01', unit='pcs',
+        )
+        Customer.objects.create(business=self.biz, name='Bob')
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('5000'), payment_method='credit', recipient='Bob',
+            date=timezone.localdate(),
+        )
+        pos = cash_position(self.biz)
+        self.assertEqual(pos['receivables'], 5000.0)
+        self.assertEqual(pos['payables'], 3000.0)
+        self.assertEqual(pos['net'], 2000.0)
+
+    def test_owner_can_record_invoice_and_payment_via_views(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/payables/invoices/record/', {
+            'supplier_name': 'Kenchic', 'amount': '8000', 'invoice_no': 'INV-001',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        invoice_id = data['invoice_id']
+        resp2 = self.client.post(f'/payables/invoices/{invoice_id}/pay/', {'amount': '3000', 'method': 'cash'})
+        self.assertTrue(resp2.json()['ok'])
+        self.assertEqual(resp2.json()['status'], SupplierInvoice.STATUS_PARTIAL)
+
+    def test_staff_cannot_record_invoice(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.post('/payables/invoices/record/', {'supplier_name': 'X', 'amount': '100'})
+        self.assertEqual(resp.status_code, 302)  # owner_or_manager_required redirects
+
+    def test_home_dashboard_shows_cash_position_for_owner(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/')
+        self.assertContains(resp, 'Hali Halisi ya Pesa')
+
+    def test_due_reminder_notifies_owner(self):
+        from core.payables_views import send_payables_due_reminders
+        self.owner.phone = '0712345678'
+        self.owner.save(update_fields=['phone'])
+        SupplierInvoice.objects.create(
+            business=self.biz, supplier_name='Urgent Supplier', amount=Decimal('1000'),
+            due_date=timezone.localdate(),
+        )
+        count = send_payables_due_reminders(self.biz)
+        self.assertEqual(count, 1)
+        self.assertTrue(Notification.objects.filter(user=self.owner_user, title__icontains='Malipo').exists())
