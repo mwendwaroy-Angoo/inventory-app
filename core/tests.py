@@ -20974,3 +20974,89 @@ class AccountabilityEngineTest(TestCase):
             self.assertEqual(actual[0].staff_id, expected[0].staff_id)
             self.assertEqual(actual[0].loss_kes, expected[0].loss_kes)
 
+
+# ── UBA §M0-5 — dashboard tile registry ──────────────────────────────────────
+
+class DashboardTileRegistryTest(TestCase):
+    """core.dashboard_tiles is an additive registry wired into home() as a new
+    context key (uba_dashboard_tiles) that home.html does not read yet — must
+    be a complete no-op for every existing page render (M0-AC1)."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        self.bar_type, _c = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz = Business.objects.create(name='UBA Tiles Biz', business_type=self.bar_type)
+        Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='uba_tiles_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_home_page_still_renders_unaffected(self):
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('uba_dashboard_tiles', resp.context)
+
+    def test_register_and_build_tile(self):
+        from core.dashboard_tiles import DashboardTile, register_tile, build_tiles, _TILE_BUILDERS
+        original = dict(_TILE_BUILDERS)
+        try:
+            register_tile(
+                'test_tile',
+                requires=lambda capability: True,
+                builder=lambda business, user_profile, capability: DashboardTile(
+                    key='test_tile', title='Test', value=42, url='/x/',
+                ),
+            )
+            tiles = build_tiles(self.biz, None, None)
+            matching = [t for t in tiles if t.key == 'test_tile']
+            self.assertEqual(len(matching), 1)
+            self.assertEqual(matching[0].value, 42)
+        finally:
+            _TILE_BUILDERS.clear()
+            _TILE_BUILDERS.update(original)
+
+    def test_tile_skipped_when_capability_requirement_unmet(self):
+        from core.dashboard_tiles import register_tile, build_tiles, _TILE_BUILDERS
+        original = dict(_TILE_BUILDERS)
+        calls = []
+        try:
+            def _never_called_builder(business, user_profile, capability):
+                calls.append(1)
+                return None
+            register_tile('unmet_tile', requires=lambda capability: False, builder=_never_called_builder)
+            tiles = build_tiles(self.biz, None, None)
+            self.assertFalse(any(t.key == 'unmet_tile' for t in tiles))
+            self.assertEqual(calls, [], 'builder must never be called when requires() is False')
+        finally:
+            _TILE_BUILDERS.clear()
+            _TILE_BUILDERS.update(original)
+
+    def test_builder_returning_none_is_filtered_out(self):
+        from core.dashboard_tiles import register_tile, build_tiles, _TILE_BUILDERS
+        original = dict(_TILE_BUILDERS)
+        try:
+            register_tile('nothing_tile', requires=lambda capability: True,
+                           builder=lambda business, user_profile, capability: None)
+            tiles = build_tiles(self.biz, None, None)
+            self.assertFalse(any(t.key == 'nothing_tile' for t in tiles))
+        finally:
+            _TILE_BUILDERS.clear()
+            _TILE_BUILDERS.update(original)
+
+    def test_keg_variance_tile_requires_weigh_in_accountability(self):
+        from core.business_profiles import get_profile
+        from core.dashboard_tiles import _TILE_BUILDERS
+        profile = get_profile(self.biz)
+        requires, _builder = _TILE_BUILDERS['keg_variance']
+        self.assertTrue(requires(profile['capability']))  # bar composes WEIGH_IN
+
+    def test_keg_variance_tile_absent_for_kibanda(self):
+        from accounts.models import BusinessType
+        from core.business_profiles import get_profile
+        from core.dashboard_tiles import _TILE_BUILDERS
+        kibanda_type, _c = BusinessType.objects.get_or_create(name='Kibanda / Food Stall')
+        kibanda_biz = Business.objects.create(name='UBA Tiles Kibanda', business_type=kibanda_type)
+        profile = get_profile(kibanda_biz)
+        requires, _builder = _TILE_BUILDERS['keg_variance']
+        self.assertFalse(requires(profile['capability']))  # kibanda does not compose WEIGH_IN
+

@@ -259,6 +259,18 @@ def home(request):
             user_profile = request.user.userprofile
             business = user_profile.business
 
+            # UBA §M0-5 — additive dashboard tile registry (core/dashboard_tiles.py).
+            # home.html does not read this key yet; computed here so it's available
+            # once a future sprint rewires the template to consume it. Never lets a
+            # tile-builder error break the rest of the dashboard.
+            try:
+                from .business_profiles import get_profile as _get_profile_tiles
+                from .dashboard_tiles import build_tiles as _build_uba_tiles
+                _capability = _get_profile_tiles(business).get('capability')
+                context['uba_dashboard_tiles'] = _build_uba_tiles(business, user_profile, _capability)
+            except Exception:
+                context['uba_dashboard_tiles'] = []
+
             # Station scoping — determine what this staff member can see
             show_bar, show_kitchen = _station_scope(user_profile)
             context['show_bar']     = show_bar
