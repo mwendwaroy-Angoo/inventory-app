@@ -65,6 +65,18 @@ def analytics_dashboard(request):
     prev_start = start_date - timedelta(days=days)
     prev_end = start_date - timedelta(days=1)
 
+    # UBA §M0-6 — additive analytics section registry (core/analytics_sections.py).
+    # analytics.html does not read this key yet; computed here so it's available
+    # once a future sprint rewires the template to consume it. Never lets a
+    # section-builder error break the rest of the analytics page.
+    try:
+        from .business_profiles import get_profile as _get_profile_sections
+        from .analytics_sections import build_sections as _build_uba_sections
+        _capability = _get_profile_sections(business).get('capability')
+        uba_analytics_sections = _build_uba_sections(business, _capability, start_date, today)
+    except Exception:
+        uba_analytics_sections = []
+
     # Optional product filter for per-product analytics/forecast
     product_id = request.GET.get('product')
     items = list(Item.objects.filter(business=business).order_by('description').values('id', 'description'))
@@ -1017,6 +1029,8 @@ def analytics_dashboard(request):
         'kitchen_rows':           kitchen_rows,
         'total_kitchen_revenue':  total_kitchen_revenue,
         'kitchen_share':          kitchen_share,
+        # UBA §M0-6 — additive section registry, not read by analytics.html yet
+        'uba_analytics_sections': uba_analytics_sections,
     }
     return render(request, 'core/analytics.html', context)
 

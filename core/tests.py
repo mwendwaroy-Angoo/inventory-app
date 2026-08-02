@@ -21060,3 +21060,107 @@ class DashboardTileRegistryTest(TestCase):
         requires, _builder = _TILE_BUILDERS['keg_variance']
         self.assertFalse(requires(profile['capability']))  # kibanda does not compose WEIGH_IN
 
+
+# ── UBA §M0-6 — analytics section registry ───────────────────────────────────
+
+class AnalyticsSectionRegistryTest(TestCase):
+    """core.analytics_sections is an additive registry wired into
+    analytics_dashboard() as a new context key (uba_analytics_sections) that
+    analytics.html does not read yet — must be a complete no-op for every
+    existing page render (M0-AC1)."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        self.bar_type, _c = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz = Business.objects.create(name='UBA Sections Biz', business_type=self.bar_type)
+        Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='uba_sections_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_analytics_page_still_renders_unaffected(self):
+        resp = self.client.get('/analytics/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('uba_analytics_sections', resp.context)
+
+    def test_register_and_build_section(self):
+        from core.analytics_sections import AnalyticsSection, register_section, build_sections, _SECTION_BUILDERS
+        original = dict(_SECTION_BUILDERS)
+        try:
+            register_section(
+                'test_section',
+                requires=lambda capability: True,
+                builder=lambda business, capability, date_from, date_to: AnalyticsSection(
+                    key='test_section', title='Test', rows=[1, 2, 3],
+                ),
+            )
+            today = timezone.localdate()
+            sections = build_sections(self.biz, None, today, today)
+            matching = [s for s in sections if s.key == 'test_section']
+            self.assertEqual(len(matching), 1)
+            self.assertEqual(matching[0].rows, [1, 2, 3])
+        finally:
+            _SECTION_BUILDERS.clear()
+            _SECTION_BUILDERS.update(original)
+
+    def test_section_skipped_when_capability_requirement_unmet(self):
+        from core.analytics_sections import register_section, build_sections, _SECTION_BUILDERS
+        original = dict(_SECTION_BUILDERS)
+        calls = []
+        try:
+            def _never_called_builder(business, capability, date_from, date_to):
+                calls.append(1)
+                return None
+            register_section('unmet_section', requires=lambda capability: False, builder=_never_called_builder)
+            today = timezone.localdate()
+            sections = build_sections(self.biz, None, today, today)
+            self.assertFalse(any(s.key == 'unmet_section' for s in sections))
+            self.assertEqual(calls, [], 'builder must never be called when requires() is False')
+        finally:
+            _SECTION_BUILDERS.clear()
+            _SECTION_BUILDERS.update(original)
+
+    def test_builder_returning_none_is_filtered_out(self):
+        from core.analytics_sections import register_section, build_sections, _SECTION_BUILDERS
+        original = dict(_SECTION_BUILDERS)
+        try:
+            register_section('nothing_section', requires=lambda capability: True,
+                              builder=lambda business, capability, date_from, date_to: None)
+            today = timezone.localdate()
+            sections = build_sections(self.biz, None, today, today)
+            self.assertFalse(any(s.key == 'nothing_section' for s in sections))
+        finally:
+            _SECTION_BUILDERS.clear()
+            _SECTION_BUILDERS.update(original)
+
+    def test_keg_shrinkage_section_requires_weigh_in_accountability(self):
+        from core.business_profiles import get_profile
+        from core.analytics_sections import _SECTION_BUILDERS
+        profile = get_profile(self.biz)
+        requires, _builder = _SECTION_BUILDERS['keg_shrinkage']
+        self.assertTrue(requires(profile['capability']))  # bar composes WEIGH_IN
+
+    def test_keg_shrinkage_section_absent_for_kibanda(self):
+        from accounts.models import BusinessType
+        from core.business_profiles import get_profile
+        from core.analytics_sections import _SECTION_BUILDERS
+        kibanda_type, _c = BusinessType.objects.get_or_create(name='Kibanda / Food Stall')
+        kibanda_biz = Business.objects.create(name='UBA Sections Kibanda', business_type=kibanda_type)
+        profile = get_profile(kibanda_biz)
+        requires, _builder = _SECTION_BUILDERS['keg_shrinkage']
+        self.assertFalse(requires(profile['capability']))  # kibanda does not compose WEIGH_IN
+
+    def test_keg_shrinkage_section_matches_accountability_leaderboard(self):
+        from core import accountability
+        from core.analytics_sections import build_sections
+        from core.business_profiles import get_profile
+        today = timezone.localdate()
+        profile = get_profile(self.biz)
+        sections = build_sections(self.biz, profile['capability'], today, today)
+        expected_rows = accountability.leaderboard(self.biz, date_from=today, date_to=today)
+        matching = [s for s in sections if s.key == 'keg_shrinkage']
+        # No shifts/sales recorded in this business yet -> leaderboard is empty ->
+        # the section builder correctly returns None (filtered out), not an empty section.
+        self.assertEqual(expected_rows, [])
+        self.assertEqual(matching, [])
+

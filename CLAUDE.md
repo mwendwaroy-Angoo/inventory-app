@@ -4538,3 +4538,26 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   sprint adds a second engine (produce envelope, kitchen recipe, retail cycle count) and
   actually needs it. 5 new tests, 1152 total, OK. M0-5 (dashboard tile registry) and M0-6
   (analytics section registry) remain — next up in `docs/UBA_PROGRESS.md`.
+- UBA M0-5 (2026-08-02): dashboard tile registry — `core/dashboard_tiles.py`'s
+  `register_tile`/`build_tiles`. Read `home()` first (~520 lines, ~30 individually-named
+  context keys each in its own try/except) — migrating all of them into the registry and
+  rewiring `home.html` to consume it needs visual verification this environment doesn't
+  have, so deferred as a follow-up (documented in the module's own docstring). Built the
+  registry itself plus two real, capability-gated example tiles: `keg_variance` (bar-only,
+  via `core.accountability.leaderboard()` from M0-7) and `pending_petty_cash` (universal).
+  Wired into `home()` as an additive `context['uba_dashboard_tiles']` key `home.html`
+  doesn't read yet — zero visible change, confirmed by a `/` render test. Query-savings
+  claim is genuinely true for these 2 tiles (a builder is never called when its capability
+  requirement is unmet — locked in by a test) but doesn't yet apply to the ~30 legacy
+  home() tiles. 6 new tests, 1158 total, OK.
+- UBA M0-6 (2026-08-02): analytics section registry — `core/analytics_sections.py`, same
+  pattern and scoping discipline as M0-5. `analytics_dashboard()` (~975 lines, ~15
+  sections gated by ad-hoc presence checks rather than capability — the "existing bleed
+  risk" CLAUDE.md already flagged) gets one real example section, `keg_shrinkage`
+  (requires `'WEIGH_IN' in capability.accountability`), reusing
+  `core.accountability.leaderboard()` rather than new business logic. Wired into
+  `analytics_dashboard()` as an additive `context['uba_analytics_sections']` key
+  `analytics.html` doesn't read yet. Migrating the ~15 legacy sections + rewiring the
+  template is deferred as a follow-up needing visual verification. 7 new tests, 1165
+  total, OK. This closes out all of Phase 0's M0 capability-refactor sub-sprints (M0-1
+  through M0-7) — M1 (multi-store) is next.
