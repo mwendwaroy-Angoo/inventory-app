@@ -20706,3 +20706,112 @@ class KitchenPerformancePerPresetBreakdownTest(TestCase):
         self.assertEqual(rows['Chips']['revenue'], 200.0)
         self.assertEqual(rows['Chips']['units'], 2.0)
 
+
+# ── UBA §2.1/§2.4 — Item.stock_model + Capability registry ──────────────────
+
+class ItemStockModelSyncTest(TestCase):
+    """Item.save() keeps stock_model in sync with the pre-existing, load-bearing
+    discriminators (is_produce/produce_mode, is_keg, is_kitchen_batch)."""
+
+    def setUp(self):
+        biz_type = None
+        try:
+            from accounts.models import BusinessType
+            biz_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        except Exception:
+            pass
+        self.biz = Business.objects.create(name='UBA Stock Model Biz', business_type=biz_type)
+        self.store = Store.objects.create(business=self.biz, name='Main')
+
+    def _item(self, **kwargs):
+        n = Item.objects.count()
+        defaults = dict(business=self.biz, store=self.store, unit='Pcs', description=f'Item {n}')
+        defaults.update(kwargs)
+        return Item.objects.create(material_no=f'UBASM-{n}', **defaults)
+
+    def test_bunch_produce_becomes_envelope(self):
+        item = self._item(description='Sukuma', is_produce=True, produce_mode='BUNCH')
+        self.assertEqual(item.stock_model, 'ENVELOPE')
+
+    def test_portion_produce_becomes_unit(self):
+        item = self._item(description='Cabbage', is_produce=True, produce_mode='PORTION')
+        self.assertEqual(item.stock_model, 'UNIT')
+
+    def test_keg_item_becomes_measure(self):
+        item = self._item(description='Senator Keg', is_keg=True)
+        self.assertEqual(item.stock_model, 'MEASURE')
+
+    def test_kitchen_batch_becomes_envelope(self):
+        item = self._item(description='Chipo', is_kitchen_batch=True)
+        self.assertEqual(item.stock_model, 'ENVELOPE')
+
+    def test_plain_item_keeps_default_unit(self):
+        item = self._item(description='Soap')
+        self.assertEqual(item.stock_model, 'UNIT')
+
+    def test_toggling_off_is_produce_does_not_retroactively_relabel(self):
+        """Turning off is_produce on save doesn't force UNIT if some other
+        discriminator (is_keg) now applies instead — elif chain, not a reset."""
+        item = self._item(description='Weird combo', is_produce=True, produce_mode='BUNCH')
+        self.assertEqual(item.stock_model, 'ENVELOPE')
+        item.is_produce = False
+        item.is_keg = True
+        item.save()
+        self.assertEqual(item.stock_model, 'MEASURE')
+
+
+class CapabilityRegistryTest(TestCase):
+    """business_profiles.get_profile() attaches a Capability per UBA §2.4,
+    purely additive — must never change board/modules/catalog for any of the
+    8 existing profiles."""
+
+    def test_every_existing_profile_key_has_a_capability(self):
+        from core.business_profiles import CAPABILITIES, PROFILES
+        for key in PROFILES:
+            self.assertIn(key, CAPABILITIES, f'{key} profile has no Capability entry')
+
+    def test_get_profile_attaches_capability_without_changing_existing_keys(self):
+        from core.business_profiles import get_profile, PROFILES
+        biz_type = None
+        try:
+            from accounts.models import BusinessType
+            biz_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        except Exception:
+            pass
+        biz = Business.objects.create(name='UBA Cap Biz', business_type=biz_type)
+        profile = get_profile(biz)
+        self.assertEqual(profile['board'], PROFILES['bar']['board'])
+        self.assertEqual(profile['catalog'], PROFILES['bar']['catalog'])
+        self.assertIn('keg', profile['modules'])
+        self.assertIsNotNone(profile.get('capability'))
+        self.assertIn('MEASURE', profile['capability'].stock_models)
+
+    def test_default_profile_gets_default_capability(self):
+        from core.business_profiles import get_profile, DEFAULT_CAPABILITY
+        profile = get_profile(None)
+        self.assertEqual(profile['capability'], DEFAULT_CAPABILITY)
+
+
+class VocabFilterTest(TestCase):
+    """core.templatetags.uba_extras.vocab — per-profile word substitution
+    (UBA §M0-4). A no-op today since no profile has populated `vocabulary`
+    yet; this locks in the fallback and lookup behavior for when one does."""
+
+    def test_falls_back_to_word_when_vocabulary_empty(self):
+        from core.business_profiles import get_profile
+        from core.templatetags.uba_extras import vocab
+        profile = get_profile(None)
+        self.assertEqual(vocab('item', profile), 'item')
+
+    def test_uses_vocabulary_substitution_when_present(self):
+        from core.business_profiles import Capability
+        from core.templatetags.uba_extras import vocab
+        fake_profile = {'capability': Capability(vocabulary={'item': 'Huduma'})}
+        self.assertEqual(vocab('item', fake_profile), 'Huduma')
+        self.assertEqual(vocab('sale', fake_profile), 'sale')  # not in vocabulary -> falls back
+
+    def test_never_raises_on_missing_capability(self):
+        from core.templatetags.uba_extras import vocab
+        self.assertEqual(vocab('item', {}), 'item')
+        self.assertEqual(vocab('item', None), 'item')
+
