@@ -1032,6 +1032,140 @@ class Transaction(models.Model):
             return all_ids
 
     @classmethod
+    def split_to_credit_locked(cls, txn_id, business, split_amount, recipient, staff_user=None):
+        """UBA P0-A — boundary-split sibling of split_payment_method_locked(),
+        for a direct sale's UNPAID remainder becoming credit rather than a
+        second cash/mpesa channel (Kibanda's "Lipa kidogo" gap: KES 100
+        mboga, customer hands over 60, the other 40 becomes an ordinary
+        debt against their name, in the SAME checkout action — no tab
+        needed, matching the bar/kitchen tab-based partial-settle-to-debt
+        feature Quick Sell never got).
+
+        Deliberately a SEPARATE method rather than widening
+        split_payment_method_locked() itself — that function is narrowly,
+        deliberately cash/mpesa-only and shared with the post-hoc
+        correction endpoint (split_transaction_payment_method); adding a
+        credit destination there would need a wider regression sweep than
+        this warrants. This mirrors its shape instead.
+
+        Reduces the original transaction's amount to (original -
+        split_amount), keeping its existing cash/mpesa payment_method, and
+        creates a NEW sibling transaction for split_amount tagged
+        payment_method='credit', recipient=recipient — the exact shape the
+        debt tracker already expects, so no debt-tracker code changes.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            txn = cls.objects.select_for_update().get(pk=txn_id, business=business)
+            try:
+                has_tab_entry = txn.tab_entry is not None
+            except Exception:
+                has_tab_entry = False
+            if txn.type != 'Issue' or has_tab_entry:
+                raise ValueError('Muamala huu hauwezi kugawanywa — si mauzo ya moja kwa moja.')
+            if txn.payment_method not in ('cash', 'mpesa'):
+                raise ValueError('Njia ya malipo ya sasa haiwezi kugawanywa.')
+            if not recipient:
+                raise ValueError('Jina la mteja linahitajika kwa deni.')
+
+            original_amount = float(txn.revenue())
+            split_amount = float(split_amount)
+            if split_amount <= 0 or split_amount >= original_amount:
+                raise ValueError('Kiasi cha deni lazima kiwe kati ya 0 na jumla ya mauzo.')
+
+            remaining = round(original_amount - split_amount, 2)
+            txn.sale_amount = Decimal(str(remaining))
+            txn.save(update_fields=['sale_amount'])
+
+            new_txn = cls.objects.create(
+                item=txn.item, business=txn.business, type='Issue',
+                qty=Decimal('0'), sale_amount=Decimal(str(round(split_amount, 2))),
+                payment_method='credit', recipient=recipient,
+                invoice_no=txn.invoice_no,
+                recorded_by=staff_user or txn.recorded_by,
+                date=txn.date,
+                keg_barrel_id=txn.keg_barrel_id,
+                produce_bunch_id=txn.produce_bunch_id,
+                kitchen_batch_id=txn.kitchen_batch_id,
+            )
+            return txn, new_txn
+
+    @classmethod
+    def apply_checkout_partial_credit_locked(cls, txn_ids, business, amount_paid, recipient, staff_user=None):
+        """UBA P0-A — Kibanda split-tender-at-checkout: one direct sale,
+        customer pays only `amount_paid` (already recorded as cash/mpesa on
+        every transaction in txn_ids — the caller checks out normally with
+        a single primary payment_method first, exactly like a plain
+        cash/mpesa/credit sale), and the shortfall becomes ordinary credit
+        debt against `recipient` — the exact payment_method='credit'/
+        recipient=name shape the debt tracker already reads, so no
+        debt-tracker code changes at all.
+
+        Walks txn_ids from the end (same walk-and-split shape as
+        apply_split_payment_locked, just converting the LAST-recorded
+        lines to credit first — an arbitrary but deterministic choice;
+        which specific line becomes credit never matters, only that the
+        totals reconcile), converting whole transactions to credit once
+        the credit remainder is covered, then boundary-splits the
+        transaction that straddles the paid/credit line via
+        split_to_credit_locked().
+
+        No-ops (returns None) when amount_paid is None or >= the batch
+        total — nothing left to convert; that was a full cash/mpesa sale,
+        not a partial one.
+
+        The CALLER is responsible for gating the CREDIT REMAINDER (not the
+        full sale total) through core.credit_policy.evaluate_credit()
+        BEFORE calling this — computed against (total - amount_paid), the
+        actual new debt being extended, same as the existing full-credit
+        checkout gate but against the smaller, real number rather than the
+        whole cart.
+        """
+        if not txn_ids or amount_paid is None:
+            return None
+        amount_paid = float(amount_paid)
+        if amount_paid < 0:
+            raise ValueError('Kiasi kilicholipwa hakiwezi kuwa hasi.')
+        if not recipient:
+            raise ValueError('Jina la mteja linahitajika kwa deni.')
+
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            txns = list(
+                cls.objects.select_for_update()
+                .filter(id__in=txn_ids, business=business, type='Issue')
+                .order_by('id')
+            )
+            total = sum(float(t.revenue()) for t in txns)
+            if amount_paid >= total:
+                return None  # fully paid — nothing to convert
+
+            all_ids = [t.id for t in txns]
+            remaining_credit = round(total - amount_paid, 2)
+            for t in reversed(txns):
+                if remaining_credit <= 0:
+                    break
+                if t.payment_method not in ('cash', 'mpesa'):
+                    continue
+                amt = float(t.revenue())
+                if amt <= 0:
+                    continue
+                if remaining_credit >= amt - 0.005:
+                    t.payment_method = 'credit'
+                    t.recipient = recipient
+                    t.save(update_fields=['payment_method', 'recipient'])
+                    remaining_credit = round(remaining_credit - amt, 2)
+                else:
+                    _orig, new_txn = cls.split_to_credit_locked(
+                        txn_id=t.id, business=business,
+                        split_amount=Decimal(str(remaining_credit)), recipient=recipient,
+                        staff_user=staff_user,
+                    )
+                    all_ids.append(new_txn.id)
+                    remaining_credit = 0
+            return all_ids
+
+    @classmethod
     def payment_split_breakdown(cls, txn_ids, business):
         """Sum revenue per payment_method across the given transaction ids —
         2026-07-30 live report: "split payments are working well... but the

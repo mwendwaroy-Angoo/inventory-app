@@ -3027,6 +3027,22 @@ def quick_sell(request):
             split_amount_qs = Decimal("0")
         split_method_qs = request.POST.get("split_method", "").strip()
 
+        # UBA P0-A — "Lipa kidogo" (pay a little): a direct cash/mpesa sale
+        # where the customer only pays PART of the total now, the rest
+        # becoming ordinary credit debt against credit_recipient — no tab
+        # needed. Only meaningful when the primary method is cash/mpesa;
+        # a plain 'credit' checkout is already a full-credit sale with no
+        # partial payment to make. See Transaction.apply_checkout_partial_credit_locked().
+        try:
+            partial_credit_amount_qs = Decimal(str(request.POST.get("partial_credit_amount", "") or "0"))
+        except Exception:
+            partial_credit_amount_qs = Decimal("0")
+        _wants_partial_credit = (
+            payment_method_raw in ("cash", "mpesa")
+            and partial_credit_amount_qs > 0
+            and bool(credit_recipient)
+        )
+
         # ── CREDIT DISCIPLINE GATE (credit sales only — not bar tabs; tab
         #    creation doesn't use the debt ledger credit_approved path) ────────
         if payment_method_raw == 'credit' and credit_recipient:
@@ -3051,6 +3067,32 @@ def quick_sell(request):
                     request,
                     f'Deni haliwezi kutolewa: {_decision.reason} — '
                     'Lipa kwa cash au M-Pesa badala yake.'
+                )
+                return redirect('quick_sell')
+
+        # ── CREDIT DISCIPLINE GATE for a partial-payment remainder — gated
+        #    against the REMAINDER itself (the actual new debt), not the
+        #    full cart total, since that's what the customer's credit
+        #    limit/policy is really being checked against. ──────────────────
+        if _wants_partial_credit:
+            from core.models import Customer as _CustomerModel
+            from core.credit_policy import evaluate_credit
+            _cust_gate = _CustomerModel.objects.filter(
+                business=user_profile.business, name=credit_recipient
+            ).first()
+            if _cust_gate is None:
+                _cust_gate = _CustomerModel.objects.create(
+                    business=user_profile.business,
+                    name=credit_recipient,
+                    phone=credit_phone,
+                    credit_approved=True,
+                )
+            _decision = evaluate_credit(user_profile.business, _cust_gate)
+            if not _decision.allowed:
+                messages.error(
+                    request,
+                    f'Deni haliwezi kutolewa: {_decision.reason} — '
+                    'Lipa kiasi chote kwa cash au M-Pesa badala yake.'
                 )
                 return redirect('quick_sell')
         # ─────────────────────────────────────────────────────────────────────
@@ -3228,6 +3270,7 @@ def quick_sell(request):
             # (Transaction.payment_split_breakdown) forward into rcpt_meta
             # below, whichever receipt branch actually issues it.
             _qs_split_breakdown = {}
+            _qs_all_split_ids = None  # set below only if a cash/mpesa split actually runs
             if (
                 payment_method_qs in ("cash", "mpesa")
                 and split_method_qs in ("cash", "mpesa")
@@ -3244,6 +3287,61 @@ def quick_sell(request):
                     )
                 except ValueError as _split_err:
                     messages.warning(request, str(_split_err))
+
+            # UBA P0-A — "Lipa kidogo": convert the unpaid remainder of a
+            # direct cash/mpesa sale to ordinary credit debt, in the same
+            # checkout action. Never blocks the checkout: the sale already
+            # happened above regardless of what happens here.
+            if _wants_partial_credit:
+                try:
+                    # partial_credit_amount_qs is the OWED remainder (what the
+                    # frontend computes and labels "iliyobaki" — see
+                    # qsPartialCreditPaidInput's JS), but
+                    # apply_checkout_partial_credit_locked()'s contract takes
+                    # the PAID amount — convert here rather than in the model,
+                    # so the model's parameter name stays literally true to
+                    # what it does.
+                    _qs_amount_paid_for_credit_split = round(float(total) - float(partial_credit_amount_qs), 2)
+                    _qs_credit_split_ids = Transaction.apply_checkout_partial_credit_locked(
+                        _qs_all_split_ids or created_txn_ids, user_profile.business,
+                        _qs_amount_paid_for_credit_split, credit_recipient, staff_user=request.user,
+                    )
+                    if _qs_credit_split_ids:
+                        # Reflect the credit portion in the receipt's split-payment
+                        # display too — reuses the same generic mechanism the
+                        # cash/mpesa split already writes into rcpt_meta below.
+                        _qs_split_breakdown = Transaction.payment_split_breakdown(
+                            _qs_credit_split_ids, user_profile.business,
+                        )
+                        from .models import Customer as _CustomerQsPartial
+                        _cust_partial = _CustomerQsPartial.objects.filter(
+                            business=user_profile.business, name=credit_recipient
+                        ).first()
+                        if _cust_partial is None:
+                            _cust_partial = _CustomerQsPartial.objects.create(
+                                business=user_profile.business, name=credit_recipient,
+                                credit_approved=True,
+                            )
+                        if credit_phone and not _cust_partial.phone:
+                            _cust_partial.phone = credit_phone
+                            _cust_partial.save(update_fields=['phone'])
+                        if credit_phone:
+                            try:
+                                from .notifications import normalize_ke_phone, send_sms_notification
+                                _normalized_partial = normalize_ke_phone(credit_phone)
+                                if _normalized_partial:
+                                    _amount_owed = round(float(partial_credit_amount_qs), 2)
+                                    _amount_now = round(float(total) - _amount_owed, 2)
+                                    _sms_partial = (
+                                        f"Duka: {user_profile.business.name}\n"
+                                        f"Umenunua KES {total:,.0f}, umelipa KES {_amount_now:,.0f}.\n"
+                                        f"Deni lililobaki: KES {_amount_owed:,.0f}"
+                                    )
+                                    send_sms_notification(_sms_partial, _normalized_partial)
+                            except Exception:
+                                pass
+                except ValueError as _partial_credit_err:
+                    messages.warning(request, str(_partial_credit_err))
 
             try:
                 from .notifications import notify_transaction_async

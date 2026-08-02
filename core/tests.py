@@ -21231,3 +21231,257 @@ class UbaStubProfileAcceptanceTest(TestCase):
         self.assertEqual(profile['type'], '')
         self.assertEqual(profile['capability'], DEFAULT_CAPABILITY)
 
+
+# ── UBA P0-A — split tender at checkout (Kibanda's "Lipa kidogo" gap) ───────
+
+class SplitToCreditLockedTest(TestCase):
+    """Transaction.split_to_credit_locked() — the boundary-split helper that
+    converts part of a direct cash/mpesa sale to credit debt."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='P0A Split Credit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Mboga',
+            material_no='P0A-01', unit='Bunch', selling_price=Decimal('100'),
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+
+    def test_splits_into_remaining_cash_and_new_credit_txn(self):
+        orig, new_txn = Transaction.split_to_credit_locked(
+            txn_id=self.txn.id, business=self.biz, split_amount=Decimal('40'),
+            recipient='Mary',
+        )
+        orig.refresh_from_db()
+        self.assertEqual(orig.payment_method, 'cash')
+        self.assertEqual(float(orig.sale_amount), 60.0)
+        self.assertEqual(new_txn.payment_method, 'credit')
+        self.assertEqual(new_txn.recipient, 'Mary')
+        self.assertEqual(float(new_txn.sale_amount), 40.0)
+        self.assertEqual(new_txn.qty, Decimal('0'))  # re-billing, no additional stock movement
+
+    def test_rejects_missing_recipient(self):
+        with self.assertRaises(ValueError):
+            Transaction.split_to_credit_locked(
+                txn_id=self.txn.id, business=self.biz, split_amount=Decimal('40'), recipient='',
+            )
+
+    def test_rejects_amount_at_or_above_total(self):
+        with self.assertRaises(ValueError):
+            Transaction.split_to_credit_locked(
+                txn_id=self.txn.id, business=self.biz, split_amount=Decimal('100'), recipient='Mary',
+            )
+
+    def test_rejects_non_cash_mpesa_source(self):
+        credit_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='credit', recipient='X',
+        )
+        with self.assertRaises(ValueError):
+            Transaction.split_to_credit_locked(
+                txn_id=credit_txn.id, business=self.biz, split_amount=Decimal('40'), recipient='Mary',
+            )
+
+
+class ApplyCheckoutPartialCreditLockedTest(TestCase):
+    """Transaction.apply_checkout_partial_credit_locked() — the top-level
+    checkout-time split: pay part now, the rest becomes ordinary credit."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='P0A Partial Credit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Mboga',
+            material_no='P0A-02', unit='Bunch', selling_price=Decimal('100'),
+        )
+
+    def test_single_transaction_partial_payment_splits_to_credit(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        ids = Transaction.apply_checkout_partial_credit_locked(
+            [txn.id], self.biz, amount_paid=60, recipient='Mary',
+        )
+        self.assertIsNotNone(ids)
+        txns = Transaction.objects.filter(id__in=ids)
+        cash_total = sum(float(t.sale_amount) for t in txns if t.payment_method == 'cash')
+        credit_total = sum(float(t.sale_amount) for t in txns if t.payment_method == 'credit')
+        self.assertEqual(cash_total, 60.0)
+        self.assertEqual(credit_total, 40.0)
+        credit_txn = [t for t in txns if t.payment_method == 'credit'][0]
+        self.assertEqual(credit_txn.recipient, 'Mary')
+
+    def test_multiple_transactions_whole_conversion_plus_boundary_split(self):
+        t1 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('30'), payment_method='cash',
+        )
+        t2 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('70'), payment_method='cash',
+        )
+        # Total 100, paid 60 -> 40 credit: converts t2 (70) partially? Walk is
+        # from the END (t2 first) — t2's 70 > remaining_credit(40), so t2
+        # boundary-splits into 30 cash + 40 credit; t1 (30 cash) untouched.
+        ids = Transaction.apply_checkout_partial_credit_locked(
+            [t1.id, t2.id], self.biz, amount_paid=60, recipient='Bosco',
+        )
+        txns = Transaction.objects.filter(id__in=ids)
+        cash_total = sum(float(t.sale_amount) for t in txns if t.payment_method == 'cash')
+        credit_total = sum(float(t.sale_amount) for t in txns if t.payment_method == 'credit')
+        self.assertEqual(cash_total, 60.0)
+        self.assertEqual(credit_total, 40.0)
+        t1.refresh_from_db()
+        self.assertEqual(t1.payment_method, 'cash')
+        self.assertEqual(float(t1.sale_amount), 30.0)
+
+    def test_fully_paid_is_a_no_op(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        result = Transaction.apply_checkout_partial_credit_locked(
+            [txn.id], self.biz, amount_paid=100, recipient='Mary',
+        )
+        self.assertIsNone(result)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')
+
+    def test_none_amount_paid_is_a_no_op(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        result = Transaction.apply_checkout_partial_credit_locked(
+            [txn.id], self.biz, amount_paid=None, recipient='Mary',
+        )
+        self.assertIsNone(result)
+
+    def test_rejects_negative_amount_paid(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        with self.assertRaises(ValueError):
+            Transaction.apply_checkout_partial_credit_locked(
+                [txn.id], self.biz, amount_paid=-10, recipient='Mary',
+            )
+
+    def test_rejects_missing_recipient(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        with self.assertRaises(ValueError):
+            Transaction.apply_checkout_partial_credit_locked(
+                [txn.id], self.biz, amount_paid=60, recipient='',
+            )
+
+
+class QuickSellPartialCreditCheckoutTest(TestCase):
+    """POST /quick-sell/ with partial_credit_amount — Kibanda's literal
+    motivating scenario: a KES 100 mboga sale, customer hands over 60 cash,
+    the remaining 40 becomes ordinary credit debt against their name, in one
+    checkout action, no tab needed (P0-AC1)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='QS Partial Credit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='qspartial_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Mboga',
+            material_no='QSPARTIAL-01', unit='Bunch', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_partial_cash_payment_creates_credit_remainder(self):
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'cash',
+            'recipient': 'Mary',
+            'partial_credit_amount': '40',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        cash_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, type='Issue', payment_method='cash',
+            )
+        )
+        credit_txns = Transaction.objects.filter(
+            business=self.biz, item=self.item, type='Issue', payment_method='credit', recipient='Mary',
+        )
+        credit_total = sum(float(t.sale_amount) for t in credit_txns)
+        self.assertEqual(cash_total, 60.0)
+        self.assertEqual(credit_total, 40.0)
+        # Customer auto-created so the debt tracker finds them
+        self.assertTrue(Customer.objects.filter(business=self.biz, name='Mary').exists())
+
+    def test_full_payment_no_credit_created(self):
+        """No partial_credit_amount sent -> ordinary full cash sale, untouched."""
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'cash',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, payment_method='credit').count(), 0,
+        )
+
+    def test_partial_credit_gated_by_evaluate_credit(self):
+        """A defaulter customer must be blocked from a partial-credit
+        remainder exactly like a full-credit sale — the K3 gate must run on
+        this path too, not be bypassed."""
+        Customer.objects.create(
+            business=self.biz, name='Baddebt', credit_approved=False,
+        )
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'cash',
+            'recipient': 'Baddebt',
+            'partial_credit_amount': '40',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        # Blocked before any transaction is even recorded
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item).exclude(type='Receipt').count(), 0,
+        )
+
+    def test_partial_credit_never_applied_to_tab_sales(self):
+        """partial_credit_amount only ever applies to a direct cash/mpesa
+        checkout (_wants_partial_credit requires payment_method_raw in
+        ('cash','mpesa')) — a tab sale is unaffected by it and behaves as a
+        completely ordinary, un-split, full-credit tab sale."""
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'tab',
+            'recipient': 'Tab Patron',
+            'partial_credit_amount': '40',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        credit_txns = Transaction.objects.filter(
+            business=self.biz, item=self.item, type='Issue', payment_method='credit',
+        )
+        # One single full-amount credit transaction — never split into a
+        # cash/credit pair the way a direct cash/mpesa checkout would be.
+        # Uses .revenue() not raw sale_amount: a plain (non-preset) item's
+        # sale_amount is left None by design, with revenue computed from
+        # qty × selling_price instead (see quick_sell()'s cart loop).
+        self.assertEqual(credit_txns.count(), 1)
+        self.assertEqual(float(credit_txns.first().revenue()), 100.0)
+

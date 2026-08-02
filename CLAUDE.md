@@ -4561,3 +4561,36 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   template is deferred as a follow-up needing visual verification. 7 new tests, 1165
   total, OK. This closes out all of Phase 0's M0 capability-refactor sub-sprints (M0-1
   through M0-7) — M1 (multi-store) is next.
+- UBA M0-AC3 (2026-08-02): stub profile proof, deferred from M0-3. `business_profiles.py`
+  gains `'uba_stub_salon'` in both `PROFILES` and `CAPABILITIES` (`hides={'yield',
+  'produce_keg_settings'}` so M0-3's gating mechanism has something concrete to prove
+  itself against). Critical check done before writing any code: grepped the real seeded
+  `BusinessType` data and found a genuine `'Salon & Barbershop'` type already exists — any
+  live business already using that exact name falls through to `DEFAULT_PROFILE` today;
+  naively naming the stub to match it would have been a real, live regression. Used a
+  deliberately non-colliding match string instead. Phase 3's real Salon profile replaces
+  this stub outright when that sprint starts. 5 new tests — home dashboard + navbar render
+  for the stub type, item form hides the right sections, capability composes as declared,
+  and the regression lock that matters most: a business under the REAL 'Salon &
+  Barbershop' type is confirmed still falling through to DEFAULT_PROFILE/DEFAULT_CAPABILITY
+  unchanged. 5 new tests, 1170 total, OK. Phase 0's M0 sub-sprints and AC gate fully closed.
+- UBA P0-A (2026-08-02): split tender at checkout — Kibanda's "Lipa kidogo" gap (customer
+  pays part of a direct sale now, the rest becomes credit, one action, no tab). Investigated
+  current state first: this app already has extensive split-payment infrastructure
+  (`Transaction.apply_split_payment_locked`/`split_payment_method_locked`,
+  `BarTab.settle_entries_amount_locked`) but those two are hard cash/mpesa-only, and the
+  tab-based partial-to-debt flow requires a tab — Quick Sell/produce board's direct
+  checkout never got this. Rather than the spec's illustrative `SalePayment` model
+  (would duplicate what already works), added two `Transaction` classmethods —
+  `split_to_credit_locked()` (boundary-split sibling of `split_payment_method_locked`,
+  deliberately separate rather than widening that shared, narrowly-scoped function) and
+  `apply_checkout_partial_credit_locked()` (mirrors `apply_split_payment_locked`'s walk).
+  Neither touches `Transaction.payment_method`'s semantics — the credit remainder is an
+  ordinary `payment_method='credit', recipient=name` transaction, exactly what the debt
+  tracker already reads. Wired into `quick_sell()` (Quick Sell IS the produce board for
+  Kibanda): new `partial_credit_amount` field, `evaluate_credit()` gated on the REMAINDER
+  specifically (caught a real bug wiring this: the frontend sends the OWED amount, the
+  model method's parameter is the PAID amount — fixed by converting in the view). Bar
+  board/kitchen board's direct checkouts deliberately not extended this pass (Kibanda was
+  the spec's own motivating example); logged as a low-risk follow-up now that the pattern
+  is proven. 14 new tests, 1184 total, OK.
