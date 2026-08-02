@@ -20891,3 +20891,86 @@ class ItemFormCapabilityHidesGatingTest(TestCase):
         self.assertContains(resp, 'Restriction Settings')
         self.assertContains(resp, 'Keg Settings')
 
+
+# ── UBA §2.3/M0-7 — core/accountability.py wraps keg_metrics.py ─────────────
+
+class AccountabilityEngineTest(TestCase):
+    """core.accountability is a thin, additive facade over the existing
+    core.keg_metrics module — it must re-export everything bar code already
+    imports from keg_metrics, and its one registered engine ('keg_shift')
+    must produce numbers identical to calling keg_metrics.shift_barrel_variance()
+    directly, since it wraps that function rather than reimplementing it."""
+
+    def setUp(self):
+        self.business, self.store, self.owner, self.item, self.barrel, self.preset, self.shift = (
+            _make_keg_fixtures_with_shift('Accountability Test Bar')
+        )
+        Transaction.objects.create(
+            business=self.business, item=self.item, type='Issue',
+            qty=Decimal('-2000'), sale_amount=Decimal('800'),
+            payment_method='cash', keg_barrel=self.barrel, date=timezone.localdate(),
+        )
+        t_open = self.shift.started_at
+        t_close = self.shift.started_at + timedelta(hours=8)
+        ro = KegWeightReading.objects.create(
+            barrel=self.barrel, shift=self.shift, weight_kg=Decimal('57'),
+            reading_type='SHIFT_OPEN', recorded_by=self.owner,
+        )
+        KegWeightReading.objects.filter(pk=ro.pk).update(recorded_at=t_open)
+        rc = KegWeightReading.objects.create(
+            barrel=self.barrel, shift=self.shift, weight_kg=Decimal('54'),
+            reading_type='SHIFT_CLOSE', recorded_by=self.owner,
+        )
+        KegWeightReading.objects.filter(pk=rc.pk).update(recorded_at=t_close)
+        self.shift.ended_at = t_close
+        self.shift.status = 'CLOSED'
+        self.shift.save(update_fields=['ended_at', 'status'])
+
+    def test_reexports_match_keg_metrics_originals(self):
+        from core import accountability, keg_metrics
+        self.assertIs(accountability.barrel_variance, keg_metrics.barrel_variance)
+        self.assertIs(accountability.shift_barrel_variance, keg_metrics.shift_barrel_variance)
+        self.assertIs(accountability.staff_shrinkage, keg_metrics.staff_shrinkage)
+        self.assertIs(accountability.variance_flag, keg_metrics.variance_flag)
+        self.assertIs(accountability.business_keg_loss_baseline, keg_metrics.business_keg_loss_baseline)
+
+    def test_keg_shift_engine_matches_keg_metrics_directly(self):
+        from core import accountability, keg_metrics
+        direct = keg_metrics.shift_barrel_variance(self.shift, self.barrel)
+        result = accountability.variance_for(
+            'keg_shift', business=self.business, store=self.barrel, shift=self.shift,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result.expected, Decimal(str(direct.book_ml)))
+        self.assertEqual(result.actual, Decimal(str(direct.scale_ml)))
+        self.assertEqual(result.variance, Decimal(str(direct.variance_ml)))
+        self.assertEqual(result.variance_kes, Decimal(str(direct.wastage_kes)))
+        self.assertTrue(result.coverage_pct == Decimal('100'))
+        self.assertFalse(result.is_partial)
+
+    def test_unregistered_scope_returns_none_not_an_error(self):
+        from core import accountability
+        result = accountability.variance_for(
+            'salon_recipe', business=self.business, store=None, shift=self.shift,
+        )
+        self.assertIsNone(result)
+
+    def test_no_shift_or_store_returns_none(self):
+        from core import accountability
+        self.assertIsNone(accountability.variance_for(
+            'keg_shift', business=self.business, store=self.barrel, shift=None,
+        ))
+        self.assertIsNone(accountability.variance_for(
+            'keg_shift', business=self.business, store=None, shift=self.shift,
+        ))
+
+    def test_leaderboard_delegates_to_staff_shrinkage(self):
+        from core import accountability, keg_metrics
+        today = timezone.localdate()
+        expected = keg_metrics.staff_shrinkage(self.business, today, today)
+        actual = accountability.leaderboard(self.business, date_from=today, date_to=today)
+        self.assertEqual(len(actual), len(expected))
+        if actual:
+            self.assertEqual(actual[0].staff_id, expected[0].staff_id)
+            self.assertEqual(actual[0].loss_kes, expected[0].loss_kes)
+
