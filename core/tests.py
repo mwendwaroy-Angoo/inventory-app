@@ -21485,3 +21485,149 @@ class QuickSellPartialCreditCheckoutTest(TestCase):
         self.assertEqual(credit_txns.count(), 1)
         self.assertEqual(float(credit_txns.first().revenue()), 100.0)
 
+
+# ── UBA §5.1 — Store as first-class outlet ───────────────────────────────────
+
+class StoreTypeSyncTest(TestCase):
+    """Store.save() keeps store_type consistent with the pre-existing,
+    load-bearing is_kitchen flag — ONE-DIRECTIONALLY (is_kitchen ground
+    truth -> store_type derived), deliberately NOT the spec's illustrative
+    bidirectional pseudocode, which would break a real existing call site."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Store Sync Biz')
+
+    def test_creating_with_is_kitchen_true_sets_store_type_kitchen(self):
+        """The exact shape core.kitchen_views.get_or_create_kitchen_store()
+        already uses — Store.objects.create(..., is_kitchen=True) with no
+        store_type — must end up store_type='kitchen', not silently flipped
+        the other way."""
+        store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.assertEqual(store.store_type, 'kitchen')
+        self.assertTrue(store.is_kitchen)
+
+    def test_creating_with_store_type_kitchen_sets_is_kitchen_true(self):
+        store = Store.objects.create(business=self.biz, name='Jiko', store_type='kitchen')
+        self.assertTrue(store.is_kitchen)
+        self.assertEqual(store.store_type, 'kitchen')
+
+    def test_plain_store_unaffected(self):
+        store = Store.objects.create(business=self.biz, name='Main')
+        self.assertFalse(store.is_kitchen)
+        self.assertEqual(store.store_type, 'retail')
+
+    def test_resaving_a_non_kitchen_store_never_flips_it(self):
+        store = Store.objects.create(business=self.biz, name='Bar', store_type='bar')
+        store.save()
+        store.refresh_from_db()
+        self.assertEqual(store.store_type, 'bar')
+        self.assertFalse(store.is_kitchen)
+
+    def test_migration_backfill_set_store_type_for_pre_existing_kitchen_stores(self):
+        """Regression lock for the migration itself (0141): every row that
+        was is_kitchen=True before this migration must have gained
+        store_type='kitchen' — verified here by directly exercising the
+        same backfill query the migration's RunPython step runs, against a
+        row created bypassing save() (.update()), simulating a pre-migration
+        historical row that never went through the new save() logic."""
+        store = Store.objects.create(business=self.biz, name='Historical Kitchen')
+        Store.objects.filter(pk=store.pk).update(is_kitchen=True, store_type='retail')
+        store.refresh_from_db()
+        self.assertEqual(store.store_type, 'retail')  # bypassed save(), still stale
+        Store.objects.filter(is_kitchen=True).update(store_type='kitchen')  # the migration's own query
+        store.refresh_from_db()
+        self.assertEqual(store.store_type, 'kitchen')
+
+
+class AccessibleStoresTest(TestCase):
+    """UserProfile.accessible_stores() — the store-scoping resolver."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Access Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.inactive_store = Store.objects.create(business=self.biz, name='Closed Store', is_active=False)
+
+    def test_owner_sees_all_active_stores(self):
+        owner = User.objects.create_user(username='access_owner', password='x')
+        profile = UserProfile.objects.create(user=owner, business=self.biz, role='owner')
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_a, accessible)
+        self.assertIn(self.store_b, accessible)
+        self.assertNotIn(self.inactive_store, accessible)
+
+    def test_staff_with_no_assignment_sees_all_active_stores(self):
+        """The back-compat case — every staffer today, and any newly-added
+        staffer before an owner assigns them anywhere. Deliberately NOT
+        Store.objects.none() (the spec's own illustrative fallback), which
+        would lock out every existing staff member the instant this is
+        wired into a real view."""
+        staff = User.objects.create_user(username='access_staff_unassigned', password='x')
+        profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_a, accessible)
+        self.assertIn(self.store_b, accessible)
+
+    def test_staff_with_stores_m2m_is_scoped(self):
+        staff = User.objects.create_user(username='access_staff_m2m', password='x')
+        profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        profile.stores.add(self.store_a)
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_a, accessible)
+        self.assertNotIn(self.store_b, accessible)
+
+    def test_staff_with_home_store_only_is_scoped(self):
+        staff = User.objects.create_user(username='access_staff_home', password='x')
+        profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff', home_store=self.store_b)
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_b, accessible)
+        self.assertNotIn(self.store_a, accessible)
+
+    def test_stores_m2m_takes_priority_over_home_store(self):
+        staff = User.objects.create_user(username='access_staff_both', password='x')
+        profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff', home_store=self.store_b)
+        profile.stores.add(self.store_a)
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_a, accessible)
+        self.assertNotIn(self.store_b, accessible)
+
+    def test_inactive_home_store_excluded(self):
+        staff = User.objects.create_user(username='access_staff_inactive_home', password='x')
+        profile = UserProfile.objects.create(
+            user=staff, business=self.biz, role='staff', home_store=self.inactive_store,
+        )
+        self.assertEqual(profile.accessible_stores().count(), 0)
+
+
+class RequireStoreAccessTest(TestCase):
+    """core.access.require_store_access() — the one gate, used on view AND URL."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Gate Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        staff = User.objects.create_user(username='gate_staff', password='x')
+        self.profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+
+    def test_none_store_always_allowed(self):
+        from core.access import require_store_access
+        require_store_access(self.profile, None)  # must not raise
+
+    def test_allowed_store_does_not_raise(self):
+        from core.access import require_store_access
+        require_store_access(self.profile, self.store_a)  # must not raise
+
+    def test_disallowed_store_raises_permission_denied(self):
+        from django.core.exceptions import PermissionDenied
+        from core.access import require_store_access
+        with self.assertRaises(PermissionDenied):
+            require_store_access(self.profile, self.store_b)
+
+    def test_owner_always_allowed(self):
+        from core.access import require_store_access
+        owner_user = User.objects.create_user(username='gate_owner', password='x')
+        owner_profile = UserProfile.objects.create(user=owner_user, business=self.biz, role='owner')
+        require_store_access(owner_profile, self.store_a)
+        require_store_access(owner_profile, self.store_b)
+

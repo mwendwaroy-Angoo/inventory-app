@@ -168,6 +168,18 @@ class Business(models.Model):
                    'cron fire or retry from re-sending the same day\'s summary.'
     )
 
+    # ── UBA §3 decision #7 — dormant pricing-tier hook, gates nothing yet ──
+    PLAN_CHOICES = [
+        ('standard', 'Standard'),
+        ('multi', 'Multi-Store'),
+        ('pro', 'Pro'),
+    ]
+    plan = models.CharField(
+        max_length=10, default='standard', choices=PLAN_CHOICES,
+        help_text='UBA pricing tier. Dormant hook only per the execution order — '
+                  'nothing in the app currently reads or gates on this field.'
+    )
+
     # ── Keg Bar Settings ──────────────────────────────────────────────────
     keg_variance_tolerance_pct = models.DecimalField(
         max_digits=4, decimal_places=1, default=Decimal('3.0'),
@@ -480,6 +492,47 @@ class UserProfile(models.Model):
         User, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='staff_reactivations_recorded',
     )
+
+    # ── UBA §5.1 — Store scoping ─────────────────────────────────────────
+    home_store = models.ForeignKey(
+        'core.Store', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='home_staff',
+    )
+    stores = models.ManyToManyField(
+        'core.Store', blank=True, related_name='assigned_staff',
+        help_text='Stores this staff member may access. Empty means unrestricted '
+                  '(see accessible_stores()) — an owner narrows this per staff member.',
+    )
+
+    def accessible_stores(self):
+        """UBA §5.1 — which stores this profile may see/act on.
+
+        Owner always sees every active store. A staffer with an explicit
+        `stores` assignment is scoped to exactly that set; falling back to
+        `home_store` when `stores` is empty (single-store assignment,
+        simpler than the M2M for the common case).
+
+        With NEITHER set — true for every staff member that existed before
+        this field did, and for any newly-added staffer before an owner
+        assigns them anywhere — this deliberately returns ALL of the
+        business's active stores, matching today's completely unscoped
+        behavior. This differs from the spec's own illustrative pseudocode
+        (which falls back to Store.objects.none() here): that version would
+        lock every existing staff member out of every store-scoped page the
+        instant require_store_access() is wired into any view, before any
+        owner has assigned anyone to a specific store — see the M1 entry in
+        docs/UBA_PROGRESS.md for the full reasoning. Access only narrows
+        once an owner actively assigns a staffer to specific store(s).
+        """
+        from core.models import Store
+        if self.role == 'owner':
+            return Store.objects.filter(business=self.business, is_active=True)
+        assigned = self.stores.filter(is_active=True)
+        if assigned.exists():
+            return assigned
+        if self.home_store_id:
+            return Store.objects.filter(pk=self.home_store_id, is_active=True)
+        return Store.objects.filter(business=self.business, is_active=True)
 
     @property
     def is_departed(self):

@@ -360,6 +360,45 @@ class Store(models.Model):
     suitable_for_types = models.ManyToManyField(BusinessType, related_name='suitable_stores', blank=True)
     is_kitchen = models.BooleanField(default=False, help_text='Kitchen / grill side venture — separate POS board')
 
+    # ── UBA §5.1 — Store as first-class outlet ──────────────────────────────
+    STORE_TYPE_CHOICES = [
+        ('bar', 'Bar'),
+        ('kitchen', 'Jiko / Kitchen'),
+        ('retail', 'Duka / Retail floor'),
+        ('produce', 'Kibanda'),
+        ('salon', 'Salon'),
+        ('rental', 'Rentals'),
+        ('warehouse', 'Godown / Store'),
+        ('other', 'Nyingine'),
+    ]
+    store_type = models.CharField(
+        max_length=20, default='retail', choices=STORE_TYPE_CHOICES,
+        help_text='UBA capability model: what kind of outlet this store is.'
+    )
+    code = models.CharField(
+        max_length=12, blank=True,
+        help_text='Short code for this outlet — used on receipts, transfers, Paybill account (e.g. "KHY01").'
+    )
+    is_outlet = models.BooleanField(
+        default=True,
+        help_text='True = sells to customers. False = a godown/warehouse: holds stock, cannot sell.'
+    )
+    manager = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='managed_stores',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Deactivating blocks new sales at this store but preserves its history.'
+    )
+    opening_time = models.TimeField(null=True, blank=True)
+    closing_time = models.TimeField(null=True, blank=True)
+    target_daily_revenue = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    phone = models.CharField(max_length=20, blank=True, help_text='Store line for SMS + storefront.')
+    address_note = models.CharField(max_length=200, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+
     # ── Per-counter M-Pesa overrides (Sprint K2a) ────────────────────────────
     has_own_mpesa = models.BooleanField(
         default=False,
@@ -376,6 +415,30 @@ class Store(models.Model):
         max_length=10, blank=True,
         help_text="Leave blank to inherit from business. Set 'sandbox' or 'production' to override.",
     )
+
+    def save(self, *args, **kwargs):
+        # UBA §5.1 — keep store_type consistent with the existing,
+        # load-bearing is_kitchen flag. Deliberately ONE-DIRECTIONAL
+        # (is_kitchen -> store_type), NOT the spec's illustrative
+        # bidirectional pseudocode (which also flips is_kitchen to False
+        # whenever store_type != 'kitchen'). Found and ruled out during
+        # this sprint: core.kitchen_views.get_or_create_kitchen_store()
+        # (and any future call site) creates the kitchen Store via
+        # `Store.objects.create(..., is_kitchen=True)` alone, never setting
+        # store_type — the bidirectional version would silently flip that
+        # store's is_kitchen back to False the moment anything saved it
+        # again (store_type defaults to 'retail'), breaking the entire
+        # kitchen module for every business the instant this shipped. This
+        # mirrors Item.save()'s own precedent: legacy discriminators are
+        # ground truth, the new UBA field is derived from them, never the
+        # reverse. Setting store_type='kitchen' directly still implies
+        # is_kitchen=True (the safe, additive direction) for any future
+        # code that only knows about the new field.
+        if self.store_type == 'kitchen':
+            self.is_kitchen = True
+        elif self.is_kitchen:
+            self.store_type = 'kitchen'
+        super().save(*args, **kwargs)
 
     def __str__(self):
         business_name = self.business.name if self.business else "No Business"
