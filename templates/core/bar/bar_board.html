@@ -3182,6 +3182,8 @@
               'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
               '<button onclick="window.splitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
               'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
+              (e.payment_method !== 'credit' ? '<button onclick="window.voidDirectPayment(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+              'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🗑 Futa</button>' : '') +
               '</div>';
           });
         }
@@ -3293,6 +3295,33 @@
           .then(function (d) {
             if (d.ok) {
               showToast(d.message || '✓ Imerekebishwa');
+              window.loadRecentPayments();
+            } else if (d.shift_required) {
+              showToast('Fungua shift kwanza.');
+            } else {
+              showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+            }
+          })
+          .catch(function () { showToast('Hitilafu ya mtandao. Jaribu tena.'); });
+      },
+    });
+  };
+
+  // 2026-08-02 audit finding — a tab sale has a full undo (Futa), a debt
+  // sale has one (Ilikuwa Kosa), but a plain direct cash/mpesa sale had
+  // no way to restore stock AND remove it from revenue in one step.
+  window.voidDirectPayment = function (txnId, desc, anchorEl) {
+    if (!confirm('Futa mauzo ya "' + desc + '" kabisa? Stock itarudi na mapato yataondolewa. Hatua hii haiwezi kutenguliwa.')) return;
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kwa nini unafuta mauzo haya?',
+      chips: ['Iliingizwa mara mbili (double entry)', 'Bidhaa isiyo sahihi', 'Mteja hakununua kabisa'],
+      onSelect: function (reason) {
+        post('/bar/transactions/' + txnId + '/void/', {reason: reason || ''})
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.ok) {
+              showToast(d.message || '✓ Imefutwa');
               window.loadRecentPayments();
             } else if (d.shift_required) {
               showToast('Fungua shift kwanza.');

@@ -13511,6 +13511,217 @@ class DirectSalePaymentCorrectionTest(TestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+class VoidDirectTransactionTest(TestCase):
+    """2026-08-02 audit finding (Roy's transactional-integrity audit,
+    Monsoon Inn): a tab sale has a full undo (remove_tab_entry / "Futa"),
+    a direct-to-debt sale has one (the debt-erase-mistake write-off), but
+    a plain direct (non-tab) cash/mpesa sale had no way to restore stock
+    AND remove it from revenue in one action — correct_transaction_
+    payment_method/split_transaction_payment_method only ever relabel the
+    payment method, never touching qty or revenue. void_direct_transaction
+    closes that gap: qty→0 (restores stock, same convention remove_tab_
+    entry uses) + payment_method='void' (already excluded from every
+    revenue query app-wide), plus reversing the sale's own contribution to
+    whichever revenue-envelope model (KegBarrel/ProduceBunch/KitchenBatch)
+    it was drawn from, if any."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Void Direct Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='vd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='vd_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Tusker',
+            material_no='VD-BAR-01', unit='Pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('150'), opening_bin_balance=Decimal('20'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chips',
+            material_no='VD-KIT-01', unit='Pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('60'), opening_bin_balance=Decimal('20'),
+        )
+
+    def test_void_plain_direct_sale_restores_stock_and_zeroes_qty(self):
+        self.assertEqual(self.item.current_balance(), Decimal('20'))
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        self.assertEqual(self.item.current_balance(), Decimal('19'))
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {'reason': 'Double entry'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('0'))
+        self.assertEqual(txn.payment_method, 'void')
+        self.assertIn('Double entry', txn.recipient)
+        self.assertEqual(self.item.current_balance(), Decimal('20'))
+
+    def test_voided_sale_excluded_from_station_revenue_window(self):
+        from core.shift_views import _window_revenue
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        start = timezone.now() - timedelta(hours=1)
+        end = timezone.now() + timedelta(hours=1)
+        self.assertEqual(_window_revenue(self.biz, is_kitchen=False, start=start, end=end), 200.0)
+
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+
+        self.assertEqual(
+            _window_revenue(self.biz, is_kitchen=False, start=start, end=end), 0.0,
+            'A voided direct sale must disappear from the live revenue tile',
+        )
+
+    def test_credit_sale_cannot_be_voided_here(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='credit',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertEqual(resp.status_code, 400)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'credit')
+        self.assertEqual(txn.qty, Decimal('-1'))
+
+    def test_already_voided_sale_rejected(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('0'), sale_amount=Decimal('200'), payment_method='void',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_staff_without_open_shift_blocked(self):
+        Shift.objects.filter(staff=self.staff).delete()
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json().get('shift_required'))
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')
+
+    def test_cross_business_transaction_returns_404(self):
+        other_biz = Business.objects.create(name='Other Void Biz')
+        other_store = Store.objects.create(business=other_biz, name='Bar')
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Foreign Item',
+            material_no='VD-FOREIGN', unit='Pcs', selling_price=Decimal('300'),
+        )
+        other_txn = Transaction.objects.create(
+            business=other_biz, item=other_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'), payment_method='cash',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{other_txn.id}/void/', {})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_void_keg_pour_decrements_barrel_envelope(self):
+        barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.bar_store, item=self.item,
+            cost_price=Decimal('3000'), target_revenue=Decimal('5000'),
+            status='TAPPED', revenue_collected=Decimal('1000'),
+            volume_dispensed_ml=Decimal('2000'), cups_dispensed=10,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-500'), sale_amount=Decimal('250'), payment_method='cash',
+            keg_barrel=barrel, keg_serving='cup', keg_qty=5,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertTrue(resp.json()['ok'])
+
+        barrel.refresh_from_db()
+        self.assertEqual(barrel.revenue_collected, Decimal('750'))
+        self.assertEqual(barrel.volume_dispensed_ml, Decimal('1500'))
+        self.assertEqual(barrel.cups_dispensed, 5)
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('0'))
+
+    def test_void_produce_bunch_sale_decrements_revenue_collected(self):
+        from core.models import ProduceBunch
+        bunch = ProduceBunch.objects.create(
+            item=self.item, business=self.biz, size='MEDIUM',
+            cost_price=Decimal('40'), target_revenue=Decimal('70'),
+            revenue_collected=Decimal('30'), status='OPEN',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-0.2857'), sale_amount=Decimal('20'), payment_method='cash',
+            produce_bunch=bunch,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertTrue(resp.json()['ok'])
+        bunch.refresh_from_db()
+        self.assertEqual(bunch.revenue_collected, Decimal('10'))
+
+    def test_void_kitchen_batch_sale_decrements_revenue_collected(self):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.kitchen_item,
+            cost_total=Decimal('1500'), revenue_collected=Decimal('800'), status='OPEN',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+            kitchen_batch=batch,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertTrue(resp.json()['ok'])
+        batch.refresh_from_db()
+        self.assertEqual(batch.revenue_collected, Decimal('700'))
+
+    def test_envelope_revenue_collected_floors_at_zero(self):
+        from core.models import ProduceBunch
+        bunch = ProduceBunch.objects.create(
+            item=self.item, business=self.biz, size='SMALL',
+            cost_price=Decimal('20'), target_revenue=Decimal('35'),
+            revenue_collected=Decimal('10'), status='OPEN',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-0.5714'), sale_amount=Decimal('20'), payment_method='cash',
+            produce_bunch=bunch,
+        )
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        bunch.refresh_from_db()
+        self.assertEqual(bunch.revenue_collected, Decimal('0'))
+
+    def test_kitchen_only_staff_cannot_void_bar_sale(self):
+        kitchen_staff = User.objects.create_user(username='vd_kitchenstaff', password='x')
+        UserProfile.objects.create(user=kitchen_staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=kitchen_staff, status='OPEN', station='kitchen')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        self.client.force_login(kitchen_staff)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertEqual(resp.status_code, 403)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')
+
+
 class TransactionPresetCorrectionTest(TestCase):
     """2026-08-01 live request (Monsoon Inn, screenshots): kitchen staff
     mistakenly rang up "Wing" instead of "Leg" on a shared "Kuku" item —

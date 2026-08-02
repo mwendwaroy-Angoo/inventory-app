@@ -2698,7 +2698,9 @@
                 '<button onclick="window.kbCorrectDirectPayment(' + e.id + ',\'' + other + '\',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
                 'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
                 '<button onclick="window.kbSplitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
-                'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>';
+                'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
+                '<button onclick="window.kbVoidDirectPayment(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+                'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🗑 Futa</button>';
             }
             if (e.preset_id) {
               html +=
@@ -2806,6 +2808,33 @@
         else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
       })
       .catch(function(){ showToast('Hitilafu ya mtandao'); });
+  };
+
+  // 2026-08-02 audit finding — parity with bar_board.html's voidDirectPayment.
+  window.kbVoidDirectPayment = function (txnId, desc, anchorEl) {
+    if (!confirm('Futa mauzo ya "' + desc + '" kabisa? Stock itarudi na mapato yataondolewa. Hatua hii haiwezi kutenguliwa.')) return;
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kwa nini unafuta mauzo haya?',
+      chips: ['Iliingizwa mara mbili (double entry)', 'Bidhaa isiyo sahihi', 'Mteja hakununua kabisa'],
+      onSelect: function (reason) {
+        var fd = new URLSearchParams();
+        fd.append('reason', reason || '');
+        fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+        fetch('/bar/transactions/' + txnId + '/void/', {
+          method: 'POST', credentials: 'same-origin', body: fd
+        })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d.ok) {
+              showToast(d.message || '✓ Imefutwa');
+              window.kbLoadRecentPayments();
+            } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
+            else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
+          })
+          .catch(function () { showToast('Hitilafu ya mtandao. Jaribu tena.'); });
+      },
+    });
   };
 
   window.kbCorrectDirectPayment = function (txnId, newMethod, desc, anchorEl) {

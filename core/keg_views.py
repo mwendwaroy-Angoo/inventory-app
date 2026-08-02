@@ -1809,6 +1809,134 @@ def split_transaction_payment_method(request, txn_id):
 
 @login_required
 @require_POST
+def void_direct_transaction(request, txn_id):
+    """Fully reverse a DIRECT (non-tab) cash/mpesa sale — restores the
+    deducted stock AND removes it from every revenue tally, in one action.
+    2026-08-02 audit finding (Roy): tab-linked sales already have a clean
+    full undo (remove_tab_entry, "Futa"), and direct-to-debt sales already
+    have one too (the debt-erase-mistake write-off) — but a plain walk-up
+    cash/mpesa sale, whether whole or split across methods, had no
+    equivalent. correct_transaction_payment_method/split_transaction_
+    payment_method only ever relabel/split the payment method; neither
+    touches qty or revenue.
+
+    Sets qty=0 (removing the sale's stock effect, same convention
+    remove_tab_entry already uses) and payment_method='void' — 'void' is
+    already excluded from every revenue query in the app (_reconcile,
+    station_revenue_window, analytics), so this one flag naturally removes
+    it from the shift modal, the dashboard tile, and everywhere else in a
+    single step, with no separate "remove from revenue" step needed.
+
+    If the sale was drawn from a revenue-envelope model (KegBarrel pour,
+    ProduceBunch portion, KitchenBatch sale), also decrements that
+    envelope's revenue_collected by the voided amount — otherwise the
+    envelope would still show more collected than the transaction ledger
+    now reflects. Deliberately does NOT touch envelope status/closed_at —
+    if voiding causes a DEPLETED/DISCARDED envelope to have remaining
+    balance again, that's a separate, rarer judgment call for the owner to
+    make explicitly (a sale being voided doesn't necessarily mean the
+    barrel/bunch/batch itself is still physically available).
+
+    Restricted to cash/mpesa direct sales only — a credit (direct-to-debt)
+    sale already has its own correction tool (Ilikuwa Kosa / write-off) and
+    must go through that instead, so its debt-tracker bookkeeping stays
+    consistent.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    from django.db import transaction as db_txn
+
+    txn = get_object_or_404(
+        Transaction.objects.select_related('item__store'),
+        id=txn_id, business=up.business, type='Issue', tab_entry__isnull=True,
+    )
+    try:
+        is_kitchen = bool(txn.item.store.is_kitchen)
+    except Exception:
+        is_kitchen = False
+    if ('kitchen' if is_kitchen else 'bar') not in _allowed_tab_sources(up):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kufuta mauzo haya.'}, status=403)
+
+    if txn.payment_method not in ('cash', 'mpesa'):
+        return JsonResponse(
+            {'ok': False, 'error': 'Muamala huu hauwezi kufutwa hapa — tumia zana sahihi (k.m. Ilikuwa Kosa kwa mauzo ya deni).'},
+            status=400,
+        )
+
+    reason = (request.POST.get('reason') or '').strip()
+    old_amount = float(txn.revenue())
+    old_method = txn.payment_method
+    item_description = txn.item.description if txn.item else ''
+
+    with db_txn.atomic():
+        txn = Transaction.objects.select_for_update().get(id=txn.id)
+        if txn.payment_method == 'void':
+            return JsonResponse({'ok': False, 'error': 'Tayari imefutwa.'}, status=400)
+
+        sale_amt = txn.sale_amount or Decimal('0')
+        if txn.keg_barrel_id:
+            barrel = KegBarrel.objects.select_for_update().get(id=txn.keg_barrel_id)
+            barrel.revenue_collected = max(Decimal('0'), (barrel.revenue_collected or Decimal('0')) - sale_amt)
+            update_fields = ['revenue_collected']
+            ml = abs(txn.qty or Decimal('0'))
+            barrel.volume_dispensed_ml = max(Decimal('0'), (barrel.volume_dispensed_ml or Decimal('0')) - ml)
+            update_fields.append('volume_dispensed_ml')
+            serving = (txn.keg_serving or '').strip()
+            qty_int = int(txn.keg_qty or 0)
+            if serving == 'jug' and qty_int:
+                barrel.jugs_dispensed = max(0, (barrel.jugs_dispensed or 0) - qty_int)
+                update_fields.append('jugs_dispensed')
+            elif serving == 'pint' and qty_int:
+                barrel.pints_dispensed = max(0, (barrel.pints_dispensed or 0) - qty_int)
+                update_fields.append('pints_dispensed')
+            elif qty_int:
+                barrel.cups_dispensed = max(0, (barrel.cups_dispensed or 0) - qty_int)
+                update_fields.append('cups_dispensed')
+            barrel.save(update_fields=update_fields)
+        elif txn.produce_bunch_id:
+            from .models import ProduceBunch
+            bunch = ProduceBunch.objects.select_for_update().get(id=txn.produce_bunch_id)
+            bunch.revenue_collected = max(Decimal('0'), (bunch.revenue_collected or Decimal('0')) - sale_amt)
+            bunch.save(update_fields=['revenue_collected'])
+        elif txn.kitchen_batch_id:
+            from .models import KitchenBatch
+            batch = KitchenBatch.objects.select_for_update().get(id=txn.kitchen_batch_id)
+            batch.revenue_collected = max(Decimal('0'), (batch.revenue_collected or Decimal('0')) - sale_amt)
+            batch.save(update_fields=['revenue_collected'])
+
+        txn.qty = Decimal('0')
+        txn.payment_method = 'void'
+        if reason:
+            txn.recipient = (f'{txn.recipient} [FUTWA: {reason}]' if txn.recipient else f'[FUTWA: {reason}]')[:200]
+            txn.save(update_fields=['qty', 'payment_method', 'recipient'])
+        else:
+            txn.save(update_fields=['qty', 'payment_method'])
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    label = {'cash': 'Cash', 'mpesa': 'M-Pesa'}
+    message = (
+        f'🗑 {who} amefuta mauzo ya "{item_description}" (KES {old_amount:,.0f} '
+        f'{label.get(old_method, old_method)}) — stock na mapato vimerekebishwa. Tarehe {when}.'
+        + (f' Sababu: {reason}' if reason else '')
+    )
+    _notify_direct_correction(up.business, message, request.user, source=('kitchen' if is_kitchen else 'bar'))
+
+    return JsonResponse({'ok': True, 'message': message})
+
+
+@login_required
+@require_POST
 def correct_transaction_preset(request, txn_id):
     """Correct WHICH preset/cut was actually sold on an already-recorded
     sale — e.g. staff tapped "Wing" but the piece actually served (and
