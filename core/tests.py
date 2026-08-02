@@ -21164,3 +21164,70 @@ class AnalyticsSectionRegistryTest(TestCase):
         self.assertEqual(expected_rows, [])
         self.assertEqual(matching, [])
 
+
+# ── UBA M0-AC3 — a new profile needs only a business_profiles.py edit ───────
+
+class UbaStubProfileAcceptanceTest(TestCase):
+    """M0-AC3: 'a new profile can be added by editing only business_profiles.py
+    — prove it by adding a stub salon profile that renders a working (empty)
+    navbar and dashboard with no other file changed.'
+
+    The 'uba_stub_salon' profile added alongside the real 8 is deliberately
+    namespaced away from the real seeded 'Salon & Barbershop' BusinessType
+    (confirmed via grep of core/migrations/0006_seed_business_types_counties.py)
+    — a live business already using that real name must never be affected by
+    this proof; only a business explicitly typed under the stub's own
+    never-colliding match string picks it up."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        self.stub_type, _c = BusinessType.objects.get_or_create(
+            name='UBA M0-AC3 Stub — Salon (proof only, not the real Phase 3 build)'
+        )
+        self.biz = Business.objects.create(name='UBA Stub Salon Biz', business_type=self.stub_type)
+        Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='uba_stub_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_home_dashboard_renders_for_stub_profile(self):
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_navbar_renders_without_error(self):
+        """base.html is rendered on every page, including home() — a 500 here
+        would mean the navbar can't handle a profile it doesn't recognise."""
+        resp = self.client.get('/')
+        self.assertContains(resp, 'Duka')
+
+    def test_item_form_hides_yield_and_produce_keg_sections(self):
+        resp = self.client.get('/stock/add/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Yield / Processing')
+        self.assertNotContains(resp, 'Produce Settings')
+        self.assertNotContains(resp, 'Keg Settings')
+        # Restriction Settings has no hide key populated for this stub -> still shows
+        self.assertContains(resp, 'Restriction Settings')
+
+    def test_capability_composed_correctly(self):
+        from core.business_profiles import get_profile
+        profile = get_profile(self.biz)
+        self.assertEqual(profile['type'], 'uba_stub_salon')
+        cap = profile['capability']
+        self.assertIn('SERVICE', cap.stock_models)
+        self.assertIn('BOOKING', cap.sale_mechanics)
+        self.assertIn('yield', cap.hides)
+
+    def test_real_salon_barbershop_business_type_unaffected(self):
+        """The actual seeded BusinessType ('Salon & Barbershop') must still
+        fall through to DEFAULT_PROFILE/DEFAULT_CAPABILITY, completely
+        unaffected by the stub — this is the whole reason the stub uses a
+        deliberately non-colliding match string."""
+        from accounts.models import BusinessType
+        from core.business_profiles import get_profile, DEFAULT_CAPABILITY
+        real_salon_type, _c = BusinessType.objects.get_or_create(name='Salon & Barbershop')
+        real_salon_biz = Business.objects.create(name='Real Salon Biz', business_type=real_salon_type)
+        profile = get_profile(real_salon_biz)
+        self.assertEqual(profile['type'], '')
+        self.assertEqual(profile['capability'], DEFAULT_CAPABILITY)
+

@@ -508,6 +508,19 @@ CAPABILITIES = {
         modules=frozenset(),
         board_template='retail_board',
     ),
+    # UBA M0-AC3 proof stub — see the matching PROFILES entry above for why
+    # this is deliberately namespaced away from the real seeded 'Salon &
+    # Barbershop' BusinessType. `hides` is populated (unlike every real
+    # profile above) specifically so the item_form.html gating built in
+    # M0-3 has something concrete to prove itself against.
+    'uba_stub_salon': Capability(
+        stock_models=frozenset({'SERVICE', 'UNIT'}),
+        sale_mechanics=frozenset({'BOOKING', 'POS_CART', 'COMMISSION', 'CREDIT'}),
+        accountability=frozenset({'RECIPE_VARIANCE', 'CASH_DRAWER'}),
+        modules=frozenset({'salon'}),
+        hides=frozenset({'yield', 'produce_keg_settings'}),
+        board_template='salon_board',
+    ),
 }
 
 DEFAULT_CAPABILITY = Capability(
@@ -570,6 +583,22 @@ PROFILES = {
         'board': 'grid',
         'modules': dict(_DEFAULT_MODULES),
         'catalog': WATER_CATALOG,
+    },
+    # ── UBA M0-AC3 proof stub ───────────────────────────────────────────────
+    # Deliberately NOT 'Salon & Barbershop' (the real seeded BusinessType from
+    # migration 0006) — a live business already using that exact name would
+    # have its item form/capability silently changed the moment this profile
+    # existed, which is exactly the "must not change behaviour by a single
+    # pixel" rule this whole sprint exists to protect. This match string can
+    # never collide with a real seeded business type. Phase 3's real Salon
+    # profile (spec §9) replaces this stub outright when that sprint starts —
+    # this one only exists to prove M0-AC3: "a new profile can be added by
+    # editing only business_profiles.py."
+    'uba_stub_salon': {
+        'match': ['UBA M0-AC3 Stub — Salon (proof only, not the real Phase 3 build)'],
+        'board': 'grid',
+        'modules': dict(_DEFAULT_MODULES),
+        'catalog': [],
     },
 }
 
