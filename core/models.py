@@ -460,6 +460,33 @@ class Item(models.Model):
         help_text='Enable portion-based selling. Owner defines price presets (e.g. KES 40 = quarter head). Used for vegetables, produce, and gorogoro items.'
     )
 
+    # ── Universal Business Architecture — capability model (UBA §2.1) ──────
+    # Declarative "how is this sellable thing counted" — the eight stock
+    # models every future business type composes from. This is metadata
+    # only for now: nothing outside save()'s own sync block reads it yet.
+    # The existing discriminators (is_produce, produce_mode, is_keg,
+    # is_kitchen_batch, produce_bunch_id, etc.) remain the load-bearing
+    # ones every view/template/report already reads — do not remove them,
+    # and do not change any of them to read stock_model instead without a
+    # dedicated regression sweep (see CLAUDE.md's "discriminator
+    # consistency" rule).
+    STOCK_MODEL_CHOICES = [
+        ('UNIT', 'Unit — countable (default)'),
+        ('MEASURE', 'Measure — weight/volume, decanted from a bulk parent'),
+        ('ENVELOPE', 'Envelope — revenue batch, no unit count'),
+        ('VARIANT', 'Variant — one product, many sellable children (size/colour)'),
+        ('SERIAL', 'Serial — each physical unit individually identified'),
+        ('LOT', 'Lot — batch with its own expiry, FIFO depletion'),
+        ('SERVICE', 'Service — time + skill, consumes supplies per a recipe'),
+        ('ASSET', 'Asset — goes out, must come back'),
+    ]
+    stock_model = models.CharField(
+        max_length=10, choices=STOCK_MODEL_CHOICES, default='UNIT',
+        help_text='UBA capability model: how this item\'s stock is counted. '
+                  'Kept in sync with is_produce/produce_mode in save() for '
+                  'existing items — see Item.save().'
+    )
+
     # ── Greens / bunch-based produce (Kibanda Produce Module) ──────────────
     PRODUCE_MODE_CHOICES = [
         ('PORTION', _('Portion / fraction (cabbage, gorogoro)')),
@@ -672,6 +699,22 @@ class Item(models.Model):
         if self.selling_price and self.cost_price:
             return float(self.selling_price) - float(self.cost_price)
         return 0
+
+    def save(self, *args, **kwargs):
+        # UBA §2.1 — keep stock_model in sync with the existing, load-bearing
+        # discriminators for every item type this app already builds. Only
+        # fires when one of these legacy flags is set; a plain item (or a
+        # future VARIANT/SERIAL/LOT/SERVICE/ASSET item nothing here creates
+        # yet) keeps whatever stock_model it already has.
+        if self.is_produce and self.produce_mode == 'BUNCH':
+            self.stock_model = 'ENVELOPE'
+        elif self.is_produce:
+            self.stock_model = 'UNIT'
+        elif self.is_keg:
+            self.stock_model = 'MEASURE'
+        elif self.is_kitchen_batch:
+            self.stock_model = 'ENVELOPE'
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.material_no} - {self.description}"
