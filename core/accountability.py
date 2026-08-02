@@ -193,3 +193,55 @@ def _fitting_room_engine(*, business, store, shift, date_from=None, date_to=None
 
 
 register_engine('fitting_room', _fitting_room_engine)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 'recipe_variance' engine — UBA §9.2 (Sprint S1), the salon side-client detector.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _recipe_variance_engine(*, business, store, shift, date_from=None, date_to=None) -> Optional[VarianceResult]:
+    """`store` here is repurposed as the (item, stylist) tuple this call is
+    scoped to, matching the same "generic kwarg reused for the specific
+    object" convention `_keg_shift_engine`/`_fitting_room_engine` both use.
+    Reuses core.salon.expected_consumption()/actual_shrinkage() — the
+    latter reads StockCountLine (R3's cycle-count model) exactly as-is
+    rather than inventing a parallel opening/closing-count tracker.
+
+    Deliberately does NOT implement a learned baseline (F3's keg pattern) —
+    that needs its own dedicated tracking field/sprint; `coverage_pct`
+    alone (0 when the supply item was never physically counted in the
+    window, 100 when it was) already satisfies S1-AC2's "never produces a
+    variance for a stylist whose supplies were not counted" requirement
+    without one. Flagged in core/salon.py as a documented follow-up."""
+    if store is None or date_from is None or date_to is None:
+        return None
+    item, stylist = store
+    from core.salon import actual_shrinkage, expected_consumption
+
+    expected = expected_consumption(business, item, stylist, date_from, date_to)
+    shortage, coverage_pct = actual_shrinkage(business, item, date_from, date_to)
+    if coverage_pct == 0:
+        return VarianceResult(
+            expected=expected, actual=Decimal('0'), variance=Decimal('0'),
+            variance_kes=Decimal('0'), variance_pct=None, baseline_pct=None,
+            flag='ok', coverage_pct=Decimal('0'), is_partial=True,
+        )
+    variance = shortage - expected
+    variance_kes = variance * _dec(getattr(item, 'cost_price', None) or 0)
+    from core.models import ServiceSupplyLine
+    first_line = ServiceSupplyLine.objects.filter(item=item).first()
+    tolerance_pct = float(first_line.tolerance_pct) if first_line else 25.0
+    variance_pct = _dec(abs(variance) / expected * 100) if expected > 0 else None
+    flag = 'ok'
+    if variance_pct is not None:
+        flag = keg_metrics.variance_flag(float(variance_pct), tolerance_pct)
+    elif variance > 0:
+        flag = 'warning'
+    return VarianceResult(
+        expected=expected, actual=shortage, variance=variance, variance_kes=variance_kes,
+        variance_pct=variance_pct, baseline_pct=None, flag=flag,
+        coverage_pct=Decimal('100'), is_partial=False,
+    )
+
+
+register_engine('recipe_variance', _recipe_variance_engine)

@@ -240,6 +240,10 @@ from core.variants_views import create_variant_matrix_view
 from core.apparel_views import (
     aging_markdown_report_view, apply_markdown_view, record_fitting_room_count,
 )
+from core.salon_views import (
+    complete_service_view, recipe_variance_report_view, create_appointment,
+    update_appointment_status, commission_report_view,
+)
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -814,6 +818,12 @@ urlpatterns = [
     path("analytics/apparel/aging-markdown/", aging_markdown_report_view, name="aging_markdown_report_view"),
     path("stock/items/<int:item_id>/apply-markdown/", apply_markdown_view, name="apply_markdown_view"),
     path("apparel/fitting-room/record/", record_fitting_room_count, name="record_fitting_room_count"),
+    # ── UBA S1/S2/S3 — salon: services, bookings, commission ────────────────────
+    path("salon/services/complete/", complete_service_view, name="complete_service_view"),
+    path("salon/services/recipe-variance/", recipe_variance_report_view, name="recipe_variance_report_view"),
+    path("salon/appointments/create/", create_appointment, name="create_appointment"),
+    path("salon/appointments/<int:appointment_id>/status/", update_appointment_status, name="update_appointment_status"),
+    path("salon/commission/<int:stylist_id>/", commission_report_view, name="commission_report_view"),
 ]
 
 if settings.DEBUG:

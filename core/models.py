@@ -233,6 +233,11 @@ class Customer(models.Model):
         blank=True,
         help_text='Internal notes about this customer (e.g. preferences, contact details).',
     )
+    no_show_count = models.PositiveIntegerField(
+        default=0,
+        help_text='UBA §9.3 (Salon) — missed appointments. A repeat no-show can be required '
+                  'to leave a booking deposit (PaymentPlan kind=BOOKING).'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -1040,6 +1045,17 @@ class Transaction(models.Model):
             'excludes a transfer from revenue()/cost() everywhere — a transfer '
             'is a stock movement, never a sale.'
         ),
+    )
+    service = models.ForeignKey(
+        'Service', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales',
+        help_text='UBA §9.2 (Salon) — set on the shadow-item Issue transaction when this '
+                  'is a completed service sale, and on each recipe-line supply deduction.'
+    )
+    performed_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='services_performed',
+        help_text='UBA §9.2 (Salon) — the STYLIST who performed the service, distinct from '
+                  '`recorded_by` (the cashier/whoever rang it up). Never set for non-salon sales.'
     )
     created_at = models.DateTimeField(
         default=timezone.now, null=True, blank=True,
@@ -3103,6 +3119,127 @@ class FittingRoomLog(models.Model):
 
     def __str__(self):
         return f"{self.pieces_out} out / {self.pieces_back} back (variance {self.variance})"
+
+
+# ────────────────────────────────────────────────
+# UBA §9.2 (Sprint S1) — Salon: services, recipes, the side-client detector
+# ────────────────────────────────────────────────
+
+class Service(models.Model):
+    """A sold SERVICE, not a physical good. `Transaction.item` is
+    non-nullable throughout this codebase (VERIFY-ME confirmed: every
+    `item = models.ForeignKey(Item, ...)` in this file has no `null=True`) —
+    per the spec's own explicit recommendation, this uses the lower-risk
+    shadow-Item approach (`shadow_item`, `stock_model='SERVICE'`, balance
+    never checked/meaningful) rather than making `Transaction.item`
+    nullable, which the spec calls out as needing a full app-wide audit of
+    every existing `item=`-assuming reader. See `core.salon.
+    get_or_create_shadow_item()` and `complete_service_locked()`."""
+    COMMISSION_CHOICES = [('NONE', 'Hakuna'), ('PERCENT', 'Asilimia'), ('FIXED', 'Kiasi Maalum')]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='services')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True)
+    name = models.CharField(max_length=120)
+    category = models.CharField(max_length=60, blank=True, help_text="'Nywele'|'Kucha'|'Ngozi'.")
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    duration_minutes = models.PositiveIntegerField(default=30)
+    buffer_minutes = models.PositiveIntegerField(default=0)
+    commission_type = models.CharField(max_length=10, choices=COMMISSION_CHOICES, default='NONE')
+    commission_value = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    requires_booking = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    rebook_after_days = models.PositiveIntegerField(
+        null=True, blank=True, help_text='UBA §9.3 rebooking nudge — e.g. 42 for a 6-week retouch cycle.'
+    )
+    display_order = models.IntegerField(default=0)
+    shadow_item = models.OneToOneField(
+        Item, on_delete=models.SET_NULL, null=True, blank=True, related_name='service_for',
+        help_text='Auto-created — see core.salon.get_or_create_shadow_item(). Never sold via '
+                  'the normal item-balance path; its own balance is meaningless/untracked.'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['display_order', 'name']
+
+    def __str__(self):
+        return self.name
+
+    def commission_amount(self, sale_amount):
+        if self.commission_type == 'PERCENT':
+            return (Decimal(str(sale_amount)) * self.commission_value / Decimal('100')).quantize(Decimal('0.01'))
+        if self.commission_type == 'FIXED':
+            return self.commission_value
+        return Decimal('0')
+
+
+class ServiceSupplyLine(models.Model):
+    """The recipe. THIS is what makes the accountability engine work for
+    salons — see core.salon.expected_consumption()."""
+    service = models.ForeignKey(Service, on_delete=models.CASCADE, related_name='supplies')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, help_text='A MEASURE or UNIT stock item.')
+    qty_expected = models.DecimalField(max_digits=10, decimal_places=3, help_text='e.g. 60 (ml of relaxer).')
+    tolerance_pct = models.DecimalField(
+        max_digits=5, decimal_places=1, default=Decimal('25.0'),
+        help_text='Hair varies — be generous or you cry wolf.'
+    )
+
+    def __str__(self):
+        return f"{self.service.name}: {self.qty_expected} {self.item.unit} of {self.item.description}"
+
+
+# ────────────────────────────────────────────────
+# UBA §9.3 (Sprint S2) — bookings, walk-ins, chair queue
+# ────────────────────────────────────────────────
+
+class Appointment(models.Model):
+    STATUS_BOOKED = 'BOOKED'
+    STATUS_CONFIRMED = 'CONFIRMED'
+    STATUS_ARRIVED = 'ARRIVED'
+    STATUS_IN_SERVICE = 'IN_SERVICE'
+    STATUS_DONE = 'DONE'
+    STATUS_NO_SHOW = 'NO_SHOW'
+    STATUS_CANCELLED = 'CANCELLED'
+    STATUS_CHOICES = [
+        (STATUS_BOOKED, 'Imewekwa'), (STATUS_CONFIRMED, 'Imethibitishwa'),
+        (STATUS_ARRIVED, 'Amefika'), (STATUS_IN_SERVICE, 'Inaendelea'),
+        (STATUS_DONE, 'Imekamilika'), (STATUS_NO_SHOW, 'Hakuja'),
+        (STATUS_CANCELLED, 'Imefutwa'),
+    ]
+    SOURCE_CHOICES = [
+        ('walkin', 'Walk-in'), ('phone', 'Simu'), ('whatsapp', 'WhatsApp'), ('online', 'Mtandaoni'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='appointments')
+    store = models.ForeignKey(Store, on_delete=models.CASCADE)
+    customer = models.ForeignKey('Customer', on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
+    customer_name = models.CharField(max_length=200, blank=True)
+    customer_phone = models.CharField(max_length=20, blank=True)
+    staff = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='appointments', help_text='Requested stylist.'
+    )
+    start_at = models.DateTimeField()
+    end_at = models.DateTimeField()
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_BOOKED)
+    source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='walkin')
+    deposit_plan = models.ForeignKey('PaymentPlan', on_delete=models.SET_NULL, null=True, blank=True)
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['start_at']
+
+    def __str__(self):
+        return f"{self.customer_name or (self.customer.name if self.customer else '?')} — {self.start_at:%d %b %H:%M}"
+
+
+class AppointmentService(models.Model):
+    appointment = models.ForeignKey(Appointment, on_delete=models.CASCADE, related_name='services')
+    service = models.ForeignKey(Service, on_delete=models.CASCADE)
+    price_at_booking = models.DecimalField(max_digits=10, decimal_places=2)
+
+    def __str__(self):
+        return f"{self.service.name} @ KES {self.price_at_booking}"
 
 
 # ────────────────────────────────────────────────

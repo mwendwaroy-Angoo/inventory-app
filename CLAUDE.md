@@ -814,6 +814,42 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA S1/S2/S3 (2026-08-02): Salon/Barbershop/Spa (spec §9), closing out
+  Phase 3 (real `'salon'` profile registration deferred to the same
+  future rollup sprint as apparel — "Salon & Barbershop" is likewise a
+  live BusinessType). **S1 — Services, recipes, side-client detector**:
+  confirmed `Transaction.item` is non-nullable throughout, so per the
+  spec's own recommendation built the shadow-Item approach instead of an
+  app-wide nullable-FK audit — `Service.shadow_item` (auto-created,
+  `stock_model='SERVICE'`) is what a completed service actually posts
+  against, so every existing receipt/analytics/debt/target path works
+  unmodified. `complete_service_locked()` creates the shadow-item Issue
+  (real revenue) plus one `type='Draw'` transaction per recipe line for
+  the real supply item — reusing the EXISTING Draw precedent (built for
+  KitchenBatch) avoids a real bug: a naive recipe-consumption transaction
+  with no sale_amount would double-count as a second sale the moment the
+  supply item also has a retail selling_price, since revenue()'s fallback
+  multiplies by it — Draw already returns 0 from revenue()'s first check.
+  Free redo (zero revenue, excluded from the variance denominator) needs
+  no extra logic — it simply never creates the shadow-item Issue, and the
+  denominator only counts services via exactly that transaction. New
+  `'recipe_variance'` accountability engine — the THIRD real caller for
+  the VarianceResult contract — reuses R3's `StockCountLine` as-is for
+  the "actual" side rather than inventing a parallel count tracker;
+  coverage_pct=0 (never accuses) when the supply was never physically
+  counted. Full learned-baseline system deliberately deferred. **S2 —
+  Bookings**: new `Appointment`/`AppointmentService`; double-booking
+  refused via a direct overlapping-window query; no-show tracking on
+  `Customer.no_show_count`; T-24h reminder SMS deferred (needs a
+  scheduler, same documented limitation as every deferred-cron feature
+  this session). **S3 — Commission**: deliberately reuses the EXISTING
+  Haki module rather than a parallel payment mechanism — commission_
+  report() reuses `_salary_period_balance()`'s "sum every SalaryPayment"
+  logic, and recording a payment is literally the existing `record_
+  salary_payment()` view (already sends the H2 employee SMS confirmation).
+  Dedicated salon_board.html deferred. 15 new tests. 1355 tests pass.
+  This completes Phase 3 in full. See `docs/UBA_PROGRESS.md`. Next:
+  Phase 4 (Rentals) — L1, L2, L3.
 - UBA A1/A2/A3 (2026-08-02): Apparel/boutique/mitumba (spec §8.2–§8.4),
   closing out Phase 2 (photos excluded per the standing blocker table —
   `ItemPhoto` left unbuilt, Render's ephemeral filesystem). Logged a new

@@ -9,12 +9,13 @@ from django.utils import timezone
 
 from accounts.models import Business, UserProfile
 from core.models import (
-    BarCupLog, BarTab, BarTabEntry, BusinessException, County, Customer,
-    FittingRoomLog, GlobalProduct, Item, ItemPortionPreset, ItemPriceHistory,
-    KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
-    KitchenStockReceipt, KitchenStockReceiptLine, MarketPriceIndex,
-    Notification, Payment, PaymentPlan, PaymentPlanEntry, PettyCash,
-    ProduceBunch, Receipt, Return, RevenueTarget, Shift, StockCountLine,
+    Appointment, AppointmentService, BarCupLog, BarTab, BarTabEntry,
+    BusinessException, County, Customer, FittingRoomLog, GlobalProduct, Item,
+    ItemPortionPreset, ItemPriceHistory, KegBarrel, KegWeightReading,
+    KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
+    KitchenStockReceiptLine, MarketPriceIndex, Notification, Payment,
+    PaymentPlan, PaymentPlanEntry, PettyCash, ProduceBunch, Receipt, Return,
+    RevenueTarget, Service, ServiceSupplyLine, Shift, StockCountLine,
     StockCountSession, Store, StockTransfer, StockTransferLine,
     SupplierInvoice, SupplierPayment, TabTransferRequest, TillCount, Transaction,
 )
@@ -23563,3 +23564,260 @@ class FittingRoomLogTest(TestCase):
             'pieces_out': '5', 'pieces_back': '5', 'store': self.store.id,
         })
         self.assertEqual(resp.status_code, 403)
+
+
+class SalonServiceTest(TestCase):
+    """UBA S1 §9.2 — services, recipes, shadow-item revenue path."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Salon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Salon')
+        self.owner_user = User.objects.create_user(username='sal_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.stylist_user = User.objects.create_user(username='sal_stylist', password='x')
+        self.stylist = UserProfile.objects.create(user=self.stylist_user, business=self.biz, role='staff')
+        self.relaxer = Item.objects.create(
+            business=self.biz, store=self.store, description='Relaxer',
+            material_no='SAL-RELAXER', unit='ml', cost_price=Decimal('2'),
+            opening_bin_balance=5000,
+        )
+        self.service = Service.objects.create(
+            business=self.biz, store=self.store, name='Retouch', price=Decimal('1500'),
+            commission_type='PERCENT', commission_value=Decimal('40'),
+        )
+        ServiceSupplyLine.objects.create(service=self.service, item=self.relaxer, qty_expected=Decimal('60'))
+
+    def test_shadow_item_created_lazily_with_service_stock_model(self):
+        from core.salon import get_or_create_shadow_item
+        self.assertIsNone(self.service.shadow_item_id)
+        shadow = get_or_create_shadow_item(self.service)
+        self.assertEqual(shadow.stock_model, 'SERVICE')
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.shadow_item_id, shadow.id)
+
+    def test_complete_service_deducts_recipe_and_issues_receipt_ready_revenue(self):
+        from core.salon import complete_service_locked
+        service_txn, supply_txns = complete_service_locked(
+            self.service, self.stylist, self.biz, payment_method='cash', recorded_by=self.owner,
+        )
+        self.assertEqual(service_txn.type, 'Issue')
+        self.assertEqual(float(service_txn.revenue()), 1500.0)
+        self.assertEqual(service_txn.performed_by_id, self.stylist.id)
+        self.assertEqual(len(supply_txns), 1)
+        self.assertEqual(supply_txns[0].type, 'Draw')
+        self.relaxer.refresh_from_db()
+        self.assertEqual(self.relaxer.current_balance(), 5000 - 60)
+
+    def test_draw_transaction_never_counts_as_revenue_even_if_item_has_selling_price(self):
+        """Regression lock for the exact bug this design avoids: a supply
+        item that ALSO has its own selling_price (common -- many salon
+        supplies are sold retail too) must never have its recipe-consumption
+        Draw transaction misread as a second sale."""
+        self.relaxer.selling_price = Decimal('500')
+        self.relaxer.save(update_fields=['selling_price'])
+        from core.salon import complete_service_locked
+        _, supply_txns = complete_service_locked(
+            self.service, self.stylist, self.biz, recorded_by=self.owner,
+        )
+        self.assertEqual(float(supply_txns[0].revenue()), 0.0)
+
+    def test_free_redo_zero_revenue_and_excluded_from_services_performed_count(self):
+        from core.salon import complete_service_locked, expected_consumption
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)  # real service
+        service_txn, supply_txns = complete_service_locked(
+            self.service, self.stylist, self.biz, is_redo=True, recorded_by=self.owner,
+        )
+        self.assertIsNone(service_txn)  # no shadow-item Issue created for a redo
+        self.assertEqual(supply_txns[0].invoice_no, '[REDO]')
+        today = timezone.localdate()
+        expected = expected_consumption(self.biz, self.relaxer, self.stylist, today, today)
+        self.assertEqual(expected, Decimal('60'))  # only the ONE real service counted, not the redo
+
+    def test_commission_amount_percent_and_fixed(self):
+        self.assertEqual(self.service.commission_amount(Decimal('1500')), Decimal('600.00'))
+        fixed_service = Service.objects.create(
+            business=self.biz, name='Wash', price=Decimal('300'),
+            commission_type='FIXED', commission_value=Decimal('100'),
+        )
+        self.assertEqual(fixed_service.commission_amount(Decimal('300')), Decimal('100'))
+
+    def test_complete_service_view_end_to_end(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/salon/services/complete/', {
+            'service_id': self.service.id, 'stylist_id': self.stylist.id, 'payment_method': 'cash',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIsNotNone(data['service_txn_id'])
+
+
+class RecipeVarianceEngineTest(TestCase):
+    """UBA S1-AC2 — the side-client detector accountability engine."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='RV Salon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Salon')
+        self.owner_user = User.objects.create_user(username='rv_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.stylist_user = User.objects.create_user(username='rv_stylist', password='x')
+        self.stylist = UserProfile.objects.create(user=self.stylist_user, business=self.biz, role='staff')
+        self.relaxer = Item.objects.create(
+            business=self.biz, store=self.store, description='Relaxer',
+            material_no='RV-RELAXER', unit='ml', cost_price=Decimal('3'), opening_bin_balance=1000,
+        )
+        self.service = Service.objects.create(business=self.biz, store=self.store, name='Retouch', price=Decimal('1500'))
+        ServiceSupplyLine.objects.create(service=self.service, item=self.relaxer, qty_expected=Decimal('60'))
+
+    def test_never_counted_gives_coverage_zero_and_no_accusation(self):
+        from core.accountability import variance_for
+        from core.salon import complete_service_locked
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)
+        today = timezone.localdate()
+        result = variance_for(
+            'recipe_variance', business=self.biz, store=(self.relaxer, self.stylist), shift=None,
+            date_from=today, date_to=today,
+        )
+        self.assertEqual(result.coverage_pct, Decimal('0'))
+        self.assertTrue(result.is_partial)
+        self.assertEqual(result.flag, 'ok')  # never accuses when uncounted
+
+    def test_matching_count_shows_no_variance(self):
+        from core.accountability import variance_for
+        from core.salon import complete_service_locked
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)  # -60ml drawn
+        self.relaxer.refresh_from_db()
+        session = StockCountSession.objects.create(business=self.biz, store=self.store, started_by=self.owner)
+        line = StockCountLine.objects.create(session=session, item=self.relaxer, book_qty=self.relaxer.current_balance())
+        line.counted_qty = self.relaxer.current_balance()  # count matches book exactly
+        line.variance_qty = Decimal('0')
+        line.counted_at = timezone.now()
+        line.save()
+        today = timezone.localdate()
+        result = variance_for(
+            'recipe_variance', business=self.biz, store=(self.relaxer, self.stylist), shift=None,
+            date_from=today, date_to=today,
+        )
+        self.assertEqual(result.coverage_pct, Decimal('100'))
+        self.assertEqual(result.variance, Decimal('0') - Decimal('60'))  # no shortage counted -> pure negative of expected
+        # sanity: with zero physical shortage, actual shrinkage is 0
+        self.assertEqual(result.actual, Decimal('0'))
+
+    def test_side_client_signal_when_shrinkage_exceeds_expected(self):
+        from core.accountability import variance_for
+        from core.salon import complete_service_locked
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)  # 1 service, expects 60ml
+        self.relaxer.refresh_from_db()
+        session = StockCountSession.objects.create(business=self.biz, store=self.store, started_by=self.owner)
+        line = StockCountLine.objects.create(session=session, item=self.relaxer, book_qty=self.relaxer.current_balance())
+        # physical count shows MORE missing than the one recorded service can explain
+        line.counted_qty = self.relaxer.current_balance() - Decimal('100')
+        line.variance_qty = Decimal('-100')
+        line.counted_at = timezone.now()
+        line.save()
+        today = timezone.localdate()
+        result = variance_for(
+            'recipe_variance', business=self.biz, store=(self.relaxer, self.stylist), shift=None,
+            date_from=today, date_to=today,
+        )
+        self.assertEqual(result.actual, Decimal('100'))
+        self.assertEqual(result.variance, Decimal('40'))  # 100 actual shrinkage - 60 expected = 40ml unaccounted
+
+
+class SalonAppointmentTest(TestCase):
+    """UBA S2 §9.3 — bookings, double-booking prevention, no-show tracking."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Booking Salon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Salon')
+        self.owner_user = User.objects.create_user(username='book_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.stylist_user = User.objects.create_user(username='book_stylist', password='x')
+        self.stylist = UserProfile.objects.create(user=self.stylist_user, business=self.biz, role='staff')
+
+    def test_double_booking_same_stylist_refused(self):
+        self.client.force_login(self.owner_user)
+        resp1 = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'staff_id': self.stylist.id,
+            'start_at': '2026-09-01T10:00:00', 'end_at': '2026-09-01T11:00:00',
+            'customer_name': 'Alice',
+        })
+        self.assertTrue(resp1.json()['ok'])
+        resp2 = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'staff_id': self.stylist.id,
+            'start_at': '2026-09-01T10:30:00', 'end_at': '2026-09-01T11:30:00',
+            'customer_name': 'Bob',
+        })
+        self.assertFalse(resp2.json()['ok'])
+        self.assertIn('appointment', resp2.json()['error'].lower())
+
+    def test_non_overlapping_slots_both_allowed(self):
+        self.client.force_login(self.owner_user)
+        resp1 = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'staff_id': self.stylist.id,
+            'start_at': '2026-09-01T10:00:00', 'end_at': '2026-09-01T11:00:00',
+            'customer_name': 'Alice',
+        })
+        resp2 = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'staff_id': self.stylist.id,
+            'start_at': '2026-09-01T11:00:00', 'end_at': '2026-09-01T12:00:00',
+            'customer_name': 'Bob',
+        })
+        self.assertTrue(resp1.json()['ok'])
+        self.assertTrue(resp2.json()['ok'])
+
+    def test_no_show_increments_customer_count(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'start_at': '2026-09-01T10:00:00',
+            'end_at': '2026-09-01T11:00:00', 'customer_name': 'Repeat Offender',
+        })
+        appt_id = resp.json()['appointment_id']
+        self.client.post(f'/salon/appointments/{appt_id}/status/', {'status': 'NO_SHOW'})
+        customer = Customer.objects.get(business=self.biz, name='Repeat Offender')
+        self.assertEqual(customer.no_show_count, 1)
+
+
+class SalonCommissionTest(TestCase):
+    """UBA S3 §9.4 — commission ledger, reusing the existing Haki module."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Commission Salon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Salon')
+        self.owner_user = User.objects.create_user(username='comm_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.stylist_user = User.objects.create_user(username='comm_stylist', password='x')
+        self.stylist = UserProfile.objects.create(user=self.stylist_user, business=self.biz, role='staff', phone='0712345678')
+        self.service = Service.objects.create(
+            business=self.biz, store=self.store, name='Weave', price=Decimal('2000'),
+            commission_type='PERCENT', commission_value=Decimal('30'),
+        )
+
+    def test_commission_matches_hand_calculation(self):
+        from core.salon import complete_service_locked
+        from core.salon_commission import commission_report
+        for _ in range(3):
+            complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)
+        period = timezone.localdate().strftime('%Y-%m')
+        report = commission_report(self.biz, self.stylist, period)
+        self.assertEqual(report['services_count'], 3)
+        self.assertEqual(report['revenue_total'], 6000.0)
+        self.assertEqual(report['commission_total'], 1800.0)  # 3 * 2000 * 0.30
+        self.assertEqual(report['owed'], 1800.0)
+
+    def test_recording_payment_clears_from_owed(self):
+        from core.salon import complete_service_locked
+        from core.salon_commission import commission_report
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)
+        period = timezone.localdate().strftime('%Y-%m')
+        self.client.force_login(self.owner_user)
+        self.client.post(f'/staff/{self.stylist.id}/salary/', {
+            'period': period, 'amount': '600', 'method': 'cash', 'payment_type': 'full',
+        })
+        report = commission_report(self.biz, self.stylist, period)
+        self.assertEqual(report['owed'], 0.0)  # 600 commission earned, 600 paid
+
+    def test_commission_report_view_owner_only(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get(f'/salon/commission/{self.stylist.id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
