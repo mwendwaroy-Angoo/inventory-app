@@ -280,6 +280,10 @@ Fonts: Playfair Display (headings), DM Sans (body)
 ---
 
 ## Coding Preferences
+- **UBA architecture:** All post-2026-08 feature work follows `docs/UBA_MASTER_SPEC.md`
+  (capability composition model) and the queue in `docs/UBA_EXECUTION_ORDER.md`. Read both
+  at the start of any session that adds a feature or a business type. Current progress:
+  `docs/UBA_PROGRESS.md`.
 - Always output COMPLETE files — never use `...` or `# unchanged`
 - One file at a time — state what changed
 - Never truncate — complete every file fully
