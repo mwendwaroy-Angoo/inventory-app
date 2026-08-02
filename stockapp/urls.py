@@ -222,6 +222,7 @@ from core.analytics_views import (
     revenue_target_progress,
     daily_sales,
 )
+from core.maduka_views import maduka_dashboard, maduka_acknowledge_exception
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -758,6 +759,9 @@ urlpatterns = [
     path("analytics/", analytics_dashboard, name="analytics"),
     path("analytics/forecast/", forecast_api, name="forecast_api"),
     path("api/v1/analytics/trends/", analytics_api, name="analytics_api"),
+    # ── UBA M3 — Maduka Yangu owner console ──────────────────────────────────
+    path("maduka/", maduka_dashboard, name="maduka_dashboard"),
+    path("maduka/exceptions/<int:exc_id>/acknowledge/", maduka_acknowledge_exception, name="maduka_acknowledge_exception"),
 ]
 
 if settings.DEBUG:

@@ -4957,11 +4957,16 @@ class StockTransfer(models.Model):
             if transfer.status != 'DISPATCHED':
                 raise ValueError('Uhamisho huu si tayari kupokelewa.')
             any_short = False
+            shortfall_kes = Decimal('0')
+            short_items = []
             for line in transfer.lines.select_related('item').all():
                 qty_received = Decimal(str(lines_received.get(line.id, line.qty_sent)))
                 line.qty_received = qty_received
                 if qty_received < line.qty_sent:
                     any_short = True
+                    missing = line.qty_sent - qty_received
+                    shortfall_kes += missing * (line.item.cost_price or Decimal('0'))
+                    short_items.append(f"{line.item.description} ({missing} {line.item.unit})")
                 line.save(update_fields=['qty_received'])
                 if qty_received > 0:
                     Transaction.objects.create(
@@ -4976,6 +4981,51 @@ class StockTransfer(models.Model):
             self.status = transfer.status
             self.received_by = transfer.received_by
             self.received_at = transfer.received_at
+            # UBA M3 §5.3 — a dispute is exactly the kind of ad-hoc alert
+            # BusinessException exists to unify, and M2-AC1 ("owner got exactly
+            # one notification") was never actually satisfied when the M2
+            # sprint shipped model-layer-only with no view wired up yet. Fire
+            # both here: the durable feed row (Maduka Yangu's exception feed)
+            # and the one-time owner/manager notification, mirroring the
+            # attribution rule in the spec ("against the dispatching shift, not
+            # the receiver — the receiver is the whistle") as closely as this
+            # app's data allows — StockTransfer has no shift FK of its own
+            # (dispatch/receive are staff actions, not shift-scoped, unlike bar/
+            # kitchen sales), so `staff` is set to the DISPATCHER, never the
+            # receiving staffer who is only reporting the shortfall.
+            if any_short:
+                try:
+                    detail = (
+                        f"{transfer.reference}: {', '.join(short_items)} — "
+                        f"{transfer.from_store.name} → {transfer.to_store.name}"
+                    )
+                    BusinessException.raise_exception(
+                        business=transfer.business, kind='transfer_dispute', severity='warn',
+                        title=f"Uhamisho {transfer.reference} una utata",
+                        detail=detail, store=transfer.to_store,
+                        staff=transfer.dispatched_by, amount_kes=shortfall_kes,
+                        link_url='/maduka/',
+                    )
+                    from .notifications import normalize_ke_phone as _nkp, send_sms_notification as _ssms
+                    from accounts.models import UserProfile as _UP
+                    msg = (
+                        f"⚠️ Uhamisho {transfer.reference} una utata — {detail}. "
+                        f"Angalia dukamwecheche.co.ke/maduka/"
+                    )
+                    for _op in _UP.objects.filter(
+                        business=transfer.business, role__in=['owner', 'manager']
+                    ).select_related('user'):
+                        Notification.objects.create(
+                            user=_op.user, title='⚠️ Utata wa Uhamisho', message=msg,
+                            notification_type='warning', link_url='/maduka/',
+                        )
+                        if _op.phone:
+                            try:
+                                _ssms(msg, _nkp(_op.phone))
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
             return transfer
 
     def resolve_dispute_locked(self, resolved_by=None):
@@ -5043,6 +5093,90 @@ class StockTransferLine(models.Model):
 
     def __str__(self):
         return f"{self.item.description} × {self.qty_sent} ({self.transfer.reference})"
+
+
+class BusinessException(models.Model):
+    """UBA §5.3 — the single owner-facing exception feed backing "Maduka Yangu"
+    (core/maduka_views.py). Every accountability check in the app should write
+    a row here instead of inventing its own ad-hoc alert shape, so the owner
+    sees ONE prioritised, cross-store feed instead of scattered per-module
+    banners. Deliberately ADDITIVE, not a replacement for the existing
+    per-user Notification/SMS delivery mechanisms — a BusinessException is the
+    durable, queryable audit-trail/feed record; Notification/SMS stay the
+    per-user real-time delivery channel for the same underlying event. Two of
+    them fire side-by-side at the same call site (see close_shift()'s keg/cash
+    variance alerts and StockTransfer.receive_locked()'s dispute path) rather
+    than one replacing the other.
+    """
+    KIND_CHOICES = [
+        ('shrinkage', 'Upungufu wa Bidhaa'),
+        ('cash_variance', 'Tofauti ya Fedha'),
+        ('transfer_dispute', 'Utata wa Uhamisho'),
+        ('below_cost', 'Bei Chini ya Gharama'),
+        ('credit_blocked', 'Deni kwa Mteja Aliyezuiliwa'),
+        ('no_sales', 'Hakuna Mauzo'),
+        ('stock_count_variance', 'Tofauti ya Hesabu ya Stock'),
+        ('till_not_counted', 'Till Haijahesabiwa'),
+        ('other', 'Nyingine'),
+    ]
+    SEVERITY_CHOICES = [
+        ('info', 'Taarifa'),
+        ('warn', 'Onyo'),
+        ('danger', 'Hatari'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='exceptions')
+    store = models.ForeignKey(
+        Store, on_delete=models.SET_NULL, null=True, blank=True, related_name='exceptions'
+    )
+    shift = models.ForeignKey(
+        'Shift', on_delete=models.SET_NULL, null=True, blank=True, related_name='exceptions'
+    )
+    staff = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='exceptions_caused',
+    )
+    kind = models.CharField(max_length=30, choices=KIND_CHOICES, default='other')
+    severity = models.CharField(max_length=10, choices=SEVERITY_CHOICES, default='info')
+    amount_kes = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    title = models.CharField(max_length=200)
+    detail = models.TextField(blank=True)
+    link_url = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    acknowledged_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='exceptions_acknowledged',
+    )
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.get_severity_display()}] {self.title}"
+
+    @classmethod
+    def raise_exception(cls, business, kind, severity, title, detail='', store=None,
+                         shift=None, staff=None, amount_kes=None, link_url=''):
+        """The one way any accountability check in the app should record an
+        exception — never instantiate BusinessException directly elsewhere,
+        matching this file's own *_locked()/create_*() single-entry-point
+        convention. Never raises — a feed-write failure must never block the
+        real state change (shift close, transfer receive, etc.) it accompanies;
+        callers should still wrap this in their own try/except per this app's
+        established defensive-notification pattern, since a DB-level failure
+        (rare, but possible under load) is still theoretically possible here.
+        """
+        return cls.objects.create(
+            business=business, kind=kind, severity=severity, title=title, detail=detail,
+            store=store, shift=shift, staff=staff, amount_kes=amount_kes, link_url=link_url,
+        )
+
+    def acknowledge(self, by):
+        if self.acknowledged_at:
+            return
+        self.acknowledged_by = by
+        self.acknowledged_at = timezone.now()
+        self.save(update_fields=['acknowledged_by', 'acknowledged_at'])
 
 
 # ── DJ / MC Performer Management ─────────────────────────────────────────────

@@ -586,6 +586,7 @@
                                 <li><hr class="dropdown-divider"></li>
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'reset_sales_intro' %}" style="color:var(--danger);">🧹 {% trans 'Reset Sales & Analytics' %}</a></li>{% endif %}
+                                {% if user.userprofile.is_owner and accessible_stores_list|length > 1 %}<li><a class="dropdown-item" href="{% url 'maduka_dashboard' %}">🏪 {% trans 'Maduka Yangu' %}</a></li>{% endif %}
                             </ul>
                         </li>
                     </ul>
@@ -800,6 +801,7 @@
                                 <li><hr class="dropdown-divider"></li>
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'edit_business' %}">⚙️ {% trans 'Business Settings' %}</a></li>{% endif %}
                                 {% if user.userprofile.is_owner %}<li><a class="dropdown-item" href="{% url 'reset_sales_intro' %}" style="color:var(--danger);">🧹 {% trans 'Reset Sales & Analytics' %}</a></li>{% endif %}
+                                {% if user.userprofile.is_owner and accessible_stores_list|length > 1 %}<li><a class="dropdown-item" href="{% url 'maduka_dashboard' %}">🏪 {% trans 'Maduka Yangu' %}</a></li>{% endif %}
                             </ul>
                         </li>
                     </ul>

@@ -814,6 +814,40 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA M3 (2026-08-02): Maduka Yangu owner console + `BusinessException` (spec
+  §5.3). New `BusinessException` model (migration `0144_businessexception`) —
+  `business`/`store`/`shift`/`staff` FKs, `kind`/`severity` choices, `amount_kes`,
+  `title`/`detail`/`link_url`, `acknowledged_by`/`acknowledged_at`.
+  `raise_exception()` is the one write path; `acknowledge()` is idempotent.
+  Additive only — every existing per-user Notification/SMS mechanism stays
+  unchanged, this is the durable feed row alongside it. Wired 3 real producers:
+  (1) `StockTransfer.receive_locked()`'s DISPUTED path (M2 shipped model-layer-
+  only with no view calling it yet) now fires `kind='transfer_dispute'` PLUS an
+  owner/manager Notification+SMS — actually closes M2-AC1 ("owner got exactly
+  one notification"), never satisfied when M2 shipped. Attribution set to the
+  DISPATCHER, not the receiving staffer who is only reporting the shortfall.
+  (2)/(3) `close_shift()`'s existing keg-variance-danger and >KES 500 cash-
+  variance alerts now also write `kind='shrinkage'`/`kind='cash_variance'`
+  rows. Both needed the correct `store` resolved explicitly rather than
+  trusting `Shift.store` — traced and confirmed `Shift.store` is ALWAYS
+  `business.stores.first()` regardless of the actual counter (the real
+  per-shift discriminator is `Shift.station`) — attaching it directly would
+  have imported a known bug into a brand-new feature. New `/maduka/` route
+  (`core/maduka_views.py`, strict owner-only) renders a day strip (revenue vs
+  combined target, open tabs KES, credit issued today), per-store cards sorted
+  problem-first (unacknowledged exception count, then how far below target —
+  never alphabetical), and an exception feed with one-tap acknowledge.
+  "Who's on shift"/"cash expected" only render for a bar/kitchen-station store
+  — the only stores with a working Shift/till concept today; a genuine
+  N-outlet retail store honestly shows revenue-vs-target only rather than
+  fabricating shift data. Navbar link gated on `is_owner and
+  accessible_stores_list|length > 1`, reusing M1's context processor —
+  directly satisfies "single-store business sees... no Maduka link."
+  Deliberately deferred and documented (same discipline as M0-5/M0-6): the
+  Chart.js compare view (needs visual verification this environment can't
+  provide) and the daily digest SMS (needs its own dedup field + webhook,
+  substantial enough for its own follow-up pass). 24 new tests. 1241 tests
+  pass. See `docs/UBA_PROGRESS.md` for full detail.
 - UBA M2 (2026-08-02): stock transfers between stores — `StockTransfer`/
   `StockTransferLine` models (migration `0142_stocktransfer_stocktransferline_
   transaction_transfer`) + a new `Transaction.transfer` FK. Gap-free

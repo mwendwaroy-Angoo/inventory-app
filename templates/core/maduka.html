@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}Maduka Yangu — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+.maduka-strip { display:flex; flex-wrap:wrap; gap:0.8rem; margin-bottom:1.2rem; }
+.maduka-strip-tile { flex:1 1 130px; background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:0.9rem; text-align:center; }
+.maduka-strip-tile .val { font-size:1.3rem; font-weight:700; color:var(--gold-light); font-family:'Playfair Display',serif; }
+.maduka-strip-tile .lbl { font-size:0.75rem; color:#b0b0b0; margin-top:0.2rem; }
+.maduka-store-card { background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1rem; margin-bottom:0.9rem; }
+.maduka-store-card.has-problem { border-color: var(--raspberry); }
+.maduka-store-name { color:var(--gold-light); font-weight:600; font-size:1.05rem; }
+.maduka-chip { display:inline-block; padding:0.15rem 0.55rem; border-radius:20px; font-size:0.72rem; margin-left:0.4rem; }
+.maduka-chip-danger { background:rgba(192,57,90,0.25); color:#ff9fb5; }
+.maduka-chip-warn { background:rgba(201,168,76,0.2); color:var(--gold-light); }
+.maduka-chip-ok { background:rgba(46,204,113,0.15); color:#6ee7b7; }
+.maduka-exc-row { border-bottom:1px solid #333; padding:0.7rem 0; display:flex; justify-content:space-between; gap:0.6rem; align-items:flex-start; }
+.maduka-exc-row:last-child { border-bottom:none; }
+.maduka-exc-sev-danger { color:#ff9fb5; }
+.maduka-exc-sev-warn { color:var(--gold-light); }
+.maduka-exc-sev-info { color:#b0b0b0; }
+.maduka-ack-btn { background:transparent; border:1px solid #555; color:#b0b0b0; border-radius:6px; padding:0.2rem 0.6rem; font-size:0.75rem; white-space:nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:820px;">
+    <h4 style="color:var(--gold-light); font-family:'Playfair Display',serif; margin-bottom:1rem;">🏪 {% trans "Maduka Yangu" %}</h4>
+
+    <div class="maduka-strip">
+        <div class="maduka-strip-tile">
+            <div class="val">KES {{ total_revenue_today|floatformat:0 }}</div>
+            <div class="lbl">{% trans "Mauzo Leo (Maduka Yote)" %}{% if combined_target %} / {{ combined_target|floatformat:0 }}{% endif %}</div>
+        </div>
+        <div class="maduka-strip-tile">
+            <div class="val">KES {{ open_tabs_kes|floatformat:0 }}</div>
+            <div class="lbl">{% trans "Tabu Zilizo Wazi" %}</div>
+        </div>
+        <div class="maduka-strip-tile">
+            <div class="val">KES {{ credit_issued_today|floatformat:0 }}</div>
+            <div class="lbl">{% trans "Deni Jipya Leo" %}</div>
+        </div>
+    </div>
+
+    <h6 style="color:var(--gold-light); margin:1.2rem 0 0.6rem;">{% trans "Maduka Yako" %}</h6>
+    {% for card in store_cards %}
+        <div class="maduka-store-card {% if card.exc_count %}has-problem{% endif %}">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="maduka-store-name">{{ card.store.name }}{% if card.store.code %} ({{ card.store.code }}){% endif %}</span>
+                {% if card.exc_count %}
+                    <span class="maduka-chip maduka-chip-danger">{{ card.exc_count }} {% trans "shida" %}</span>
+                {% else %}
+                    <span class="maduka-chip maduka-chip-ok">✓</span>
+                {% endif %}
+            </div>
+            <p style="color:#b0b0b0; font-size:0.85rem; margin:0.4rem 0 0;">
+                {% trans "Mauzo Leo" %}: KES {{ card.revenue_today|floatformat:0 }}{% if card.target_today %} / {{ card.target_today|floatformat:0 }}{% endif %}
+            </p>
+            {% if card.station %}
+                <p style="color:#b0b0b0; font-size:0.8rem; margin:0.2rem 0 0;">
+                    {% if card.on_shift_names %}
+                        🟢 {% trans "Kazini sasa" %}: {{ card.on_shift_names|join:", " }}
+                    {% else %}
+                        ⚪ {% trans "Hakuna shift iliyo wazi" %}
+                    {% endif %}
+                </p>
+                {% if card.till_info and card.till_info.anchor_established %}
+                    <p style="color:#b0b0b0; font-size:0.8rem; margin:0.2rem 0 0;">
+                        💰 {% trans "Pesa Zinazotarajiwa" %}: KES {{ card.till_info.expected_cash|floatformat:0 }}
+                    </p>
+                {% endif %}
+            {% endif %}
+        </div>
+    {% empty %}
+        <p style="color:#b0b0b0;">{% trans "Hakuna maduka bado." %}</p>
+    {% endfor %}
+
+    <h6 style="color:var(--gold-light); margin:1.4rem 0 0.6rem;">{% trans "Matukio Yanayohitaji Kuangaliwa" %}</h6>
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:0.4rem 1rem;">
+        {% for exc in exceptions %}
+            <div class="maduka-exc-row">
+                <div>
+                    <span class="maduka-exc-sev-{{ exc.severity }}">●</span>
+                    <strong style="color:var(--pearl);">{{ exc.title }}</strong>
+                    {% if exc.store %}<span class="maduka-chip maduka-chip-warn">{{ exc.store.name }}</span>{% endif %}
+                    <p style="color:#b0b0b0; font-size:0.8rem; margin:0.2rem 0 0;">{{ exc.detail }}</p>
+                    <p style="color:#666; font-size:0.72rem; margin:0.15rem 0 0;">{{ exc.created_at|date:"d M, H:i" }}{% if exc.amount_kes %} · KES {{ exc.amount_kes|floatformat:0 }}{% endif %}</p>
+                </div>
+                {% if not exc.acknowledged_at %}
+                    <form method="post" action="{% url 'maduka_acknowledge_exception' exc.id %}">
+                        {% csrf_token %}
+                        <button type="submit" class="maduka-ack-btn">✓ {% trans "Nimeona" %}</button>
+                    </form>
+                {% else %}
+                    <span style="color:#6ee7b7; font-size:0.72rem; white-space:nowrap;">✓ {% trans "Imeonwa" %}</span>
+                {% endif %}
+            </div>
+        {% empty %}
+            <p style="color:#b0b0b0; padding:0.8rem 0;">{% trans "Hakuna matukio — kila kitu kiko sawa." %}</p>
+        {% endfor %}
+    </div>
+
+    <p style="color:#666; font-size:0.78rem; margin-top:1rem;">
+        💡 {% trans "Mlinganisho wa maduka (chati) unakuja hivi karibuni." %}
+    </p>
+</div>
+{% endblock %}

@@ -9,11 +9,11 @@ from django.utils import timezone
 
 from accounts.models import Business, UserProfile
 from core.models import (
-    BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
-    KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
-    KitchenStockReceipt, KitchenStockReceiptLine,
-    Notification, Payment, PettyCash, Receipt, Shift, Store, StockTransfer,
-    StockTransferLine, TabTransferRequest, TillCount, Transaction,
+    BarCupLog, BarTab, BarTabEntry, BusinessException, Customer, Item,
+    ItemPortionPreset, KegBarrel, KegWeightReading, KitchenBatch,
+    KitchenConsumableLog, KitchenStockReceipt, KitchenStockReceiptLine,
+    Notification, Payment, PettyCash, Receipt, RevenueTarget, Shift, Store,
+    StockTransfer, StockTransferLine, TabTransferRequest, TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -21974,3 +21974,300 @@ class StockTransferExcludedFromRevenueEverywhereTest(TestCase):
         matching = [p for p in portion_produce if p['description'] == 'Rice 5kg']
         self.assertEqual(matching, [])  # no revenue row for a pure transfer
 
+
+
+class BusinessExceptionModelTest(TestCase):
+    """UBA M3 §5.3 — BusinessException.raise_exception()/acknowledge()."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Maduka M3 Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner_user = User.objects.create_user(username='m3_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_raise_exception_creates_row_with_all_fields(self):
+        exc = BusinessException.raise_exception(
+            business=self.biz, kind='shrinkage', severity='danger',
+            title='Test title', detail='Test detail', store=self.store,
+            staff=self.owner, amount_kes=Decimal('1234.50'), link_url='/maduka/',
+        )
+        exc.refresh_from_db()
+        self.assertEqual(exc.business_id, self.biz.id)
+        self.assertEqual(exc.kind, 'shrinkage')
+        self.assertEqual(exc.severity, 'danger')
+        self.assertEqual(exc.store_id, self.store.id)
+        self.assertEqual(exc.staff_id, self.owner.id)
+        self.assertEqual(exc.amount_kes, Decimal('1234.50'))
+        self.assertIsNone(exc.acknowledged_at)
+
+    def test_acknowledge_sets_fields_and_is_idempotent(self):
+        exc = BusinessException.raise_exception(
+            business=self.biz, kind='other', severity='info', title='X',
+        )
+        exc.acknowledge(self.owner)
+        exc.refresh_from_db()
+        self.assertEqual(exc.acknowledged_by_id, self.owner.id)
+        first_ack_at = exc.acknowledged_at
+        self.assertIsNotNone(first_ack_at)
+
+        other_user = User.objects.create_user(username='m3_other', password='x')
+        other_profile = UserProfile.objects.create(user=other_user, business=self.biz, role='manager')
+        exc.acknowledge(other_profile)  # already acknowledged — must be a no-op
+        exc.refresh_from_db()
+        self.assertEqual(exc.acknowledged_by_id, self.owner.id)
+        self.assertEqual(exc.acknowledged_at, first_ack_at)
+
+
+class StockTransferDisputeExceptionAndNotificationTest(TestCase):
+    """M2-AC1 ("owner got exactly one notification") was never actually
+    satisfied when M2 shipped model-layer-only with no view calling
+    receive_locked() yet. M3 closes that gap by wiring the dispute path to
+    BusinessException + a real owner/manager Notification+SMS, the exact
+    mechanism M3 exists to build."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Transfer Dispute Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Godown')
+        self.store_b = Store.objects.create(business=self.biz, name='Branch')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Flour 2kg',
+            material_no='TRF-DISP-01', unit='pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('180'), opening_bin_balance=100,
+        )
+        self.owner_user = User.objects.create_user(username='disp_owner', password='x')
+        self.owner = UserProfile.objects.create(
+            user=self.owner_user, business=self.biz, role='owner', phone='0712345678'
+        )
+        self.manager_user = User.objects.create_user(username='disp_manager', password='x')
+        self.manager = UserProfile.objects.create(
+            user=self.manager_user, business=self.biz, role='manager'
+        )
+        self.staff_user = User.objects.create_user(username='disp_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def _make_transfer(self, qty_sent=20):
+        return StockTransfer.create_draft_locked(
+            self.biz, self.store_a, self.store_b,
+            lines=[{'item_id': self.item.id, 'qty_sent': qty_sent}], created_by=self.owner,
+        )
+
+    def test_short_receive_creates_exactly_one_exception_and_notifies_owner_and_manager(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+
+        self.assertEqual(BusinessException.objects.filter(business=self.biz).count(), 0)
+        transfer.receive_locked({line.id: 18}, received_by=self.owner)
+
+        excs = BusinessException.objects.filter(business=self.biz, kind='transfer_dispute')
+        self.assertEqual(excs.count(), 1)
+        exc = excs.first()
+        self.assertEqual(exc.severity, 'warn')
+        self.assertEqual(exc.store_id, self.store_b.id)  # attributed at the receiving store
+        self.assertIn(transfer.reference, exc.title)
+        self.assertGreater(exc.amount_kes, 0)
+
+        # Notified exactly once each — owner and manager, never the plain staff.
+        owner_notifs = Notification.objects.filter(user=self.owner_user, title__icontains='Utata')
+        manager_notifs = Notification.objects.filter(user=self.manager_user, title__icontains='Utata')
+        staff_notifs = Notification.objects.filter(user=self.staff_user, title__icontains='Utata')
+        self.assertEqual(owner_notifs.count(), 1)
+        self.assertEqual(manager_notifs.count(), 1)
+        self.assertEqual(staff_notifs.count(), 0)
+
+    def test_full_receive_creates_no_exception_and_no_notification(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 20}, received_by=self.owner)
+
+        self.assertEqual(BusinessException.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(Notification.objects.filter(title__icontains='Utata').count(), 0)
+
+
+class ShiftCloseBusinessExceptionTest(TestCase):
+    """M3 §5.3 — close_shift()'s existing cash-variance and keg-danger alerts
+    now also write a BusinessException row (additive to the pre-existing
+    Notification/SMS, never replacing it)."""
+
+    def test_cash_variance_over_500_creates_business_exception(self):
+        biz = Business.objects.create(name='Cash BE Biz')
+        store = Store.objects.create(business=biz, name='Bar')
+        owner_user = User.objects.create_user(username='cbe_owner', password='x')
+        UserProfile.objects.create(user=owner_user, business=biz, role='owner')
+        staff_user = User.objects.create_user(username='cbe_staff', password='x')
+        UserProfile.objects.create(user=staff_user, business=biz, role='staff')
+
+        item = Item.objects.create(
+            business=biz, store=store, description='Beer 500ml',
+            material_no='CBE-ITEM-01', unit='pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('120'),
+        )
+        shift = Shift.objects.create(
+            business=biz, store=store, staff=staff_user, station='bar',
+            status='OPEN', opening_float=Decimal('0'),
+        )
+        Transaction.objects.create(
+            business=biz, item=item, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('1000'), payment_method='cash',
+            date=timezone.localdate(), recorded_by=staff_user,
+        )
+
+        self.client.force_login(owner_user)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {'closing_cash_counted': '100'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+        excs = BusinessException.objects.filter(business=biz, kind='cash_variance')
+        self.assertEqual(excs.count(), 1)
+        exc = excs.first()
+        self.assertEqual(exc.store_id, store.id)
+        self.assertEqual(exc.shift_id, shift.id)
+        self.assertGreater(exc.amount_kes, 500)
+
+    def test_no_variance_creates_no_business_exception(self):
+        biz = Business.objects.create(name='NoVar BE Biz')
+        store = Store.objects.create(business=biz, name='Bar')
+        owner_user = User.objects.create_user(username='nvbe_owner', password='x')
+        UserProfile.objects.create(user=owner_user, business=biz, role='owner')
+        staff_user = User.objects.create_user(username='nvbe_staff', password='x')
+        UserProfile.objects.create(user=staff_user, business=biz, role='staff')
+
+        shift = Shift.objects.create(
+            business=biz, store=store, staff=staff_user, station='bar',
+            status='OPEN', opening_float=Decimal('500'),
+        )
+        self.client.force_login(owner_user)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {'closing_cash_counted': '500'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(BusinessException.objects.filter(business=biz, kind='cash_variance').count(), 0)
+
+    def test_keg_danger_variance_creates_shrinkage_exception(self):
+        from django.test import RequestFactory
+        from core.shift_views import close_shift
+        import json as _json
+
+        business, store, owner, item, barrel, preset, shift = _make_keg_fixtures_with_shift(
+            'Bar M3 DangerClose'
+        )
+        business.keg_variance_tolerance_pct = Decimal('0.1')
+        business.keg_alerts_enabled = True
+        business.save(update_fields=['keg_variance_tolerance_pct', 'keg_alerts_enabled'])
+
+        barrel.volume_dispensed_ml = Decimal('500')
+        barrel.revenue_collected = Decimal('200')
+        barrel.save(update_fields=['volume_dispensed_ml', 'revenue_collected'])
+
+        rf = RequestFactory()
+        barrel_weights = _json.dumps([{'barrel_id': barrel.id, 'weight_kg': '30.0'}])
+        req = rf.post(f'/bar/shift/{shift.id}/close/', {
+            'closing_cash_counted': '0',
+            'barrel_weights': barrel_weights,
+        })
+        req.user = owner
+        req.session = {}
+
+        resp = close_shift(req, shift.id)
+        self.assertEqual(resp.status_code, 200)
+
+        excs = BusinessException.objects.filter(business=business, kind='shrinkage')
+        self.assertEqual(excs.count(), 1)
+        self.assertEqual(excs.first().store_id, store.id)
+
+
+class MadukaDashboardViewTest(TestCase):
+    """UBA M3 §5.3 — /maduka/ owner console."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Maduka View Biz')
+        self.store_a = Store.objects.create(
+            business=self.biz, name='Branch A', code='A01', is_active=True,
+        )
+        self.store_b = Store.objects.create(
+            business=self.biz, name='Branch B', code='B01', is_active=True,
+        )
+        self.owner_user = User.objects.create_user(username='mdv_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='mdv_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_owner_sees_dashboard_with_store_cards_and_exceptions(self):
+        RevenueTarget.objects.create(
+            business=self.biz, target_type='daily', amount=Decimal('1000'), store=self.store_a,
+        )
+        item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Milk 500ml',
+            material_no='MDV-ITEM-01', unit='pcs', selling_price=Decimal('60'),
+            cost_price=Decimal('40'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('300'), payment_method='cash',
+            date=timezone.localdate(),
+        )
+        BusinessException.raise_exception(
+            business=self.biz, kind='below_cost', severity='warn',
+            title='Sold below cost', store=self.store_a, amount_kes=Decimal('50'),
+        )
+
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/maduka/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['total_revenue_today'], 300.0)
+        cards = {c['store'].id: c for c in resp.context['store_cards']}
+        self.assertEqual(cards[self.store_a.id]['revenue_today'], 300.0)
+        self.assertEqual(cards[self.store_a.id]['exc_count'], 1)
+        # Problem-first sort: store_a (1 unacknowledged exception) must sort before store_b (0).
+        self.assertEqual(resp.context['store_cards'][0]['store'].id, self.store_a.id)
+        self.assertContains(resp, 'Sold below cost')
+
+    def test_non_owner_redirected(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/maduka/')
+        self.assertEqual(resp.status_code, 302)
+
+    def test_navbar_link_hidden_for_single_store_business(self):
+        single = Business.objects.create(name='Single Store Biz')
+        Store.objects.create(business=single, name='Only Store')
+        single_owner = User.objects.create_user(username='mdv_single_owner', password='x')
+        UserProfile.objects.create(user=single_owner, business=single, role='owner')
+        self.client.force_login(single_owner)
+        resp = self.client.get('/')
+        self.assertNotContains(resp, 'Maduka Yangu')
+
+    def test_navbar_link_shown_for_multi_store_business(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/')
+        self.assertContains(resp, 'Maduka Yangu')
+
+
+class MadukaAcknowledgeExceptionViewTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Maduka Ack Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner_user = User.objects.create_user(username='mack_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.exc = BusinessException.raise_exception(
+            business=self.biz, kind='other', severity='info', title='Test exc',
+        )
+
+    def test_owner_can_acknowledge(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/maduka/exceptions/{self.exc.id}/acknowledge/')
+        self.assertEqual(resp.status_code, 302)
+        self.exc.refresh_from_db()
+        self.assertEqual(self.exc.acknowledged_by_id, self.owner.id)
+        self.assertIsNotNone(self.exc.acknowledged_at)
+
+    def test_get_not_allowed(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get(f'/maduka/exceptions/{self.exc.id}/acknowledge/')
+        self.assertEqual(resp.status_code, 405)
+
+    def test_cannot_acknowledge_another_businesss_exception(self):
+        other_biz = Business.objects.create(name='Other Biz')
+        other_owner_user = User.objects.create_user(username='mack_other', password='x')
+        UserProfile.objects.create(user=other_owner_user, business=other_biz, role='owner')
+        self.client.force_login(other_owner_user)
+        resp = self.client.post(f'/maduka/exceptions/{self.exc.id}/acknowledge/')
+        self.assertEqual(resp.status_code, 404)
