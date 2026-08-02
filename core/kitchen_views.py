@@ -1536,9 +1536,21 @@ def kitchen_tabs_list(request):
             or e.transaction.item.store.is_kitchen
         ]
         bar_count = len(all_entries) - len(kitchen_entries)
+
+        def _kb_entry_date(e):
+            # 2026-08-02 — parity with core.keg_views.tabs_list()'s
+            # _entry_dict: a tab can legitimately span several calendar
+            # days, so each entry needs its own date once it's not today's.
+            if e.transaction_id and e.transaction.created_at:
+                _dt_local = timezone.localtime(e.transaction.created_at)
+                if _dt_local.date() != timezone.localdate():
+                    return _dt_local.strftime('%d %b')
+            return ''
+
         entries = [
             {
                 'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid,
+                'entry_date': _kb_entry_date(e),
                 'pending_transfer_out': _pending_out_by_entry.get(e.id),
                 'transfer_note': ('' if e.id in _pending_out_by_entry else e.transfer_reason_note()),
             }

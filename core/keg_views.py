@@ -1337,14 +1337,32 @@ def tabs_list(request):
             })
         _pending_in_by_tab[_dest_id] = _rows
 
+    _today_local = timezone.localdate()
+
     def _entry_dict(e):
-        """Serialise one BarTabEntry, including whether its item is a kitchen (food) item."""
+        """Serialise one BarTabEntry, including whether its item is a kitchen (food) item.
+
+        2026-08-02 live request (Roy, using his own tab as the example): a
+        tab can legitimately stay open across several calendar days (still
+        accumulating orders every one of those days, by design — see the
+        stale-tab banner, which only ever PROMPTS Geuza Deni, never forces
+        it). Once it does, the entry list needs to say which day each item
+        was actually rung up on, or a multi-day tab reads as one confusing
+        pile with no way to tell today's round from a previous day's.
+        `entry_date` is blank for anything rung up today (the common case,
+        no need to label it) and a short date otherwise.
+        """
         _is_kitchen_item = bool(
             e.transaction_id
             and e.transaction.item_id
             and e.transaction.item.store_id
             and e.transaction.item.store.is_kitchen
         )
+        _entry_date = ''
+        if e.transaction_id and e.transaction.created_at:
+            _dt_local = timezone.localtime(e.transaction.created_at)
+            if _dt_local.date() != _today_local:
+                _entry_date = _dt_local.strftime('%d %b')
         return {
             'id': e.id,
             'description': e.description,
@@ -1352,6 +1370,7 @@ def tabs_list(request):
             'is_paid': e.is_paid,
             'payment_method': e.payment_method,
             'is_kitchen_item': _is_kitchen_item,
+            'entry_date': _entry_date,
             'pending_transfer_out': _pending_out_by_entry.get(e.id),
             # Only computed when there's no LIVE pending request (that badge
             # already explains itself) — a REJECTED/CANCELLED one is a small
@@ -3933,14 +3952,25 @@ def keg_barrel_detail(request, barrel_id):
     )
     barrel_end = barrel.closed_at or timezone.now()
 
-    # Shifts that overlapped with this barrel being active
+    # Shifts that overlapped with this barrel being active — 2026-08-02 live
+    # report (Roy): kitchen staff who never sold a single alcoholic drink
+    # were showing up in a keg barrel's Shift-by-Shift Breakdown, purely
+    # because their KITCHEN shift happened to be open during the same clock
+    # hours the barrel was tapped. This query had no station filter at all —
+    # any shift on ANY counter that time-overlapped the barrel's active
+    # window was included. A keg barrel is bar-only by definition, so this
+    # needs the same explicit-station-first, role-fallback-for-legacy-rows
+    # discriminator already established for every other shift/station
+    # surface in this app (see shift_views._station_q(), 2026-07-27/28 "Fix
+    # Shift station misattribution" — this exact view was missed then).
     from .models import Shift
+    from .shift_views import _station_q
     shifts = Shift.objects.filter(
         business=business,
         started_at__lt=barrel_end,
     ).filter(
         Q(ended_at__isnull=True) | Q(ended_at__gt=barrel_start)
-    ).select_related('staff').order_by('started_at')
+    ).filter(_station_q(is_kitchen=False)).select_related('staff').order_by('started_at')
 
     # Weight readings for this barrel, oldest first — enrich with implied remaining
     readings_raw = list(barrel.weight_readings.order_by('recorded_at').select_related('recorded_by'))

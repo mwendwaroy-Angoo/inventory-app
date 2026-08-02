@@ -10090,6 +10090,76 @@ class KegBarrelsPeriodStationScopingTest(TestCase):
         self.assertNotIn('Kitchen Keg Item', barrel_items)
 
 
+# ── Fix: keg_barrel_detail Shift-by-Shift Breakdown had no station filter
+# (2026-08-02) ─────────────────────────────────────────────────────────────
+# Live report (Roy, Monsoon Inn): kitchen staff who never sold a single
+# alcoholic drink were appearing in a keg barrel's reconciliation page
+# "Shift-by-Shift Breakdown" table, purely because their kitchen shift
+# happened to time-overlap the barrel being tapped. shift_barrel_variance()
+# returns a row for ANY shift whose time window overlaps the barrel's
+# active life, regardless of whether that shift recorded any sales from the
+# barrel at all — so the caller's shifts queryset must itself be station-
+# scoped. Same bug class as the 2026-07-27/28 "Fix Shift station
+# misattribution" sprint; this one view was simply missed then.
+
+class KegBarrelDetailShiftBreakdownStationScopingTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Barrel Detail Station Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_staff = User.objects.create_user(username='kbd_barstaff', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='kbd_kitchenstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Barrel Detail Keg Item',
+            material_no='KBD-01', is_keg=True, selling_price=Decimal('50'),
+        )
+        now = timezone.now()
+        self.barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.bar_store, item=self.bar_item,
+            cost_price=Decimal('1000'), target_revenue=Decimal('2000'), status='TAPPED',
+            tapped_at=now - timedelta(hours=4),
+        )
+        # Bar shift: genuinely overlapping AND actually sold from the barrel.
+        self.bar_shift = Shift.objects.create(
+            business=self.biz, staff=self.bar_staff, status='OPEN', station='bar',
+            started_at=now - timedelta(hours=3),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            keg_barrel=self.barrel, payment_method='cash', sale_amount=Decimal('50'),
+            recorded_by=self.bar_staff, created_at=now - timedelta(hours=2),
+        )
+        # Kitchen shift: time-overlaps the barrel's tapped window, but never
+        # sold a single alcoholic drink — the exact live-report scenario.
+        self.kitchen_shift = Shift.objects.create(
+            business=self.biz, staff=self.kitchen_staff, status='OPEN', station='kitchen',
+            started_at=now - timedelta(hours=3),
+        )
+        self.client.force_login(self.owner)
+
+    def test_kitchen_shift_excluded_from_bar_barrel_breakdown(self):
+        resp = self.client.get(f'/bar/reconciliation/{self.barrel.id}/')
+        self.assertEqual(resp.status_code, 200)
+        staff_names = [row['staff'] for row in resp.context['shift_rows']]
+        self.assertIn('kbd_barstaff', staff_names)
+        self.assertNotIn('kbd_kitchenstaff', staff_names)
+
+    def test_legacy_blank_station_shift_falls_back_to_role(self):
+        # A pre-migration Shift with no explicit station recorded must still
+        # be correctly excluded via the role-based fallback in _station_q().
+        Shift.objects.filter(id=self.kitchen_shift.id).update(station='')
+        resp = self.client.get(f'/bar/reconciliation/{self.barrel.id}/')
+        staff_names = [row['staff'] for row in resp.context['shift_rows']]
+        self.assertNotIn('kbd_kitchenstaff', staff_names)
+        self.assertIn('kbd_barstaff', staff_names)
+
+
 # ── Fix: duplicate Kitchen store on toggle (2026-07-22) ───────────────────────
 # Root cause reported live by Roy for Monsoon Inn: manage_stores lets an
 # owner create a plain Store just by typing a name, with no is_kitchen
@@ -19206,6 +19276,266 @@ class CustomerRenameAndCombinedCorrectionTest(TestCase):
         resp2 = self.client.get('/debt/customers/correct/')
         self.assertEqual(resp2.status_code, 200)
         self.assertContains(resp2, 'Sahihisha')
+
+
+class DebtorsListApiTest(TestCase):
+    """2026-08-02 live request (Monsoon Inn): a customer paying upfront
+    (cash/mpesa/split) might still owe money from an earlier tab — staff
+    has no reason to check the Debt Tracker separately before ringing up
+    a "clean" sale. debtors_list_api powers a "💳 Wateja wenye Deni" panel
+    on all three counters, open to every staff member (not owner/manager-
+    only like customer_search_api), station-scoped the same way the debt
+    ledger itself already is."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debtors List Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='dl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_staff = User.objects.create_user(username='dl_barstaff', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='dl_kitchenstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Lemonade',
+            material_no='DL-BAR-01', unit='Bottle', selling_price=Decimal('60'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            material_no='DL-KIT-01', unit='Plate', selling_price=Decimal('100'),
+        )
+
+    def test_outstanding_debtor_appears_with_correct_balance(self):
+        from core.models import Customer
+        cust = Customer.objects.create(business=self.biz, name='Bosco', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Bosco',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/customers/debtors/')
+        data = resp.json()
+        self.assertEqual(len(data['debtors']), 1)
+        self.assertEqual(data['debtors'][0]['name'], 'Bosco')
+        self.assertEqual(data['debtors'][0]['outstanding'], 60.0)
+        self.assertEqual(data['debtors'][0]['customer_id'], cust.id)
+        self.assertFalse(data['debtors'][0]['is_defaulter'])
+
+    def test_fully_paid_customer_does_not_appear(self):
+        from core.models import Customer, CustomerDebtPayment
+        Customer.objects.create(business=self.biz, name='Cleared Customer', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Cleared Customer',
+        )
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=Customer.objects.get(name='Cleared Customer'),
+            amount_paid=Decimal('60'), source='bar',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/customers/debtors/')
+        self.assertEqual(resp.json()['debtors'], [])
+
+    def test_defaulter_flag_surfaced(self):
+        from core.models import Customer
+        Customer.objects.create(
+            business=self.biz, name='Defaulted Guy', credit_approved=True, is_defaulter=True,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Defaulted Guy',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/customers/debtors/')
+        self.assertTrue(resp.json()['debtors'][0]['is_defaulter'])
+
+    def test_open_tab_credit_not_counted_as_debt_yet(self):
+        """A tab's own charges are only real debt once it's settled/
+        converted — an OPEN tab must never show up here, matching
+        _get_customer_debt_data's own exclusion."""
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Still Tabbing', credit_approved=True)
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Still Tabbing', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Still Tabbing',
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='Lemonade', amount=Decimal('60'))
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/customers/debtors/')
+        self.assertEqual(resp.json()['debtors'], [])
+
+    def test_search_query_filters_by_name(self):
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Bosco', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Alice', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Bosco',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('40'), payment_method='credit', recipient='Alice',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/customers/debtors/?q=bos')
+        names = [d['name'] for d in resp.json()['debtors']]
+        self.assertEqual(names, ['Bosco'])
+
+    def test_kitchen_staff_sees_only_kitchen_debt(self):
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Bar Debtor', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Kitchen Debtor', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Bar Debtor',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Kitchen Debtor',
+        )
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.get('/debt/customers/debtors/')
+        names = [d['name'] for d in resp.json()['debtors']]
+        self.assertEqual(names, ['Kitchen Debtor'])
+
+    def test_bar_staff_sees_only_bar_debt(self):
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Bar Debtor', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Kitchen Debtor', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Bar Debtor',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Kitchen Debtor',
+        )
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/debt/customers/debtors/')
+        names = [d['name'] for d in resp.json()['debtors']]
+        self.assertEqual(names, ['Bar Debtor'])
+
+    def test_owner_sees_both_stations(self):
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Bar Debtor', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Kitchen Debtor', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Bar Debtor',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Kitchen Debtor',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/customers/debtors/')
+        names = sorted(d['name'] for d in resp.json()['debtors'])
+        self.assertEqual(names, ['Bar Debtor', 'Kitchen Debtor'])
+
+    def test_sorted_by_outstanding_descending(self):
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Small Debt', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Big Debt', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('20'), payment_method='credit', recipient='Small Debt',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('300'), payment_method='credit', recipient='Big Debt',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/customers/debtors/')
+        names = [d['name'] for d in resp.json()['debtors']]
+        self.assertEqual(names, ['Big Debt', 'Small Debt'])
+
+
+class TabEntryDateLabelTest(TestCase):
+    """2026-08-02 live request (Roy, using his own tab as the example): a
+    tab can legitimately stay open across several calendar days — the
+    stale-tab banner only ever PROMPTS Geuza Deni, never forces it, so
+    orders keep landing on the same still-open tab regardless of its age.
+    Once they do, each entry needs its own date label so a multi-day tab
+    doesn't read as one confusing pile — "it shows which item was for
+    when." Covers both tabs_list() (Bar Board + Quick Sell, same endpoint)
+    and kitchen_tabs_list()."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Entry Date Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='ed_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='KC Ginger',
+            material_no='ED-BAR-01', unit='Bottle', selling_price=Decimal('100'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            material_no='ED-KIT-01', unit='Plate', selling_price=Decimal('100'),
+        )
+        self.tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source='bar',
+        )
+        self.client.force_login(self.owner)
+
+    def test_todays_entry_has_blank_date(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', created_at=timezone.now(),
+        )
+        BarTabEntry.objects.create(tab=self.tab, transaction=txn, description='KC Ginger', amount=Decimal('100'))
+        resp = self.client.get('/bar/tabs/')
+        entry = resp.json()['tabs'][0]['entries'][0]
+        self.assertEqual(entry['entry_date'], '')
+
+    def test_yesterdays_entry_on_still_open_tab_shows_its_date(self):
+        yesterday = timezone.now() - timedelta(days=1)
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', created_at=yesterday,
+        )
+        BarTabEntry.objects.create(tab=self.tab, transaction=txn, description='KC Ginger', amount=Decimal('100'))
+        resp = self.client.get('/bar/tabs/')
+        entry = resp.json()['tabs'][0]['entries'][0]
+        self.assertEqual(entry['entry_date'], timezone.localtime(yesterday).strftime('%d %b'))
+
+    def test_multi_day_tab_shows_mixed_dates_correctly(self):
+        yesterday = timezone.now() - timedelta(days=1)
+        txn_old = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', created_at=yesterday,
+        )
+        BarTabEntry.objects.create(tab=self.tab, transaction=txn_old, description='KC Ginger', amount=Decimal('100'))
+        txn_today = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='credit', created_at=timezone.now(),
+        )
+        BarTabEntry.objects.create(tab=self.tab, transaction=txn_today, description='Dallas', amount=Decimal('50'))
+        resp = self.client.get('/bar/tabs/')
+        entries = resp.json()['tabs'][0]['entries']
+        by_desc = {e['description']: e['entry_date'] for e in entries}
+        self.assertNotEqual(by_desc['KC Ginger'], '')
+        self.assertEqual(by_desc['Dallas'], '')
+
+    def test_kitchen_tabs_list_shows_entry_date_too(self):
+        food_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source='kitchen',
+        )
+        yesterday = timezone.now() - timedelta(days=1)
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', created_at=yesterday,
+        )
+        BarTabEntry.objects.create(tab=food_tab, transaction=txn, description='Chipo', amount=Decimal('100'))
+        resp = self.client.get('/kitchen/tabs/')
+        entry = resp.json()['tabs'][0]['entries'][0]
+        self.assertEqual(entry['entry_date'], timezone.localtime(yesterday).strftime('%d %b'))
 
 
 # ── Widened similar-name detection (2026-07-31) ─────────────────────────────

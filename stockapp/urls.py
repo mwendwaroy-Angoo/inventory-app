@@ -251,6 +251,7 @@ from core.debt_views import (
     manager_review_write_off,
     pending_write_offs,
     customer_search_api,
+    debtors_list_api,
     merge_customer,
     customer_identity_correct,
 )
@@ -563,6 +564,7 @@ urlpatterns = [
     path("debt/write-offs/pending/", pending_write_offs, name="pending_write_offs"),
     path("debt/<int:customer_id>/clear-defaulter/", clear_defaulter, name="clear_defaulter"),
     path("debt/customers/search/", customer_search_api, name="customer_search_api"),
+    path("debt/customers/debtors/", debtors_list_api, name="debtors_list_api"),
     path("debt/customers/correct/", customer_identity_correct, name="customer_identity_correct"),
     path("debt/<int:customer_id>/merge/", merge_customer, name="merge_customer"),
     # ── Haki (Staff Contribution + Salary) ──

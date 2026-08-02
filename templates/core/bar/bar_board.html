@@ -1553,6 +1553,24 @@
     </div>
     <div id="recent-payments-panel" style="display:none;margin-top:.35rem;max-height:220px;overflow-y:auto;"></div>
   </div>
+  <!-- Customers with existing debt — 2026-08-02 live request: a customer
+       paying upfront (cash/mpesa/split) might still owe money from an
+       earlier tab; staff has no reason to think to check the Debt Tracker
+       separately before ringing up a "clean" sale, so put the answer here
+       instead, searchable or just browsable. -->
+  <div style="margin:0.4rem 0.75rem 0;">
+    <button onclick="window.toggleDebtorsPanel()" id="debtors-toggle"
+            style="width:100%;text-align:left;background:rgba(255,255,255,.03);border:1px solid #333;
+                   border-radius:8px;padding:.4rem .6rem;color:#b0b0b0;font-size:.78rem;cursor:pointer;">
+      💳 Wateja wenye Deni <span id="debtors-caret">▾</span>
+    </button>
+    <div id="debtors-searchbar" style="display:none;margin-top:.35rem;">
+      <input type="text" id="debtors-search" placeholder="Tafuta jina la mteja anayelipa..."
+             style="width:100%;background:#111;border:1px solid #444;border-radius:5px;color:#f0ece4;padding:.3rem .5rem;font-size:.78rem;"
+             oninput="window._debtorsSearchDebounce()">
+    </div>
+    <div id="debtors-panel" style="display:none;margin-top:.35rem;max-height:220px;overflow-y:auto;"></div>
+  </div>
   <!-- Revert a mistaken Geuza Deni conversion back to an open tab
        (2026-07-30 urgent live request). Owner/manager only. -->
   {% if is_owner %}
@@ -2783,8 +2801,9 @@
 
         var kitchenHtml = kitchenUnpaid.map(function(e) {
           var sd = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+          var dateBit = e.entry_date ? ' <span style="color:#f39c12;font-size:.68rem;">(' + e.entry_date + ')</span>' : '';
           return '<div style="display:flex;align-items:center;gap:8px;font-size:.82rem;padding:.18rem 0;">' +
-                 '<span style="flex:1;color:#b0b0b0;">🍽 ' + sd + '</span>' +
+                 '<span style="flex:1;color:#b0b0b0;">🍽 ' + sd + dateBit + '</span>' +
                  '<span style="color:#c9a84c;">KES ' + fmt(e.amount) + '</span>' +
                  '</div>';
         }).join('');
@@ -2792,6 +2811,7 @@
         /* Bar entries inside #tab-entries-{id} so updateTabSelectionUI can find checkboxes */
         var barHtml = barUnpaid.map(function(e) {
           var sd = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+          var dateBit = e.entry_date ? ' <span style="color:#f39c12;font-size:.68rem;">(' + e.entry_date + ')</span>' : '';
           var rb =
             '<button onclick="window.removeTabEntry(' + e.id + ',' + tab.id + ',\'' + sd.replace(/'/g, "\\'") + '\', this)" ' +
             'style="background:none;border:none;color:#c0395a;cursor:pointer;font-size:0.78rem;padding:0 2px;flex-shrink:0;" ' +
@@ -2802,7 +2822,7 @@
                  ' data-entry-id="' + e.id + '" data-amount="' + e.amount + '"' +
                  ' onchange="window.updateTabSelectionUI(' + tab.id + ')"' +
                  ' style="accent-color:#c9a84c;flex-shrink:0;">' +
-                 '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">🍺 ' + sd + '</span>' +
+                 '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">🍺 ' + sd + dateBit + '</span>' +
                  '</label>' +
                  '<span class="tab-entry-amt">KES ' + fmt(e.amount) + '</span>' +
                  rb +
@@ -2884,6 +2904,7 @@
         unpaidEntries.forEach(function (e) {
           var safeDesc = e.description.replace(/&/g, '&amp;').replace(/</g, '&lt;');
           var entryIcon = e.is_kitchen_item ? '🍽' : '🍺';
+          var dateBit = e.entry_date ? ' <span style="color:#f39c12;font-size:.68rem;">(' + e.entry_date + ')</span>' : '';
           // 2026-07-25: widened from owner-only — any staff with an open
           // shift may now erase a mistaken tab placement (Roy's explicit
           // call, matches every other staff-facing tab correction here).
@@ -2914,7 +2935,7 @@
             ' data-entry-id="' + e.id + '" data-amount="' + e.amount + '"' +
             ' onchange="window.updateTabSelectionUI(' + tab.id + ')"' +
             ' style="accent-color:#c9a84c; flex-shrink:0;">' +
-            '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">' + entryIcon + ' ' + safeDesc + '</span>' +
+            '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">' + entryIcon + ' ' + safeDesc + dateBit + '</span>' +
             '</label>' +
             '<span class="tab-entry-amt">KES ' + fmt(e.amount) + '</span>' +
             splitBtn +
@@ -3245,6 +3266,53 @@
         }
       })
       .catch(function () { btn.disabled = false; showToast('❌ Hitilafu ya mtandao', 3000); });
+  };
+
+  /* ── Wateja wenye Deni — 2026-08-02 live request ── */
+  window.toggleDebtorsPanel = function () {
+    var panel = document.getElementById('debtors-panel');
+    var bar = document.getElementById('debtors-searchbar');
+    var caret = document.getElementById('debtors-caret');
+    var showing = panel.style.display !== 'none';
+    panel.style.display = showing ? 'none' : 'block';
+    bar.style.display = showing ? 'none' : 'block';
+    caret.textContent = showing ? '▾' : '▴';
+    if (!showing) window.loadDebtorsPanel();
+  };
+
+  var _debtorsSearchTimer = null;
+  window._debtorsSearchDebounce = function () {
+    clearTimeout(_debtorsSearchTimer);
+    _debtorsSearchTimer = setTimeout(window.loadDebtorsPanel, 300);
+  };
+
+  window.loadDebtorsPanel = function () {
+    var panel = document.getElementById('debtors-panel');
+    panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Inapakia...</div>';
+    var q = (document.getElementById('debtors-search') || {}).value || '';
+    fetch('/debt/customers/debtors/?q=' + encodeURIComponent(q), {credentials: 'same-origin'})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var debtors = d.debtors || [];
+        if (!debtors.length) {
+          panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Hakuna wateja wenye deni.</div>';
+          return;
+        }
+        var html = '';
+        debtors.forEach(function (deb) {
+          html += '<div style="display:flex;align-items:center;gap:.4rem;background:#222;border:1px solid #333;' +
+            'border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem;">' +
+            '<div style="flex:1;font-size:.75rem;color:' + (deb.is_defaulter ? '#c0395a' : '#f0a840') + ';">' +
+            deb.name + (deb.is_defaulter ? ' ⛔' : '') +
+            '<br><span style="color:#888;font-size:.68rem;">KES ' + Math.round(deb.outstanding) + '</span></div>' +
+            '<a href="/debt/' + deb.customer_id + '/" target="_blank" ' +
+            'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;' +
+            'color:#5da8f0;font-size:.7rem;padding:.2rem .5rem;cursor:pointer;white-space:nowrap;text-decoration:none;">Angalia Deni ↗</a>' +
+            '</div>';
+        });
+        panel.innerHTML = html;
+      })
+      .catch(function () { panel.innerHTML = '<div style="color:#c0395a;font-size:.75rem;padding:.4rem;">Hitilafu ya mtandao.</div>'; });
   };
 
   // 2026-07-26 (items 2+4) — split one sale's payment across two methods,

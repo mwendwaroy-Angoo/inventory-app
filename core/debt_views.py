@@ -1125,6 +1125,79 @@ def customer_identity_correct(request):
     })
 
 
+@login_required
+def debtors_list_api(request):
+    """AJAX GET — every customer with outstanding debt right now, station-
+    scoped, for the "💳 Wateja wenye Deni" panel on Bar Board / Kitchen
+    Board / Quick Sell (2026-08-02 live request, Monsoon Inn). Roy's own
+    framing: a customer paying upfront (cash/mpesa/split) might still owe
+    money from an earlier tab — a busy staffer has no reason to think to
+    check the debt ledger before ringing up a "clean" upfront sale, so put
+    the answer where they're already looking instead. Open with no query
+    for the full station-scoped list; ?q= narrows it to a name search —
+    both share this one endpoint so the panel and the optional search box
+    stay in sync automatically.
+
+    Deliberately open to ALL staff (not owner/manager-only like
+    customer_search_api) — the whole point is any staff member checking a
+    customer before completing a sale, not an owner-side admin tool.
+
+    Reuses the exact same outstanding-balance math as
+    _get_customer_debt_data (Transaction.revenue() per credit txn minus
+    CustomerDebtPayment.amount_paid, grouped this time across every
+    customer in one pass instead of one customer at a time) rather than
+    a raw Sum('sale_amount') — see this app's own hard rule on why revenue
+    must never be aggregated that way (keg/produce/preset sales don't
+    always set sale_amount).
+    """
+    up = get_user_profile(request)
+    business = up.business
+    scope = _debt_scope(up, business)
+    q = (request.GET.get('q') or '').strip()
+
+    credit_qs = Transaction.objects.filter(
+        business=business, payment_method='credit', type='Issue',
+    ).exclude(tab_entry__tab__status='OPEN').select_related('item__store')
+    if scope == 'kitchen':
+        credit_qs = credit_qs.filter(item__store__is_kitchen=True)
+    elif scope == 'bar':
+        credit_qs = credit_qs.filter(item__store__is_kitchen=False)
+
+    credit_by_name = defaultdict(float)
+    for t in credit_qs:
+        if t.recipient:
+            credit_by_name[t.recipient] += float(t.revenue())
+
+    payment_qs = CustomerDebtPayment.objects.filter(business=business)
+    if scope == 'kitchen':
+        payment_qs = payment_qs.filter(source='kitchen')
+    elif scope == 'bar':
+        payment_qs = payment_qs.filter(source='bar')
+    paid_by_customer_id = defaultdict(float)
+    for p in payment_qs.values_list('customer_id', 'amount_paid'):
+        paid_by_customer_id[p[0]] += float(p[1])
+
+    customers = Customer.objects.filter(business=business, name__in=credit_by_name.keys())
+    if q:
+        customers = customers.filter(name__icontains=q)
+
+    debtors = []
+    for cust in customers:
+        total_credit = credit_by_name.get(cust.name, 0.0)
+        paid = paid_by_customer_id.get(cust.id, 0.0)
+        outstanding = max(0.0, total_credit - paid)
+        if outstanding > 0:
+            debtors.append({
+                'customer_id': cust.id,
+                'name': cust.name,
+                'outstanding': round(outstanding, 2),
+                'is_defaulter': bool(cust.is_defaulter),
+            })
+    debtors.sort(key=lambda d: -d['outstanding'])
+
+    return JsonResponse({'debtors': debtors[:30]})
+
+
 @owner_or_manager_required
 def customer_search_api(request):
     """AJAX GET — search this business's customers by name (owner/manager
