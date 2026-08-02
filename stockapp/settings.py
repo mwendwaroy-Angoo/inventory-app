@@ -114,6 +114,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.onboarding_context",
                 "core.context_processors.business_profile",
+                "core.context_processors.active_store_context",
             ],
         },
     },

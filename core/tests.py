@@ -21631,3 +21631,159 @@ class RequireStoreAccessTest(TestCase):
         require_store_access(owner_profile, self.store_a)
         require_store_access(owner_profile, self.store_b)
 
+
+class ActiveStoreContextProcessorTest(TestCase):
+    """core.context_processors.active_store_context — session-scoped active
+    store, resolved against accessible_stores() (never trusts the session
+    value blindly)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Ctx Store Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.staff = User.objects.create_user(username='ctxstore_staff', password='x')
+        self.profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+        self.client.force_login(self.staff)
+
+    def test_no_session_value_gives_none(self):
+        resp = self.client.get('/')
+        self.assertIsNone(resp.context['active_store'])
+
+    def test_session_value_resolves_when_accessible(self):
+        session = self.client.session
+        session['active_store_id'] = self.store_a.id
+        session.save()
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['active_store'], self.store_a)
+
+    def test_session_value_ignored_when_not_accessible(self):
+        session = self.client.session
+        session['active_store_id'] = self.store_b.id
+        session.save()
+        resp = self.client.get('/')
+        self.assertIsNone(resp.context['active_store'])
+
+    def test_accessible_stores_list_present(self):
+        resp = self.client.get('/')
+        self.assertIn(self.store_a, resp.context['accessible_stores_list'])
+        self.assertNotIn(self.store_b, resp.context['accessible_stores_list'])
+
+
+class SwitchActiveStoreViewTest(TestCase):
+    """GET /store/switch/<id>/ — sets the session's active store only if
+    the requesting profile can actually access it."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Switch Store Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.staff = User.objects.create_user(username='switchstore_staff', password='x')
+        self.profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+        self.client.force_login(self.staff)
+
+    def test_switch_to_accessible_store_succeeds(self):
+        resp = self.client.get(f'/store/switch/{self.store_a.id}/', follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.client.session.get('active_store_id'), self.store_a.id)
+
+    def test_switch_to_inaccessible_store_denied(self):
+        resp = self.client.get(f'/store/switch/{self.store_b.id}/', follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotEqual(self.client.session.get('active_store_id'), self.store_b.id)
+
+    def test_owner_can_switch_to_any_store(self):
+        owner = User.objects.create_user(username='switchstore_owner', password='x')
+        UserProfile.objects.create(user=owner, business=self.biz, role='owner')
+        self.client.force_login(owner)
+        resp = self.client.get(f'/store/switch/{self.store_b.id}/', follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.client.session.get('active_store_id'), self.store_b.id)
+
+
+class StockListStoreAccessGateTest(TestCase):
+    """UBA M1-AC1: a staffer assigned to Store A who manipulates the URL to
+    hit Store B's stock list (?store=<B>) gets PermissionDenied."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA StockList Gate Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.staff = User.objects.create_user(username='sl_gate_staff', password='x')
+        self.profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+        self.client.force_login(self.staff)
+
+    def test_scoped_staff_denied_other_store(self):
+        resp = self.client.get(f'/stock/?store={self.store_b.id}')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_scoped_staff_allowed_own_store(self):
+        resp = self.client.get(f'/stock/?store={self.store_a.id}')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_unassigned_staff_unaffected(self):
+        """Back-compat: a staffer with no explicit store assignment (every
+        staffer that existed before this field did) sees zero change."""
+        unassigned = User.objects.create_user(username='sl_gate_unassigned', password='x')
+        UserProfile.objects.create(user=unassigned, business=self.biz, role='staff')
+        self.client.force_login(unassigned)
+        resp = self.client.get(f'/stock/?store={self.store_b.id}')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_owner_unaffected(self):
+        owner = User.objects.create_user(username='sl_gate_owner', password='x')
+        UserProfile.objects.create(user=owner, business=self.biz, role='owner')
+        self.client.force_login(owner)
+        resp = self.client.get(f'/stock/?store={self.store_b.id}')
+        self.assertEqual(resp.status_code, 200)
+
+
+class AddTransactionStoreAccessGateTest(TestCase):
+    """UBA M1-AC1: a staffer assigned to Store A who submits a transaction
+    against a Store B item gets PermissionDenied."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA AddTxn Gate Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.item_a = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Item A',
+            material_no='ATGATE-A', unit='pcs', selling_price=Decimal('10'),
+        )
+        self.item_b = Item.objects.create(
+            business=self.biz, store=self.store_b, description='Item B',
+            material_no='ATGATE-B', unit='pcs', selling_price=Decimal('10'),
+        )
+        self.staff = User.objects.create_user(username='at_gate_staff', password='x')
+        self.profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+        # add_transaction() gates non-owner staff on an open shift before
+        # reaching the store-access check this test exercises.
+        Shift.objects.create(business=self.biz, store=self.store_a, staff=self.staff, status='OPEN')
+        self.client.force_login(self.staff)
+
+    def test_scoped_staff_denied_other_store_item(self):
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item_b.id, 'type': 'Receipt', 'qty': '5',
+        })
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(Transaction.objects.filter(item=self.item_b).exists())
+
+    def test_scoped_staff_allowed_own_store_item(self):
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item_a.id, 'type': 'Receipt', 'qty': '5',
+        })
+        self.assertNotEqual(resp.status_code, 403)
+        self.assertTrue(Transaction.objects.filter(item=self.item_a).exists())
+
+    def test_unassigned_staff_unaffected(self):
+        unassigned = User.objects.create_user(username='at_gate_unassigned', password='x')
+        UserProfile.objects.create(user=unassigned, business=self.biz, role='staff')
+        self.client.force_login(unassigned)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item_b.id, 'type': 'Receipt', 'qty': '5',
+        })
+        self.assertNotEqual(resp.status_code, 403)
+

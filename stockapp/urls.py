@@ -6,6 +6,7 @@ from accounts.views import logout_view
 from stockapp.admin_site import duka_admin_site
 from core.views import (
     home,
+    switch_active_store,
     dashboard_revenue_api,
     stock_list,
     expiring_items,
@@ -336,6 +337,7 @@ urlpatterns = [
     path("accounts/", include("django.contrib.auth.urls")),
     path("business/", include("accounts.urls")),
     path("", home, name="home"),
+    path("store/switch/<int:store_id>/", switch_active_store, name="switch_active_store"),
     path("dashboard/revenue/", dashboard_revenue_api, name="dashboard_revenue_api"),
     path("health/", health_check, name="health_check"),
     path("offline/", offline, name="offline"),

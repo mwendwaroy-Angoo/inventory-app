@@ -230,6 +230,24 @@ def csrf_failure_view(request, reason=""):
     return redirect('login')
 
 
+@login_required
+def switch_active_store(request, store_id):
+    """UBA §5.1 — set the session's active store, after confirming this
+    profile can actually access it. Never trusts the URL param blindly —
+    a staffer cannot switch into a store require_store_access() would deny
+    them. A GET (not a state-changing POST) matches this app's existing
+    convention for lightweight UI-preference toggles, not a financial or
+    stock-affecting action."""
+    profile = request.user.userprofile
+    store = Store.objects.filter(pk=store_id, business=profile.business).first()
+    if store is None or not profile.accessible_stores().filter(pk=store.pk).exists():
+        messages.error(request, "Huna ruhusa ya duka hili.")
+        return redirect(request.META.get('HTTP_REFERER') or 'home')
+    request.session['active_store_id'] = store.id
+    messages.success(request, f"Umebadilisha kwenda {store.name}.")
+    return redirect(request.META.get('HTTP_REFERER') or 'home')
+
+
 @never_cache
 def home(request):
     # 2026-07-28 live report: Roy saw the KES 1400 till figure (already fixed
@@ -853,6 +871,18 @@ def stock_list(request):
     if selected_store_id:
         try:
             selected_store_id = int(selected_store_id)
+            # UBA §5.1 — a staffer scoped to specific store(s) must not be
+            # able to reach another store's stock list by editing ?store=
+            # in the URL. require_store_access() is a no-op for every
+            # existing staffer today (accessible_stores() falls back to
+            # "all active stores" with no explicit assignment) — this only
+            # narrows once an owner actually assigns someone to store(s).
+            _target_store = Store.objects.filter(
+                pk=selected_store_id, business=user_profile.business
+            ).first()
+            if _target_store is not None:
+                from core.access import require_store_access
+                require_store_access(user_profile, _target_store)
             items = items.filter(store_id=selected_store_id)
         except (ValueError, TypeError):
             pass
@@ -1142,6 +1172,15 @@ def add_transaction(request):
         # Sell-module audit finding, 2026-07-19 — the most severe gap found
         # in this audit series so far).
         item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
+
+        # UBA §5.1 — a staffer scoped to specific store(s) must not be able
+        # to record a transaction against another store's item, even one
+        # within the same business. No-op for every existing staffer today
+        # (accessible_stores() falls back to "all active stores" with no
+        # explicit assignment) — only narrows once an owner assigns someone
+        # to specific store(s).
+        from core.access import require_store_access
+        require_store_access(user_profile, item.store)
 
         # ── PRODUCE PRESET HANDLING ───────────────────────────────────────────
         preset_id = request.POST.get('preset_id', '').strip()
