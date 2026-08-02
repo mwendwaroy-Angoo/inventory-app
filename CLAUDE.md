@@ -814,6 +814,45 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA M2 (2026-08-02): stock transfers between stores — `StockTransfer`/
+  `StockTransferLine` models (migration `0142_stocktransfer_stocktransferline_
+  transaction_transfer`) + a new `Transaction.transfer` FK. Gap-free
+  `transfer_number` per business via `select_for_update().order_by(
+  '-transfer_number').first()`, same pattern as `Receipt.receipt_number`.
+  Lifecycle: `create_draft_locked()` (DRAFT) → `dispatch_locked()` (DRAFT→
+  DISPATCHED, deducts `from_store`) → `receive_locked()` (DISPATCHED→RECEIVED
+  if quantities match, else →DISPUTED per line) → `resolve_dispute_locked()`
+  (DISPUTED→RECEIVED, books the shortfall as `type='Wastage',
+  invoice_no='[TRF-LOSS]'`, same `[TAG]`-suppression convention as `[ADJ]`/
+  `[SVQ]`). `cancel_locked()` reverses a DISPATCHED transfer's deduction via
+  compensating `[TRF-CANCEL]` transactions. **Critical mid-sprint redesign,
+  caught by investigation before shipping, not by a failing test**: the first
+  design used ordinary `type='Issue'`/`type='Receipt'` transactions with a
+  `transfer_id` field and `if self.transfer_id: return 0` guards in
+  `Transaction.revenue()`/`.cost()`. Per this file's own "audit ALL surfaces"
+  rule, grepped for every OTHER raw revenue/cost aggregate in the codebase
+  before calling it done — found the identical `Abs(F('qty')) *
+  Coalesce(F('item__selling_price'), Value(0))`-style pattern duplicated in
+  `shift_views.py`'s `_reconcile()` (the money-critical function behind every
+  till/Z-report/shift-close figure), plus `haki_views.py` (×2) and
+  `analytics_views.py` (×2) — none of which checked `transfer_id`. A
+  transfer's `type='Issue'` dispatch leg (payment_method defaulting to
+  `'cash'`, the same bug class already fixed once for split-remainder
+  transactions on 2026-07-25) would have silently inflated `_reconcile()`'s
+  `cash_sales`/`expected_cash` — real till corruption, not a cosmetic P&L
+  issue. Redesigned to a dedicated `type='Transfer'` value (migration
+  `0143_alter_transaction_type`) instead of chasing an open-ended sweep — same
+  "excluded by construction, no exclusion list to maintain" pattern already
+  proven by `KitchenBatch`'s `type='Draw'`. Both transfer legs now use
+  `type='Transfer'`, automatically invisible to every `type='Issue'`-filtered
+  query app-wide with zero new checks needed; confirmed by 2 direct
+  regression tests asserting a transfer never appears in `_reconcile()`'s
+  totals or analytics' revenue figures, using those functions' own query
+  shapes. 14 new tests (`StockTransferTest` ×12, `StockTransferExcludedFrom
+  RevenueEverywhereTest` ×2). 1227 tests pass. Model + business-logic layer
+  only this pass — dispatch/receive UI, transfer-request flow, and rider/POD
+  integration deferred to a follow-up, matching M1 part 1's same discipline.
+  See `docs/UBA_PROGRESS.md` for the full Cause-&-Effect detail.
 - Rekebisha "not a real loss" (2026-08-01), same-day follow-up. Live report
   with screenshots: Roy corrected Chrome Brandy 250ml (10→5) and Gilbey's
   (2→1) via ⚖️ Rekebisha, reversing the duplicate-receipt idempotency bug

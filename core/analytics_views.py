@@ -599,6 +599,9 @@ def analytics_dashboard(request):
     greens_daily_values = json.dumps([float(r['revenue'] or 0) for r in greens_daily_raw])
 
     # ── PORTION produce analytics (onions, tomatoes, potatoes, etc.) ──────────────
+    # UBA §5.2: a stock transfer's dispatch/receive legs are type='Transfer',
+    # never type='Issue' — so they're excluded from this query by
+    # construction, with no explicit transfer_id filter needed here.
     portion_txns = list(
         Transaction.objects
         .filter(
@@ -813,6 +816,9 @@ def analytics_dashboard(request):
     _staff_acc = {}
     for _shift in bar_shifts:
         _shift_end = _shift.ended_at or timezone.now()
+        # UBA §5.2: a stock transfer's dispatch leg is type='Transfer', never
+        # type='Issue' — excluded from this shift-window revenue attribution
+        # by construction, with no explicit transfer_id filter needed here.
         _agg = Transaction.objects.filter(
             business=business,
             type='Issue',

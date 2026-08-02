@@ -12,8 +12,8 @@ from core.models import (
     BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
     KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
     KitchenStockReceipt, KitchenStockReceiptLine,
-    Notification, Payment, PettyCash, Receipt, Shift, Store, TabTransferRequest,
-    TillCount, Transaction,
+    Notification, Payment, PettyCash, Receipt, Shift, Store, StockTransfer,
+    StockTransferLine, TabTransferRequest, TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -21786,4 +21786,191 @@ class AddTransactionStoreAccessGateTest(TestCase):
             'item': self.item_b.id, 'type': 'Receipt', 'qty': '5',
         })
         self.assertNotEqual(resp.status_code, 403)
+
+
+# ── UBA §5.2 — Stock transfers between stores ────────────────────────────────
+
+class StockTransferTest(TestCase):
+    """StockTransfer/StockTransferLine — dispatch/receive/dispute/cancel
+    lifecycle, gap-free references, and revenue/cost exclusion."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Transfer Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Godown')
+        self.store_b = Store.objects.create(business=self.biz, name='Branch')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Sugar 2kg',
+            material_no='TRF-ITEM-01', unit='pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('180'), opening_bin_balance=100,
+        )
+        self.owner_user = User.objects.create_user(username='transfer_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def _make_transfer(self, qty_sent=20):
+        return StockTransfer.create_draft_locked(
+            self.biz, self.store_a, self.store_b,
+            lines=[{'item_id': self.item.id, 'qty_sent': qty_sent}],
+            created_by=self.owner,
+        )
+
+    def test_gap_free_reference_numbering(self):
+        t1 = self._make_transfer()
+        t2 = self._make_transfer()
+        self.assertEqual(t1.transfer_number, 1)
+        self.assertEqual(t2.transfer_number, 2)
+        self.assertEqual(t1.reference, 'TRF-0001')
+        self.assertEqual(t2.reference, 'TRF-0002')
+
+    def test_dispatch_deducts_from_store_and_creates_no_revenue(self):
+        transfer = self._make_transfer(qty_sent=20)
+        before_balance = self.item.current_balance()
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), before_balance - 20)
+        txn = Transaction.objects.get(transfer=transfer, item=self.item)
+        self.assertEqual(txn.revenue(), 0)
+        self.assertEqual(txn.cost(), 0)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'DISPATCHED')
+        self.assertIsNotNone(transfer.dispatched_at)
+
+    def test_full_receive_closes_as_received(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 20}, received_by=self.owner)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'RECEIVED')
+        receive_txn = Transaction.objects.get(transfer=transfer, qty__gt=0)
+        self.assertEqual(float(receive_txn.qty), 20.0)
+        self.assertEqual(receive_txn.revenue(), 0)  # never revenue, matching M2-AC1
+
+    def test_short_receive_marks_disputed(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 18}, received_by=self.owner)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'DISPUTED')
+        line.refresh_from_db()
+        self.assertEqual(float(line.qty_received), 18.0)
+
+    def test_resolve_dispute_writes_off_shortfall_as_wastage_and_closes(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 18}, received_by=self.owner)
+        transfer.resolve_dispute_locked(resolved_by=self.owner)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'RECEIVED')
+        wastage_txn = Transaction.objects.get(transfer=transfer, type='Wastage')
+        self.assertEqual(float(wastage_txn.qty), -2.0)
+
+    def test_resolve_dispute_only_valid_from_disputed(self):
+        transfer = self._make_transfer()
+        with self.assertRaises(ValueError):
+            transfer.resolve_dispute_locked(resolved_by=self.owner)
+
+    def test_cancel_draft_creates_no_transactions(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.cancel_locked(cancelled_by=self.owner)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'CANCELLED')
+        self.assertEqual(Transaction.objects.filter(transfer=transfer).count(), 0)
+
+    def test_cancel_dispatched_reverses_stock_movement(self):
+        transfer = self._make_transfer(qty_sent=20)
+        before_balance = self.item.current_balance()
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        transfer.cancel_locked(cancelled_by=self.owner)
+        self.item.refresh_from_db()
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'CANCELLED')
+        self.assertEqual(self.item.current_balance(), before_balance)  # fully reversed
+
+    def test_cannot_dispatch_twice(self):
+        transfer = self._make_transfer()
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        with self.assertRaises(ValueError):
+            transfer.dispatch_locked(dispatched_by=self.owner)
+
+    def test_cannot_receive_a_draft(self):
+        transfer = self._make_transfer()
+        line = transfer.lines.first()
+        with self.assertRaises(ValueError):
+            transfer.receive_locked({line.id: 20}, received_by=self.owner)
+
+    def test_cannot_cancel_a_received_transfer(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 20}, received_by=self.owner)
+        with self.assertRaises(ValueError):
+            transfer.cancel_locked(cancelled_by=self.owner)
+
+    def test_dispatch_never_touches_to_store_balance(self):
+        """Only from_store's balance moves at dispatch — the goods are
+        in-transit, not yet at to_store (M2's in-transit window)."""
+        item_b_side = Item.objects.create(
+            business=self.biz, store=self.store_b, description='Sugar 2kg (branch)',
+            material_no='TRF-ITEM-02', unit='pcs', selling_price=Decimal('250'),
+        )
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        self.assertEqual(item_b_side.current_balance(), 0)
+
+
+class StockTransferExcludedFromRevenueEverywhereTest(TestCase):
+    """M2-AC1: a dispatched/received transfer must never appear as revenue in
+    shift reconciliation (the money-critical surface) or analytics — the
+    real reason type='Transfer' was chosen over type='Issue' + a transfer_id
+    filter: type='Issue'-scoped queries exclude it BY CONSTRUCTION, with no
+    per-report sweep needed."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Transfer Revenue Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Godown')
+        self.store_b = Store.objects.create(business=self.biz, name='Branch')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Rice 5kg',
+            material_no='TRFREV-01', unit='pcs', selling_price=Decimal('500'),
+            cost_price=Decimal('350'), opening_bin_balance=50,
+        )
+        self.owner_user = User.objects.create_user(username='trfrev_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_dispatch_during_open_shift_does_not_inflate_reconciliation(self):
+        from core.shift_views import _reconcile
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store_a, staff=self.owner_user, status='OPEN',
+        )
+        # A real cash sale during the shift — should be the ONLY thing counted.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), sale_amount=Decimal('1000'), payment_method='cash',
+        )
+        transfer = StockTransfer.create_draft_locked(
+            self.biz, self.store_a, self.store_b,
+            lines=[{'item_id': self.item.id, 'qty_sent': 10}], created_by=self.owner,
+        )
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        result = _reconcile(shift)
+        self.assertEqual(result['cash_sales'], 1000.0)
+
+    def test_dispatch_never_appears_in_kitchen_produce_analytics(self):
+        self.item.is_produce = True
+        self.item.produce_mode = 'PORTION'
+        self.item.save()
+        transfer = StockTransfer.create_draft_locked(
+            self.biz, self.store_a, self.store_b,
+            lines=[{'item_id': self.item.id, 'qty_sent': 10}], created_by=self.owner,
+        )
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        self.owner_user2 = self.owner_user
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/analytics/')
+        self.assertEqual(resp.status_code, 200)
+        portion_produce = resp.context['portion_produce']
+        matching = [p for p in portion_produce if p['description'] == 'Rice 5kg']
+        self.assertEqual(matching, [])  # no revenue row for a pure transfer
 

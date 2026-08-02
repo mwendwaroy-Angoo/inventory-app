@@ -821,6 +821,7 @@ class Transaction(models.Model):
         ('Wastage', _('Wastage')),
         ('OwnerConsumption', _('Owner Consumption')),
         ('Draw', _('Kitchen Batch Draw')),
+        ('Transfer', _('Stock Transfer Between Stores')),
     ]
 
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='transactions')
@@ -877,6 +878,16 @@ class Transaction(models.Model):
             "sold at KES 150) but have different real costs. See Transaction.cost()."
         ),
     )
+    transfer = models.ForeignKey(
+        'StockTransfer', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transactions',
+        help_text=(
+            'UBA §5.2 — set on both legs of a stock transfer between stores '
+            '(the dispatch Issue and the receive Receipt). Discriminator that '
+            'excludes a transfer from revenue()/cost() everywhere — a transfer '
+            'is a stock movement, never a sale.'
+        ),
+    )
     created_at = models.DateTimeField(
         default=timezone.now, null=True, blank=True,
         help_text='Exact timestamp — used for shift-level reconciliation. Can be backdated for offline sales.',
@@ -902,6 +913,14 @@ class Transaction(models.Model):
     )
 
     def revenue(self):
+        # UBA §5.2 — a stock-transfer leg (type='Transfer', see the Draw-type
+        # precedent this mirrors) is a movement, never a sale — already
+        # excluded by the type check below, since it's never 'Issue'. The
+        # explicit transfer_id check is defense-in-depth: it means a transfer
+        # leg returns 0 revenue even if something ever mistakenly creates one
+        # with type='Issue' instead, so this can never be silently bypassed.
+        if self.transfer_id:
+            return 0
         if self.type != 'Issue':
             return 0
         if self.sale_amount is not None:
@@ -911,6 +930,8 @@ class Transaction(models.Model):
         return 0
 
     def cost(self):
+        if self.transfer_id:
+            return 0
         if self.type != 'Issue':
             return 0
         # Keg barrel pours: qty is stored in ml — must NOT be multiplied by KES cost_price.
@@ -4799,6 +4820,229 @@ class Receipt(models.Model):
                 meta=meta or {},
                 created_by=user,
             )
+
+
+# ── UBA §5.2 — Stock transfers between stores ────────────────────────────────
+# Goods in transit is the single biggest shrinkage hiding place in a multi-
+# outlet business — "nilipeleka Kahawa branch" with no receipt on the other
+# end is how stock evaporates. DISPATCH creates an Issue transaction at
+# from_store; RECEIVE creates a Receipt transaction at to_store; the gap
+# between them is the in-transit window, and the StockTransfer record itself
+# is the audit trail. Transaction.transfer links both legs and is used by
+# Transaction.revenue()/cost() to exclude transfers from revenue everywhere —
+# a transfer is a stock movement, never a sale.
+
+class StockTransfer(models.Model):
+    STATUS_CHOICES = [
+        ('DRAFT', 'Rasimu'),
+        ('DISPATCHED', 'Imetumwa'),
+        ('RECEIVED', 'Imepokelewa'),
+        ('DISPUTED', 'Ina Utata'),
+        ('CANCELLED', 'Imefutwa'),
+    ]
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='stock_transfers'
+    )
+    transfer_number = models.PositiveIntegerField(
+        help_text='Gap-free per business — same guarantee as Receipt.receipt_number. '
+                  'Display via .reference (e.g. "TRF-0001").'
+    )
+    from_store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='transfers_out')
+    to_store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='transfers_in')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='DRAFT')
+    dispatched_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transfers_dispatched',
+    )
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    received_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transfers_received',
+    )
+    received_at = models.DateTimeField(null=True, blank=True)
+    rider = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transfers_ridden',
+    )
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transfers_created',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('business', 'transfer_number')]
+        ordering = ['-created_at']
+
+    @property
+    def reference(self):
+        return f"TRF-{self.transfer_number:04d}"
+
+    def __str__(self):
+        return f"{self.reference} ({self.from_store} → {self.to_store})"
+
+    @classmethod
+    def create_draft_locked(cls, business, from_store, to_store, lines, note='', created_by=None):
+        """Create a DRAFT transfer with its lines. `lines` is a list of
+        {item_id, qty_sent}. Gap-free transfer_number via the same
+        select_for_update() + order_by().first() pattern Receipt.issue()
+        already uses (select_for_update() + aggregate() is rejected by
+        PostgreSQL — this avoids that entirely)."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            latest = cls.objects.select_for_update().filter(business=business).order_by('-transfer_number').first()
+            last = latest.transfer_number if latest else 0
+            transfer = cls.objects.create(
+                business=business, transfer_number=last + 1,
+                from_store=from_store, to_store=to_store, note=note, created_by=created_by,
+            )
+            for line in lines:
+                StockTransferLine.objects.create(
+                    transfer=transfer, item_id=line['item_id'],
+                    qty_sent=Decimal(str(line['qty_sent'])),
+                )
+            return transfer
+
+    def dispatch_locked(self, dispatched_by=None):
+        """DRAFT -> DISPATCHED. Creates one type='Transfer' Transaction per
+        line at from_store — a real stock-out (current_balance() sums qty
+        across every type, so the balance still deducts correctly) but,
+        per the same precedent as KitchenBatch's 'Draw' type, NOT type=
+        'Issue' — so it is excluded BY CONSTRUCTION from every existing
+        type='Issue'-filtered revenue/analytics/reconciliation query across
+        the whole app, with no per-report exclusion list to find and
+        maintain. An early design of this used type='Issue' + a transfer_id
+        exclusion instead; ruled out after finding it would have required
+        auditing every revenue aggregate app-wide (shift reconciliation,
+        Staff Pouring League, Kibanda Produce Performance...) one at a time
+        to add the exclusion — exactly the failure mode the Draw-type
+        precedent already exists to avoid."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            transfer = StockTransfer.objects.select_for_update().get(pk=self.pk)
+            if transfer.status != 'DRAFT':
+                raise ValueError('Uhamisho huu tayari umeshughulikiwa.')
+            for line in transfer.lines.select_related('item').all():
+                Transaction.objects.create(
+                    business=transfer.business, item=line.item, type='Transfer',
+                    qty=-abs(line.qty_sent), transfer=transfer,
+                    recorded_by=getattr(dispatched_by, 'user', None),
+                )
+            transfer.status = 'DISPATCHED'
+            transfer.dispatched_by = dispatched_by
+            transfer.dispatched_at = timezone.now()
+            transfer.save(update_fields=['status', 'dispatched_by', 'dispatched_at'])
+            self.status = transfer.status
+            self.dispatched_by = transfer.dispatched_by
+            self.dispatched_at = transfer.dispatched_at
+            return transfer
+
+    def receive_locked(self, lines_received, received_by=None):
+        """DISPATCHED -> RECEIVED (or DISPUTED if any line arrived short).
+        `lines_received` is {line_id: qty_received}. Creates one type=
+        'Transfer' Transaction per line at to_store for the counted
+        quantity — never the sent quantity, so a shortfall is never
+        silently absorbed. Not type='Receipt' — same reasoning as
+        dispatch_locked(): excluded by construction from every revenue
+        query, and critically, Receipt-type transactions are Item.
+        cost_price's ONE designed writer path (add_transaction's Receipt
+        flow) elsewhere in this app — a transfer must never look like a
+        real purchase and silently perturb the item's cost price. A short
+        line's shortfall is left for the owner to explain via
+        resolve_dispute_locked()."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            transfer = StockTransfer.objects.select_for_update().get(pk=self.pk)
+            if transfer.status != 'DISPATCHED':
+                raise ValueError('Uhamisho huu si tayari kupokelewa.')
+            any_short = False
+            for line in transfer.lines.select_related('item').all():
+                qty_received = Decimal(str(lines_received.get(line.id, line.qty_sent)))
+                line.qty_received = qty_received
+                if qty_received < line.qty_sent:
+                    any_short = True
+                line.save(update_fields=['qty_received'])
+                if qty_received > 0:
+                    Transaction.objects.create(
+                        business=transfer.business, item=line.item, type='Transfer',
+                        qty=qty_received, transfer=transfer,
+                        recorded_by=getattr(received_by, 'user', None),
+                    )
+            transfer.status = 'DISPUTED' if any_short else 'RECEIVED'
+            transfer.received_by = received_by
+            transfer.received_at = timezone.now()
+            transfer.save(update_fields=['status', 'received_by', 'received_at'])
+            self.status = transfer.status
+            self.received_by = transfer.received_by
+            self.received_at = transfer.received_at
+            return transfer
+
+    def resolve_dispute_locked(self, resolved_by=None):
+        """DISPUTED -> RECEIVED: the owner has looked into the shortfall and
+        is writing it off — creates a Wastage Transaction at from_store for
+        each short line's missing quantity (a real, now-explained loss),
+        then closes the transfer as RECEIVED. Never auto-called — an owner
+        decision every time, matching this app's own Rekebisha/write-off
+        conventions elsewhere."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            transfer = StockTransfer.objects.select_for_update().get(pk=self.pk)
+            if transfer.status != 'DISPUTED':
+                raise ValueError('Uhamisho huu hauna utata wa kutatua.')
+            for line in transfer.lines.select_related('item').all():
+                qty_received = line.qty_received or Decimal('0')
+                shortfall = line.qty_sent - qty_received
+                if shortfall > 0:
+                    Transaction.objects.create(
+                        business=transfer.business, item=line.item, type='Wastage',
+                        qty=-shortfall, transfer=transfer,
+                        recorded_by=getattr(resolved_by, 'user', None),
+                        invoice_no='[TRF-LOSS]',
+                    )
+            transfer.status = 'RECEIVED'
+            transfer.save(update_fields=['status'])
+            self.status = transfer.status
+            return transfer
+
+    def cancel_locked(self, cancelled_by=None):
+        """Only while DRAFT or DISPATCHED, only by the dispatcher or the
+        owner (permission check is the caller's responsibility, matching
+        every other *_locked() method in this app — the model layer
+        enforces STATE, the view layer enforces WHO). A DRAFT cancel has no
+        Transactions to reverse (nothing moved yet). A DISPATCHED cancel
+        creates a compensating Receipt at from_store for each line's full
+        qty_sent — the goods never actually left, or came back — so the
+        stock movement must reverse; this is the transfer's own inverse
+        action, per CLAUDE.md's Cause-&-Effect protocol."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            transfer = StockTransfer.objects.select_for_update().get(pk=self.pk)
+            if transfer.status not in ('DRAFT', 'DISPATCHED'):
+                raise ValueError('Uhamisho huu hauwezi kufutwa katika hali hii.')
+            if transfer.status == 'DISPATCHED':
+                for line in transfer.lines.select_related('item').all():
+                    Transaction.objects.create(
+                        business=transfer.business, item=line.item, type='Transfer',
+                        qty=abs(line.qty_sent), transfer=transfer,
+                        recorded_by=getattr(cancelled_by, 'user', None),
+                        invoice_no='[TRF-CANCEL]',
+                    )
+            transfer.status = 'CANCELLED'
+            transfer.save(update_fields=['status'])
+            self.status = transfer.status
+            return transfer
+
+
+class StockTransferLine(models.Model):
+    transfer = models.ForeignKey(StockTransfer, on_delete=models.CASCADE, related_name='lines')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    qty_sent = models.DecimalField(max_digits=12, decimal_places=3)
+    qty_received = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    variance_note = models.CharField(max_length=200, blank=True)
+
+    def __str__(self):
+        return f"{self.item.description} × {self.qty_sent} ({self.transfer.reference})"
 
 
 # ── DJ / MC Performer Management ─────────────────────────────────────────────
