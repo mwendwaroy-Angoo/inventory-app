@@ -10160,6 +10160,121 @@ class KegBarrelDetailShiftBreakdownStationScopingTest(TestCase):
         self.assertIn('kbd_barstaff', staff_names)
 
 
+# ── Fix: Staff Pouring League + stock_take_api used the broken Shift.store
+# proxy instead of the real station discriminator (2026-08-02) ─────────────
+# Live report (Roy, screenshot from Bosco/Monsoon Inn's Bar Performance
+# analytics): kitchen staff "Shavel Atis" and "Dush Master" — who never
+# poured a single drink — appeared in the "Usahihi wa Kumwaga — Pouring
+# League" table with real revenue attributed to them. Same root cause as
+# the keg_barrel_detail fix a few minutes earlier the same day: Shift.store
+# is a documented broken proxy (always business.stores.first()), and this
+# section deliberately attributes ALL bar Issue transactions during a
+# shift's time window to that shift's staff — so a misattributed kitchen
+# shift pulled in real bar revenue sold by someone else during its window
+# and credited it to the kitchen staffer. The regression sweep also found
+# the identical bug in stock_take_api's item-scoping (both GET and POST).
+
+class StaffPouringLeagueStationScopingTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Pouring League Station Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='pl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.bar_staff = User.objects.create_user(username='pl_barstaff', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='pl_kitchenstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Pouring League Beer',
+            material_no='PL-01', selling_price=Decimal('200'),
+        )
+        now = timezone.now()
+        # Both shifts overlap the exact same clock window — the scenario
+        # that produced the misattribution (a bar sale made during that
+        # shared window used to get double-credited to the kitchen shift
+        # too, since the kitchen shift wrongly slipped into bar_shifts).
+        self.bar_shift = Shift.objects.create(
+            business=self.biz, staff=self.bar_staff, status='OPEN', station='bar',
+            started_at=now - timedelta(hours=2),
+        )
+        self.kitchen_shift = Shift.objects.create(
+            business=self.biz, staff=self.kitchen_staff, status='OPEN', station='kitchen',
+            started_at=now - timedelta(hours=2),
+        )
+        # A real bar-store sale, made by the bar staffer, during the window
+        # both shifts share.
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            payment_method='cash', sale_amount=Decimal('200'),
+            recorded_by=self.bar_staff, created_at=now - timedelta(hours=1),
+        )
+        self.client.force_login(self.owner)
+
+    def test_kitchen_staff_never_appears_in_pouring_league(self):
+        resp = self.client.get('/analytics/')
+        rows = resp.context['staff_keg_rows']
+        names = [r['name'] for r in rows]
+        self.assertIn('pl_barstaff', names)
+        self.assertNotIn('pl_kitchenstaff', names)
+        bar_row = next(r for r in rows if r['name'] == 'pl_barstaff')
+        self.assertEqual(bar_row['revenue'], 200.0)
+
+    def test_legacy_blank_station_shift_falls_back_to_role(self):
+        Shift.objects.filter(id=self.kitchen_shift.id).update(station='')
+        resp = self.client.get('/analytics/')
+        names = [r['name'] for r in resp.context['staff_keg_rows']]
+        self.assertNotIn('pl_kitchenstaff', names)
+
+
+class StockTakeApiStationScopingTest(TestCase):
+    """stock_take_api's item-scoping (both GET's item list and POST's
+    per-item skip check) used shift.store — the same broken proxy — instead
+    of the real _shift_station() discriminator."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Stock Take Station Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='stst_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kitchen_staff = User.objects.create_user(username='stst_kitchenstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Stock Take Bar Item',
+            material_no='STST-BAR', selling_price=Decimal('50'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Stock Take Kitchen Item',
+            material_no='STST-KITCHEN', selling_price=Decimal('50'),
+        )
+        self.kitchen_shift = Shift.objects.create(
+            business=self.biz, staff=self.kitchen_staff, status='OPEN', station='kitchen',
+        )
+        self.client.force_login(self.kitchen_staff)
+
+    def test_get_only_lists_own_station_items(self):
+        resp = self.client.get(f'/kitchen/shift/{self.kitchen_shift.id}/stock-take/')
+        names = [row['name'] for row in resp.json()['items']]
+        self.assertIn('Stock Take Kitchen Item', names)
+        self.assertNotIn('Stock Take Bar Item', names)
+
+    def test_post_skips_other_station_items(self):
+        import json
+        from core.models import ShiftStockCount
+        self.client.post(f'/kitchen/shift/{self.kitchen_shift.id}/stock-take/', {
+            'counts': json.dumps([
+                {'item_id': self.kitchen_item.id, 'actual_count': 5},
+                {'item_id': self.bar_item.id, 'actual_count': 5},
+            ]),
+        })
+        self.assertTrue(ShiftStockCount.objects.filter(shift=self.kitchen_shift, item=self.kitchen_item).exists())
+        self.assertFalse(ShiftStockCount.objects.filter(shift=self.kitchen_shift, item=self.bar_item).exists())
+
+
 # ── Fix: duplicate Kitchen store on toggle (2026-07-22) ───────────────────────
 # Root cause reported live by Roy for Monsoon Inn: manage_stores lets an
 # owner create a plain Store just by typing a name, with no is_kitchen

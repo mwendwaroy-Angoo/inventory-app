@@ -766,6 +766,7 @@ def analytics_dashboard(request):
     from django.db.models import Case, DecimalField as _DecF, Value, When
     from django.db.models.functions import Abs as _Abs, Coalesce as _Coal
     from .models import Shift as _Shift
+    from .shift_views import _station_q
 
     _rev_expr = Case(
         When(sale_amount__isnull=False, then=F('sale_amount')),
@@ -773,13 +774,28 @@ def analytics_dashboard(request):
         output_field=_DecF(max_digits=12, decimal_places=2),
     )
 
+    # 2026-08-02 live report (Roy, using the Bosco/Monsoon Inn account):
+    # kitchen staff who never poured a drink were appearing in the Staff
+    # Pouring League with real revenue attributed to them. Root cause: this
+    # used to filter on Shift.store — a documented broken proxy that is
+    # ALWAYS business.stores.first() regardless of which counter the shift
+    # actually ran on (see the 2026-07-27/28 "Fix Shift station
+    # misattribution" sprint and the same-day keg_barrel_detail fix above).
+    # A kitchen shift slipping into bar_shifts here isn't just cosmetic —
+    # this section deliberately attributes ALL bar Issue transactions during
+    # a shift's time window to that shift's staff (by design, so cash/mpesa
+    # walk-up sales aren't invisible), so a misattributed kitchen shift
+    # pulls in real bar revenue sold by someone else during that same
+    # window and credits it to the kitchen staffer. Fixed with the same
+    # explicit-station-first, role-fallback-for-blank-rows discriminator
+    # already established for every other shift/station surface in this app.
     bar_shifts = list(
         _Shift.objects.filter(
             business=business,
             started_at__date__gte=start_date,
             started_at__date__lte=today,
             status__in=['OPEN', 'CLOSED', 'CONFIRMED'],
-        ).exclude(store__is_kitchen=True).select_related('staff')
+        ).filter(_station_q(is_kitchen=False)).select_related('staff')
     )
 
     _staff_acc = {}

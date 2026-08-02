@@ -2358,10 +2358,14 @@ def stock_take_api(request, shift_id):
             .order_by('description')
             .prefetch_related('portion_presets')
         )
-        # Station scoping: only show items from the same counter as this shift
-        _shift_store = shift.store
-        if _shift_store is not None:
-            items = items.filter(store__is_kitchen=_shift_store.is_kitchen)
+        # Station scoping: only show items from the same counter as this shift.
+        # 2026-08-02 regression sweep (found while fixing the identical bug in
+        # analytics_views.py's Staff Pouring League): this used to read
+        # shift.store, a documented broken proxy that is ALWAYS
+        # business.stores.first() regardless of which counter the shift
+        # actually ran on. Fixed to the real, explicit-field-first station
+        # discriminator this file itself established (_shift_station()).
+        items = items.filter(store__is_kitchen=(_shift_station(shift) == 'kitchen'))
         data = []
         for item in items:
             data.append({
@@ -2389,7 +2393,9 @@ def stock_take_api(request, shift_id):
         if phase not in ('opening', 'closing'):
             phase = 'closing'
 
-        _shift_store = shift.store
+        # 2026-08-02 regression sweep: same broken shift.store proxy as the
+        # GET branch above — fixed to the real _shift_station() discriminator.
+        _shift_is_kitchen = (_shift_station(shift) == 'kitchen')
         results = []
         for entry in counts:
             try:
@@ -2401,8 +2407,8 @@ def stock_take_api(request, shift_id):
                 if not item:
                     continue
                 # Skip items that belong to the other counter
-                if _shift_store is not None and item.store_id:
-                    if item.store.is_kitchen != _shift_store.is_kitchen:
+                if item.store_id:
+                    if bool(item.store.is_kitchen) != _shift_is_kitchen:
                         continue
                 book = item.current_balance()
                 ShiftStockCount.objects.update_or_create(
