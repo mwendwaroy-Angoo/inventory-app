@@ -814,6 +814,36 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA A1/A2/A3 (2026-08-02): Apparel/boutique/mitumba (spec §8.2–§8.4),
+  closing out Phase 2 (photos excluded per the standing blocker table —
+  `ItemPhoto` left unbuilt, Render's ephemeral filesystem). Logged a new
+  `docs/UBA_BLOCKERS.md` entry first: the real seeded `BusinessType`
+  already includes "Clothing & Apparel" (a live type), so registering an
+  `'apparel'` `business_profiles.py` entry now would be a real behavior
+  change for existing businesses, unlike M0-AC3's inert stub — deferred
+  to its own dedicated rollup sprint; every A1-A3 mechanism built as
+  general/type-agnostic instead, same as all of Phase 1. **A1 —
+  Variants**: `Item.parent`/`variant_label`/`variant_attrs`/
+  `is_variant_parent` — parent/child Items per the spec's own explicit
+  recommendation, NOT a separate `ItemVariant` table (confirmed rationale:
+  a separate model would need auditing every balance reader/analytics
+  query/receipt line/reorder table/Quick-Sell tile/debt line/shrinkage
+  calc in the app; parent/child Items reuse 100% of existing machinery
+  for free). New `core/variants.py::create_variant_matrix()` with
+  collision-safe auto-SKU generation. Matrix-creator UI deferred — JSON
+  endpoint only. **A2 — Bale envelope**: `ProduceBunch` gains `kind`/
+  `grade`/`label` — deliberately keeps the model name (`produce_bunch_id`
+  is THE discriminator, never to be broken); `realized_markup()`/
+  `is_wilting()`/`sell_mix()` work completely unchanged, confirmed by a
+  direct test. **A3 — Aging/markdown + fitting room** (layaway itself
+  already built in P0-B): new `core/markdown_engine.py` reuses
+  `ItemPriceHistory` (built in R2) with `reason='markdown'` — one model,
+  two producers. New `FittingRoomLog` + a NEW `'fitting_room'`
+  accountability engine — the second real caller for the contract M0-7
+  deliberately left `attribute()` unbuilt for until a second engine
+  needed it. Boutique-intelligence UI dashboard deferred. 16 new tests.
+  1340 tests pass. This completes Phase 2 in full. See
+  `docs/UBA_PROGRESS.md`. Next: Phase 3 (Salon) — S1, S2, S3.
 - UBA P0-B (2026-08-02): Payment plans (layaway/deposit/instalments/
   booking), spec §6.2, first sprint of Phase 2 (Apparel). New
   `PaymentPlan`/`PaymentPlanEntry` models + `Business.layaway_forfeit_

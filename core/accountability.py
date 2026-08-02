@@ -160,3 +160,36 @@ def _keg_shift_engine(*, business, store, shift, date_from=None, date_to=None) -
 
 
 register_engine('keg_shift', _keg_shift_engine)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 'fitting_room' engine — UBA §8.4 (Sprint A3), the second real caller for this
+# module's `attribute()`-shaped contract that M0-7's docstring deferred until a
+# second engine actually needed it (produce envelope / kitchen recipe / retail
+# cycle count were all named candidates — a boutique fitting-room count turned
+# out to be the one that landed first).
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _fitting_room_engine(*, business, store, shift, date_from=None, date_to=None) -> Optional[VarianceResult]:
+    """`store` here is the FittingRoomLog instance for one staff/shift count —
+    kept under the generic `store` kwarg name for the same reason
+    `_keg_shift_engine` does: every future scope shares one call shape.
+    pieces_out is "expected back", pieces_back is "actual" — a shortfall
+    (pieces taken into the fitting room that never came back) is the
+    variance this exists to surface, no learned baseline yet (no prior
+    sprint built one for this scope, unlike keg's F3 baseline)."""
+    if store is None:
+        return None
+    log = store
+    expected = _dec(log.pieces_out)
+    actual = _dec(log.pieces_back)
+    variance = actual - expected
+    flag = 'ok' if variance == 0 else ('warning' if abs(variance) <= 1 else 'danger')
+    return VarianceResult(
+        expected=expected, actual=actual, variance=variance,
+        variance_kes=Decimal('0'), variance_pct=None, baseline_pct=None,
+        flag=flag, coverage_pct=Decimal('100'), is_partial=False,
+    )
+
+
+register_engine('fitting_room', _fitting_room_engine)

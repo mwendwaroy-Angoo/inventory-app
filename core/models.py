@@ -646,6 +646,21 @@ class Item(models.Model):
                   'miniatures...) — force-included in every cycle count regardless of ABC class.'
     )
 
+    # ── UBA §8.2 (Sprint A1) — variants (the boutique half) ─────────────────
+    # Parent/child Items, deliberately NOT a separate ItemVariant table (see
+    # core/variants.py's module docstring for why) — each variant IS an
+    # ordinary Item with its own balance/cost/price/barcode/history, reusing
+    # 100% of existing machinery. The parent is a display grouping only and
+    # is never sold directly.
+    parent = models.ForeignKey(
+        'self', on_delete=models.CASCADE, null=True, blank=True, related_name='variants'
+    )
+    variant_label = models.CharField(max_length=60, blank=True, help_text="e.g. 'M / Navy'.")
+    variant_attrs = models.JSONField(default=dict, blank=True, help_text="e.g. {'size':'M','colour':'Navy'}.")
+    is_variant_parent = models.BooleanField(
+        default=False, help_text='A display-grouping-only row — never sold directly.'
+    )
+
     # ── Greens / bunch-based produce (Kibanda Produce Module) ──────────────
     PRODUCE_MODE_CHOICES = [
         ('PORTION', _('Portion / fraction (cabbage, gorogoro)')),
@@ -779,6 +794,23 @@ class Item(models.Model):
         stock check instead, the one surface where overselling a reserved
         item actually causes the harm this exists to prevent."""
         return self.current_balance() - self.reserved_qty()
+
+    def variant_summary(self):
+        """UBA §8.2 (Sprint A1) — for a parent Item's stock-list collapse
+        row: total balance across all its variant children, and their price
+        range. Only meaningful when `is_variant_parent` is True; for an
+        ordinary item this just returns zeroed/empty values."""
+        children = list(self.variants.all())
+        if not children:
+            return {'total_balance': 0, 'min_price': None, 'max_price': None, 'variant_count': 0}
+        total_balance = sum(c.current_balance() for c in children)
+        prices = [c.selling_price for c in children if c.selling_price is not None]
+        return {
+            'total_balance': total_balance,
+            'min_price': min(prices) if prices else None,
+            'max_price': max(prices) if prices else None,
+            'variant_count': len(children),
+        }
 
     def physical_balance(self):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
@@ -3045,6 +3077,35 @@ class PaymentPlanEntry(models.Model):
 
 
 # ────────────────────────────────────────────────
+# UBA §8.4 (Sprint A3) — fitting-room log (optional, high-shrinkage boutiques)
+# ────────────────────────────────────────────────
+
+class FittingRoomLog(models.Model):
+    """Lightweight: a counter per staff per shift. Pieces out → pieces back.
+    Variance feeds StaffShrinkage via core.accountability's registry (a
+    second real caller for the pattern M0-7's VarianceResult contract was
+    built for)."""
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='fitting_room_logs')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True)
+    staff = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    shift = models.ForeignKey('Shift', on_delete=models.SET_NULL, null=True, blank=True)
+    pieces_out = models.PositiveIntegerField(default=0)
+    pieces_back = models.PositiveIntegerField(default=0)
+    note = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @property
+    def variance(self):
+        return self.pieces_out - self.pieces_back
+
+    def __str__(self):
+        return f"{self.pieces_out} out / {self.pieces_back} back (variance {self.variance})"
+
+
+# ────────────────────────────────────────────────
 # SALARY DEDUCTIONS  (Sprint WO1)
 # ────────────────────────────────────────────────
 
@@ -3301,6 +3362,20 @@ class ProduceBunch(models.Model):
     opened_on = models.DateTimeField(null=True, blank=True)
     closed_on = models.DateTimeField(null=True, blank=True)
     note = models.CharField(max_length=200, blank=True, default='')
+
+    # ── UBA §8.3 (Sprint A2) — generalised envelope (keeps this model name,
+    # never breaks produce_bunch_id, CLAUDE.md's own flagged discriminator) ──
+    KIND_CHOICES = [
+        ('produce', 'Mboga/Matunda'), ('bale', 'Bale ya mitumba'),
+        ('carcass', 'Nyama'), ('sack', 'Gunia'),
+    ]
+    kind = models.CharField(
+        max_length=16, default='produce', choices=KIND_CHOICES,
+        help_text='Same revenue-envelope maths for every kind — only the vocabulary/label '
+                  'shown to the owner should differ per business profile, never the maths.'
+    )
+    grade = models.CharField(max_length=12, blank=True, help_text="Mitumba grading: '1st'|'2nd'|'3rd'.")
+    label = models.CharField(max_length=60, blank=True, help_text="e.g. 'Bale ya jeans — Gikomba 28/07'.")
 
     class Meta:
         ordering = ['received_on', 'id']  # oldest first → sell-oldest / FIFO

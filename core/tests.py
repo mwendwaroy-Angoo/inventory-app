@@ -10,13 +10,13 @@ from django.utils import timezone
 from accounts.models import Business, UserProfile
 from core.models import (
     BarCupLog, BarTab, BarTabEntry, BusinessException, County, Customer,
-    GlobalProduct, Item, ItemPortionPreset, ItemPriceHistory, KegBarrel,
-    KegWeightReading, KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
-    KitchenStockReceiptLine, MarketPriceIndex, Notification, Payment,
-    PaymentPlan, PaymentPlanEntry, PettyCash, Receipt, Return, RevenueTarget,
-    Shift, StockCountLine, StockCountSession, Store, StockTransfer,
-    StockTransferLine, SupplierInvoice, SupplierPayment, TabTransferRequest,
-    TillCount, Transaction,
+    FittingRoomLog, GlobalProduct, Item, ItemPortionPreset, ItemPriceHistory,
+    KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
+    KitchenStockReceipt, KitchenStockReceiptLine, MarketPriceIndex,
+    Notification, Payment, PaymentPlan, PaymentPlanEntry, PettyCash,
+    ProduceBunch, Receipt, Return, RevenueTarget, Shift, StockCountLine,
+    StockCountSession, Store, StockTransfer, StockTransferLine,
+    SupplierInvoice, SupplierPayment, TabTransferRequest, TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -23344,3 +23344,222 @@ class PaymentPlanTest(TestCase):
             'payment_method': 'cash',
         })
         self.assertFalse(Transaction.objects.filter(business=self.biz, item=self.dress).exists())
+
+
+class VariantMatrixTest(TestCase):
+    """UBA A1 §8.2 — variants (the boutique half): parent/child Items."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Boutique Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='var_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_create_variant_matrix_creates_parent_and_children(self):
+        from core.variants import create_variant_matrix
+        parent, children = create_variant_matrix(
+            self.biz, self.store, 'Shirt', sizes=['S', 'M', 'L'], colours=['Navy', 'Red'],
+            base_price=Decimal('1500'),
+        )
+        self.assertTrue(parent.is_variant_parent)
+        self.assertEqual(len(children), 6)
+        for child in children:
+            self.assertEqual(child.parent_id, parent.id)
+            self.assertFalse(child.is_variant_parent)
+            self.assertTrue(child.variant_label)
+
+    def test_each_variant_has_independent_balance(self):
+        from core.variants import create_variant_matrix
+        parent, children = create_variant_matrix(
+            self.biz, self.store, 'Dress', sizes=['M'], colours=['Blue', 'Green'],
+            base_price=Decimal('2000'), opening_qty=5,
+        )
+        blue = next(c for c in children if 'Blue' in c.variant_label)
+        green = next(c for c in children if 'Green' in c.variant_label)
+        self.assertEqual(blue.current_balance(), 5)
+        Transaction.objects.create(
+            business=self.biz, item=blue, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('4000'), payment_method='cash', date=timezone.localdate(),
+        )
+        blue.refresh_from_db()
+        self.assertEqual(blue.current_balance(), 3)
+        self.assertEqual(green.current_balance(), 5)  # unaffected
+
+    def test_auto_skus_are_unique(self):
+        from core.variants import create_variant_matrix
+        _, children1 = create_variant_matrix(
+            self.biz, self.store, 'Shirt', sizes=['M'], colours=['Navy'], base_price=Decimal('1000'),
+        )
+        _, children2 = create_variant_matrix(
+            self.biz, self.store, 'Shirt', sizes=['M'], colours=['Navy'], base_price=Decimal('1000'),
+        )
+        self.assertNotEqual(children1[0].material_no, children2[0].material_no)
+
+    def test_variant_summary_aggregates_children(self):
+        from core.variants import create_variant_matrix
+        parent, children = create_variant_matrix(
+            self.biz, self.store, 'Jacket', sizes=['M', 'L'], colours=[''],
+            base_price=Decimal('3000'), opening_qty=2,
+        )
+        for c in children:
+            c.selling_price = Decimal('3000') if 'M' in c.variant_label else Decimal('3500')
+            c.save(update_fields=['selling_price'])
+        summary = parent.variant_summary()
+        self.assertEqual(summary['total_balance'], 4)
+        self.assertEqual(summary['variant_count'], 2)
+        self.assertEqual(summary['min_price'], Decimal('3000'))
+        self.assertEqual(summary['max_price'], Decimal('3500'))
+
+    def test_create_matrix_view_end_to_end(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/variants/create-matrix/', {
+            'product_name': 'Trousers', 'store_id': self.store.id, 'base_price': '2500',
+            'sizes': ['30', '32', '34'], 'colours': ['Black'], 'opening_qty': '3',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(len(data['children']), 3)
+
+
+class BaleEnvelopeTest(TestCase):
+    """UBA A2 §8.3 — bale envelope generalisation (ProduceBunch.kind/grade/label)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Mitumba Biz')
+        self.store = Store.objects.create(business=self.biz, name='Stall')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Jeans Bale',
+            material_no='BALE-01', unit='pcs', is_produce=True,
+        )
+
+    def test_bale_kind_defaults_and_same_maths_as_produce(self):
+        bale = ProduceBunch.objects.create(
+            business=self.biz, item=self.item, kind='bale', grade='1st',
+            label='Bale ya jeans — Gikomba 28/07', size='LARGE',
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+        )
+        self.assertEqual(bale.kind, 'bale')
+        self.assertEqual(bale.grade, '1st')
+        bale.revenue_collected = Decimal('8000')
+        bale.save(update_fields=['revenue_collected'])
+        self.assertEqual(bale.remaining(), Decimal('12000'))
+        self.assertAlmostEqual(bale.realized_markup(), 8000 / 12000)
+
+    def test_default_kind_is_produce_for_ordinary_bunches(self):
+        bunch = ProduceBunch.objects.create(
+            business=self.biz, item=self.item, size='SMALL',
+            cost_price=Decimal('40'), target_revenue=Decimal('70'),
+        )
+        self.assertEqual(bunch.kind, 'produce')
+        self.assertEqual(bunch.grade, '')
+
+
+class MarkdownEngineTest(TestCase):
+    """UBA A3 §8.4 — aging & markdown engine."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Markdown Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='md_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_stale_item_gets_markdown_suggestion(self):
+        from core.markdown_engine import aging_and_markdown_report
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Old Suits',
+            material_no='MD-01', unit='pcs', selling_price=Decimal('2000'),
+            cost_price=Decimal('1600'), opening_bin_balance=6,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('2000'), payment_method='cash',
+            date=timezone.localdate() - timedelta(days=95),
+        )
+        rows = aging_and_markdown_report(self.biz)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row['bucket'], '90+')
+        self.assertEqual(row['markdown_pct'], 40.0)
+        self.assertEqual(row['suggested_price'], 1200.0)  # 2000 * 0.6
+
+    def test_recently_sold_item_excluded(self):
+        from core.markdown_engine import aging_and_markdown_report
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Fresh Stock',
+            material_no='MD-02', unit='pcs', selling_price=Decimal('1000'), opening_bin_balance=5,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('1000'), payment_method='cash', date=timezone.localdate(),
+        )
+        rows = aging_and_markdown_report(self.biz)
+        self.assertEqual(rows, [])
+
+    def test_apply_markdown_writes_price_history(self):
+        from core.markdown_engine import apply_markdown
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Markdown Item',
+            material_no='MD-03', unit='pcs', selling_price=Decimal('1000'),
+        )
+        apply_markdown(item, Decimal('600'), self.owner)
+        item.refresh_from_db()
+        self.assertEqual(item.selling_price, Decimal('600'))
+        hist = ItemPriceHistory.objects.get(item=item)
+        self.assertEqual(hist.reason, 'markdown')
+
+    def test_apply_markdown_view_end_to_end(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='View Markdown Item',
+            material_no='MD-04', unit='pcs', selling_price=Decimal('1000'),
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/items/{item.id}/apply-markdown/', {'new_price': '750'})
+        self.assertTrue(resp.json()['ok'])
+        item.refresh_from_db()
+        self.assertEqual(item.selling_price, Decimal('750'))
+
+
+class FittingRoomLogTest(TestCase):
+    """UBA A3 §8.4 — fitting-room log, second real accountability engine caller."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Fitting Room Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='fr_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='fr_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_variance_property(self):
+        log = FittingRoomLog.objects.create(business=self.biz, store=self.store, pieces_out=10, pieces_back=8)
+        self.assertEqual(log.variance, 2)
+
+    def test_fitting_room_engine_flags_danger_on_large_variance(self):
+        from core.accountability import variance_for
+        log = FittingRoomLog.objects.create(business=self.biz, store=self.store, pieces_out=10, pieces_back=5)
+        result = variance_for('fitting_room', business=self.biz, store=log, shift=None)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.flag, 'danger')
+        self.assertEqual(result.variance, Decimal('-5'))
+
+    def test_fitting_room_engine_ok_on_zero_variance(self):
+        from core.accountability import variance_for
+        log = FittingRoomLog.objects.create(business=self.biz, store=self.store, pieces_out=10, pieces_back=10)
+        result = variance_for('fitting_room', business=self.biz, store=log, shift=None)
+        self.assertEqual(result.flag, 'ok')
+
+    def test_record_fitting_room_count_view_owner(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/apparel/fitting-room/record/', {
+            'pieces_out': '12', 'pieces_back': '11', 'store': self.store.id,
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['variance'], 1)
+
+    def test_record_fitting_room_count_requires_shift_for_staff(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.post('/apparel/fitting-room/record/', {
+            'pieces_out': '5', 'pieces_back': '5', 'store': self.store.id,
+        })
+        self.assertEqual(resp.status_code, 403)

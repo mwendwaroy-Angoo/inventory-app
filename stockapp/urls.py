@@ -236,6 +236,10 @@ from core.payment_plans_views import (
     create_payment_plan, pay_payment_plan, convert_payment_plan_to_sale,
     refund_payment_plan, release_payment_plan, forfeit_payment_plan,
 )
+from core.variants_views import create_variant_matrix_view
+from core.apparel_views import (
+    aging_markdown_report_view, apply_markdown_view, record_fitting_room_count,
+)
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -804,6 +808,12 @@ urlpatterns = [
     path("payment-plans/<int:plan_id>/refund/", refund_payment_plan, name="refund_payment_plan"),
     path("payment-plans/<int:plan_id>/release/", release_payment_plan, name="release_payment_plan"),
     path("payment-plans/<int:plan_id>/forfeit/", forfeit_payment_plan, name="forfeit_payment_plan"),
+    # ── UBA A1 — variants (the boutique half) ──────────────────────────────────
+    path("stock/variants/create-matrix/", create_variant_matrix_view, name="create_variant_matrix_view"),
+    # ── UBA A3 — aging/markdown + fitting room ──────────────────────────────────
+    path("analytics/apparel/aging-markdown/", aging_markdown_report_view, name="aging_markdown_report_view"),
+    path("stock/items/<int:item_id>/apply-markdown/", apply_markdown_view, name="apply_markdown_view"),
+    path("apparel/fitting-room/record/", record_fitting_room_count, name="record_fitting_room_count"),
 ]
 
 if settings.DEBUG:
