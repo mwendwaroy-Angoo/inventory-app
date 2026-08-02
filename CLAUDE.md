@@ -4594,3 +4594,32 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   board/kitchen board's direct checkouts deliberately not extended this pass (Kibanda was
   the spec's own motivating example); logged as a low-risk follow-up now that the pattern
   is proven. 14 new tests, 1184 total, OK.
+- UBA M1 part 1 (2026-08-02): Store as first-class outlet — model layer + access gate
+  primitive. `core/models.py` Store gains `store_type/code/is_outlet/manager/is_active/
+  opening_time/closing_time/target_daily_revenue/phone/address_note/latitude/longitude`
+  (migration 0141). **Critical bug caught before it shipped**: the spec's own illustrative
+  `Store.save()` sync is bidirectional (`store_type=='kitchen' → is_kitchen=True`, `elif
+  is_kitchen and store_type!='kitchen' → is_kitchen=False`) — copied it in verbatim, then
+  grepped every `is_kitchen=True` call site before testing and found
+  `kitchen_views.get_or_create_kitchen_store()` creates the kitchen Store via `is_kitchen=
+  True` alone, never `store_type` — the bidirectional version would have silently flipped
+  it back to `is_kitchen=False` the next time anything saved it, breaking the kitchen
+  module for every business. Fixed to ONE-DIRECTIONAL sync (`is_kitchen` ground truth →
+  `store_type` derived), same precedent as `Item.save()`. Migration backfills
+  `store_type='kitchen'` for pre-existing rows. `accounts/models.py` UserProfile gains
+  `home_store`/`stores` M2M/`accessible_stores()` (migration 0056); `Business.plan` dormant
+  hook (§3 decision #7). **Second deviation**: `accessible_stores()`'s no-assignment
+  fallback is ALL active stores, not the spec's own `Store.objects.none()` — that version
+  would lock out every staff member that exists today the instant the gate is wired in;
+  access only narrows once an owner assigns someone to specific store(s) (M1-AC2). New
+  `core/access.py::require_store_access(profile, store)`. 15 new tests, 1199 total, OK.
+- UBA M1 part 2 (2026-08-02): session store switcher + real view wiring.
+  `core.context_processors.active_store_context` reads `request.session['active_store_id']`,
+  resolves against `accessible_stores()` (never trusts the session value blindly); new
+  `switch_active_store()` view validates access before writing the session key. Navbar
+  switcher UI deliberately deferred (no template touched, same discipline as M0-5/M0-6).
+  `require_store_access()` wired into `stock_list()`'s `?store=` filter and
+  `add_transaction()`'s item resolution — the two most explicitly named in the spec. 14 new
+  tests are direct M1-AC1 regression locks (staffer scoped to Store A gets 403 hitting
+  Store B; unassigned staff/owner unaffected). 1213 total, OK. Remaining for a future pass:
+  receipts list/shift open/debt views/analytics wiring, the switcher UI, M2, M3.
