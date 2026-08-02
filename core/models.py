@@ -2671,6 +2671,33 @@ class Shift(models.Model):
         max_length=15, blank=True, choices=VARIANCE_REVIEW_CHOICES,
     )
 
+    # ── Close-on-behalf-of accountability (2026-08-02, live request) ────────────
+    # Roy: "give the owner the ability to close shift on behalf of the manager
+    # or staff in shift at any point in time" — for the exact scenario where
+    # business hours have passed, real sales were made, but the staffer simply
+    # forgot to close on the app before leaving. Rather than always waiting on
+    # the auto-close inactivity sweep (_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS),
+    # the owner (or a manager with the same can_confirm_shifts delegation
+    # already used by confirm_shift() — never for another manager's shift,
+    # same rule as everywhere else in this app) may close it immediately.
+    # closed_by is set on EVERY close, self or on-behalf — closed_by == staff
+    # is the ordinary case; closed_by != staff means it was force-closed on
+    # someone else's behalf, and force_close_reason (optional, reason-chips
+    # or a prompt) explains why, matching this app's wording/accountability
+    # standard of naming who acted, when, and why.
+    closed_by = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='shifts_closed',
+        help_text='Who actually submitted the close — same as staff for an '
+                   'ordinary self-close, different when an owner/manager '
+                   'closed it on someone else\'s behalf.',
+    )
+    force_close_reason = models.CharField(
+        max_length=300, blank=True,
+        help_text='Optional explanation when closed_by differs from staff — '
+                   'why the owner/manager closed this shift on their behalf.',
+    )
+
     class Meta:
         ordering = ['-started_at']
         verbose_name = 'Shift'

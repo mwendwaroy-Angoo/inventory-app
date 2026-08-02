@@ -243,6 +243,13 @@
         </span>
       </div>
       {% endif %}
+      {% if s.closed_by_id and s.closed_by_id != s.staff_id %}
+      <p style="font-size:.8rem; color:#e57373; margin-top:.5rem;">
+        🔒 Ilifungwa na {{ s.closed_by.get_full_name|default:s.closed_by.username }} kwa niaba ya
+        {{ s.staff.get_full_name|default:s.staff.username }}
+        {% if s.force_close_reason %} — "{{ s.force_close_reason }}"{% endif %}
+      </p>
+      {% endif %}
       {% if s.confirmed_by %}
       <p style="font-size:.8rem; color:#5da8f0; margin-top:.5rem;">
         &#10003; Imethibitishwa na {{ s.confirmed_by.get_full_name|default:s.confirmed_by.username }}

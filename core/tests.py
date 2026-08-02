@@ -4599,11 +4599,14 @@ class ActivityBasedAutoCloseTest(TestCase):
     The auto-close sweep is now purely ACTIVITY-based, for every role
     (manager and owner shifts included, no special-casing): past closing
     time AND no sale recorded anywhere on that station for
-    _SHIFT_AUTO_CLOSE_INACTIVITY_HOURS (8h) straight. As long as real
-    sales keep happening on the counter, no shift on it is ever swept, no
-    matter who's ringing them up or what the clock/business hours say.
-    Only genuine, sustained silence trips the safety net — and once it
-    does, it now also resets the station's live revenue tile (see
+    _SHIFT_AUTO_CLOSE_INACTIVITY_HOURS straight (3h as of the same-day
+    2026-08-02 follow-up — now that an owner/delegated manager can also
+    force-close a forgotten shift on the spot at any time, the safety net
+    itself no longer needs to wait as long). As long as real sales keep
+    happening on the counter, no shift on it is ever swept, no matter who's
+    ringing them up or what the clock/business hours say. Only genuine,
+    sustained silence trips the safety net — and once it does, it now also
+    resets the station's live revenue tile (see
     AutoCloseRevenueContinuityTest)."""
 
     def setUp(self):
@@ -4730,6 +4733,164 @@ class ActivityBasedAutoCloseTest(TestCase):
         closed_ids = [r['shift_id'] for r in result]
         self.assertNotIn(self.manager_shift.id, closed_ids)
         self.assertNotIn(self.staff_shift.id, closed_ids)
+
+
+class AutoCloseInactivityThresholdTest(TestCase):
+    """2026-08-02 live follow-up: Roy asked for the safety-net window itself
+    to drop from 8h to 3h, now that force-close-on-behalf-of covers the
+    'owner wants it closed right now' case directly."""
+
+    def test_threshold_is_three_hours(self):
+        from core.shift_views import _SHIFT_AUTO_CLOSE_INACTIVITY_HOURS
+        self.assertEqual(_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS, 3)
+
+
+class CloseShiftOnBehalfOfTest(TestCase):
+    """2026-08-02 live request: "give the owner the ability to close shift
+    on behalf of the manager or staff in shift at any point in time" — for
+    the scenario where business hours have passed, real sales were made,
+    but the staffer forgot to close on the app before leaving, and the
+    owner doesn't want to wait for the auto-close sweep. Reuses the exact
+    same permission tier _can_confirm_shift() already established for
+    confirm_shift() — owner always, a toggled manager only for non-manager
+    staff, never another manager's shift. This also closes a real
+    pre-existing gap: before this, close_shift() had NO authorization tying
+    the actor to shift.staff at all."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Close On Behalf Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='cob_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='cob_manager', password='x')
+        UserProfile.objects.create(
+            user=self.manager, business=self.biz, role='manager', can_confirm_shifts=True,
+        )
+        # A SEPARATE manager account, never toggled on, rather than flipping
+        # self.manager's toggle off after creation — force_login() calls
+        # user.save(update_fields=['last_login']), which fires accounts'
+        # save_user_profile post_save hook and does a FULL, unconditional
+        # save() of whatever UserProfile happens to be cached on that same
+        # Python User object; a later .filter().update() bypasses that
+        # cache, so a subsequent force_login(self.manager) would silently
+        # resurrect the stale in-memory can_confirm_shifts=True and clobber
+        # the .update() — a real Django gotcha, not something to route
+        # around with a workaround inside close_shift() itself.
+        self.manager_no_toggle = User.objects.create_user(username='cob_manager_notoggle', password='x')
+        UserProfile.objects.create(
+            user=self.manager_no_toggle, business=self.biz, role='manager', can_confirm_shifts=False,
+        )
+        self.manager2 = User.objects.create_user(username='cob_manager2', password='x')
+        UserProfile.objects.create(
+            user=self.manager2, business=self.biz, role='manager', can_confirm_shifts=True,
+        )
+        self.plain_staff = User.objects.create_user(username='cob_plainstaff', password='x')
+        UserProfile.objects.create(user=self.plain_staff, business=self.biz, role='staff')
+        self.staff = User.objects.create_user(username='cob_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def _open_shift_for(self, user):
+        return Shift.objects.create(
+            business=self.biz, store=self.store, staff=user,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+
+    def test_owner_closes_staff_shift_on_behalf(self):
+        shift = self._open_shift_for(self.staff)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {
+            'force_close_reason': 'Alisahau kufunga',
+        })
+        self.assertEqual(resp.json()['ok'], True)
+        self.assertTrue(resp.json()['closed_on_behalf'])
+        shift.refresh_from_db()
+        self.assertEqual(shift.status, 'CLOSED')
+        self.assertEqual(shift.closed_by_id, self.owner.id)
+        self.assertEqual(shift.force_close_reason, 'Alisahau kufunga')
+        self.assertIsNone(shift.closing_cash_counted)
+
+    def test_owner_closes_manager_shift_on_behalf(self):
+        shift = self._open_shift_for(self.manager)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {})
+        self.assertEqual(resp.json()['ok'], True)
+        shift.refresh_from_db()
+        self.assertEqual(shift.status, 'CLOSED')
+        self.assertEqual(shift.closed_by_id, self.owner.id)
+
+    def test_manager_without_toggle_cannot_force_close(self):
+        shift = self._open_shift_for(self.staff)
+        self.client.force_login(self.manager_no_toggle)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {})
+        self.assertEqual(resp.status_code, 403)
+        shift.refresh_from_db()
+        self.assertEqual(shift.status, 'OPEN')
+
+    def test_manager_with_toggle_can_force_close_staff_shift(self):
+        shift = self._open_shift_for(self.staff)
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {})
+        self.assertEqual(resp.json()['ok'], True)
+        shift.refresh_from_db()
+        self.assertEqual(shift.status, 'CLOSED')
+        self.assertEqual(shift.closed_by_id, self.manager.id)
+
+    def test_manager_cannot_force_close_another_managers_shift(self):
+        shift = self._open_shift_for(self.manager2)
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {})
+        self.assertEqual(resp.status_code, 403)
+        shift.refresh_from_db()
+        self.assertEqual(shift.status, 'OPEN')
+
+    def test_plain_staff_cannot_close_another_staffs_shift(self):
+        """The real pre-existing gap this fix closes: before this, ANY
+        logged-in staff member of the business could close ANY other
+        shift's id with zero check."""
+        shift = self._open_shift_for(self.staff)
+        self.client.force_login(self.plain_staff)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {})
+        self.assertEqual(resp.status_code, 403)
+        shift.refresh_from_db()
+        self.assertEqual(shift.status, 'OPEN')
+
+    def test_self_close_still_works_unaffected(self):
+        shift = self._open_shift_for(self.staff)
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {
+            'closing_cash_counted': '500',
+        })
+        self.assertEqual(resp.json()['ok'], True)
+        self.assertFalse(resp.json()['closed_on_behalf'])
+        shift.refresh_from_db()
+        self.assertEqual(shift.status, 'CLOSED')
+        self.assertEqual(shift.closed_by_id, self.staff.id)
+        self.assertEqual(shift.closing_cash_counted, Decimal('500'))
+        self.assertEqual(shift.force_close_reason, '')
+
+    def test_staff_notified_when_closed_on_their_behalf(self):
+        from core.models import Notification
+        shift = self._open_shift_for(self.staff)
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/shift/{shift.id}/close/', {
+            'force_close_reason': 'Zamu ilikuwa imefunguliwa muda mrefu',
+        })
+        notif = Notification.objects.filter(user=self.staff, title='🔒 Shift Yako Imefungwa').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('cob_owner', notif.message)
+        self.assertIn('Zamu ilikuwa imefunguliwa muda mrefu', notif.message)
+
+    def test_blank_closing_cash_leaves_variance_uncomputed(self):
+        """Uncounted (None), not a false 'physically counted zero' — same
+        semantics the auto-close safety net already uses, so
+        till_expected_cash()'s anchor never trusts an unverified figure."""
+        shift = self._open_shift_for(self.staff)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {})
+        data = resp.json()
+        self.assertIsNone(data['variance'])
+        shift.refresh_from_db()
+        self.assertIsNone(shift.closing_cash_counted)
 
 
 class CloseShiftAutoConvertedNamesResponseTest(TestCase):
@@ -20544,3 +20705,4 @@ class KitchenPerformancePerPresetBreakdownTest(TestCase):
         self.assertIn('Chips', rows)
         self.assertEqual(rows['Chips']['revenue'], 200.0)
         self.assertEqual(rows['Chips']['units'], 2.0)
+

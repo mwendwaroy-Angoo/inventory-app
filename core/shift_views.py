@@ -850,9 +850,14 @@ def _tapped_barrels_for_business(business):
 
 # ── Auto-close stale shifts ───────────────────────────────────────────────────
 
-_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS = 8   # 2026-08-02: hours of zero sales on a
-    # station, past closing time, before the auto-close safety net fires —
-    # replaces the old fixed post-closing-time clock grace (see
+_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS = 3   # 2026-08-02, tightened same-day from 8:
+    # Roy's own follow-up — now that the owner can force-close a forgotten
+    # shift on behalf of staff/manager at any time (see close_shift()'s
+    # _can_confirm_shift on-behalf branch), the automatic safety net no
+    # longer needs to wait as long before a genuinely-quiet station gets
+    # swept — 3 hours of zero sales, past closing time, is enough. Hours of
+    # zero sales on a station, past closing time, before the auto-close
+    # safety net fires — replaces the old fixed post-closing-time clock grace (see
     # _auto_close_expired_shifts()'s docstring for why).
 
 
@@ -1197,9 +1202,15 @@ def active_shift_api(request):
     all_shifts_data = []
     for s in all_open:
         rec = _reconcile(s)
+        try:
+            _staff_role = s.staff.userprofile.role
+        except Exception:
+            _staff_role = ''
         all_shifts_data.append({
             'id':          s.id,
+            'staff_id':    s.staff_id,
             'staff_name':  s.staff.get_full_name() or s.staff.username,
+            'staff_role':  _staff_role,
             'section':     _section(s),
             'covers_both': _covers_both(s),
             'status':      s.status,
@@ -1550,10 +1561,40 @@ def close_shift(request, shift_id):
     if shift.status != 'OPEN':
         return JsonResponse({'ok': False, 'error': 'Shift si OPEN'}, status=400)
 
-    try:
-        closing_cash = Decimal(str(request.POST.get('closing_cash_counted', '0')))
-    except Exception:
-        return JsonResponse({'ok': False, 'error': 'Nambari si sahihi'}, status=400)
+    # 2026-08-02 live request (Roy): "give the owner the ability to close
+    # shift on behalf of the manager or staff in shift at any point in
+    # time" — for exactly the scenario where business hours have passed,
+    # real sales were made, but the staffer forgot to close on the app
+    # before leaving, and the owner doesn't want to wait for the auto-close
+    # inactivity sweep. Reuses the SAME permission tier already established
+    # for confirm_shift() — owner always, a manager only with the
+    # can_confirm_shifts delegation toggle and never for another manager's
+    # shift — rather than inventing a second, parallel manager-delegation
+    # concept for what is functionally the same kind of "act on someone
+    # else's shift" authority. This also closes a real pre-existing gap:
+    # before this check, close_shift() had NO authorization tying the actor
+    # to shift.staff at all — any staff member of the business who knew or
+    # guessed another shift's id could already close it silently.
+    _on_behalf = shift.staff_id != request.user.id
+    if _on_behalf and not _can_confirm_shift(up, shift):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kufunga shift hii.'}, status=403)
+
+    # Blank/omitted closing_cash_counted means UNCOUNTED (None), not a
+    # physically-verified zero — same semantics _auto_close_expired_shifts()
+    # already uses, and required so till_expected_cash()'s anchor (which
+    # only trusts a real count) never silently treats "the owner didn't
+    # know the count" as "the drawer genuinely held nothing." The normal
+    # self-close modal already blocks submitting a blank value client-side,
+    # so this changes nothing for that path — it only matters for the new
+    # close-on-behalf-of flow, where the actor often has no physical count.
+    _cash_raw = (request.POST.get('closing_cash_counted') or '').strip()
+    if _cash_raw:
+        try:
+            closing_cash = Decimal(_cash_raw)
+        except Exception:
+            return JsonResponse({'ok': False, 'error': 'Nambari si sahihi'}, status=400)
+    else:
+        closing_cash = None
 
     notes_add = (request.POST.get('notes') or '').strip()
     try:
@@ -1561,18 +1602,50 @@ def close_shift(request, shift_id):
     except Exception:
         offline_amt = Decimal('0')
     offline_note = (request.POST.get('offline_sales_note') or '').strip()
+    force_reason = (request.POST.get('force_close_reason') or '').strip()[:300]
 
     shift.closing_cash_counted  = closing_cash
     shift.ended_at              = timezone.now()
     shift.status                = 'CLOSED'
     shift.offline_sales_amount  = offline_amt
     shift.offline_sales_note    = offline_note
+    shift.closed_by             = request.user
+    if _on_behalf:
+        shift.force_close_reason = force_reason
     if notes_add:
         shift.notes = (shift.notes + '\n' + notes_add).strip()
     shift.save(update_fields=[
         'closing_cash_counted', 'ended_at', 'status', 'notes',
         'offline_sales_amount', 'offline_sales_note',
+        'closed_by', 'force_close_reason',
     ])
+
+    # Tell the shift's own staff their shift was closed on their behalf —
+    # same wording/accountability standard used everywhere else in this
+    # app (who acted, when, why) rather than a silent status change they'd
+    # only discover later on Shift History.
+    if _on_behalf:
+        try:
+            from .notifications import normalize_ke_phone as _nkp2, send_sms_notification as _ssms2
+            from .models import Notification as _Notif2
+            _closer_name = request.user.get_full_name() or request.user.username
+            _when = timezone.localtime(shift.ended_at).strftime('%d %b, %H:%M')
+            _msg = f"🔒 Shift yako ilifungwa na {_closer_name} saa {_when}"
+            if force_reason:
+                _msg += f" — sababu: {force_reason}"
+            _Notif2.objects.create(
+                user=shift.staff, title='🔒 Shift Yako Imefungwa',
+                message=_msg, notification_type='warning',
+                link_url='/bar/shift/history/',
+            )
+            _staff_up = getattr(shift.staff, 'userprofile', None)
+            if _staff_up and _staff_up.phone:
+                try:
+                    _ssms2(_msg, _nkp2(_staff_up.phone))
+                except Exception:
+                    pass
+        except Exception:
+            logger.exception('close_shift: on-behalf notify failed for shift %s', shift.id)
 
     # Process barrel weights (SHIFT_CLOSE readings)
     barrel_weights_raw = request.POST.get('barrel_weights', '[]')
@@ -1714,6 +1787,8 @@ def close_shift(request, shift_id):
         'auto_converted':       auto_converted,
         'auto_converted_names': auto_converted_names,
         'manager_taking_over':  _manager_taking_over,
+        'closed_on_behalf':     _on_behalf,
+        'staff_name':           shift.staff.get_full_name() or shift.staff.username,
     })
 
 
@@ -2296,7 +2371,7 @@ def shift_history(request):
     if not _is_owner:
         _base_qs = _base_qs.filter(staff=request.user)
 
-    shifts_qs = _base_qs.select_related('staff__userprofile', 'confirmed_by').order_by('-started_at')[:60]
+    shifts_qs = _base_qs.select_related('staff__userprofile', 'confirmed_by', 'closed_by').order_by('-started_at')[:60]
 
     rows = []
     for shift in shifts_qs:

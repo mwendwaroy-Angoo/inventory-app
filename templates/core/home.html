@@ -1091,6 +1091,42 @@
 <script>
 var HOME_SHOW_BAR     = {{ show_bar|yesno:"true,false" }};
 var HOME_SHOW_KITCHEN = {{ show_kitchen|yesno:"true,false" }};
+// 2026-08-02 live request (Roy): owner (or a delegated manager, same
+// can_confirm_shifts toggle confirm_shift() already uses) can close a
+// forgotten OPEN shift on someone else's behalf, without waiting for the
+// auto-close inactivity sweep. Server-side (close_shift()'s _can_confirm_shift
+// check) is the real authority — this only decides whether to show the button.
+var HOME_CAN_FORCE_CLOSE = {{ user.userprofile.is_owner|yesno:"true,false" }} ||
+    {{ user.userprofile.can_confirm_shifts|yesno:"true,false" }};
+var HOME_IS_MANAGER_VIEWER = '{{ user.userprofile.role|default:"" }}' === 'manager';
+var HOME_MY_USER_ID = {{ user.id|default:0 }};
+
+function homeForceCloseShift(shiftId, staffName) {
+    var cash = window.prompt(
+        'Kufunga shift ya ' + staffName + ' kwa niaba yao.\n\n' +
+        'Pesa zilizohesabiwa (KES) — acha wazi kama hujui:'
+    );
+    if (cash === null) return;
+    cash = cash.trim();
+    var reason = window.prompt('Sababu (hiari) — kwa nini unafunga kwa niaba yao?');
+    if (reason === null) reason = '';
+    var body = new URLSearchParams({
+        closing_cash_counted: cash,
+        force_close_reason: reason,
+        csrfmiddlewaretoken: '{{ csrf_token }}',
+    });
+    fetch('/bar/shift/' + shiftId + '/close/', { method: 'POST', body: body })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.ok) {
+                alert('✓ Shift ya ' + (d.staff_name || staffName) + ' imefungwa.');
+                location.reload();
+            } else {
+                alert(d.error || 'Imeshindikana');
+            }
+        })
+        .catch(function () { alert('Hitilafu ya mtandao'); });
+}
 (function () {
     var meter = document.getElementById('shift-meter');
     var heroShift = document.getElementById('bar-hero-shift');
@@ -1135,6 +1171,15 @@ var HOME_SHOW_KITCHEN = {{ show_kitchen|yesno:"true,false" }};
                 var link      = isKitchen ? '/kitchen/' : '/bar/';
                 var linkTxt   = isKitchen ? 'Kitchen ›' : 'Bar Board ›';
                 var border    = idx < openShifts.length - 1 ? 'border-bottom:1px solid #222;' : '';
+                // 2026-08-02: owner (or a delegated manager, acting on a
+                // non-manager staffer) may force-close this shift on the
+                // spot instead of waiting for the auto-close sweep.
+                var canCloseOther = HOME_CAN_FORCE_CLOSE && s.staff_id !== HOME_MY_USER_ID &&
+                    !(HOME_IS_MANAGER_VIEWER && s.staff_role === 'manager');
+                var closeBtn = canCloseOther
+                    ? '<button type="button" onclick=\'homeForceCloseShift(' + s.id + ', ' + JSON.stringify(s.staff_name) + ')\' ' +
+                      'style="font-size:.68rem; padding:.15rem .5rem; border-radius:6px; border:1px solid #c0395a; background:transparent; color:#e57373; cursor:pointer;">🔒 Funga kwa niaba</button>'
+                    : '';
                 return '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.4rem; padding:.3rem 0; ' + border + '">' +
                     '<div style="display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">' +
                         '<span style="width:8px; height:8px; border-radius:50%; background:#5dde7a; display:inline-block; flex-shrink:0;"></span>' +
@@ -1148,6 +1193,7 @@ var HOME_SHOW_KITCHEN = {{ show_kitchen|yesno:"true,false" }};
                         (s.credit_sales > 0 ? '<span style="font-size:.75rem; color:#f87171;" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa">Deni <strong>KES ' + Math.round(s.credit_sales) + '</strong></span>' : '') +
                         '<span style="font-size:.75rem; color:#c9a84c; font-weight:700;" title="Confirmed cash + M-Pesa only">KES ' + Math.round(s.confirmed_sales) + '</span>' +
                         '<a href="' + link + '" style="font-size:.72rem; color:#888; text-decoration:none;">' + linkTxt + '</a>' +
+                        closeBtn +
                     '</div>' +
                 '</div>';
             });
