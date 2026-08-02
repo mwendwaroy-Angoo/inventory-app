@@ -814,6 +814,51 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA R1 (2026-08-02): Fast onboarding + barcode + the shared product
+  catalog (spec §7.2) — first sprint of Phase 1 (Retail/Minimart), Phase 0
+  now fully complete. New cross-tenant `GlobalProduct` (barcode/name/brand/
+  pack_size/unit/category, `confirm_count`, `is_verified` at >=3) and
+  `MarketPriceIndex` (county-level median cost/price, `sample_size`) models.
+  Two `Business` fields implement pre-answered decision #3's SPLIT exactly
+  (not the spec's single illustrative flag): `contribute_market_data`
+  (default True, opt-out) gates whether new barcode-scanned items feed the
+  shared name/brand/pack dictionary; `contribute_price_data` (default
+  False, opt-IN only) gates BOTH contributing to AND seeing the
+  `MarketPriceIndex` benchmark — "opting out loses the benchmark, not just
+  the contribution" as one shared boolean. `core/market_price.py`:
+  `lookup_global_product()` (always allowed — shared reference data, not
+  one business's figures), `record_barcode_contribution()` (increments
+  `confirm_count` only the first time a GIVEN business confirms a GIVEN
+  barcode — the best available guard against self-inflation, since the
+  spec's schema is a plain counter, not a per-business M2M),
+  `recompute_market_price_index()` (median via `statistics.median`, DELETES
+  any row below sample_size 5 rather than showing a stale thin benchmark),
+  `get_market_price_benchmark()` (the one read gate). New management
+  command for bulk recompute, not wired to an automatic schedule — same
+  documented-deferral pattern as M3's daily digest. New
+  `core/barcode_views.py` — `barcode_lookup()` (read-only) +
+  `add_item_by_barcode()` (owner/manager, a deliberately SEPARATE small
+  endpoint rather than widening the existing ~200-line `add_item()`/
+  `ItemForm` machinery, which handles produce/keg/kitchen-batch complexity
+  a barcode-scanned item doesn't need) — R1-AC1's "two taps to a stocked
+  item." New `Item.barcode` (not unique per-business — the same barcode
+  legitimately exists at many dukas) and `Item.balance_confirmed_at`
+  fields implement "Anza bila kuhesabu": a barcode-scanned item with an
+  unknown opening count starts unconfirmed (excluded from shrinkage
+  attribution rather than a false accusation) and gets confirmed by two
+  EXISTING mechanisms reused rather than a new endpoint invented: (1)
+  `adjust_stock_balance()` (Rekebisha) now stamps it on every run,
+  including no-change; (2) `add_transaction()`'s Receipt branch stamps it
+  only when the Receipt is the item's first-ever transaction — a Receipt
+  into an item with existing history does NOT imply total on-hand is now
+  known, only that this one delivery is real. `stock_list.html` shows a
+  "❓ Haijahesabiwa" badge, reusing the existing Rekebisha modal
+  (`?adjust_item=` deep link) as the confirm mechanism. Deliberately
+  deferred and documented: the camera scan UI itself (these endpoints are
+  what a future scan UI would call, fully testable via HTTP without it),
+  and wiring barcode/contribute flags into item_form.html/Business
+  Settings UI. 22 new tests including R1-AC1/R1-AC2 as direct regression
+  locks. 1263 tests pass. See `docs/UBA_PROGRESS.md` for full detail.
 - UBA M3 (2026-08-02): Maduka Yangu owner console + `BusinessException` (spec
   §5.3). New `BusinessException` model (migration `0144_businessexception`) —
   `business`/`store`/`shift`/`staff` FKs, `kind`/`severity` choices, `amount_kes`,

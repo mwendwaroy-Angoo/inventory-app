@@ -130,6 +130,66 @@ class Ward(models.Model):
 
 
 # ────────────────────────────────────────────────
+# UBA §7.2 (Sprint R1) — cross-tenant product dictionary + market benchmark
+# ────────────────────────────────────────────────
+# Privacy rules, non-negotiable (pre-answered decision #3 in
+# docs/UBA_EXECUTION_ORDER.md, splitting the spec's single illustrative flag
+# into two — names/barcodes/pack sizes are shared BY DEFAULT (opt-out
+# available via Business.contribute_market_data), while buying/selling
+# PRICES are opt-IN only (Business.contribute_price_data, default False) and
+# never exposed below a county sample_size of 5. No business can ever query
+# another named business's data — GlobalProduct/MarketPriceIndex carry no
+# per-business price at all, only aggregates.
+
+class GlobalProduct(models.Model):
+    """Cross-tenant product dictionary — NAMES AND PACK SIZES ONLY, never a
+    price. The 500th duka to scan a barcode already known to the platform
+    gets its name/brand/pack pre-filled for free; the value comes purely
+    from multi-tenancy, not from any one business's data being exposed."""
+    barcode = models.CharField(max_length=32, unique=True, db_index=True)
+    name = models.CharField(max_length=160)
+    brand = models.CharField(max_length=80, blank=True)
+    pack_size = models.CharField(max_length=40, blank=True, help_text="e.g. '250g', '500ml', '2kg'")
+    unit = models.CharField(max_length=20, blank=True)
+    category = models.CharField(max_length=60, blank=True)
+    image_url = models.URLField(blank=True)
+    contributed_by = models.ForeignKey(
+        'accounts.Business', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='global_products_contributed',
+    )
+    confirm_count = models.PositiveIntegerField(
+        default=1, help_text='How many different businesses have agreed on this name.'
+    )
+    is_verified = models.BooleanField(default=False, help_text='True once confirm_count >= 3.')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.barcode})"
+
+
+class MarketPriceIndex(models.Model):
+    """Anonymised, aggregated cost/price benchmark. NEVER exposes a single
+    business's figures — only a county-level median, and only once
+    sample_size >= 5 (see market_price.recompute_index()). A business whose
+    own Business.contribute_price_data is False both contributes nothing to
+    this and never sees any benchmark reading — opting out loses the
+    benchmark, it does not just hide the opt-out business's own number."""
+    global_product = models.ForeignKey(GlobalProduct, on_delete=models.CASCADE, related_name='price_indexes')
+    county = models.ForeignKey(County, on_delete=models.SET_NULL, null=True, blank=True)
+    median_cost = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    median_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    sample_size = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('global_product', 'county')]
+
+    def __str__(self):
+        return f"{self.global_product.name} — {self.county or 'National'} (n={self.sample_size})"
+
+
+# ────────────────────────────────────────────────
 # CUSTOMER MODEL
 # ────────────────────────────────────────────────
 
@@ -548,6 +608,25 @@ class Item(models.Model):
         help_text='UBA capability model: how this item\'s stock is counted. '
                   'Kept in sync with is_produce/produce_mode in save() for '
                   'existing items — see Item.save().'
+    )
+
+    # ── UBA §7.2 (Sprint R1) — barcode + fast onboarding without a stock take ──
+    barcode = models.CharField(
+        max_length=32, blank=True, db_index=True,
+        help_text='Scanned barcode, if any. Looked up against the cross-tenant '
+                  'GlobalProduct dictionary — never unique per business, since '
+                  'the same barcode legitimately exists at many different dukas.'
+    )
+    balance_confirmed_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='When this item\'s on-hand balance was last established by a real '
+                  'physical count — set by adjust_stock_balance() (Rekebisha) every '
+                  'time it runs, and by the first-ever Receipt on a brand-new item '
+                  '(fast onboarding: "Anza bila kuhesabu" never demands an opening '
+                  'balance, so an item can go a while with this blank). NULL means '
+                  '"never confirmed" — excluded from shrinkage attribution (would '
+                  'generate false accusations against staff) and surfaced honestly '
+                  'in stock_list as "Haijahesabiwa" rather than silently assumed.'
     )
 
     # ── Greens / bunch-based produce (Kibanda Produce Module) ──────────────

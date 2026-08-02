@@ -9,11 +9,12 @@ from django.utils import timezone
 
 from accounts.models import Business, UserProfile
 from core.models import (
-    BarCupLog, BarTab, BarTabEntry, BusinessException, Customer, Item,
-    ItemPortionPreset, KegBarrel, KegWeightReading, KitchenBatch,
-    KitchenConsumableLog, KitchenStockReceipt, KitchenStockReceiptLine,
-    Notification, Payment, PettyCash, Receipt, RevenueTarget, Shift, Store,
-    StockTransfer, StockTransferLine, TabTransferRequest, TillCount, Transaction,
+    BarCupLog, BarTab, BarTabEntry, BusinessException, County, Customer,
+    GlobalProduct, Item, ItemPortionPreset, KegBarrel, KegWeightReading,
+    KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
+    KitchenStockReceiptLine, MarketPriceIndex, Notification, Payment,
+    PettyCash, Receipt, RevenueTarget, Shift, Store, StockTransfer,
+    StockTransferLine, TabTransferRequest, TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -22271,3 +22272,291 @@ class MadukaAcknowledgeExceptionViewTest(TestCase):
         self.client.force_login(other_owner_user)
         resp = self.client.post(f'/maduka/exceptions/{self.exc.id}/acknowledge/')
         self.assertEqual(resp.status_code, 404)
+
+
+class GlobalProductLookupAndContributionTest(TestCase):
+    """UBA R1 §7.2 — GlobalProduct dictionary + contribute_market_data opt-out."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='R1 Contrib Biz')
+        self.other_biz = Business.objects.create(name='R1 Other Biz')
+
+    def test_lookup_miss_returns_none(self):
+        from core.market_price import lookup_global_product
+        self.assertIsNone(lookup_global_product('9999999999999'))
+
+    def test_record_contribution_creates_new_global_product_on_miss(self):
+        from core.market_price import record_barcode_contribution
+        gp = record_barcode_contribution(
+            self.biz, '1234567890123', 'Sugar 2kg', brand='Mumias', pack_size='2kg', unit='pcs',
+        )
+        self.assertIsNotNone(gp)
+        self.assertEqual(gp.confirm_count, 1)
+        self.assertFalse(gp.is_verified)
+        self.assertEqual(gp.contributed_by_id, self.biz.id)
+
+    def test_second_business_confirming_increments_count(self):
+        from core.market_price import record_barcode_contribution
+        record_barcode_contribution(self.biz, '1234567890123', 'Sugar 2kg')
+        Item.objects.create(
+            business=self.biz, store=Store.objects.create(business=self.biz, name='S'),
+            description='Sugar 2kg', material_no='R1-A', unit='pcs', barcode='1234567890123',
+        )
+        record_barcode_contribution(self.other_biz, '1234567890123', 'Sugar 2kg')
+        gp = GlobalProduct.objects.get(barcode='1234567890123')
+        self.assertEqual(gp.confirm_count, 2)
+
+    def test_third_confirmation_marks_verified(self):
+        from core.market_price import record_barcode_contribution
+        b1, b2, b3 = self.biz, self.other_biz, Business.objects.create(name='R1 Third Biz')
+        record_barcode_contribution(b1, 'BC001', 'Rice 5kg')
+        Item.objects.create(
+            business=b1, store=Store.objects.create(business=b1, name='S1'),
+            description='Rice 5kg', material_no='R1-B1', unit='pcs', barcode='BC001',
+        )
+        record_barcode_contribution(b2, 'BC001', 'Rice 5kg')
+        Item.objects.create(
+            business=b2, store=Store.objects.create(business=b2, name='S2'),
+            description='Rice 5kg', material_no='R1-B2', unit='pcs', barcode='BC001',
+        )
+        record_barcode_contribution(b3, 'BC001', 'Rice 5kg')
+        gp = GlobalProduct.objects.get(barcode='BC001')
+        self.assertEqual(gp.confirm_count, 3)
+        self.assertTrue(gp.is_verified)
+
+    def test_opted_out_business_does_not_contribute(self):
+        from core.market_price import record_barcode_contribution
+        self.biz.contribute_market_data = False
+        self.biz.save(update_fields=['contribute_market_data'])
+        result = record_barcode_contribution(self.biz, 'BC-OPTOUT', 'Flour 2kg')
+        self.assertIsNone(result)
+        self.assertFalse(GlobalProduct.objects.filter(barcode='BC-OPTOUT').exists())
+
+    def test_opted_out_business_can_still_read_existing_entry(self):
+        from core.market_price import lookup_global_product, record_barcode_contribution
+        record_barcode_contribution(self.biz, 'BC-READ', 'Cooking Oil 1L')
+        self.other_biz.contribute_market_data = False
+        self.other_biz.save(update_fields=['contribute_market_data'])
+        gp = lookup_global_product('BC-READ')
+        self.assertIsNotNone(gp)
+        self.assertEqual(gp.name, 'Cooking Oil 1L')
+
+
+class MarketPriceIndexTest(TestCase):
+    """R1-AC2: opt-IN only, never below sample_size 5, opting out loses the
+    benchmark (not just the contribution)."""
+
+    def setUp(self):
+        self.county = County.objects.create(name='R1 Nairobi')
+        self.gp = GlobalProduct.objects.create(barcode='MPI-001', name='Sugar 2kg', confirm_count=1)
+
+    def _biz_with_item(self, name, cost, price, contribute=True, county=None):
+        biz = Business.objects.create(name=name, contribute_price_data=contribute, county=county)
+        store = Store.objects.create(business=biz, name='S')
+        Item.objects.create(
+            business=biz, store=store, description='Sugar 2kg', material_no=f'MPI-{name}',
+            unit='pcs', barcode='MPI-001', cost_price=Decimal(str(cost)), selling_price=Decimal(str(price)),
+        )
+        return biz
+
+    def test_below_sample_size_returns_none_and_creates_no_row(self):
+        from core.market_price import recompute_market_price_index
+        for i in range(3):
+            self._biz_with_item(f'Biz{i}', 100 + i, 150 + i, county=self.county)
+        result = recompute_market_price_index(self.gp, county=self.county)
+        self.assertIsNone(result)
+        self.assertFalse(MarketPriceIndex.objects.filter(global_product=self.gp, county=self.county).exists())
+
+    def test_five_contributing_businesses_produce_median(self):
+        from core.market_price import recompute_market_price_index
+        costs = [100, 110, 120, 130, 140]
+        for i, c in enumerate(costs):
+            self._biz_with_item(f'BizM{i}', c, c + 50, county=self.county)
+        result = recompute_market_price_index(self.gp, county=self.county)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.sample_size, 5)
+        self.assertEqual(result.median_cost, Decimal('120'))
+
+    def test_non_contributing_business_excluded_from_aggregate(self):
+        from core.market_price import recompute_market_price_index
+        for i in range(5):
+            self._biz_with_item(f'BizN{i}', 100, 150, county=self.county)
+        self._biz_with_item('NonContrib', 99999, 99999, contribute=False, county=self.county)
+        result = recompute_market_price_index(self.gp, county=self.county)
+        self.assertEqual(result.sample_size, 5)  # the opted-out business's absurd price never enters
+
+    def test_get_benchmark_none_when_business_not_opted_in(self):
+        from core.market_price import get_market_price_benchmark, recompute_market_price_index
+        for i in range(5):
+            self._biz_with_item(f'BizV{i}', 100, 150, county=self.county)
+        recompute_market_price_index(self.gp, county=self.county)
+        viewer = Business.objects.create(name='Viewer Not Opted In', contribute_price_data=False)
+        self.assertIsNone(get_market_price_benchmark(viewer, self.gp, county=self.county))
+
+    def test_get_benchmark_returned_when_opted_in_and_sample_met(self):
+        from core.market_price import get_market_price_benchmark, recompute_market_price_index
+        for i in range(5):
+            self._biz_with_item(f'BizW{i}', 100, 150, county=self.county)
+        recompute_market_price_index(self.gp, county=self.county)
+        viewer = Business.objects.create(name='Viewer Opted In', contribute_price_data=True)
+        result = get_market_price_benchmark(viewer, self.gp, county=self.county)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.sample_size, 5)
+
+
+class AddItemByBarcodeViewTest(TestCase):
+    """R1-AC1: scanning a known barcode pre-fills name/brand/pack; entering
+    price + qty creates a stocked item in <= 3 taps (2 endpoint calls: lookup
+    then create)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='R1 View Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner_user = User.objects.create_user(username='r1_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='r1_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_lookup_hit_prefills_name_brand_pack(self):
+        GlobalProduct.objects.create(
+            barcode='LKP001', name='Blue Band 500g', brand='Blue Band', pack_size='500g', unit='pcs',
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/stock/barcode/LKP001/')
+        data = resp.json()
+        self.assertTrue(data['found'])
+        self.assertEqual(data['name'], 'Blue Band 500g')
+        self.assertEqual(data['brand'], 'Blue Band')
+
+    def test_lookup_miss_returns_found_false(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/stock/barcode/9999999999999/')
+        self.assertFalse(resp.json()['found'])
+
+    def test_owner_creates_item_from_known_barcode_in_one_call(self):
+        GlobalProduct.objects.create(barcode='LKP002', name='Omo 500g', unit='pcs')
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/add-by-barcode/', {
+            'barcode': 'LKP002', 'store_id': self.store.id,
+            'selling_price': '120', 'opening_qty': '10',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertTrue(data['was_known_product'])
+        item = Item.objects.get(id=data['item_id'])
+        self.assertEqual(item.description, 'Omo 500g')
+        self.assertEqual(item.barcode, 'LKP002')
+        self.assertIsNotNone(item.balance_confirmed_at)  # a real opening qty was entered
+
+    def test_miss_requires_manual_description_and_creates_global_product(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/add-by-barcode/', {
+            'barcode': 'BRANDNEW01', 'store_id': self.store.id,
+            'description': 'Local Honey 250ml', 'selling_price': '300', 'opening_qty': '0',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertFalse(data['was_known_product'])
+        item = Item.objects.get(id=data['item_id'])
+        self.assertIsNone(item.balance_confirmed_at)  # unknown opening balance — not confirmed yet
+        self.assertTrue(GlobalProduct.objects.filter(barcode='BRANDNEW01', name='Local Honey 250ml').exists())
+
+    def test_staff_cannot_create_item_by_barcode(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.post('/stock/add-by-barcode/', {
+            'barcode': 'STAFFTRY', 'store_id': self.store.id,
+            'description': 'X', 'selling_price': '10',
+        })
+        self.assertEqual(resp.status_code, 302)  # owner_or_manager_required redirects
+
+    def test_cross_business_store_rejected(self):
+        other_biz = Business.objects.create(name='Other R1 Biz')
+        other_store = Store.objects.create(business=other_biz, name='Other Store')
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/add-by-barcode/', {
+            'barcode': 'XB001', 'store_id': other_store.id,
+            'description': 'X', 'selling_price': '10',
+        })
+        self.assertEqual(resp.json()['ok'], False)
+
+
+class BalanceConfirmedAtTest(TestCase):
+    """UBA R1 §7.2 — Item.balance_confirmed_at: set by Rekebisha (any
+    direction) and by an item's first-ever Receipt, never by a Receipt on an
+    item with pre-existing history."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='BC Confirm Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner_user = User.objects.create_user(username='bc_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_rekebisha_no_change_still_confirms(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Salt 1kg',
+            material_no='BC-01', unit='pcs', opening_bin_balance=5,
+        )
+        self.assertIsNone(item.balance_confirmed_at)
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/items/{item.id}/adjust/', {'actual_count': '5'})
+        self.assertTrue(resp.json()['ok'])
+        item.refresh_from_db()
+        self.assertIsNotNone(item.balance_confirmed_at)
+
+    def test_rekebisha_shortage_confirms(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Salt 1kg',
+            material_no='BC-02', unit='pcs', opening_bin_balance=5,
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/items/{item.id}/adjust/', {'actual_count': '2'})
+        self.assertTrue(resp.json()['ok'])
+        item.refresh_from_db()
+        self.assertIsNotNone(item.balance_confirmed_at)
+
+    def test_first_ever_receipt_confirms_brand_new_item(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Rice 2kg',
+            material_no='BC-03', unit='pcs', barcode='BC-NEW',
+        )
+        self.assertIsNone(item.balance_confirmed_at)
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/add-transaction/', {
+            'item': item.id, 'type': 'Receipt', 'quantity': '20',
+            'recipient': 'Supplier X', 'invoice_no': 'INV-01',
+        })
+        item.refresh_from_db()
+        self.assertIsNotNone(item.balance_confirmed_at)
+
+    def test_receipt_on_item_with_existing_history_does_not_confirm(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Rice 2kg',
+            material_no='BC-04', unit='pcs',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='cash', date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/add-transaction/', {
+            'item': item.id, 'type': 'Receipt', 'quantity': '20',
+            'recipient': 'Supplier X', 'invoice_no': 'INV-02',
+        })
+        item.refresh_from_db()
+        self.assertIsNone(item.balance_confirmed_at)
+
+    def test_stock_list_shows_uncounted_badge(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Uncounted Item',
+            material_no='BC-05', unit='pcs',
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/stock/')
+        self.assertContains(resp, 'Haijahesabiwa')
+        item.balance_confirmed_at = timezone.now()
+        item.save(update_fields=['balance_confirmed_at'])
+        resp2 = self.client.get('/stock/')
+        # The badge text should no longer be associated with this specific confirmed item —
+        # verified via the item's own uncounted flag in context rather than a brittle page-wide count.
+        matching = [i for i in resp2.context['items'] if i.id == item.id]
+        self.assertFalse(matching[0].uncounted)

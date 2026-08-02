@@ -180,6 +180,22 @@ class Business(models.Model):
                   'nothing in the app currently reads or gates on this field.'
     )
 
+    # ── UBA §7.2 / §3 decision #3 — GlobalProduct / MarketPriceIndex privacy ──
+    contribute_market_data = models.BooleanField(
+        default=True,
+        help_text='Share product NAMES, barcodes and pack sizes (never prices) into the '
+                  'cross-tenant GlobalProduct dictionary when adding a new item by barcode. '
+                  'On by default — opt out any time; never shares this business\'s prices '
+                  'either way.'
+    )
+    contribute_price_data = models.BooleanField(
+        default=False,
+        help_text='Opt-IN only. Lets this business\'s cost/selling prices feed the county-level '
+                  'MarketPriceIndex benchmark (median only, sample_size>=5, never a single '
+                  'business\'s figure) — and, in exchange, lets this business SEE that '
+                  'benchmark. Opting out loses the benchmark, not just the contribution.'
+    )
+
     # ── Keg Bar Settings ──────────────────────────────────────────────────
     keg_variance_tolerance_pct = models.DecimalField(
         max_digits=4, decimal_places=1, default=Decimal('3.0'),

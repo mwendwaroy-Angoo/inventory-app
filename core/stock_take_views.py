@@ -676,6 +676,13 @@ def adjust_stock_balance(request, item_id):
     book = item.current_balance()
     variance = actual - book
 
+    # UBA R1 §7.2 — Rekebisha is a REAL physical count, whichever direction
+    # (or none at all) it lands on, so this is exactly the "confirm the
+    # balance" moment fast-onboarding items (added with an unknown opening
+    # count) are waiting for. Set unconditionally, all three branches below.
+    item.balance_confirmed_at = timezone.now()
+    item.save(update_fields=['balance_confirmed_at'])
+
     if variance == 0:
         return JsonResponse({'ok': True, 'no_change': True, 'message': 'Hesabu inafanana na rekodi — hakuna marekebisho yaliyohitajika.'})
 

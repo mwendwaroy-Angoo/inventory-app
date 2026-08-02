@@ -927,6 +927,12 @@ def stock_list(request):
         else:
             item.expiry_date   = exp
             item.expiry_status = 'OK'
+        # UBA R1 §7.2 — "Anza bila kuhesabu" (fast onboarding): an item whose
+        # balance has never been physically confirmed is shown honestly
+        # rather than silently assumed correct; NOT surfaced for produce/keg
+        # items, which already have their own dedicated envelope/bunch
+        # accountability model instead of a plain on-hand balance.
+        item.uncounted = (item.balance_confirmed_at is None) and not item.is_produce and not item.is_keg
 
     # Annotate items with pending restock request flag
     _pending_restock_ids = set(
@@ -1328,6 +1334,21 @@ def add_transaction(request):
 
         # ── RESTOCK REQUEST AUTO-RESOLVE ─────────────────────────────────
         if trans_type == 'Receipt':
+            # UBA R1 §7.2 — a Receipt that establishes the item's FIRST-EVER
+            # transaction confirms its balance for accountability purposes
+            # (fast onboarding: an item added via barcode scan with an
+            # unknown opening count becomes confirmed the moment a real
+            # received quantity anchors it from zero history). A Receipt
+            # into an item that ALREADY has history does not imply the
+            # item's total on-hand is now known — only that this one
+            # delivery is real — so it deliberately does NOT confirm in
+            # that case; Rekebisha (adjust_stock_balance) stays the one
+            # real physical-count confirmation mechanism from then on.
+            if item.balance_confirmed_at is None and not Transaction.objects.filter(
+                item=item
+            ).exclude(pk=transaction.pk).exists():
+                item.balance_confirmed_at = timezone.now()
+                item.save(update_fields=['balance_confirmed_at'])
             _pending_srs = list(
                 StockRequest.objects.filter(
                     business=user_profile.business,

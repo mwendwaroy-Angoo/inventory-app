@@ -223,6 +223,7 @@ from core.analytics_views import (
     daily_sales,
 )
 from core.maduka_views import maduka_dashboard, maduka_acknowledge_exception
+from core.barcode_views import barcode_lookup, add_item_by_barcode
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -762,6 +763,9 @@ urlpatterns = [
     # ── UBA M3 — Maduka Yangu owner console ──────────────────────────────────
     path("maduka/", maduka_dashboard, name="maduka_dashboard"),
     path("maduka/exceptions/<int:exc_id>/acknowledge/", maduka_acknowledge_exception, name="maduka_acknowledge_exception"),
+    # ── UBA R1 — barcode + fast onboarding ────────────────────────────────────
+    path("stock/barcode/<str:barcode>/", barcode_lookup, name="barcode_lookup"),
+    path("stock/add-by-barcode/", add_item_by_barcode, name="add_item_by_barcode"),
 ]
 
 if settings.DEBUG:
