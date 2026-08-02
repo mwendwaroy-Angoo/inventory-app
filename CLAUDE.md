@@ -814,6 +814,25 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA R4 (2026-08-02): Retail intelligence (spec §7.5), closing out Phase 1
+  (Retail/Minimart) entirely — R1 through R4 and X1 all done. No new
+  models — pure read-only report functions over existing data. New
+  `core/retail_reports.py`: **dead stock report** (R4-AC1) sorted by
+  capital tied up, `transfer_available` true only when the business has
+  >1 active store (M2's `StockTransfer` is the real action, not wired
+  into the function itself); **"Order ya leo"** reuses `Item.needs_
+  reorder()`/`recommended_order_qty()` (already existed) rather than
+  reimplementing reorder math, each row pre-drafted as a Swahili WhatsApp/
+  SMS message ("most dukas order by phone, meet them there"); **basket
+  affinity** reuses `Receipt.lines` (an existing per-sale JSONField
+  snapshot) as the natural basket unit — no new grouping mechanism — top
+  10 co-occurring pairs only, per the spec's own "do not build a
+  recommender" instruction; **hour-of-day heatmap**, 24 fixed buckets.
+  New `core/retail_reports_views.py` — 4 read-only JSON endpoints, owner/
+  manager only. A dedicated retail-intelligence dashboard UI (charts) is
+  deferred and documented, same discipline as `retail_board.html`/
+  `payables_dashboard.html`. 7 new tests. 1307 tests pass. See
+  `docs/UBA_PROGRESS.md`. Next: Phase 2 (Apparel) — P0-B, A1, A2, A3.
 - UBA X1 (2026-08-02): Payables — the missing half of the cash picture
   (spec §12.1). New `SupplierInvoice`/`SupplierPayment` models —
   deliberately the mirror image of the debt tracker's `Customer`/

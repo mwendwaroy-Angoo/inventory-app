@@ -229,6 +229,9 @@ from core.cycle_count_views import (
     todays_cycle_count_list, start_cycle_count, submit_cycle_count_line, close_cycle_count_session,
 )
 from core.payables_views import payables_dashboard, record_supplier_invoice, record_supplier_payment
+from core.retail_reports_views import (
+    dead_stock_report_view, reorder_today_view, basket_affinity_view, hour_heatmap_view,
+)
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -785,6 +788,11 @@ urlpatterns = [
     path("payables/", payables_dashboard, name="payables_dashboard"),
     path("payables/invoices/record/", record_supplier_invoice, name="record_supplier_invoice"),
     path("payables/invoices/<int:invoice_id>/pay/", record_supplier_payment, name="record_supplier_payment"),
+    # ── UBA R4 — retail intelligence ────────────────────────────────────────────
+    path("analytics/retail/dead-stock/", dead_stock_report_view, name="dead_stock_report_view"),
+    path("analytics/retail/reorder-today/", reorder_today_view, name="reorder_today_view"),
+    path("analytics/retail/basket-affinity/", basket_affinity_view, name="basket_affinity_view"),
+    path("analytics/retail/hour-heatmap/", hour_heatmap_view, name="hour_heatmap_view"),
 ]
 
 if settings.DEBUG:

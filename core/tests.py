@@ -23033,3 +23033,110 @@ class PayablesTest(TestCase):
         count = send_payables_due_reminders(self.biz)
         self.assertEqual(count, 1)
         self.assertTrue(Notification.objects.filter(user=self.owner_user, title__icontains='Malipo').exists())
+
+
+class RetailIntelligenceTest(TestCase):
+    """UBA R4 §7.5 — dead stock, reorder ("Order ya leo"), basket affinity,
+    hour-of-day heatmap."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='R4 Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Branch A')
+        self.owner_user = User.objects.create_user(username='r4_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_dead_stock_sorted_by_capital_tied_up(self):
+        from core.retail_reports import dead_stock_report
+        cheap = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Cheap Dead Stock',
+            material_no='R4-01', unit='pcs', cost_price=Decimal('10'), opening_bin_balance=5,
+        )
+        expensive = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Expensive Dead Stock',
+            material_no='R4-02', unit='pcs', cost_price=Decimal('1000'), opening_bin_balance=10,
+        )
+        rows = dead_stock_report(self.biz, days=60)
+        self.assertEqual(rows[0]['item'].id, expensive.id)  # 10,000 tied up > 50
+        self.assertFalse(rows[0]['transfer_available'])  # single store
+
+    def test_recently_sold_item_excluded_from_dead_stock(self):
+        from core.retail_reports import dead_stock_report
+        item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Fresh Seller',
+            material_no='R4-03', unit='pcs', cost_price=Decimal('50'), opening_bin_balance=10,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', date=timezone.localdate(),
+        )
+        rows = dead_stock_report(self.biz, days=60)
+        self.assertEqual([r for r in rows if r['item'].id == item.id], [])
+
+    def test_transfer_available_true_for_multi_store(self):
+        from core.retail_reports import dead_stock_report
+        Store.objects.create(business=self.biz, name='Branch B')
+        Item.objects.create(
+            business=self.biz, store=self.store_a, description='Dead Multi',
+            material_no='R4-04', unit='pcs', cost_price=Decimal('100'), opening_bin_balance=5,
+        )
+        rows = dead_stock_report(self.biz, days=60)
+        self.assertTrue(rows[0]['transfer_available'])
+
+    def test_reorder_today_only_lists_items_needing_reorder(self):
+        from core.retail_reports import reorder_today_list
+        low = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Low Stock Item',
+            material_no='R4-05', unit='pcs', reorder_level=10, reorder_quantity=20,
+            opening_bin_balance=2,
+        )
+        healthy = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Healthy Item',
+            material_no='R4-06', unit='pcs', reorder_level=5, reorder_quantity=10,
+            opening_bin_balance=100,
+        )
+        rows = reorder_today_list(self.biz)
+        ids = [r['item'].id for r in rows]
+        self.assertIn(low.id, ids)
+        self.assertNotIn(healthy.id, ids)
+        low_row = next(r for r in rows if r['item'].id == low.id)
+        self.assertIn(low.description, low_row['message_draft'])
+
+    def test_basket_affinity_finds_cooccurring_pairs(self):
+        from core.retail_reports import basket_affinity_top10
+        Receipt.objects.create(
+            business=self.biz, receipt_number=1, token='r4tok1',
+            lines=[{'name': 'Bread'}, {'name': 'Milk'}], total=Decimal('100'),
+        )
+        Receipt.objects.create(
+            business=self.biz, receipt_number=2, token='r4tok2',
+            lines=[{'name': 'Bread'}, {'name': 'Milk'}], total=Decimal('100'),
+        )
+        Receipt.objects.create(
+            business=self.biz, receipt_number=3, token='r4tok3',
+            lines=[{'name': 'Sugar'}], total=Decimal('50'),
+        )
+        rows = basket_affinity_top10(self.biz, days=30)
+        pairs = [(r['item_a'], r['item_b']) for r in rows]
+        self.assertIn(('Bread', 'Milk'), pairs)
+        top = next(r for r in rows if (r['item_a'], r['item_b']) == ('Bread', 'Milk'))
+        self.assertEqual(top['count'], 2)
+
+    def test_hour_heatmap_buckets_have_24_hours(self):
+        from core.retail_reports import hour_of_day_heatmap
+        item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Heatmap Item',
+            material_no='R4-07', unit='pcs',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='cash', date=timezone.localdate(),
+        )
+        rows = hour_of_day_heatmap(self.biz, days=30)
+        self.assertEqual(len(rows), 24)
+        self.assertEqual(sum(r['count'] for r in rows), 1)
+
+    def test_dead_stock_view_owner_only(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/analytics/retail/dead-stock/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
