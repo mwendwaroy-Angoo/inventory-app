@@ -526,6 +526,37 @@ def home(request):
             except Exception:
                 pass
 
+            # 2026-08-02 live request (Monsoon Inn) — Roy: instead of relying
+            # purely on the safety-net auto-close (now activity-based, see
+            # shift_views._auto_close_expired_shifts) to quietly sweep a
+            # forgotten tab to debt, surface it to a human FIRST — "right
+            # there on the first view of the dashboard" — so staff/manager/
+            # owner can act deliberately (Geuza Deni, or go collect the
+            # money) instead of finding out only after it's already been
+            # converted. Any tab still OPEN from a previous calendar day,
+            # station-scoped the same way every other tab surface in this
+            # app is (_allowed_tab_sources' own logic, inlined here since
+            # that helper lives in keg_views and takes a request-bound
+            # UserProfile the same shape as user_profile here).
+            context['stale_open_tabs'] = []
+            try:
+                from .models import BarTab as _BarTab
+                _allowed_sources = {'qs'}
+                if show_bar:
+                    _allowed_sources.add('bar')
+                if show_kitchen:
+                    _allowed_sources.add('kitchen')
+                _today_local = timezone.localdate()
+                context['stale_open_tabs'] = list(
+                    _BarTab.objects.filter(
+                        business=business, status='OPEN', source__in=_allowed_sources,
+                    ).exclude(opened_at__date=_today_local)
+                    .select_related('customer')
+                    .order_by('opened_at')[:20]
+                )
+            except Exception:
+                context['stale_open_tabs'] = []
+
             # Active managers logged in today (shown to owner on dashboard)
             if user_profile.is_owner:
                 try:

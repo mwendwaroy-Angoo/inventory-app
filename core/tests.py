@@ -4539,9 +4539,14 @@ class AutoCloseShiftConvertsOpenTabsTest(TestCase):
         tab = BarTab.objects.create(
             business=self.biz, customer_name='Forgotten Patron', status='OPEN', source='bar',
         )
+        # Explicit, genuinely-stale created_at — 2026-08-02: auto-close is now
+        # activity-based (see _SHIFT_AUTO_CLOSE_INACTIVITY_HOURS), so a sale
+        # timestamped "now" (the old implicit default) would itself count as
+        # recent activity and block the very auto-close this test exercises.
         txn = Transaction.objects.create(
             business=self.biz, item=self.item, type='Issue',
             qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+            created_at=self.shift.started_at + timedelta(hours=1),
         )
         BarTabEntry.objects.create(
             tab=tab, transaction=txn, description='Autoclose Beer', amount=Decimal('100'),
@@ -4578,50 +4583,67 @@ class AutoCloseShiftConvertsOpenTabsTest(TestCase):
         self.assertEqual(self.shift.status, 'CLOSED')
 
 
-class ManagerShiftExemptFromAutoCloseTest(TestCase):
-    """2026-08-01 live request — Roy: a manager is often the one physically
-    still running the counter after the configured closing time when the
-    owner isn't around (a bar running late, an after-hours event) — the
-    auto-close sweep is a safety net for staff who forgot, not a rule that
-    forces a manager off the till the instant the clock says so, especially
-    since manager_must_have_shift blocks them from ringing up a NEW sale
-    once their shift is gone. Manager-role shifts are now exempt from
-    _auto_close_expired_shifts() — they stay OPEN indefinitely past
-    business hours until the manager deliberately closes out themselves,
-    at which point the ordinary manual-close consequences (tab-to-debt
-    sweep, owner-must-confirm) apply exactly as before. Staff/waitress/
-    kitchen shifts are unaffected — still swept exactly as before."""
+class ActivityBasedAutoCloseTest(TestCase):
+    """2026-08-02 live follow-up (Monsoon Inn) — supersedes the 2026-08-01
+    "managers are just categorically exempt from auto-close" design. Roy's
+    real scenario: doors are sometimes shut early (before closing_time) to
+    avoid unwanted attention while customers stay inside, and the manager/
+    owner keep selling well past both that early shutdown and the
+    configured closing_time, after ordinary staff have gone home. A
+    blanket manager exemption never actually protected this case either —
+    per _convert_open_tabs_to_debt_for_shift's own docstring, the tab
+    sweep is STATION-scoped, not shift-scoped, so an OTHER (non-exempt)
+    shift on the same counter auto-closing would still sweep the manager's
+    own active tabs regardless of the manager's own shift being exempt.
+
+    The auto-close sweep is now purely ACTIVITY-based, for every role
+    (manager and owner shifts included, no special-casing): past closing
+    time AND no sale recorded anywhere on that station for
+    _SHIFT_AUTO_CLOSE_INACTIVITY_HOURS (8h) straight. As long as real
+    sales keep happening on the counter, no shift on it is ever swept, no
+    matter who's ringing them up or what the clock/business hours say.
+    Only genuine, sustained silence trips the safety net — and once it
+    does, it now also resets the station's live revenue tile (see
+    AutoCloseRevenueContinuityTest)."""
 
     def setUp(self):
         from datetime import time as _time, datetime as _datetime
         self.biz = Business.objects.create(
-            name='Manager Exempt Biz',
+            name='Activity AutoClose Biz',
             opening_time=_time(8, 0), closing_time=_time(20, 0),
         )
         self.store = Store.objects.create(business=self.biz, name='Bar')
-        self.manager = User.objects.create_user(username='mgrexempt_manager', password='x')
+        self.manager = User.objects.create_user(username='actac_manager', password='x')
         UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
-        self.staff = User.objects.create_user(username='mgrexempt_staff', password='x')
+        self.staff = User.objects.create_user(username='actac_staff', password='x')
         UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='ActAC Beer',
+            material_no='ACTAC-01', unit='Pcs', selling_price=Decimal('100'),
+        )
         yesterday = timezone.localdate() - timedelta(days=1)
-        started = timezone.make_aware(_datetime.combine(yesterday, _time(10, 0)))
+        self.started = timezone.make_aware(_datetime.combine(yesterday, _time(10, 0)))
         self.manager_shift = Shift.objects.create(
             business=self.biz, store=self.store, staff=self.manager,
-            status='OPEN', opening_float=Decimal('0'), started_at=started,
+            status='OPEN', opening_float=Decimal('0'), started_at=self.started,
         )
         self.staff_shift = Shift.objects.create(
             business=self.biz, store=self.store, staff=self.staff,
-            status='OPEN', opening_float=Decimal('0'), started_at=started,
+            status='OPEN', opening_float=Decimal('0'), started_at=self.started,
         )
 
-    def test_manager_shift_stays_open_past_closing_time(self):
+    def test_manager_shift_with_no_activity_eventually_auto_closes(self):
+        """No manager exemption anymore — zero sales ever on this shift
+        means the station has been silent since started_at (yesterday
+        10:00), long past both closing_time and the 8h inactivity window,
+        so it IS swept, same as ordinary staff."""
         from core.shift_views import _auto_close_expired_shifts
         result = _auto_close_expired_shifts(self.biz)
         closed_ids = [r['shift_id'] for r in result]
-        self.assertNotIn(self.manager_shift.id, closed_ids)
+        self.assertIn(self.manager_shift.id, closed_ids)
         self.manager_shift.refresh_from_db()
-        self.assertEqual(self.manager_shift.status, 'OPEN')
-        self.assertFalse(self.manager_shift.auto_closed)
+        self.assertEqual(self.manager_shift.status, 'CLOSED')
+        self.assertTrue(self.manager_shift.auto_closed)
 
     def test_staff_shift_still_auto_closes_as_before(self):
         from core.shift_views import _auto_close_expired_shifts
@@ -4632,50 +4654,82 @@ class ManagerShiftExemptFromAutoCloseTest(TestCase):
         self.assertEqual(self.staff_shift.status, 'CLOSED')
         self.assertTrue(self.staff_shift.auto_closed)
 
-    def test_managers_open_tab_untouched_since_shift_never_auto_closes(self):
-        """Tab-to-debt conversion is station-scoped, not shift-scoped — it's
-        triggered by ANY expired shift on that station auto-closing, not
-        specifically the tab's own opener. So this isolates the real
-        scenario Roy described (manager is the only one still on duty):
-        no OTHER shift on this station is also expiring alongside the
-        exempt manager one."""
+    def test_manager_shift_with_recent_sale_stays_open_past_closing_time(self):
+        """The core live scenario: a sale recorded moments ago (the
+        manager still actively serving, doors shut early or not) means
+        the station is genuinely active — the shift must stay OPEN no
+        matter how far past closing_time the clock is."""
         from core.shift_views import _auto_close_expired_shifts
         self.staff_shift.delete()
-        item = Item.objects.create(
-            business=self.biz, store=self.store, description='Mgr Exempt Beer',
-            material_no='MGREXEMPT-01', unit='Pcs', selling_price=Decimal('100'),
-        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )  # created_at defaults to now — recent activity
+        result = _auto_close_expired_shifts(self.biz)
+        closed_ids = [r['shift_id'] for r in result]
+        self.assertNotIn(self.manager_shift.id, closed_ids)
+        self.manager_shift.refresh_from_db()
+        self.assertEqual(self.manager_shift.status, 'OPEN')
+        self.assertFalse(self.manager_shift.auto_closed)
+
+    def test_open_tab_untouched_while_station_has_recent_activity(self):
+        """Tab-to-debt conversion is station-scoped, not shift-scoped — so
+        this checks the actual thing that matters: as long as the counter
+        is demonstrably active, the tab must not be silently converted."""
+        from core.shift_views import _auto_close_expired_shifts
+        self.staff_shift.delete()
         tab = BarTab.objects.create(
             business=self.biz, customer_name='Still Being Served', status='OPEN', source='bar',
         )
         txn = Transaction.objects.create(
-            business=self.biz, item=item, type='Issue',
+            business=self.biz, item=self.item, type='Issue',
             qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
         )
         BarTabEntry.objects.create(
-            tab=tab, transaction=txn, description='Mgr Exempt Beer', amount=Decimal('100'),
+            tab=tab, transaction=txn, description='ActAC Beer', amount=Decimal('100'),
         )
         _auto_close_expired_shifts(self.biz)
         tab.refresh_from_db()
         self.assertEqual(
             tab.status, 'OPEN',
-            "A manager's open tab must not be silently converted to debt while "
-            "they're demonstrably still working — only a real close should trigger that",
+            "An open tab must not be silently converted to debt while the "
+            "counter is demonstrably still active — only genuine, sustained "
+            "silence should trigger that",
         )
         txn.refresh_from_db()
         self.assertEqual(txn.payment_method, 'cash')
 
-    def test_manager_can_keep_selling_under_the_same_shift_past_closing_time(self):
-        """The whole point: manager_must_have_shift must still find this
-        shift OPEN and let a sale through, well past the configured
-        closing time, with no forced re-open — even after the auto-close
+    def test_manager_can_keep_selling_under_the_same_shift_while_station_active(self):
+        """manager_must_have_shift must still find this shift OPEN and let
+        a sale through, well past the configured closing time, as long as
+        the station stays genuinely active — even after the auto-close
         sweep has already run for this business (as every real checkout
         view runs it before checking for an active shift)."""
         from core.shift_views import _auto_close_expired_shifts, get_active_staff_shift
+        self.staff_shift.delete()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
         _auto_close_expired_shifts(self.biz)
         up = self.manager.userprofile
         result = get_active_staff_shift(up, self.biz, manager_must_have_shift=True)
         self.assertEqual(result.id, self.manager_shift.id)
+
+    def test_station_wide_activity_from_other_staff_also_defers_close(self):
+        """Activity is checked station-wide, not per-staff — a sale rung
+        up by anyone on the same counter keeps EVERY open shift on that
+        counter alive, since the tab-sweep consequence is station-wide
+        too. This is a deliberate scope choice, not an oversight."""
+        from core.shift_views import _auto_close_expired_shifts
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('50'), payment_method='mpesa',
+        )  # rung up under neither shift in particular — just "the counter"
+        result = _auto_close_expired_shifts(self.biz)
+        closed_ids = [r['shift_id'] for r in result]
+        self.assertNotIn(self.manager_shift.id, closed_ids)
+        self.assertNotIn(self.staff_shift.id, closed_ids)
 
 
 class CloseShiftAutoConvertedNamesResponseTest(TestCase):
@@ -15882,13 +15936,21 @@ class AutoCloseRevenueContinuityTest(TestCase):
     auto close balances/transactional information adjusts automatically
     regardless of the auto shift close." Runs the REAL production
     auto-close path (_auto_close_expired_shifts(), not a hand-built CLOSED
-    shift) end to end and confirms both the continuous till
+    shift) end to end and confirms the continuous till
     (till_expected_cash — already locked in for a hand-built shift by
-    TillAnchorSkipsAutoClosedShiftTest above) and the confirm-gated
-    dashboard revenue window (station_revenue_window_start/_info) come out
-    correct once the sweep has actually run: nothing resets or drops a
-    sale just because the shift got force-closed by the business-hours
-    sweep instead of a deliberate manual close."""
+    TillAnchorSkipsAutoClosedShiftTest above) comes out correct once the
+    sweep has actually run: nothing drops a sale just because the shift
+    got force-closed by the business-hours sweep instead of a deliberate
+    manual close.
+
+    2026-08-02, same-day follow-up — Roy's own words: "the bar revenue and
+    sales could reset ... if the shift is autoclosed but in a logical
+    sense" (see _station_reset_anchor()'s docstring). Since the sweep is
+    now activity-based rather than a flat clock grace, a genuine auto-close
+    IS trustworthy enough to also reset the live revenue tile — this
+    class's window-related tests were rewritten to match that (the
+    confirm-only behaviour these tests originally locked in is now
+    "confirm OR a genuine activity-based auto-close", not confirm alone)."""
 
     def setUp(self):
         from datetime import time as _time, datetime as _datetime
@@ -15920,7 +15982,7 @@ class AutoCloseRevenueContinuityTest(TestCase):
             created_at=self.started_at + timedelta(hours=2),
         )
 
-    def test_revenue_window_still_reaches_the_auto_closed_shift(self):
+    def test_revenue_window_resets_to_the_auto_closed_shifts_last_activity(self):
         from core.shift_views import _auto_close_expired_shifts, station_revenue_window_start
         result = _auto_close_expired_shifts(self.biz)
         self.assertEqual(len(result), 1)
@@ -15928,8 +15990,16 @@ class AutoCloseRevenueContinuityTest(TestCase):
         self.assertEqual(self.shift.status, 'CLOSED')
         self.assertTrue(self.shift.auto_closed)
 
+        expected_reset = self.started_at + timedelta(hours=2)  # the later of the two sales
+        self.assertEqual(self.shift.ended_at, expected_reset)
+
         window_start = station_revenue_window_start(self.biz, is_kitchen=False)
-        self.assertEqual(window_start, self.started_at)
+        self.assertEqual(
+            window_start, expected_reset,
+            'A genuine (8h-inactivity) auto-close now resets the window to its own '
+            "last real sale — the closed shift's own sales no longer inflate "
+            '"today\'s" figure once the counter has gone truly quiet',
+        )
 
         total = sum(
             t.revenue() for t in Transaction.objects.filter(
@@ -15937,18 +16007,22 @@ class AutoCloseRevenueContinuityTest(TestCase):
                 payment_method__in=['cash', 'mpesa'], item__store__is_kitchen=False,
             )
         )
-        self.assertEqual(total, 1000.0, 'Both sales made during the auto-closed shift must still count')
+        self.assertEqual(total, 250.0, 'Only the exact last sale (the reset point itself) still counts')
 
-    def test_pending_shifts_list_names_the_auto_closed_shift(self):
+    def test_auto_closed_shift_no_longer_appears_as_pending(self):
         from core.shift_views import _auto_close_expired_shifts, station_revenue_window_info
         _auto_close_expired_shifts(self.biz)
         info = station_revenue_window_info(self.biz, is_kitchen=False)
-        self.assertEqual(len(info['pending_shifts']), 1)
-        self.assertEqual(info['pending_shifts'][0]['id'], self.shift.id)
-        self.assertEqual(info['pending_shifts'][0]['status'], 'CLOSED')
-        self.assertEqual(info['pending_shifts'][0]['revenue'], 1000.0)
-        self.assertEqual(info['total_revenue'], 1000.0)
-        self.assertEqual(info['other_revenue'], 0)
+        self.assertEqual(
+            info['pending_shifts'], [],
+            'The auto-closed shift is now the reset anchor itself, not something '
+            'still awaiting resolution — it must not show up as pending',
+        )
+        # The reset point itself (the shift's own last sale, used as both
+        # ended_at and the new window_start) is boundary-inclusive — same
+        # >= semantics already used for a confirmed shift's confirmed_at.
+        self.assertEqual(info['total_revenue'], 250.0)
+        self.assertEqual(info['other_revenue'], 250.0)
 
     def test_confirming_the_auto_closed_shift_resets_the_window(self):
         from core.shift_views import _auto_close_expired_shifts, station_revenue_window_start
@@ -17317,6 +17391,74 @@ class HomeDashboardTillBreakdownTest(TestCase):
         resp = self.client.get('/')
         self.assertEqual(resp.status_code, 200)
         self.assertNotIn('vipi hesabu hii ilipatikana', resp.content.decode())
+
+
+class HomeDashboardStaleTabsBannerTest(TestCase):
+    """2026-08-02 live request (Monsoon Inn) — Roy: instead of relying
+    purely on the (now activity-based) auto-close sweep to silently
+    resolve a tab left open from a previous day, surface it "right there
+    on the first view of the dashboard" so staff/manager/owner can act
+    deliberately. Station-scoped the same way every other tab surface in
+    this app is."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Stale Banner Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='sbb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_staff = User.objects.create_user(username='sbb_barstaff', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='sbb_kitchenstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+
+        # BarTab.opened_at is auto_now_add=True — any value passed at
+        # .create() time is silently ignored by Django, so backdate via a
+        # queryset .update() afterward, which bypasses that.
+        yesterday_open = timezone.now() - timedelta(days=1)
+        self.stale_bar_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Jana Bar Customer', status='OPEN', source='bar',
+        )
+        BarTab.objects.filter(id=self.stale_bar_tab.id).update(opened_at=yesterday_open)
+        self.stale_kitchen_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Jana Kitchen Customer', status='OPEN', source='kitchen',
+        )
+        BarTab.objects.filter(id=self.stale_kitchen_tab.id).update(opened_at=yesterday_open)
+        self.todays_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Leo Customer', status='OPEN', source='bar',
+        )
+
+    def test_owner_sees_both_stale_tabs(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        self.assertIn('Jana Bar Customer', content)
+        self.assertIn('Jana Kitchen Customer', content)
+
+    def test_todays_tab_not_flagged_as_stale(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertNotIn('Leo Customer', resp.content.decode())
+
+    def test_bar_staff_sees_only_bar_stale_tab(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/')
+        content = resp.content.decode()
+        self.assertIn('Jana Bar Customer', content)
+        self.assertNotIn('Jana Kitchen Customer', content)
+
+    def test_kitchen_staff_sees_only_kitchen_stale_tab(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.get('/')
+        content = resp.content.decode()
+        self.assertIn('Jana Kitchen Customer', content)
+        self.assertNotIn('Jana Bar Customer', content)
+
+    def test_no_banner_when_nothing_stale(self):
+        self.stale_bar_tab.delete()
+        self.stale_kitchen_tab.delete()
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertNotIn('bado wazi tangu siku iliyopita', resp.content.decode())
 
 
 # ── Per-preset sale-time cost attribution + custom-price presets (2026-07-28) ──

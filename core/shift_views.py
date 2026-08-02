@@ -177,15 +177,9 @@ def station_revenue_window_start(business, is_kitchen, now=None):
     from .models import Shift
     now = now or timezone.now()
 
-    last_confirmed = (
-        Shift.objects.filter(business=business, status='CONFIRMED')
-        .filter(_station_q(is_kitchen))
-        .exclude(confirmed_at__isnull=True)
-        .order_by('-confirmed_at')
-        .first()
-    )
-    if last_confirmed:
-        return last_confirmed.confirmed_at
+    anchor_dt, _kind, _shift = _station_reset_anchor(business, is_kitchen)
+    if anchor_dt:
+        return anchor_dt
 
     earliest = (
         Shift.objects.filter(business=business)
@@ -197,6 +191,54 @@ def station_revenue_window_start(business, is_kitchen, now=None):
         return earliest.started_at
 
     return timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _station_reset_anchor(business, is_kitchen):
+    """The most recent genuine "start fresh" signal for one station's live
+    revenue tile — either a human CONFIRM (Thibitisha), or the counter
+    having gone genuinely quiet long enough for the auto-close safety net
+    to fire (see _SHIFT_AUTO_CLOSE_INACTIVITY_HOURS below). Returns
+    (anchor_dt, 'confirmed'|'auto_closed', shift) or (None, None, None).
+
+    2026-08-02, same-day live follow-up to the 2026-08-01 confirm-only
+    rule above — Roy's own words: "the bar revenue and sales could reset
+    after the manager ends shift or if the shift is autoclosed but in a
+    logical sense." An auto-close under the OLD fixed clock-time grace
+    could fire while genuine sales were still happening (see
+    _auto_close_expired_shifts()'s docstring), so it deliberately never
+    reset this tile. Now that auto-close only fires after real, sustained
+    inactivity, it's just as trustworthy a "this counter's day is over"
+    signal as an explicit confirm — so it's added as a second candidate
+    anchor here. An ordinary manual close still AWAITING confirmation
+    (auto_closed=False) is deliberately NOT a candidate — that's exactly
+    the case StationRevenueWindowStartTest already locks in as must-NOT-
+    reset (a human hasn't signed off on it yet, and the safety net didn't
+    fire either — nothing here has actually confirmed the counter is
+    quiet)."""
+    from .models import Shift
+    last_confirmed = (
+        Shift.objects.filter(business=business, status='CONFIRMED')
+        .filter(_station_q(is_kitchen))
+        .exclude(confirmed_at__isnull=True)
+        .order_by('-confirmed_at')
+        .first()
+    )
+    last_auto_closed = (
+        Shift.objects.filter(business=business, status='CLOSED', auto_closed=True)
+        .filter(_station_q(is_kitchen))
+        .exclude(ended_at__isnull=True)
+        .order_by('-ended_at')
+        .first()
+    )
+    candidates = []
+    if last_confirmed:
+        candidates.append(('confirmed', last_confirmed, last_confirmed.confirmed_at))
+    if last_auto_closed:
+        candidates.append(('auto_closed', last_auto_closed, last_auto_closed.ended_at))
+    if not candidates:
+        return None, None, None
+    kind, shift, dt = max(candidates, key=lambda c: c[2])
+    return dt, kind, shift
 
 
 def _window_revenue(business, is_kitchen, start, end):
@@ -247,20 +289,20 @@ def station_revenue_window_info(business, is_kitchen, now=None):
     from .models import Shift
     now = now or timezone.now()
 
-    last_confirmed = (
-        Shift.objects.filter(business=business, status='CONFIRMED')
-        .filter(_station_q(is_kitchen))
-        .exclude(confirmed_at__isnull=True)
-        .order_by('-confirmed_at')
-        .first()
-    )
-    if last_confirmed:
-        window_start = last_confirmed.confirmed_at
-        who = last_confirmed.staff.get_full_name() or last_confirmed.staff.username
-        anchor_label = (
-            f"Tangu shift ya {who} ilivyothibitishwa "
-            f"{timezone.localtime(window_start).strftime('%d %b, %H:%M')}"
-        )
+    anchor_dt, anchor_kind, anchor_shift = _station_reset_anchor(business, is_kitchen)
+    if anchor_dt:
+        window_start = anchor_dt
+        who = anchor_shift.staff.get_full_name() or anchor_shift.staff.username
+        if anchor_kind == 'confirmed':
+            anchor_label = (
+                f"Tangu shift ya {who} ilivyothibitishwa "
+                f"{timezone.localtime(window_start).strftime('%d %b, %H:%M')}"
+            )
+        else:
+            anchor_label = (
+                f"Tangu counter hii ilivyokaa kimya kwa masaa {_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS}+ "
+                f"baada ya shift ya {who} — {timezone.localtime(window_start).strftime('%d %b, %H:%M')}"
+            )
     else:
         earliest = (
             Shift.objects.filter(business=business)
@@ -808,7 +850,10 @@ def _tapped_barrels_for_business(business):
 
 # ── Auto-close stale shifts ───────────────────────────────────────────────────
 
-_SHIFT_AUTO_CLOSE_GRACE_HOURS = 2   # grace period after closing time before auto-close fires
+_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS = 8   # 2026-08-02: hours of zero sales on a
+    # station, past closing time, before the auto-close safety net fires —
+    # replaces the old fixed post-closing-time clock grace (see
+    # _auto_close_expired_shifts()'s docstring for why).
 
 
 def _convert_open_tabs_to_debt_for_shift(shift, business, should_convert):
@@ -908,8 +953,24 @@ def _convert_open_tabs_to_debt_for_shift(shift, business, should_convert):
     return auto_converted, auto_converted_names, open_tabs_list
 
 
+def _station_last_sale_at(business, is_kitchen):
+    """Most recent Issue-sale timestamp anywhere on this business+station —
+    the activity signal _auto_close_expired_shifts() uses (2026-08-02,
+    replacing the old fixed clock-time grace below). None if the station
+    has never recorded a sale."""
+    return (
+        Transaction.objects.filter(
+            business=business, type='Issue', item__store__is_kitchen=is_kitchen,
+        )
+        .order_by('-created_at')
+        .values_list('created_at', flat=True)
+        .first()
+    )
+
+
 def _auto_close_expired_shifts(business):
-    """Close any OPEN shifts that ran past the business's closing time + grace.
+    """Close any OPEN shift whose station has gone genuinely quiet, past
+    the business's closing time.
 
     Returns a list of dicts describing what was auto-closed (for toast/notification).
     Does nothing when:
@@ -918,20 +979,36 @@ def _auto_close_expired_shifts(business):
     Handles overnight businesses (opening_time > closing_time, e.g. bar opens
     22:00, closes 02:00) by projecting the close onto the following calendar day.
 
-    2026-08-01 live request — Roy: a manager is often the one physically still
-    running the counter after the configured closing time when the owner isn't
-    around (a bar running late, an after-hours event) — this sweep is a safety
-    net for staff who genuinely forgot, not a rule that a manager's shift must
-    end the moment the clock says so. MANAGER-role shifts are exempt: they stay
-    OPEN past business hours so a manager can keep selling under the same
-    continuous shift (no forced re-open, no fragmented cash float) instead of
-    being auto-closed and then blocked from ringing up new sales by the
-    manager_must_have_shift gate (see get_active_staff_shift()). Open tabs on
-    an exempt manager shift are correspondingly left alone too — they'll only
-    convert to debt when the manager actually, deliberately closes out, same as
-    any manual close. Owner shifts were never subject to this sweep's
-    consequence in the first place (owners always bypass the "must have an
-    open shift to sell" gate), so no change was needed there.
+    2026-08-02, same-day live follow-up to the 2026-08-01 "manager exempt"
+    fix below (fully superseded, not just extended) — a real Monsoon Inn
+    scenario: doors are sometimes shut early (before the configured closing
+    time) to avoid unwanted attention, while customers stay inside and the
+    manager/owner keep selling well past both that early shutdown AND the
+    configured closing_time, after ordinary staff have already gone home.
+    A flat "closing_time + N hours" clock grace has no way to tell that
+    apart from a genuinely abandoned shift — and the previous fix's blanket
+    "managers are just never auto-closed" rule swung too far the other way,
+    since a manager shift that really is abandoned for days would then
+    never get swept at all, and — per _convert_open_tabs_to_debt_for_shift's
+    docstring — the conversion sweep is STATION-scoped, not shift-scoped, so
+    exempting the manager's own shift row never actually protected a
+    manager's tabs from an OTHER (non-exempt) shift's sweep on the same
+    counter either.
+
+    The real, reliable signal is ACTIVITY, not role or the clock: a shift's
+    station only becomes eligible for auto-close once we're past the
+    configured closing time AND no sale has been recorded on that station
+    (by anyone — owner, manager, or staff; see _station_last_sale_at()) for
+    _SHIFT_AUTO_CLOSE_INACTIVITY_HOURS straight. As long as someone keeps
+    ringing up real sales on the counter, no shift on it ever becomes
+    eligible, no matter what the clock or the business's configured hours
+    say — solving the "still serving after the doors are shut" case
+    directly, for every role, including manager and owner shifts (neither
+    is special-cased anymore). Only once the counter has been truly silent
+    for a long stretch does the safety net (auto-close + tab-to-debt sweep,
+    see _convert_open_tabs_to_debt_for_shift) fire — see
+    _station_reset_anchor() above for how this also now resets the live
+    revenue tile once it does.
     """
     closing_time = getattr(business, 'closing_time', None)
     opening_time = getattr(business, 'opening_time', None)
@@ -941,12 +1018,10 @@ def _auto_close_expired_shifts(business):
 
     now_local = timezone.localtime(timezone.now())
     local_tz  = timezone.get_current_timezone()
-    grace     = timedelta(hours=_SHIFT_AUTO_CLOSE_GRACE_HOURS)
     is_overnight = closing_time < opening_time  # e.g. opens 22:00, closes 02:00
 
     open_shifts = list(
         Shift.objects.filter(business=business, status='OPEN')
-        .exclude(staff__userprofile__role='manager')
         .select_related('staff')
     )
     auto_closed = []
@@ -965,31 +1040,50 @@ def _auto_close_expired_shifts(business):
         if scheduled_close <= shift.started_at:
             continue
 
-        if now_local >= timezone.localtime(scheduled_close + grace):
-            staff_name = shift.staff.get_full_name() or shift.staff.username
-            note = (
-                f'[Auto-closed at {closing_time.strftime("%H:%M")} — '
-                f'business hours ended. Staff may have forgotten.]'
-            )
-            shift.status     = 'CLOSED'
-            shift.ended_at   = scheduled_close
-            shift.auto_closed = True
-            shift.notes      = (shift.notes + '\n' + note).strip() if shift.notes else note
-            shift.save(update_fields=['status', 'ended_at', 'auto_closed', 'notes'])
+        # Never even consider a shift still within business hours.
+        if now_local < timezone.localtime(scheduled_close):
+            continue
 
-            # Same tab-to-debt sweep a manual close performs — the system is force-closing
-            # because we're already past closing time + grace, so always convert (no
-            # "manager_taking_over" concept applies to an unattended auto-close).
-            _converted_n, _converted_names, _ = _convert_open_tabs_to_debt_for_shift(
-                shift, business, should_convert=True,
-            )
+        is_kitchen = _shift_station(shift) == 'kitchen'
+        last_sale_at = _station_last_sale_at(shift.business, is_kitchen)
+        last_activity = last_sale_at or shift.started_at
+        inactive_for = now_local - timezone.localtime(last_activity)
 
-            auto_closed.append({
-                'shift_id':        shift.id,
-                'staff_name':      staff_name,
-                'scheduled_close': closing_time.strftime('%H:%M'),
-                'tabs_converted':  _converted_n,
-            })
+        if inactive_for < timedelta(hours=_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS):
+            continue  # this counter is still genuinely active — leave it alone
+
+        staff_name = shift.staff.get_full_name() or shift.staff.username
+        # The shift's own "end" is the last real thing that happened on its
+        # station, not the nominal closing time — accurate for Shift History,
+        # and this is exactly what _station_reset_anchor() uses to reset the
+        # live revenue tile once auto-close fires.
+        effective_end = last_activity if last_activity > shift.started_at else scheduled_close
+        note = (
+            f'[Auto-closed — no sales on this counter for '
+            f'{_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS}+ hours since '
+            f'{timezone.localtime(effective_end).strftime("%d %b, %H:%M")}, '
+            f'past business closing time of {closing_time.strftime("%H:%M")}.]'
+        )
+        shift.status     = 'CLOSED'
+        shift.ended_at   = effective_end
+        shift.auto_closed = True
+        shift.notes      = (shift.notes + '\n' + note).strip() if shift.notes else note
+        shift.save(update_fields=['status', 'ended_at', 'auto_closed', 'notes'])
+
+        # Same tab-to-debt sweep a manual close performs — the system is
+        # force-closing because the counter has been genuinely silent for
+        # hours, so always convert (no "manager_taking_over" concept
+        # applies to an unattended auto-close).
+        _converted_n, _converted_names, _ = _convert_open_tabs_to_debt_for_shift(
+            shift, business, should_convert=True,
+        )
+
+        auto_closed.append({
+            'shift_id':        shift.id,
+            'staff_name':      staff_name,
+            'scheduled_close': closing_time.strftime('%H:%M'),
+            'tabs_converted':  _converted_n,
+        })
 
     if auto_closed:
         try:
