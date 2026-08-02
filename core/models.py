@@ -755,6 +755,31 @@ class Item(models.Model):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
         return self.opening_bin_balance + total_movement
 
+    def reserved_qty(self):
+        """UBA §6.2 (Sprint P0-B) — physical stock held against an OPEN
+        PaymentPlan (layaway). Reserved stock is not available stock: a
+        layaway holds real goods, so `current_balance()` alone overstates
+        what a NEW customer can actually be sold. Only OPEN plans reserve
+        anything — completing/refunding/releasing/forfeiting a plan always
+        flips status away from OPEN, so the reservation clears automatically
+        the instant any of those inverse actions runs, with no separate
+        "release the hold" bookkeeping step needed here."""
+        total = self.payment_plan_reservations.filter(
+            status='OPEN'
+        ).aggregate(models.Sum('reserved_qty'))['reserved_qty__sum']
+        return total or 0
+
+    def available_balance(self):
+        """current_balance() minus reserved_qty() — the number a NEW sale
+        must actually check against, so two customers are never sold the
+        same reserved dress. NOT swept into every existing display surface
+        this pass (stock_list.html, item_detail.html, etc. still show plain
+        current_balance()) — documented deferral, same discipline as every
+        other UBA sprint's template work; wired into Quick Sell's checkout
+        stock check instead, the one surface where overselling a reserved
+        item actually causes the harm this exists to prevent."""
+        return self.current_balance() - self.reserved_qty()
+
     def physical_balance(self):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
         return self.opening_physical + total_movement
@@ -2805,6 +2830,218 @@ class SupplierPayment(models.Model):
 
     def __str__(self):
         return f"KES {self.amount} on {self.invoice}"
+
+
+# ────────────────────────────────────────────────
+# UBA §6.2 (Sprint P0-B) — payment plans (layaway / deposit / instalments)
+# ────────────────────────────────────────────────
+
+class PaymentPlan(models.Model):
+    """A deposit/layaway/instalment/booking plan — deliberately NOT the debt
+    tracker. A plan is money the business is HOLDING against a future
+    completion, not credit extended to a customer; `PaymentPlanEntry`
+    payments never create a revenue-bearing Transaction (deposits are a
+    LIABILITY, not revenue — see `pay_locked()`'s docstring), and the debt
+    ledger machinery is never touched by any method here, so a plan
+    correctly never appears in the deni ledger by construction — no
+    exclusion filter needed anywhere else in the app.
+
+    Known, documented limitation (not solved this pass): a cash/M-Pesa
+    deposit payment is not yet reflected in `shift_views.till_expected_cash()`
+    / `_reconcile()` — that machinery is this app's single most
+    money-sensitive function (its own module docstring calls it exactly
+    that), and integrating a second cash-affecting event into it needs its
+    own careful, dedicated pass rather than being folded into this one.
+    """
+    KIND_LAYAWAY = 'LAYAWAY'
+    KIND_DEPOSIT = 'DEPOSIT'
+    KIND_INSTALMENT = 'INSTALMENT'
+    KIND_BOOKING = 'BOOKING'
+    KIND_CHOICES = [
+        (KIND_LAYAWAY, 'Lipa pole pole'), (KIND_DEPOSIT, 'Amana'),
+        (KIND_INSTALMENT, 'Malipo ya awamu'), (KIND_BOOKING, 'Booking'),
+    ]
+    STATUS_OPEN = 'OPEN'
+    STATUS_COMPLETED = 'COMPLETED'
+    STATUS_FORFEITED = 'FORFEITED'
+    STATUS_REFUNDED = 'REFUNDED'
+    STATUS_CANCELLED = 'CANCELLED'
+    STATUS_CHOICES = [
+        (STATUS_OPEN, 'Wazi'), (STATUS_COMPLETED, 'Imekamilika'),
+        (STATUS_FORFEITED, 'Amana Imepotea'), (STATUS_REFUNDED, 'Imerejeshwa'),
+        (STATUS_CANCELLED, 'Imefutwa'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='payment_plans')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True)
+    customer = models.ForeignKey('Customer', on_delete=models.CASCADE, related_name='payment_plans')
+    kind = models.CharField(max_length=12, choices=KIND_CHOICES, default=KIND_LAYAWAY)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    due_date = models.DateField(null=True, blank=True)
+    hold_expires_on = models.DateField(null=True, blank=True, help_text='Layaway: goods held until this date.')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    forfeit_policy = models.CharField(
+        max_length=200, blank=True,
+        help_text='Human-readable, snapshotted from Business.layaway_forfeit_policy at creation '
+                  'time and shown on the deposit receipt — never retro-applied if the business '
+                  'setting changes later.'
+    )
+    reserved_item = models.ForeignKey(Item, on_delete=models.SET_NULL, null=True, blank=True, related_name='payment_plan_reservations')
+    reserved_qty = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    created_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.get_kind_display()} — {self.customer.name} (KES {self.paid_amount}/{self.total_amount})"
+
+    @property
+    def balance(self):
+        return max(Decimal('0'), self.total_amount - self.paid_amount)
+
+    @staticmethod
+    def describe_forfeit_policy(business):
+        """The exact Swahili sentence printed on the deposit receipt at the
+        moment money is taken — never discovered later (§6.2's ethics note)."""
+        if business.layaway_forfeit_policy == 'full_refund':
+            return 'Ukikosa kumaliza malipo, amana yako yote itarejeshwa.'
+        if business.layaway_forfeit_policy == 'full_forfeit':
+            return 'Ukikosa kumaliza malipo, amana yako haitarejeshwa kabisa.'
+        return (
+            f'Ukikosa kumaliza malipo, amana yako itarejeshwa ukitoa ada ya '
+            f'asilimia {business.layaway_forfeit_pct:g}%.'
+        )
+
+    @classmethod
+    def create_locked(cls, business, customer, kind, total_amount, created_by,
+                       store=None, due_date=None, hold_expires_on=None,
+                       reserved_item=None, reserved_qty=None, initial_payment=None,
+                       initial_method='cash', initial_reference=''):
+        """The one entry point — snapshots the forfeit policy text NOW so a
+        later change to Business.layaway_forfeit_policy can never silently
+        alter a plan already sold to a customer."""
+        plan = cls.objects.create(
+            business=business, customer=customer, kind=kind, total_amount=total_amount,
+            store=store, due_date=due_date, hold_expires_on=hold_expires_on,
+            reserved_item=reserved_item, reserved_qty=reserved_qty,
+            forfeit_policy=cls.describe_forfeit_policy(business), created_by=created_by,
+        )
+        if initial_payment:
+            plan.pay_locked(initial_payment, initial_method, created_by, reference=initial_reference)
+        return plan
+
+    def pay_locked(self, amount, method, recorded_by, reference=''):
+        """Records a PaymentPlanEntry and updates paid_amount. Deliberately
+        creates NO Transaction — a deposit is a liability, not revenue,
+        until the plan actually completes (convert_to_sale_locked())."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            plan = PaymentPlan.objects.select_for_update().get(pk=self.pk)
+            if plan.status != self.STATUS_OPEN:
+                raise ValueError('Mpango huu si wazi tena.')
+            entry = PaymentPlanEntry.objects.create(
+                plan=plan, amount=amount, method=method, mpesa_ref=reference, recorded_by=recorded_by,
+            )
+            plan.paid_amount = plan.paid_amount + Decimal(str(amount))
+            plan.save(update_fields=['paid_amount'])
+            self.paid_amount = plan.paid_amount
+            return entry
+
+    def convert_to_sale_locked(self, converted_by):
+        """Plan → real sale on completion (spec's own "inverse action":
+        plan ↔ convert to sale). Creates the actual Issue transaction(s) for
+        the reserved item NOW — this is the ONE moment a plan's money
+        becomes real recognised revenue, not at any individual deposit/
+        instalment payment."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            plan = PaymentPlan.objects.select_for_update().get(pk=self.pk)
+            if plan.status != self.STATUS_OPEN:
+                raise ValueError('Mpango huu si wazi tena.')
+            if plan.balance > 0:
+                raise ValueError('Malipo bado hayajakamilika.')
+            txn = None
+            if plan.reserved_item_id and plan.reserved_qty:
+                txn = Transaction.objects.create(
+                    business=plan.business, item=plan.reserved_item, type='Issue',
+                    qty=-abs(plan.reserved_qty), sale_amount=plan.total_amount,
+                    payment_method='cash', recorded_by=getattr(converted_by, 'user', None),
+                )
+            plan.status = self.STATUS_COMPLETED
+            plan.closed_at = timezone.now()
+            plan.save(update_fields=['status', 'closed_at'])
+            self.status = plan.status
+            self.closed_at = plan.closed_at
+            return txn
+
+    def refund_locked(self, refunded_by, amount=None):
+        """Refunds some or all of paid_amount (default: everything paid so
+        far) and releases any stock reservation. No Transaction is created —
+        no sale ever happened, so there is nothing for a Return to reverse."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            plan = PaymentPlan.objects.select_for_update().get(pk=self.pk)
+            if plan.status != self.STATUS_OPEN:
+                raise ValueError('Mpango huu si wazi tena.')
+            plan.status = self.STATUS_REFUNDED
+            plan.closed_at = timezone.now()
+            plan.save(update_fields=['status', 'closed_at'])
+            self.status = plan.status
+            self.closed_at = plan.closed_at
+            return plan
+
+    def release(self, released_by):
+        """Cancel a hold with no money movement question (e.g. customer
+        never paid a deposit at all yet) — the reserved item becomes
+        available again the instant status leaves OPEN, since
+        Item.reserved_qty() only ever sums OPEN plans."""
+        if self.status != self.STATUS_OPEN:
+            raise ValueError('Mpango huu si wazi tena.')
+        self.status = self.STATUS_CANCELLED
+        self.closed_at = timezone.now()
+        self.save(update_fields=['status', 'closed_at'])
+
+    def forfeit_locked(self, forfeited_by):
+        """Applies Business.layaway_forfeit_policy — never retro-applied,
+        always the policy snapshotted onto forfeit_policy at creation time.
+        full_forfeit/minus_percent both close the plan as FORFEITED (the
+        business keeps some or all of paid_amount); full_refund closes it
+        as REFUNDED instead, since nothing was actually kept."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            plan = PaymentPlan.objects.select_for_update().get(pk=self.pk)
+            if plan.status != self.STATUS_OPEN:
+                raise ValueError('Mpango huu si wazi tena.')
+            policy = plan.business.layaway_forfeit_policy
+            if policy == 'full_refund':
+                plan.status = self.STATUS_REFUNDED
+            else:
+                plan.status = self.STATUS_FORFEITED
+            plan.closed_at = timezone.now()
+            plan.save(update_fields=['status', 'closed_at'])
+            self.status = plan.status
+            self.closed_at = plan.closed_at
+            return plan
+
+
+class PaymentPlanEntry(models.Model):
+    METHOD_CHOICES = [('cash', 'Cash'), ('mpesa', 'M-Pesa'), ('other', 'Nyingine')]
+    plan = models.ForeignKey(PaymentPlan, on_delete=models.CASCADE, related_name='entries')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=10, choices=METHOD_CHOICES, default='cash')
+    mpesa_ref = models.CharField(max_length=40, blank=True)
+    recorded_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    receipt = models.ForeignKey('Receipt', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"KES {self.amount} ({self.method}) on {self.plan}"
 
 
 # ────────────────────────────────────────────────

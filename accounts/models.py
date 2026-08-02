@@ -203,6 +203,21 @@ class Business(models.Model):
                   'fires a cost_rise BusinessException + owner alert with a suggested new '
                   'selling price that preserves the old margin ratio.'
     )
+    # ── UBA §6.2/§3 decision #5 (Sprint P0-B) — layaway forfeiture policy ────
+    LAYAWAY_FORFEIT_CHOICES = [
+        ('full_refund', 'Rejesha Yote'),
+        ('minus_percent', 'Rejesha Kiasi (toa asilimia)'),
+        ('full_forfeit', 'Haitarejeshwa Kabisa'),
+    ]
+    layaway_forfeit_policy = models.CharField(
+        max_length=15, choices=LAYAWAY_FORFEIT_CHOICES, default='minus_percent',
+        help_text='What happens to a layaway deposit if the customer never completes the plan. '
+                  'Default: refund minus an admin fee — never a silent full-forfeit default.'
+    )
+    layaway_forfeit_pct = models.DecimalField(
+        max_digits=5, decimal_places=1, default=Decimal('10.0'),
+        help_text='Admin fee percentage deducted on forfeit, when layaway_forfeit_policy=minus_percent.'
+    )
     return_approval_threshold = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True,
         help_text='A customer return whose refund exceeds this KES amount needs owner/manager '

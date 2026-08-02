@@ -13,9 +13,10 @@ from core.models import (
     GlobalProduct, Item, ItemPortionPreset, ItemPriceHistory, KegBarrel,
     KegWeightReading, KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
     KitchenStockReceiptLine, MarketPriceIndex, Notification, Payment,
-    PettyCash, Receipt, Return, RevenueTarget, Shift, StockCountLine,
-    StockCountSession, Store, StockTransfer, StockTransferLine,
-    SupplierInvoice, SupplierPayment, TabTransferRequest, TillCount, Transaction,
+    PaymentPlan, PaymentPlanEntry, PettyCash, Receipt, Return, RevenueTarget,
+    Shift, StockCountLine, StockCountSession, Store, StockTransfer,
+    StockTransferLine, SupplierInvoice, SupplierPayment, TabTransferRequest,
+    TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -23140,3 +23141,206 @@ class RetailIntelligenceTest(TestCase):
         resp = self.client.get('/analytics/retail/dead-stock/')
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json()['ok'])
+
+
+class PaymentPlanTest(TestCase):
+    """UBA P0-B §6.2 — payment plans (layaway/deposit/instalment/booking)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Layaway Biz')
+        self.store = Store.objects.create(business=self.biz, name='Boutique')
+        self.owner_user = User.objects.create_user(username='pp_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='pp_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.customer = Customer.objects.create(business=self.biz, name='Jane Wanjiku', phone='0712345678')
+        self.dress = Item.objects.create(
+            business=self.biz, store=self.store, description='Red Dress Size 42',
+            material_no='PP-01', unit='pcs', selling_price=Decimal('3000'),
+            cost_price=Decimal('1500'), opening_bin_balance=3,
+        )
+
+    def test_default_forfeit_policy_is_minus_percent(self):
+        self.assertEqual(self.biz.layaway_forfeit_policy, 'minus_percent')
+        self.assertEqual(self.biz.layaway_forfeit_pct, Decimal('10.0'))
+
+    def test_describe_forfeit_policy_text(self):
+        text = PaymentPlan.describe_forfeit_policy(self.biz)
+        self.assertIn('asilimia 10', text)
+
+    def test_reserved_item_reduces_available_balance(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'),
+        )
+        self.dress.refresh_from_db()
+        self.assertEqual(self.dress.current_balance(), 3)
+        self.assertEqual(self.dress.reserved_qty(), Decimal('1'))
+        self.assertEqual(self.dress.available_balance(), 2)
+
+    def test_pay_locked_creates_no_revenue_transaction(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+        )
+        plan.pay_locked(Decimal('1000'), 'cash', self.owner)
+        self.assertEqual(plan.paid_amount, Decimal('1000'))
+        self.assertEqual(plan.balance, Decimal('2000'))
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), 0)  # deposit is a liability, not revenue
+
+    def test_plan_never_appears_in_debt_ledger(self):
+        from core.debt_views import _get_customer_debt_data
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_DEPOSIT,
+            total_amount=Decimal('5000'), created_by=self.owner, initial_payment=Decimal('2000'),
+        )
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['outstanding'], 0.0)
+
+    def test_convert_to_sale_creates_issue_transaction_and_completes(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'), initial_payment=Decimal('3000'),
+        )
+        before_balance = self.dress.current_balance()
+        txn = plan.convert_to_sale_locked(self.owner)
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.type, 'Issue')
+        self.assertEqual(float(txn.revenue()), 3000.0)
+        self.dress.refresh_from_db()
+        self.assertEqual(self.dress.current_balance(), before_balance - 1)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_COMPLETED)
+        self.assertEqual(self.dress.reserved_qty(), 0)  # reservation cleared on completion
+
+    def test_cannot_convert_with_outstanding_balance(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner, initial_payment=Decimal('1000'),
+        )
+        with self.assertRaises(ValueError):
+            plan.convert_to_sale_locked(self.owner)
+
+    def test_refund_releases_reservation(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'), initial_payment=Decimal('1000'),
+        )
+        plan.refund_locked(self.owner)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_REFUNDED)
+        self.dress.refresh_from_db()
+        self.assertEqual(self.dress.reserved_qty(), 0)
+
+    def test_release_cancels_hold(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'),
+        )
+        plan.release(self.owner)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_CANCELLED)
+
+    def test_forfeit_minus_percent_marks_forfeited(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner, initial_payment=Decimal('1000'),
+        )
+        plan.forfeit_locked(self.owner)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_FORFEITED)
+
+    def test_forfeit_full_refund_policy_marks_refunded_instead(self):
+        self.biz.layaway_forfeit_policy = 'full_refund'
+        self.biz.save(update_fields=['layaway_forfeit_policy'])
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner, initial_payment=Decimal('1000'),
+        )
+        plan.forfeit_locked(self.owner)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_REFUNDED)
+
+    def test_forfeit_policy_snapshotted_not_retroactive(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+        )
+        original_text = plan.forfeit_policy
+        self.biz.layaway_forfeit_policy = 'full_forfeit'
+        self.biz.save(update_fields=['layaway_forfeit_policy'])
+        plan.refresh_from_db()
+        self.assertEqual(plan.forfeit_policy, original_text)  # unchanged despite the business setting flipping
+
+    def test_last_piece_shows_zero_available_once_reserved(self):
+        """Two customers cannot be sold the same reserved dress (§6.2's
+        literal example) -- verified via the helper a real checkout/create
+        flow would check before allowing a second reservation or sale."""
+        single_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Last Piece',
+            material_no='PP-02', unit='pcs', selling_price=Decimal('1000'), opening_bin_balance=1,
+        )
+        PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('1000'), created_by=self.owner,
+            reserved_item=single_item, reserved_qty=Decimal('1'),
+        )
+        self.assertEqual(single_item.current_balance(), 1)
+        self.assertEqual(single_item.available_balance(), 0)
+
+    def test_create_and_pay_views_end_to_end(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/payment-plans/create/', {
+            'customer_name': 'Jane Wanjiku', 'kind': 'LAYAWAY', 'total_amount': '3000',
+            'reserved_item_id': self.dress.id, 'reserved_qty': '1', 'initial_payment': '500',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('asilimia', data['forfeit_policy'])
+        plan_id = data['plan_id']
+
+        resp2 = self.client.post(f'/payment-plans/{plan_id}/pay/', {'amount': '2500'})
+        self.assertTrue(resp2.json()['ok'])
+        self.assertEqual(resp2.json()['balance'], 0.0)
+
+        resp3 = self.client.post(f'/payment-plans/{plan_id}/convert/')
+        self.assertTrue(resp3.json()['ok'])
+        self.assertEqual(resp3.json()['status'], PaymentPlan.STATUS_COMPLETED)
+
+    def test_home_dashboard_shows_deposits_held(self):
+        PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner, initial_payment=Decimal('1000'),
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/')
+        self.assertContains(resp, 'Amana Zilizoshikiliwa')
+
+    def test_hold_expiry_reminder_notifies_owner(self):
+        from core.payment_plans_views import send_hold_expiry_reminders
+        PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'),
+            hold_expires_on=timezone.localdate(),
+        )
+        count = send_hold_expiry_reminders(self.biz)
+        self.assertEqual(count, 1)
+        self.assertTrue(Notification.objects.filter(user=self.owner_user, title__icontains='Amana').exists())
+
+    def test_quick_sell_respects_reservation(self):
+        PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('3'),  # reserves ALL 3 pieces
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.dress.id, 'qty': 1, 'price': 3000}]),
+            'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(business=self.biz, item=self.dress).exists())

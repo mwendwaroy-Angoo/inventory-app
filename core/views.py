@@ -704,6 +704,18 @@ def home(request):
             else:
                 context['cash_position'] = None
 
+            # UBA P0-B §6.2 — "Amana Zilizoshikiliwa" (deposits held): money the
+            # business is HOLDING against open payment plans, not its own
+            # revenue — the cause-&-effect map's own explicit dashboard ask.
+            if user_profile.is_owner_or_manager:
+                try:
+                    from core.payment_plans_views import deposits_held_total
+                    context['deposits_held'] = deposits_held_total(business)
+                except Exception:
+                    context['deposits_held'] = None
+            else:
+                context['deposits_held'] = None
+
         except Exception:
             context["error"] = _("Profile not found. Please contact support.")
     else:
@@ -3297,7 +3309,12 @@ def quick_sell(request):
                 continue
             # ─────────────────────────────────────────────────────────────
 
-            if item.current_balance() < stock_qty:
+            # UBA P0-B §6.2 — available_balance() subtracts any OPEN layaway
+            # reservation on this item; for an item with zero reservations
+            # (the overwhelming majority) this is byte-identical to
+            # current_balance(), so this check is unchanged in every ordinary
+            # case and only actually differs for a reserved item.
+            if item.available_balance() < stock_qty:
                 messages.warning(
                     request,
                     _(
@@ -3305,7 +3322,7 @@ def quick_sell(request):
                     )
                     % {
                         "item_description": item.description,
-                        "available": item.current_balance(),
+                        "available": item.available_balance(),
                         "unit": item.unit,
                     },
                 )

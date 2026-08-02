@@ -232,6 +232,10 @@ from core.payables_views import payables_dashboard, record_supplier_invoice, rec
 from core.retail_reports_views import (
     dead_stock_report_view, reorder_today_view, basket_affinity_view, hour_heatmap_view,
 )
+from core.payment_plans_views import (
+    create_payment_plan, pay_payment_plan, convert_payment_plan_to_sale,
+    refund_payment_plan, release_payment_plan, forfeit_payment_plan,
+)
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -793,6 +797,13 @@ urlpatterns = [
     path("analytics/retail/reorder-today/", reorder_today_view, name="reorder_today_view"),
     path("analytics/retail/basket-affinity/", basket_affinity_view, name="basket_affinity_view"),
     path("analytics/retail/hour-heatmap/", hour_heatmap_view, name="hour_heatmap_view"),
+    # ── UBA P0-B — payment plans (layaway / deposit / instalment / booking) ────
+    path("payment-plans/create/", create_payment_plan, name="create_payment_plan"),
+    path("payment-plans/<int:plan_id>/pay/", pay_payment_plan, name="pay_payment_plan"),
+    path("payment-plans/<int:plan_id>/convert/", convert_payment_plan_to_sale, name="convert_payment_plan_to_sale"),
+    path("payment-plans/<int:plan_id>/refund/", refund_payment_plan, name="refund_payment_plan"),
+    path("payment-plans/<int:plan_id>/release/", release_payment_plan, name="release_payment_plan"),
+    path("payment-plans/<int:plan_id>/forfeit/", forfeit_payment_plan, name="forfeit_payment_plan"),
 ]
 
 if settings.DEBUG:

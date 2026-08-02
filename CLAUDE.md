@@ -814,6 +814,38 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA P0-B (2026-08-02): Payment plans (layaway/deposit/instalments/
+  booking), spec §6.2, first sprint of Phase 2 (Apparel). New
+  `PaymentPlan`/`PaymentPlanEntry` models + `Business.layaway_forfeit_
+  policy`/`layaway_forfeit_pct` (decision #5: default `minus_percent` at
+  10%, never a silent full-forfeit default). Deliberately NOT the debt
+  tracker — `pay_locked()` creates a `PaymentPlanEntry` and updates
+  `paid_amount` but NEVER creates a revenue-bearing `Transaction`, so
+  deposits correctly never appear in the deni ledger or count as revenue
+  anywhere, satisfying "deposits are a liability" purely by not creating
+  the one record every revenue aggregate reads. `convert_to_sale_locked()`
+  is the one moment a plan becomes real recognised revenue, refusing to
+  run while `balance > 0`. New `Item.reserved_qty()`/`available_balance()`
+  implement "reserved stock is not available stock" — deliberately wired
+  into only ONE surface (Quick Sell's checkout stock check), not swept
+  across every template that shows a balance (documented deferral, same
+  discipline as every prior UBA sprint), confirmed byte-identical for
+  every item with zero reservations. All four inverse actions built: pay,
+  refund (releases reservation), release (cancel with no money question),
+  forfeit (applies the business's policy — `full_refund` closes as
+  REFUNDED, others as FORFEITED). `forfeit_policy` text is SNAPSHOTTED at
+  creation time and never retro-applied if the business setting changes
+  later (the ethics note's own explicit requirement) — verified directly.
+  New "Amana Zilizoshikiliwa" dashboard tile wired directly into home.html
+  this pass (not deferred, matching X1's cash-position precedent).
+  Known, documented limitation: a cash/mpesa deposit is not yet reflected
+  in `till_expected_cash()`/`_reconcile()` — that function is this app's
+  own documented single most money-sensitive function, so integrating a
+  second cash-affecting event into it needs its own dedicated pass. Hold-
+  expiry reminders + bulk management command, not auto-scheduled (same
+  deferred-cron pattern). A dedicated layaway UI page deferred — JSON
+  endpoints only. 17 new tests. 1324 tests pass. See
+  `docs/UBA_PROGRESS.md`.
 - UBA R4 (2026-08-02): Retail intelligence (spec §7.5), closing out Phase 1
   (Retail/Minimart) entirely — R1 through R4 and X1 all done. No new
   models — pure read-only report functions over existing data. New
