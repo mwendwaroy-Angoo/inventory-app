@@ -4522,3 +4522,19 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   to populate `hides` and asserting the sections disappear (then revert cleanly). M0-AC3
   (stub profile proof) deferred to its own commit now that this mechanism exists. 4 new
   tests, 1147 total, OK.
+- UBA M0-7 (2026-08-02): `core/accountability.py` — the §2.3 accountability-engine
+  contract. Explicitly NOT a rewrite of `core/keg_metrics.py` — per the execution order's
+  own instruction, that module and every bar view calling it are completely untouched; this
+  is a thin, additive facade re-exporting its public names (identity-tested:
+  `accountability.barrel_variance is keg_metrics.barrel_variance`, etc.). New
+  `VarianceResult` dataclass matches the spec exactly. Built a real, working
+  `register_engine()`/`variance_for()` registry rather than a stub — one engine,
+  `'keg_shift'`, wraps `keg_metrics.shift_barrel_variance()` verbatim (no math
+  reimplemented), verified byte-for-byte against calling it directly on the same fixture
+  the pre-existing `LeaderboardLossAggregatedInKesTest` uses. `leaderboard()` delegates to
+  `keg_metrics.staff_shrinkage()`. Deliberately left `attribute()` (the spec's illustrative
+  per-result attribution function) unbuilt — with only one registered engine, a generic
+  shape for it would be speculative; noted in the module docstring for whichever future
+  sprint adds a second engine (produce envelope, kitchen recipe, retail cycle count) and
+  actually needs it. 5 new tests, 1152 total, OK. M0-5 (dashboard tile registry) and M0-6
+  (analytics section registry) remain — next up in `docs/UBA_PROGRESS.md`.
