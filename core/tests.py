@@ -13,11 +13,13 @@ from core.models import (
     BusinessException, County, Customer, FittingRoomLog, GlobalProduct, Item,
     ItemPortionPreset, ItemPriceHistory, KegBarrel, KegWeightReading,
     KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
-    KitchenStockReceiptLine, MarketPriceIndex, Notification, Payment,
-    PaymentPlan, PaymentPlanEntry, PettyCash, ProduceBunch, Receipt, Return,
-    RevenueTarget, Service, ServiceSupplyLine, Shift, StockCountLine,
-    StockCountSession, Store, StockTransfer, StockTransferLine,
-    SupplierInvoice, SupplierPayment, TabTransferRequest, TillCount, Transaction,
+    KitchenStockReceiptLine, MaintenanceTicket, MarketPriceIndex,
+    MeterReading, Notification, Payment, PaymentPlan, PaymentPlanEntry,
+    PettyCash, ProduceBunch, Receipt, RentalAgreement, RentalInvoice,
+    RentalUnit, Return, RevenueTarget, Service, ServiceSupplyLine, Shift,
+    StockCountLine, StockCountSession, Store, StockTransfer,
+    StockTransferLine, SupplierInvoice, SupplierPayment, TabTransferRequest,
+    TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
 from core.mpesa_views import _settle_tab_from_payment
@@ -23821,3 +23823,244 @@ class SalonCommissionTest(TestCase):
         resp = self.client.get(f'/salon/commission/{self.stylist.id}/')
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json()['ok'])
+
+
+class RentalUnitAndAgreementTest(TestCase):
+    """UBA L1 §10.3 — units, agreements, availability."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Rental Biz')
+        self.store = Store.objects.create(business=self.biz, name='Portfolio A')
+        self.owner_user = User.objects.create_user(username='rent_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.caretaker_user = User.objects.create_user(username='rent_caretaker', password='x')
+        self.caretaker = UserProfile.objects.create(user=self.caretaker_user, business=self.biz, role='caretaker')
+
+    def test_property_unit_default_qty_one(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, kind='property', code='A12',
+            name='Bedsitter A12', default_rate=Decimal('8000'),
+        )
+        self.assertEqual(unit.quantity, 1)
+        self.assertEqual(unit.available_qty(), 1)
+
+    def test_equipment_committed_qty_reduces_availability(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, kind='equipment', code='CHAIRS',
+            default_rate=Decimal('50'), rate_period='day', quantity=300,
+        )
+        customer = Customer.objects.create(business=self.biz, name='Event Co')
+        RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer, start_date=timezone.localdate(),
+            rate=Decimal('50'), rate_period='day', quantity=200, status='ACTIVE',
+        )
+        self.assertEqual(unit.committed_qty(), 200)
+        self.assertEqual(unit.available_qty(), 100)
+
+    def test_cannot_book_more_than_available_equipment(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, kind='equipment', code='TENTS',
+            default_rate=Decimal('1000'), rate_period='day', quantity=5,
+        )
+        customer1 = Customer.objects.create(business=self.biz, name='Customer One')
+        RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer1, start_date=timezone.localdate(),
+            rate=Decimal('1000'), quantity=5, status='ACTIVE',
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/rentals/agreements/create/', {
+            'unit_id': unit.id, 'quantity': '1', 'customer_name': 'Customer Two',
+        })
+        self.assertFalse(resp.json()['ok'])
+
+    def test_terminate_agreement(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='B4', default_rate=Decimal('6000'),
+        )
+        customer = Customer.objects.create(business=self.biz, name='Tenant X')
+        agreement = RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer, start_date=timezone.localdate(),
+            rate=Decimal('6000'), status='ACTIVE',
+        )
+        agreement.terminate(ended_by=self.owner, reason='Moved out')
+        agreement.refresh_from_db()
+        self.assertEqual(agreement.status, 'TERMINATED')
+        self.assertIsNotNone(agreement.end_date)
+
+    def test_caretaker_cannot_create_agreement(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='C7', default_rate=Decimal('5000'),
+        )
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post('/rentals/agreements/create/', {
+            'unit_id': unit.id, 'customer_name': 'New Tenant',
+        })
+        self.assertEqual(resp.status_code, 302)  # owner_or_manager_required redirects, not created
+
+    def test_caretaker_can_record_meter_reading(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='D9', default_rate=Decimal('5000'), is_metered=True,
+        )
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post(f'/rentals/units/{unit.id}/meter-reading/', {
+            'kind': 'water', 'reading': '145.5',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.assertEqual(MeterReading.objects.filter(unit=unit).count(), 1)
+
+    def test_caretaker_cannot_deduct_deposit(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='E1', default_rate=Decimal('5000'),
+        )
+        customer = Customer.objects.create(business=self.biz, name='Deposit Tenant')
+        agreement = RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer, start_date=timezone.localdate(),
+            rate=Decimal('5000'), deposit_held=Decimal('10000'), status='ACTIVE',
+        )
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post(f'/rentals/agreements/{agreement.id}/deduct-deposit/', {
+            'amount': '2000', 'reason': 'Broken window',
+        })
+        self.assertEqual(resp.status_code, 302)  # blocked -- L2-AC2
+        agreement.refresh_from_db()
+        self.assertEqual(agreement.deposit_held, Decimal('10000'))  # untouched
+
+    def test_owner_can_deduct_deposit_itemised(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='F2', default_rate=Decimal('5000'),
+        )
+        customer = Customer.objects.create(business=self.biz, name='Deposit Tenant 2')
+        agreement = RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer, start_date=timezone.localdate(),
+            rate=Decimal('5000'), deposit_held=Decimal('10000'), status='ACTIVE',
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/rentals/agreements/{agreement.id}/deduct-deposit/', {
+            'amount': '2000', 'reason': 'Broken window',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['deposit_held'], 8000.0)
+        self.assertIn('Broken window', data['note'])
+        # No Transaction was ever created for the deposit or its deduction --
+        # it never touched revenue, matching P0-B's own liability pattern.
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), 0)
+
+
+class RentRollAndArrearsTest(TestCase):
+    """UBA L1-AC1/L1-AC2 — rent roll idempotency + arrears-are-debt."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Rent Roll Biz')
+        self.store = Store.objects.create(business=self.biz, name='Portfolio')
+        self.owner_user = User.objects.create_user(username='roll_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='A12', default_rate=Decimal('8000'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='Mary Wanjiru', phone='0712345678')
+        self.agreement = RentalAgreement.objects.create(
+            business=self.biz, unit=self.unit, customer=self.customer, start_date=timezone.localdate(),
+            rate=Decimal('8000'), status='ACTIVE',
+        )
+
+    def test_rent_roll_creates_credit_transaction_and_invoice(self):
+        from core.rentals import generate_rent_roll
+        today = timezone.localdate()
+        created = generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        self.assertEqual(len(created), 1)
+        invoice = created[0]
+        self.assertEqual(invoice.total, Decimal('8000'))
+        self.assertIsNotNone(invoice.rent_txn)
+        self.assertEqual(invoice.rent_txn.payment_method, 'credit')
+        self.assertEqual(invoice.rent_txn.recipient, 'Mary Wanjiru')
+
+    def test_rent_roll_is_idempotent(self):
+        from core.rentals import generate_rent_roll
+        today = timezone.localdate()
+        generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        created_again = generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        self.assertEqual(len(created_again), 0)
+        self.assertEqual(RentalInvoice.objects.filter(agreement=self.agreement).count(), 1)
+
+    def test_rent_arrears_appear_in_debt_tracker(self):
+        from core.debt_views import _get_customer_debt_data
+        from core.rentals import generate_rent_roll
+        today = timezone.localdate()
+        generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['outstanding'], 8000.0)
+
+    def test_mpesa_c2b_matches_unit_code_and_clears_arrears(self):
+        from core.rentals import generate_rent_roll, sync_invoice_payment_status
+        today = timezone.localdate()
+        invoices = generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        invoice = invoices[0]
+
+        resp = self.client.post('/mpesa/c2b/confirmation/', json.dumps({
+            'TransactionType': 'Pay Bill', 'TransID': 'RENTTEST01', 'TransAmount': '8000',
+            'BusinessShortCode': '000000', 'BillRefNumber': 'A12', 'MSISDN': '254712345678',
+        }), content_type='application/json')
+        # The C2B view resolves shortcode via resolve_account_by_shortcode, which
+        # needs the business to actually have that shortcode configured -- set it
+        # up front so the unit-code branch is reached at all.
+        self.biz.mpesa_paybill = '000000'
+        self.biz.save(update_fields=['mpesa_paybill'])
+        resp = self.client.post('/mpesa/c2b/confirmation/', json.dumps({
+            'TransactionType': 'Pay Bill', 'TransID': 'RENTTEST02', 'TransAmount': '8000',
+            'BusinessShortCode': '000000', 'BillRefNumber': 'A12', 'MSISDN': '254712345678',
+        }), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        sync_invoice_payment_status(invoice)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, RentalInvoice.STATUS_PAID)
+
+    def test_unmatched_unit_code_raises_business_exception(self):
+        self.biz.mpesa_paybill = '000000'
+        self.biz.save(update_fields=['mpesa_paybill'])
+        resp = self.client.post('/mpesa/c2b/confirmation/', json.dumps({
+            'TransactionType': 'Pay Bill', 'TransID': 'RENTTEST03', 'TransAmount': '5000',
+            'BusinessShortCode': '000000', 'BillRefNumber': 'ZZZ-NOPE', 'MSISDN': '254712345678',
+        }), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(BusinessException.objects.filter(business=self.biz, kind='other').exists())
+
+
+class MaintenanceTicketTest(TestCase):
+    """UBA L2 §10.4 — maintenance tickets, per-unit history."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Maintenance Biz')
+        self.store = Store.objects.create(business=self.biz, name='Portfolio')
+        self.owner_user = User.objects.create_user(username='maint_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.caretaker_user = User.objects.create_user(username='maint_caretaker', password='x')
+        UserProfile.objects.create(user=self.caretaker_user, business=self.biz, role='caretaker')
+        self.unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='G3', default_rate=Decimal('7000'),
+        )
+
+    def test_caretaker_can_report_maintenance(self):
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post(f'/rentals/units/{self.unit.id}/maintenance/', {
+            'description': 'Leaking tap in bathroom',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.assertEqual(MaintenanceTicket.objects.filter(unit=self.unit).count(), 1)
+
+    def test_owner_closes_ticket_with_cost(self):
+        ticket = MaintenanceTicket.objects.create(unit=self.unit, description='Broken door')
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/rentals/maintenance/{ticket.id}/close/', {'cost': '1500'})
+        self.assertTrue(resp.json()['ok'])
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, 'CLOSED')
+        self.assertEqual(ticket.cost, Decimal('1500'))
+
+    def test_caretaker_cannot_close_ticket(self):
+        ticket = MaintenanceTicket.objects.create(unit=self.unit, description='Broken door 2')
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post(f'/rentals/maintenance/{ticket.id}/close/', {'cost': '500'})
+        self.assertEqual(resp.status_code, 302)
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, 'OPEN')

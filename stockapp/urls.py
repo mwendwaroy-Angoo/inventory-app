@@ -244,6 +244,11 @@ from core.salon_views import (
     complete_service_view, recipe_variance_report_view, create_appointment,
     update_appointment_status, commission_report_view,
 )
+from core.rentals_views import (
+    create_rental_unit, create_rental_agreement, terminate_rental_agreement,
+    run_rent_roll, record_meter_reading, report_maintenance,
+    close_maintenance_ticket, deduct_from_deposit,
+)
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -824,6 +829,15 @@ urlpatterns = [
     path("salon/appointments/create/", create_appointment, name="create_appointment"),
     path("salon/appointments/<int:appointment_id>/status/", update_appointment_status, name="update_appointment_status"),
     path("salon/commission/<int:stylist_id>/", commission_report_view, name="commission_report_view"),
+    # ── UBA L1/L2 — rentals (property + equipment) ──────────────────────────────
+    path("rentals/units/create/", create_rental_unit, name="create_rental_unit"),
+    path("rentals/agreements/create/", create_rental_agreement, name="create_rental_agreement"),
+    path("rentals/agreements/<int:agreement_id>/terminate/", terminate_rental_agreement, name="terminate_rental_agreement"),
+    path("rentals/rent-roll/run/", run_rent_roll, name="run_rent_roll"),
+    path("rentals/units/<int:unit_id>/meter-reading/", record_meter_reading, name="record_meter_reading"),
+    path("rentals/units/<int:unit_id>/maintenance/", report_maintenance, name="report_maintenance"),
+    path("rentals/maintenance/<int:ticket_id>/close/", close_maintenance_ticket, name="close_maintenance_ticket"),
+    path("rentals/agreements/<int:agreement_id>/deduct-deposit/", deduct_from_deposit, name="deduct_from_deposit"),
 ]
 
 if settings.DEBUG:

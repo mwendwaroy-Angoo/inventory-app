@@ -3243,6 +3243,179 @@ class AppointmentService(models.Model):
 
 
 # ────────────────────────────────────────────────
+# UBA §10 (Sprints L1-L2) — Rentals: property + equipment, one primitive
+# ────────────────────────────────────────────────
+# Pre-answered decision #2: property first; equipment mode in the SAME
+# sprint since it costs no extra models — RentalUnit.kind is the only
+# thing that differs, exactly as the spec itself frames it ("one
+# primitive, two markets").
+
+class RentalUnit(models.Model):
+    KIND_CHOICES = [('property', 'Nyumba/Chumba'), ('equipment', 'Kifaa')]
+    STATUS_CHOICES = [
+        ('AVAILABLE', 'Iko wazi'), ('RESERVED', 'Imewekwa'), ('OCCUPIED', 'Ina mtu'),
+        ('OUT', 'Imetoka'), ('MAINTENANCE', 'Inatengenezwa'), ('RETIRED', 'Imeondolewa'),
+    ]
+    RATE_PERIOD_CHOICES = [('day', 'Siku'), ('week', 'Wiki'), ('month', 'Mwezi')]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='rental_units')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True, help_text='Property/portfolio.')
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default='property')
+    code = models.CharField(max_length=30, help_text="'A12' — doubles as the M-Pesa Paybill account number.")
+    name = models.CharField(max_length=120, blank=True, help_text="'Bedsitter A12'.")
+    description = models.TextField(blank=True)
+    default_rate = models.DecimalField(max_digits=12, decimal_places=2, help_text='Per month (property) or per day (equipment).')
+    rate_period = models.CharField(max_length=6, choices=RATE_PERIOD_CHOICES, default='month')
+    deposit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    quantity = models.PositiveIntegerField(default=1, help_text='Equipment: 300 chairs = one unit, qty 300.')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='AVAILABLE')
+    is_metered = models.BooleanField(default=False)
+    is_published = models.BooleanField(default=False, help_text='Storefront listing (Phase 6).')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('business', 'code')]
+        ordering = ['code']
+
+    def __str__(self):
+        return f"{self.code} — {self.name or self.get_kind_display()}"
+
+    def committed_qty(self, on_date=None):
+        """UBA L3-AC1 — equipment: how many of this unit's total quantity
+        are already committed to an ACTIVE agreement covering `on_date`
+        (default: today). Property units are always quantity=1, so this is
+        naturally 0 or 1 for them."""
+        from django.utils import timezone as _tz
+        on_date = on_date or _tz.localdate()
+        agreements = self.agreements.filter(
+            status=RentalAgreement.STATUS_ACTIVE, start_date__lte=on_date,
+        ).filter(models.Q(end_date__isnull=True) | models.Q(end_date__gte=on_date))
+        return sum(a.quantity for a in agreements)
+
+    def available_qty(self, on_date=None):
+        return max(0, self.quantity - self.committed_qty(on_date))
+
+
+class RentalAgreement(models.Model):
+    STATUS_DRAFT = 'DRAFT'
+    STATUS_ACTIVE = 'ACTIVE'
+    STATUS_ENDED = 'ENDED'
+    STATUS_TERMINATED = 'TERMINATED'
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, 'Rasimu'), (STATUS_ACTIVE, 'Inaendelea'),
+        (STATUS_ENDED, 'Imeisha'), (STATUS_TERMINATED, 'Imesitishwa'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='rental_agreements')
+    unit = models.ForeignKey(RentalUnit, on_delete=models.CASCADE, related_name='agreements')
+    customer = models.ForeignKey('Customer', on_delete=models.CASCADE, related_name='rental_agreements', help_text='Tenant/hirer — reuses debt + credit score.')
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    rate = models.DecimalField(max_digits=12, decimal_places=2)
+    rate_period = models.CharField(max_length=6, choices=RentalUnit.RATE_PERIOD_CHOICES, default='month')
+    quantity = models.PositiveIntegerField(default=1, help_text='e.g. 200 of the 300 chairs.')
+    deposit_held = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    deposit_plan = models.ForeignKey('PaymentPlan', on_delete=models.SET_NULL, null=True, blank=True)
+    billing_day = models.PositiveSmallIntegerField(default=5)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    terms_note = models.TextField(blank=True)
+    created_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.unit.code} — {self.customer.name} ({self.get_status_display()})"
+
+    def terminate(self, ended_by=None, reason=''):
+        self.status = self.STATUS_TERMINATED
+        self.end_date = timezone.localdate()
+        if reason:
+            self.terms_note = (self.terms_note + f'\nImesitishwa: {reason}').strip()
+        self.save(update_fields=['status', 'end_date', 'terms_note'])
+
+
+class RentalInvoice(models.Model):
+    STATUS_DUE = 'DUE'
+    STATUS_PARTIAL = 'PARTIAL'
+    STATUS_PAID = 'PAID'
+    STATUS_WAIVED = 'WAIVED'
+    STATUS_CHOICES = [
+        (STATUS_DUE, 'Inadaiwa'), (STATUS_PARTIAL, 'Imelipwa Kiasi'),
+        (STATUS_PAID, 'Imelipwa'), (STATUS_WAIVED, 'Imesamehewa'),
+    ]
+    agreement = models.ForeignKey(RentalAgreement, on_delete=models.CASCADE, related_name='invoices')
+    period_start = models.DateField()
+    period_end = models.DateField()
+    rent_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    utilities_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    other_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    other_note = models.CharField(max_length=200, blank=True)
+    total = models.DecimalField(max_digits=12, decimal_places=2)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    due_date = models.DateField()
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_DUE)
+    issued_at = models.DateTimeField(auto_now_add=True)
+    receipt = models.ForeignKey('Receipt', on_delete=models.SET_NULL, null=True, blank=True)
+    rent_txn = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+        help_text='UBA §10.3 — the credit Transaction the debt tracker actually reads. '
+                  '"Arrears ARE debt" — no parallel aging engine; see core.rentals.py.'
+    )
+
+    class Meta:
+        unique_together = [('agreement', 'period_start')]
+        ordering = ['due_date']
+
+    def __str__(self):
+        return f"{self.agreement.unit.code} — {self.period_start} to {self.period_end} (KES {self.total})"
+
+
+class MeterReading(models.Model):
+    KIND_CHOICES = [('water', 'Maji'), ('electricity', 'Umeme')]
+    unit = models.ForeignKey(RentalUnit, on_delete=models.CASCADE, related_name='meter_readings')
+    kind = models.CharField(max_length=15, choices=KIND_CHOICES)
+    reading = models.DecimalField(max_digits=12, decimal_places=2)
+    read_on = models.DateField(default=timezone.localdate)
+    read_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    rate_per_unit = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        ordering = ['-read_on']
+
+    def __str__(self):
+        return f"{self.unit.code} {self.get_kind_display()}: {self.reading} ({self.read_on})"
+
+
+class MaintenanceTicket(models.Model):
+    """UBA §10.4 — tenant reports, caretaker updates, owner sees cost and
+    history per unit; feeds the per-unit P&L (rent − maintenance − vacancy)
+    the spec calls "the number no Kenyan landlord currently knows"."""
+    STATUS_OPEN = 'OPEN'
+    STATUS_IN_PROGRESS = 'IN_PROGRESS'
+    STATUS_CLOSED = 'CLOSED'
+    STATUS_CHOICES = [
+        (STATUS_OPEN, 'Wazi'), (STATUS_IN_PROGRESS, 'Inashughulikiwa'), (STATUS_CLOSED, 'Imefungwa'),
+    ]
+    unit = models.ForeignKey(RentalUnit, on_delete=models.CASCADE, related_name='maintenance_tickets')
+    reported_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    description = models.TextField()
+    cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    created_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    def __str__(self):
+        return f"{self.unit.code}: {self.description[:40]} ({self.get_status_display()})"
+
+    def close(self, closed_by, cost=None):
+        if cost is not None:
+            self.cost = cost
+        self.status = self.STATUS_CLOSED
+        self.closed_at = timezone.now()
+        self.closed_by = closed_by
+        self.save(update_fields=['cost', 'status', 'closed_at', 'closed_by'])
+
+
+# ────────────────────────────────────────────────
 # SALARY DEDUCTIONS  (Sprint WO1)
 # ────────────────────────────────────────────────
 

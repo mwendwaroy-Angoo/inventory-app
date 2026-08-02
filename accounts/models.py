@@ -394,6 +394,12 @@ class UserProfile(models.Model):
         ('kitchen',  _('Kitchen / Grill Staff')),
         ('rider',    _('Rider')),
         ('supplier', _('Supplier')),
+        # UBA §10.4 (Sprint L2) — caretaker: can record meter readings, report
+        # maintenance, mark units available; CANNOT record payments, see the
+        # full portfolio P&L, or alter agreements. The main anti-skim control
+        # for this business type — enforced at the view layer, see
+        # core.rentals_views's is_caretaker gate.
+        ('caretaker', _('Caretaker')),
     ]
     LANGUAGE_CHOICES = [
         ('en', 'English'),

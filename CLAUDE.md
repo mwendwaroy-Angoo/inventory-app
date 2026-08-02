@@ -4953,3 +4953,26 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   tests are direct M1-AC1 regression locks (staffer scoped to Store A gets 403 hitting
   Store B; unassigned staff/owner unaffected). 1213 total, OK. Remaining for a future pass:
   receipts list/shift open/debt views/analytics wiring, the switcher UI, M2, M3.
+- UBA L1/L2 (2026-08-02): Rentals (spec §10), Phase 4. Shadow-Item pattern (established by
+  S1 for Salon services) reused for rent itself: `core/rentals.py::get_or_create_rent_
+  shadow_item()` makes ONE shared shadow Item per business that every `RentalInvoice`'s
+  rent transaction posts against, so receipts/analytics/revenue-targets all work
+  unmodified. New `RentalUnit` (with `committed_qty()`/`available_qty()` — supports
+  multi-quantity equipment units without overbooking), `RentalAgreement`, `RentalInvoice`
+  (`unique_together=('agreement','period_start')` is the idempotency guarantee itself),
+  `MeterReading`, `MaintenanceTicket`. `generate_rent_roll()` creates one ordinary
+  `payment_method='credit'` Transaction per invoice — arrears are just the EXISTING debt
+  tracker's FIFO (`sync_invoice_payment_status()`/`apply_rent_payment_by_unit_code()` read
+  and write through `debt_views`'s own aggregate, zero new aging logic). M-Pesa C2B
+  `bill_ref_number` matched against `RentalUnit.code` in `mpesa_views.c2b_confirmation()`,
+  checked before the generic bar/kitchen fallback; an unmatched paybill payment raises a
+  `BusinessException` for owner visibility rather than being silently dropped, per this
+  app's own "money must never vanish" standard. New `'caretaker'` role (accounts migration
+  0060) may record meter readings/report maintenance but never alter agreements or close a
+  maintenance ticket with a cost (owner/manager only, same tier as every other financial
+  correction) — both directions regression-tested. Deposit deductions
+  (`deduct_from_deposit()`, owner/manager only, itemised+reasoned) never create a
+  Transaction, matching P0-B's "deposits are a liability" principle exactly. Dedicated
+  `rental_board.html` (L3) deferred — every mechanism is a tested JSON endpoint today. 16
+  new tests. 1371 total, OK. **Phase 4 (Rentals) L1/L2 complete.** Next: Phase 5 (Supply
+  Chain) — X2 (Goods Received Note), X3 (rider POD/COD).
