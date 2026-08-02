@@ -4476,3 +4476,31 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   returns the right business for an authenticated user, `None` for anonymous, and the Kazi
   Yangu link now actually appears on the home page for staff, the literal previously-broken
   case). No migrations.
+- UBA §2.1/§2.4 — capability model foundation (2026-08-02, prior session, backfilled into
+  this log retroactively once the standing work order in `docs/UBA_EXECUTION_ORDER.md`
+  started requiring it). `Item.stock_model` CharField (migration 0140, commit `cad33e2`) —
+  the 8-value UBA stock model (UNIT/MEASURE/ENVELOPE/VARIANT/SERIAL/LOT/SERVICE/ASSET),
+  synced in `Item.save()` from the existing load-bearing discriminators
+  (`is_produce`/`produce_mode` → ENVELOPE/UNIT, `is_keg` → MEASURE, `is_kitchen_batch` →
+  ENVELOPE) with a data migration backfilling existing rows the same way. Purely additive —
+  nothing outside `save()`'s own sync block read it at the time. `Capability` composition
+  registry in `business_profiles.py` (commit `96eb454`) — a frozen dataclass
+  (stock_models/sale_mechanics/accountability/modules/hides/vocabulary/board_template) plus
+  a `CAPABILITIES` dict mapping all 8 existing profile keys to a composition drawn from the
+  UBA spec's matrix, wired into `get_profile()` as `profile['capability']`. `PROFILES`/
+  `DEFAULT_PROFILE`/every catalog left untouched verbatim (confirmed via diff — insertions
+  only); nothing read `profile['capability']` yet either. See `docs/UBA_PROGRESS.md` for the
+  full UBA sprint log going forward.
+- UBA Sprint 0 (2026-08-02): persisted the UBA master spec and standing execution order into
+  the repo as `docs/UBA_MASTER_SPEC.md` / `docs/UBA_EXECUTION_ORDER.md` (verbatim `cp` +
+  `diff`-confirmed, not hand-transcribed), created `docs/UBA_PROGRESS.md` and
+  `docs/UBA_BLOCKERS.md`, and added the UBA pointer above this entry in Coding Preferences.
+  Every future session working this queue reads those three files first instead of Roy
+  re-pasting the spec.
+- UBA M0-4 (2026-08-02): vocabulary layer — `core/templatetags/uba_extras.py`'s `vocab`
+  filter reads `biz_profile.capability.vocabulary` (§2.4). Deviates slightly from the spec's
+  illustrative `{{ 'item'|vocab }}` syntax since a plain Django filter can't read template
+  context — implemented as `{{ 'item'|vocab:biz_profile }}` instead (documented in the
+  filter's docstring). No-op today: every one of the 8 real profiles has an empty
+  `vocabulary` dict, and nothing calls the filter yet. Also backfilled dedicated tests for
+  the M0-1/M0-2 work above, which had shipped without any. 12 new tests, 1143 total, OK.
