@@ -814,6 +814,49 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA R2 (2026-08-02): Retail POS board + margin guard (spec §7.3).
+  `retail_board.html` itself deferred and documented (needs visual
+  verification) — Quick Sell already serves as the de-facto general POS
+  for non-bar/kitchen businesses and is where both new checks are wired.
+  **Margin guard** (R2-AC1): `Business.margin_alert_pct` (default 15%) +
+  new `ItemPriceHistory` model. `core/retail_intelligence.py::
+  check_margin_guard()` called from `add_transaction()`'s EXISTING
+  "COST PRICE UPDATE (Receipt only)" block — the one designed writer of
+  `Item.cost_price` — right after a cost rise beyond threshold is
+  detected; suggests a new selling price preserving the OLD margin ratio,
+  fires exactly one `BusinessException(kind='cost_rise')` + one owner/
+  manager Notification+SMS. New `apply_suggested_price()` view is the
+  one-tap "Sasisha bei" action, writing an `ItemPriceHistory` row.
+  **Sale-below-cost** (R2-AC2): wired into `quick_sell()`'s checkout loop
+  for plain item lines — staff blocked outright, owner allowed through
+  with a warning, either way logged as `BusinessException(kind='below_cost')`.
+  **Returns/refunds** (R-AC-RET, "do not skip this") — new `Return` model.
+  Design decision made to avoid an app-wide sweep: rather than inventing
+  `Transaction.type='Return'` and then having to widen every
+  `type='Issue'`-filtered revenue aggregate throughout the app (the exact
+  failure mode M2's redesign avoided in the other direction), a return
+  creates TWO ordinary transactions using types/fields every existing
+  aggregate already understands: a `type='Receipt'` stock reversal
+  (created directly via ORM, never through `add_transaction()`'s view, so
+  it can never touch `Item.cost_price`) plus a `type='Issue'`, `qty=0`
+  transaction with a NEGATIVE `sale_amount` inheriting the original sale's
+  payment_method/recipient. Since `Transaction.revenue()` already returns
+  `sale_amount` verbatim (never `abs()`'d), this flows automatically
+  through every existing `type='Issue'`-filtered revenue query with ZERO
+  code changes — including the debt tracker's `_get_customer_debt_data()`,
+  satisfying "if credit, the debt ledger" reversal for free (verified:
+  outstanding drops from KES 400 to KES 200 on a half-return with zero
+  debt_views.py changes). Known, documented limitation: `qty=0` means
+  `cost()` returns 0 too, so COGS isn't reversed — net_profit stays
+  slightly overstated after a return; R-AC-RET's wording doesn't require
+  cost reversal, so flagged as a future refinement, not solved here.
+  `Return.process_locked()` validates against double-returning more than
+  was sold and rejects a wrong-business transaction id; an owner-approval
+  threshold (`Business.return_approval_threshold`) gates large refunds
+  into a pending state until `approve()`/`reject()`. New
+  `core/returns_views.py` — a return-processing UI page is likewise
+  deferred, these are JSON endpoints a future retail_board flow would
+  call. 17 new tests. 1280 tests pass. See `docs/UBA_PROGRESS.md`.
 - UBA R1 (2026-08-02): Fast onboarding + barcode + the shared product
   catalog (spec §7.2) — first sprint of Phase 1 (Retail/Minimart), Phase 0
   now fully complete. New cross-tenant `GlobalProduct` (barcode/name/brand/

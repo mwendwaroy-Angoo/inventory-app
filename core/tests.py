@@ -10,10 +10,10 @@ from django.utils import timezone
 from accounts.models import Business, UserProfile
 from core.models import (
     BarCupLog, BarTab, BarTabEntry, BusinessException, County, Customer,
-    GlobalProduct, Item, ItemPortionPreset, KegBarrel, KegWeightReading,
-    KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
+    GlobalProduct, Item, ItemPortionPreset, ItemPriceHistory, KegBarrel,
+    KegWeightReading, KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
     KitchenStockReceiptLine, MarketPriceIndex, Notification, Payment,
-    PettyCash, Receipt, RevenueTarget, Shift, Store, StockTransfer,
+    PettyCash, Receipt, Return, RevenueTarget, Shift, Store, StockTransfer,
     StockTransferLine, TabTransferRequest, TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
@@ -22560,3 +22560,231 @@ class BalanceConfirmedAtTest(TestCase):
         # verified via the item's own uncounted flag in context rather than a brittle page-wide count.
         matching = [i for i in resp2.context['items'] if i.id == item.id]
         self.assertFalse(matching[0].uncounted)
+
+
+class ReturnPrimitiveTest(TestCase):
+    """UBA R2 §7.3 — Returns/refunds. R-AC-RET: reverses stock, revenue,
+    revenue-target contribution and (if credit) the debt ledger."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Return Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='ret_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Cooking Oil 1L',
+            material_no='RET-01', unit='pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('150'), opening_bin_balance=50,
+        )
+
+    def _sale(self, qty=2, amount=Decimal('400'), payment_method='cash', recipient=''):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal(str(-qty)),
+            sale_amount=amount, payment_method=payment_method, recipient=recipient,
+            date=timezone.localdate(),
+        )
+
+    def test_return_reverses_stock_and_revenue(self):
+        before_balance = self.item.current_balance()
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        after_sale_balance = self.item.current_balance()
+        self.assertEqual(after_sale_balance, before_balance - 2)
+
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=1, reason='Imeharibika', processed_by=self.owner)
+        self.assertEqual(ret.status, Return.STATUS_APPROVED)
+        self.assertEqual(ret.refund_amount, Decimal('200.00'))
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), after_sale_balance + 1)  # stock reversed
+
+        # Revenue reversal: the two Issue transactions (sale + reversal) net to the kept half.
+        today = timezone.localdate()
+        total_rev = sum(
+            t.revenue() for t in Transaction.objects.filter(business=self.biz, item=self.item, type='Issue', date=today)
+        )
+        self.assertAlmostEqual(total_rev, 200.0, places=2)
+
+    def test_return_reverses_credit_debt(self):
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Alice Wanjiru')
+        sale = self._sale(qty=2, amount=Decimal('400'), payment_method='credit', recipient='Alice Wanjiru')
+        from core.debt_views import _get_customer_debt_data
+        customer = Customer.objects.get(business=self.biz, name='Alice Wanjiru')
+        before = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(before['outstanding'], 400.0)
+
+        Return.process_locked(sale.id, self.biz, qty_returned=1, reason='Si sahihi', processed_by=self.owner)
+        after = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(after['outstanding'], 200.0)
+
+    def test_cannot_return_more_than_sold(self):
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        with self.assertRaises(ValueError):
+            Return.process_locked(sale.id, self.biz, qty_returned=3, reason='X', processed_by=self.owner)
+
+    def test_cannot_double_return_same_units(self):
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        with self.assertRaises(ValueError):
+            Return.process_locked(sale.id, self.biz, qty_returned=1, reason='X', processed_by=self.owner)
+
+    def test_cross_business_transaction_rejected(self):
+        other_biz = Business.objects.create(name='Other Return Biz')
+        sale = self._sale(qty=1, amount=Decimal('200'))
+        with self.assertRaises(Transaction.DoesNotExist):
+            Return.process_locked(sale.id, other_biz, qty_returned=1, reason='X', processed_by=self.owner)
+
+    def test_approval_threshold_creates_pending_return(self):
+        self.biz.return_approval_threshold = Decimal('100')
+        self.biz.save(update_fields=['return_approval_threshold'])
+        sale = self._sale(qty=2, amount=Decimal('400'))  # refund for qty=2 would be 400, over threshold
+        before_balance = self.item.current_balance()
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        self.assertEqual(ret.status, Return.STATUS_PENDING)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), before_balance)  # nothing reversed yet
+
+    def test_approve_pending_return_processes_reversal(self):
+        self.biz.return_approval_threshold = Decimal('100')
+        self.biz.save(update_fields=['return_approval_threshold'])
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        before_balance = self.item.current_balance()
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        ret.approve(self.owner)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), before_balance + 2)
+        ret.refresh_from_db()
+        self.assertEqual(ret.status, Return.STATUS_APPROVED)
+
+    def test_reject_pending_return_processes_nothing(self):
+        self.biz.return_approval_threshold = Decimal('100')
+        self.biz.save(update_fields=['return_approval_threshold'])
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        before_balance = self.item.current_balance()
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        ret.reject(self.owner)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), before_balance)
+        ret.refresh_from_db()
+        self.assertEqual(ret.status, Return.STATUS_REJECTED)
+
+    def test_return_does_not_touch_item_cost_price(self):
+        original_cost = self.item.cost_price
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        Return.process_locked(sale.id, self.biz, qty_returned=1, reason='X', processed_by=self.owner)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, original_cost)
+
+    def test_process_return_view_end_to_end(self):
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/returns/process/', {
+            'transaction_id': sale.id, 'qty_returned': '1', 'reason': 'Imeharibika',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertFalse(data['needs_approval'])
+        self.assertTrue(Return.objects.filter(id=data['return_id'], status=Return.STATUS_APPROVED).exists())
+
+    def test_pending_return_approve_reject_views(self):
+        self.biz.return_approval_threshold = Decimal('50')
+        self.biz.save(update_fields=['return_approval_threshold'])
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        self.assertEqual(ret.status, Return.STATUS_PENDING)
+
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/returns/{ret.id}/approve/')
+        self.assertTrue(resp.json()['ok'])
+        ret.refresh_from_db()
+        self.assertEqual(ret.status, Return.STATUS_APPROVED)
+
+
+class MarginGuardTest(TestCase):
+    """R2-AC1: cost rise beyond margin_alert_pct fires exactly one exception
+    + one SMS, and the one-tap price update writes a price-history row."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Margin Guard Biz', margin_alert_pct=Decimal('15.0'))
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='mg_owner', password='x', first_name='Marg')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner', phone='0712345678')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Flour 2kg',
+            material_no='MG-01', unit='pcs', selling_price=Decimal('220'),
+            cost_price=Decimal('100'),
+        )
+
+    def test_cost_rise_beyond_threshold_fires_exception(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'new_cost_price': '130', 'update_cost_price': 'on',
+        })
+        excs = BusinessException.objects.filter(business=self.biz, kind='cost_rise')
+        self.assertEqual(excs.count(), 1)
+        self.assertIn('Pendekezo', excs.first().detail)
+        owner_notifs = Notification.objects.filter(user=self.owner_user, title__icontains='Bei')
+        self.assertEqual(owner_notifs.count(), 1)
+
+    def test_small_cost_rise_within_threshold_fires_no_exception(self):
+        self.client.force_login(self.owner_user)
+        self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'new_cost_price': '105', 'update_cost_price': 'on',
+        })
+        self.assertEqual(BusinessException.objects.filter(business=self.biz, kind='cost_rise').count(), 0)
+
+    def test_apply_suggested_price_updates_and_logs_history(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/items/{self.item.id}/apply-suggested-price/', {'new_price': '242'})
+        self.assertTrue(resp.json()['ok'])
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.selling_price, Decimal('242'))
+        hist = ItemPriceHistory.objects.get(item=self.item)
+        self.assertEqual(hist.old_price, Decimal('220'))
+        self.assertEqual(hist.new_price, Decimal('242'))
+        self.assertEqual(hist.reason, 'margin_guard')
+
+
+class SaleBelowCostTest(TestCase):
+    """R2-AC2: selling below cost is blocked for staff and warned for owner, and logged."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Below Cost Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='bc_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='bc_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Rice 5kg',
+            material_no='BCT-01', unit='pcs', selling_price=Decimal('500'),
+            cost_price=Decimal('450'), opening_bin_balance=50,
+        )
+        Shift.objects.create(business=self.biz, store=self.store, staff=self.staff_user, status='OPEN', opening_float=Decimal('0'))
+
+    def test_staff_blocked_from_selling_below_cost(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1, 'price': 400}]),
+            'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(business=self.biz, item=self.item).exists())
+        self.assertEqual(BusinessException.objects.filter(business=self.biz, kind='below_cost').count(), 1)
+
+    def test_owner_warned_but_allowed_below_cost(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1, 'price': 400}]),
+            'payment_method': 'cash',
+        })
+        self.assertTrue(Transaction.objects.filter(business=self.biz, item=self.item).exists())
+        self.assertEqual(BusinessException.objects.filter(business=self.biz, kind='below_cost').count(), 1)
+
+    def test_normal_price_sale_never_flagged(self):
+        self.client.force_login(self.owner_user)
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1, 'price': 500}]),
+            'payment_method': 'cash',
+        })
+        self.assertEqual(BusinessException.objects.filter(business=self.biz, kind='below_cost').count(), 0)

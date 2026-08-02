@@ -2449,6 +2449,210 @@ class WriteOffRequest(models.Model):
 
 
 # ────────────────────────────────────────────────
+# UBA §7.3 (Sprint R2) — Returns/refunds, the genuinely new primitive retail forces
+# ────────────────────────────────────────────────
+
+class Return(models.Model):
+    """A customer return against ONE original sale Transaction — reverses
+    stock, revenue, revenue-target contribution and (if the original sale
+    was credit) the debt ledger, all via the SAME existing aggregate
+    machinery those surfaces already use, not a parallel mechanism:
+
+    - Stock reversal is a plain `type='Receipt'` Transaction (qty=+returned)
+      created directly via the ORM (bypassing add_transaction()'s VIEW-layer
+      cost-price-update logic entirely, since that only runs inside the view
+      — so a return can never perturb Item.cost_price, preserving "exactly
+      ONE designed writer").
+    - Revenue reversal is a `type='Issue'` Transaction with qty=0 (no
+      additional stock effect — the Receipt leg above already handled that)
+      and a NEGATIVE `sale_amount`, inheriting the original sale's
+      `payment_method`/`recipient`. Because `Transaction.revenue()` already
+      returns `sale_amount` verbatim (never abs()'d) for any `type='Issue'`
+      row, this negative contribution flows automatically through EVERY
+      existing `type='Issue'`-filtered revenue aggregate in the app —
+      analytics, `_reconcile()`'s cash/mpesa/credit sums, revenue targets,
+      daily_sales, home dashboard tiles, AND the debt tracker's
+      `_get_customer_debt_data()` (same `payment_method='credit'` +
+      `recipient` match) — with ZERO changes needed to any of those
+      functions. Known, honestly-scoped limitation: `qty=0` means
+      `Transaction.cost()` returns 0 for this leg too, so COGS is NOT
+      reversed — a return currently leaves net_profit slightly overstated
+      by the original sale's recognized cost. R-AC-RET (spec §7.3) does not
+      require cost/margin reversal, only stock/revenue/revenue-target/debt,
+      so this is deferred rather than solved here — flagged for a future
+      pass if margin-accuracy-after-returns becomes a real complaint.
+    """
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Inasubiri Idhini'),
+        (STATUS_APPROVED, 'Imeidhinishwa'),
+        (STATUS_REJECTED, 'Imekataliwa'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='returns')
+    original_transaction = models.ForeignKey(
+        'Transaction', on_delete=models.CASCADE, related_name='return_requests'
+    )
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    qty_returned = models.DecimalField(max_digits=12, decimal_places=3)
+    refund_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=200)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_APPROVED)
+    processed_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='returns_processed',
+    )
+    approved_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='returns_approved',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    stock_txn = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    revenue_txn = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Return of {self.qty_returned} {self.item.description} (KES {self.refund_amount})"
+
+    @classmethod
+    def _already_returned_qty(cls, original_transaction):
+        agg = cls.objects.filter(
+            original_transaction=original_transaction, status=cls.STATUS_APPROVED,
+        ).aggregate(total=models.Sum('qty_returned'))
+        return agg['total'] or Decimal('0')
+
+    @classmethod
+    def process_locked(cls, original_transaction_id, business, qty_returned, reason,
+                        processed_by=None, force_approve=False):
+        """The one entry point. Raises ValueError for an invalid request
+        (wrong business, not a plain Issue sale, qty exceeds what's left to
+        return). Returns a Return instance — status='pending' (no
+        transactions created yet) if `business.return_approval_threshold`
+        is set and the computed refund exceeds it and `force_approve` is
+        False; otherwise status='approved' with both reversal transactions
+        created and linked. `force_approve=True` is the owner/manager
+        approval action's own call (see approve_return()), never a
+        self-service bypass — the view layer enforces that permission
+        check, matching this app's own "model enforces state, view enforces
+        who" convention."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            orig = Transaction.objects.select_for_update().get(
+                id=original_transaction_id, business=business, type='Issue',
+            )
+            qty_returned = Decimal(str(qty_returned))
+            if qty_returned <= 0:
+                raise ValueError('Kiasi cha kurudisha lazima kiwe zaidi ya sifuri.')
+            already = cls._already_returned_qty(orig)
+            if qty_returned > (abs(orig.qty) - already):
+                raise ValueError('Kiasi kinachorudishwa ni zaidi ya kilichouzwa.')
+
+            original_qty_sold = abs(orig.qty) or Decimal('1')
+            refund_amount = (Decimal(str(orig.revenue())) * qty_returned / original_qty_sold)
+            refund_amount = refund_amount.quantize(Decimal('0.01'))
+
+            threshold = business.return_approval_threshold
+            if threshold and refund_amount > threshold and not force_approve:
+                return cls.objects.create(
+                    business=business, original_transaction=orig, item=orig.item,
+                    qty_returned=qty_returned, refund_amount=refund_amount, reason=reason,
+                    status=cls.STATUS_PENDING, processed_by=processed_by,
+                )
+
+            stock_txn = Transaction.objects.create(
+                business=business, item=orig.item, type='Receipt', qty=qty_returned,
+                recipient=reason, invoice_no='[RETURN]', payment_method='',
+                recorded_by=getattr(processed_by, 'user', None),
+            )
+            revenue_txn = Transaction.objects.create(
+                business=business, item=orig.item, type='Issue', qty=Decimal('0'),
+                sale_amount=-refund_amount, payment_method=orig.payment_method,
+                recipient=orig.recipient, invoice_no='[RETURN]',
+                recorded_by=getattr(processed_by, 'user', None),
+            )
+            return cls.objects.create(
+                business=business, original_transaction=orig, item=orig.item,
+                qty_returned=qty_returned, refund_amount=refund_amount, reason=reason,
+                status=cls.STATUS_APPROVED, processed_by=processed_by,
+                approved_by=processed_by if force_approve else None,
+                approved_at=timezone.now() if force_approve else None,
+                stock_txn=stock_txn, revenue_txn=revenue_txn,
+            )
+
+    def approve(self, approved_by):
+        """Owner/manager approves a pending (above-threshold) return —
+        the view layer is responsible for the permission check. Creates the
+        same pair of reversal transactions process_locked() would have
+        created immediately, had the threshold not applied."""
+        if self.status != self.STATUS_PENDING:
+            raise ValueError('Ombi hili tayari limeshughulikiwa.')
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            ret = Return.objects.select_for_update().get(pk=self.pk)
+            if ret.status != self.STATUS_PENDING:
+                raise ValueError('Ombi hili tayari limeshughulikiwa.')
+            orig = ret.original_transaction
+            stock_txn = Transaction.objects.create(
+                business=ret.business, item=ret.item, type='Receipt', qty=ret.qty_returned,
+                recipient=ret.reason, invoice_no='[RETURN]', payment_method='',
+                recorded_by=getattr(approved_by, 'user', None),
+            )
+            revenue_txn = Transaction.objects.create(
+                business=ret.business, item=ret.item, type='Issue', qty=Decimal('0'),
+                sale_amount=-ret.refund_amount, payment_method=orig.payment_method,
+                recipient=orig.recipient, invoice_no='[RETURN]',
+                recorded_by=getattr(approved_by, 'user', None),
+            )
+            ret.status = self.STATUS_APPROVED
+            ret.approved_by = approved_by
+            ret.approved_at = timezone.now()
+            ret.stock_txn = stock_txn
+            ret.revenue_txn = revenue_txn
+            ret.save(update_fields=['status', 'approved_by', 'approved_at', 'stock_txn', 'revenue_txn'])
+            self.status = ret.status
+            self.stock_txn = ret.stock_txn
+            self.revenue_txn = ret.revenue_txn
+            return ret
+
+    def reject(self, rejected_by):
+        if self.status != self.STATUS_PENDING:
+            raise ValueError('Ombi hili tayari limeshughulikiwa.')
+        self.status = self.STATUS_REJECTED
+        self.approved_by = rejected_by
+        self.approved_at = timezone.now()
+        self.save(update_fields=['status', 'approved_by', 'approved_at'])
+
+
+class ItemPriceHistory(models.Model):
+    """UBA §7.3 (Sprint R2) — the margin guard's "Sasisha bei" one-tap price
+    update writes here. NOT a general price-change log for every possible
+    edit_item save — only for the margin-guard-suggested update, so the
+    reason is always known and this stays small and meaningful."""
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='price_history')
+    old_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    new_price = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=100, default='margin_guard')
+    changed_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True
+    )
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-changed_at']
+
+    def __str__(self):
+        return f"{self.item.description}: {self.old_price} → {self.new_price}"
+
+
+# ────────────────────────────────────────────────
 # SALARY DEDUCTIONS  (Sprint WO1)
 # ────────────────────────────────────────────────
 

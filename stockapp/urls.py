@@ -224,6 +224,7 @@ from core.analytics_views import (
 )
 from core.maduka_views import maduka_dashboard, maduka_acknowledge_exception
 from core.barcode_views import barcode_lookup, add_item_by_barcode
+from core.returns_views import process_return, approve_return, reject_return, apply_suggested_price
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -766,6 +767,11 @@ urlpatterns = [
     # ── UBA R1 — barcode + fast onboarding ────────────────────────────────────
     path("stock/barcode/<str:barcode>/", barcode_lookup, name="barcode_lookup"),
     path("stock/add-by-barcode/", add_item_by_barcode, name="add_item_by_barcode"),
+    # ── UBA R2 — returns + margin guard ────────────────────────────────────────
+    path("stock/returns/process/", process_return, name="process_return"),
+    path("stock/returns/<int:return_id>/approve/", approve_return, name="approve_return"),
+    path("stock/returns/<int:return_id>/reject/", reject_return, name="reject_return"),
+    path("stock/items/<int:item_id>/apply-suggested-price/", apply_suggested_price, name="apply_suggested_price"),
 ]
 
 if settings.DEBUG:

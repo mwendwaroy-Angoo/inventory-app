@@ -196,6 +196,20 @@ class Business(models.Model):
                   'benchmark. Opting out loses the benchmark, not just the contribution.'
     )
 
+    # ── UBA §7.2/§7.3 (Sprint R1/R2) — retail intelligence ──────────────────
+    margin_alert_pct = models.DecimalField(
+        max_digits=5, decimal_places=1, default=Decimal('15.0'),
+        help_text='A supplier cost rise beyond this percentage (vs the item\'s previous cost) '
+                  'fires a cost_rise BusinessException + owner alert with a suggested new '
+                  'selling price that preserves the old margin ratio.'
+    )
+    return_approval_threshold = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='A customer return whose refund exceeds this KES amount needs owner/manager '
+                  'approval before stock/revenue are reversed. Blank means every return '
+                  'auto-processes regardless of amount.'
+    )
+
     # ── Keg Bar Settings ──────────────────────────────────────────────────
     keg_variance_tolerance_pct = models.DecimalField(
         max_digits=4, decimal_places=1, default=Decimal('3.0'),

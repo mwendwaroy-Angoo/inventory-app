@@ -1428,6 +1428,21 @@ def add_transaction(request):
                         item.cost_price = landed_cost
                         item.save(update_fields=["cost_price"])
 
+                        # UBA R2 §7.3 — margin guard: a supplier cost rise beyond
+                        # margin_alert_pct is the single biggest silent profit leak
+                        # in retail (the owner keeps selling at the old price for
+                        # weeks). Reuses this SAME hook — Add Transaction's Receipt
+                        # flow, the ONE designed writer of Item.cost_price — rather
+                        # than a second cost-price-writing code path.
+                        if old_cost and landed_cost > old_cost * (
+                            Decimal('1') + user_profile.business.margin_alert_pct / Decimal('100')
+                        ):
+                            try:
+                                from core.retail_intelligence import check_margin_guard
+                                check_margin_guard(item, old_cost, landed_cost, user_profile.business)
+                            except Exception:
+                                pass
+
                         if delivery_fee > 0:
                             messages.info(
                                 request,
@@ -3294,6 +3309,21 @@ def quick_sell(request):
                 sale_amt = Decimal(str(round(display_price * float(display_qty), 2)))
 
             line_amount = Decimal(str(round(display_price * float(display_qty), 2)))
+
+            # ── UBA R2 §7.3 — sale-below-cost check ────────────────────────
+            # Plain (non-preset) items only — this is the retail sweethearting/
+            # mistake control the margin guard's sibling check exists for.
+            if sale_preset is None and entry.get("stock_qty") is None:
+                from core.retail_intelligence import check_sale_below_cost
+                blocked, below_cost_msg = check_sale_below_cost(
+                    item, line_amount, stock_qty, user_profile.business, user_profile.is_owner,
+                )
+                if blocked:
+                    messages.warning(request, below_cost_msg)
+                    continue
+                elif below_cost_msg:
+                    messages.warning(request, below_cost_msg)
+            # ─────────────────────────────────────────────────────────────
             last_transaction = Transaction.objects.create(
                 item=item,
                 type="Issue",
