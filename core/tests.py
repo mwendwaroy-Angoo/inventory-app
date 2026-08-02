@@ -20815,3 +20815,79 @@ class VocabFilterTest(TestCase):
         self.assertEqual(vocab('item', {}), 'item')
         self.assertEqual(vocab('item', None), 'item')
 
+
+class ItemFormCapabilityHidesGatingTest(TestCase):
+    """UBA M0-3 — item_form.html field-group gating via
+    biz_profile.capability.hides. Three groups now wrap in an additive
+    `{% if 'X' not in biz_profile.capability.hides %}`: 'yield' (Yield /
+    Processing), 'restricted_items' (Restriction Settings), and
+    'produce_keg_settings' (Produce Settings through the entire preset
+    table + Kitchen Stock Mode — all originally one single
+    `{% if user.userprofile.is_owner %}` block that runs ~1100 lines, so
+    splitting Produce from Keg mid-block was judged too risky; one hide
+    key covers the whole span).
+
+    All 8 real profiles have an empty `hides` set today, so these wraps
+    must be a complete no-op — every section that rendered before this
+    sprint must still render exactly the same way (M0-AC1). A third test
+    proves the mechanism actually hides a section when a capability
+    populates `hides` — patching the registry directly since no real
+    profile has a populated hides set yet."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        self.bar_type, _c1 = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.kibanda_type, _c2 = BusinessType.objects.get_or_create(name='Kibanda / Food Stall')
+        self.bar_biz = Business.objects.create(name='UBA Hides Bar', business_type=self.bar_type)
+        self.kibanda_biz = Business.objects.create(name='UBA Hides Kibanda', business_type=self.kibanda_type)
+        Store.objects.create(business=self.bar_biz, name='Main')
+        Store.objects.create(business=self.kibanda_biz, name='Main')
+        self.bar_owner = User.objects.create_user(username='hides_bar_owner', password='x')
+        UserProfile.objects.create(user=self.bar_owner, business=self.bar_biz, role='owner')
+        self.kibanda_owner = User.objects.create_user(username='hides_kib_owner', password='x')
+        UserProfile.objects.create(user=self.kibanda_owner, business=self.kibanda_biz, role='owner')
+
+    def test_bar_item_form_sections_unaffected(self):
+        self.client.force_login(self.bar_owner)
+        resp = self.client.get('/stock/add/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Restriction Settings')
+        self.assertContains(resp, 'Keg Settings')
+        self.assertContains(resp, 'Spirits Accountability')
+
+    def test_kibanda_item_form_sections_unaffected(self):
+        self.client.force_login(self.kibanda_owner)
+        resp = self.client.get('/stock/add/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Restriction Settings')
+        self.assertContains(resp, 'Produce Settings')
+        self.assertContains(resp, 'Yield / Processing')
+
+    def test_populated_hides_actually_hides_the_sections(self):
+        from core.business_profiles import CAPABILITIES
+        import dataclasses
+        original = CAPABILITIES['bar']
+        patched = dataclasses.replace(
+            original,
+            hides=frozenset({'produce_keg_settings', 'restricted_items', 'yield'}),
+        )
+        CAPABILITIES['bar'] = patched
+        try:
+            self.client.force_login(self.bar_owner)
+            resp = self.client.get('/stock/add/')
+            self.assertEqual(resp.status_code, 200)
+            self.assertNotContains(resp, 'Restriction Settings')
+            self.assertNotContains(resp, 'Keg Settings')
+            self.assertNotContains(resp, 'Spirits Accountability')
+            self.assertNotContains(resp, 'Yield / Processing')
+        finally:
+            CAPABILITIES['bar'] = original
+
+    def test_hides_reverts_cleanly_after_patch(self):
+        """Guard against test pollution: confirm the registry is really
+        back to normal after the previous test's patch/restore pattern."""
+        self.client.force_login(self.bar_owner)
+        resp = self.client.get('/stock/add/')
+        self.assertContains(resp, 'Restriction Settings')
+        self.assertContains(resp, 'Keg Settings')
+
