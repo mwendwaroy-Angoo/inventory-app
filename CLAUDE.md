@@ -4504,3 +4504,21 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   filter's docstring). No-op today: every one of the 8 real profiles has an empty
   `vocabulary` dict, and nothing calls the filter yet. Also backfilled dedicated tests for
   the M0-1/M0-2 work above, which had shipped without any. 12 new tests, 1143 total, OK.
+- UBA M0-3 (2026-08-02): item form field gating via `biz_profile.capability.hides`
+  (`templates/core/item_form.html`). Traced the real template structure first: "Produce
+  Settings"/"Keg Settings"/"Spirits Accountability"/the preset table turned out to be ONE
+  single `{% if user.userprofile.is_owner %}` block spanning ~1100 lines (JS in between
+  cross-references both `is_produce` and `is_keg` DOM elements freely), not three separable
+  sections as the spec's prose implies — splitting it would mean inserting new if/endif
+  pairs deep inside that span, judged too risky without browser access to verify; used one
+  `'produce_keg_settings'` hide key for the whole thing instead. Two cleanly bounded
+  single-key wraps: `'yield'` and `'restricted_items'`. All three are additive outer
+  `{% if 'X' not in biz_profile.capability.hides %}` wraps around unmodified content —
+  verified balanced via a Python if/endif-depth script (the produce/keg span's true close
+  was 5 lines further than a naive grep suggested) and via `get_template()` parsing with no
+  `TemplateSyntaxError`. `hides` is empty for all 8 real profiles today, so this is a no-op
+  — locked in by 2 tests confirming every affected section still renders for a bar and a
+  kibanda owner, plus a 3rd proving the mechanism itself by patching `CAPABILITIES['bar']`
+  to populate `hides` and asserting the sections disappear (then revert cleanly). M0-AC3
+  (stub profile proof) deferred to its own commit now that this mechanism exists. 4 new
+  tests, 1147 total, OK.
