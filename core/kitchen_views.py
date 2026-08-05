@@ -242,6 +242,46 @@ def kitchen_board(request):
             .prefetch_related('portion_presets')
             .order_by('description')
         )
+
+        # 2026-08-05 live request (Roy, Kuku/chicken-leg example): "the tile
+        # module when selling should not show wings, drumsticks etc. when
+        # only chicken legs were received in order to track sales
+        # accurately." Several differently-priced cuts of one shared item
+        # (Kuku → Bawa/Paja/Kifua/Legi Nzima) all deduct from ONE shared
+        # balance, so today's plain item-level balance can never answer
+        # "do we actually have wings right now" — only "do we have ANY
+        # Kuku." But KitchenStockReceiptLine.preset (2026-07-25) already
+        # records exactly which cut was received in what quantity, and
+        # Transaction.preset (2026-07-28) already records exactly which cut
+        # was SOLD — so "remaining for this specific cut" is reconstructible
+        # with no new balance field: received minus sold, per preset.
+        # Deliberately scoped to items that have EVER used preset-attributed
+        # receiving at all (items_with_preset_receipts below) — an item
+        # that's only ever been received the plain way (no Kitchen Stock
+        # Receipt, no preset attribution) keeps showing every preset exactly
+        # as before, so this never breaks an item that doesn't use the
+        # per-cut receiving flow.
+        from django.db.models import Sum
+        from django.db.models.functions import Abs as _KAbs
+        _received_by_preset = dict(
+            KitchenStockReceiptLine.objects.filter(
+                item__store=kitchen_store, preset_id__isnull=False,
+            ).values('preset_id').annotate(total=Sum('qty_received')).values_list('preset_id', 'total')
+        )
+        _sold_by_preset = dict(
+            Transaction.objects.filter(
+                business=business, type='Issue', item__store=kitchen_store,
+                preset_id__isnull=False,
+            ).exclude(payment_method='void')
+            .values('preset_id').annotate(total=Sum(_KAbs('qty')))
+            .values_list('preset_id', 'total')
+        )
+        items_with_preset_receipts = set(
+            KitchenStockReceiptLine.objects.filter(
+                item__store=kitchen_store, preset_id__isnull=False,
+            ).values_list('item_id', flat=True).distinct()
+        )
+
         for item in items_qs:
             presets = [
                 {
@@ -250,6 +290,9 @@ def kitchen_board(request):
                     'cost_price': float(p.cost_price) if p.cost_price is not None else None,
                 }
                 for p in item.portion_presets.all().order_by('display_order', 'price')
+                if item.id not in items_with_preset_receipts or (
+                    float(_received_by_preset.get(p.id) or 0) - float(_sold_by_preset.get(p.id) or 0) > 0
+                )
             ]
             if item.is_kitchen_batch:
                 # Kitchen batch item (chips, stew, ugali) — KitchenBatch P&L

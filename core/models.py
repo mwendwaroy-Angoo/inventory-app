@@ -4014,7 +4014,32 @@ class TableOrder(models.Model):
         related_name='table_orders',
     )
     status         = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
-    payment_method = models.CharField(max_length=10, choices=PAYMENT_CHOICES, default='cash')
+    payment_method = models.CharField(
+        max_length=10, choices=PAYMENT_CHOICES, default='cash', blank=True,
+        help_text='Legacy field, kept for schema history — no longer read to set the '
+                   'final sale\'s payment method (see tab below). Payment is now decided '
+                   'when the table\'s tab is settled, not guessed at order-placement time.',
+    )
+    # ── Table-service redesign (2026-08-05 live request) ────────────────────────
+    # Roy: "check all ways an order might be placed when it comes to payment or
+    # bills." Before this, payment_method was locked in AT ORDER TIME — before the
+    # food/drinks were even served — with no way to correct it, no support for a
+    # table running up several rounds on one bill, and none of the payment
+    # machinery (partial settle, split-transfer, debt conversion, wall-QR/PIN,
+    # STK push, revoke) this app already built for BarTab. Rather than reinventing
+    # any of that a second time inside TableOrder, SERVED now bills the order's
+    # items onto the table's own running BarTab (found-or-created by table_label,
+    # same anonymous-tab-by-name pattern every other counter already uses) — so a
+    # table's bill IS a tab, gets the exact same wall-QR/PIN + full payment
+    # toolkit as any other tab, and multiple rounds for the same table
+    # automatically accumulate on one bill for free.
+    tab            = models.ForeignKey(
+        'BarTab', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='table_orders',
+        help_text="The table's running tab — this order's items are billed here "
+                  "once SERVED. Payment (cash/mpesa/split/debt) happens by settling "
+                  "this tab, not at order-placement time.",
+    )
     notes          = models.CharField(max_length=200, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)

@@ -274,8 +274,8 @@
 {% endif %}
 <div class="ws-header">
   <h1 class="ws-title">🍺 Order Desk</h1>
-  <a href="{% url 'bar_board' %}" style="color:#888; font-size:.82rem; text-decoration:none;">
-    ← Bar Board
+  <a href="{% url 'bar_board' %}" style="color:var(--gold); font-size:.82rem; text-decoration:none; white-space:nowrap;">
+    💳 Lipa Bili →
   </a>
 </div>
 
@@ -407,13 +407,13 @@
              style="background:#1a1a1a; border:1px solid #444; color:var(--pearl);
                     border-radius:8px; padding:.35rem .65rem; font-size:.82rem; width:100%;">
     </div>
+    <!-- 2026-08-05 table-service redesign: payment is no longer chosen here —
+         the order bills onto the table's own running tab and gets settled
+         later (cash/mpesa/split/debt) via the "💳 Bili ya Meza" panel below,
+         same as how every other counter in this app already handles payment,
+         instead of guessing a payment method before the order is even served. -->
     <div class="cart-footer-row">
-      <select class="cart-pm-select" id="cart-pm">
-        <option value="cash">💵 Cash</option>
-        <option value="mpesa">📱 M-Pesa</option>
-        <option value="credit">📒 Credit</option>
-      </select>
-      <button class="btn-place" id="btn-place" onclick="window.placeOrder()">
+      <button class="btn-place" id="btn-place" onclick="window.placeOrder()" style="width:100%;">
         Tuma Agizo
       </button>
     </div>
@@ -624,7 +624,6 @@
     var fd = new FormData();
     fd.append('csrfmiddlewaretoken', CSRF);
     fd.append('table_label', _table);
-    fd.append('payment_method', document.getElementById('cart-pm').value);
     fd.append('notes', document.getElementById('cart-notes').value);
     fd.append('items', JSON.stringify(items));
 
@@ -683,17 +682,26 @@
           return;
         }
         var html = '';
-        var pmIcons = { cash: '💵', mpesa: '📱', credit: '📒' };
         var cancelStatuses = ['PENDING', 'ACCEPTED'];
         d.orders.forEach(function(o) {
           var cancelBtn = cancelStatuses.indexOf(o.status) >= 0
             ? '<button style="background:transparent;border:none;color:#c0395a;font-size:.72rem;cursor:pointer;padding:0;" onclick="window.cancelOrder(' + o.id + ', this)">Futa</button>'
+            : '';
+          // 2026-08-05 table-service redesign: once served, this order's
+          // items live on the table's own tab (settled via cash/mpesa/
+          // split/debt on Bar Board, not a payment method picked here) —
+          // show the table's LIVE running unpaid total so a waitress can
+          // quote it to the customer without leaving her own screen.
+          var billLine = (o.tab_id && o.tab_unpaid !== null)
+            ? '<div class="order-time" style="color:var(--gold);">💳 Bili ya meza: KES ' + Math.round(o.tab_unpaid).toLocaleString()
+              + (o.tab_pin ? ' · PIN ' + o.tab_pin : '') + '</div>'
             : '';
           html += '<div class="order-card" id="order-' + o.id + '">'
             + '<div class="order-card-left">'
             + '<div class="order-table">' + escHtml(o.table_label) + '</div>'
             + '<div class="order-summary">' + escHtml(o.summary) + '</div>'
             + '<div class="order-time">' + o.created_at + ' · KES ' + Math.round(o.total).toLocaleString() + '</div>'
+            + billLine
             + '</div>'
             + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:.35rem;">'
             + '<span class="status-badge status-' + o.status + '">' + statusLabel(o.status) + '</span>'

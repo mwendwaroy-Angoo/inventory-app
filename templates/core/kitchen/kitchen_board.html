@@ -1414,12 +1414,16 @@
                    border-radius:8px;padding:.4rem .6rem;color:#b0b0b0;font-size:.78rem;cursor:pointer;">
       🕐 Malipo ya Hivi Karibuni <span id="kb-recent-payments-caret">▾</span>
     </button>
-    <div id="kb-recent-payments-datebar" style="display:none;margin-top:.35rem;align-items:center;gap:.4rem;">
+    <div id="kb-recent-payments-datebar" style="display:none;margin-top:.35rem;align-items:center;gap:.4rem;flex-wrap:wrap;">
       <span style="color:#888;font-size:.72rem;">Tarehe:</span>
       <input type="date" id="kb-recent-payments-date"
              style="background:#111;border:1px solid #444;border-radius:5px;color:#f0ece4;padding:.2rem .4rem;font-size:.75rem;"
              onchange="window.kbLoadRecentPayments()">
+      <input type="text" id="kb-recent-payments-search" placeholder="🔍 Tafuta bidhaa (mfano: Kuku, Cash)…"
+             style="flex:1;min-width:140px;background:#111;border:1px solid #444;border-radius:5px;color:#f0ece4;padding:.2rem .4rem;font-size:.75rem;"
+             oninput="window.kbRenderRecentPayments()">
     </div>
+    <div id="kb-recent-payments-summary"></div>
     <div id="kb-recent-payments-panel" style="display:none;margin-top:.35rem;max-height:220px;overflow-y:auto;"></div>
   </div>
   <!-- Customers with existing debt — 2026-08-02 live request: a customer
@@ -2676,6 +2680,103 @@
     return d.getFullYear() + '-' + m + '-' + day;
   }
 
+  // 2026-08-05 live request: "item search... can see how many keg cups
+  // she sold or bar orders sold in order to assist with posting in the
+  // system" — cache the fetched day's data so the search box re-filters
+  // instantly, and show a running order-count / servings / KES summary
+  // over whatever's currently matching (kitchen items have no
+  // keg_serving, so this naturally degrades to just order count + KES —
+  // still useful for cross-checking a paper tally).
+  var _kbRecentPaymentsData = { tabs: [], direct: [] };
+
+  function _kbRpMatches(desc, q) {
+    return !q || (desc || '').toLowerCase().indexOf(q) !== -1;
+  }
+
+  window.kbRenderRecentPayments = function () {
+    var panel = document.getElementById('kb-recent-payments-panel');
+    var summaryEl = document.getElementById('kb-recent-payments-summary');
+    var searchEl = document.getElementById('kb-recent-payments-search');
+    var q = (searchEl && searchEl.value || '').trim().toLowerCase();
+    var tabs = _kbRecentPaymentsData.tabs, direct = _kbRecentPaymentsData.direct;
+
+    var filteredTabs = tabs.map(function (t) {
+      var entries = t.entries.filter(function (e) { return _kbRpMatches(e.description, q); });
+      return entries.length ? Object.assign({}, t, { entries: entries }) : null;
+    }).filter(Boolean);
+    var filteredDirect = direct.filter(function (e) { return _kbRpMatches(e.description, q); });
+
+    if (!filteredTabs.length && !filteredDirect.length) {
+      panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">' +
+        (q ? 'Hakuna kilicholingana na "' + q + '".' : 'Hakuna malipo tarehe hii.') + '</div>';
+      if (summaryEl) summaryEl.innerHTML = '';
+      return;
+    }
+
+    var totalKes = 0, totalCount = 0, servingCounts = {};
+    function tally(e) {
+      totalKes += e.amount; totalCount += 1;
+      if (e.keg_serving && e.keg_qty) {
+        servingCounts[e.keg_serving] = (servingCounts[e.keg_serving] || 0) + e.keg_qty;
+      }
+    }
+    filteredTabs.forEach(function (t) { t.entries.forEach(tally); });
+    filteredDirect.forEach(tally);
+
+    if (summaryEl) {
+      var icons = { cup: '☕', pint: '🍺', jug: '🫙' };
+      var bits = [];
+      Object.keys(servingCounts).forEach(function (k) {
+        bits.push((icons[k] || '🍻') + ' ' + servingCounts[k] + ' ' + k + (servingCounts[k] !== 1 ? 's' : ''));
+      });
+      summaryEl.innerHTML = '<div style="font-size:.72rem;color:#c9a84c;font-weight:600;padding:.3rem .1rem 0;">' +
+        totalCount + ' order' + (totalCount !== 1 ? 's' : '') +
+        (bits.length ? ' — ' + bits.join(' · ') : '') +
+        ' — Jumla KES ' + fmt(totalKes) + '</div>';
+    }
+
+    var html = '';
+    filteredTabs.forEach(function (t) {
+      html += '<div style="background:#222;border:1px solid #333;border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem;">' +
+        '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at +
+        (t.tab_open ? ' <span style="color:#f0a840;font-weight:400;">(bado wazi — bidhaa zingine hazijalipwa)</span>' : '') +
+        '</div>';
+      t.entries.forEach(function (e) {
+        html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
+          '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ')</span>' +
+          '<button onclick="window.kbRevokeEntryPayment(' + e.id + ',' + t.tab_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+          'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">↺ Tengua</button>' +
+          '</div>';
+      });
+      html += '</div>';
+    });
+    if (filteredDirect.length) {
+      html += '<div style="font-size:.72rem;color:#888;font-weight:600;margin:.3rem 0 .15rem;">Mauzo ya Moja kwa Moja (si tab)</div>';
+      filteredDirect.forEach(function (e) {
+        var other = e.payment_method === 'cash' ? 'mpesa' : 'cash';
+        var otherLabel = other === 'cash' ? 'Cash' : 'M-Pesa';
+        html += '<div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
+          '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ') — ' + e.time + '</span>';
+        if (e.payment_method !== 'credit') {
+          html +=
+            '<button onclick="window.kbCorrectDirectPayment(' + e.id + ',\'' + other + '\',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+            'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
+            '<button onclick="window.kbSplitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
+            'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
+            '<button onclick="window.kbVoidDirectPayment(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+            'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🗑 Futa</button>';
+        }
+        if (e.preset_id) {
+          html +=
+            '<button onclick="window.kbCorrectPreset(' + e.id + ',' + e.item_id + ',' + e.preset_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+            'style="background:rgba(110,231,183,.1);border:1px solid rgba(110,231,183,.3);border-radius:4px;color:#6ee7b7;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 Kipande</button>';
+        }
+        html += '</div>';
+      });
+    }
+    panel.innerHTML = html;
+  };
+
   window.kbLoadRecentPayments = function () {
     var panel = document.getElementById('kb-recent-payments-panel');
     panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Inapakia...</div>';
@@ -2684,52 +2785,10 @@
     fetch('/bar/tabs/recent-settled/?date=' + sel + '&station=kitchen', {credentials: 'same-origin'})
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        var tabs = d.tabs || [];
-        var direct = d.direct || [];
-        if (!tabs.length && !direct.length) {
-          panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Hakuna malipo tarehe hii.</div>';
-          return;
-        }
-        var html = '';
-        tabs.forEach(function (t) {
-          html += '<div style="background:#222;border:1px solid #333;border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem;">' +
-            '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at +
-            (t.tab_open ? ' <span style="color:#f0a840;font-weight:400;">(bado wazi — bidhaa zingine hazijalipwa)</span>' : '') +
-            '</div>';
-          t.entries.forEach(function (e) {
-            html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
-              '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ')</span>' +
-              '<button onclick="window.kbRevokeEntryPayment(' + e.id + ',' + t.tab_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
-              'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">↺ Tengua</button>' +
-              '</div>';
-          });
-          html += '</div>';
-        });
-        if (direct.length) {
-          html += '<div style="font-size:.72rem;color:#888;font-weight:600;margin:.3rem 0 .15rem;">Mauzo ya Moja kwa Moja (si tab)</div>';
-          direct.forEach(function (e) {
-            var other = e.payment_method === 'cash' ? 'mpesa' : 'cash';
-            var otherLabel = other === 'cash' ? 'Cash' : 'M-Pesa';
-            html += '<div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
-              '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ') — ' + e.time + '</span>';
-            if (e.payment_method !== 'credit') {
-              html +=
-                '<button onclick="window.kbCorrectDirectPayment(' + e.id + ',\'' + other + '\',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
-                'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
-                '<button onclick="window.kbSplitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
-                'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
-                '<button onclick="window.kbVoidDirectPayment(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
-                'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🗑 Futa</button>';
-            }
-            if (e.preset_id) {
-              html +=
-                '<button onclick="window.kbCorrectPreset(' + e.id + ',' + e.item_id + ',' + e.preset_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
-                'style="background:rgba(110,231,183,.1);border:1px solid rgba(110,231,183,.3);border-radius:4px;color:#6ee7b7;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 Kipande</button>';
-            }
-            html += '</div>';
-          });
-        }
-        panel.innerHTML = html;
+        _kbRecentPaymentsData = { tabs: d.tabs || [], direct: d.direct || [] };
+        var searchEl = document.getElementById('kb-recent-payments-search');
+        if (searchEl) searchEl.value = '';
+        window.kbRenderRecentPayments();
       })
       .catch(function () { panel.innerHTML = '<div style="color:#c0395a;font-size:.75rem;padding:.4rem;">Hitilafu ya mtandao.</div>'; });
   };

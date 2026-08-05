@@ -12667,6 +12667,149 @@ class TableOrderCancelReasonTest(TestCase):
         self.assertNotIn('cannot be cancelled', resp2.json().get('error', ''))
 
 
+class TableOrderBillsOntoTableTabTest(TestCase):
+    """2026-08-05 live request: "design and architect the waiter/waitress
+    section... check all ways an order might be placed when it comes to
+    payment or bills." Before this, TableOrder.payment_method was locked in
+    AT ORDER-PLACEMENT time — before the food/drinks were even served — a
+    completely isolated, parallel mechanism from BarTab that never got any
+    of the payment machinery (partial settle, split-transfer, debt
+    conversion, wall-QR/PIN, revoke) already built for every other counter.
+    Redesigned so a SERVED order bills its items onto the table's own
+    running BarTab (found/created by table_label, same anonymous-tab-by-
+    name convention used everywhere else) — payment is decided by settling
+    that tab, not guessed at placement time, and multiple rounds for one
+    table accumulate on ONE bill automatically."""
+
+    def setUp(self):
+        from core.models import TableOrder
+        self.TableOrder = TableOrder
+        self.biz = Business.objects.create(name='Table Tab Redesign Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ttr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='ttr_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+        self.keg_item = Item.objects.create(
+            business=self.biz, store=self.store, description='TTR Lager',
+            material_no='TTR-KEG', unit='ml', is_keg=True, selling_price=Decimal('0'),
+        )
+        self.barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.keg_item,
+            cost_price=Decimal('5000'), target_revenue=Decimal('9000'),
+            gross_weight_kg=Decimal('60'), tare_weight_kg=Decimal('10'), status='TAPPED',
+        )
+        self.pint = ItemPortionPreset.objects.create(
+            item=self.keg_item, label='Pint', price=Decimal('200'),
+            quantity_consumed=Decimal('500'), serving_type='pint',
+        )
+        self.soda = Item.objects.create(
+            business=self.biz, store=self.store, description='Soda',
+            material_no='TTR-SODA', unit='Pcs', selling_price=Decimal('50'),
+        )
+        self.client.force_login(self.waitress)
+
+    def _place(self, table, items):
+        return self.client.post('/bar/orders/place/', {
+            'table_label': table, 'notes': '', 'items': json.dumps(items),
+        })
+
+    def _pint_item(self, qty=1):
+        return {
+            'item_id': self.keg_item.id, 'preset_id': self.pint.id,
+            'preset_label': 'Pint', 'unit_price': '200', 'quantity': qty,
+        }
+
+    def _soda_item(self, qty=1):
+        return {
+            'item_id': self.soda.id, 'item_name': 'Soda',
+            'unit_price': '50', 'quantity': qty,
+        }
+
+    def _advance_to_served(self, order_id):
+        for status in ('ACCEPTED', 'READY', 'SERVED'):
+            resp = self.client.post(f'/bar/orders/{order_id}/update/', {'status': status})
+            self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_no_tab_created_at_placement(self):
+        resp = self._place('T1', [self._pint_item()])
+        order = self.TableOrder.objects.get(id=resp.json()['order_id'])
+        self.assertIsNone(order.tab_id)
+        self.assertFalse(BarTab.objects.filter(business=self.biz, customer_name='T1').exists())
+
+    def test_served_bills_items_onto_a_table_tab(self):
+        resp = self._place('T2', [self._pint_item(qty=2), self._soda_item(qty=1)])
+        order_id = resp.json()['order_id']
+        self._advance_to_served(order_id)
+
+        order = self.TableOrder.objects.get(id=order_id)
+        self.assertIsNotNone(order.tab_id)
+        tab = order.tab
+        self.assertEqual(tab.customer_name, 'T2')
+        self.assertEqual(tab.source, 'bar')
+        self.assertEqual(tab.entries.count(), 2)
+        self.assertEqual(tab.unpaid_total(), Decimal('450.00'))  # 2×200 pint + 50 soda
+
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.revenue_collected, Decimal('400'))
+        self.assertEqual(self.barrel.volume_dispensed_ml, Decimal('1000'))
+
+    def test_multi_round_same_table_shares_one_tab(self):
+        resp1 = self._place('T3', [self._pint_item()])
+        self._advance_to_served(resp1.json()['order_id'])
+        order1 = self.TableOrder.objects.get(id=resp1.json()['order_id'])
+
+        resp2 = self._place('T3', [self._soda_item()])
+        self._advance_to_served(resp2.json()['order_id'])
+        order2 = self.TableOrder.objects.get(id=resp2.json()['order_id'])
+
+        self.assertEqual(order1.tab_id, order2.tab_id)
+        self.assertEqual(order1.tab.entries.count(), 2)
+        self.assertEqual(order1.tab.unpaid_total(), Decimal('250.00'))
+
+    def test_cancelled_order_never_creates_a_tab(self):
+        resp = self._place('T4', [self._pint_item()])
+        order_id = resp.json()['order_id']
+        self.client.post(f'/bar/orders/{order_id}/cancel/', {'reason': 'Mteja ameondoka'})
+        order = self.TableOrder.objects.get(id=order_id)
+        self.assertIsNone(order.tab_id)
+        self.assertFalse(BarTab.objects.filter(business=self.biz, customer_name='T4').exists())
+
+    def test_receipt_reused_across_rounds_for_same_table(self):
+        resp1 = self._place('T5', [self._pint_item()])
+        self._advance_to_served(resp1.json()['order_id'])
+        order1 = self.TableOrder.objects.get(id=resp1.json()['order_id'])
+        receipt1 = Receipt.objects.get(meta__tab_id=order1.tab_id)
+        self.assertEqual(len(receipt1.lines), 1)
+
+        resp2 = self._place('T5', [self._soda_item()])
+        self._advance_to_served(resp2.json()['order_id'])
+        receipt1.refresh_from_db()
+        self.assertEqual(Receipt.objects.filter(business=self.biz, customer_name='T5').count(), 1)
+        self.assertEqual(len(receipt1.lines), 2)
+        self.assertEqual(receipt1.total, Decimal('250.00'))
+
+    def test_table_tab_settles_via_the_ordinary_settle_endpoint(self):
+        """Sanity check that a table's bill genuinely plugs into the SAME
+        payment toolkit every other tab already has — no new payment code
+        was written for this feature."""
+        resp = self._place('T6', [self._soda_item(qty=2)])
+        self._advance_to_served(resp.json()['order_id'])
+        order = self.TableOrder.objects.get(id=resp.json()['order_id'])
+        tab = order.tab
+
+        self.client.force_login(self.owner)
+        settle_resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+        self.assertTrue(settle_resp.json()['ok'], settle_resp.json())
+        tab.refresh_from_db()
+        self.assertEqual(tab.unpaid_total(), Decimal('0'))
+        self.assertTrue(tab.entries.filter(is_paid=True).exists())
+
+
 class StaffJourneyTest(TestCase):
     """2026-07-25: the durable "story" of a staff member's tenure — must keep
     working (same revenue/shift numbers) whether the staffer is still active
@@ -13284,6 +13427,109 @@ class WeighBarrelIdempotencyTest(TestCase):
         self.assertTrue(resp.json()['ok'])
 
 
+class KegRecordMissedSaleTest(TestCase):
+    """2026-08-05 live request (Roy): "keg variance reconciliation according
+    to remaining weight in the instance that a barrel was received sold
+    physically but not sold by the app and when weighed it showed a lesser
+    weight than expected, so that variance should be accounted for
+    accordingly." A real pour that was never rung up shows only as
+    unexplained scale-vs-book shrinkage; keg_record_missed_sale() lets the
+    owner/manager reconcile it by recording it as an ordinary sale through
+    the SAME KegBarrel.record_sale_locked() path any normal pour uses —
+    real revenue, a real Transaction, reducing the reported wastage gap."""
+
+    def setUp(self):
+        self.business, self.store, self.owner, self.item, self.barrel, self.preset, self.shift = (
+            _make_keg_fixtures_with_shift('Missed Sale Biz')
+        )
+        self.staff = User.objects.create_user(username='ms_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.business, role='staff')
+
+    def test_owner_records_missed_sale_as_ordinary_transaction(self):
+        self.client.force_login(self.owner)
+        rev_before = float(self.barrel.revenue_collected)
+        vol_before = float(self.barrel.volume_dispensed_ml)
+        resp = self.client.post(
+            f'/bar/reconciliation/{self.barrel.id}/record-missed-sale/',
+            {
+                'preset_id': self.preset.id, 'qty': '2', 'payment_method': 'cash',
+                'note': 'aliyeuza alisahau', 'idempotency_token': 'ms-tok-1',
+            },
+        )
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.barrel.refresh_from_db()
+        self.assertEqual(float(self.barrel.revenue_collected), rev_before + 400.0)
+        self.assertEqual(float(self.barrel.volume_dispensed_ml), vol_before + 1000.0)
+        txn = Transaction.objects.filter(business=self.business, keg_barrel=self.barrel).latest('created_at')
+        self.assertEqual(txn.payment_method, 'cash')
+        self.assertEqual(float(txn.sale_amount), 400.0)
+        self.assertIn('Mauzo yasiyorekodiwa', self.barrel.note)
+        self.assertIn('aliyeuza alisahau', self.barrel.note)
+
+    def test_reduces_the_scale_vs_book_gap(self):
+        """The whole point — after reconciling, the barrel's book figure
+        (volume_dispensed_ml) genuinely moves closer to the scale."""
+        from core import keg_metrics
+        self.client.force_login(self.owner)
+        before = keg_metrics.barrel_variance(self.barrel)
+        self.client.post(
+            f'/bar/reconciliation/{self.barrel.id}/record-missed-sale/',
+            {'preset_id': self.preset.id, 'qty': '3', 'idempotency_token': 'ms-tok-2'},
+        )
+        self.barrel.refresh_from_db()
+        after = keg_metrics.barrel_variance(self.barrel)
+        if before.wastage_l is not None and after.wastage_l is not None:
+            self.assertLess(after.wastage_l, before.wastage_l)
+
+    def test_staff_without_owner_or_manager_role_blocked(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f'/bar/reconciliation/{self.barrel.id}/record-missed-sale/',
+            {'preset_id': self.preset.id, 'qty': '1', 'idempotency_token': 'ms-tok-3'},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_duplicate_token_does_not_double_record(self):
+        self.client.force_login(self.owner)
+        body = {'preset_id': self.preset.id, 'qty': '1', 'idempotency_token': 'ms-tok-dup'}
+        r1 = self.client.post(f'/bar/reconciliation/{self.barrel.id}/record-missed-sale/', body)
+        r2 = self.client.post(f'/bar/reconciliation/{self.barrel.id}/record-missed-sale/', body)
+        self.assertTrue(r1.json()['ok'])
+        self.assertFalse(r2.json()['ok'])
+        self.assertTrue(r2.json().get('duplicate'))
+        self.assertEqual(Transaction.objects.filter(business=self.business, keg_barrel=self.barrel).count(), 1)
+
+    def test_invalid_qty_rejected(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/reconciliation/{self.barrel.id}/record-missed-sale/',
+            {'preset_id': self.preset.id, 'qty': '0', 'idempotency_token': 'ms-tok-4'},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_non_tapped_barrel_rejected(self):
+        self.barrel.status = 'DEPLETED'
+        self.barrel.save(update_fields=['status'])
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/reconciliation/{self.barrel.id}/record-missed-sale/',
+            {'preset_id': self.preset.id, 'qty': '1', 'idempotency_token': 'ms-tok-5'},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_cross_business_preset_rejected(self):
+        other_biz, _, other_owner, other_item, other_barrel, other_preset, _ = (
+            _make_keg_fixtures_with_shift('Missed Sale Other Biz')
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/bar/reconciliation/{self.barrel.id}/record-missed-sale/',
+            {'preset_id': other_preset.id, 'qty': '1', 'idempotency_token': 'ms-tok-6'},
+        )
+        self.assertEqual(resp.status_code, 404)
+
+
 class StartStockTakeIdempotencyTest(TestCase):
     """2026-07-25 audit finding: start_stock_take() (the full accountability-
     lifecycle stock take, distinct from stock_take_api's inherently-idempotent
@@ -13695,6 +13941,64 @@ class RecentPaymentsDatePickerTest(TestCase):
         data = resp.json()
         self.assertEqual(data['date'], timezone.localdate().isoformat())
         self.assertEqual(len(data['tabs']), 1)
+
+
+class RecentPaymentsKegServingFieldsTest(TestCase):
+    """2026-08-05 live request: "item search... can see how many keg cups
+    she sold or bar orders sold in order to assist with posting in the
+    system." recent_settled_tabs_api now surfaces raw keg_qty/keg_serving
+    (already stored per-Transaction by KegBarrel.record_sale) on both tab
+    entries and direct sales, so the frontend can search/group by preset
+    without parsing "×N" out of the free-text description."""
+
+    def setUp(self):
+        self.business, self.store, self.owner, self.item, self.barrel, self.preset, self.shift = (
+            _make_keg_fixtures_with_shift('Recent Serving Fields Biz')
+        )
+        self.client.force_login(self.owner)
+
+    def test_tab_entry_carries_keg_serving_fields(self):
+        tab = BarTab.objects.create(
+            business=self.business, customer_name='Serving Fields Tab',
+            status='SETTLED', source='bar', store=self.store,
+        )
+        txn = self.barrel.record_sale(self.preset, 2, 'credit', self.owner, tab=tab)
+        entry = tab.entries.get(transaction=txn)
+        entry.is_paid = True
+        entry.payment_method = 'cash'
+        entry.paid_at = timezone.now()
+        entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
+
+        resp = self.client.get('/bar/tabs/recent-settled/?station=bar')
+        data = resp.json()
+        found = data['tabs'][0]['entries'][0]
+        self.assertEqual(found['keg_serving'], 'pint')
+        self.assertEqual(found['keg_qty'], 2)
+
+    def test_direct_sale_carries_keg_serving_fields(self):
+        Transaction.objects.create(
+            business=self.business, item=self.item, type='Issue',
+            qty=Decimal('-500'), sale_amount=Decimal('200'), payment_method='cash',
+            keg_barrel=self.barrel, keg_serving='cup', keg_qty=3,
+        )
+        resp = self.client.get('/bar/tabs/recent-settled/?station=bar')
+        found = resp.json()['direct'][0]
+        self.assertEqual(found['keg_serving'], 'cup')
+        self.assertEqual(found['keg_qty'], 3)
+
+    def test_non_keg_direct_sale_has_blank_serving(self):
+        plain_item = Item.objects.create(
+            business=self.business, store=self.store, description='Plain Snack',
+            material_no='RSF-PLAIN', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(
+            business=self.business, item=plain_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('50'), payment_method='cash',
+        )
+        resp = self.client.get('/bar/tabs/recent-settled/?station=bar')
+        found = [d for d in resp.json()['direct'] if d['description'] == 'Plain Snack'][0]
+        self.assertEqual(found['keg_serving'], '')
+        self.assertIsNone(found['keg_qty'])
 
 
 class DirectSalePaymentCorrectionTest(TestCase):
@@ -15850,6 +16154,82 @@ class KitchenStockReceiptPresetCostingTest(TestCase):
         )
         self.kuku.refresh_from_db()
         self.assertEqual(self.kuku.current_balance(), 35)  # 36 - 1, regardless of which preset sold
+
+
+class KitchenPortionPresetVisibilityByReceiptTest(TestCase):
+    """2026-08-05 live request (Roy, chicken-leg example): "the tile module
+    when selling should not show wings, drumsticks etc. when only chicken
+    legs were received in order to track sales accurately." Once an item
+    has ever used preset-attributed receiving (KitchenStockReceiptLine.preset),
+    kitchen_board()'s presets list for that item is filtered to only cuts
+    with a positive remaining balance (received via that flow minus sold
+    via Transaction.preset) — reconstructed from data already recorded by
+    the 2026-07-25/07-28 sprints, no new balance field. An item that's
+    never used preset-attributed receiving keeps showing every preset
+    exactly as before (fully backward compatible)."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='kppv')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='KPPV-KUKU', unit='Pcs', selling_price=Decimal('0'),
+        )
+        self.bawa = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Bawa', price=Decimal('50'), quantity_consumed=Decimal('0.25'),
+        )
+        self.legi = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Legi Nzima', price=Decimal('150'), quantity_consumed=Decimal('1'),
+        )
+        self.client.force_login(self.owner_user)
+
+    def _presets_for(self, resp, item_id):
+        import json
+        items = json.loads(resp.context['portion_items'])
+        item = next(i for i in items if i['id'] == item_id)
+        return {p['id'] for p in item['presets']}
+
+    def _receive(self, preset, qty, cost):
+        import json, uuid
+        return self.client.post('/kitchen/stock-receipt/create/', {
+            'supplier': 'Butcher', 'invoice_no': '', 'note': '',
+            'lines': json.dumps([{'item_id': self.kuku.id, 'preset_id': preset.id, 'qty': str(qty), 'cost': str(cost)}]),
+            'idempotency_token': str(uuid.uuid4()),
+        })
+
+    def test_before_any_preset_receipt_all_presets_shown(self):
+        resp = self.client.get('/kitchen/')
+        ids = self._presets_for(resp, self.kuku.id)
+        self.assertEqual(ids, {self.bawa.id, self.legi.id})
+
+    def test_only_received_preset_shown_after_preset_receiving(self):
+        self._receive(self.legi, qty=10, cost=1500)
+        resp = self.client.get('/kitchen/')
+        ids = self._presets_for(resp, self.kuku.id)
+        self.assertEqual(ids, {self.legi.id})
+        self.assertNotIn(self.bawa.id, ids)
+
+    def test_preset_disappears_once_fully_sold(self):
+        self._receive(self.legi, qty=2, cost=300)
+        # Sell both legs — same shape a real checkout writes: qty deducted
+        # by quantity_consumed, preset attributed.
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Issue', qty=Decimal('-2'),
+            preset=self.legi, sale_amount=Decimal('300'), payment_method='cash',
+        )
+        resp = self.client.get('/kitchen/')
+        ids = self._presets_for(resp, self.kuku.id)
+        self.assertNotIn(self.legi.id, ids)
+
+    def test_reappears_after_a_fresh_receive(self):
+        self._receive(self.legi, qty=2, cost=300)
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Issue', qty=Decimal('-2'),
+            preset=self.legi, sale_amount=Decimal('300'), payment_method='cash',
+        )
+        self._receive(self.legi, qty=5, cost=750)
+        resp = self.client.get('/kitchen/')
+        ids = self._presets_for(resp, self.kuku.id)
+        self.assertIn(self.legi.id, ids)
 
 
 class ItemFormYieldSectionVisibilityTest(TestCase):
@@ -19079,6 +19459,83 @@ class ReceiptsListStationScopingTest(TestCase):
         resp = self.client.get('/receipts/?status=all')
         self.assertContains(resp, 'Bar Sale')
         self.assertContains(resp, 'Kitchen Sale')
+
+
+class ReceiptsListCrossCounterMergeVisibilityTest(TestCase):
+    """2026-08-05 live report: "bar staff are seeing kitchen receipts and
+    vice versa, it is confusing to the user." Traced to a real bug in the
+    2026-07-30 fix (test class above), not a fresh regression: it filtered
+    purely on Receipt.source — but resolve_master_receipt() deliberately
+    merges a customer's bar AND kitchen orders into ONE shared receipt via
+    meta.linked_tab_ids (source stays whatever it was FIRST issued as). A
+    bar-only staffer saw kitchen line items/revenue bleed into a
+    bar-sourced receipt with no explanation, while a kitchen-only staffer
+    never saw that same receipt at all — their own kitchen sale invisible
+    on their own Receipts page. Fixed by basing visibility on which
+    station(s) a receipt actually touches (own source + every linked tab's
+    source), and flagging is_mixed_station for a clear badge."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Receipts Merge Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='rmg_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_staff = User.objects.create_user(username='rmg_bar_staff', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='rmg_kitchen_staff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+
+        from core.models import Receipt
+        # A receipt FIRST issued at the bar (source='') for "Roy", later
+        # merged with his kitchen order via linked_tab_ids — exactly what
+        # resolve_master_receipt() does for a repeat customer.
+        kitchen_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='SETTLED', source='kitchen',
+        )
+        self.merged_receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=10, token='rmg-merged-tok',
+            total=Decimal('1200'), source='', customer_name='Roy',
+            meta={'linked_tab_ids': [kitchen_tab.id]},
+        )
+        # A pure bar receipt, untouched — must never show the mixed badge.
+        Receipt.objects.create(
+            business=self.biz, receipt_number=11, token='rmg-purebar-tok',
+            total=Decimal('300'), source='', customer_name='Pure Bar Sale',
+        )
+
+    def test_kitchen_only_staff_now_sees_their_own_merged_sale(self):
+        """Previously invisible — the receipt's own source is '' (bar), so
+        the old source-only filter excluded it entirely from kitchen staff,
+        even though it genuinely contains their kitchen sale."""
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.get('/receipts/?status=all')
+        self.assertContains(resp, 'Roy')
+
+    def test_bar_only_staff_still_sees_it_but_flagged_mixed(self):
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/receipts/?status=all')
+        self.assertContains(resp, 'Roy')
+        self.assertContains(resp, 'Mchanganyiko')
+
+    def test_pure_bar_receipt_never_flagged_mixed(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/receipts/?status=all')
+        content = resp.content.decode()
+        pure_idx = content.index('Pure Bar Sale')
+        merged_idx = content.index('Roy')
+        # Crude but sufficient: the mixed badge text must not appear inside
+        # the pure-bar row's own row markup segment.
+        row_start = content.rfind('receipt-row', 0, pure_idx)
+        row_end = content.index('</a>', pure_idx)
+        self.assertNotIn('Mchanganyiko', content[row_start:row_end])
+
+    def test_owner_sees_both_with_mixed_flagged(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/receipts/?status=all')
+        self.assertContains(resp, 'Roy')
+        self.assertContains(resp, 'Pure Bar Sale')
+        self.assertContains(resp, 'Mchanganyiko')
 
 
 class StaffReceiveStockPermissionTest(TestCase):

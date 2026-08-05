@@ -35,6 +35,7 @@
 .src-badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 8px; font-size: 0.65rem; font-weight: 600; white-space: nowrap; }
 .src-kitchen { background: rgba(255,180,50,0.13); color: #f5a623; }
 .src-bar     { background: rgba(200,117,42,0.13); color: #C8752A; }
+.src-mixed   { background: rgba(93,168,240,0.13); color: #5da8f0; }
 .filter-bar {
     background: var(--onyx-card);
     border: 1px solid #2a2a2a;
@@ -139,7 +140,9 @@
             {% if r.meta.split_payment %}
             <span class="pay-badge" style="background:rgba(93,168,240,0.15); color:#5da8f0;" title="Malipo yaligawanywa kati ya njia mbili">✂️ Split</span>
             {% endif %}
-            {% if r.source == 'kitchen' %}<span class="src-badge src-kitchen">🍗 Kitchen</span>{% endif %}
+            {% if r.is_mixed_station %}
+            <span class="src-badge src-mixed" title="Bili hii ina bidhaa kutoka Bar NA Kitchen — imeunganishwa kwa mteja huyu huyu">🔀 Mchanganyiko</span>
+            {% elif r.source == 'kitchen' %}<span class="src-badge src-kitchen">🍗 Kitchen</span>{% endif %}
             {% if r.created_by %}<span class="rct-server" title="Served by {{ r.created_by.get_full_name|default:r.created_by.username }}">{{ r.created_by.username }}</span>{% endif %}
         </a>
         {% endfor %}

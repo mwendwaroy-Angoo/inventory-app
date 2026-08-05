@@ -1604,6 +1604,14 @@ def recent_settled_tabs_api(request):
             'amount': float(e.amount),
             'payment_method': e.payment_method,
             'is_kitchen': is_kitchen,
+            # 2026-08-05 live request: "item search... can see how many keg
+            # cups she sold or bar orders sold in order to assist with
+            # posting in the system" — raw keg-serving fields (already
+            # stored per-Transaction by KegBarrel.record_sale) so the
+            # frontend can search/group by preset without parsing "×N" out
+            # of the free-text description string.
+            'keg_qty':     e.transaction.keg_qty if e.transaction_id else None,
+            'keg_serving': e.transaction.keg_serving if e.transaction_id else '',
         })
         if e.paid_at and (bucket['_latest'] is None or e.paid_at > bucket['_latest']):
             bucket['_latest'] = e.paid_at
@@ -1654,6 +1662,8 @@ def recent_settled_tabs_api(request):
             'payment_method': t.payment_method,
             'is_kitchen': is_kitchen,
             'time': timezone.localtime(t.created_at).strftime('%H:%M') if t.created_at else '',
+            'keg_qty':     t.keg_qty,
+            'keg_serving': t.keg_serving or '',
         })
 
     return JsonResponse({'tabs': result, 'direct': direct, 'date': sel_date.isoformat()})
@@ -3911,6 +3921,7 @@ def keg_barrel_detail(request, barrel_id):
             rate = price / qty_ml
             max_servings = int(net_vol_ml / qty_ml)
             preset_rates.append({
+                'preset_id':    p.id,
                 'label':        p.label,
                 'price':        price,
                 'qty_ml':       qty_ml,
@@ -4056,6 +4067,91 @@ def keg_barrel_detail(request, barrel_id):
         'barrel_cup_total_cost':      barrel_cup_total_cost,
         'barrel_cup_cost_300':        barrel_cup_cost_300,
         'barrel_cup_cost_500':        barrel_cup_cost_500,
+    })
+
+
+@login_required
+@require_POST
+def keg_record_missed_sale(request, barrel_id):
+    """2026-08-05 live request (Roy): "keg variance reconciliation according
+    to remaining weight in the instance that a barrel was received sold
+    physically but not sold by the app and when weighed it showed a lesser
+    weight than expected, so that variance should be accounted for
+    accordingly." A pour that genuinely happened — real money changed
+    hands — but was never rung up in the app shows up ONLY as unexplained
+    scale-vs-book shrinkage, indistinguishable from real spillage/theft in
+    every wastage report (barrel_variance(), the Bar Performance shrinkage
+    table, the shrinkage leaderboard). Rather than inventing a second,
+    parallel accounting mechanism for the same envelope, this reconciles
+    the gap by recording it as an ORDINARY sale through the exact same
+    KegBarrel.record_sale_locked() path any normal pour uses — a real
+    preset + qty the owner/manager attests actually happened, real revenue,
+    a real Transaction — so it correctly reduces the scale-vs-book gap,
+    counts toward till/dashboard/analytics revenue like any other sale, and
+    leaves a receipt-worthy trail instead of a silent "explain nothing"
+    write-off. Deliberately owner/manager-only, not open to any on-shift
+    staffer — this creates new recorded revenue based on a manual,
+    unverified account of what was actually poured, the same sensitivity
+    tier as adjust_stock_balance/Rekebisha and every other financial-figure
+    correction in this app."""
+    up = _get_up(request)
+    if not up or not up.is_owner_or_manager:
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa.'}, status=403)
+
+    business = up.business
+    barrel = get_object_or_404(KegBarrel, id=barrel_id, business=business)
+
+    # Same double-submit backstop every other checkout-shaped action in this
+    # app uses — a retried/duplicate submit here would double-record real
+    # revenue for one physical pour.
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
+    preset = ItemPortionPreset.objects.filter(
+        id=request.POST.get('preset_id'), item=barrel.item,
+    ).first()
+    if not preset:
+        return JsonResponse({'ok': False, 'error': 'Kiwango (preset) hakikupatikana'}, status=404)
+
+    try:
+        qty = int(request.POST.get('qty', '0'))
+        if qty <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        return JsonResponse({'ok': False, 'error': 'Idadi si sahihi'}, status=400)
+
+    payment_method = request.POST.get('payment_method') or 'cash'
+    if payment_method not in ('cash', 'mpesa', 'credit'):
+        payment_method = 'cash'
+    note = (request.POST.get('note') or '').strip()[:200]
+
+    try:
+        txn = KegBarrel.record_sale_locked(
+            barrel.id, business, preset, qty, payment_method, recorded_by=request.user,
+        )
+    except KegBarrel.DoesNotExist:
+        return JsonResponse(
+            {'ok': False, 'error': 'Pipa hii si Tapped — huwezi kurekodi mauzo yasiyorekodiwa.'},
+            status=400,
+        )
+
+    barrel.refresh_from_db()
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b, %H:%M')
+    audit_line = f"[Mauzo yasiyorekodiwa yaliongezwa na {who} — {when}: {preset.label} x{qty}"
+    if note:
+        audit_line += f" — {note}"
+    audit_line += "]"
+    barrel.note = (barrel.note + ' | ' if barrel.note else '') + audit_line
+    barrel.save(update_fields=['note'])
+
+    return JsonResponse({
+        'ok': True,
+        'message': f"✓ Imerekodiwa: {preset.label} ×{qty} — KES {float(txn.sale_amount):,.0f}",
+        'revenue_collected':   float(barrel.revenue_collected),
+        'volume_dispensed_ml': float(barrel.volume_dispensed_ml),
     })
 
 

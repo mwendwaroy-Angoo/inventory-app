@@ -1545,12 +1545,16 @@
                    border-radius:8px;padding:.4rem .6rem;color:#b0b0b0;font-size:.78rem;cursor:pointer;">
       🕐 Malipo ya Hivi Karibuni <span id="recent-payments-caret">▾</span>
     </button>
-    <div id="recent-payments-datebar" style="display:none;margin-top:.35rem;align-items:center;gap:.4rem;">
+    <div id="recent-payments-datebar" style="display:none;margin-top:.35rem;align-items:center;gap:.4rem;flex-wrap:wrap;">
       <span style="color:#888;font-size:.72rem;">Tarehe:</span>
       <input type="date" id="recent-payments-date"
              style="background:#111;border:1px solid #444;border-radius:5px;color:#f0ece4;padding:.2rem .4rem;font-size:.75rem;"
              onchange="window.loadRecentPayments()">
+      <input type="text" id="recent-payments-search" placeholder="🔍 Tafuta bidhaa (mfano: Pint, Cash)…"
+             style="flex:1;min-width:140px;background:#111;border:1px solid #444;border-radius:5px;color:#f0ece4;padding:.2rem .4rem;font-size:.75rem;"
+             oninput="window.renderRecentPayments()">
     </div>
+    <div id="recent-payments-summary"></div>
     <div id="recent-payments-panel" style="display:none;margin-top:.35rem;max-height:220px;overflow-y:auto;"></div>
   </div>
   <!-- Customers with existing debt — 2026-08-02 live request: a customer
@@ -3157,23 +3161,64 @@
     return d.getFullYear() + '-' + m + '-' + day;
   }
 
-  window.loadRecentPayments = function () {
+  // 2026-08-05 live request: "item search... can see how many keg cups she
+  // sold or bar orders sold in order to assist with posting in the
+  // system" — cache the fetched day's data client-side so the search box
+  // re-filters instantly with no re-fetch, and show a running summary
+  // (order count, total KES, and — for keg items — cups/pints/jugs sold)
+  // over whatever's currently matching the search, so staff can type
+  // "Pint" and immediately see how many pints to reconcile against a
+  // paper tally or M-Pesa statement.
+  var _recentPaymentsData = { tabs: [], direct: [] };
+
+  function _rpMatches(desc, q) {
+    return !q || (desc || '').toLowerCase().indexOf(q) !== -1;
+  }
+
+  window.renderRecentPayments = function () {
     var panel = document.getElementById('recent-payments-panel');
-    panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Inapakia...</div>';
-    var dateEl = document.getElementById('recent-payments-date');
-    var sel = (dateEl && dateEl.value) ? dateEl.value : _todayIso();
-    fetch('/bar/tabs/recent-settled/?date=' + sel + '&station=bar', {credentials: 'same-origin'})
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        _recentPaymentsLoaded = true;
-        var tabs = d.tabs || [];
-        var direct = d.direct || [];
-        if (!tabs.length && !direct.length) {
-          panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Hakuna malipo tarehe hii.</div>';
-          return;
-        }
-        var html = '';
-        tabs.forEach(function (t) {
+    var summaryEl = document.getElementById('recent-payments-summary');
+    var searchEl = document.getElementById('recent-payments-search');
+    var q = (searchEl && searchEl.value || '').trim().toLowerCase();
+    var tabs = _recentPaymentsData.tabs, direct = _recentPaymentsData.direct;
+
+    var filteredTabs = tabs.map(function (t) {
+      var entries = t.entries.filter(function (e) { return _rpMatches(e.description, q); });
+      return entries.length ? Object.assign({}, t, { entries: entries }) : null;
+    }).filter(Boolean);
+    var filteredDirect = direct.filter(function (e) { return _rpMatches(e.description, q); });
+
+    if (!filteredTabs.length && !filteredDirect.length) {
+      panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">' +
+        (q ? 'Hakuna kilicholingana na "' + q + '".' : 'Hakuna malipo tarehe hii.') + '</div>';
+      if (summaryEl) summaryEl.innerHTML = '';
+      return;
+    }
+
+    var totalKes = 0, totalCount = 0, servingCounts = {};
+    function tally(e) {
+      totalKes += e.amount; totalCount += 1;
+      if (e.keg_serving && e.keg_qty) {
+        servingCounts[e.keg_serving] = (servingCounts[e.keg_serving] || 0) + e.keg_qty;
+      }
+    }
+    filteredTabs.forEach(function (t) { t.entries.forEach(tally); });
+    filteredDirect.forEach(tally);
+
+    if (summaryEl) {
+      var icons = { cup: '☕', pint: '🍺', jug: '🫙' };
+      var bits = [];
+      Object.keys(servingCounts).forEach(function (k) {
+        bits.push((icons[k] || '🍻') + ' ' + servingCounts[k] + ' ' + k + (servingCounts[k] !== 1 ? 's' : ''));
+      });
+      summaryEl.innerHTML = '<div style="font-size:.72rem;color:#c9a84c;font-weight:600;padding:.3rem .1rem 0;">' +
+        totalCount + ' order' + (totalCount !== 1 ? 's' : '') +
+        (bits.length ? ' — ' + bits.join(' · ') : '') +
+        ' — Jumla KES ' + fmt(totalKes) + '</div>';
+    }
+
+    var html = '';
+    filteredTabs.forEach(function (t) {
           html += '<div style="background:#222;border:1px solid #333;border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem;">' +
             '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at +
             (t.tab_open ? ' <span style="color:#f0a840;font-weight:400;">(bado wazi — bidhaa zingine hazijalipwa)</span>' : '') +
@@ -3192,9 +3237,9 @@
         // sale was visible in Receipts/Transaction History but not here).
         // No "undo to unpaid" here (the sale is genuinely complete) — just a
         // payment-method relabel.
-        if (direct.length) {
+        if (filteredDirect.length) {
           html += '<div style="font-size:.72rem;color:#888;font-weight:600;margin:.3rem 0 .15rem;">Mauzo ya Moja kwa Moja (si tab)</div>';
-          direct.forEach(function (e) {
+          filteredDirect.forEach(function (e) {
             var other = e.payment_method === 'cash' ? 'mpesa' : 'cash';
             var otherLabel = other === 'cash' ? 'Cash' : 'M-Pesa';
             html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
@@ -3209,6 +3254,21 @@
           });
         }
         panel.innerHTML = html;
+  };
+
+  window.loadRecentPayments = function () {
+    var panel = document.getElementById('recent-payments-panel');
+    panel.innerHTML = '<div style="color:#888;font-size:.75rem;padding:.4rem;">Inapakia...</div>';
+    var dateEl = document.getElementById('recent-payments-date');
+    var sel = (dateEl && dateEl.value) ? dateEl.value : _todayIso();
+    fetch('/bar/tabs/recent-settled/?date=' + sel + '&station=bar', {credentials: 'same-origin'})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        _recentPaymentsLoaded = true;
+        _recentPaymentsData = { tabs: d.tabs || [], direct: d.direct || [] };
+        var searchEl = document.getElementById('recent-payments-search');
+        if (searchEl) searchEl.value = '';
+        window.renderRecentPayments();
       })
       .catch(function () { panel.innerHTML = '<div style="color:#c0395a;font-size:.75rem;padding:.4rem;">Hitilafu ya mtandao.</div>'; });
   };
@@ -5383,7 +5443,6 @@
       return;
     }
 
-    var pmIcon = { cash: '💵', mpesa: '📱', credit: '📒' };
     var statusColors = {
       PENDING:  { bg: 'rgba(255,152,0,.12)', color: '#ff9800' },
       ACCEPTED: { bg: 'rgba(33,150,243,.12)', color: '#64b5f6' },
@@ -5425,7 +5484,7 @@
         + '</div>'
         + '<div style="font-size:.82rem; color:#b0b0b0; margin-bottom:.5rem;">' + itemsHtml + '</div>'
         + '<div style="display:flex; justify-content:space-between; align-items:center;">'
-        + '<span style="color:#c9a84c; font-size:.85rem; font-weight:600;">KES ' + Math.round(o.total).toLocaleString() + ' ' + (pmIcon[o.payment_method] || '') + '</span>'
+        + '<span style="color:#c9a84c; font-size:.85rem; font-weight:600;">KES ' + Math.round(o.total).toLocaleString() + '</span>'
         + '<div style="display:flex; gap:.4rem;">' + actions + '</div>'
         + '</div>'
         + (o.notes ? '<div style="font-size:.75rem; color:#888; margin-top:.3rem; font-style:italic;">' + escOq(o.notes) + '</div>' : '')

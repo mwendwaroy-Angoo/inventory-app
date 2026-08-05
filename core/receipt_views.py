@@ -62,21 +62,6 @@ def receipts_list(request):
     if search:
         qs = qs.filter(customer_name__icontains=search)
 
-    # Station Scoping Principle (2026-07-30 audit finding while adding a direct
-    # "Mauzo ya Karibuni" button to Bar Board — this filter only ever excluded
-    # bar/QS receipts for kitchen-only staff; a bar-only staffer had no
-    # complementary exclusion and could see kitchen receipts too. Receipt.source
-    # is 'kitchen' for kitchen sales, '' (blank) for everything else — bar and
-    # Quick Sell share the same blank value, so there's no separate 'bar' value
-    # to exclude; a bar-only view is just "not kitchen".
-    from .views import _station_scope
-    _show_bar, _show_kitchen = _station_scope(user_profile)
-    if not user_profile.is_owner_or_manager:
-        if _show_kitchen and not _show_bar:
-            qs = qs.filter(source='kitchen')
-        elif _show_bar and not _show_kitchen:
-            qs = qs.exclude(source='kitchen')
-
     all_receipts = list(qs.order_by('-created_at'))
 
     # Distinguish an actually-completed sale from a still-live, unpaid tab
@@ -92,10 +77,56 @@ def receipts_list(request):
     all_tab_ids = set()
     for r in all_receipts:
         all_tab_ids.update(_receipt_all_tab_ids(r))
-    open_tab_ids = (
-        set(_BarTab.objects.filter(id__in=all_tab_ids, status='OPEN').values_list('id', flat=True))
-        if all_tab_ids else set()
+    _tabs_by_id = (
+        {t.id: t for t in _BarTab.objects.filter(id__in=all_tab_ids)}
+        if all_tab_ids else {}
     )
+    open_tab_ids = {tid for tid, t in _tabs_by_id.items() if t.status == 'OPEN'}
+
+    # Station Scoping Principle — 2026-08-05 live report (Roy): bar staff
+    # were still seeing kitchen receipts and vice versa, despite the
+    # 2026-07-30 fix below (kept, unchanged: Receipt.source is 'kitchen' for
+    # kitchen sales, '' for bar/quick-sell). Root cause of the REMAINING
+    # leak: resolve_master_receipt() (core/tab_receipts.py) deliberately
+    # consolidates a customer's bar AND kitchen orders into ONE shared
+    # receipt/PIN via meta.linked_tab_ids — a real, wanted feature (one bill
+    # for the customer) — but a receipt's own `source` field only ever
+    # reflects where it was FIRST issued, never that it later absorbed the
+    # other counter's items too. A bar-only staffer viewing a bar-sourced
+    # receipt that later had a kitchen order merged into it saw kitchen line
+    # items and kitchen revenue inside what looked like "their" receipt with
+    # zero explanation — and a kitchen-only staffer never saw that same
+    # receipt at all (excluded by source), so their own kitchen sale was
+    # invisible to them on their own Receipts page. Fixed by basing
+    # visibility on which station(s) a receipt ACTUALLY TOUCHES (its own
+    # source, plus every linked tab's own source) rather than source alone —
+    # closing both directions — and flagging is_mixed_station so a viewer
+    # who does see a cross-counter receipt gets a clear "🔀 Mchanganyiko"
+    # explanation instead of silent confusion.
+    def _receipt_touches(r, want_kitchen):
+        own_is_kitchen = (r.source == 'kitchen')
+        if own_is_kitchen == want_kitchen:
+            return True
+        for tid in _receipt_all_tab_ids(r):
+            t = _tabs_by_id.get(tid)
+            if t is None:
+                continue
+            if (t.source == 'kitchen') == want_kitchen:
+                return True
+        return False
+
+    from .views import _station_scope
+    _show_bar, _show_kitchen = _station_scope(user_profile)
+    for r in all_receipts:
+        r.touches_bar     = _receipt_touches(r, False)
+        r.touches_kitchen = _receipt_touches(r, True)
+        r.is_mixed_station = r.touches_bar and r.touches_kitchen
+
+    if not user_profile.is_owner_or_manager:
+        if _show_kitchen and not _show_bar:
+            all_receipts = [r for r in all_receipts if r.touches_kitchen]
+        elif _show_bar and not _show_kitchen:
+            all_receipts = [r for r in all_receipts if r.touches_bar]
 
     status_filter = request.GET.get('status', 'sold')  # 'sold' (default) | 'all' | 'open'
     receipts = []
