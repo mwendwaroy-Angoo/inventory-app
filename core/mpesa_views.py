@@ -1123,6 +1123,55 @@ def c2b_confirmation(request):
         logger.warning("C2B: No business found for shortcode %s", shortcode)
         return JsonResponse({'ResultCode': 0, 'ResultDesc': 'Accepted'})
 
+    # UBA L1-AC2 — the marquee rent auto-reconciliation feature: BillRefNumber
+    # is the tenant's Paybill account number, which for a Rentals business IS
+    # the RentalUnit.code (e.g. 'A12'). Try this BEFORE the generic bar/
+    # kitchen pending-prompt flow below — a rent payment should never turn
+    # into a "what did you sell?" staff prompt. Only businesses that actually
+    # HAVE rental units get the BusinessException on a miss (L1-AC2's own
+    # wording) — a business with no rental units at all just falls through
+    # to the ordinary flow, since its BillRefNumber was never meant to be a
+    # unit code in the first place.
+    if bill_ref_number and business.rental_units.exists():
+        from .rentals import apply_rent_payment_by_unit_code
+        try:
+            amount_dec = float(trans_amount)
+        except (ValueError, TypeError):
+            amount_dec = 0
+        agreement = apply_rent_payment_by_unit_code(
+            business, bill_ref_number.strip(), amount_dec, phone=msisdn, mpesa_ref=trans_id,
+        )
+        if agreement:
+            tenant_msg = (
+                f"Umepokea KES {amount_dec:,.0f} kutoka {msisdn} — {bill_ref_number} "
+                f"({agreement.customer.name}). Asante."
+            )
+            try:
+                from accounts.models import UserProfile as _UP
+                from .notifications import normalize_ke_phone, send_sms_notification
+                if agreement.customer.phone:
+                    send_sms_notification(tenant_msg, normalize_ke_phone(agreement.customer.phone))
+                for op in _UP.objects.filter(business=business, role__in=['owner', 'manager']).select_related('user'):
+                    create_in_app_notification(
+                        op.user, '💰 Kodi Imelipwa', tenant_msg, notification_type='info',
+                    )
+                    if op.phone:
+                        send_sms_notification(tenant_msg, normalize_ke_phone(op.phone))
+            except Exception:
+                pass
+            return JsonResponse({'ResultCode': 0, 'ResultDesc': 'Accepted'})
+        else:
+            from .models import BusinessException
+            BusinessException.raise_exception(
+                business=business, kind='other', severity='warn',
+                title=f"Malipo ya M-Pesa hayajatambulika: {bill_ref_number}",
+                detail=f"KES {trans_amount} kutoka {msisdn}, akaunti '{bill_ref_number}' haikupatikana "
+                       f"kwenye vitengo vya kodi.",
+                amount_kes=amount_dec, link_url='/maduka/',
+            )
+            # Fall through to the ordinary pending-prompt flow — the money
+            # still needs to be accounted for somehow, never silently dropped.
+
     # Determine source from the matched store
     c2b_source = 'kitchen' if (matched_store and getattr(matched_store, 'is_kitchen', False)) else 'bar'
 

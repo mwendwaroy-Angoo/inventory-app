@@ -6,6 +6,7 @@ from accounts.views import logout_view
 from stockapp.admin_site import duka_admin_site
 from core.views import (
     home,
+    switch_active_store,
     dashboard_revenue_api,
     stock_list,
     expiring_items,
@@ -222,6 +223,33 @@ from core.analytics_views import (
     revenue_target_progress,
     daily_sales,
 )
+from core.maduka_views import maduka_dashboard, maduka_acknowledge_exception
+from core.barcode_views import barcode_lookup, add_item_by_barcode
+from core.returns_views import process_return, approve_return, reject_return, apply_suggested_price
+from core.cycle_count_views import (
+    todays_cycle_count_list, start_cycle_count, submit_cycle_count_line, close_cycle_count_session,
+)
+from core.payables_views import payables_dashboard, record_supplier_invoice, record_supplier_payment
+from core.retail_reports_views import (
+    dead_stock_report_view, reorder_today_view, basket_affinity_view, hour_heatmap_view,
+)
+from core.payment_plans_views import (
+    create_payment_plan, pay_payment_plan, convert_payment_plan_to_sale,
+    refund_payment_plan, release_payment_plan, forfeit_payment_plan,
+)
+from core.variants_views import create_variant_matrix_view
+from core.apparel_views import (
+    aging_markdown_report_view, apply_markdown_view, record_fitting_room_count,
+)
+from core.salon_views import (
+    complete_service_view, recipe_variance_report_view, create_appointment,
+    update_appointment_status, commission_report_view,
+)
+from core.rentals_views import (
+    create_rental_unit, create_rental_agreement, terminate_rental_agreement,
+    run_rent_roll, record_meter_reading, report_maintenance,
+    close_maintenance_ticket, deduct_from_deposit,
+)
 from core.recurring_expense_views import (
     recurring_expense_list,
     recurring_expense_add,
@@ -337,6 +365,7 @@ urlpatterns = [
     path("accounts/", include("django.contrib.auth.urls")),
     path("business/", include("accounts.urls")),
     path("", home, name="home"),
+    path("store/switch/<int:store_id>/", switch_active_store, name="switch_active_store"),
     path("dashboard/revenue/", dashboard_revenue_api, name="dashboard_revenue_api"),
     path("health/", health_check, name="health_check"),
     path("offline/", offline, name="offline"),
@@ -758,6 +787,59 @@ urlpatterns = [
     path("analytics/", analytics_dashboard, name="analytics"),
     path("analytics/forecast/", forecast_api, name="forecast_api"),
     path("api/v1/analytics/trends/", analytics_api, name="analytics_api"),
+    # ── UBA M3 — Maduka Yangu owner console ──────────────────────────────────
+    path("maduka/", maduka_dashboard, name="maduka_dashboard"),
+    path("maduka/exceptions/<int:exc_id>/acknowledge/", maduka_acknowledge_exception, name="maduka_acknowledge_exception"),
+    # ── UBA R1 — barcode + fast onboarding ────────────────────────────────────
+    path("stock/barcode/<str:barcode>/", barcode_lookup, name="barcode_lookup"),
+    path("stock/add-by-barcode/", add_item_by_barcode, name="add_item_by_barcode"),
+    # ── UBA R2 — returns + margin guard ────────────────────────────────────────
+    path("stock/returns/process/", process_return, name="process_return"),
+    path("stock/returns/<int:return_id>/approve/", approve_return, name="approve_return"),
+    path("stock/returns/<int:return_id>/reject/", reject_return, name="reject_return"),
+    path("stock/items/<int:item_id>/apply-suggested-price/", apply_suggested_price, name="apply_suggested_price"),
+    # ── UBA R3 — cycle counting (ABC) ──────────────────────────────────────────
+    path("stock/cycle-count/today/", todays_cycle_count_list, name="todays_cycle_count_list"),
+    path("stock/cycle-count/start/", start_cycle_count, name="start_cycle_count"),
+    path("stock/cycle-count/line/<int:line_id>/submit/", submit_cycle_count_line, name="submit_cycle_count_line"),
+    path("stock/cycle-count/session/<int:session_id>/close/", close_cycle_count_session, name="close_cycle_count_session"),
+    # ── UBA X1 — payables ───────────────────────────────────────────────────────
+    path("payables/", payables_dashboard, name="payables_dashboard"),
+    path("payables/invoices/record/", record_supplier_invoice, name="record_supplier_invoice"),
+    path("payables/invoices/<int:invoice_id>/pay/", record_supplier_payment, name="record_supplier_payment"),
+    # ── UBA R4 — retail intelligence ────────────────────────────────────────────
+    path("analytics/retail/dead-stock/", dead_stock_report_view, name="dead_stock_report_view"),
+    path("analytics/retail/reorder-today/", reorder_today_view, name="reorder_today_view"),
+    path("analytics/retail/basket-affinity/", basket_affinity_view, name="basket_affinity_view"),
+    path("analytics/retail/hour-heatmap/", hour_heatmap_view, name="hour_heatmap_view"),
+    # ── UBA P0-B — payment plans (layaway / deposit / instalment / booking) ────
+    path("payment-plans/create/", create_payment_plan, name="create_payment_plan"),
+    path("payment-plans/<int:plan_id>/pay/", pay_payment_plan, name="pay_payment_plan"),
+    path("payment-plans/<int:plan_id>/convert/", convert_payment_plan_to_sale, name="convert_payment_plan_to_sale"),
+    path("payment-plans/<int:plan_id>/refund/", refund_payment_plan, name="refund_payment_plan"),
+    path("payment-plans/<int:plan_id>/release/", release_payment_plan, name="release_payment_plan"),
+    path("payment-plans/<int:plan_id>/forfeit/", forfeit_payment_plan, name="forfeit_payment_plan"),
+    # ── UBA A1 — variants (the boutique half) ──────────────────────────────────
+    path("stock/variants/create-matrix/", create_variant_matrix_view, name="create_variant_matrix_view"),
+    # ── UBA A3 — aging/markdown + fitting room ──────────────────────────────────
+    path("analytics/apparel/aging-markdown/", aging_markdown_report_view, name="aging_markdown_report_view"),
+    path("stock/items/<int:item_id>/apply-markdown/", apply_markdown_view, name="apply_markdown_view"),
+    path("apparel/fitting-room/record/", record_fitting_room_count, name="record_fitting_room_count"),
+    # ── UBA S1/S2/S3 — salon: services, bookings, commission ────────────────────
+    path("salon/services/complete/", complete_service_view, name="complete_service_view"),
+    path("salon/services/recipe-variance/", recipe_variance_report_view, name="recipe_variance_report_view"),
+    path("salon/appointments/create/", create_appointment, name="create_appointment"),
+    path("salon/appointments/<int:appointment_id>/status/", update_appointment_status, name="update_appointment_status"),
+    path("salon/commission/<int:stylist_id>/", commission_report_view, name="commission_report_view"),
+    # ── UBA L1/L2 — rentals (property + equipment) ──────────────────────────────
+    path("rentals/units/create/", create_rental_unit, name="create_rental_unit"),
+    path("rentals/agreements/create/", create_rental_agreement, name="create_rental_agreement"),
+    path("rentals/agreements/<int:agreement_id>/terminate/", terminate_rental_agreement, name="terminate_rental_agreement"),
+    path("rentals/rent-roll/run/", run_rent_roll, name="run_rent_roll"),
+    path("rentals/units/<int:unit_id>/meter-reading/", record_meter_reading, name="record_meter_reading"),
+    path("rentals/units/<int:unit_id>/maintenance/", report_maintenance, name="report_maintenance"),
+    path("rentals/maintenance/<int:ticket_id>/close/", close_maintenance_ticket, name="close_maintenance_ticket"),
+    path("rentals/agreements/<int:agreement_id>/deduct-deposit/", deduct_from_deposit, name="deduct_from_deposit"),
 ]
 
 if settings.DEBUG:

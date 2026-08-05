@@ -296,6 +296,7 @@
             {% bootstrap_field form.reorder_quantity %}
             </div>
 
+            {% if 'yield' not in biz_profile.capability.hides %}
             {% if not biz_profile.modules.keg or kitchen_store_ids_json %}
             <!-- ── Yield / Processing Section ──
                  2026-07-25 live report: on a business that has BOTH a keg module
@@ -341,7 +342,9 @@
             </div>
             <!-- ── end Yield Section ── -->
             {% endif %}{# not keg-only #}
+            {% endif %}{# UBA: 'yield' not in capability.hides #}
 
+            {% if 'restricted_items' not in biz_profile.capability.hides %}
             {% if user.userprofile.is_owner %}
             <div class="section-divider"><span>🔒 {% trans 'Restriction Settings' %}</span></div>
             <div class="mb-3">
@@ -378,7 +381,9 @@
                 <div id="reservedQtyHint" style="color:#6ee7b7; font-size:0.78rem; margin-top:0.25rem; display:none;"></div>
             </div>
             {% endif %}
+            {% endif %}{# UBA: 'restricted_items' not in capability.hides #}
 
+            {% if 'produce_keg_settings' not in biz_profile.capability.hides %}
             {% if user.userprofile.is_owner %}
             {% if not biz_profile.modules.keg %}
             <div class="section-divider"><span>🥬 {% trans 'Produce Settings' %}</span></div>
@@ -1473,6 +1478,7 @@
             </script>
 
             {% endif %}
+            {% endif %}{# UBA: 'produce_keg_settings' not in capability.hides #}
 
             <div class="d-flex gap-2 mt-4">
                 <button type="submit" class="btn btn-gold">

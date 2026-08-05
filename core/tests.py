@@ -9,10 +9,16 @@ from django.utils import timezone
 
 from accounts.models import Business, UserProfile
 from core.models import (
-    BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset,
-    KegBarrel, KegWeightReading, KitchenBatch, KitchenConsumableLog,
-    KitchenStockReceipt, KitchenStockReceiptLine,
-    Notification, Payment, PettyCash, Receipt, Shift, Store, TabTransferRequest,
+    Appointment, AppointmentService, BarCupLog, BarTab, BarTabEntry,
+    BusinessException, County, Customer, FittingRoomLog, GlobalProduct, Item,
+    ItemPortionPreset, ItemPriceHistory, KegBarrel, KegWeightReading,
+    KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
+    KitchenStockReceiptLine, MaintenanceTicket, MarketPriceIndex,
+    MeterReading, Notification, Payment, PaymentPlan, PaymentPlanEntry,
+    PettyCash, ProduceBunch, Receipt, RentalAgreement, RentalInvoice,
+    RentalUnit, Return, RevenueTarget, Service, ServiceSupplyLine, Shift,
+    StockCountLine, StockCountSession, Store, StockTransfer,
+    StockTransferLine, SupplierInvoice, SupplierPayment, TabTransferRequest,
     TillCount, Transaction,
 )
 from core.mpesa import _get_urls, initiate_stk_push, query_stk_status, URLS
@@ -21163,3 +21169,3355 @@ class KitchenPerformancePerPresetBreakdownTest(TestCase):
         self.assertEqual(rows['Chips']['revenue'], 200.0)
         self.assertEqual(rows['Chips']['units'], 2.0)
 
+
+# ── UBA §2.1/§2.4 — Item.stock_model + Capability registry ──────────────────
+
+class ItemStockModelSyncTest(TestCase):
+    """Item.save() keeps stock_model in sync with the pre-existing, load-bearing
+    discriminators (is_produce/produce_mode, is_keg, is_kitchen_batch)."""
+
+    def setUp(self):
+        biz_type = None
+        try:
+            from accounts.models import BusinessType
+            biz_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        except Exception:
+            pass
+        self.biz = Business.objects.create(name='UBA Stock Model Biz', business_type=biz_type)
+        self.store = Store.objects.create(business=self.biz, name='Main')
+
+    def _item(self, **kwargs):
+        n = Item.objects.count()
+        defaults = dict(business=self.biz, store=self.store, unit='Pcs', description=f'Item {n}')
+        defaults.update(kwargs)
+        return Item.objects.create(material_no=f'UBASM-{n}', **defaults)
+
+    def test_bunch_produce_becomes_envelope(self):
+        item = self._item(description='Sukuma', is_produce=True, produce_mode='BUNCH')
+        self.assertEqual(item.stock_model, 'ENVELOPE')
+
+    def test_portion_produce_becomes_unit(self):
+        item = self._item(description='Cabbage', is_produce=True, produce_mode='PORTION')
+        self.assertEqual(item.stock_model, 'UNIT')
+
+    def test_keg_item_becomes_measure(self):
+        item = self._item(description='Senator Keg', is_keg=True)
+        self.assertEqual(item.stock_model, 'MEASURE')
+
+    def test_kitchen_batch_becomes_envelope(self):
+        item = self._item(description='Chipo', is_kitchen_batch=True)
+        self.assertEqual(item.stock_model, 'ENVELOPE')
+
+    def test_plain_item_keeps_default_unit(self):
+        item = self._item(description='Soap')
+        self.assertEqual(item.stock_model, 'UNIT')
+
+    def test_toggling_off_is_produce_does_not_retroactively_relabel(self):
+        """Turning off is_produce on save doesn't force UNIT if some other
+        discriminator (is_keg) now applies instead — elif chain, not a reset."""
+        item = self._item(description='Weird combo', is_produce=True, produce_mode='BUNCH')
+        self.assertEqual(item.stock_model, 'ENVELOPE')
+        item.is_produce = False
+        item.is_keg = True
+        item.save()
+        self.assertEqual(item.stock_model, 'MEASURE')
+
+
+class CapabilityRegistryTest(TestCase):
+    """business_profiles.get_profile() attaches a Capability per UBA §2.4,
+    purely additive — must never change board/modules/catalog for any of the
+    8 existing profiles."""
+
+    def test_every_existing_profile_key_has_a_capability(self):
+        from core.business_profiles import CAPABILITIES, PROFILES
+        for key in PROFILES:
+            self.assertIn(key, CAPABILITIES, f'{key} profile has no Capability entry')
+
+    def test_get_profile_attaches_capability_without_changing_existing_keys(self):
+        from core.business_profiles import get_profile, PROFILES
+        biz_type = None
+        try:
+            from accounts.models import BusinessType
+            biz_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        except Exception:
+            pass
+        biz = Business.objects.create(name='UBA Cap Biz', business_type=biz_type)
+        profile = get_profile(biz)
+        self.assertEqual(profile['board'], PROFILES['bar']['board'])
+        self.assertEqual(profile['catalog'], PROFILES['bar']['catalog'])
+        self.assertIn('keg', profile['modules'])
+        self.assertIsNotNone(profile.get('capability'))
+        self.assertIn('MEASURE', profile['capability'].stock_models)
+
+    def test_default_profile_gets_default_capability(self):
+        from core.business_profiles import get_profile, DEFAULT_CAPABILITY
+        profile = get_profile(None)
+        self.assertEqual(profile['capability'], DEFAULT_CAPABILITY)
+
+
+class VocabFilterTest(TestCase):
+    """core.templatetags.uba_extras.vocab — per-profile word substitution
+    (UBA §M0-4). A no-op today since no profile has populated `vocabulary`
+    yet; this locks in the fallback and lookup behavior for when one does."""
+
+    def test_falls_back_to_word_when_vocabulary_empty(self):
+        from core.business_profiles import get_profile
+        from core.templatetags.uba_extras import vocab
+        profile = get_profile(None)
+        self.assertEqual(vocab('item', profile), 'item')
+
+    def test_uses_vocabulary_substitution_when_present(self):
+        from core.business_profiles import Capability
+        from core.templatetags.uba_extras import vocab
+        fake_profile = {'capability': Capability(vocabulary={'item': 'Huduma'})}
+        self.assertEqual(vocab('item', fake_profile), 'Huduma')
+        self.assertEqual(vocab('sale', fake_profile), 'sale')  # not in vocabulary -> falls back
+
+    def test_never_raises_on_missing_capability(self):
+        from core.templatetags.uba_extras import vocab
+        self.assertEqual(vocab('item', {}), 'item')
+        self.assertEqual(vocab('item', None), 'item')
+
+
+class ItemFormCapabilityHidesGatingTest(TestCase):
+    """UBA M0-3 — item_form.html field-group gating via
+    biz_profile.capability.hides. Three groups now wrap in an additive
+    `{% if 'X' not in biz_profile.capability.hides %}`: 'yield' (Yield /
+    Processing), 'restricted_items' (Restriction Settings), and
+    'produce_keg_settings' (Produce Settings through the entire preset
+    table + Kitchen Stock Mode — all originally one single
+    `{% if user.userprofile.is_owner %}` block that runs ~1100 lines, so
+    splitting Produce from Keg mid-block was judged too risky; one hide
+    key covers the whole span).
+
+    All 8 real profiles have an empty `hides` set today, so these wraps
+    must be a complete no-op — every section that rendered before this
+    sprint must still render exactly the same way (M0-AC1). A third test
+    proves the mechanism actually hides a section when a capability
+    populates `hides` — patching the registry directly since no real
+    profile has a populated hides set yet."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        self.bar_type, _c1 = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.kibanda_type, _c2 = BusinessType.objects.get_or_create(name='Kibanda / Food Stall')
+        self.bar_biz = Business.objects.create(name='UBA Hides Bar', business_type=self.bar_type)
+        self.kibanda_biz = Business.objects.create(name='UBA Hides Kibanda', business_type=self.kibanda_type)
+        Store.objects.create(business=self.bar_biz, name='Main')
+        Store.objects.create(business=self.kibanda_biz, name='Main')
+        self.bar_owner = User.objects.create_user(username='hides_bar_owner', password='x')
+        UserProfile.objects.create(user=self.bar_owner, business=self.bar_biz, role='owner')
+        self.kibanda_owner = User.objects.create_user(username='hides_kib_owner', password='x')
+        UserProfile.objects.create(user=self.kibanda_owner, business=self.kibanda_biz, role='owner')
+
+    def test_bar_item_form_sections_unaffected(self):
+        self.client.force_login(self.bar_owner)
+        resp = self.client.get('/stock/add/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Restriction Settings')
+        self.assertContains(resp, 'Keg Settings')
+        self.assertContains(resp, 'Spirits Accountability')
+
+    def test_kibanda_item_form_sections_unaffected(self):
+        self.client.force_login(self.kibanda_owner)
+        resp = self.client.get('/stock/add/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Restriction Settings')
+        self.assertContains(resp, 'Produce Settings')
+        self.assertContains(resp, 'Yield / Processing')
+
+    def test_populated_hides_actually_hides_the_sections(self):
+        from core.business_profiles import CAPABILITIES
+        import dataclasses
+        original = CAPABILITIES['bar']
+        patched = dataclasses.replace(
+            original,
+            hides=frozenset({'produce_keg_settings', 'restricted_items', 'yield'}),
+        )
+        CAPABILITIES['bar'] = patched
+        try:
+            self.client.force_login(self.bar_owner)
+            resp = self.client.get('/stock/add/')
+            self.assertEqual(resp.status_code, 200)
+            self.assertNotContains(resp, 'Restriction Settings')
+            self.assertNotContains(resp, 'Keg Settings')
+            self.assertNotContains(resp, 'Spirits Accountability')
+            self.assertNotContains(resp, 'Yield / Processing')
+        finally:
+            CAPABILITIES['bar'] = original
+
+    def test_hides_reverts_cleanly_after_patch(self):
+        """Guard against test pollution: confirm the registry is really
+        back to normal after the previous test's patch/restore pattern."""
+        self.client.force_login(self.bar_owner)
+        resp = self.client.get('/stock/add/')
+        self.assertContains(resp, 'Restriction Settings')
+        self.assertContains(resp, 'Keg Settings')
+
+
+# ── UBA §2.3/M0-7 — core/accountability.py wraps keg_metrics.py ─────────────
+
+class AccountabilityEngineTest(TestCase):
+    """core.accountability is a thin, additive facade over the existing
+    core.keg_metrics module — it must re-export everything bar code already
+    imports from keg_metrics, and its one registered engine ('keg_shift')
+    must produce numbers identical to calling keg_metrics.shift_barrel_variance()
+    directly, since it wraps that function rather than reimplementing it."""
+
+    def setUp(self):
+        self.business, self.store, self.owner, self.item, self.barrel, self.preset, self.shift = (
+            _make_keg_fixtures_with_shift('Accountability Test Bar')
+        )
+        Transaction.objects.create(
+            business=self.business, item=self.item, type='Issue',
+            qty=Decimal('-2000'), sale_amount=Decimal('800'),
+            payment_method='cash', keg_barrel=self.barrel, date=timezone.localdate(),
+        )
+        t_open = self.shift.started_at
+        t_close = self.shift.started_at + timedelta(hours=8)
+        ro = KegWeightReading.objects.create(
+            barrel=self.barrel, shift=self.shift, weight_kg=Decimal('57'),
+            reading_type='SHIFT_OPEN', recorded_by=self.owner,
+        )
+        KegWeightReading.objects.filter(pk=ro.pk).update(recorded_at=t_open)
+        rc = KegWeightReading.objects.create(
+            barrel=self.barrel, shift=self.shift, weight_kg=Decimal('54'),
+            reading_type='SHIFT_CLOSE', recorded_by=self.owner,
+        )
+        KegWeightReading.objects.filter(pk=rc.pk).update(recorded_at=t_close)
+        self.shift.ended_at = t_close
+        self.shift.status = 'CLOSED'
+        self.shift.save(update_fields=['ended_at', 'status'])
+
+    def test_reexports_match_keg_metrics_originals(self):
+        from core import accountability, keg_metrics
+        self.assertIs(accountability.barrel_variance, keg_metrics.barrel_variance)
+        self.assertIs(accountability.shift_barrel_variance, keg_metrics.shift_barrel_variance)
+        self.assertIs(accountability.staff_shrinkage, keg_metrics.staff_shrinkage)
+        self.assertIs(accountability.variance_flag, keg_metrics.variance_flag)
+        self.assertIs(accountability.business_keg_loss_baseline, keg_metrics.business_keg_loss_baseline)
+
+    def test_keg_shift_engine_matches_keg_metrics_directly(self):
+        from core import accountability, keg_metrics
+        direct = keg_metrics.shift_barrel_variance(self.shift, self.barrel)
+        result = accountability.variance_for(
+            'keg_shift', business=self.business, store=self.barrel, shift=self.shift,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result.expected, Decimal(str(direct.book_ml)))
+        self.assertEqual(result.actual, Decimal(str(direct.scale_ml)))
+        self.assertEqual(result.variance, Decimal(str(direct.variance_ml)))
+        self.assertEqual(result.variance_kes, Decimal(str(direct.wastage_kes)))
+        self.assertTrue(result.coverage_pct == Decimal('100'))
+        self.assertFalse(result.is_partial)
+
+    def test_unregistered_scope_returns_none_not_an_error(self):
+        from core import accountability
+        result = accountability.variance_for(
+            'salon_recipe', business=self.business, store=None, shift=self.shift,
+        )
+        self.assertIsNone(result)
+
+    def test_no_shift_or_store_returns_none(self):
+        from core import accountability
+        self.assertIsNone(accountability.variance_for(
+            'keg_shift', business=self.business, store=self.barrel, shift=None,
+        ))
+        self.assertIsNone(accountability.variance_for(
+            'keg_shift', business=self.business, store=None, shift=self.shift,
+        ))
+
+    def test_leaderboard_delegates_to_staff_shrinkage(self):
+        from core import accountability, keg_metrics
+        today = timezone.localdate()
+        expected = keg_metrics.staff_shrinkage(self.business, today, today)
+        actual = accountability.leaderboard(self.business, date_from=today, date_to=today)
+        self.assertEqual(len(actual), len(expected))
+        if actual:
+            self.assertEqual(actual[0].staff_id, expected[0].staff_id)
+            self.assertEqual(actual[0].loss_kes, expected[0].loss_kes)
+
+
+# ── UBA §M0-5 — dashboard tile registry ──────────────────────────────────────
+
+class DashboardTileRegistryTest(TestCase):
+    """core.dashboard_tiles is an additive registry wired into home() as a new
+    context key (uba_dashboard_tiles) that home.html does not read yet — must
+    be a complete no-op for every existing page render (M0-AC1)."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        self.bar_type, _c = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz = Business.objects.create(name='UBA Tiles Biz', business_type=self.bar_type)
+        Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='uba_tiles_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_home_page_still_renders_unaffected(self):
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('uba_dashboard_tiles', resp.context)
+
+    def test_register_and_build_tile(self):
+        from core.dashboard_tiles import DashboardTile, register_tile, build_tiles, _TILE_BUILDERS
+        original = dict(_TILE_BUILDERS)
+        try:
+            register_tile(
+                'test_tile',
+                requires=lambda capability: True,
+                builder=lambda business, user_profile, capability: DashboardTile(
+                    key='test_tile', title='Test', value=42, url='/x/',
+                ),
+            )
+            tiles = build_tiles(self.biz, None, None)
+            matching = [t for t in tiles if t.key == 'test_tile']
+            self.assertEqual(len(matching), 1)
+            self.assertEqual(matching[0].value, 42)
+        finally:
+            _TILE_BUILDERS.clear()
+            _TILE_BUILDERS.update(original)
+
+    def test_tile_skipped_when_capability_requirement_unmet(self):
+        from core.dashboard_tiles import register_tile, build_tiles, _TILE_BUILDERS
+        original = dict(_TILE_BUILDERS)
+        calls = []
+        try:
+            def _never_called_builder(business, user_profile, capability):
+                calls.append(1)
+                return None
+            register_tile('unmet_tile', requires=lambda capability: False, builder=_never_called_builder)
+            tiles = build_tiles(self.biz, None, None)
+            self.assertFalse(any(t.key == 'unmet_tile' for t in tiles))
+            self.assertEqual(calls, [], 'builder must never be called when requires() is False')
+        finally:
+            _TILE_BUILDERS.clear()
+            _TILE_BUILDERS.update(original)
+
+    def test_builder_returning_none_is_filtered_out(self):
+        from core.dashboard_tiles import register_tile, build_tiles, _TILE_BUILDERS
+        original = dict(_TILE_BUILDERS)
+        try:
+            register_tile('nothing_tile', requires=lambda capability: True,
+                           builder=lambda business, user_profile, capability: None)
+            tiles = build_tiles(self.biz, None, None)
+            self.assertFalse(any(t.key == 'nothing_tile' for t in tiles))
+        finally:
+            _TILE_BUILDERS.clear()
+            _TILE_BUILDERS.update(original)
+
+    def test_keg_variance_tile_requires_weigh_in_accountability(self):
+        from core.business_profiles import get_profile
+        from core.dashboard_tiles import _TILE_BUILDERS
+        profile = get_profile(self.biz)
+        requires, _builder = _TILE_BUILDERS['keg_variance']
+        self.assertTrue(requires(profile['capability']))  # bar composes WEIGH_IN
+
+    def test_keg_variance_tile_absent_for_kibanda(self):
+        from accounts.models import BusinessType
+        from core.business_profiles import get_profile
+        from core.dashboard_tiles import _TILE_BUILDERS
+        kibanda_type, _c = BusinessType.objects.get_or_create(name='Kibanda / Food Stall')
+        kibanda_biz = Business.objects.create(name='UBA Tiles Kibanda', business_type=kibanda_type)
+        profile = get_profile(kibanda_biz)
+        requires, _builder = _TILE_BUILDERS['keg_variance']
+        self.assertFalse(requires(profile['capability']))  # kibanda does not compose WEIGH_IN
+
+
+# ── UBA §M0-6 — analytics section registry ───────────────────────────────────
+
+class AnalyticsSectionRegistryTest(TestCase):
+    """core.analytics_sections is an additive registry wired into
+    analytics_dashboard() as a new context key (uba_analytics_sections) that
+    analytics.html does not read yet — must be a complete no-op for every
+    existing page render (M0-AC1)."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        self.bar_type, _c = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz = Business.objects.create(name='UBA Sections Biz', business_type=self.bar_type)
+        Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='uba_sections_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_analytics_page_still_renders_unaffected(self):
+        resp = self.client.get('/analytics/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('uba_analytics_sections', resp.context)
+
+    def test_register_and_build_section(self):
+        from core.analytics_sections import AnalyticsSection, register_section, build_sections, _SECTION_BUILDERS
+        original = dict(_SECTION_BUILDERS)
+        try:
+            register_section(
+                'test_section',
+                requires=lambda capability: True,
+                builder=lambda business, capability, date_from, date_to: AnalyticsSection(
+                    key='test_section', title='Test', rows=[1, 2, 3],
+                ),
+            )
+            today = timezone.localdate()
+            sections = build_sections(self.biz, None, today, today)
+            matching = [s for s in sections if s.key == 'test_section']
+            self.assertEqual(len(matching), 1)
+            self.assertEqual(matching[0].rows, [1, 2, 3])
+        finally:
+            _SECTION_BUILDERS.clear()
+            _SECTION_BUILDERS.update(original)
+
+    def test_section_skipped_when_capability_requirement_unmet(self):
+        from core.analytics_sections import register_section, build_sections, _SECTION_BUILDERS
+        original = dict(_SECTION_BUILDERS)
+        calls = []
+        try:
+            def _never_called_builder(business, capability, date_from, date_to):
+                calls.append(1)
+                return None
+            register_section('unmet_section', requires=lambda capability: False, builder=_never_called_builder)
+            today = timezone.localdate()
+            sections = build_sections(self.biz, None, today, today)
+            self.assertFalse(any(s.key == 'unmet_section' for s in sections))
+            self.assertEqual(calls, [], 'builder must never be called when requires() is False')
+        finally:
+            _SECTION_BUILDERS.clear()
+            _SECTION_BUILDERS.update(original)
+
+    def test_builder_returning_none_is_filtered_out(self):
+        from core.analytics_sections import register_section, build_sections, _SECTION_BUILDERS
+        original = dict(_SECTION_BUILDERS)
+        try:
+            register_section('nothing_section', requires=lambda capability: True,
+                              builder=lambda business, capability, date_from, date_to: None)
+            today = timezone.localdate()
+            sections = build_sections(self.biz, None, today, today)
+            self.assertFalse(any(s.key == 'nothing_section' for s in sections))
+        finally:
+            _SECTION_BUILDERS.clear()
+            _SECTION_BUILDERS.update(original)
+
+    def test_keg_shrinkage_section_requires_weigh_in_accountability(self):
+        from core.business_profiles import get_profile
+        from core.analytics_sections import _SECTION_BUILDERS
+        profile = get_profile(self.biz)
+        requires, _builder = _SECTION_BUILDERS['keg_shrinkage']
+        self.assertTrue(requires(profile['capability']))  # bar composes WEIGH_IN
+
+    def test_keg_shrinkage_section_absent_for_kibanda(self):
+        from accounts.models import BusinessType
+        from core.business_profiles import get_profile
+        from core.analytics_sections import _SECTION_BUILDERS
+        kibanda_type, _c = BusinessType.objects.get_or_create(name='Kibanda / Food Stall')
+        kibanda_biz = Business.objects.create(name='UBA Sections Kibanda', business_type=kibanda_type)
+        profile = get_profile(kibanda_biz)
+        requires, _builder = _SECTION_BUILDERS['keg_shrinkage']
+        self.assertFalse(requires(profile['capability']))  # kibanda does not compose WEIGH_IN
+
+    def test_keg_shrinkage_section_matches_accountability_leaderboard(self):
+        from core import accountability
+        from core.analytics_sections import build_sections
+        from core.business_profiles import get_profile
+        today = timezone.localdate()
+        profile = get_profile(self.biz)
+        sections = build_sections(self.biz, profile['capability'], today, today)
+        expected_rows = accountability.leaderboard(self.biz, date_from=today, date_to=today)
+        matching = [s for s in sections if s.key == 'keg_shrinkage']
+        # No shifts/sales recorded in this business yet -> leaderboard is empty ->
+        # the section builder correctly returns None (filtered out), not an empty section.
+        self.assertEqual(expected_rows, [])
+        self.assertEqual(matching, [])
+
+
+# ── UBA M0-AC3 — a new profile needs only a business_profiles.py edit ───────
+
+class UbaStubProfileAcceptanceTest(TestCase):
+    """M0-AC3: 'a new profile can be added by editing only business_profiles.py
+    — prove it by adding a stub salon profile that renders a working (empty)
+    navbar and dashboard with no other file changed.'
+
+    The 'uba_stub_salon' profile added alongside the real 8 is deliberately
+    namespaced away from the real seeded 'Salon & Barbershop' BusinessType
+    (confirmed via grep of core/migrations/0006_seed_business_types_counties.py)
+    — a live business already using that real name must never be affected by
+    this proof; only a business explicitly typed under the stub's own
+    never-colliding match string picks it up."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        self.stub_type, _c = BusinessType.objects.get_or_create(
+            name='UBA M0-AC3 Stub — Salon (proof only, not the real Phase 3 build)'
+        )
+        self.biz = Business.objects.create(name='UBA Stub Salon Biz', business_type=self.stub_type)
+        Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='uba_stub_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_home_dashboard_renders_for_stub_profile(self):
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_navbar_renders_without_error(self):
+        """base.html is rendered on every page, including home() — a 500 here
+        would mean the navbar can't handle a profile it doesn't recognise."""
+        resp = self.client.get('/')
+        self.assertContains(resp, 'Duka')
+
+    def test_item_form_hides_yield_and_produce_keg_sections(self):
+        resp = self.client.get('/stock/add/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Yield / Processing')
+        self.assertNotContains(resp, 'Produce Settings')
+        self.assertNotContains(resp, 'Keg Settings')
+        # Restriction Settings has no hide key populated for this stub -> still shows
+        self.assertContains(resp, 'Restriction Settings')
+
+    def test_capability_composed_correctly(self):
+        from core.business_profiles import get_profile
+        profile = get_profile(self.biz)
+        self.assertEqual(profile['type'], 'uba_stub_salon')
+        cap = profile['capability']
+        self.assertIn('SERVICE', cap.stock_models)
+        self.assertIn('BOOKING', cap.sale_mechanics)
+        self.assertIn('yield', cap.hides)
+
+    def test_real_salon_barbershop_business_type_unaffected(self):
+        """The actual seeded BusinessType ('Salon & Barbershop') must still
+        fall through to DEFAULT_PROFILE/DEFAULT_CAPABILITY, completely
+        unaffected by the stub — this is the whole reason the stub uses a
+        deliberately non-colliding match string."""
+        from accounts.models import BusinessType
+        from core.business_profiles import get_profile, DEFAULT_CAPABILITY
+        real_salon_type, _c = BusinessType.objects.get_or_create(name='Salon & Barbershop')
+        real_salon_biz = Business.objects.create(name='Real Salon Biz', business_type=real_salon_type)
+        profile = get_profile(real_salon_biz)
+        self.assertEqual(profile['type'], '')
+        self.assertEqual(profile['capability'], DEFAULT_CAPABILITY)
+
+
+# ── UBA P0-A — split tender at checkout (Kibanda's "Lipa kidogo" gap) ───────
+
+class SplitToCreditLockedTest(TestCase):
+    """Transaction.split_to_credit_locked() — the boundary-split helper that
+    converts part of a direct cash/mpesa sale to credit debt."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='P0A Split Credit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Mboga',
+            material_no='P0A-01', unit='Bunch', selling_price=Decimal('100'),
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+
+    def test_splits_into_remaining_cash_and_new_credit_txn(self):
+        orig, new_txn = Transaction.split_to_credit_locked(
+            txn_id=self.txn.id, business=self.biz, split_amount=Decimal('40'),
+            recipient='Mary',
+        )
+        orig.refresh_from_db()
+        self.assertEqual(orig.payment_method, 'cash')
+        self.assertEqual(float(orig.sale_amount), 60.0)
+        self.assertEqual(new_txn.payment_method, 'credit')
+        self.assertEqual(new_txn.recipient, 'Mary')
+        self.assertEqual(float(new_txn.sale_amount), 40.0)
+        self.assertEqual(new_txn.qty, Decimal('0'))  # re-billing, no additional stock movement
+
+    def test_rejects_missing_recipient(self):
+        with self.assertRaises(ValueError):
+            Transaction.split_to_credit_locked(
+                txn_id=self.txn.id, business=self.biz, split_amount=Decimal('40'), recipient='',
+            )
+
+    def test_rejects_amount_at_or_above_total(self):
+        with self.assertRaises(ValueError):
+            Transaction.split_to_credit_locked(
+                txn_id=self.txn.id, business=self.biz, split_amount=Decimal('100'), recipient='Mary',
+            )
+
+    def test_rejects_non_cash_mpesa_source(self):
+        credit_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='credit', recipient='X',
+        )
+        with self.assertRaises(ValueError):
+            Transaction.split_to_credit_locked(
+                txn_id=credit_txn.id, business=self.biz, split_amount=Decimal('40'), recipient='Mary',
+            )
+
+
+class ApplyCheckoutPartialCreditLockedTest(TestCase):
+    """Transaction.apply_checkout_partial_credit_locked() — the top-level
+    checkout-time split: pay part now, the rest becomes ordinary credit."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='P0A Partial Credit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Mboga',
+            material_no='P0A-02', unit='Bunch', selling_price=Decimal('100'),
+        )
+
+    def test_single_transaction_partial_payment_splits_to_credit(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        ids = Transaction.apply_checkout_partial_credit_locked(
+            [txn.id], self.biz, amount_paid=60, recipient='Mary',
+        )
+        self.assertIsNotNone(ids)
+        txns = Transaction.objects.filter(id__in=ids)
+        cash_total = sum(float(t.sale_amount) for t in txns if t.payment_method == 'cash')
+        credit_total = sum(float(t.sale_amount) for t in txns if t.payment_method == 'credit')
+        self.assertEqual(cash_total, 60.0)
+        self.assertEqual(credit_total, 40.0)
+        credit_txn = [t for t in txns if t.payment_method == 'credit'][0]
+        self.assertEqual(credit_txn.recipient, 'Mary')
+
+    def test_multiple_transactions_whole_conversion_plus_boundary_split(self):
+        t1 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('30'), payment_method='cash',
+        )
+        t2 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('70'), payment_method='cash',
+        )
+        # Total 100, paid 60 -> 40 credit: converts t2 (70) partially? Walk is
+        # from the END (t2 first) — t2's 70 > remaining_credit(40), so t2
+        # boundary-splits into 30 cash + 40 credit; t1 (30 cash) untouched.
+        ids = Transaction.apply_checkout_partial_credit_locked(
+            [t1.id, t2.id], self.biz, amount_paid=60, recipient='Bosco',
+        )
+        txns = Transaction.objects.filter(id__in=ids)
+        cash_total = sum(float(t.sale_amount) for t in txns if t.payment_method == 'cash')
+        credit_total = sum(float(t.sale_amount) for t in txns if t.payment_method == 'credit')
+        self.assertEqual(cash_total, 60.0)
+        self.assertEqual(credit_total, 40.0)
+        t1.refresh_from_db()
+        self.assertEqual(t1.payment_method, 'cash')
+        self.assertEqual(float(t1.sale_amount), 30.0)
+
+    def test_fully_paid_is_a_no_op(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        result = Transaction.apply_checkout_partial_credit_locked(
+            [txn.id], self.biz, amount_paid=100, recipient='Mary',
+        )
+        self.assertIsNone(result)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')
+
+    def test_none_amount_paid_is_a_no_op(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        result = Transaction.apply_checkout_partial_credit_locked(
+            [txn.id], self.biz, amount_paid=None, recipient='Mary',
+        )
+        self.assertIsNone(result)
+
+    def test_rejects_negative_amount_paid(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        with self.assertRaises(ValueError):
+            Transaction.apply_checkout_partial_credit_locked(
+                [txn.id], self.biz, amount_paid=-10, recipient='Mary',
+            )
+
+    def test_rejects_missing_recipient(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        with self.assertRaises(ValueError):
+            Transaction.apply_checkout_partial_credit_locked(
+                [txn.id], self.biz, amount_paid=60, recipient='',
+            )
+
+
+class QuickSellPartialCreditCheckoutTest(TestCase):
+    """POST /quick-sell/ with partial_credit_amount — Kibanda's literal
+    motivating scenario: a KES 100 mboga sale, customer hands over 60 cash,
+    the remaining 40 becomes ordinary credit debt against their name, in one
+    checkout action, no tab needed (P0-AC1)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='QS Partial Credit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='qspartial_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Mboga',
+            material_no='QSPARTIAL-01', unit='Bunch', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_partial_cash_payment_creates_credit_remainder(self):
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'cash',
+            'recipient': 'Mary',
+            'partial_credit_amount': '40',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        cash_total = sum(
+            float(t.sale_amount) for t in Transaction.objects.filter(
+                business=self.biz, item=self.item, type='Issue', payment_method='cash',
+            )
+        )
+        credit_txns = Transaction.objects.filter(
+            business=self.biz, item=self.item, type='Issue', payment_method='credit', recipient='Mary',
+        )
+        credit_total = sum(float(t.sale_amount) for t in credit_txns)
+        self.assertEqual(cash_total, 60.0)
+        self.assertEqual(credit_total, 40.0)
+        # Customer auto-created so the debt tracker finds them
+        self.assertTrue(Customer.objects.filter(business=self.biz, name='Mary').exists())
+
+    def test_full_payment_no_credit_created(self):
+        """No partial_credit_amount sent -> ordinary full cash sale, untouched."""
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'cash',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item, payment_method='credit').count(), 0,
+        )
+
+    def test_partial_credit_gated_by_evaluate_credit(self):
+        """A defaulter customer must be blocked from a partial-credit
+        remainder exactly like a full-credit sale — the K3 gate must run on
+        this path too, not be bypassed."""
+        Customer.objects.create(
+            business=self.biz, name='Baddebt', credit_approved=False,
+        )
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'cash',
+            'recipient': 'Baddebt',
+            'partial_credit_amount': '40',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        # Blocked before any transaction is even recorded
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.item).exclude(type='Receipt').count(), 0,
+        )
+
+    def test_partial_credit_never_applied_to_tab_sales(self):
+        """partial_credit_amount only ever applies to a direct cash/mpesa
+        checkout (_wants_partial_credit requires payment_method_raw in
+        ('cash','mpesa')) — a tab sale is unaffected by it and behaves as a
+        completely ordinary, un-split, full-credit tab sale."""
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 1, 'price': 100}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart,
+            'payment_method': 'tab',
+            'recipient': 'Tab Patron',
+            'partial_credit_amount': '40',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        credit_txns = Transaction.objects.filter(
+            business=self.biz, item=self.item, type='Issue', payment_method='credit',
+        )
+        # One single full-amount credit transaction — never split into a
+        # cash/credit pair the way a direct cash/mpesa checkout would be.
+        # Uses .revenue() not raw sale_amount: a plain (non-preset) item's
+        # sale_amount is left None by design, with revenue computed from
+        # qty × selling_price instead (see quick_sell()'s cart loop).
+        self.assertEqual(credit_txns.count(), 1)
+        self.assertEqual(float(credit_txns.first().revenue()), 100.0)
+
+
+# ── UBA §5.1 — Store as first-class outlet ───────────────────────────────────
+
+class StoreTypeSyncTest(TestCase):
+    """Store.save() keeps store_type consistent with the pre-existing,
+    load-bearing is_kitchen flag — ONE-DIRECTIONALLY (is_kitchen ground
+    truth -> store_type derived), deliberately NOT the spec's illustrative
+    bidirectional pseudocode, which would break a real existing call site."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Store Sync Biz')
+
+    def test_creating_with_is_kitchen_true_sets_store_type_kitchen(self):
+        """The exact shape core.kitchen_views.get_or_create_kitchen_store()
+        already uses — Store.objects.create(..., is_kitchen=True) with no
+        store_type — must end up store_type='kitchen', not silently flipped
+        the other way."""
+        store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.assertEqual(store.store_type, 'kitchen')
+        self.assertTrue(store.is_kitchen)
+
+    def test_creating_with_store_type_kitchen_sets_is_kitchen_true(self):
+        store = Store.objects.create(business=self.biz, name='Jiko', store_type='kitchen')
+        self.assertTrue(store.is_kitchen)
+        self.assertEqual(store.store_type, 'kitchen')
+
+    def test_plain_store_unaffected(self):
+        store = Store.objects.create(business=self.biz, name='Main')
+        self.assertFalse(store.is_kitchen)
+        self.assertEqual(store.store_type, 'retail')
+
+    def test_resaving_a_non_kitchen_store_never_flips_it(self):
+        store = Store.objects.create(business=self.biz, name='Bar', store_type='bar')
+        store.save()
+        store.refresh_from_db()
+        self.assertEqual(store.store_type, 'bar')
+        self.assertFalse(store.is_kitchen)
+
+    def test_migration_backfill_set_store_type_for_pre_existing_kitchen_stores(self):
+        """Regression lock for the migration itself (0141): every row that
+        was is_kitchen=True before this migration must have gained
+        store_type='kitchen' — verified here by directly exercising the
+        same backfill query the migration's RunPython step runs, against a
+        row created bypassing save() (.update()), simulating a pre-migration
+        historical row that never went through the new save() logic."""
+        store = Store.objects.create(business=self.biz, name='Historical Kitchen')
+        Store.objects.filter(pk=store.pk).update(is_kitchen=True, store_type='retail')
+        store.refresh_from_db()
+        self.assertEqual(store.store_type, 'retail')  # bypassed save(), still stale
+        Store.objects.filter(is_kitchen=True).update(store_type='kitchen')  # the migration's own query
+        store.refresh_from_db()
+        self.assertEqual(store.store_type, 'kitchen')
+
+
+class AccessibleStoresTest(TestCase):
+    """UserProfile.accessible_stores() — the store-scoping resolver."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Access Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.inactive_store = Store.objects.create(business=self.biz, name='Closed Store', is_active=False)
+
+    def test_owner_sees_all_active_stores(self):
+        owner = User.objects.create_user(username='access_owner', password='x')
+        profile = UserProfile.objects.create(user=owner, business=self.biz, role='owner')
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_a, accessible)
+        self.assertIn(self.store_b, accessible)
+        self.assertNotIn(self.inactive_store, accessible)
+
+    def test_staff_with_no_assignment_sees_all_active_stores(self):
+        """The back-compat case — every staffer today, and any newly-added
+        staffer before an owner assigns them anywhere. Deliberately NOT
+        Store.objects.none() (the spec's own illustrative fallback), which
+        would lock out every existing staff member the instant this is
+        wired into a real view."""
+        staff = User.objects.create_user(username='access_staff_unassigned', password='x')
+        profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_a, accessible)
+        self.assertIn(self.store_b, accessible)
+
+    def test_staff_with_stores_m2m_is_scoped(self):
+        staff = User.objects.create_user(username='access_staff_m2m', password='x')
+        profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        profile.stores.add(self.store_a)
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_a, accessible)
+        self.assertNotIn(self.store_b, accessible)
+
+    def test_staff_with_home_store_only_is_scoped(self):
+        staff = User.objects.create_user(username='access_staff_home', password='x')
+        profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff', home_store=self.store_b)
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_b, accessible)
+        self.assertNotIn(self.store_a, accessible)
+
+    def test_stores_m2m_takes_priority_over_home_store(self):
+        staff = User.objects.create_user(username='access_staff_both', password='x')
+        profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff', home_store=self.store_b)
+        profile.stores.add(self.store_a)
+        accessible = profile.accessible_stores()
+        self.assertIn(self.store_a, accessible)
+        self.assertNotIn(self.store_b, accessible)
+
+    def test_inactive_home_store_excluded(self):
+        staff = User.objects.create_user(username='access_staff_inactive_home', password='x')
+        profile = UserProfile.objects.create(
+            user=staff, business=self.biz, role='staff', home_store=self.inactive_store,
+        )
+        self.assertEqual(profile.accessible_stores().count(), 0)
+
+
+class RequireStoreAccessTest(TestCase):
+    """core.access.require_store_access() — the one gate, used on view AND URL."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Gate Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        staff = User.objects.create_user(username='gate_staff', password='x')
+        self.profile = UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+
+    def test_none_store_always_allowed(self):
+        from core.access import require_store_access
+        require_store_access(self.profile, None)  # must not raise
+
+    def test_allowed_store_does_not_raise(self):
+        from core.access import require_store_access
+        require_store_access(self.profile, self.store_a)  # must not raise
+
+    def test_disallowed_store_raises_permission_denied(self):
+        from django.core.exceptions import PermissionDenied
+        from core.access import require_store_access
+        with self.assertRaises(PermissionDenied):
+            require_store_access(self.profile, self.store_b)
+
+    def test_owner_always_allowed(self):
+        from core.access import require_store_access
+        owner_user = User.objects.create_user(username='gate_owner', password='x')
+        owner_profile = UserProfile.objects.create(user=owner_user, business=self.biz, role='owner')
+        require_store_access(owner_profile, self.store_a)
+        require_store_access(owner_profile, self.store_b)
+
+
+class ActiveStoreContextProcessorTest(TestCase):
+    """core.context_processors.active_store_context — session-scoped active
+    store, resolved against accessible_stores() (never trusts the session
+    value blindly)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Ctx Store Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.staff = User.objects.create_user(username='ctxstore_staff', password='x')
+        self.profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+        self.client.force_login(self.staff)
+
+    def test_no_session_value_gives_none(self):
+        resp = self.client.get('/')
+        self.assertIsNone(resp.context['active_store'])
+
+    def test_session_value_resolves_when_accessible(self):
+        session = self.client.session
+        session['active_store_id'] = self.store_a.id
+        session.save()
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['active_store'], self.store_a)
+
+    def test_session_value_ignored_when_not_accessible(self):
+        session = self.client.session
+        session['active_store_id'] = self.store_b.id
+        session.save()
+        resp = self.client.get('/')
+        self.assertIsNone(resp.context['active_store'])
+
+    def test_accessible_stores_list_present(self):
+        resp = self.client.get('/')
+        self.assertIn(self.store_a, resp.context['accessible_stores_list'])
+        self.assertNotIn(self.store_b, resp.context['accessible_stores_list'])
+
+
+class SwitchActiveStoreViewTest(TestCase):
+    """GET /store/switch/<id>/ — sets the session's active store only if
+    the requesting profile can actually access it."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Switch Store Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.staff = User.objects.create_user(username='switchstore_staff', password='x')
+        self.profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+        self.client.force_login(self.staff)
+
+    def test_switch_to_accessible_store_succeeds(self):
+        resp = self.client.get(f'/store/switch/{self.store_a.id}/', follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.client.session.get('active_store_id'), self.store_a.id)
+
+    def test_switch_to_inaccessible_store_denied(self):
+        resp = self.client.get(f'/store/switch/{self.store_b.id}/', follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotEqual(self.client.session.get('active_store_id'), self.store_b.id)
+
+    def test_owner_can_switch_to_any_store(self):
+        owner = User.objects.create_user(username='switchstore_owner', password='x')
+        UserProfile.objects.create(user=owner, business=self.biz, role='owner')
+        self.client.force_login(owner)
+        resp = self.client.get(f'/store/switch/{self.store_b.id}/', follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.client.session.get('active_store_id'), self.store_b.id)
+
+
+class StockListStoreAccessGateTest(TestCase):
+    """UBA M1-AC1: a staffer assigned to Store A who manipulates the URL to
+    hit Store B's stock list (?store=<B>) gets PermissionDenied."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA StockList Gate Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.staff = User.objects.create_user(username='sl_gate_staff', password='x')
+        self.profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+        self.client.force_login(self.staff)
+
+    def test_scoped_staff_denied_other_store(self):
+        resp = self.client.get(f'/stock/?store={self.store_b.id}')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_scoped_staff_allowed_own_store(self):
+        resp = self.client.get(f'/stock/?store={self.store_a.id}')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_unassigned_staff_unaffected(self):
+        """Back-compat: a staffer with no explicit store assignment (every
+        staffer that existed before this field did) sees zero change."""
+        unassigned = User.objects.create_user(username='sl_gate_unassigned', password='x')
+        UserProfile.objects.create(user=unassigned, business=self.biz, role='staff')
+        self.client.force_login(unassigned)
+        resp = self.client.get(f'/stock/?store={self.store_b.id}')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_owner_unaffected(self):
+        owner = User.objects.create_user(username='sl_gate_owner', password='x')
+        UserProfile.objects.create(user=owner, business=self.biz, role='owner')
+        self.client.force_login(owner)
+        resp = self.client.get(f'/stock/?store={self.store_b.id}')
+        self.assertEqual(resp.status_code, 200)
+
+
+class AddTransactionStoreAccessGateTest(TestCase):
+    """UBA M1-AC1: a staffer assigned to Store A who submits a transaction
+    against a Store B item gets PermissionDenied."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA AddTxn Gate Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Store A')
+        self.store_b = Store.objects.create(business=self.biz, name='Store B')
+        self.item_a = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Item A',
+            material_no='ATGATE-A', unit='pcs', selling_price=Decimal('10'),
+        )
+        self.item_b = Item.objects.create(
+            business=self.biz, store=self.store_b, description='Item B',
+            material_no='ATGATE-B', unit='pcs', selling_price=Decimal('10'),
+        )
+        self.staff = User.objects.create_user(username='at_gate_staff', password='x')
+        self.profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.profile.stores.add(self.store_a)
+        # add_transaction() gates non-owner staff on an open shift before
+        # reaching the store-access check this test exercises.
+        Shift.objects.create(business=self.biz, store=self.store_a, staff=self.staff, status='OPEN')
+        self.client.force_login(self.staff)
+
+    def test_scoped_staff_denied_other_store_item(self):
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item_b.id, 'type': 'Receipt', 'qty': '5',
+        })
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(Transaction.objects.filter(item=self.item_b).exists())
+
+    def test_scoped_staff_allowed_own_store_item(self):
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item_a.id, 'type': 'Receipt', 'qty': '5',
+        })
+        self.assertNotEqual(resp.status_code, 403)
+        self.assertTrue(Transaction.objects.filter(item=self.item_a).exists())
+
+    def test_unassigned_staff_unaffected(self):
+        unassigned = User.objects.create_user(username='at_gate_unassigned', password='x')
+        UserProfile.objects.create(user=unassigned, business=self.biz, role='staff')
+        self.client.force_login(unassigned)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item_b.id, 'type': 'Receipt', 'qty': '5',
+        })
+        self.assertNotEqual(resp.status_code, 403)
+
+
+# ── UBA §5.2 — Stock transfers between stores ────────────────────────────────
+
+class StockTransferTest(TestCase):
+    """StockTransfer/StockTransferLine — dispatch/receive/dispute/cancel
+    lifecycle, gap-free references, and revenue/cost exclusion."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Transfer Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Godown')
+        self.store_b = Store.objects.create(business=self.biz, name='Branch')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Sugar 2kg',
+            material_no='TRF-ITEM-01', unit='pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('180'), opening_bin_balance=100,
+        )
+        self.owner_user = User.objects.create_user(username='transfer_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def _make_transfer(self, qty_sent=20):
+        return StockTransfer.create_draft_locked(
+            self.biz, self.store_a, self.store_b,
+            lines=[{'item_id': self.item.id, 'qty_sent': qty_sent}],
+            created_by=self.owner,
+        )
+
+    def test_gap_free_reference_numbering(self):
+        t1 = self._make_transfer()
+        t2 = self._make_transfer()
+        self.assertEqual(t1.transfer_number, 1)
+        self.assertEqual(t2.transfer_number, 2)
+        self.assertEqual(t1.reference, 'TRF-0001')
+        self.assertEqual(t2.reference, 'TRF-0002')
+
+    def test_dispatch_deducts_from_store_and_creates_no_revenue(self):
+        transfer = self._make_transfer(qty_sent=20)
+        before_balance = self.item.current_balance()
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), before_balance - 20)
+        txn = Transaction.objects.get(transfer=transfer, item=self.item)
+        self.assertEqual(txn.revenue(), 0)
+        self.assertEqual(txn.cost(), 0)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'DISPATCHED')
+        self.assertIsNotNone(transfer.dispatched_at)
+
+    def test_full_receive_closes_as_received(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 20}, received_by=self.owner)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'RECEIVED')
+        receive_txn = Transaction.objects.get(transfer=transfer, qty__gt=0)
+        self.assertEqual(float(receive_txn.qty), 20.0)
+        self.assertEqual(receive_txn.revenue(), 0)  # never revenue, matching M2-AC1
+
+    def test_short_receive_marks_disputed(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 18}, received_by=self.owner)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'DISPUTED')
+        line.refresh_from_db()
+        self.assertEqual(float(line.qty_received), 18.0)
+
+    def test_resolve_dispute_writes_off_shortfall_as_wastage_and_closes(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 18}, received_by=self.owner)
+        transfer.resolve_dispute_locked(resolved_by=self.owner)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'RECEIVED')
+        wastage_txn = Transaction.objects.get(transfer=transfer, type='Wastage')
+        self.assertEqual(float(wastage_txn.qty), -2.0)
+
+    def test_resolve_dispute_only_valid_from_disputed(self):
+        transfer = self._make_transfer()
+        with self.assertRaises(ValueError):
+            transfer.resolve_dispute_locked(resolved_by=self.owner)
+
+    def test_cancel_draft_creates_no_transactions(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.cancel_locked(cancelled_by=self.owner)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'CANCELLED')
+        self.assertEqual(Transaction.objects.filter(transfer=transfer).count(), 0)
+
+    def test_cancel_dispatched_reverses_stock_movement(self):
+        transfer = self._make_transfer(qty_sent=20)
+        before_balance = self.item.current_balance()
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        transfer.cancel_locked(cancelled_by=self.owner)
+        self.item.refresh_from_db()
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'CANCELLED')
+        self.assertEqual(self.item.current_balance(), before_balance)  # fully reversed
+
+    def test_cannot_dispatch_twice(self):
+        transfer = self._make_transfer()
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        with self.assertRaises(ValueError):
+            transfer.dispatch_locked(dispatched_by=self.owner)
+
+    def test_cannot_receive_a_draft(self):
+        transfer = self._make_transfer()
+        line = transfer.lines.first()
+        with self.assertRaises(ValueError):
+            transfer.receive_locked({line.id: 20}, received_by=self.owner)
+
+    def test_cannot_cancel_a_received_transfer(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 20}, received_by=self.owner)
+        with self.assertRaises(ValueError):
+            transfer.cancel_locked(cancelled_by=self.owner)
+
+    def test_dispatch_never_touches_to_store_balance(self):
+        """Only from_store's balance moves at dispatch — the goods are
+        in-transit, not yet at to_store (M2's in-transit window)."""
+        item_b_side = Item.objects.create(
+            business=self.biz, store=self.store_b, description='Sugar 2kg (branch)',
+            material_no='TRF-ITEM-02', unit='pcs', selling_price=Decimal('250'),
+        )
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        self.assertEqual(item_b_side.current_balance(), 0)
+
+
+class StockTransferExcludedFromRevenueEverywhereTest(TestCase):
+    """M2-AC1: a dispatched/received transfer must never appear as revenue in
+    shift reconciliation (the money-critical surface) or analytics — the
+    real reason type='Transfer' was chosen over type='Issue' + a transfer_id
+    filter: type='Issue'-scoped queries exclude it BY CONSTRUCTION, with no
+    per-report sweep needed."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='UBA Transfer Revenue Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Godown')
+        self.store_b = Store.objects.create(business=self.biz, name='Branch')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Rice 5kg',
+            material_no='TRFREV-01', unit='pcs', selling_price=Decimal('500'),
+            cost_price=Decimal('350'), opening_bin_balance=50,
+        )
+        self.owner_user = User.objects.create_user(username='trfrev_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_dispatch_during_open_shift_does_not_inflate_reconciliation(self):
+        from core.shift_views import _reconcile
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store_a, staff=self.owner_user, status='OPEN',
+        )
+        # A real cash sale during the shift — should be the ONLY thing counted.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), sale_amount=Decimal('1000'), payment_method='cash',
+        )
+        transfer = StockTransfer.create_draft_locked(
+            self.biz, self.store_a, self.store_b,
+            lines=[{'item_id': self.item.id, 'qty_sent': 10}], created_by=self.owner,
+        )
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        result = _reconcile(shift)
+        self.assertEqual(result['cash_sales'], 1000.0)
+
+    def test_dispatch_never_appears_in_kitchen_produce_analytics(self):
+        self.item.is_produce = True
+        self.item.produce_mode = 'PORTION'
+        self.item.save()
+        transfer = StockTransfer.create_draft_locked(
+            self.biz, self.store_a, self.store_b,
+            lines=[{'item_id': self.item.id, 'qty_sent': 10}], created_by=self.owner,
+        )
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        self.owner_user2 = self.owner_user
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/analytics/')
+        self.assertEqual(resp.status_code, 200)
+        portion_produce = resp.context['portion_produce']
+        matching = [p for p in portion_produce if p['description'] == 'Rice 5kg']
+        self.assertEqual(matching, [])  # no revenue row for a pure transfer
+
+
+
+class BusinessExceptionModelTest(TestCase):
+    """UBA M3 §5.3 — BusinessException.raise_exception()/acknowledge()."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Maduka M3 Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner_user = User.objects.create_user(username='m3_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_raise_exception_creates_row_with_all_fields(self):
+        exc = BusinessException.raise_exception(
+            business=self.biz, kind='shrinkage', severity='danger',
+            title='Test title', detail='Test detail', store=self.store,
+            staff=self.owner, amount_kes=Decimal('1234.50'), link_url='/maduka/',
+        )
+        exc.refresh_from_db()
+        self.assertEqual(exc.business_id, self.biz.id)
+        self.assertEqual(exc.kind, 'shrinkage')
+        self.assertEqual(exc.severity, 'danger')
+        self.assertEqual(exc.store_id, self.store.id)
+        self.assertEqual(exc.staff_id, self.owner.id)
+        self.assertEqual(exc.amount_kes, Decimal('1234.50'))
+        self.assertIsNone(exc.acknowledged_at)
+
+    def test_acknowledge_sets_fields_and_is_idempotent(self):
+        exc = BusinessException.raise_exception(
+            business=self.biz, kind='other', severity='info', title='X',
+        )
+        exc.acknowledge(self.owner)
+        exc.refresh_from_db()
+        self.assertEqual(exc.acknowledged_by_id, self.owner.id)
+        first_ack_at = exc.acknowledged_at
+        self.assertIsNotNone(first_ack_at)
+
+        other_user = User.objects.create_user(username='m3_other', password='x')
+        other_profile = UserProfile.objects.create(user=other_user, business=self.biz, role='manager')
+        exc.acknowledge(other_profile)  # already acknowledged — must be a no-op
+        exc.refresh_from_db()
+        self.assertEqual(exc.acknowledged_by_id, self.owner.id)
+        self.assertEqual(exc.acknowledged_at, first_ack_at)
+
+
+class StockTransferDisputeExceptionAndNotificationTest(TestCase):
+    """M2-AC1 ("owner got exactly one notification") was never actually
+    satisfied when M2 shipped model-layer-only with no view calling
+    receive_locked() yet. M3 closes that gap by wiring the dispute path to
+    BusinessException + a real owner/manager Notification+SMS, the exact
+    mechanism M3 exists to build."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Transfer Dispute Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Godown')
+        self.store_b = Store.objects.create(business=self.biz, name='Branch')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Flour 2kg',
+            material_no='TRF-DISP-01', unit='pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('180'), opening_bin_balance=100,
+        )
+        self.owner_user = User.objects.create_user(username='disp_owner', password='x')
+        self.owner = UserProfile.objects.create(
+            user=self.owner_user, business=self.biz, role='owner', phone='0712345678'
+        )
+        self.manager_user = User.objects.create_user(username='disp_manager', password='x')
+        self.manager = UserProfile.objects.create(
+            user=self.manager_user, business=self.biz, role='manager'
+        )
+        self.staff_user = User.objects.create_user(username='disp_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def _make_transfer(self, qty_sent=20):
+        return StockTransfer.create_draft_locked(
+            self.biz, self.store_a, self.store_b,
+            lines=[{'item_id': self.item.id, 'qty_sent': qty_sent}], created_by=self.owner,
+        )
+
+    def test_short_receive_creates_exactly_one_exception_and_notifies_owner_and_manager(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+
+        self.assertEqual(BusinessException.objects.filter(business=self.biz).count(), 0)
+        transfer.receive_locked({line.id: 18}, received_by=self.owner)
+
+        excs = BusinessException.objects.filter(business=self.biz, kind='transfer_dispute')
+        self.assertEqual(excs.count(), 1)
+        exc = excs.first()
+        self.assertEqual(exc.severity, 'warn')
+        self.assertEqual(exc.store_id, self.store_b.id)  # attributed at the receiving store
+        self.assertIn(transfer.reference, exc.title)
+        self.assertGreater(exc.amount_kes, 0)
+
+        # Notified exactly once each — owner and manager, never the plain staff.
+        owner_notifs = Notification.objects.filter(user=self.owner_user, title__icontains='Utata')
+        manager_notifs = Notification.objects.filter(user=self.manager_user, title__icontains='Utata')
+        staff_notifs = Notification.objects.filter(user=self.staff_user, title__icontains='Utata')
+        self.assertEqual(owner_notifs.count(), 1)
+        self.assertEqual(manager_notifs.count(), 1)
+        self.assertEqual(staff_notifs.count(), 0)
+
+    def test_full_receive_creates_no_exception_and_no_notification(self):
+        transfer = self._make_transfer(qty_sent=20)
+        transfer.dispatch_locked(dispatched_by=self.owner)
+        line = transfer.lines.first()
+        transfer.receive_locked({line.id: 20}, received_by=self.owner)
+
+        self.assertEqual(BusinessException.objects.filter(business=self.biz).count(), 0)
+        self.assertEqual(Notification.objects.filter(title__icontains='Utata').count(), 0)
+
+
+class ShiftCloseBusinessExceptionTest(TestCase):
+    """M3 §5.3 — close_shift()'s existing cash-variance and keg-danger alerts
+    now also write a BusinessException row (additive to the pre-existing
+    Notification/SMS, never replacing it)."""
+
+    def test_cash_variance_over_500_creates_business_exception(self):
+        biz = Business.objects.create(name='Cash BE Biz')
+        store = Store.objects.create(business=biz, name='Bar')
+        owner_user = User.objects.create_user(username='cbe_owner', password='x')
+        UserProfile.objects.create(user=owner_user, business=biz, role='owner')
+        staff_user = User.objects.create_user(username='cbe_staff', password='x')
+        UserProfile.objects.create(user=staff_user, business=biz, role='staff')
+
+        item = Item.objects.create(
+            business=biz, store=store, description='Beer 500ml',
+            material_no='CBE-ITEM-01', unit='pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('120'),
+        )
+        shift = Shift.objects.create(
+            business=biz, store=store, staff=staff_user, station='bar',
+            status='OPEN', opening_float=Decimal('0'),
+        )
+        Transaction.objects.create(
+            business=biz, item=item, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('1000'), payment_method='cash',
+            date=timezone.localdate(), recorded_by=staff_user,
+        )
+
+        self.client.force_login(owner_user)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {'closing_cash_counted': '100'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+        excs = BusinessException.objects.filter(business=biz, kind='cash_variance')
+        self.assertEqual(excs.count(), 1)
+        exc = excs.first()
+        self.assertEqual(exc.store_id, store.id)
+        self.assertEqual(exc.shift_id, shift.id)
+        self.assertGreater(exc.amount_kes, 500)
+
+    def test_no_variance_creates_no_business_exception(self):
+        biz = Business.objects.create(name='NoVar BE Biz')
+        store = Store.objects.create(business=biz, name='Bar')
+        owner_user = User.objects.create_user(username='nvbe_owner', password='x')
+        UserProfile.objects.create(user=owner_user, business=biz, role='owner')
+        staff_user = User.objects.create_user(username='nvbe_staff', password='x')
+        UserProfile.objects.create(user=staff_user, business=biz, role='staff')
+
+        shift = Shift.objects.create(
+            business=biz, store=store, staff=staff_user, station='bar',
+            status='OPEN', opening_float=Decimal('500'),
+        )
+        self.client.force_login(owner_user)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {'closing_cash_counted': '500'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(BusinessException.objects.filter(business=biz, kind='cash_variance').count(), 0)
+
+    def test_keg_danger_variance_creates_shrinkage_exception(self):
+        from django.test import RequestFactory
+        from core.shift_views import close_shift
+        import json as _json
+
+        business, store, owner, item, barrel, preset, shift = _make_keg_fixtures_with_shift(
+            'Bar M3 DangerClose'
+        )
+        business.keg_variance_tolerance_pct = Decimal('0.1')
+        business.keg_alerts_enabled = True
+        business.save(update_fields=['keg_variance_tolerance_pct', 'keg_alerts_enabled'])
+
+        barrel.volume_dispensed_ml = Decimal('500')
+        barrel.revenue_collected = Decimal('200')
+        barrel.save(update_fields=['volume_dispensed_ml', 'revenue_collected'])
+
+        rf = RequestFactory()
+        barrel_weights = _json.dumps([{'barrel_id': barrel.id, 'weight_kg': '30.0'}])
+        req = rf.post(f'/bar/shift/{shift.id}/close/', {
+            'closing_cash_counted': '0',
+            'barrel_weights': barrel_weights,
+        })
+        req.user = owner
+        req.session = {}
+
+        resp = close_shift(req, shift.id)
+        self.assertEqual(resp.status_code, 200)
+
+        excs = BusinessException.objects.filter(business=business, kind='shrinkage')
+        self.assertEqual(excs.count(), 1)
+        self.assertEqual(excs.first().store_id, store.id)
+
+
+class MadukaDashboardViewTest(TestCase):
+    """UBA M3 §5.3 — /maduka/ owner console."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Maduka View Biz')
+        self.store_a = Store.objects.create(
+            business=self.biz, name='Branch A', code='A01', is_active=True,
+        )
+        self.store_b = Store.objects.create(
+            business=self.biz, name='Branch B', code='B01', is_active=True,
+        )
+        self.owner_user = User.objects.create_user(username='mdv_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='mdv_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_owner_sees_dashboard_with_store_cards_and_exceptions(self):
+        RevenueTarget.objects.create(
+            business=self.biz, target_type='daily', amount=Decimal('1000'), store=self.store_a,
+        )
+        item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Milk 500ml',
+            material_no='MDV-ITEM-01', unit='pcs', selling_price=Decimal('60'),
+            cost_price=Decimal('40'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('300'), payment_method='cash',
+            date=timezone.localdate(),
+        )
+        BusinessException.raise_exception(
+            business=self.biz, kind='below_cost', severity='warn',
+            title='Sold below cost', store=self.store_a, amount_kes=Decimal('50'),
+        )
+
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/maduka/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['total_revenue_today'], 300.0)
+        cards = {c['store'].id: c for c in resp.context['store_cards']}
+        self.assertEqual(cards[self.store_a.id]['revenue_today'], 300.0)
+        self.assertEqual(cards[self.store_a.id]['exc_count'], 1)
+        # Problem-first sort: store_a (1 unacknowledged exception) must sort before store_b (0).
+        self.assertEqual(resp.context['store_cards'][0]['store'].id, self.store_a.id)
+        self.assertContains(resp, 'Sold below cost')
+
+    def test_non_owner_redirected(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/maduka/')
+        self.assertEqual(resp.status_code, 302)
+
+    def test_navbar_link_hidden_for_single_store_business(self):
+        single = Business.objects.create(name='Single Store Biz')
+        Store.objects.create(business=single, name='Only Store')
+        single_owner = User.objects.create_user(username='mdv_single_owner', password='x')
+        UserProfile.objects.create(user=single_owner, business=single, role='owner')
+        self.client.force_login(single_owner)
+        resp = self.client.get('/')
+        self.assertNotContains(resp, 'Maduka Yangu')
+
+    def test_navbar_link_shown_for_multi_store_business(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/')
+        self.assertContains(resp, 'Maduka Yangu')
+
+
+class MadukaAcknowledgeExceptionViewTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Maduka Ack Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner_user = User.objects.create_user(username='mack_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.exc = BusinessException.raise_exception(
+            business=self.biz, kind='other', severity='info', title='Test exc',
+        )
+
+    def test_owner_can_acknowledge(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/maduka/exceptions/{self.exc.id}/acknowledge/')
+        self.assertEqual(resp.status_code, 302)
+        self.exc.refresh_from_db()
+        self.assertEqual(self.exc.acknowledged_by_id, self.owner.id)
+        self.assertIsNotNone(self.exc.acknowledged_at)
+
+    def test_get_not_allowed(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get(f'/maduka/exceptions/{self.exc.id}/acknowledge/')
+        self.assertEqual(resp.status_code, 405)
+
+    def test_cannot_acknowledge_another_businesss_exception(self):
+        other_biz = Business.objects.create(name='Other Biz')
+        other_owner_user = User.objects.create_user(username='mack_other', password='x')
+        UserProfile.objects.create(user=other_owner_user, business=other_biz, role='owner')
+        self.client.force_login(other_owner_user)
+        resp = self.client.post(f'/maduka/exceptions/{self.exc.id}/acknowledge/')
+        self.assertEqual(resp.status_code, 404)
+
+
+class GlobalProductLookupAndContributionTest(TestCase):
+    """UBA R1 §7.2 — GlobalProduct dictionary + contribute_market_data opt-out."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='R1 Contrib Biz')
+        self.other_biz = Business.objects.create(name='R1 Other Biz')
+
+    def test_lookup_miss_returns_none(self):
+        from core.market_price import lookup_global_product
+        self.assertIsNone(lookup_global_product('9999999999999'))
+
+    def test_record_contribution_creates_new_global_product_on_miss(self):
+        from core.market_price import record_barcode_contribution
+        gp = record_barcode_contribution(
+            self.biz, '1234567890123', 'Sugar 2kg', brand='Mumias', pack_size='2kg', unit='pcs',
+        )
+        self.assertIsNotNone(gp)
+        self.assertEqual(gp.confirm_count, 1)
+        self.assertFalse(gp.is_verified)
+        self.assertEqual(gp.contributed_by_id, self.biz.id)
+
+    def test_second_business_confirming_increments_count(self):
+        from core.market_price import record_barcode_contribution
+        record_barcode_contribution(self.biz, '1234567890123', 'Sugar 2kg')
+        Item.objects.create(
+            business=self.biz, store=Store.objects.create(business=self.biz, name='S'),
+            description='Sugar 2kg', material_no='R1-A', unit='pcs', barcode='1234567890123',
+        )
+        record_barcode_contribution(self.other_biz, '1234567890123', 'Sugar 2kg')
+        gp = GlobalProduct.objects.get(barcode='1234567890123')
+        self.assertEqual(gp.confirm_count, 2)
+
+    def test_third_confirmation_marks_verified(self):
+        from core.market_price import record_barcode_contribution
+        b1, b2, b3 = self.biz, self.other_biz, Business.objects.create(name='R1 Third Biz')
+        record_barcode_contribution(b1, 'BC001', 'Rice 5kg')
+        Item.objects.create(
+            business=b1, store=Store.objects.create(business=b1, name='S1'),
+            description='Rice 5kg', material_no='R1-B1', unit='pcs', barcode='BC001',
+        )
+        record_barcode_contribution(b2, 'BC001', 'Rice 5kg')
+        Item.objects.create(
+            business=b2, store=Store.objects.create(business=b2, name='S2'),
+            description='Rice 5kg', material_no='R1-B2', unit='pcs', barcode='BC001',
+        )
+        record_barcode_contribution(b3, 'BC001', 'Rice 5kg')
+        gp = GlobalProduct.objects.get(barcode='BC001')
+        self.assertEqual(gp.confirm_count, 3)
+        self.assertTrue(gp.is_verified)
+
+    def test_opted_out_business_does_not_contribute(self):
+        from core.market_price import record_barcode_contribution
+        self.biz.contribute_market_data = False
+        self.biz.save(update_fields=['contribute_market_data'])
+        result = record_barcode_contribution(self.biz, 'BC-OPTOUT', 'Flour 2kg')
+        self.assertIsNone(result)
+        self.assertFalse(GlobalProduct.objects.filter(barcode='BC-OPTOUT').exists())
+
+    def test_opted_out_business_can_still_read_existing_entry(self):
+        from core.market_price import lookup_global_product, record_barcode_contribution
+        record_barcode_contribution(self.biz, 'BC-READ', 'Cooking Oil 1L')
+        self.other_biz.contribute_market_data = False
+        self.other_biz.save(update_fields=['contribute_market_data'])
+        gp = lookup_global_product('BC-READ')
+        self.assertIsNotNone(gp)
+        self.assertEqual(gp.name, 'Cooking Oil 1L')
+
+
+class MarketPriceIndexTest(TestCase):
+    """R1-AC2: opt-IN only, never below sample_size 5, opting out loses the
+    benchmark (not just the contribution)."""
+
+    def setUp(self):
+        self.county = County.objects.create(name='R1 Nairobi')
+        self.gp = GlobalProduct.objects.create(barcode='MPI-001', name='Sugar 2kg', confirm_count=1)
+
+    def _biz_with_item(self, name, cost, price, contribute=True, county=None):
+        biz = Business.objects.create(name=name, contribute_price_data=contribute, county=county)
+        store = Store.objects.create(business=biz, name='S')
+        Item.objects.create(
+            business=biz, store=store, description='Sugar 2kg', material_no=f'MPI-{name}',
+            unit='pcs', barcode='MPI-001', cost_price=Decimal(str(cost)), selling_price=Decimal(str(price)),
+        )
+        return biz
+
+    def test_below_sample_size_returns_none_and_creates_no_row(self):
+        from core.market_price import recompute_market_price_index
+        for i in range(3):
+            self._biz_with_item(f'Biz{i}', 100 + i, 150 + i, county=self.county)
+        result = recompute_market_price_index(self.gp, county=self.county)
+        self.assertIsNone(result)
+        self.assertFalse(MarketPriceIndex.objects.filter(global_product=self.gp, county=self.county).exists())
+
+    def test_five_contributing_businesses_produce_median(self):
+        from core.market_price import recompute_market_price_index
+        costs = [100, 110, 120, 130, 140]
+        for i, c in enumerate(costs):
+            self._biz_with_item(f'BizM{i}', c, c + 50, county=self.county)
+        result = recompute_market_price_index(self.gp, county=self.county)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.sample_size, 5)
+        self.assertEqual(result.median_cost, Decimal('120'))
+
+    def test_non_contributing_business_excluded_from_aggregate(self):
+        from core.market_price import recompute_market_price_index
+        for i in range(5):
+            self._biz_with_item(f'BizN{i}', 100, 150, county=self.county)
+        self._biz_with_item('NonContrib', 99999, 99999, contribute=False, county=self.county)
+        result = recompute_market_price_index(self.gp, county=self.county)
+        self.assertEqual(result.sample_size, 5)  # the opted-out business's absurd price never enters
+
+    def test_get_benchmark_none_when_business_not_opted_in(self):
+        from core.market_price import get_market_price_benchmark, recompute_market_price_index
+        for i in range(5):
+            self._biz_with_item(f'BizV{i}', 100, 150, county=self.county)
+        recompute_market_price_index(self.gp, county=self.county)
+        viewer = Business.objects.create(name='Viewer Not Opted In', contribute_price_data=False)
+        self.assertIsNone(get_market_price_benchmark(viewer, self.gp, county=self.county))
+
+    def test_get_benchmark_returned_when_opted_in_and_sample_met(self):
+        from core.market_price import get_market_price_benchmark, recompute_market_price_index
+        for i in range(5):
+            self._biz_with_item(f'BizW{i}', 100, 150, county=self.county)
+        recompute_market_price_index(self.gp, county=self.county)
+        viewer = Business.objects.create(name='Viewer Opted In', contribute_price_data=True)
+        result = get_market_price_benchmark(viewer, self.gp, county=self.county)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.sample_size, 5)
+
+
+class AddItemByBarcodeViewTest(TestCase):
+    """R1-AC1: scanning a known barcode pre-fills name/brand/pack; entering
+    price + qty creates a stocked item in <= 3 taps (2 endpoint calls: lookup
+    then create)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='R1 View Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner_user = User.objects.create_user(username='r1_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='r1_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_lookup_hit_prefills_name_brand_pack(self):
+        GlobalProduct.objects.create(
+            barcode='LKP001', name='Blue Band 500g', brand='Blue Band', pack_size='500g', unit='pcs',
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/stock/barcode/LKP001/')
+        data = resp.json()
+        self.assertTrue(data['found'])
+        self.assertEqual(data['name'], 'Blue Band 500g')
+        self.assertEqual(data['brand'], 'Blue Band')
+
+    def test_lookup_miss_returns_found_false(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/stock/barcode/9999999999999/')
+        self.assertFalse(resp.json()['found'])
+
+    def test_owner_creates_item_from_known_barcode_in_one_call(self):
+        GlobalProduct.objects.create(barcode='LKP002', name='Omo 500g', unit='pcs')
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/add-by-barcode/', {
+            'barcode': 'LKP002', 'store_id': self.store.id,
+            'selling_price': '120', 'opening_qty': '10',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertTrue(data['was_known_product'])
+        item = Item.objects.get(id=data['item_id'])
+        self.assertEqual(item.description, 'Omo 500g')
+        self.assertEqual(item.barcode, 'LKP002')
+        self.assertIsNotNone(item.balance_confirmed_at)  # a real opening qty was entered
+
+    def test_miss_requires_manual_description_and_creates_global_product(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/add-by-barcode/', {
+            'barcode': 'BRANDNEW01', 'store_id': self.store.id,
+            'description': 'Local Honey 250ml', 'selling_price': '300', 'opening_qty': '0',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertFalse(data['was_known_product'])
+        item = Item.objects.get(id=data['item_id'])
+        self.assertIsNone(item.balance_confirmed_at)  # unknown opening balance — not confirmed yet
+        self.assertTrue(GlobalProduct.objects.filter(barcode='BRANDNEW01', name='Local Honey 250ml').exists())
+
+    def test_staff_cannot_create_item_by_barcode(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.post('/stock/add-by-barcode/', {
+            'barcode': 'STAFFTRY', 'store_id': self.store.id,
+            'description': 'X', 'selling_price': '10',
+        })
+        self.assertEqual(resp.status_code, 302)  # owner_or_manager_required redirects
+
+    def test_cross_business_store_rejected(self):
+        other_biz = Business.objects.create(name='Other R1 Biz')
+        other_store = Store.objects.create(business=other_biz, name='Other Store')
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/add-by-barcode/', {
+            'barcode': 'XB001', 'store_id': other_store.id,
+            'description': 'X', 'selling_price': '10',
+        })
+        self.assertEqual(resp.json()['ok'], False)
+
+
+class BalanceConfirmedAtTest(TestCase):
+    """UBA R1 §7.2 — Item.balance_confirmed_at: set by Rekebisha (any
+    direction) and by an item's first-ever Receipt, never by a Receipt on an
+    item with pre-existing history."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='BC Confirm Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner_user = User.objects.create_user(username='bc_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_rekebisha_no_change_still_confirms(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Salt 1kg',
+            material_no='BC-01', unit='pcs', opening_bin_balance=5,
+        )
+        self.assertIsNone(item.balance_confirmed_at)
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/items/{item.id}/adjust/', {'actual_count': '5'})
+        self.assertTrue(resp.json()['ok'])
+        item.refresh_from_db()
+        self.assertIsNotNone(item.balance_confirmed_at)
+
+    def test_rekebisha_shortage_confirms(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Salt 1kg',
+            material_no='BC-02', unit='pcs', opening_bin_balance=5,
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/items/{item.id}/adjust/', {'actual_count': '2'})
+        self.assertTrue(resp.json()['ok'])
+        item.refresh_from_db()
+        self.assertIsNotNone(item.balance_confirmed_at)
+
+    def test_first_ever_receipt_confirms_brand_new_item(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Rice 2kg',
+            material_no='BC-03', unit='pcs', barcode='BC-NEW',
+        )
+        self.assertIsNone(item.balance_confirmed_at)
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/add-transaction/', {
+            'item': item.id, 'type': 'Receipt', 'quantity': '20',
+            'recipient': 'Supplier X', 'invoice_no': 'INV-01',
+        })
+        item.refresh_from_db()
+        self.assertIsNotNone(item.balance_confirmed_at)
+
+    def test_receipt_on_item_with_existing_history_does_not_confirm(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Rice 2kg',
+            material_no='BC-04', unit='pcs',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='cash', date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/add-transaction/', {
+            'item': item.id, 'type': 'Receipt', 'quantity': '20',
+            'recipient': 'Supplier X', 'invoice_no': 'INV-02',
+        })
+        item.refresh_from_db()
+        self.assertIsNone(item.balance_confirmed_at)
+
+    def test_stock_list_shows_uncounted_badge(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Uncounted Item',
+            material_no='BC-05', unit='pcs',
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/stock/')
+        self.assertContains(resp, 'Haijahesabiwa')
+        item.balance_confirmed_at = timezone.now()
+        item.save(update_fields=['balance_confirmed_at'])
+        resp2 = self.client.get('/stock/')
+        # The badge text should no longer be associated with this specific confirmed item —
+        # verified via the item's own uncounted flag in context rather than a brittle page-wide count.
+        matching = [i for i in resp2.context['items'] if i.id == item.id]
+        self.assertFalse(matching[0].uncounted)
+
+
+class ReturnPrimitiveTest(TestCase):
+    """UBA R2 §7.3 — Returns/refunds. R-AC-RET: reverses stock, revenue,
+    revenue-target contribution and (if credit) the debt ledger."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Return Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='ret_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Cooking Oil 1L',
+            material_no='RET-01', unit='pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('150'), opening_bin_balance=50,
+        )
+
+    def _sale(self, qty=2, amount=Decimal('400'), payment_method='cash', recipient=''):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal(str(-qty)),
+            sale_amount=amount, payment_method=payment_method, recipient=recipient,
+            date=timezone.localdate(),
+        )
+
+    def test_return_reverses_stock_and_revenue(self):
+        before_balance = self.item.current_balance()
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        after_sale_balance = self.item.current_balance()
+        self.assertEqual(after_sale_balance, before_balance - 2)
+
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=1, reason='Imeharibika', processed_by=self.owner)
+        self.assertEqual(ret.status, Return.STATUS_APPROVED)
+        self.assertEqual(ret.refund_amount, Decimal('200.00'))
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), after_sale_balance + 1)  # stock reversed
+
+        # Revenue reversal: the two Issue transactions (sale + reversal) net to the kept half.
+        today = timezone.localdate()
+        total_rev = sum(
+            t.revenue() for t in Transaction.objects.filter(business=self.biz, item=self.item, type='Issue', date=today)
+        )
+        self.assertAlmostEqual(total_rev, 200.0, places=2)
+
+    def test_return_reverses_credit_debt(self):
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Alice Wanjiru')
+        sale = self._sale(qty=2, amount=Decimal('400'), payment_method='credit', recipient='Alice Wanjiru')
+        from core.debt_views import _get_customer_debt_data
+        customer = Customer.objects.get(business=self.biz, name='Alice Wanjiru')
+        before = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(before['outstanding'], 400.0)
+
+        Return.process_locked(sale.id, self.biz, qty_returned=1, reason='Si sahihi', processed_by=self.owner)
+        after = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(after['outstanding'], 200.0)
+
+    def test_cannot_return_more_than_sold(self):
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        with self.assertRaises(ValueError):
+            Return.process_locked(sale.id, self.biz, qty_returned=3, reason='X', processed_by=self.owner)
+
+    def test_cannot_double_return_same_units(self):
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        with self.assertRaises(ValueError):
+            Return.process_locked(sale.id, self.biz, qty_returned=1, reason='X', processed_by=self.owner)
+
+    def test_cross_business_transaction_rejected(self):
+        other_biz = Business.objects.create(name='Other Return Biz')
+        sale = self._sale(qty=1, amount=Decimal('200'))
+        with self.assertRaises(Transaction.DoesNotExist):
+            Return.process_locked(sale.id, other_biz, qty_returned=1, reason='X', processed_by=self.owner)
+
+    def test_approval_threshold_creates_pending_return(self):
+        self.biz.return_approval_threshold = Decimal('100')
+        self.biz.save(update_fields=['return_approval_threshold'])
+        sale = self._sale(qty=2, amount=Decimal('400'))  # refund for qty=2 would be 400, over threshold
+        before_balance = self.item.current_balance()
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        self.assertEqual(ret.status, Return.STATUS_PENDING)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), before_balance)  # nothing reversed yet
+
+    def test_approve_pending_return_processes_reversal(self):
+        self.biz.return_approval_threshold = Decimal('100')
+        self.biz.save(update_fields=['return_approval_threshold'])
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        before_balance = self.item.current_balance()
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        ret.approve(self.owner)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), before_balance + 2)
+        ret.refresh_from_db()
+        self.assertEqual(ret.status, Return.STATUS_APPROVED)
+
+    def test_reject_pending_return_processes_nothing(self):
+        self.biz.return_approval_threshold = Decimal('100')
+        self.biz.save(update_fields=['return_approval_threshold'])
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        before_balance = self.item.current_balance()
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        ret.reject(self.owner)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), before_balance)
+        ret.refresh_from_db()
+        self.assertEqual(ret.status, Return.STATUS_REJECTED)
+
+    def test_return_does_not_touch_item_cost_price(self):
+        original_cost = self.item.cost_price
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        Return.process_locked(sale.id, self.biz, qty_returned=1, reason='X', processed_by=self.owner)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, original_cost)
+
+    def test_process_return_view_end_to_end(self):
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/returns/process/', {
+            'transaction_id': sale.id, 'qty_returned': '1', 'reason': 'Imeharibika',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertFalse(data['needs_approval'])
+        self.assertTrue(Return.objects.filter(id=data['return_id'], status=Return.STATUS_APPROVED).exists())
+
+    def test_pending_return_approve_reject_views(self):
+        self.biz.return_approval_threshold = Decimal('50')
+        self.biz.save(update_fields=['return_approval_threshold'])
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        self.assertEqual(ret.status, Return.STATUS_PENDING)
+
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/returns/{ret.id}/approve/')
+        self.assertTrue(resp.json()['ok'])
+        ret.refresh_from_db()
+        self.assertEqual(ret.status, Return.STATUS_APPROVED)
+
+
+class MarginGuardTest(TestCase):
+    """R2-AC1: cost rise beyond margin_alert_pct fires exactly one exception
+    + one SMS, and the one-tap price update writes a price-history row."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Margin Guard Biz', margin_alert_pct=Decimal('15.0'))
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='mg_owner', password='x', first_name='Marg')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner', phone='0712345678')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Flour 2kg',
+            material_no='MG-01', unit='pcs', selling_price=Decimal('220'),
+            cost_price=Decimal('100'),
+        )
+
+    def test_cost_rise_beyond_threshold_fires_exception(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'new_cost_price': '130', 'update_cost_price': 'on',
+        })
+        excs = BusinessException.objects.filter(business=self.biz, kind='cost_rise')
+        self.assertEqual(excs.count(), 1)
+        self.assertIn('Pendekezo', excs.first().detail)
+        owner_notifs = Notification.objects.filter(user=self.owner_user, title__icontains='Bei')
+        self.assertEqual(owner_notifs.count(), 1)
+
+    def test_small_cost_rise_within_threshold_fires_no_exception(self):
+        self.client.force_login(self.owner_user)
+        self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'new_cost_price': '105', 'update_cost_price': 'on',
+        })
+        self.assertEqual(BusinessException.objects.filter(business=self.biz, kind='cost_rise').count(), 0)
+
+    def test_apply_suggested_price_updates_and_logs_history(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/items/{self.item.id}/apply-suggested-price/', {'new_price': '242'})
+        self.assertTrue(resp.json()['ok'])
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.selling_price, Decimal('242'))
+        hist = ItemPriceHistory.objects.get(item=self.item)
+        self.assertEqual(hist.old_price, Decimal('220'))
+        self.assertEqual(hist.new_price, Decimal('242'))
+        self.assertEqual(hist.reason, 'margin_guard')
+
+
+class SaleBelowCostTest(TestCase):
+    """R2-AC2: selling below cost is blocked for staff and warned for owner, and logged."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Below Cost Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='bc_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='bc_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Rice 5kg',
+            material_no='BCT-01', unit='pcs', selling_price=Decimal('500'),
+            cost_price=Decimal('450'), opening_bin_balance=50,
+        )
+        Shift.objects.create(business=self.biz, store=self.store, staff=self.staff_user, status='OPEN', opening_float=Decimal('0'))
+
+    def test_staff_blocked_from_selling_below_cost(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1, 'price': 400}]),
+            'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(business=self.biz, item=self.item).exists())
+        self.assertEqual(BusinessException.objects.filter(business=self.biz, kind='below_cost').count(), 1)
+
+    def test_owner_warned_but_allowed_below_cost(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1, 'price': 400}]),
+            'payment_method': 'cash',
+        })
+        self.assertTrue(Transaction.objects.filter(business=self.biz, item=self.item).exists())
+        self.assertEqual(BusinessException.objects.filter(business=self.biz, kind='below_cost').count(), 1)
+
+    def test_normal_price_sale_never_flagged(self):
+        self.client.force_login(self.owner_user)
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1, 'price': 500}]),
+            'payment_method': 'cash',
+        })
+        self.assertEqual(BusinessException.objects.filter(business=self.biz, kind='below_cost').count(), 0)
+
+
+class AbcClassificationTest(TestCase):
+    """UBA R3 §7.4 — classify_abc_all: top 80% of 90-day revenue = A, next 15% = B, rest = C."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='ABC Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+
+    def _item_with_revenue(self, name, revenue):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description=name,
+            material_no=f'ABC-{name}', unit='pcs', selling_price=Decimal('100'),
+        )
+        if revenue > 0:
+            Transaction.objects.create(
+                business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+                sale_amount=Decimal(str(revenue)), payment_method='cash',
+                date=timezone.localdate(),
+            )
+        return item
+
+    def test_top_revenue_item_classified_a(self):
+        from core.cycle_count import classify_abc_all
+        big = self._item_with_revenue('Big', 10000)
+        small = self._item_with_revenue('Small', 50)
+        classify_abc_all(self.biz)
+        big.refresh_from_db()
+        small.refresh_from_db()
+        self.assertEqual(big.abc_class, 'A')
+
+    def test_zero_revenue_item_left_unclassified(self):
+        from core.cycle_count import classify_abc_all
+        dormant = self._item_with_revenue('Dormant', 0)
+        classify_abc_all(self.biz)
+        dormant.refresh_from_db()
+        self.assertEqual(dormant.abc_class, '')
+
+    def test_c_class_low_contribution_item(self):
+        from core.cycle_count import classify_abc_all
+        # One dominant item (96%) pushes a tiny one past the 95% cumulative mark into C.
+        self._item_with_revenue('Dominant', 9600)
+        tiny = self._item_with_revenue('Tiny', 400)
+        classify_abc_all(self.biz)
+        tiny.refresh_from_db()
+        self.assertEqual(tiny.abc_class, 'C')
+
+
+class CycleCountSessionTest(TestCase):
+    """UBA R3 §7.4 — StockCountSession/StockCountLine lifecycle, high-risk
+    force-inclusion, variance attribution, and item.balance_confirmed_at."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Cycle Count Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='cc_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='cc_staff', password='x')
+        self.staff = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Batteries AA',
+            material_no='CC-01', unit='pcs', selling_price=Decimal('20'),
+            cost_price=Decimal('10'), opening_bin_balance=100, is_high_risk=True,
+        )
+        self.normal_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Ordinary Item',
+            material_no='CC-02', unit='pcs', selling_price=Decimal('50'),
+            cost_price=Decimal('30'), opening_bin_balance=20,
+        )
+
+    def test_high_risk_item_always_selected(self):
+        from core.cycle_count import select_items_for_cycle_count
+        selected = select_items_for_cycle_count(self.biz, limit=1)
+        self.assertIn(self.item, selected)
+
+    def test_start_session_snapshots_book_qty(self):
+        from core.cycle_count import start_cycle_count_session
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        line = session.lines.first()
+        self.assertEqual(line.book_qty, Decimal('100'))
+
+    def test_record_count_line_computes_variance_and_confirms_balance(self):
+        from core.cycle_count import record_count_line, start_cycle_count_session
+        self.assertIsNone(self.item.balance_confirmed_at)
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        line = session.lines.first()
+        record_count_line(line.id, self.biz, counted_qty='95', counted_by=self.owner, reason='Imeibiwa')
+        line.refresh_from_db()
+        self.assertEqual(line.variance_qty, Decimal('-5'))
+        self.assertEqual(line.variance_kes, Decimal('-50'))
+        self.item.refresh_from_db()
+        self.assertIsNotNone(self.item.balance_confirmed_at)
+
+    def test_record_count_line_attributes_to_active_shift_with_activity(self):
+        from core.cycle_count import record_count_line, start_cycle_count_session
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user, status='OPEN',
+            opening_float=Decimal('0'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('20'), payment_method='cash', date=timezone.localdate(),
+        )
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        line = session.lines.first()
+        record_count_line(line.id, self.biz, counted_qty='95', counted_by=self.owner, current_shift=shift)
+        line.refresh_from_db()
+        self.assertEqual(line.attributed_shift_id, shift.id)
+
+    def test_no_variance_no_attribution(self):
+        from core.cycle_count import record_count_line, start_cycle_count_session
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        line = session.lines.first()
+        record_count_line(line.id, self.biz, counted_qty='100', counted_by=self.owner)
+        line.refresh_from_db()
+        self.assertEqual(line.variance_qty, Decimal('0'))
+        self.assertIsNone(line.attributed_shift_id)
+
+    def test_close_session_marks_closed(self):
+        from core.cycle_count import close_session, start_cycle_count_session
+        session = start_cycle_count_session(self.biz, self.store, self.owner, item_ids=[self.item.id])
+        close_session(session.id, self.biz)
+        session.refresh_from_db()
+        self.assertEqual(session.status, StockCountSession.STATUS_CLOSED)
+        self.assertIsNotNone(session.closed_at)
+
+    def test_start_and_submit_views_end_to_end(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/cycle-count/start/', {'store': self.store.id})
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        line_id = data['lines'][0]['line_id']
+        resp2 = self.client.post(f'/stock/cycle-count/line/{line_id}/submit/', {
+            'counted_qty': '18', 'reason': 'kosa la kuandika',
+        })
+        self.assertTrue(resp2.json()['ok'])
+
+
+class PayablesTest(TestCase):
+    """UBA X1 §12.1 — payables: the missing half of the cash picture."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Payables Biz')
+        self.owner_user = User.objects.create_user(username='pay_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='pay_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_outstanding_property(self):
+        inv = SupplierInvoice.objects.create(business=self.biz, supplier_name='Mumias Sugar', amount=Decimal('10000'))
+        self.assertEqual(inv.outstanding, Decimal('10000'))
+        inv.record_payment_locked(Decimal('4000'), 'cash', self.owner)
+        inv.refresh_from_db()
+        self.assertEqual(inv.outstanding, Decimal('6000'))
+        self.assertEqual(inv.status, SupplierInvoice.STATUS_PARTIAL)
+
+    def test_full_payment_marks_paid(self):
+        inv = SupplierInvoice.objects.create(business=self.biz, supplier_name='Bidco', amount=Decimal('5000'))
+        inv.record_payment_locked(Decimal('5000'), 'mpesa', self.owner)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, SupplierInvoice.STATUS_PAID)
+        self.assertEqual(inv.outstanding, Decimal('0'))
+
+    def test_payment_creates_payment_row(self):
+        inv = SupplierInvoice.objects.create(business=self.biz, supplier_name='Unga Ltd', amount=Decimal('3000'))
+        inv.record_payment_locked(Decimal('1000'), 'cash', self.owner, reference='REF001')
+        self.assertEqual(SupplierPayment.objects.filter(invoice=inv).count(), 1)
+        payment = SupplierPayment.objects.get(invoice=inv)
+        self.assertEqual(payment.reference, 'REF001')
+
+    def test_aging_buckets(self):
+        from core.payables import payables_aging_summary
+        today = timezone.localdate()
+        SupplierInvoice.objects.create(
+            business=self.biz, supplier_name='Current Supplier', amount=Decimal('1000'),
+            due_date=today,
+        )
+        SupplierInvoice.objects.create(
+            business=self.biz, supplier_name='Overdue90 Supplier', amount=Decimal('2000'),
+            due_date=today - timedelta(days=100),
+        )
+        summary = payables_aging_summary(self.biz)
+        self.assertEqual(summary['aged']['current'], 1000.0)
+        self.assertEqual(summary['aged']['overdue_90'], 2000.0)
+        self.assertEqual(summary['total_outstanding'], 3000.0)
+
+    def test_paid_invoices_excluded_from_aging(self):
+        from core.payables import payables_aging_summary
+        inv = SupplierInvoice.objects.create(business=self.biz, supplier_name='Paid Supplier', amount=Decimal('500'))
+        inv.record_payment_locked(Decimal('500'), 'cash', self.owner)
+        summary = payables_aging_summary(self.biz)
+        self.assertEqual(summary['total_outstanding'], 0.0)
+
+    def test_cash_position_nets_receivables_and_payables(self):
+        from core.payables import cash_position
+        SupplierInvoice.objects.create(business=self.biz, supplier_name='X', amount=Decimal('3000'))
+        store = Store.objects.create(business=self.biz, name='Shop')
+        item = Item.objects.create(
+            business=self.biz, store=store, description='Item', material_no='PAY-01', unit='pcs',
+        )
+        Customer.objects.create(business=self.biz, name='Bob')
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('5000'), payment_method='credit', recipient='Bob',
+            date=timezone.localdate(),
+        )
+        pos = cash_position(self.biz)
+        self.assertEqual(pos['receivables'], 5000.0)
+        self.assertEqual(pos['payables'], 3000.0)
+        self.assertEqual(pos['net'], 2000.0)
+
+    def test_owner_can_record_invoice_and_payment_via_views(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/payables/invoices/record/', {
+            'supplier_name': 'Kenchic', 'amount': '8000', 'invoice_no': 'INV-001',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        invoice_id = data['invoice_id']
+        resp2 = self.client.post(f'/payables/invoices/{invoice_id}/pay/', {'amount': '3000', 'method': 'cash'})
+        self.assertTrue(resp2.json()['ok'])
+        self.assertEqual(resp2.json()['status'], SupplierInvoice.STATUS_PARTIAL)
+
+    def test_staff_cannot_record_invoice(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.post('/payables/invoices/record/', {'supplier_name': 'X', 'amount': '100'})
+        self.assertEqual(resp.status_code, 302)  # owner_or_manager_required redirects
+
+    def test_home_dashboard_shows_cash_position_for_owner(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/')
+        self.assertContains(resp, 'Hali Halisi ya Pesa')
+
+    def test_due_reminder_notifies_owner(self):
+        from core.payables_views import send_payables_due_reminders
+        self.owner.phone = '0712345678'
+        self.owner.save(update_fields=['phone'])
+        SupplierInvoice.objects.create(
+            business=self.biz, supplier_name='Urgent Supplier', amount=Decimal('1000'),
+            due_date=timezone.localdate(),
+        )
+        count = send_payables_due_reminders(self.biz)
+        self.assertEqual(count, 1)
+        self.assertTrue(Notification.objects.filter(user=self.owner_user, title__icontains='Malipo').exists())
+
+
+class RetailIntelligenceTest(TestCase):
+    """UBA R4 §7.5 — dead stock, reorder ("Order ya leo"), basket affinity,
+    hour-of-day heatmap."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='R4 Biz')
+        self.store_a = Store.objects.create(business=self.biz, name='Branch A')
+        self.owner_user = User.objects.create_user(username='r4_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_dead_stock_sorted_by_capital_tied_up(self):
+        from core.retail_reports import dead_stock_report
+        cheap = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Cheap Dead Stock',
+            material_no='R4-01', unit='pcs', cost_price=Decimal('10'), opening_bin_balance=5,
+        )
+        expensive = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Expensive Dead Stock',
+            material_no='R4-02', unit='pcs', cost_price=Decimal('1000'), opening_bin_balance=10,
+        )
+        rows = dead_stock_report(self.biz, days=60)
+        self.assertEqual(rows[0]['item'].id, expensive.id)  # 10,000 tied up > 50
+        self.assertFalse(rows[0]['transfer_available'])  # single store
+
+    def test_recently_sold_item_excluded_from_dead_stock(self):
+        from core.retail_reports import dead_stock_report
+        item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Fresh Seller',
+            material_no='R4-03', unit='pcs', cost_price=Decimal('50'), opening_bin_balance=10,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', date=timezone.localdate(),
+        )
+        rows = dead_stock_report(self.biz, days=60)
+        self.assertEqual([r for r in rows if r['item'].id == item.id], [])
+
+    def test_transfer_available_true_for_multi_store(self):
+        from core.retail_reports import dead_stock_report
+        Store.objects.create(business=self.biz, name='Branch B')
+        Item.objects.create(
+            business=self.biz, store=self.store_a, description='Dead Multi',
+            material_no='R4-04', unit='pcs', cost_price=Decimal('100'), opening_bin_balance=5,
+        )
+        rows = dead_stock_report(self.biz, days=60)
+        self.assertTrue(rows[0]['transfer_available'])
+
+    def test_reorder_today_only_lists_items_needing_reorder(self):
+        from core.retail_reports import reorder_today_list
+        low = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Low Stock Item',
+            material_no='R4-05', unit='pcs', reorder_level=10, reorder_quantity=20,
+            opening_bin_balance=2,
+        )
+        healthy = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Healthy Item',
+            material_no='R4-06', unit='pcs', reorder_level=5, reorder_quantity=10,
+            opening_bin_balance=100,
+        )
+        rows = reorder_today_list(self.biz)
+        ids = [r['item'].id for r in rows]
+        self.assertIn(low.id, ids)
+        self.assertNotIn(healthy.id, ids)
+        low_row = next(r for r in rows if r['item'].id == low.id)
+        self.assertIn(low.description, low_row['message_draft'])
+
+    def test_basket_affinity_finds_cooccurring_pairs(self):
+        from core.retail_reports import basket_affinity_top10
+        Receipt.objects.create(
+            business=self.biz, receipt_number=1, token='r4tok1',
+            lines=[{'name': 'Bread'}, {'name': 'Milk'}], total=Decimal('100'),
+        )
+        Receipt.objects.create(
+            business=self.biz, receipt_number=2, token='r4tok2',
+            lines=[{'name': 'Bread'}, {'name': 'Milk'}], total=Decimal('100'),
+        )
+        Receipt.objects.create(
+            business=self.biz, receipt_number=3, token='r4tok3',
+            lines=[{'name': 'Sugar'}], total=Decimal('50'),
+        )
+        rows = basket_affinity_top10(self.biz, days=30)
+        pairs = [(r['item_a'], r['item_b']) for r in rows]
+        self.assertIn(('Bread', 'Milk'), pairs)
+        top = next(r for r in rows if (r['item_a'], r['item_b']) == ('Bread', 'Milk'))
+        self.assertEqual(top['count'], 2)
+
+    def test_hour_heatmap_buckets_have_24_hours(self):
+        from core.retail_reports import hour_of_day_heatmap
+        item = Item.objects.create(
+            business=self.biz, store=self.store_a, description='Heatmap Item',
+            material_no='R4-07', unit='pcs',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='cash', date=timezone.localdate(),
+        )
+        rows = hour_of_day_heatmap(self.biz, days=30)
+        self.assertEqual(len(rows), 24)
+        self.assertEqual(sum(r['count'] for r in rows), 1)
+
+    def test_dead_stock_view_owner_only(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/analytics/retail/dead-stock/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+
+class PaymentPlanTest(TestCase):
+    """UBA P0-B §6.2 — payment plans (layaway/deposit/instalment/booking)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Layaway Biz')
+        self.store = Store.objects.create(business=self.biz, name='Boutique')
+        self.owner_user = User.objects.create_user(username='pp_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='pp_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.customer = Customer.objects.create(business=self.biz, name='Jane Wanjiku', phone='0712345678')
+        self.dress = Item.objects.create(
+            business=self.biz, store=self.store, description='Red Dress Size 42',
+            material_no='PP-01', unit='pcs', selling_price=Decimal('3000'),
+            cost_price=Decimal('1500'), opening_bin_balance=3,
+        )
+
+    def test_default_forfeit_policy_is_minus_percent(self):
+        self.assertEqual(self.biz.layaway_forfeit_policy, 'minus_percent')
+        self.assertEqual(self.biz.layaway_forfeit_pct, Decimal('10.0'))
+
+    def test_describe_forfeit_policy_text(self):
+        text = PaymentPlan.describe_forfeit_policy(self.biz)
+        self.assertIn('asilimia 10', text)
+
+    def test_reserved_item_reduces_available_balance(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'),
+        )
+        self.dress.refresh_from_db()
+        self.assertEqual(self.dress.current_balance(), 3)
+        self.assertEqual(self.dress.reserved_qty(), Decimal('1'))
+        self.assertEqual(self.dress.available_balance(), 2)
+
+    def test_pay_locked_creates_no_revenue_transaction(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+        )
+        plan.pay_locked(Decimal('1000'), 'cash', self.owner)
+        self.assertEqual(plan.paid_amount, Decimal('1000'))
+        self.assertEqual(plan.balance, Decimal('2000'))
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), 0)  # deposit is a liability, not revenue
+
+    def test_plan_never_appears_in_debt_ledger(self):
+        from core.debt_views import _get_customer_debt_data
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_DEPOSIT,
+            total_amount=Decimal('5000'), created_by=self.owner, initial_payment=Decimal('2000'),
+        )
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['outstanding'], 0.0)
+
+    def test_convert_to_sale_creates_issue_transaction_and_completes(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'), initial_payment=Decimal('3000'),
+        )
+        before_balance = self.dress.current_balance()
+        txn = plan.convert_to_sale_locked(self.owner)
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.type, 'Issue')
+        self.assertEqual(float(txn.revenue()), 3000.0)
+        self.dress.refresh_from_db()
+        self.assertEqual(self.dress.current_balance(), before_balance - 1)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_COMPLETED)
+        self.assertEqual(self.dress.reserved_qty(), 0)  # reservation cleared on completion
+
+    def test_cannot_convert_with_outstanding_balance(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner, initial_payment=Decimal('1000'),
+        )
+        with self.assertRaises(ValueError):
+            plan.convert_to_sale_locked(self.owner)
+
+    def test_refund_releases_reservation(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'), initial_payment=Decimal('1000'),
+        )
+        plan.refund_locked(self.owner)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_REFUNDED)
+        self.dress.refresh_from_db()
+        self.assertEqual(self.dress.reserved_qty(), 0)
+
+    def test_release_cancels_hold(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'),
+        )
+        plan.release(self.owner)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_CANCELLED)
+
+    def test_forfeit_minus_percent_marks_forfeited(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner, initial_payment=Decimal('1000'),
+        )
+        plan.forfeit_locked(self.owner)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_FORFEITED)
+
+    def test_forfeit_full_refund_policy_marks_refunded_instead(self):
+        self.biz.layaway_forfeit_policy = 'full_refund'
+        self.biz.save(update_fields=['layaway_forfeit_policy'])
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner, initial_payment=Decimal('1000'),
+        )
+        plan.forfeit_locked(self.owner)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, PaymentPlan.STATUS_REFUNDED)
+
+    def test_forfeit_policy_snapshotted_not_retroactive(self):
+        plan = PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+        )
+        original_text = plan.forfeit_policy
+        self.biz.layaway_forfeit_policy = 'full_forfeit'
+        self.biz.save(update_fields=['layaway_forfeit_policy'])
+        plan.refresh_from_db()
+        self.assertEqual(plan.forfeit_policy, original_text)  # unchanged despite the business setting flipping
+
+    def test_last_piece_shows_zero_available_once_reserved(self):
+        """Two customers cannot be sold the same reserved dress (§6.2's
+        literal example) -- verified via the helper a real checkout/create
+        flow would check before allowing a second reservation or sale."""
+        single_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Last Piece',
+            material_no='PP-02', unit='pcs', selling_price=Decimal('1000'), opening_bin_balance=1,
+        )
+        PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('1000'), created_by=self.owner,
+            reserved_item=single_item, reserved_qty=Decimal('1'),
+        )
+        self.assertEqual(single_item.current_balance(), 1)
+        self.assertEqual(single_item.available_balance(), 0)
+
+    def test_create_and_pay_views_end_to_end(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/payment-plans/create/', {
+            'customer_name': 'Jane Wanjiku', 'kind': 'LAYAWAY', 'total_amount': '3000',
+            'reserved_item_id': self.dress.id, 'reserved_qty': '1', 'initial_payment': '500',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('asilimia', data['forfeit_policy'])
+        plan_id = data['plan_id']
+
+        resp2 = self.client.post(f'/payment-plans/{plan_id}/pay/', {'amount': '2500'})
+        self.assertTrue(resp2.json()['ok'])
+        self.assertEqual(resp2.json()['balance'], 0.0)
+
+        resp3 = self.client.post(f'/payment-plans/{plan_id}/convert/')
+        self.assertTrue(resp3.json()['ok'])
+        self.assertEqual(resp3.json()['status'], PaymentPlan.STATUS_COMPLETED)
+
+    def test_home_dashboard_shows_deposits_held(self):
+        PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner, initial_payment=Decimal('1000'),
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.get('/')
+        self.assertContains(resp, 'Amana Zilizoshikiliwa')
+
+    def test_hold_expiry_reminder_notifies_owner(self):
+        from core.payment_plans_views import send_hold_expiry_reminders
+        PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('1'),
+            hold_expires_on=timezone.localdate(),
+        )
+        count = send_hold_expiry_reminders(self.biz)
+        self.assertEqual(count, 1)
+        self.assertTrue(Notification.objects.filter(user=self.owner_user, title__icontains='Amana').exists())
+
+    def test_quick_sell_respects_reservation(self):
+        PaymentPlan.create_locked(
+            business=self.biz, customer=self.customer, kind=PaymentPlan.KIND_LAYAWAY,
+            total_amount=Decimal('3000'), created_by=self.owner,
+            reserved_item=self.dress, reserved_qty=Decimal('3'),  # reserves ALL 3 pieces
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.dress.id, 'qty': 1, 'price': 3000}]),
+            'payment_method': 'cash',
+        })
+        self.assertFalse(Transaction.objects.filter(business=self.biz, item=self.dress).exists())
+
+
+class VariantMatrixTest(TestCase):
+    """UBA A1 §8.2 — variants (the boutique half): parent/child Items."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Boutique Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='var_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_create_variant_matrix_creates_parent_and_children(self):
+        from core.variants import create_variant_matrix
+        parent, children = create_variant_matrix(
+            self.biz, self.store, 'Shirt', sizes=['S', 'M', 'L'], colours=['Navy', 'Red'],
+            base_price=Decimal('1500'),
+        )
+        self.assertTrue(parent.is_variant_parent)
+        self.assertEqual(len(children), 6)
+        for child in children:
+            self.assertEqual(child.parent_id, parent.id)
+            self.assertFalse(child.is_variant_parent)
+            self.assertTrue(child.variant_label)
+
+    def test_each_variant_has_independent_balance(self):
+        from core.variants import create_variant_matrix
+        parent, children = create_variant_matrix(
+            self.biz, self.store, 'Dress', sizes=['M'], colours=['Blue', 'Green'],
+            base_price=Decimal('2000'), opening_qty=5,
+        )
+        blue = next(c for c in children if 'Blue' in c.variant_label)
+        green = next(c for c in children if 'Green' in c.variant_label)
+        self.assertEqual(blue.current_balance(), 5)
+        Transaction.objects.create(
+            business=self.biz, item=blue, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('4000'), payment_method='cash', date=timezone.localdate(),
+        )
+        blue.refresh_from_db()
+        self.assertEqual(blue.current_balance(), 3)
+        self.assertEqual(green.current_balance(), 5)  # unaffected
+
+    def test_auto_skus_are_unique(self):
+        from core.variants import create_variant_matrix
+        _, children1 = create_variant_matrix(
+            self.biz, self.store, 'Shirt', sizes=['M'], colours=['Navy'], base_price=Decimal('1000'),
+        )
+        _, children2 = create_variant_matrix(
+            self.biz, self.store, 'Shirt', sizes=['M'], colours=['Navy'], base_price=Decimal('1000'),
+        )
+        self.assertNotEqual(children1[0].material_no, children2[0].material_no)
+
+    def test_variant_summary_aggregates_children(self):
+        from core.variants import create_variant_matrix
+        parent, children = create_variant_matrix(
+            self.biz, self.store, 'Jacket', sizes=['M', 'L'], colours=[''],
+            base_price=Decimal('3000'), opening_qty=2,
+        )
+        for c in children:
+            c.selling_price = Decimal('3000') if 'M' in c.variant_label else Decimal('3500')
+            c.save(update_fields=['selling_price'])
+        summary = parent.variant_summary()
+        self.assertEqual(summary['total_balance'], 4)
+        self.assertEqual(summary['variant_count'], 2)
+        self.assertEqual(summary['min_price'], Decimal('3000'))
+        self.assertEqual(summary['max_price'], Decimal('3500'))
+
+    def test_create_matrix_view_end_to_end(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/variants/create-matrix/', {
+            'product_name': 'Trousers', 'store_id': self.store.id, 'base_price': '2500',
+            'sizes': ['30', '32', '34'], 'colours': ['Black'], 'opening_qty': '3',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(len(data['children']), 3)
+
+
+class BaleEnvelopeTest(TestCase):
+    """UBA A2 §8.3 — bale envelope generalisation (ProduceBunch.kind/grade/label)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Mitumba Biz')
+        self.store = Store.objects.create(business=self.biz, name='Stall')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Jeans Bale',
+            material_no='BALE-01', unit='pcs', is_produce=True,
+        )
+
+    def test_bale_kind_defaults_and_same_maths_as_produce(self):
+        bale = ProduceBunch.objects.create(
+            business=self.biz, item=self.item, kind='bale', grade='1st',
+            label='Bale ya jeans — Gikomba 28/07', size='LARGE',
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+        )
+        self.assertEqual(bale.kind, 'bale')
+        self.assertEqual(bale.grade, '1st')
+        bale.revenue_collected = Decimal('8000')
+        bale.save(update_fields=['revenue_collected'])
+        self.assertEqual(bale.remaining(), Decimal('12000'))
+        self.assertAlmostEqual(bale.realized_markup(), 8000 / 12000)
+
+    def test_default_kind_is_produce_for_ordinary_bunches(self):
+        bunch = ProduceBunch.objects.create(
+            business=self.biz, item=self.item, size='SMALL',
+            cost_price=Decimal('40'), target_revenue=Decimal('70'),
+        )
+        self.assertEqual(bunch.kind, 'produce')
+        self.assertEqual(bunch.grade, '')
+
+
+class MarkdownEngineTest(TestCase):
+    """UBA A3 §8.4 — aging & markdown engine."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Markdown Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='md_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_stale_item_gets_markdown_suggestion(self):
+        from core.markdown_engine import aging_and_markdown_report
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Old Suits',
+            material_no='MD-01', unit='pcs', selling_price=Decimal('2000'),
+            cost_price=Decimal('1600'), opening_bin_balance=6,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('2000'), payment_method='cash',
+            date=timezone.localdate() - timedelta(days=95),
+        )
+        rows = aging_and_markdown_report(self.biz)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row['bucket'], '90+')
+        self.assertEqual(row['markdown_pct'], 40.0)
+        self.assertEqual(row['suggested_price'], 1200.0)  # 2000 * 0.6
+
+    def test_recently_sold_item_excluded(self):
+        from core.markdown_engine import aging_and_markdown_report
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Fresh Stock',
+            material_no='MD-02', unit='pcs', selling_price=Decimal('1000'), opening_bin_balance=5,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('1000'), payment_method='cash', date=timezone.localdate(),
+        )
+        rows = aging_and_markdown_report(self.biz)
+        self.assertEqual(rows, [])
+
+    def test_apply_markdown_writes_price_history(self):
+        from core.markdown_engine import apply_markdown
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Markdown Item',
+            material_no='MD-03', unit='pcs', selling_price=Decimal('1000'),
+        )
+        apply_markdown(item, Decimal('600'), self.owner)
+        item.refresh_from_db()
+        self.assertEqual(item.selling_price, Decimal('600'))
+        hist = ItemPriceHistory.objects.get(item=item)
+        self.assertEqual(hist.reason, 'markdown')
+
+    def test_apply_markdown_view_end_to_end(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='View Markdown Item',
+            material_no='MD-04', unit='pcs', selling_price=Decimal('1000'),
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/stock/items/{item.id}/apply-markdown/', {'new_price': '750'})
+        self.assertTrue(resp.json()['ok'])
+        item.refresh_from_db()
+        self.assertEqual(item.selling_price, Decimal('750'))
+
+
+class FittingRoomLogTest(TestCase):
+    """UBA A3 §8.4 — fitting-room log, second real accountability engine caller."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Fitting Room Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='fr_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='fr_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_variance_property(self):
+        log = FittingRoomLog.objects.create(business=self.biz, store=self.store, pieces_out=10, pieces_back=8)
+        self.assertEqual(log.variance, 2)
+
+    def test_fitting_room_engine_flags_danger_on_large_variance(self):
+        from core.accountability import variance_for
+        log = FittingRoomLog.objects.create(business=self.biz, store=self.store, pieces_out=10, pieces_back=5)
+        result = variance_for('fitting_room', business=self.biz, store=log, shift=None)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.flag, 'danger')
+        self.assertEqual(result.variance, Decimal('-5'))
+
+    def test_fitting_room_engine_ok_on_zero_variance(self):
+        from core.accountability import variance_for
+        log = FittingRoomLog.objects.create(business=self.biz, store=self.store, pieces_out=10, pieces_back=10)
+        result = variance_for('fitting_room', business=self.biz, store=log, shift=None)
+        self.assertEqual(result.flag, 'ok')
+
+    def test_record_fitting_room_count_view_owner(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/apparel/fitting-room/record/', {
+            'pieces_out': '12', 'pieces_back': '11', 'store': self.store.id,
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['variance'], 1)
+
+    def test_record_fitting_room_count_requires_shift_for_staff(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.post('/apparel/fitting-room/record/', {
+            'pieces_out': '5', 'pieces_back': '5', 'store': self.store.id,
+        })
+        self.assertEqual(resp.status_code, 403)
+
+
+class SalonServiceTest(TestCase):
+    """UBA S1 §9.2 — services, recipes, shadow-item revenue path."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Salon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Salon')
+        self.owner_user = User.objects.create_user(username='sal_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.stylist_user = User.objects.create_user(username='sal_stylist', password='x')
+        self.stylist = UserProfile.objects.create(user=self.stylist_user, business=self.biz, role='staff')
+        self.relaxer = Item.objects.create(
+            business=self.biz, store=self.store, description='Relaxer',
+            material_no='SAL-RELAXER', unit='ml', cost_price=Decimal('2'),
+            opening_bin_balance=5000,
+        )
+        self.service = Service.objects.create(
+            business=self.biz, store=self.store, name='Retouch', price=Decimal('1500'),
+            commission_type='PERCENT', commission_value=Decimal('40'),
+        )
+        ServiceSupplyLine.objects.create(service=self.service, item=self.relaxer, qty_expected=Decimal('60'))
+
+    def test_shadow_item_created_lazily_with_service_stock_model(self):
+        from core.salon import get_or_create_shadow_item
+        self.assertIsNone(self.service.shadow_item_id)
+        shadow = get_or_create_shadow_item(self.service)
+        self.assertEqual(shadow.stock_model, 'SERVICE')
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.shadow_item_id, shadow.id)
+
+    def test_complete_service_deducts_recipe_and_issues_receipt_ready_revenue(self):
+        from core.salon import complete_service_locked
+        service_txn, supply_txns = complete_service_locked(
+            self.service, self.stylist, self.biz, payment_method='cash', recorded_by=self.owner,
+        )
+        self.assertEqual(service_txn.type, 'Issue')
+        self.assertEqual(float(service_txn.revenue()), 1500.0)
+        self.assertEqual(service_txn.performed_by_id, self.stylist.id)
+        self.assertEqual(len(supply_txns), 1)
+        self.assertEqual(supply_txns[0].type, 'Draw')
+        self.relaxer.refresh_from_db()
+        self.assertEqual(self.relaxer.current_balance(), 5000 - 60)
+
+    def test_draw_transaction_never_counts_as_revenue_even_if_item_has_selling_price(self):
+        """Regression lock for the exact bug this design avoids: a supply
+        item that ALSO has its own selling_price (common -- many salon
+        supplies are sold retail too) must never have its recipe-consumption
+        Draw transaction misread as a second sale."""
+        self.relaxer.selling_price = Decimal('500')
+        self.relaxer.save(update_fields=['selling_price'])
+        from core.salon import complete_service_locked
+        _, supply_txns = complete_service_locked(
+            self.service, self.stylist, self.biz, recorded_by=self.owner,
+        )
+        self.assertEqual(float(supply_txns[0].revenue()), 0.0)
+
+    def test_free_redo_zero_revenue_and_excluded_from_services_performed_count(self):
+        from core.salon import complete_service_locked, expected_consumption
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)  # real service
+        service_txn, supply_txns = complete_service_locked(
+            self.service, self.stylist, self.biz, is_redo=True, recorded_by=self.owner,
+        )
+        self.assertIsNone(service_txn)  # no shadow-item Issue created for a redo
+        self.assertEqual(supply_txns[0].invoice_no, '[REDO]')
+        today = timezone.localdate()
+        expected = expected_consumption(self.biz, self.relaxer, self.stylist, today, today)
+        self.assertEqual(expected, Decimal('60'))  # only the ONE real service counted, not the redo
+
+    def test_commission_amount_percent_and_fixed(self):
+        self.assertEqual(self.service.commission_amount(Decimal('1500')), Decimal('600.00'))
+        fixed_service = Service.objects.create(
+            business=self.biz, name='Wash', price=Decimal('300'),
+            commission_type='FIXED', commission_value=Decimal('100'),
+        )
+        self.assertEqual(fixed_service.commission_amount(Decimal('300')), Decimal('100'))
+
+    def test_complete_service_view_end_to_end(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/salon/services/complete/', {
+            'service_id': self.service.id, 'stylist_id': self.stylist.id, 'payment_method': 'cash',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIsNotNone(data['service_txn_id'])
+
+
+class RecipeVarianceEngineTest(TestCase):
+    """UBA S1-AC2 — the side-client detector accountability engine."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='RV Salon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Salon')
+        self.owner_user = User.objects.create_user(username='rv_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.stylist_user = User.objects.create_user(username='rv_stylist', password='x')
+        self.stylist = UserProfile.objects.create(user=self.stylist_user, business=self.biz, role='staff')
+        self.relaxer = Item.objects.create(
+            business=self.biz, store=self.store, description='Relaxer',
+            material_no='RV-RELAXER', unit='ml', cost_price=Decimal('3'), opening_bin_balance=1000,
+        )
+        self.service = Service.objects.create(business=self.biz, store=self.store, name='Retouch', price=Decimal('1500'))
+        ServiceSupplyLine.objects.create(service=self.service, item=self.relaxer, qty_expected=Decimal('60'))
+
+    def test_never_counted_gives_coverage_zero_and_no_accusation(self):
+        from core.accountability import variance_for
+        from core.salon import complete_service_locked
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)
+        today = timezone.localdate()
+        result = variance_for(
+            'recipe_variance', business=self.biz, store=(self.relaxer, self.stylist), shift=None,
+            date_from=today, date_to=today,
+        )
+        self.assertEqual(result.coverage_pct, Decimal('0'))
+        self.assertTrue(result.is_partial)
+        self.assertEqual(result.flag, 'ok')  # never accuses when uncounted
+
+    def test_matching_count_shows_no_variance(self):
+        from core.accountability import variance_for
+        from core.salon import complete_service_locked
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)  # -60ml drawn
+        self.relaxer.refresh_from_db()
+        session = StockCountSession.objects.create(business=self.biz, store=self.store, started_by=self.owner)
+        line = StockCountLine.objects.create(session=session, item=self.relaxer, book_qty=self.relaxer.current_balance())
+        line.counted_qty = self.relaxer.current_balance()  # count matches book exactly
+        line.variance_qty = Decimal('0')
+        line.counted_at = timezone.now()
+        line.save()
+        today = timezone.localdate()
+        result = variance_for(
+            'recipe_variance', business=self.biz, store=(self.relaxer, self.stylist), shift=None,
+            date_from=today, date_to=today,
+        )
+        self.assertEqual(result.coverage_pct, Decimal('100'))
+        self.assertEqual(result.variance, Decimal('0') - Decimal('60'))  # no shortage counted -> pure negative of expected
+        # sanity: with zero physical shortage, actual shrinkage is 0
+        self.assertEqual(result.actual, Decimal('0'))
+
+    def test_side_client_signal_when_shrinkage_exceeds_expected(self):
+        from core.accountability import variance_for
+        from core.salon import complete_service_locked
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)  # 1 service, expects 60ml
+        self.relaxer.refresh_from_db()
+        session = StockCountSession.objects.create(business=self.biz, store=self.store, started_by=self.owner)
+        line = StockCountLine.objects.create(session=session, item=self.relaxer, book_qty=self.relaxer.current_balance())
+        # physical count shows MORE missing than the one recorded service can explain
+        line.counted_qty = self.relaxer.current_balance() - Decimal('100')
+        line.variance_qty = Decimal('-100')
+        line.counted_at = timezone.now()
+        line.save()
+        today = timezone.localdate()
+        result = variance_for(
+            'recipe_variance', business=self.biz, store=(self.relaxer, self.stylist), shift=None,
+            date_from=today, date_to=today,
+        )
+        self.assertEqual(result.actual, Decimal('100'))
+        self.assertEqual(result.variance, Decimal('40'))  # 100 actual shrinkage - 60 expected = 40ml unaccounted
+
+
+class SalonAppointmentTest(TestCase):
+    """UBA S2 §9.3 — bookings, double-booking prevention, no-show tracking."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Booking Salon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Salon')
+        self.owner_user = User.objects.create_user(username='book_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.stylist_user = User.objects.create_user(username='book_stylist', password='x')
+        self.stylist = UserProfile.objects.create(user=self.stylist_user, business=self.biz, role='staff')
+
+    def test_double_booking_same_stylist_refused(self):
+        self.client.force_login(self.owner_user)
+        resp1 = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'staff_id': self.stylist.id,
+            'start_at': '2026-09-01T10:00:00', 'end_at': '2026-09-01T11:00:00',
+            'customer_name': 'Alice',
+        })
+        self.assertTrue(resp1.json()['ok'])
+        resp2 = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'staff_id': self.stylist.id,
+            'start_at': '2026-09-01T10:30:00', 'end_at': '2026-09-01T11:30:00',
+            'customer_name': 'Bob',
+        })
+        self.assertFalse(resp2.json()['ok'])
+        self.assertIn('appointment', resp2.json()['error'].lower())
+
+    def test_non_overlapping_slots_both_allowed(self):
+        self.client.force_login(self.owner_user)
+        resp1 = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'staff_id': self.stylist.id,
+            'start_at': '2026-09-01T10:00:00', 'end_at': '2026-09-01T11:00:00',
+            'customer_name': 'Alice',
+        })
+        resp2 = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'staff_id': self.stylist.id,
+            'start_at': '2026-09-01T11:00:00', 'end_at': '2026-09-01T12:00:00',
+            'customer_name': 'Bob',
+        })
+        self.assertTrue(resp1.json()['ok'])
+        self.assertTrue(resp2.json()['ok'])
+
+    def test_no_show_increments_customer_count(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/salon/appointments/create/', {
+            'store_id': self.store.id, 'start_at': '2026-09-01T10:00:00',
+            'end_at': '2026-09-01T11:00:00', 'customer_name': 'Repeat Offender',
+        })
+        appt_id = resp.json()['appointment_id']
+        self.client.post(f'/salon/appointments/{appt_id}/status/', {'status': 'NO_SHOW'})
+        customer = Customer.objects.get(business=self.biz, name='Repeat Offender')
+        self.assertEqual(customer.no_show_count, 1)
+
+
+class SalonCommissionTest(TestCase):
+    """UBA S3 §9.4 — commission ledger, reusing the existing Haki module."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Commission Salon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Salon')
+        self.owner_user = User.objects.create_user(username='comm_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.stylist_user = User.objects.create_user(username='comm_stylist', password='x')
+        self.stylist = UserProfile.objects.create(user=self.stylist_user, business=self.biz, role='staff', phone='0712345678')
+        self.service = Service.objects.create(
+            business=self.biz, store=self.store, name='Weave', price=Decimal('2000'),
+            commission_type='PERCENT', commission_value=Decimal('30'),
+        )
+
+    def test_commission_matches_hand_calculation(self):
+        from core.salon import complete_service_locked
+        from core.salon_commission import commission_report
+        for _ in range(3):
+            complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)
+        period = timezone.localdate().strftime('%Y-%m')
+        report = commission_report(self.biz, self.stylist, period)
+        self.assertEqual(report['services_count'], 3)
+        self.assertEqual(report['revenue_total'], 6000.0)
+        self.assertEqual(report['commission_total'], 1800.0)  # 3 * 2000 * 0.30
+        self.assertEqual(report['owed'], 1800.0)
+
+    def test_recording_payment_clears_from_owed(self):
+        from core.salon import complete_service_locked
+        from core.salon_commission import commission_report
+        complete_service_locked(self.service, self.stylist, self.biz, recorded_by=self.owner)
+        period = timezone.localdate().strftime('%Y-%m')
+        self.client.force_login(self.owner_user)
+        self.client.post(f'/staff/{self.stylist.id}/salary/', {
+            'period': period, 'amount': '600', 'method': 'cash', 'payment_type': 'full',
+        })
+        report = commission_report(self.biz, self.stylist, period)
+        self.assertEqual(report['owed'], 0.0)  # 600 commission earned, 600 paid
+
+    def test_commission_report_view_owner_only(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.get(f'/salon/commission/{self.stylist.id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+
+class RentalUnitAndAgreementTest(TestCase):
+    """UBA L1 §10.3 — units, agreements, availability."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Rental Biz')
+        self.store = Store.objects.create(business=self.biz, name='Portfolio A')
+        self.owner_user = User.objects.create_user(username='rent_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.caretaker_user = User.objects.create_user(username='rent_caretaker', password='x')
+        self.caretaker = UserProfile.objects.create(user=self.caretaker_user, business=self.biz, role='caretaker')
+
+    def test_property_unit_default_qty_one(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, kind='property', code='A12',
+            name='Bedsitter A12', default_rate=Decimal('8000'),
+        )
+        self.assertEqual(unit.quantity, 1)
+        self.assertEqual(unit.available_qty(), 1)
+
+    def test_equipment_committed_qty_reduces_availability(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, kind='equipment', code='CHAIRS',
+            default_rate=Decimal('50'), rate_period='day', quantity=300,
+        )
+        customer = Customer.objects.create(business=self.biz, name='Event Co')
+        RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer, start_date=timezone.localdate(),
+            rate=Decimal('50'), rate_period='day', quantity=200, status='ACTIVE',
+        )
+        self.assertEqual(unit.committed_qty(), 200)
+        self.assertEqual(unit.available_qty(), 100)
+
+    def test_cannot_book_more_than_available_equipment(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, kind='equipment', code='TENTS',
+            default_rate=Decimal('1000'), rate_period='day', quantity=5,
+        )
+        customer1 = Customer.objects.create(business=self.biz, name='Customer One')
+        RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer1, start_date=timezone.localdate(),
+            rate=Decimal('1000'), quantity=5, status='ACTIVE',
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/rentals/agreements/create/', {
+            'unit_id': unit.id, 'quantity': '1', 'customer_name': 'Customer Two',
+        })
+        self.assertFalse(resp.json()['ok'])
+
+    def test_terminate_agreement(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='B4', default_rate=Decimal('6000'),
+        )
+        customer = Customer.objects.create(business=self.biz, name='Tenant X')
+        agreement = RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer, start_date=timezone.localdate(),
+            rate=Decimal('6000'), status='ACTIVE',
+        )
+        agreement.terminate(ended_by=self.owner, reason='Moved out')
+        agreement.refresh_from_db()
+        self.assertEqual(agreement.status, 'TERMINATED')
+        self.assertIsNotNone(agreement.end_date)
+
+    def test_caretaker_cannot_create_agreement(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='C7', default_rate=Decimal('5000'),
+        )
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post('/rentals/agreements/create/', {
+            'unit_id': unit.id, 'customer_name': 'New Tenant',
+        })
+        self.assertEqual(resp.status_code, 302)  # owner_or_manager_required redirects, not created
+
+    def test_caretaker_can_record_meter_reading(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='D9', default_rate=Decimal('5000'), is_metered=True,
+        )
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post(f'/rentals/units/{unit.id}/meter-reading/', {
+            'kind': 'water', 'reading': '145.5',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.assertEqual(MeterReading.objects.filter(unit=unit).count(), 1)
+
+    def test_caretaker_cannot_deduct_deposit(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='E1', default_rate=Decimal('5000'),
+        )
+        customer = Customer.objects.create(business=self.biz, name='Deposit Tenant')
+        agreement = RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer, start_date=timezone.localdate(),
+            rate=Decimal('5000'), deposit_held=Decimal('10000'), status='ACTIVE',
+        )
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post(f'/rentals/agreements/{agreement.id}/deduct-deposit/', {
+            'amount': '2000', 'reason': 'Broken window',
+        })
+        self.assertEqual(resp.status_code, 302)  # blocked -- L2-AC2
+        agreement.refresh_from_db()
+        self.assertEqual(agreement.deposit_held, Decimal('10000'))  # untouched
+
+    def test_owner_can_deduct_deposit_itemised(self):
+        unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='F2', default_rate=Decimal('5000'),
+        )
+        customer = Customer.objects.create(business=self.biz, name='Deposit Tenant 2')
+        agreement = RentalAgreement.objects.create(
+            business=self.biz, unit=unit, customer=customer, start_date=timezone.localdate(),
+            rate=Decimal('5000'), deposit_held=Decimal('10000'), status='ACTIVE',
+        )
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/rentals/agreements/{agreement.id}/deduct-deposit/', {
+            'amount': '2000', 'reason': 'Broken window',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['deposit_held'], 8000.0)
+        self.assertIn('Broken window', data['note'])
+        # No Transaction was ever created for the deposit or its deduction --
+        # it never touched revenue, matching P0-B's own liability pattern.
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), 0)
+
+
+class RentRollAndArrearsTest(TestCase):
+    """UBA L1-AC1/L1-AC2 — rent roll idempotency + arrears-are-debt."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Rent Roll Biz')
+        self.store = Store.objects.create(business=self.biz, name='Portfolio')
+        self.owner_user = User.objects.create_user(username='roll_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='A12', default_rate=Decimal('8000'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='Mary Wanjiru', phone='0712345678')
+        self.agreement = RentalAgreement.objects.create(
+            business=self.biz, unit=self.unit, customer=self.customer, start_date=timezone.localdate(),
+            rate=Decimal('8000'), status='ACTIVE',
+        )
+
+    def test_rent_roll_creates_credit_transaction_and_invoice(self):
+        from core.rentals import generate_rent_roll
+        today = timezone.localdate()
+        created = generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        self.assertEqual(len(created), 1)
+        invoice = created[0]
+        self.assertEqual(invoice.total, Decimal('8000'))
+        self.assertIsNotNone(invoice.rent_txn)
+        self.assertEqual(invoice.rent_txn.payment_method, 'credit')
+        self.assertEqual(invoice.rent_txn.recipient, 'Mary Wanjiru')
+
+    def test_rent_roll_is_idempotent(self):
+        from core.rentals import generate_rent_roll
+        today = timezone.localdate()
+        generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        created_again = generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        self.assertEqual(len(created_again), 0)
+        self.assertEqual(RentalInvoice.objects.filter(agreement=self.agreement).count(), 1)
+
+    def test_rent_arrears_appear_in_debt_tracker(self):
+        from core.debt_views import _get_customer_debt_data
+        from core.rentals import generate_rent_roll
+        today = timezone.localdate()
+        generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['outstanding'], 8000.0)
+
+    def test_mpesa_c2b_matches_unit_code_and_clears_arrears(self):
+        from core.rentals import generate_rent_roll, sync_invoice_payment_status
+        today = timezone.localdate()
+        invoices = generate_rent_roll(self.biz, today.replace(day=1), today, today.replace(day=5))
+        invoice = invoices[0]
+
+        resp = self.client.post('/mpesa/c2b/confirmation/', json.dumps({
+            'TransactionType': 'Pay Bill', 'TransID': 'RENTTEST01', 'TransAmount': '8000',
+            'BusinessShortCode': '000000', 'BillRefNumber': 'A12', 'MSISDN': '254712345678',
+        }), content_type='application/json')
+        # The C2B view resolves shortcode via resolve_account_by_shortcode, which
+        # needs the business to actually have that shortcode configured -- set it
+        # up front so the unit-code branch is reached at all.
+        self.biz.mpesa_paybill = '000000'
+        self.biz.save(update_fields=['mpesa_paybill'])
+        resp = self.client.post('/mpesa/c2b/confirmation/', json.dumps({
+            'TransactionType': 'Pay Bill', 'TransID': 'RENTTEST02', 'TransAmount': '8000',
+            'BusinessShortCode': '000000', 'BillRefNumber': 'A12', 'MSISDN': '254712345678',
+        }), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        sync_invoice_payment_status(invoice)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, RentalInvoice.STATUS_PAID)
+
+    def test_unmatched_unit_code_raises_business_exception(self):
+        self.biz.mpesa_paybill = '000000'
+        self.biz.save(update_fields=['mpesa_paybill'])
+        resp = self.client.post('/mpesa/c2b/confirmation/', json.dumps({
+            'TransactionType': 'Pay Bill', 'TransID': 'RENTTEST03', 'TransAmount': '5000',
+            'BusinessShortCode': '000000', 'BillRefNumber': 'ZZZ-NOPE', 'MSISDN': '254712345678',
+        }), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(BusinessException.objects.filter(business=self.biz, kind='other').exists())
+
+
+class MaintenanceTicketTest(TestCase):
+    """UBA L2 §10.4 — maintenance tickets, per-unit history."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Maintenance Biz')
+        self.store = Store.objects.create(business=self.biz, name='Portfolio')
+        self.owner_user = User.objects.create_user(username='maint_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.caretaker_user = User.objects.create_user(username='maint_caretaker', password='x')
+        UserProfile.objects.create(user=self.caretaker_user, business=self.biz, role='caretaker')
+        self.unit = RentalUnit.objects.create(
+            business=self.biz, store=self.store, code='G3', default_rate=Decimal('7000'),
+        )
+
+    def test_caretaker_can_report_maintenance(self):
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post(f'/rentals/units/{self.unit.id}/maintenance/', {
+            'description': 'Leaking tap in bathroom',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.assertEqual(MaintenanceTicket.objects.filter(unit=self.unit).count(), 1)
+
+    def test_owner_closes_ticket_with_cost(self):
+        ticket = MaintenanceTicket.objects.create(unit=self.unit, description='Broken door')
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/rentals/maintenance/{ticket.id}/close/', {'cost': '1500'})
+        self.assertTrue(resp.json()['ok'])
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, 'CLOSED')
+        self.assertEqual(ticket.cost, Decimal('1500'))
+
+    def test_caretaker_cannot_close_ticket(self):
+        ticket = MaintenanceTicket.objects.create(unit=self.unit, description='Broken door 2')
+        self.client.force_login(self.caretaker_user)
+        resp = self.client.post(f'/rentals/maintenance/{ticket.id}/close/', {'cost': '500'})
+        self.assertEqual(resp.status_code, 302)
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, 'OPEN')

@@ -197,7 +197,13 @@
                 {% elif item.needs_reorder %}reorder{% endif %}"
                 onclick="window.location='{% url 'item_detail' item.id %}'">
                 <td><strong>{{ item.material_no }}</strong></td>
-                <td>{{ item.description }}</td>
+                <td>{{ item.description }}
+                    {% if item.uncounted %}
+                        <span class="badge d-block mt-1" style="background:rgba(201,168,76,.12); color:var(--gold); border:1px solid rgba(201,168,76,.3); font-weight:500; font-size:.68rem; width:fit-content;" title="{% trans 'Salio halisi bado halijahesabiwa — tumia Rekebisha kuthibitisha.' %}">
+                            ❓ {% trans 'Haijahesabiwa' %}
+                        </span>
+                    {% endif %}
+                </td>
                 <td>{{ item.unit }}</td>
                 <td>{% if item.is_produce %}{{ item.current_balance|floatformat:2 }}{% else %}{{ item.current_balance|floatformat:0 }}{% endif %}</td>
                 <td>{{ item.physical_balance }}</td>

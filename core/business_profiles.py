@@ -10,7 +10,15 @@ Usage:
     from core.business_profiles import get_profile
     profile = get_profile(business)
     # profile['board'], profile['modules']['keg'], profile['catalog']
+
+Also exposes `profile['capability']` — a UBA §2.4 Capability declaration
+(stock models / sale mechanics / accountability engines this business type
+composes). This is metadata only: nothing in the app reads it yet. It does
+not change `board`, `modules`, or `catalog` — those keep gating the app
+exactly as before.
 """
+
+from dataclasses import dataclass, field
 
 from core.liquor_pricelist_catalog import LIQUOR_PRICELIST_CATALOG
 
@@ -402,6 +410,127 @@ KITCHEN_CATALOG = [
 ]
 
 
+# ── Capability composition model (UBA §2.4) ───────────────────────────────────
+# Declarative "what does this business type compose" metadata, per the
+# Universal Business Architecture spec. Purely additive: `get_profile()`
+# attaches a Capability instance under profile['capability'] below, but
+# nothing else in the app reads it yet — the item form, navbar, dashboards,
+# and analytics all still branch on the existing `board`/`modules`/`catalog`
+# keys exactly as before. See CLAUDE.md's UBA spec, §2.1–2.4, for the full
+# stock-model / sale-mechanic / accountability vocabulary and composition
+# matrix this is drawn from.
+
+@dataclass(frozen=True)
+class Capability:
+    """One business type's composition of the platform's shared primitives.
+
+    stock_models   — how a sellable thing is counted (§2.1): UNIT, MEASURE,
+                      ENVELOPE, VARIANT, SERIAL, LOT, SERVICE, ASSET.
+    sale_mechanics — how money is taken (§2.2): POS_CART, PRESET, TAB, CREDIT,
+                      SPLIT_TENDER, PLAN, BOOKING, CYCLE, CONSIGNMENT,
+                      COMMISSION, ONLINE.
+    accountability — which variance-tracking engines apply (§2.3): SHIFT,
+                      WEIGH_IN, CASH_DRAWER, CYCLE_COUNT, RECIPE_VARIANCE,
+                      YIELD_VARIANCE, ASSET_RETURN, etc.
+    modules        — high-level app modules this composes (e.g. 'bar',
+                      'produce') — a coarser label than the `modules` feature
+                      flags on the profile dict below, not a replacement for it.
+    hides          — item-form/dashboard fields to suppress for this type
+                      (not yet populated for any profile — left empty until a
+                      sprint actually needs to hide something).
+    vocabulary     — per-type word substitutions, e.g. {'item': 'Bidhaa'}
+                      (not yet populated — left empty until a sprint defines one).
+    board_template — which POS surface is this type's home screen.
+    """
+    stock_models: frozenset = field(default_factory=frozenset)
+    sale_mechanics: frozenset = field(default_factory=frozenset)
+    accountability: frozenset = field(default_factory=frozenset)
+    modules: frozenset = field(default_factory=frozenset)
+    hides: frozenset = field(default_factory=frozenset)
+    vocabulary: dict = field(default_factory=dict)
+    board_template: str = ''
+
+
+CAPABILITIES = {
+    'bar': Capability(
+        stock_models=frozenset({'MEASURE', 'UNIT', 'VARIANT'}),
+        sale_mechanics=frozenset({'POS_CART', 'PRESET', 'TAB', 'CREDIT', 'SPLIT_TENDER'}),
+        accountability=frozenset({'SHIFT', 'WEIGH_IN', 'CASH_DRAWER'}),
+        modules=frozenset({'bar'}),
+        board_template='bar_board',
+    ),
+    'liquor_store': Capability(
+        stock_models=frozenset({'UNIT', 'VARIANT'}),
+        sale_mechanics=frozenset({'POS_CART', 'CREDIT'}),
+        accountability=frozenset({'CASH_DRAWER'}),
+        modules=frozenset({'bar'}),
+        board_template='retail_board',
+    ),
+    'club': Capability(
+        stock_models=frozenset({'UNIT', 'VARIANT'}),
+        sale_mechanics=frozenset({'POS_CART', 'TAB', 'CREDIT'}),
+        accountability=frozenset({'SHIFT', 'CASH_DRAWER'}),
+        modules=frozenset({'bar'}),
+        board_template='retail_board',
+    ),
+    'kibanda': Capability(
+        stock_models=frozenset({'ENVELOPE', 'UNIT'}),
+        sale_mechanics=frozenset({'POS_CART', 'PRESET', 'CREDIT', 'SPLIT_TENDER'}),
+        accountability=frozenset({'SHIFT', 'CASH_DRAWER'}),
+        modules=frozenset({'produce'}),
+        board_template='quick_sell',
+    ),
+    'butchery': Capability(
+        stock_models=frozenset({'ENVELOPE', 'MEASURE'}),
+        sale_mechanics=frozenset({'POS_CART', 'PRESET', 'CREDIT'}),
+        accountability=frozenset({'SHIFT', 'YIELD_VARIANCE'}),
+        modules=frozenset(),
+        board_template='retail_board',
+    ),
+    'cereals': Capability(
+        stock_models=frozenset({'ENVELOPE', 'UNIT'}),
+        sale_mechanics=frozenset({'POS_CART', 'PRESET', 'CREDIT'}),
+        accountability=frozenset({'CASH_DRAWER'}),
+        modules=frozenset({'produce'}),
+        board_template='quick_sell',
+    ),
+    'fish': Capability(
+        stock_models=frozenset({'UNIT', 'MEASURE'}),
+        sale_mechanics=frozenset({'POS_CART', 'CREDIT'}),
+        accountability=frozenset({'CASH_DRAWER'}),
+        modules=frozenset(),
+        board_template='retail_board',
+    ),
+    'water': Capability(
+        stock_models=frozenset({'UNIT'}),
+        sale_mechanics=frozenset({'POS_CART', 'CREDIT'}),
+        accountability=frozenset({'CASH_DRAWER'}),
+        modules=frozenset(),
+        board_template='retail_board',
+    ),
+    # UBA M0-AC3 proof stub — see the matching PROFILES entry above for why
+    # this is deliberately namespaced away from the real seeded 'Salon &
+    # Barbershop' BusinessType. `hides` is populated (unlike every real
+    # profile above) specifically so the item_form.html gating built in
+    # M0-3 has something concrete to prove itself against.
+    'uba_stub_salon': Capability(
+        stock_models=frozenset({'SERVICE', 'UNIT'}),
+        sale_mechanics=frozenset({'BOOKING', 'POS_CART', 'COMMISSION', 'CREDIT'}),
+        accountability=frozenset({'RECIPE_VARIANCE', 'CASH_DRAWER'}),
+        modules=frozenset({'salon'}),
+        hides=frozenset({'yield', 'produce_keg_settings'}),
+        board_template='salon_board',
+    ),
+}
+
+DEFAULT_CAPABILITY = Capability(
+    stock_models=frozenset({'UNIT'}),
+    sale_mechanics=frozenset({'POS_CART', 'CREDIT'}),
+    accountability=frozenset({'CASH_DRAWER'}),
+    board_template='retail_board',
+)
+
+
 # ── Profile registry ──────────────────────────────────────────────────────────
 
 _DEFAULT_MODULES = {'keg': False, 'tabs': False, 'shifts': False, 'produce': False, 'kitchen': False}
@@ -455,6 +584,22 @@ PROFILES = {
         'modules': dict(_DEFAULT_MODULES),
         'catalog': WATER_CATALOG,
     },
+    # ── UBA M0-AC3 proof stub ───────────────────────────────────────────────
+    # Deliberately NOT 'Salon & Barbershop' (the real seeded BusinessType from
+    # migration 0006) — a live business already using that exact name would
+    # have its item form/capability silently changed the moment this profile
+    # existed, which is exactly the "must not change behaviour by a single
+    # pixel" rule this whole sprint exists to protect. This match string can
+    # never collide with a real seeded business type. Phase 3's real Salon
+    # profile (spec §9) replaces this stub outright when that sprint starts —
+    # this one only exists to prove M0-AC3: "a new profile can be added by
+    # editing only business_profiles.py."
+    'uba_stub_salon': {
+        'match': ['UBA M0-AC3 Stub — Salon (proof only, not the real Phase 3 build)'],
+        'board': 'grid',
+        'modules': dict(_DEFAULT_MODULES),
+        'catalog': [],
+    },
 }
 
 DEFAULT_PROFILE = {
@@ -486,4 +631,9 @@ def get_profile(business):
     modules['kitchen'] = bool(getattr(business, 'has_kitchen', False))
     profile = dict(profile)
     profile['modules'] = modules
+
+    # UBA §2.4 — attach the declarative capability composition. Additive only:
+    # nothing currently reads profile['capability'], so this changes no
+    # existing behavior for any business type.
+    profile['capability'] = CAPABILITIES.get(profile.get('type', ''), DEFAULT_CAPABILITY)
     return profile

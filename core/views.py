@@ -230,6 +230,24 @@ def csrf_failure_view(request, reason=""):
     return redirect('login')
 
 
+@login_required
+def switch_active_store(request, store_id):
+    """UBA §5.1 — set the session's active store, after confirming this
+    profile can actually access it. Never trusts the URL param blindly —
+    a staffer cannot switch into a store require_store_access() would deny
+    them. A GET (not a state-changing POST) matches this app's existing
+    convention for lightweight UI-preference toggles, not a financial or
+    stock-affecting action."""
+    profile = request.user.userprofile
+    store = Store.objects.filter(pk=store_id, business=profile.business).first()
+    if store is None or not profile.accessible_stores().filter(pk=store.pk).exists():
+        messages.error(request, "Huna ruhusa ya duka hili.")
+        return redirect(request.META.get('HTTP_REFERER') or 'home')
+    request.session['active_store_id'] = store.id
+    messages.success(request, f"Umebadilisha kwenda {store.name}.")
+    return redirect(request.META.get('HTTP_REFERER') or 'home')
+
+
 @never_cache
 def home(request):
     # 2026-07-28 live report: Roy saw the KES 1400 till figure (already fixed
@@ -258,6 +276,18 @@ def home(request):
         try:
             user_profile = request.user.userprofile
             business = user_profile.business
+
+            # UBA §M0-5 — additive dashboard tile registry (core/dashboard_tiles.py).
+            # home.html does not read this key yet; computed here so it's available
+            # once a future sprint rewires the template to consume it. Never lets a
+            # tile-builder error break the rest of the dashboard.
+            try:
+                from .business_profiles import get_profile as _get_profile_tiles
+                from .dashboard_tiles import build_tiles as _build_uba_tiles
+                _capability = _get_profile_tiles(business).get('capability')
+                context['uba_dashboard_tiles'] = _build_uba_tiles(business, user_profile, _capability)
+            except Exception:
+                context['uba_dashboard_tiles'] = []
 
             # Station scoping — determine what this staff member can see
             show_bar, show_kitchen = _station_scope(user_profile)
@@ -661,6 +691,31 @@ def home(request):
             except Exception:
                 context['revenue_targets'] = None
 
+            # UBA X1 §12.1 — cash position tile: Receivables − Payables, "the
+            # most honest number in the app". Owner/manager only (the same
+            # figures the debt tracker and a future payables dashboard would
+            # show, just netted into one number).
+            if user_profile.is_owner_or_manager:
+                try:
+                    from core.payables import cash_position as _cash_position
+                    context['cash_position'] = _cash_position(business)
+                except Exception:
+                    context['cash_position'] = None
+            else:
+                context['cash_position'] = None
+
+            # UBA P0-B §6.2 — "Amana Zilizoshikiliwa" (deposits held): money the
+            # business is HOLDING against open payment plans, not its own
+            # revenue — the cause-&-effect map's own explicit dashboard ask.
+            if user_profile.is_owner_or_manager:
+                try:
+                    from core.payment_plans_views import deposits_held_total
+                    context['deposits_held'] = deposits_held_total(business)
+                except Exception:
+                    context['deposits_held'] = None
+            else:
+                context['deposits_held'] = None
+
         except Exception:
             context["error"] = _("Profile not found. Please contact support.")
     else:
@@ -841,6 +896,18 @@ def stock_list(request):
     if selected_store_id:
         try:
             selected_store_id = int(selected_store_id)
+            # UBA §5.1 — a staffer scoped to specific store(s) must not be
+            # able to reach another store's stock list by editing ?store=
+            # in the URL. require_store_access() is a no-op for every
+            # existing staffer today (accessible_stores() falls back to
+            # "all active stores" with no explicit assignment) — this only
+            # narrows once an owner actually assigns someone to store(s).
+            _target_store = Store.objects.filter(
+                pk=selected_store_id, business=user_profile.business
+            ).first()
+            if _target_store is not None:
+                from core.access import require_store_access
+                require_store_access(user_profile, _target_store)
             items = items.filter(store_id=selected_store_id)
         except (ValueError, TypeError):
             pass
@@ -885,6 +952,12 @@ def stock_list(request):
         else:
             item.expiry_date   = exp
             item.expiry_status = 'OK'
+        # UBA R1 §7.2 — "Anza bila kuhesabu" (fast onboarding): an item whose
+        # balance has never been physically confirmed is shown honestly
+        # rather than silently assumed correct; NOT surfaced for produce/keg
+        # items, which already have their own dedicated envelope/bunch
+        # accountability model instead of a plain on-hand balance.
+        item.uncounted = (item.balance_confirmed_at is None) and not item.is_produce and not item.is_keg
 
     # Annotate items with pending restock request flag
     _pending_restock_ids = set(
@@ -1131,6 +1204,15 @@ def add_transaction(request):
         # in this audit series so far).
         item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
 
+        # UBA §5.1 — a staffer scoped to specific store(s) must not be able
+        # to record a transaction against another store's item, even one
+        # within the same business. No-op for every existing staffer today
+        # (accessible_stores() falls back to "all active stores" with no
+        # explicit assignment) — only narrows once an owner assigns someone
+        # to specific store(s).
+        from core.access import require_store_access
+        require_store_access(user_profile, item.store)
+
         # ── PRODUCE PRESET HANDLING ───────────────────────────────────────────
         preset_id = request.POST.get('preset_id', '').strip()
         if preset_id and item.is_produce:
@@ -1277,6 +1359,21 @@ def add_transaction(request):
 
         # ── RESTOCK REQUEST AUTO-RESOLVE ─────────────────────────────────
         if trans_type == 'Receipt':
+            # UBA R1 §7.2 — a Receipt that establishes the item's FIRST-EVER
+            # transaction confirms its balance for accountability purposes
+            # (fast onboarding: an item added via barcode scan with an
+            # unknown opening count becomes confirmed the moment a real
+            # received quantity anchors it from zero history). A Receipt
+            # into an item that ALREADY has history does not imply the
+            # item's total on-hand is now known — only that this one
+            # delivery is real — so it deliberately does NOT confirm in
+            # that case; Rekebisha (adjust_stock_balance) stays the one
+            # real physical-count confirmation mechanism from then on.
+            if item.balance_confirmed_at is None and not Transaction.objects.filter(
+                item=item
+            ).exclude(pk=transaction.pk).exists():
+                item.balance_confirmed_at = timezone.now()
+                item.save(update_fields=['balance_confirmed_at'])
             _pending_srs = list(
                 StockRequest.objects.filter(
                     business=user_profile.business,
@@ -1355,6 +1452,21 @@ def add_transaction(request):
                     if landed_cost != old_cost:
                         item.cost_price = landed_cost
                         item.save(update_fields=["cost_price"])
+
+                        # UBA R2 §7.3 — margin guard: a supplier cost rise beyond
+                        # margin_alert_pct is the single biggest silent profit leak
+                        # in retail (the owner keeps selling at the old price for
+                        # weeks). Reuses this SAME hook — Add Transaction's Receipt
+                        # flow, the ONE designed writer of Item.cost_price — rather
+                        # than a second cost-price-writing code path.
+                        if old_cost and landed_cost > old_cost * (
+                            Decimal('1') + user_profile.business.margin_alert_pct / Decimal('100')
+                        ):
+                            try:
+                                from core.retail_intelligence import check_margin_guard
+                                check_margin_guard(item, old_cost, landed_cost, user_profile.business)
+                            except Exception:
+                                pass
 
                         if delivery_fee > 0:
                             messages.info(
@@ -3015,6 +3127,22 @@ def quick_sell(request):
             split_amount_qs = Decimal("0")
         split_method_qs = request.POST.get("split_method", "").strip()
 
+        # UBA P0-A — "Lipa kidogo" (pay a little): a direct cash/mpesa sale
+        # where the customer only pays PART of the total now, the rest
+        # becoming ordinary credit debt against credit_recipient — no tab
+        # needed. Only meaningful when the primary method is cash/mpesa;
+        # a plain 'credit' checkout is already a full-credit sale with no
+        # partial payment to make. See Transaction.apply_checkout_partial_credit_locked().
+        try:
+            partial_credit_amount_qs = Decimal(str(request.POST.get("partial_credit_amount", "") or "0"))
+        except Exception:
+            partial_credit_amount_qs = Decimal("0")
+        _wants_partial_credit = (
+            payment_method_raw in ("cash", "mpesa")
+            and partial_credit_amount_qs > 0
+            and bool(credit_recipient)
+        )
+
         # ── CREDIT DISCIPLINE GATE (credit sales only — not bar tabs; tab
         #    creation doesn't use the debt ledger credit_approved path) ────────
         if payment_method_raw == 'credit' and credit_recipient:
@@ -3039,6 +3167,32 @@ def quick_sell(request):
                     request,
                     f'Deni haliwezi kutolewa: {_decision.reason} — '
                     'Lipa kwa cash au M-Pesa badala yake.'
+                )
+                return redirect('quick_sell')
+
+        # ── CREDIT DISCIPLINE GATE for a partial-payment remainder — gated
+        #    against the REMAINDER itself (the actual new debt), not the
+        #    full cart total, since that's what the customer's credit
+        #    limit/policy is really being checked against. ──────────────────
+        if _wants_partial_credit:
+            from core.models import Customer as _CustomerModel
+            from core.credit_policy import evaluate_credit
+            _cust_gate = _CustomerModel.objects.filter(
+                business=user_profile.business, name=credit_recipient
+            ).first()
+            if _cust_gate is None:
+                _cust_gate = _CustomerModel.objects.create(
+                    business=user_profile.business,
+                    name=credit_recipient,
+                    phone=credit_phone,
+                    credit_approved=True,
+                )
+            _decision = evaluate_credit(user_profile.business, _cust_gate)
+            if not _decision.allowed:
+                messages.error(
+                    request,
+                    f'Deni haliwezi kutolewa: {_decision.reason} — '
+                    'Lipa kiasi chote kwa cash au M-Pesa badala yake.'
                 )
                 return redirect('quick_sell')
         # ─────────────────────────────────────────────────────────────────────
@@ -3155,7 +3309,12 @@ def quick_sell(request):
                 continue
             # ─────────────────────────────────────────────────────────────
 
-            if item.current_balance() < stock_qty:
+            # UBA P0-B §6.2 — available_balance() subtracts any OPEN layaway
+            # reservation on this item; for an item with zero reservations
+            # (the overwhelming majority) this is byte-identical to
+            # current_balance(), so this check is unchanged in every ordinary
+            # case and only actually differs for a reserved item.
+            if item.available_balance() < stock_qty:
                 messages.warning(
                     request,
                     _(
@@ -3163,7 +3322,7 @@ def quick_sell(request):
                     )
                     % {
                         "item_description": item.description,
-                        "available": item.current_balance(),
+                        "available": item.available_balance(),
                         "unit": item.unit,
                     },
                 )
@@ -3180,6 +3339,21 @@ def quick_sell(request):
                 sale_amt = Decimal(str(round(display_price * float(display_qty), 2)))
 
             line_amount = Decimal(str(round(display_price * float(display_qty), 2)))
+
+            # ── UBA R2 §7.3 — sale-below-cost check ────────────────────────
+            # Plain (non-preset) items only — this is the retail sweethearting/
+            # mistake control the margin guard's sibling check exists for.
+            if sale_preset is None and entry.get("stock_qty") is None:
+                from core.retail_intelligence import check_sale_below_cost
+                blocked, below_cost_msg = check_sale_below_cost(
+                    item, line_amount, stock_qty, user_profile.business, user_profile.is_owner,
+                )
+                if blocked:
+                    messages.warning(request, below_cost_msg)
+                    continue
+                elif below_cost_msg:
+                    messages.warning(request, below_cost_msg)
+            # ─────────────────────────────────────────────────────────────
             last_transaction = Transaction.objects.create(
                 item=item,
                 type="Issue",
@@ -3216,6 +3390,7 @@ def quick_sell(request):
             # (Transaction.payment_split_breakdown) forward into rcpt_meta
             # below, whichever receipt branch actually issues it.
             _qs_split_breakdown = {}
+            _qs_all_split_ids = None  # set below only if a cash/mpesa split actually runs
             if (
                 payment_method_qs in ("cash", "mpesa")
                 and split_method_qs in ("cash", "mpesa")
@@ -3232,6 +3407,61 @@ def quick_sell(request):
                     )
                 except ValueError as _split_err:
                     messages.warning(request, str(_split_err))
+
+            # UBA P0-A — "Lipa kidogo": convert the unpaid remainder of a
+            # direct cash/mpesa sale to ordinary credit debt, in the same
+            # checkout action. Never blocks the checkout: the sale already
+            # happened above regardless of what happens here.
+            if _wants_partial_credit:
+                try:
+                    # partial_credit_amount_qs is the OWED remainder (what the
+                    # frontend computes and labels "iliyobaki" — see
+                    # qsPartialCreditPaidInput's JS), but
+                    # apply_checkout_partial_credit_locked()'s contract takes
+                    # the PAID amount — convert here rather than in the model,
+                    # so the model's parameter name stays literally true to
+                    # what it does.
+                    _qs_amount_paid_for_credit_split = round(float(total) - float(partial_credit_amount_qs), 2)
+                    _qs_credit_split_ids = Transaction.apply_checkout_partial_credit_locked(
+                        _qs_all_split_ids or created_txn_ids, user_profile.business,
+                        _qs_amount_paid_for_credit_split, credit_recipient, staff_user=request.user,
+                    )
+                    if _qs_credit_split_ids:
+                        # Reflect the credit portion in the receipt's split-payment
+                        # display too — reuses the same generic mechanism the
+                        # cash/mpesa split already writes into rcpt_meta below.
+                        _qs_split_breakdown = Transaction.payment_split_breakdown(
+                            _qs_credit_split_ids, user_profile.business,
+                        )
+                        from .models import Customer as _CustomerQsPartial
+                        _cust_partial = _CustomerQsPartial.objects.filter(
+                            business=user_profile.business, name=credit_recipient
+                        ).first()
+                        if _cust_partial is None:
+                            _cust_partial = _CustomerQsPartial.objects.create(
+                                business=user_profile.business, name=credit_recipient,
+                                credit_approved=True,
+                            )
+                        if credit_phone and not _cust_partial.phone:
+                            _cust_partial.phone = credit_phone
+                            _cust_partial.save(update_fields=['phone'])
+                        if credit_phone:
+                            try:
+                                from .notifications import normalize_ke_phone, send_sms_notification
+                                _normalized_partial = normalize_ke_phone(credit_phone)
+                                if _normalized_partial:
+                                    _amount_owed = round(float(partial_credit_amount_qs), 2)
+                                    _amount_now = round(float(total) - _amount_owed, 2)
+                                    _sms_partial = (
+                                        f"Duka: {user_profile.business.name}\n"
+                                        f"Umenunua KES {total:,.0f}, umelipa KES {_amount_now:,.0f}.\n"
+                                        f"Deni lililobaki: KES {_amount_owed:,.0f}"
+                                    )
+                                    send_sms_notification(_sms_partial, _normalized_partial)
+                            except Exception:
+                                pass
+                except ValueError as _partial_credit_err:
+                    messages.warning(request, str(_partial_credit_err))
 
             try:
                 from .notifications import notify_transaction_async

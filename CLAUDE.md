@@ -280,6 +280,10 @@ Fonts: Playfair Display (headings), DM Sans (body)
 ---
 
 ## Coding Preferences
+- **UBA architecture:** All post-2026-08 feature work follows `docs/UBA_MASTER_SPEC.md`
+  (capability composition model) and the queue in `docs/UBA_EXECUTION_ORDER.md`. Read both
+  at the start of any session that adds a feature or a business type. Current progress:
+  `docs/UBA_PROGRESS.md`.
 - Always output COMPLETE files — never use `...` or `# unchanged`
 - One file at a time — state what changed
 - Never truncate — complete every file fully
@@ -810,6 +814,336 @@ Fill the map, implement every "yes" row, then run the regression-sweep grep befo
 run python manage.py check and makemigrations --check, commit as 'Sprint N: summary', push to main, append a one-line status update to this file."
 
 ## Sprint Status Log
+- UBA S1/S2/S3 (2026-08-02): Salon/Barbershop/Spa (spec §9), closing out
+  Phase 3 (real `'salon'` profile registration deferred to the same
+  future rollup sprint as apparel — "Salon & Barbershop" is likewise a
+  live BusinessType). **S1 — Services, recipes, side-client detector**:
+  confirmed `Transaction.item` is non-nullable throughout, so per the
+  spec's own recommendation built the shadow-Item approach instead of an
+  app-wide nullable-FK audit — `Service.shadow_item` (auto-created,
+  `stock_model='SERVICE'`) is what a completed service actually posts
+  against, so every existing receipt/analytics/debt/target path works
+  unmodified. `complete_service_locked()` creates the shadow-item Issue
+  (real revenue) plus one `type='Draw'` transaction per recipe line for
+  the real supply item — reusing the EXISTING Draw precedent (built for
+  KitchenBatch) avoids a real bug: a naive recipe-consumption transaction
+  with no sale_amount would double-count as a second sale the moment the
+  supply item also has a retail selling_price, since revenue()'s fallback
+  multiplies by it — Draw already returns 0 from revenue()'s first check.
+  Free redo (zero revenue, excluded from the variance denominator) needs
+  no extra logic — it simply never creates the shadow-item Issue, and the
+  denominator only counts services via exactly that transaction. New
+  `'recipe_variance'` accountability engine — the THIRD real caller for
+  the VarianceResult contract — reuses R3's `StockCountLine` as-is for
+  the "actual" side rather than inventing a parallel count tracker;
+  coverage_pct=0 (never accuses) when the supply was never physically
+  counted. Full learned-baseline system deliberately deferred. **S2 —
+  Bookings**: new `Appointment`/`AppointmentService`; double-booking
+  refused via a direct overlapping-window query; no-show tracking on
+  `Customer.no_show_count`; T-24h reminder SMS deferred (needs a
+  scheduler, same documented limitation as every deferred-cron feature
+  this session). **S3 — Commission**: deliberately reuses the EXISTING
+  Haki module rather than a parallel payment mechanism — commission_
+  report() reuses `_salary_period_balance()`'s "sum every SalaryPayment"
+  logic, and recording a payment is literally the existing `record_
+  salary_payment()` view (already sends the H2 employee SMS confirmation).
+  Dedicated salon_board.html deferred. 15 new tests. 1355 tests pass.
+  This completes Phase 3 in full. See `docs/UBA_PROGRESS.md`. Next:
+  Phase 4 (Rentals) — L1, L2, L3.
+- UBA A1/A2/A3 (2026-08-02): Apparel/boutique/mitumba (spec §8.2–§8.4),
+  closing out Phase 2 (photos excluded per the standing blocker table —
+  `ItemPhoto` left unbuilt, Render's ephemeral filesystem). Logged a new
+  `docs/UBA_BLOCKERS.md` entry first: the real seeded `BusinessType`
+  already includes "Clothing & Apparel" (a live type), so registering an
+  `'apparel'` `business_profiles.py` entry now would be a real behavior
+  change for existing businesses, unlike M0-AC3's inert stub — deferred
+  to its own dedicated rollup sprint; every A1-A3 mechanism built as
+  general/type-agnostic instead, same as all of Phase 1. **A1 —
+  Variants**: `Item.parent`/`variant_label`/`variant_attrs`/
+  `is_variant_parent` — parent/child Items per the spec's own explicit
+  recommendation, NOT a separate `ItemVariant` table (confirmed rationale:
+  a separate model would need auditing every balance reader/analytics
+  query/receipt line/reorder table/Quick-Sell tile/debt line/shrinkage
+  calc in the app; parent/child Items reuse 100% of existing machinery
+  for free). New `core/variants.py::create_variant_matrix()` with
+  collision-safe auto-SKU generation. Matrix-creator UI deferred — JSON
+  endpoint only. **A2 — Bale envelope**: `ProduceBunch` gains `kind`/
+  `grade`/`label` — deliberately keeps the model name (`produce_bunch_id`
+  is THE discriminator, never to be broken); `realized_markup()`/
+  `is_wilting()`/`sell_mix()` work completely unchanged, confirmed by a
+  direct test. **A3 — Aging/markdown + fitting room** (layaway itself
+  already built in P0-B): new `core/markdown_engine.py` reuses
+  `ItemPriceHistory` (built in R2) with `reason='markdown'` — one model,
+  two producers. New `FittingRoomLog` + a NEW `'fitting_room'`
+  accountability engine — the second real caller for the contract M0-7
+  deliberately left `attribute()` unbuilt for until a second engine
+  needed it. Boutique-intelligence UI dashboard deferred. 16 new tests.
+  1340 tests pass. This completes Phase 2 in full. See
+  `docs/UBA_PROGRESS.md`. Next: Phase 3 (Salon) — S1, S2, S3.
+- UBA P0-B (2026-08-02): Payment plans (layaway/deposit/instalments/
+  booking), spec §6.2, first sprint of Phase 2 (Apparel). New
+  `PaymentPlan`/`PaymentPlanEntry` models + `Business.layaway_forfeit_
+  policy`/`layaway_forfeit_pct` (decision #5: default `minus_percent` at
+  10%, never a silent full-forfeit default). Deliberately NOT the debt
+  tracker — `pay_locked()` creates a `PaymentPlanEntry` and updates
+  `paid_amount` but NEVER creates a revenue-bearing `Transaction`, so
+  deposits correctly never appear in the deni ledger or count as revenue
+  anywhere, satisfying "deposits are a liability" purely by not creating
+  the one record every revenue aggregate reads. `convert_to_sale_locked()`
+  is the one moment a plan becomes real recognised revenue, refusing to
+  run while `balance > 0`. New `Item.reserved_qty()`/`available_balance()`
+  implement "reserved stock is not available stock" — deliberately wired
+  into only ONE surface (Quick Sell's checkout stock check), not swept
+  across every template that shows a balance (documented deferral, same
+  discipline as every prior UBA sprint), confirmed byte-identical for
+  every item with zero reservations. All four inverse actions built: pay,
+  refund (releases reservation), release (cancel with no money question),
+  forfeit (applies the business's policy — `full_refund` closes as
+  REFUNDED, others as FORFEITED). `forfeit_policy` text is SNAPSHOTTED at
+  creation time and never retro-applied if the business setting changes
+  later (the ethics note's own explicit requirement) — verified directly.
+  New "Amana Zilizoshikiliwa" dashboard tile wired directly into home.html
+  this pass (not deferred, matching X1's cash-position precedent).
+  Known, documented limitation: a cash/mpesa deposit is not yet reflected
+  in `till_expected_cash()`/`_reconcile()` — that function is this app's
+  own documented single most money-sensitive function, so integrating a
+  second cash-affecting event into it needs its own dedicated pass. Hold-
+  expiry reminders + bulk management command, not auto-scheduled (same
+  deferred-cron pattern). A dedicated layaway UI page deferred — JSON
+  endpoints only. 17 new tests. 1324 tests pass. See
+  `docs/UBA_PROGRESS.md`.
+- UBA R4 (2026-08-02): Retail intelligence (spec §7.5), closing out Phase 1
+  (Retail/Minimart) entirely — R1 through R4 and X1 all done. No new
+  models — pure read-only report functions over existing data. New
+  `core/retail_reports.py`: **dead stock report** (R4-AC1) sorted by
+  capital tied up, `transfer_available` true only when the business has
+  >1 active store (M2's `StockTransfer` is the real action, not wired
+  into the function itself); **"Order ya leo"** reuses `Item.needs_
+  reorder()`/`recommended_order_qty()` (already existed) rather than
+  reimplementing reorder math, each row pre-drafted as a Swahili WhatsApp/
+  SMS message ("most dukas order by phone, meet them there"); **basket
+  affinity** reuses `Receipt.lines` (an existing per-sale JSONField
+  snapshot) as the natural basket unit — no new grouping mechanism — top
+  10 co-occurring pairs only, per the spec's own "do not build a
+  recommender" instruction; **hour-of-day heatmap**, 24 fixed buckets.
+  New `core/retail_reports_views.py` — 4 read-only JSON endpoints, owner/
+  manager only. A dedicated retail-intelligence dashboard UI (charts) is
+  deferred and documented, same discipline as `retail_board.html`/
+  `payables_dashboard.html`. 7 new tests. 1307 tests pass. See
+  `docs/UBA_PROGRESS.md`. Next: Phase 2 (Apparel) — P0-B, A1, A2, A3.
+- UBA X1 (2026-08-02): Payables — the missing half of the cash picture
+  (spec §12.1). New `SupplierInvoice`/`SupplierPayment` models —
+  deliberately the mirror image of the debt tracker's `Customer`/
+  `CustomerDebtPayment`, same aging bucket boundaries (current/30/60/90+),
+  opposite direction. `core/payables.py::payables_aging_summary()` reuses
+  the EXACT same threshold logic `debt_views.py`'s `_get_customer_debt_
+  data()` already uses. `SupplierInvoice.record_payment_locked()`
+  (select_for_update) flips status DUE→PARTIAL→PAID as payments
+  accumulate. **Cash position tile** ("Hali Halisi ya Pesa" — Receivables
+  − Payables, the spec's own "most honest number in the app"): reuses
+  `debt_dashboard()`'s existing per-customer iteration for the
+  receivables side. Wired directly into `home()` AND `home.html` this
+  pass — unlike most prior UBA dashboard work this was NOT deferred,
+  since the spec explicitly calls it out as a priority dashboard-visible
+  figure and the addition is a small, self-contained stat card with no
+  other page changes. New `core/payables_views.py` — owner/manager only
+  (recording what the business owes suppliers is a step above an
+  everyday counter action, matching the tier used for Rekebisha/petty-
+  cash-review, not ordinary sales/returns). Payment due reminders go to
+  the OWNER, never the supplier (spec's own explicit framing — missing a
+  distributor payment is existential for a shop's credit line); new
+  bulk management command, not auto-scheduled — same deferred-cron
+  pattern as R1/R3/M3. A dedicated payables dashboard UI page is
+  deferred (same discipline as `retail_board.html`) — JSON endpoints
+  only, fully testable without it. 10 new tests. 1300 tests pass. See
+  `docs/UBA_PROGRESS.md`.
+- UBA R3 (2026-08-02): Cycle counting (ABC) + retail shrinkage (spec §7.4).
+  New `Item.abc_class` (A/B/C) + `Item.is_high_risk` fields; new
+  `StockCountSession`/`StockCountLine` models. `core/cycle_count.py::
+  classify_abc_all()` ranks items by 90-day revenue. **Real bug caught by
+  the test suite**: the first draft classified by cumulative-percentage
+  AFTER adding each item, which wrongly put a single dominant item (96% of
+  all revenue alone) into class C, since adding its own share immediately
+  blew past every threshold — fixed to check the cumulative percentage
+  BEFORE the item (where it STARTS in the curve, not where it ends).
+  Zero-revenue items are left unclassified rather than force-set to C —
+  dead stock is R4's separate concern. New `classify_items_abc`
+  management command, not auto-scheduled (same deferred-cron pattern as
+  R1/M3). `select_items_for_cycle_count()` builds "today's N items"
+  (high-risk items first unconditionally, then ABC-due items). `record_
+  count_line()` computes variance from a book_qty snapshot and — for
+  attribution — reuses `shift_views.attribute_variance_shift()`
+  completely unchanged, finally giving that function's `item=` parameter
+  a second real caller exactly as its own docstring anticipated. Also
+  stamps `Item.balance_confirmed_at` per counted line (R1's "a real
+  physical count" mechanism). Deliberately scoped down and documented:
+  the spec's fuller "variance weighted across every shift since last
+  count" is NOT built — single-shift attribution is used as-is, flagged
+  as a separate future mechanism. New `core/cycle_count_views.py`
+  endpoints; a dedicated UI page deferred (same discipline as
+  `retail_board.html`). 10 new tests including the classification-bug
+  regression lock. 1290 tests pass. See `docs/UBA_PROGRESS.md`.
+- UBA R2 (2026-08-02): Retail POS board + margin guard (spec §7.3).
+  `retail_board.html` itself deferred and documented (needs visual
+  verification) — Quick Sell already serves as the de-facto general POS
+  for non-bar/kitchen businesses and is where both new checks are wired.
+  **Margin guard** (R2-AC1): `Business.margin_alert_pct` (default 15%) +
+  new `ItemPriceHistory` model. `core/retail_intelligence.py::
+  check_margin_guard()` called from `add_transaction()`'s EXISTING
+  "COST PRICE UPDATE (Receipt only)" block — the one designed writer of
+  `Item.cost_price` — right after a cost rise beyond threshold is
+  detected; suggests a new selling price preserving the OLD margin ratio,
+  fires exactly one `BusinessException(kind='cost_rise')` + one owner/
+  manager Notification+SMS. New `apply_suggested_price()` view is the
+  one-tap "Sasisha bei" action, writing an `ItemPriceHistory` row.
+  **Sale-below-cost** (R2-AC2): wired into `quick_sell()`'s checkout loop
+  for plain item lines — staff blocked outright, owner allowed through
+  with a warning, either way logged as `BusinessException(kind='below_cost')`.
+  **Returns/refunds** (R-AC-RET, "do not skip this") — new `Return` model.
+  Design decision made to avoid an app-wide sweep: rather than inventing
+  `Transaction.type='Return'` and then having to widen every
+  `type='Issue'`-filtered revenue aggregate throughout the app (the exact
+  failure mode M2's redesign avoided in the other direction), a return
+  creates TWO ordinary transactions using types/fields every existing
+  aggregate already understands: a `type='Receipt'` stock reversal
+  (created directly via ORM, never through `add_transaction()`'s view, so
+  it can never touch `Item.cost_price`) plus a `type='Issue'`, `qty=0`
+  transaction with a NEGATIVE `sale_amount` inheriting the original sale's
+  payment_method/recipient. Since `Transaction.revenue()` already returns
+  `sale_amount` verbatim (never `abs()`'d), this flows automatically
+  through every existing `type='Issue'`-filtered revenue query with ZERO
+  code changes — including the debt tracker's `_get_customer_debt_data()`,
+  satisfying "if credit, the debt ledger" reversal for free (verified:
+  outstanding drops from KES 400 to KES 200 on a half-return with zero
+  debt_views.py changes). Known, documented limitation: `qty=0` means
+  `cost()` returns 0 too, so COGS isn't reversed — net_profit stays
+  slightly overstated after a return; R-AC-RET's wording doesn't require
+  cost reversal, so flagged as a future refinement, not solved here.
+  `Return.process_locked()` validates against double-returning more than
+  was sold and rejects a wrong-business transaction id; an owner-approval
+  threshold (`Business.return_approval_threshold`) gates large refunds
+  into a pending state until `approve()`/`reject()`. New
+  `core/returns_views.py` — a return-processing UI page is likewise
+  deferred, these are JSON endpoints a future retail_board flow would
+  call. 17 new tests. 1280 tests pass. See `docs/UBA_PROGRESS.md`.
+- UBA R1 (2026-08-02): Fast onboarding + barcode + the shared product
+  catalog (spec §7.2) — first sprint of Phase 1 (Retail/Minimart), Phase 0
+  now fully complete. New cross-tenant `GlobalProduct` (barcode/name/brand/
+  pack_size/unit/category, `confirm_count`, `is_verified` at >=3) and
+  `MarketPriceIndex` (county-level median cost/price, `sample_size`) models.
+  Two `Business` fields implement pre-answered decision #3's SPLIT exactly
+  (not the spec's single illustrative flag): `contribute_market_data`
+  (default True, opt-out) gates whether new barcode-scanned items feed the
+  shared name/brand/pack dictionary; `contribute_price_data` (default
+  False, opt-IN only) gates BOTH contributing to AND seeing the
+  `MarketPriceIndex` benchmark — "opting out loses the benchmark, not just
+  the contribution" as one shared boolean. `core/market_price.py`:
+  `lookup_global_product()` (always allowed — shared reference data, not
+  one business's figures), `record_barcode_contribution()` (increments
+  `confirm_count` only the first time a GIVEN business confirms a GIVEN
+  barcode — the best available guard against self-inflation, since the
+  spec's schema is a plain counter, not a per-business M2M),
+  `recompute_market_price_index()` (median via `statistics.median`, DELETES
+  any row below sample_size 5 rather than showing a stale thin benchmark),
+  `get_market_price_benchmark()` (the one read gate). New management
+  command for bulk recompute, not wired to an automatic schedule — same
+  documented-deferral pattern as M3's daily digest. New
+  `core/barcode_views.py` — `barcode_lookup()` (read-only) +
+  `add_item_by_barcode()` (owner/manager, a deliberately SEPARATE small
+  endpoint rather than widening the existing ~200-line `add_item()`/
+  `ItemForm` machinery, which handles produce/keg/kitchen-batch complexity
+  a barcode-scanned item doesn't need) — R1-AC1's "two taps to a stocked
+  item." New `Item.barcode` (not unique per-business — the same barcode
+  legitimately exists at many dukas) and `Item.balance_confirmed_at`
+  fields implement "Anza bila kuhesabu": a barcode-scanned item with an
+  unknown opening count starts unconfirmed (excluded from shrinkage
+  attribution rather than a false accusation) and gets confirmed by two
+  EXISTING mechanisms reused rather than a new endpoint invented: (1)
+  `adjust_stock_balance()` (Rekebisha) now stamps it on every run,
+  including no-change; (2) `add_transaction()`'s Receipt branch stamps it
+  only when the Receipt is the item's first-ever transaction — a Receipt
+  into an item with existing history does NOT imply total on-hand is now
+  known, only that this one delivery is real. `stock_list.html` shows a
+  "❓ Haijahesabiwa" badge, reusing the existing Rekebisha modal
+  (`?adjust_item=` deep link) as the confirm mechanism. Deliberately
+  deferred and documented: the camera scan UI itself (these endpoints are
+  what a future scan UI would call, fully testable via HTTP without it),
+  and wiring barcode/contribute flags into item_form.html/Business
+  Settings UI. 22 new tests including R1-AC1/R1-AC2 as direct regression
+  locks. 1263 tests pass. See `docs/UBA_PROGRESS.md` for full detail.
+- UBA M3 (2026-08-02): Maduka Yangu owner console + `BusinessException` (spec
+  §5.3). New `BusinessException` model (migration `0144_businessexception`) —
+  `business`/`store`/`shift`/`staff` FKs, `kind`/`severity` choices, `amount_kes`,
+  `title`/`detail`/`link_url`, `acknowledged_by`/`acknowledged_at`.
+  `raise_exception()` is the one write path; `acknowledge()` is idempotent.
+  Additive only — every existing per-user Notification/SMS mechanism stays
+  unchanged, this is the durable feed row alongside it. Wired 3 real producers:
+  (1) `StockTransfer.receive_locked()`'s DISPUTED path (M2 shipped model-layer-
+  only with no view calling it yet) now fires `kind='transfer_dispute'` PLUS an
+  owner/manager Notification+SMS — actually closes M2-AC1 ("owner got exactly
+  one notification"), never satisfied when M2 shipped. Attribution set to the
+  DISPATCHER, not the receiving staffer who is only reporting the shortfall.
+  (2)/(3) `close_shift()`'s existing keg-variance-danger and >KES 500 cash-
+  variance alerts now also write `kind='shrinkage'`/`kind='cash_variance'`
+  rows. Both needed the correct `store` resolved explicitly rather than
+  trusting `Shift.store` — traced and confirmed `Shift.store` is ALWAYS
+  `business.stores.first()` regardless of the actual counter (the real
+  per-shift discriminator is `Shift.station`) — attaching it directly would
+  have imported a known bug into a brand-new feature. New `/maduka/` route
+  (`core/maduka_views.py`, strict owner-only) renders a day strip (revenue vs
+  combined target, open tabs KES, credit issued today), per-store cards sorted
+  problem-first (unacknowledged exception count, then how far below target —
+  never alphabetical), and an exception feed with one-tap acknowledge.
+  "Who's on shift"/"cash expected" only render for a bar/kitchen-station store
+  — the only stores with a working Shift/till concept today; a genuine
+  N-outlet retail store honestly shows revenue-vs-target only rather than
+  fabricating shift data. Navbar link gated on `is_owner and
+  accessible_stores_list|length > 1`, reusing M1's context processor —
+  directly satisfies "single-store business sees... no Maduka link."
+  Deliberately deferred and documented (same discipline as M0-5/M0-6): the
+  Chart.js compare view (needs visual verification this environment can't
+  provide) and the daily digest SMS (needs its own dedup field + webhook,
+  substantial enough for its own follow-up pass). 24 new tests. 1241 tests
+  pass. See `docs/UBA_PROGRESS.md` for full detail.
+- UBA M2 (2026-08-02): stock transfers between stores — `StockTransfer`/
+  `StockTransferLine` models (migration `0142_stocktransfer_stocktransferline_
+  transaction_transfer`) + a new `Transaction.transfer` FK. Gap-free
+  `transfer_number` per business via `select_for_update().order_by(
+  '-transfer_number').first()`, same pattern as `Receipt.receipt_number`.
+  Lifecycle: `create_draft_locked()` (DRAFT) → `dispatch_locked()` (DRAFT→
+  DISPATCHED, deducts `from_store`) → `receive_locked()` (DISPATCHED→RECEIVED
+  if quantities match, else →DISPUTED per line) → `resolve_dispute_locked()`
+  (DISPUTED→RECEIVED, books the shortfall as `type='Wastage',
+  invoice_no='[TRF-LOSS]'`, same `[TAG]`-suppression convention as `[ADJ]`/
+  `[SVQ]`). `cancel_locked()` reverses a DISPATCHED transfer's deduction via
+  compensating `[TRF-CANCEL]` transactions. **Critical mid-sprint redesign,
+  caught by investigation before shipping, not by a failing test**: the first
+  design used ordinary `type='Issue'`/`type='Receipt'` transactions with a
+  `transfer_id` field and `if self.transfer_id: return 0` guards in
+  `Transaction.revenue()`/`.cost()`. Per this file's own "audit ALL surfaces"
+  rule, grepped for every OTHER raw revenue/cost aggregate in the codebase
+  before calling it done — found the identical `Abs(F('qty')) *
+  Coalesce(F('item__selling_price'), Value(0))`-style pattern duplicated in
+  `shift_views.py`'s `_reconcile()` (the money-critical function behind every
+  till/Z-report/shift-close figure), plus `haki_views.py` (×2) and
+  `analytics_views.py` (×2) — none of which checked `transfer_id`. A
+  transfer's `type='Issue'` dispatch leg (payment_method defaulting to
+  `'cash'`, the same bug class already fixed once for split-remainder
+  transactions on 2026-07-25) would have silently inflated `_reconcile()`'s
+  `cash_sales`/`expected_cash` — real till corruption, not a cosmetic P&L
+  issue. Redesigned to a dedicated `type='Transfer'` value (migration
+  `0143_alter_transaction_type`) instead of chasing an open-ended sweep — same
+  "excluded by construction, no exclusion list to maintain" pattern already
+  proven by `KitchenBatch`'s `type='Draw'`. Both transfer legs now use
+  `type='Transfer'`, automatically invisible to every `type='Issue'`-filtered
+  query app-wide with zero new checks needed; confirmed by 2 direct
+  regression tests asserting a transfer never appears in `_reconcile()`'s
+  totals or analytics' revenue figures, using those functions' own query
+  shapes. 14 new tests (`StockTransferTest` ×12, `StockTransferExcludedFrom
+  RevenueEverywhereTest` ×2). 1227 tests pass. Model + business-logic layer
+  only this pass — dispatch/receive UI, transfer-request flow, and rider/POD
+  integration deferred to a follow-up, matching M1 part 1's same discipline.
+  See `docs/UBA_PROGRESS.md` for the full Cause-&-Effect detail.
 - Rekebisha "not a real loss" (2026-08-01), same-day follow-up. Live report
   with screenshots: Roy corrected Chrome Brandy 250ml (10→5) and Gilbey's
   (2→1) via ⚖️ Rekebisha, reversing the duplicate-receipt idempotency bug
@@ -4472,3 +4806,173 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   returns the right business for an authenticated user, `None` for anonymous, and the Kazi
   Yangu link now actually appears on the home page for staff, the literal previously-broken
   case). No migrations.
+- UBA §2.1/§2.4 — capability model foundation (2026-08-02, prior session, backfilled into
+  this log retroactively once the standing work order in `docs/UBA_EXECUTION_ORDER.md`
+  started requiring it). `Item.stock_model` CharField (migration 0140, commit `cad33e2`) —
+  the 8-value UBA stock model (UNIT/MEASURE/ENVELOPE/VARIANT/SERIAL/LOT/SERVICE/ASSET),
+  synced in `Item.save()` from the existing load-bearing discriminators
+  (`is_produce`/`produce_mode` → ENVELOPE/UNIT, `is_keg` → MEASURE, `is_kitchen_batch` →
+  ENVELOPE) with a data migration backfilling existing rows the same way. Purely additive —
+  nothing outside `save()`'s own sync block read it at the time. `Capability` composition
+  registry in `business_profiles.py` (commit `96eb454`) — a frozen dataclass
+  (stock_models/sale_mechanics/accountability/modules/hides/vocabulary/board_template) plus
+  a `CAPABILITIES` dict mapping all 8 existing profile keys to a composition drawn from the
+  UBA spec's matrix, wired into `get_profile()` as `profile['capability']`. `PROFILES`/
+  `DEFAULT_PROFILE`/every catalog left untouched verbatim (confirmed via diff — insertions
+  only); nothing read `profile['capability']` yet either. See `docs/UBA_PROGRESS.md` for the
+  full UBA sprint log going forward.
+- UBA Sprint 0 (2026-08-02): persisted the UBA master spec and standing execution order into
+  the repo as `docs/UBA_MASTER_SPEC.md` / `docs/UBA_EXECUTION_ORDER.md` (verbatim `cp` +
+  `diff`-confirmed, not hand-transcribed), created `docs/UBA_PROGRESS.md` and
+  `docs/UBA_BLOCKERS.md`, and added the UBA pointer above this entry in Coding Preferences.
+  Every future session working this queue reads those three files first instead of Roy
+  re-pasting the spec.
+- UBA M0-4 (2026-08-02): vocabulary layer — `core/templatetags/uba_extras.py`'s `vocab`
+  filter reads `biz_profile.capability.vocabulary` (§2.4). Deviates slightly from the spec's
+  illustrative `{{ 'item'|vocab }}` syntax since a plain Django filter can't read template
+  context — implemented as `{{ 'item'|vocab:biz_profile }}` instead (documented in the
+  filter's docstring). No-op today: every one of the 8 real profiles has an empty
+  `vocabulary` dict, and nothing calls the filter yet. Also backfilled dedicated tests for
+  the M0-1/M0-2 work above, which had shipped without any. 12 new tests, 1143 total, OK.
+- UBA M0-3 (2026-08-02): item form field gating via `biz_profile.capability.hides`
+  (`templates/core/item_form.html`). Traced the real template structure first: "Produce
+  Settings"/"Keg Settings"/"Spirits Accountability"/the preset table turned out to be ONE
+  single `{% if user.userprofile.is_owner %}` block spanning ~1100 lines (JS in between
+  cross-references both `is_produce` and `is_keg` DOM elements freely), not three separable
+  sections as the spec's prose implies — splitting it would mean inserting new if/endif
+  pairs deep inside that span, judged too risky without browser access to verify; used one
+  `'produce_keg_settings'` hide key for the whole thing instead. Two cleanly bounded
+  single-key wraps: `'yield'` and `'restricted_items'`. All three are additive outer
+  `{% if 'X' not in biz_profile.capability.hides %}` wraps around unmodified content —
+  verified balanced via a Python if/endif-depth script (the produce/keg span's true close
+  was 5 lines further than a naive grep suggested) and via `get_template()` parsing with no
+  `TemplateSyntaxError`. `hides` is empty for all 8 real profiles today, so this is a no-op
+  — locked in by 2 tests confirming every affected section still renders for a bar and a
+  kibanda owner, plus a 3rd proving the mechanism itself by patching `CAPABILITIES['bar']`
+  to populate `hides` and asserting the sections disappear (then revert cleanly). M0-AC3
+  (stub profile proof) deferred to its own commit now that this mechanism exists. 4 new
+  tests, 1147 total, OK.
+- UBA M0-7 (2026-08-02): `core/accountability.py` — the §2.3 accountability-engine
+  contract. Explicitly NOT a rewrite of `core/keg_metrics.py` — per the execution order's
+  own instruction, that module and every bar view calling it are completely untouched; this
+  is a thin, additive facade re-exporting its public names (identity-tested:
+  `accountability.barrel_variance is keg_metrics.barrel_variance`, etc.). New
+  `VarianceResult` dataclass matches the spec exactly. Built a real, working
+  `register_engine()`/`variance_for()` registry rather than a stub — one engine,
+  `'keg_shift'`, wraps `keg_metrics.shift_barrel_variance()` verbatim (no math
+  reimplemented), verified byte-for-byte against calling it directly on the same fixture
+  the pre-existing `LeaderboardLossAggregatedInKesTest` uses. `leaderboard()` delegates to
+  `keg_metrics.staff_shrinkage()`. Deliberately left `attribute()` (the spec's illustrative
+  per-result attribution function) unbuilt — with only one registered engine, a generic
+  shape for it would be speculative; noted in the module docstring for whichever future
+  sprint adds a second engine (produce envelope, kitchen recipe, retail cycle count) and
+  actually needs it. 5 new tests, 1152 total, OK. M0-5 (dashboard tile registry) and M0-6
+  (analytics section registry) remain — next up in `docs/UBA_PROGRESS.md`.
+- UBA M0-5 (2026-08-02): dashboard tile registry — `core/dashboard_tiles.py`'s
+  `register_tile`/`build_tiles`. Read `home()` first (~520 lines, ~30 individually-named
+  context keys each in its own try/except) — migrating all of them into the registry and
+  rewiring `home.html` to consume it needs visual verification this environment doesn't
+  have, so deferred as a follow-up (documented in the module's own docstring). Built the
+  registry itself plus two real, capability-gated example tiles: `keg_variance` (bar-only,
+  via `core.accountability.leaderboard()` from M0-7) and `pending_petty_cash` (universal).
+  Wired into `home()` as an additive `context['uba_dashboard_tiles']` key `home.html`
+  doesn't read yet — zero visible change, confirmed by a `/` render test. Query-savings
+  claim is genuinely true for these 2 tiles (a builder is never called when its capability
+  requirement is unmet — locked in by a test) but doesn't yet apply to the ~30 legacy
+  home() tiles. 6 new tests, 1158 total, OK.
+- UBA M0-6 (2026-08-02): analytics section registry — `core/analytics_sections.py`, same
+  pattern and scoping discipline as M0-5. `analytics_dashboard()` (~975 lines, ~15
+  sections gated by ad-hoc presence checks rather than capability — the "existing bleed
+  risk" CLAUDE.md already flagged) gets one real example section, `keg_shrinkage`
+  (requires `'WEIGH_IN' in capability.accountability`), reusing
+  `core.accountability.leaderboard()` rather than new business logic. Wired into
+  `analytics_dashboard()` as an additive `context['uba_analytics_sections']` key
+  `analytics.html` doesn't read yet. Migrating the ~15 legacy sections + rewiring the
+  template is deferred as a follow-up needing visual verification. 7 new tests, 1165
+  total, OK. This closes out all of Phase 0's M0 capability-refactor sub-sprints (M0-1
+  through M0-7) — M1 (multi-store) is next.
+- UBA M0-AC3 (2026-08-02): stub profile proof, deferred from M0-3. `business_profiles.py`
+  gains `'uba_stub_salon'` in both `PROFILES` and `CAPABILITIES` (`hides={'yield',
+  'produce_keg_settings'}` so M0-3's gating mechanism has something concrete to prove
+  itself against). Critical check done before writing any code: grepped the real seeded
+  `BusinessType` data and found a genuine `'Salon & Barbershop'` type already exists — any
+  live business already using that exact name falls through to `DEFAULT_PROFILE` today;
+  naively naming the stub to match it would have been a real, live regression. Used a
+  deliberately non-colliding match string instead. Phase 3's real Salon profile replaces
+  this stub outright when that sprint starts. 5 new tests — home dashboard + navbar render
+  for the stub type, item form hides the right sections, capability composes as declared,
+  and the regression lock that matters most: a business under the REAL 'Salon &
+  Barbershop' type is confirmed still falling through to DEFAULT_PROFILE/DEFAULT_CAPABILITY
+  unchanged. 5 new tests, 1170 total, OK. Phase 0's M0 sub-sprints and AC gate fully closed.
+- UBA P0-A (2026-08-02): split tender at checkout — Kibanda's "Lipa kidogo" gap (customer
+  pays part of a direct sale now, the rest becomes credit, one action, no tab). Investigated
+  current state first: this app already has extensive split-payment infrastructure
+  (`Transaction.apply_split_payment_locked`/`split_payment_method_locked`,
+  `BarTab.settle_entries_amount_locked`) but those two are hard cash/mpesa-only, and the
+  tab-based partial-to-debt flow requires a tab — Quick Sell/produce board's direct
+  checkout never got this. Rather than the spec's illustrative `SalePayment` model
+  (would duplicate what already works), added two `Transaction` classmethods —
+  `split_to_credit_locked()` (boundary-split sibling of `split_payment_method_locked`,
+  deliberately separate rather than widening that shared, narrowly-scoped function) and
+  `apply_checkout_partial_credit_locked()` (mirrors `apply_split_payment_locked`'s walk).
+  Neither touches `Transaction.payment_method`'s semantics — the credit remainder is an
+  ordinary `payment_method='credit', recipient=name` transaction, exactly what the debt
+  tracker already reads. Wired into `quick_sell()` (Quick Sell IS the produce board for
+  Kibanda): new `partial_credit_amount` field, `evaluate_credit()` gated on the REMAINDER
+  specifically (caught a real bug wiring this: the frontend sends the OWED amount, the
+  model method's parameter is the PAID amount — fixed by converting in the view). Bar
+  board/kitchen board's direct checkouts deliberately not extended this pass (Kibanda was
+  the spec's own motivating example); logged as a low-risk follow-up now that the pattern
+  is proven. 14 new tests, 1184 total, OK.
+- UBA M1 part 1 (2026-08-02): Store as first-class outlet — model layer + access gate
+  primitive. `core/models.py` Store gains `store_type/code/is_outlet/manager/is_active/
+  opening_time/closing_time/target_daily_revenue/phone/address_note/latitude/longitude`
+  (migration 0141). **Critical bug caught before it shipped**: the spec's own illustrative
+  `Store.save()` sync is bidirectional (`store_type=='kitchen' → is_kitchen=True`, `elif
+  is_kitchen and store_type!='kitchen' → is_kitchen=False`) — copied it in verbatim, then
+  grepped every `is_kitchen=True` call site before testing and found
+  `kitchen_views.get_or_create_kitchen_store()` creates the kitchen Store via `is_kitchen=
+  True` alone, never `store_type` — the bidirectional version would have silently flipped
+  it back to `is_kitchen=False` the next time anything saved it, breaking the kitchen
+  module for every business. Fixed to ONE-DIRECTIONAL sync (`is_kitchen` ground truth →
+  `store_type` derived), same precedent as `Item.save()`. Migration backfills
+  `store_type='kitchen'` for pre-existing rows. `accounts/models.py` UserProfile gains
+  `home_store`/`stores` M2M/`accessible_stores()` (migration 0056); `Business.plan` dormant
+  hook (§3 decision #7). **Second deviation**: `accessible_stores()`'s no-assignment
+  fallback is ALL active stores, not the spec's own `Store.objects.none()` — that version
+  would lock out every staff member that exists today the instant the gate is wired in;
+  access only narrows once an owner assigns someone to specific store(s) (M1-AC2). New
+  `core/access.py::require_store_access(profile, store)`. 15 new tests, 1199 total, OK.
+- UBA M1 part 2 (2026-08-02): session store switcher + real view wiring.
+  `core.context_processors.active_store_context` reads `request.session['active_store_id']`,
+  resolves against `accessible_stores()` (never trusts the session value blindly); new
+  `switch_active_store()` view validates access before writing the session key. Navbar
+  switcher UI deliberately deferred (no template touched, same discipline as M0-5/M0-6).
+  `require_store_access()` wired into `stock_list()`'s `?store=` filter and
+  `add_transaction()`'s item resolution — the two most explicitly named in the spec. 14 new
+  tests are direct M1-AC1 regression locks (staffer scoped to Store A gets 403 hitting
+  Store B; unassigned staff/owner unaffected). 1213 total, OK. Remaining for a future pass:
+  receipts list/shift open/debt views/analytics wiring, the switcher UI, M2, M3.
+- UBA L1/L2 (2026-08-02): Rentals (spec §10), Phase 4. Shadow-Item pattern (established by
+  S1 for Salon services) reused for rent itself: `core/rentals.py::get_or_create_rent_
+  shadow_item()` makes ONE shared shadow Item per business that every `RentalInvoice`'s
+  rent transaction posts against, so receipts/analytics/revenue-targets all work
+  unmodified. New `RentalUnit` (with `committed_qty()`/`available_qty()` — supports
+  multi-quantity equipment units without overbooking), `RentalAgreement`, `RentalInvoice`
+  (`unique_together=('agreement','period_start')` is the idempotency guarantee itself),
+  `MeterReading`, `MaintenanceTicket`. `generate_rent_roll()` creates one ordinary
+  `payment_method='credit'` Transaction per invoice — arrears are just the EXISTING debt
+  tracker's FIFO (`sync_invoice_payment_status()`/`apply_rent_payment_by_unit_code()` read
+  and write through `debt_views`'s own aggregate, zero new aging logic). M-Pesa C2B
+  `bill_ref_number` matched against `RentalUnit.code` in `mpesa_views.c2b_confirmation()`,
+  checked before the generic bar/kitchen fallback; an unmatched paybill payment raises a
+  `BusinessException` for owner visibility rather than being silently dropped, per this
+  app's own "money must never vanish" standard. New `'caretaker'` role (accounts migration
+  0060) may record meter readings/report maintenance but never alter agreements or close a
+  maintenance ticket with a cost (owner/manager only, same tier as every other financial
+  correction) — both directions regression-tested. Deposit deductions
+  (`deduct_from_deposit()`, owner/manager only, itemised+reasoned) never create a
+  Transaction, matching P0-B's "deposits are a liability" principle exactly. Dedicated
+  `rental_board.html` (L3) deferred — every mechanism is a tested JSON endpoint today. 16
+  new tests. 1371 total, OK. **Phase 4 (Rentals) L1/L2 complete.** Next: Phase 5 (Supply
+  Chain) — X2 (Goods Received Note), X3 (rider POD/COD).

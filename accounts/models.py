@@ -168,6 +168,63 @@ class Business(models.Model):
                    'cron fire or retry from re-sending the same day\'s summary.'
     )
 
+    # ── UBA §3 decision #7 — dormant pricing-tier hook, gates nothing yet ──
+    PLAN_CHOICES = [
+        ('standard', 'Standard'),
+        ('multi', 'Multi-Store'),
+        ('pro', 'Pro'),
+    ]
+    plan = models.CharField(
+        max_length=10, default='standard', choices=PLAN_CHOICES,
+        help_text='UBA pricing tier. Dormant hook only per the execution order — '
+                  'nothing in the app currently reads or gates on this field.'
+    )
+
+    # ── UBA §7.2 / §3 decision #3 — GlobalProduct / MarketPriceIndex privacy ──
+    contribute_market_data = models.BooleanField(
+        default=True,
+        help_text='Share product NAMES, barcodes and pack sizes (never prices) into the '
+                  'cross-tenant GlobalProduct dictionary when adding a new item by barcode. '
+                  'On by default — opt out any time; never shares this business\'s prices '
+                  'either way.'
+    )
+    contribute_price_data = models.BooleanField(
+        default=False,
+        help_text='Opt-IN only. Lets this business\'s cost/selling prices feed the county-level '
+                  'MarketPriceIndex benchmark (median only, sample_size>=5, never a single '
+                  'business\'s figure) — and, in exchange, lets this business SEE that '
+                  'benchmark. Opting out loses the benchmark, not just the contribution.'
+    )
+
+    # ── UBA §7.2/§7.3 (Sprint R1/R2) — retail intelligence ──────────────────
+    margin_alert_pct = models.DecimalField(
+        max_digits=5, decimal_places=1, default=Decimal('15.0'),
+        help_text='A supplier cost rise beyond this percentage (vs the item\'s previous cost) '
+                  'fires a cost_rise BusinessException + owner alert with a suggested new '
+                  'selling price that preserves the old margin ratio.'
+    )
+    # ── UBA §6.2/§3 decision #5 (Sprint P0-B) — layaway forfeiture policy ────
+    LAYAWAY_FORFEIT_CHOICES = [
+        ('full_refund', 'Rejesha Yote'),
+        ('minus_percent', 'Rejesha Kiasi (toa asilimia)'),
+        ('full_forfeit', 'Haitarejeshwa Kabisa'),
+    ]
+    layaway_forfeit_policy = models.CharField(
+        max_length=15, choices=LAYAWAY_FORFEIT_CHOICES, default='minus_percent',
+        help_text='What happens to a layaway deposit if the customer never completes the plan. '
+                  'Default: refund minus an admin fee — never a silent full-forfeit default.'
+    )
+    layaway_forfeit_pct = models.DecimalField(
+        max_digits=5, decimal_places=1, default=Decimal('10.0'),
+        help_text='Admin fee percentage deducted on forfeit, when layaway_forfeit_policy=minus_percent.'
+    )
+    return_approval_threshold = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='A customer return whose refund exceeds this KES amount needs owner/manager '
+                  'approval before stock/revenue are reversed. Blank means every return '
+                  'auto-processes regardless of amount.'
+    )
+
     # ── Keg Bar Settings ──────────────────────────────────────────────────
     keg_variance_tolerance_pct = models.DecimalField(
         max_digits=4, decimal_places=1, default=Decimal('3.0'),
@@ -337,6 +394,12 @@ class UserProfile(models.Model):
         ('kitchen',  _('Kitchen / Grill Staff')),
         ('rider',    _('Rider')),
         ('supplier', _('Supplier')),
+        # UBA §10.4 (Sprint L2) — caretaker: can record meter readings, report
+        # maintenance, mark units available; CANNOT record payments, see the
+        # full portfolio P&L, or alter agreements. The main anti-skim control
+        # for this business type — enforced at the view layer, see
+        # core.rentals_views's is_caretaker gate.
+        ('caretaker', _('Caretaker')),
     ]
     LANGUAGE_CHOICES = [
         ('en', 'English'),
@@ -480,6 +543,47 @@ class UserProfile(models.Model):
         User, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='staff_reactivations_recorded',
     )
+
+    # ── UBA §5.1 — Store scoping ─────────────────────────────────────────
+    home_store = models.ForeignKey(
+        'core.Store', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='home_staff',
+    )
+    stores = models.ManyToManyField(
+        'core.Store', blank=True, related_name='assigned_staff',
+        help_text='Stores this staff member may access. Empty means unrestricted '
+                  '(see accessible_stores()) — an owner narrows this per staff member.',
+    )
+
+    def accessible_stores(self):
+        """UBA §5.1 — which stores this profile may see/act on.
+
+        Owner always sees every active store. A staffer with an explicit
+        `stores` assignment is scoped to exactly that set; falling back to
+        `home_store` when `stores` is empty (single-store assignment,
+        simpler than the M2M for the common case).
+
+        With NEITHER set — true for every staff member that existed before
+        this field did, and for any newly-added staffer before an owner
+        assigns them anywhere — this deliberately returns ALL of the
+        business's active stores, matching today's completely unscoped
+        behavior. This differs from the spec's own illustrative pseudocode
+        (which falls back to Store.objects.none() here): that version would
+        lock every existing staff member out of every store-scoped page the
+        instant require_store_access() is wired into any view, before any
+        owner has assigned anyone to a specific store — see the M1 entry in
+        docs/UBA_PROGRESS.md for the full reasoning. Access only narrows
+        once an owner actively assigns a staffer to specific store(s).
+        """
+        from core.models import Store
+        if self.role == 'owner':
+            return Store.objects.filter(business=self.business, is_active=True)
+        assigned = self.stores.filter(is_active=True)
+        if assigned.exists():
+            return assigned
+        if self.home_store_id:
+            return Store.objects.filter(pk=self.home_store_id, is_active=True)
+        return Store.objects.filter(business=self.business, is_active=True)
 
     @property
     def is_departed(self):

@@ -31,6 +31,31 @@ def business_profile(request):
         return {'biz_profile': DEFAULT_PROFILE, 'business': None}
 
 
+def active_store_context(request):
+    """UBA §5.1 — session-scoped active store switcher.
+
+    Reads request.session['active_store_id'], resolves it against the
+    viewing profile's accessible_stores() (never trusts a stale/tampered
+    session value blindly — a store no longer accessible silently resolves
+    to None rather than leaking access), and injects `active_store` +
+    `accessible_stores_list` into every template. Additive: no existing
+    template reads either key yet, so this changes nothing visible today.
+    Templates gain a switcher UI in a follow-up pass.
+    """
+    if not request.user.is_authenticated:
+        return {'active_store': None, 'accessible_stores_list': []}
+    try:
+        profile = request.user.userprofile
+        accessible = list(profile.accessible_stores())
+        active_store = None
+        active_id = request.session.get('active_store_id')
+        if active_id:
+            active_store = next((s for s in accessible if s.pk == active_id), None)
+        return {'active_store': active_store, 'accessible_stores_list': accessible}
+    except Exception:
+        return {'active_store': None, 'accessible_stores_list': []}
+
+
 def onboarding_context(request):
     """Makes tour_sections_seen available in every template."""
     if request.user.is_authenticated:

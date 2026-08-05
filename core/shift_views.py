@@ -24,7 +24,10 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .models import Item, KegBarrel, KegWeightReading, PettyCash, Shift, ShiftStockCount, Transaction
+from .models import (
+    BusinessException, Item, KegBarrel, KegWeightReading, PettyCash, Shift,
+    ShiftStockCount, Store, Transaction,
+)
 
 
 def _get_up(request):
@@ -1691,6 +1694,27 @@ def close_shift(request, shift_id):
                                 bv.wastage_pct,
                                 barrel_id=barrel.id,
                             )
+                            # UBA M3 §5.3 — feed this into the Maduka Yangu
+                            # exception feed too. _fire_keg_alert() above stays
+                            # untouched (per-user Notification/SMS delivery);
+                            # this is the additive, durable feed row.
+                            try:
+                                _be_store = Store.objects.filter(
+                                    business=up.business, is_kitchen=(_shift_station(shift) == 'kitchen')
+                                ).first()
+                                BusinessException.raise_exception(
+                                    business=up.business, kind='shrinkage', severity='danger',
+                                    title=f"Upungufu wa {barrel.item.description}",
+                                    detail=(
+                                        f"{request.user.get_full_name() or request.user.username}: "
+                                        f"KES {bv.wastage_kes or 0:,.0f} ({bv.wastage_pct:.1f}%)"
+                                    ),
+                                    store=_be_store, shift=shift,
+                                    staff=getattr(request.user, 'userprofile', None),
+                                    amount_kes=bv.wastage_kes, link_url='/bar/reconciliation/',
+                                )
+                            except Exception:
+                                pass
                 except Exception:
                     pass
             net_kg = round(float(wkg) - float(barrel.tare_weight_kg), 2)
@@ -1737,6 +1761,27 @@ def close_shift(request, shift_id):
                         pass
         except Exception:
             logger.exception('close_shift: cash variance alert failed for shift %s', shift.id)
+
+        # UBA M3 §5.3 — additive feed row for Maduka Yangu, alongside (not
+        # instead of) the Notification/SMS fired just above.
+        try:
+            _be_store = Store.objects.filter(
+                business=up.business, is_kitchen=(_shift_station(shift) == 'kitchen')
+            ).first()
+            BusinessException.raise_exception(
+                business=up.business, kind='cash_variance',
+                severity='danger' if abs(_variance) > 2000 else 'warn',
+                title=f"Tofauti ya Fedha — {shift.staff.get_full_name() or shift.staff.username}",
+                detail=(
+                    f"KES {abs(_variance):,.0f} ({'upungufu' if _variance < 0 else 'ziada'}) "
+                    f"mwisho wa shift."
+                ),
+                store=_be_store, shift=shift,
+                staff=getattr(shift.staff, 'userprofile', None),
+                amount_kes=abs(_variance), link_url='/bar/shift/history/',
+            )
+        except Exception:
+            pass
 
     # Auto-convert open tabs to debt at shift close — but ONLY when the business
     # is past its closing time (or operates 24/7 with no closing_time set).

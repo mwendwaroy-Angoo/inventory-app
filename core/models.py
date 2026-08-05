@@ -130,6 +130,66 @@ class Ward(models.Model):
 
 
 # ────────────────────────────────────────────────
+# UBA §7.2 (Sprint R1) — cross-tenant product dictionary + market benchmark
+# ────────────────────────────────────────────────
+# Privacy rules, non-negotiable (pre-answered decision #3 in
+# docs/UBA_EXECUTION_ORDER.md, splitting the spec's single illustrative flag
+# into two — names/barcodes/pack sizes are shared BY DEFAULT (opt-out
+# available via Business.contribute_market_data), while buying/selling
+# PRICES are opt-IN only (Business.contribute_price_data, default False) and
+# never exposed below a county sample_size of 5. No business can ever query
+# another named business's data — GlobalProduct/MarketPriceIndex carry no
+# per-business price at all, only aggregates.
+
+class GlobalProduct(models.Model):
+    """Cross-tenant product dictionary — NAMES AND PACK SIZES ONLY, never a
+    price. The 500th duka to scan a barcode already known to the platform
+    gets its name/brand/pack pre-filled for free; the value comes purely
+    from multi-tenancy, not from any one business's data being exposed."""
+    barcode = models.CharField(max_length=32, unique=True, db_index=True)
+    name = models.CharField(max_length=160)
+    brand = models.CharField(max_length=80, blank=True)
+    pack_size = models.CharField(max_length=40, blank=True, help_text="e.g. '250g', '500ml', '2kg'")
+    unit = models.CharField(max_length=20, blank=True)
+    category = models.CharField(max_length=60, blank=True)
+    image_url = models.URLField(blank=True)
+    contributed_by = models.ForeignKey(
+        'accounts.Business', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='global_products_contributed',
+    )
+    confirm_count = models.PositiveIntegerField(
+        default=1, help_text='How many different businesses have agreed on this name.'
+    )
+    is_verified = models.BooleanField(default=False, help_text='True once confirm_count >= 3.')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.barcode})"
+
+
+class MarketPriceIndex(models.Model):
+    """Anonymised, aggregated cost/price benchmark. NEVER exposes a single
+    business's figures — only a county-level median, and only once
+    sample_size >= 5 (see market_price.recompute_index()). A business whose
+    own Business.contribute_price_data is False both contributes nothing to
+    this and never sees any benchmark reading — opting out loses the
+    benchmark, it does not just hide the opt-out business's own number."""
+    global_product = models.ForeignKey(GlobalProduct, on_delete=models.CASCADE, related_name='price_indexes')
+    county = models.ForeignKey(County, on_delete=models.SET_NULL, null=True, blank=True)
+    median_cost = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    median_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    sample_size = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('global_product', 'county')]
+
+    def __str__(self):
+        return f"{self.global_product.name} — {self.county or 'National'} (n={self.sample_size})"
+
+
+# ────────────────────────────────────────────────
 # CUSTOMER MODEL
 # ────────────────────────────────────────────────
 
@@ -172,6 +232,11 @@ class Customer(models.Model):
     notes = models.TextField(
         blank=True,
         help_text='Internal notes about this customer (e.g. preferences, contact details).',
+    )
+    no_show_count = models.PositiveIntegerField(
+        default=0,
+        help_text='UBA §9.3 (Salon) — missed appointments. A repeat no-show can be required '
+                  'to leave a booking deposit (PaymentPlan kind=BOOKING).'
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -360,6 +425,45 @@ class Store(models.Model):
     suitable_for_types = models.ManyToManyField(BusinessType, related_name='suitable_stores', blank=True)
     is_kitchen = models.BooleanField(default=False, help_text='Kitchen / grill side venture — separate POS board')
 
+    # ── UBA §5.1 — Store as first-class outlet ──────────────────────────────
+    STORE_TYPE_CHOICES = [
+        ('bar', 'Bar'),
+        ('kitchen', 'Jiko / Kitchen'),
+        ('retail', 'Duka / Retail floor'),
+        ('produce', 'Kibanda'),
+        ('salon', 'Salon'),
+        ('rental', 'Rentals'),
+        ('warehouse', 'Godown / Store'),
+        ('other', 'Nyingine'),
+    ]
+    store_type = models.CharField(
+        max_length=20, default='retail', choices=STORE_TYPE_CHOICES,
+        help_text='UBA capability model: what kind of outlet this store is.'
+    )
+    code = models.CharField(
+        max_length=12, blank=True,
+        help_text='Short code for this outlet — used on receipts, transfers, Paybill account (e.g. "KHY01").'
+    )
+    is_outlet = models.BooleanField(
+        default=True,
+        help_text='True = sells to customers. False = a godown/warehouse: holds stock, cannot sell.'
+    )
+    manager = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='managed_stores',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Deactivating blocks new sales at this store but preserves its history.'
+    )
+    opening_time = models.TimeField(null=True, blank=True)
+    closing_time = models.TimeField(null=True, blank=True)
+    target_daily_revenue = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    phone = models.CharField(max_length=20, blank=True, help_text='Store line for SMS + storefront.')
+    address_note = models.CharField(max_length=200, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+
     # ── Per-counter M-Pesa overrides (Sprint K2a) ────────────────────────────
     has_own_mpesa = models.BooleanField(
         default=False,
@@ -376,6 +480,30 @@ class Store(models.Model):
         max_length=10, blank=True,
         help_text="Leave blank to inherit from business. Set 'sandbox' or 'production' to override.",
     )
+
+    def save(self, *args, **kwargs):
+        # UBA §5.1 — keep store_type consistent with the existing,
+        # load-bearing is_kitchen flag. Deliberately ONE-DIRECTIONAL
+        # (is_kitchen -> store_type), NOT the spec's illustrative
+        # bidirectional pseudocode (which also flips is_kitchen to False
+        # whenever store_type != 'kitchen'). Found and ruled out during
+        # this sprint: core.kitchen_views.get_or_create_kitchen_store()
+        # (and any future call site) creates the kitchen Store via
+        # `Store.objects.create(..., is_kitchen=True)` alone, never setting
+        # store_type — the bidirectional version would silently flip that
+        # store's is_kitchen back to False the moment anything saved it
+        # again (store_type defaults to 'retail'), breaking the entire
+        # kitchen module for every business the instant this shipped. This
+        # mirrors Item.save()'s own precedent: legacy discriminators are
+        # ground truth, the new UBA field is derived from them, never the
+        # reverse. Setting store_type='kitchen' directly still implies
+        # is_kitchen=True (the safe, additive direction) for any future
+        # code that only knows about the new field.
+        if self.store_type == 'kitchen':
+            self.is_kitchen = True
+        elif self.is_kitchen:
+            self.store_type = 'kitchen'
+        super().save(*args, **kwargs)
 
     def __str__(self):
         business_name = self.business.name if self.business else "No Business"
@@ -458,6 +586,84 @@ class Item(models.Model):
     is_produce = models.BooleanField(
         default=False,
         help_text='Enable portion-based selling. Owner defines price presets (e.g. KES 40 = quarter head). Used for vegetables, produce, and gorogoro items.'
+    )
+
+    # ── Universal Business Architecture — capability model (UBA §2.1) ──────
+    # Declarative "how is this sellable thing counted" — the eight stock
+    # models every future business type composes from. This is metadata
+    # only for now: nothing outside save()'s own sync block reads it yet.
+    # The existing discriminators (is_produce, produce_mode, is_keg,
+    # is_kitchen_batch, produce_bunch_id, etc.) remain the load-bearing
+    # ones every view/template/report already reads — do not remove them,
+    # and do not change any of them to read stock_model instead without a
+    # dedicated regression sweep (see CLAUDE.md's "discriminator
+    # consistency" rule).
+    STOCK_MODEL_CHOICES = [
+        ('UNIT', 'Unit — countable (default)'),
+        ('MEASURE', 'Measure — weight/volume, decanted from a bulk parent'),
+        ('ENVELOPE', 'Envelope — revenue batch, no unit count'),
+        ('VARIANT', 'Variant — one product, many sellable children (size/colour)'),
+        ('SERIAL', 'Serial — each physical unit individually identified'),
+        ('LOT', 'Lot — batch with its own expiry, FIFO depletion'),
+        ('SERVICE', 'Service — time + skill, consumes supplies per a recipe'),
+        ('ASSET', 'Asset — goes out, must come back'),
+    ]
+    stock_model = models.CharField(
+        max_length=10, choices=STOCK_MODEL_CHOICES, default='UNIT',
+        help_text='UBA capability model: how this item\'s stock is counted. '
+                  'Kept in sync with is_produce/produce_mode in save() for '
+                  'existing items — see Item.save().'
+    )
+
+    # ── UBA §7.2 (Sprint R1) — barcode + fast onboarding without a stock take ──
+    barcode = models.CharField(
+        max_length=32, blank=True, db_index=True,
+        help_text='Scanned barcode, if any. Looked up against the cross-tenant '
+                  'GlobalProduct dictionary — never unique per business, since '
+                  'the same barcode legitimately exists at many different dukas.'
+    )
+    balance_confirmed_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='When this item\'s on-hand balance was last established by a real '
+                  'physical count — set by adjust_stock_balance() (Rekebisha) every '
+                  'time it runs, and by the first-ever Receipt on a brand-new item '
+                  '(fast onboarding: "Anza bila kuhesabu" never demands an opening '
+                  'balance, so an item can go a while with this blank). NULL means '
+                  '"never confirmed" — excluded from shrinkage attribution (would '
+                  'generate false accusations against staff) and surfaced honestly '
+                  'in stock_list as "Haijahesabiwa" rather than silently assumed.'
+    )
+
+    # ── UBA §7.4 (Sprint R3) — cycle counting / ABC classification ─────────
+    ABC_CLASS_CHOICES = [
+        ('A', 'A — juu ya thamani (hesabu kila wiki)'),
+        ('B', 'B — wastani (hesabu kila mwezi)'),
+        ('C', 'C — chini ya thamani (hesabu kila robo mwaka)'),
+    ]
+    abc_class = models.CharField(
+        max_length=1, choices=ABC_CLASS_CHOICES, blank=True,
+        help_text='Set by core.cycle_count.classify_abc_all() from 90-day revenue contribution '
+                  '— top 80% of value=A, next 15%=B, rest=C. Blank until first classified.'
+    )
+    is_high_risk = models.BooleanField(
+        default=False,
+        help_text='High value × small size (razors, batteries, phone accessories, spirits '
+                  'miniatures...) — force-included in every cycle count regardless of ABC class.'
+    )
+
+    # ── UBA §8.2 (Sprint A1) — variants (the boutique half) ─────────────────
+    # Parent/child Items, deliberately NOT a separate ItemVariant table (see
+    # core/variants.py's module docstring for why) — each variant IS an
+    # ordinary Item with its own balance/cost/price/barcode/history, reusing
+    # 100% of existing machinery. The parent is a display grouping only and
+    # is never sold directly.
+    parent = models.ForeignKey(
+        'self', on_delete=models.CASCADE, null=True, blank=True, related_name='variants'
+    )
+    variant_label = models.CharField(max_length=60, blank=True, help_text="e.g. 'M / Navy'.")
+    variant_attrs = models.JSONField(default=dict, blank=True, help_text="e.g. {'size':'M','colour':'Navy'}.")
+    is_variant_parent = models.BooleanField(
+        default=False, help_text='A display-grouping-only row — never sold directly.'
     )
 
     # ── Greens / bunch-based produce (Kibanda Produce Module) ──────────────
@@ -569,6 +775,48 @@ class Item(models.Model):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
         return self.opening_bin_balance + total_movement
 
+    def reserved_qty(self):
+        """UBA §6.2 (Sprint P0-B) — physical stock held against an OPEN
+        PaymentPlan (layaway). Reserved stock is not available stock: a
+        layaway holds real goods, so `current_balance()` alone overstates
+        what a NEW customer can actually be sold. Only OPEN plans reserve
+        anything — completing/refunding/releasing/forfeiting a plan always
+        flips status away from OPEN, so the reservation clears automatically
+        the instant any of those inverse actions runs, with no separate
+        "release the hold" bookkeeping step needed here."""
+        total = self.payment_plan_reservations.filter(
+            status='OPEN'
+        ).aggregate(models.Sum('reserved_qty'))['reserved_qty__sum']
+        return total or 0
+
+    def available_balance(self):
+        """current_balance() minus reserved_qty() — the number a NEW sale
+        must actually check against, so two customers are never sold the
+        same reserved dress. NOT swept into every existing display surface
+        this pass (stock_list.html, item_detail.html, etc. still show plain
+        current_balance()) — documented deferral, same discipline as every
+        other UBA sprint's template work; wired into Quick Sell's checkout
+        stock check instead, the one surface where overselling a reserved
+        item actually causes the harm this exists to prevent."""
+        return self.current_balance() - self.reserved_qty()
+
+    def variant_summary(self):
+        """UBA §8.2 (Sprint A1) — for a parent Item's stock-list collapse
+        row: total balance across all its variant children, and their price
+        range. Only meaningful when `is_variant_parent` is True; for an
+        ordinary item this just returns zeroed/empty values."""
+        children = list(self.variants.all())
+        if not children:
+            return {'total_balance': 0, 'min_price': None, 'max_price': None, 'variant_count': 0}
+        total_balance = sum(c.current_balance() for c in children)
+        prices = [c.selling_price for c in children if c.selling_price is not None]
+        return {
+            'total_balance': total_balance,
+            'min_price': min(prices) if prices else None,
+            'max_price': max(prices) if prices else None,
+            'variant_count': len(children),
+        }
+
     def physical_balance(self):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
         return self.opening_physical + total_movement
@@ -673,6 +921,22 @@ class Item(models.Model):
             return float(self.selling_price) - float(self.cost_price)
         return 0
 
+    def save(self, *args, **kwargs):
+        # UBA §2.1 — keep stock_model in sync with the existing, load-bearing
+        # discriminators for every item type this app already builds. Only
+        # fires when one of these legacy flags is set; a plain item (or a
+        # future VARIANT/SERIAL/LOT/SERVICE/ASSET item nothing here creates
+        # yet) keeps whatever stock_model it already has.
+        if self.is_produce and self.produce_mode == 'BUNCH':
+            self.stock_model = 'ENVELOPE'
+        elif self.is_produce:
+            self.stock_model = 'UNIT'
+        elif self.is_keg:
+            self.stock_model = 'MEASURE'
+        elif self.is_kitchen_batch:
+            self.stock_model = 'ENVELOPE'
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.material_no} - {self.description}"
 
@@ -715,6 +979,7 @@ class Transaction(models.Model):
         ('Wastage', _('Wastage')),
         ('OwnerConsumption', _('Owner Consumption')),
         ('Draw', _('Kitchen Batch Draw')),
+        ('Transfer', _('Stock Transfer Between Stores')),
     ]
 
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='transactions')
@@ -771,6 +1036,27 @@ class Transaction(models.Model):
             "sold at KES 150) but have different real costs. See Transaction.cost()."
         ),
     )
+    transfer = models.ForeignKey(
+        'StockTransfer', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transactions',
+        help_text=(
+            'UBA §5.2 — set on both legs of a stock transfer between stores '
+            '(the dispatch Issue and the receive Receipt). Discriminator that '
+            'excludes a transfer from revenue()/cost() everywhere — a transfer '
+            'is a stock movement, never a sale.'
+        ),
+    )
+    service = models.ForeignKey(
+        'Service', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales',
+        help_text='UBA §9.2 (Salon) — set on the shadow-item Issue transaction when this '
+                  'is a completed service sale, and on each recipe-line supply deduction.'
+    )
+    performed_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='services_performed',
+        help_text='UBA §9.2 (Salon) — the STYLIST who performed the service, distinct from '
+                  '`recorded_by` (the cashier/whoever rang it up). Never set for non-salon sales.'
+    )
     created_at = models.DateTimeField(
         default=timezone.now, null=True, blank=True,
         help_text='Exact timestamp — used for shift-level reconciliation. Can be backdated for offline sales.',
@@ -796,6 +1082,14 @@ class Transaction(models.Model):
     )
 
     def revenue(self):
+        # UBA §5.2 — a stock-transfer leg (type='Transfer', see the Draw-type
+        # precedent this mirrors) is a movement, never a sale — already
+        # excluded by the type check below, since it's never 'Issue'. The
+        # explicit transfer_id check is defense-in-depth: it means a transfer
+        # leg returns 0 revenue even if something ever mistakenly creates one
+        # with type='Issue' instead, so this can never be silently bypassed.
+        if self.transfer_id:
+            return 0
         if self.type != 'Issue':
             return 0
         if self.sale_amount is not None:
@@ -805,6 +1099,8 @@ class Transaction(models.Model):
         return 0
 
     def cost(self):
+        if self.transfer_id:
+            return 0
         if self.type != 'Issue':
             return 0
         # Keg barrel pours: qty is stored in ml — must NOT be multiplied by KES cost_price.
@@ -986,6 +1282,140 @@ class Transaction(models.Model):
                     )
                     all_ids.append(new_txn.id)
                     remaining = 0
+            return all_ids
+
+    @classmethod
+    def split_to_credit_locked(cls, txn_id, business, split_amount, recipient, staff_user=None):
+        """UBA P0-A — boundary-split sibling of split_payment_method_locked(),
+        for a direct sale's UNPAID remainder becoming credit rather than a
+        second cash/mpesa channel (Kibanda's "Lipa kidogo" gap: KES 100
+        mboga, customer hands over 60, the other 40 becomes an ordinary
+        debt against their name, in the SAME checkout action — no tab
+        needed, matching the bar/kitchen tab-based partial-settle-to-debt
+        feature Quick Sell never got).
+
+        Deliberately a SEPARATE method rather than widening
+        split_payment_method_locked() itself — that function is narrowly,
+        deliberately cash/mpesa-only and shared with the post-hoc
+        correction endpoint (split_transaction_payment_method); adding a
+        credit destination there would need a wider regression sweep than
+        this warrants. This mirrors its shape instead.
+
+        Reduces the original transaction's amount to (original -
+        split_amount), keeping its existing cash/mpesa payment_method, and
+        creates a NEW sibling transaction for split_amount tagged
+        payment_method='credit', recipient=recipient — the exact shape the
+        debt tracker already expects, so no debt-tracker code changes.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            txn = cls.objects.select_for_update().get(pk=txn_id, business=business)
+            try:
+                has_tab_entry = txn.tab_entry is not None
+            except Exception:
+                has_tab_entry = False
+            if txn.type != 'Issue' or has_tab_entry:
+                raise ValueError('Muamala huu hauwezi kugawanywa — si mauzo ya moja kwa moja.')
+            if txn.payment_method not in ('cash', 'mpesa'):
+                raise ValueError('Njia ya malipo ya sasa haiwezi kugawanywa.')
+            if not recipient:
+                raise ValueError('Jina la mteja linahitajika kwa deni.')
+
+            original_amount = float(txn.revenue())
+            split_amount = float(split_amount)
+            if split_amount <= 0 or split_amount >= original_amount:
+                raise ValueError('Kiasi cha deni lazima kiwe kati ya 0 na jumla ya mauzo.')
+
+            remaining = round(original_amount - split_amount, 2)
+            txn.sale_amount = Decimal(str(remaining))
+            txn.save(update_fields=['sale_amount'])
+
+            new_txn = cls.objects.create(
+                item=txn.item, business=txn.business, type='Issue',
+                qty=Decimal('0'), sale_amount=Decimal(str(round(split_amount, 2))),
+                payment_method='credit', recipient=recipient,
+                invoice_no=txn.invoice_no,
+                recorded_by=staff_user or txn.recorded_by,
+                date=txn.date,
+                keg_barrel_id=txn.keg_barrel_id,
+                produce_bunch_id=txn.produce_bunch_id,
+                kitchen_batch_id=txn.kitchen_batch_id,
+            )
+            return txn, new_txn
+
+    @classmethod
+    def apply_checkout_partial_credit_locked(cls, txn_ids, business, amount_paid, recipient, staff_user=None):
+        """UBA P0-A — Kibanda split-tender-at-checkout: one direct sale,
+        customer pays only `amount_paid` (already recorded as cash/mpesa on
+        every transaction in txn_ids — the caller checks out normally with
+        a single primary payment_method first, exactly like a plain
+        cash/mpesa/credit sale), and the shortfall becomes ordinary credit
+        debt against `recipient` — the exact payment_method='credit'/
+        recipient=name shape the debt tracker already reads, so no
+        debt-tracker code changes at all.
+
+        Walks txn_ids from the end (same walk-and-split shape as
+        apply_split_payment_locked, just converting the LAST-recorded
+        lines to credit first — an arbitrary but deterministic choice;
+        which specific line becomes credit never matters, only that the
+        totals reconcile), converting whole transactions to credit once
+        the credit remainder is covered, then boundary-splits the
+        transaction that straddles the paid/credit line via
+        split_to_credit_locked().
+
+        No-ops (returns None) when amount_paid is None or >= the batch
+        total — nothing left to convert; that was a full cash/mpesa sale,
+        not a partial one.
+
+        The CALLER is responsible for gating the CREDIT REMAINDER (not the
+        full sale total) through core.credit_policy.evaluate_credit()
+        BEFORE calling this — computed against (total - amount_paid), the
+        actual new debt being extended, same as the existing full-credit
+        checkout gate but against the smaller, real number rather than the
+        whole cart.
+        """
+        if not txn_ids or amount_paid is None:
+            return None
+        amount_paid = float(amount_paid)
+        if amount_paid < 0:
+            raise ValueError('Kiasi kilicholipwa hakiwezi kuwa hasi.')
+        if not recipient:
+            raise ValueError('Jina la mteja linahitajika kwa deni.')
+
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            txns = list(
+                cls.objects.select_for_update()
+                .filter(id__in=txn_ids, business=business, type='Issue')
+                .order_by('id')
+            )
+            total = sum(float(t.revenue()) for t in txns)
+            if amount_paid >= total:
+                return None  # fully paid — nothing to convert
+
+            all_ids = [t.id for t in txns]
+            remaining_credit = round(total - amount_paid, 2)
+            for t in reversed(txns):
+                if remaining_credit <= 0:
+                    break
+                if t.payment_method not in ('cash', 'mpesa'):
+                    continue
+                amt = float(t.revenue())
+                if amt <= 0:
+                    continue
+                if remaining_credit >= amt - 0.005:
+                    t.payment_method = 'credit'
+                    t.recipient = recipient
+                    t.save(update_fields=['payment_method', 'recipient'])
+                    remaining_credit = round(remaining_credit - amt, 2)
+                else:
+                    _orig, new_txn = cls.split_to_credit_locked(
+                        txn_id=t.id, business=business,
+                        split_amount=Decimal(str(remaining_credit)), recipient=recipient,
+                        staff_user=staff_user,
+                    )
+                    all_ids.append(new_txn.id)
+                    remaining_credit = 0
             return all_ids
 
     @classmethod
@@ -2109,6 +2539,883 @@ class WriteOffRequest(models.Model):
 
 
 # ────────────────────────────────────────────────
+# UBA §7.3 (Sprint R2) — Returns/refunds, the genuinely new primitive retail forces
+# ────────────────────────────────────────────────
+
+class Return(models.Model):
+    """A customer return against ONE original sale Transaction — reverses
+    stock, revenue, revenue-target contribution and (if the original sale
+    was credit) the debt ledger, all via the SAME existing aggregate
+    machinery those surfaces already use, not a parallel mechanism:
+
+    - Stock reversal is a plain `type='Receipt'` Transaction (qty=+returned)
+      created directly via the ORM (bypassing add_transaction()'s VIEW-layer
+      cost-price-update logic entirely, since that only runs inside the view
+      — so a return can never perturb Item.cost_price, preserving "exactly
+      ONE designed writer").
+    - Revenue reversal is a `type='Issue'` Transaction with qty=0 (no
+      additional stock effect — the Receipt leg above already handled that)
+      and a NEGATIVE `sale_amount`, inheriting the original sale's
+      `payment_method`/`recipient`. Because `Transaction.revenue()` already
+      returns `sale_amount` verbatim (never abs()'d) for any `type='Issue'`
+      row, this negative contribution flows automatically through EVERY
+      existing `type='Issue'`-filtered revenue aggregate in the app —
+      analytics, `_reconcile()`'s cash/mpesa/credit sums, revenue targets,
+      daily_sales, home dashboard tiles, AND the debt tracker's
+      `_get_customer_debt_data()` (same `payment_method='credit'` +
+      `recipient` match) — with ZERO changes needed to any of those
+      functions. Known, honestly-scoped limitation: `qty=0` means
+      `Transaction.cost()` returns 0 for this leg too, so COGS is NOT
+      reversed — a return currently leaves net_profit slightly overstated
+      by the original sale's recognized cost. R-AC-RET (spec §7.3) does not
+      require cost/margin reversal, only stock/revenue/revenue-target/debt,
+      so this is deferred rather than solved here — flagged for a future
+      pass if margin-accuracy-after-returns becomes a real complaint.
+    """
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Inasubiri Idhini'),
+        (STATUS_APPROVED, 'Imeidhinishwa'),
+        (STATUS_REJECTED, 'Imekataliwa'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='returns')
+    original_transaction = models.ForeignKey(
+        'Transaction', on_delete=models.CASCADE, related_name='return_requests'
+    )
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    qty_returned = models.DecimalField(max_digits=12, decimal_places=3)
+    refund_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=200)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_APPROVED)
+    processed_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='returns_processed',
+    )
+    approved_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='returns_approved',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    stock_txn = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    revenue_txn = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Return of {self.qty_returned} {self.item.description} (KES {self.refund_amount})"
+
+    @classmethod
+    def _already_returned_qty(cls, original_transaction):
+        agg = cls.objects.filter(
+            original_transaction=original_transaction, status=cls.STATUS_APPROVED,
+        ).aggregate(total=models.Sum('qty_returned'))
+        return agg['total'] or Decimal('0')
+
+    @classmethod
+    def process_locked(cls, original_transaction_id, business, qty_returned, reason,
+                        processed_by=None, force_approve=False):
+        """The one entry point. Raises ValueError for an invalid request
+        (wrong business, not a plain Issue sale, qty exceeds what's left to
+        return). Returns a Return instance — status='pending' (no
+        transactions created yet) if `business.return_approval_threshold`
+        is set and the computed refund exceeds it and `force_approve` is
+        False; otherwise status='approved' with both reversal transactions
+        created and linked. `force_approve=True` is the owner/manager
+        approval action's own call (see approve_return()), never a
+        self-service bypass — the view layer enforces that permission
+        check, matching this app's own "model enforces state, view enforces
+        who" convention."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            orig = Transaction.objects.select_for_update().get(
+                id=original_transaction_id, business=business, type='Issue',
+            )
+            qty_returned = Decimal(str(qty_returned))
+            if qty_returned <= 0:
+                raise ValueError('Kiasi cha kurudisha lazima kiwe zaidi ya sifuri.')
+            already = cls._already_returned_qty(orig)
+            if qty_returned > (abs(orig.qty) - already):
+                raise ValueError('Kiasi kinachorudishwa ni zaidi ya kilichouzwa.')
+
+            original_qty_sold = abs(orig.qty) or Decimal('1')
+            refund_amount = (Decimal(str(orig.revenue())) * qty_returned / original_qty_sold)
+            refund_amount = refund_amount.quantize(Decimal('0.01'))
+
+            threshold = business.return_approval_threshold
+            if threshold and refund_amount > threshold and not force_approve:
+                return cls.objects.create(
+                    business=business, original_transaction=orig, item=orig.item,
+                    qty_returned=qty_returned, refund_amount=refund_amount, reason=reason,
+                    status=cls.STATUS_PENDING, processed_by=processed_by,
+                )
+
+            stock_txn = Transaction.objects.create(
+                business=business, item=orig.item, type='Receipt', qty=qty_returned,
+                recipient=reason, invoice_no='[RETURN]', payment_method='',
+                recorded_by=getattr(processed_by, 'user', None),
+            )
+            revenue_txn = Transaction.objects.create(
+                business=business, item=orig.item, type='Issue', qty=Decimal('0'),
+                sale_amount=-refund_amount, payment_method=orig.payment_method,
+                recipient=orig.recipient, invoice_no='[RETURN]',
+                recorded_by=getattr(processed_by, 'user', None),
+            )
+            return cls.objects.create(
+                business=business, original_transaction=orig, item=orig.item,
+                qty_returned=qty_returned, refund_amount=refund_amount, reason=reason,
+                status=cls.STATUS_APPROVED, processed_by=processed_by,
+                approved_by=processed_by if force_approve else None,
+                approved_at=timezone.now() if force_approve else None,
+                stock_txn=stock_txn, revenue_txn=revenue_txn,
+            )
+
+    def approve(self, approved_by):
+        """Owner/manager approves a pending (above-threshold) return —
+        the view layer is responsible for the permission check. Creates the
+        same pair of reversal transactions process_locked() would have
+        created immediately, had the threshold not applied."""
+        if self.status != self.STATUS_PENDING:
+            raise ValueError('Ombi hili tayari limeshughulikiwa.')
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            ret = Return.objects.select_for_update().get(pk=self.pk)
+            if ret.status != self.STATUS_PENDING:
+                raise ValueError('Ombi hili tayari limeshughulikiwa.')
+            orig = ret.original_transaction
+            stock_txn = Transaction.objects.create(
+                business=ret.business, item=ret.item, type='Receipt', qty=ret.qty_returned,
+                recipient=ret.reason, invoice_no='[RETURN]', payment_method='',
+                recorded_by=getattr(approved_by, 'user', None),
+            )
+            revenue_txn = Transaction.objects.create(
+                business=ret.business, item=ret.item, type='Issue', qty=Decimal('0'),
+                sale_amount=-ret.refund_amount, payment_method=orig.payment_method,
+                recipient=orig.recipient, invoice_no='[RETURN]',
+                recorded_by=getattr(approved_by, 'user', None),
+            )
+            ret.status = self.STATUS_APPROVED
+            ret.approved_by = approved_by
+            ret.approved_at = timezone.now()
+            ret.stock_txn = stock_txn
+            ret.revenue_txn = revenue_txn
+            ret.save(update_fields=['status', 'approved_by', 'approved_at', 'stock_txn', 'revenue_txn'])
+            self.status = ret.status
+            self.stock_txn = ret.stock_txn
+            self.revenue_txn = ret.revenue_txn
+            return ret
+
+    def reject(self, rejected_by):
+        if self.status != self.STATUS_PENDING:
+            raise ValueError('Ombi hili tayari limeshughulikiwa.')
+        self.status = self.STATUS_REJECTED
+        self.approved_by = rejected_by
+        self.approved_at = timezone.now()
+        self.save(update_fields=['status', 'approved_by', 'approved_at'])
+
+
+class ItemPriceHistory(models.Model):
+    """UBA §7.3 (Sprint R2) — the margin guard's "Sasisha bei" one-tap price
+    update writes here. NOT a general price-change log for every possible
+    edit_item save — only for the margin-guard-suggested update, so the
+    reason is always known and this stays small and meaningful."""
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='price_history')
+    old_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    new_price = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=100, default='margin_guard')
+    changed_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True
+    )
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-changed_at']
+
+    def __str__(self):
+        return f"{self.item.description}: {self.old_price} → {self.new_price}"
+
+
+# ────────────────────────────────────────────────
+# UBA §7.4 (Sprint R3) — cycle counting (ABC) + retail shrinkage
+# ────────────────────────────────────────────────
+
+class StockCountSession(models.Model):
+    KIND_CYCLE = 'CYCLE'
+    KIND_FULL = 'FULL'
+    KIND_SPOT = 'SPOT'
+    KIND_CHOICES = [
+        (KIND_CYCLE, 'Hesabu ya kila siku'),
+        (KIND_FULL, 'Hesabu kamili'),
+        (KIND_SPOT, 'Hesabu ya ghafla'),
+    ]
+    STATUS_OPEN = 'OPEN'
+    STATUS_CLOSED = 'CLOSED'
+    STATUS_CHOICES = [(STATUS_OPEN, 'Wazi'), (STATUS_CLOSED, 'Imefungwa')]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='stock_count_sessions')
+    store = models.ForeignKey(Store, on_delete=models.CASCADE, null=True, blank=True)
+    kind = models.CharField(max_length=6, choices=KIND_CHOICES, default=KIND_CYCLE)
+    scope_note = models.CharField(max_length=100, blank=True, help_text="e.g. 'Class A — 12 items'")
+    started_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=6, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    shift = models.ForeignKey('Shift', on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return f"{self.get_kind_display()} — {self.started_at:%Y-%m-%d}"
+
+
+class StockCountLine(models.Model):
+    session = models.ForeignKey(StockCountSession, on_delete=models.CASCADE, related_name='lines')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    book_qty = models.DecimalField(max_digits=12, decimal_places=3, help_text='Snapshot at count time — never recomputed later.')
+    counted_qty = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    variance_qty = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    variance_kes = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    reason = models.CharField(max_length=100, blank=True, help_text="'imeharibika' | 'imeibiwa' | 'kosa la kuandika' | ...")
+    attributed_shift = models.ForeignKey(
+        'Shift', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+        help_text='Which shift is believed accountable for this variance — see '
+                  'core.cycle_count.record_count_line(), reuses shift_views.attribute_variance_shift().'
+    )
+    counted_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    counted_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.item.description}: book {self.book_qty}, counted {self.counted_qty}"
+
+
+# ────────────────────────────────────────────────
+# UBA §12.1 (Sprint X1) — Payables: the missing half of the cash picture
+# ────────────────────────────────────────────────
+
+class SupplierInvoice(models.Model):
+    """What THIS business owes a supplier — the mirror image of the debt
+    tracker's Customer/CustomerDebtPayment (receivables). Same aging
+    buckets, same UI patterns, opposite direction — see core/payables.py,
+    which deliberately reuses the debt tracker's own bucket boundaries
+    (current / 30 / 60 / 90+) rather than inventing new ones."""
+    STATUS_DUE = 'DUE'
+    STATUS_PARTIAL = 'PARTIAL'
+    STATUS_PAID = 'PAID'
+    STATUS_DISPUTED = 'DISPUTED'
+    STATUS_CHOICES = [
+        (STATUS_DUE, 'Inadaiwa'), (STATUS_PARTIAL, 'Imelipwa Kiasi'),
+        (STATUS_PAID, 'Imelipwa'), (STATUS_DISPUTED, 'Ina Utata'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='supplier_invoices')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True)
+    supplier = models.ForeignKey(
+        'accounts.Business', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='issued_invoices', help_text='A platform supplier, if this business trades with one via the marketplace.'
+    )
+    supplier_name = models.CharField(max_length=200, blank=True, help_text='Off-platform distributor name — most cases.')
+    invoice_no = models.CharField(max_length=60, blank=True)
+    purchase_order = models.ForeignKey(
+        'PurchaseOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='supplier_invoices'
+    )
+    invoice_date = models.DateField(default=timezone.localdate)
+    due_date = models.DateField(null=True, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_DUE)
+    note = models.TextField(blank=True)
+    recorded_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['due_date', '-invoice_date']
+
+    def __str__(self):
+        return f"{self.supplier_name or self.supplier}: KES {self.amount} ({self.get_status_display()})"
+
+    @property
+    def outstanding(self):
+        return max(Decimal('0'), self.amount - self.paid_amount)
+
+    def record_payment_locked(self, amount, method, recorded_by, reference='', paid_on=None):
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            inv = SupplierInvoice.objects.select_for_update().get(pk=self.pk)
+            SupplierPayment.objects.create(
+                invoice=inv, amount=amount, method=method, reference=reference,
+                paid_on=paid_on or timezone.localdate(), recorded_by=recorded_by,
+            )
+            inv.paid_amount = inv.paid_amount + Decimal(str(amount))
+            if inv.paid_amount >= inv.amount:
+                inv.status = SupplierInvoice.STATUS_PAID
+            elif inv.paid_amount > 0:
+                inv.status = SupplierInvoice.STATUS_PARTIAL
+            inv.save(update_fields=['paid_amount', 'status'])
+            self.paid_amount = inv.paid_amount
+            self.status = inv.status
+            return inv
+
+
+class SupplierPayment(models.Model):
+    METHOD_CHOICES = [('cash', 'Cash'), ('mpesa', 'M-Pesa'), ('bank', 'Bank'), ('other', 'Nyingine')]
+    invoice = models.ForeignKey(SupplierInvoice, on_delete=models.CASCADE, related_name='payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=10, choices=METHOD_CHOICES, default='cash')
+    reference = models.CharField(max_length=100, blank=True)
+    paid_on = models.DateField(default=timezone.localdate)
+    recorded_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-paid_on']
+
+    def __str__(self):
+        return f"KES {self.amount} on {self.invoice}"
+
+
+# ────────────────────────────────────────────────
+# UBA §6.2 (Sprint P0-B) — payment plans (layaway / deposit / instalments)
+# ────────────────────────────────────────────────
+
+class PaymentPlan(models.Model):
+    """A deposit/layaway/instalment/booking plan — deliberately NOT the debt
+    tracker. A plan is money the business is HOLDING against a future
+    completion, not credit extended to a customer; `PaymentPlanEntry`
+    payments never create a revenue-bearing Transaction (deposits are a
+    LIABILITY, not revenue — see `pay_locked()`'s docstring), and the debt
+    ledger machinery is never touched by any method here, so a plan
+    correctly never appears in the deni ledger by construction — no
+    exclusion filter needed anywhere else in the app.
+
+    Known, documented limitation (not solved this pass): a cash/M-Pesa
+    deposit payment is not yet reflected in `shift_views.till_expected_cash()`
+    / `_reconcile()` — that machinery is this app's single most
+    money-sensitive function (its own module docstring calls it exactly
+    that), and integrating a second cash-affecting event into it needs its
+    own careful, dedicated pass rather than being folded into this one.
+    """
+    KIND_LAYAWAY = 'LAYAWAY'
+    KIND_DEPOSIT = 'DEPOSIT'
+    KIND_INSTALMENT = 'INSTALMENT'
+    KIND_BOOKING = 'BOOKING'
+    KIND_CHOICES = [
+        (KIND_LAYAWAY, 'Lipa pole pole'), (KIND_DEPOSIT, 'Amana'),
+        (KIND_INSTALMENT, 'Malipo ya awamu'), (KIND_BOOKING, 'Booking'),
+    ]
+    STATUS_OPEN = 'OPEN'
+    STATUS_COMPLETED = 'COMPLETED'
+    STATUS_FORFEITED = 'FORFEITED'
+    STATUS_REFUNDED = 'REFUNDED'
+    STATUS_CANCELLED = 'CANCELLED'
+    STATUS_CHOICES = [
+        (STATUS_OPEN, 'Wazi'), (STATUS_COMPLETED, 'Imekamilika'),
+        (STATUS_FORFEITED, 'Amana Imepotea'), (STATUS_REFUNDED, 'Imerejeshwa'),
+        (STATUS_CANCELLED, 'Imefutwa'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='payment_plans')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True)
+    customer = models.ForeignKey('Customer', on_delete=models.CASCADE, related_name='payment_plans')
+    kind = models.CharField(max_length=12, choices=KIND_CHOICES, default=KIND_LAYAWAY)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    due_date = models.DateField(null=True, blank=True)
+    hold_expires_on = models.DateField(null=True, blank=True, help_text='Layaway: goods held until this date.')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    forfeit_policy = models.CharField(
+        max_length=200, blank=True,
+        help_text='Human-readable, snapshotted from Business.layaway_forfeit_policy at creation '
+                  'time and shown on the deposit receipt — never retro-applied if the business '
+                  'setting changes later.'
+    )
+    reserved_item = models.ForeignKey(Item, on_delete=models.SET_NULL, null=True, blank=True, related_name='payment_plan_reservations')
+    reserved_qty = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    created_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.get_kind_display()} — {self.customer.name} (KES {self.paid_amount}/{self.total_amount})"
+
+    @property
+    def balance(self):
+        return max(Decimal('0'), self.total_amount - self.paid_amount)
+
+    @staticmethod
+    def describe_forfeit_policy(business):
+        """The exact Swahili sentence printed on the deposit receipt at the
+        moment money is taken — never discovered later (§6.2's ethics note)."""
+        if business.layaway_forfeit_policy == 'full_refund':
+            return 'Ukikosa kumaliza malipo, amana yako yote itarejeshwa.'
+        if business.layaway_forfeit_policy == 'full_forfeit':
+            return 'Ukikosa kumaliza malipo, amana yako haitarejeshwa kabisa.'
+        return (
+            f'Ukikosa kumaliza malipo, amana yako itarejeshwa ukitoa ada ya '
+            f'asilimia {business.layaway_forfeit_pct:g}%.'
+        )
+
+    @classmethod
+    def create_locked(cls, business, customer, kind, total_amount, created_by,
+                       store=None, due_date=None, hold_expires_on=None,
+                       reserved_item=None, reserved_qty=None, initial_payment=None,
+                       initial_method='cash', initial_reference=''):
+        """The one entry point — snapshots the forfeit policy text NOW so a
+        later change to Business.layaway_forfeit_policy can never silently
+        alter a plan already sold to a customer."""
+        plan = cls.objects.create(
+            business=business, customer=customer, kind=kind, total_amount=total_amount,
+            store=store, due_date=due_date, hold_expires_on=hold_expires_on,
+            reserved_item=reserved_item, reserved_qty=reserved_qty,
+            forfeit_policy=cls.describe_forfeit_policy(business), created_by=created_by,
+        )
+        if initial_payment:
+            plan.pay_locked(initial_payment, initial_method, created_by, reference=initial_reference)
+        return plan
+
+    def pay_locked(self, amount, method, recorded_by, reference=''):
+        """Records a PaymentPlanEntry and updates paid_amount. Deliberately
+        creates NO Transaction — a deposit is a liability, not revenue,
+        until the plan actually completes (convert_to_sale_locked())."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            plan = PaymentPlan.objects.select_for_update().get(pk=self.pk)
+            if plan.status != self.STATUS_OPEN:
+                raise ValueError('Mpango huu si wazi tena.')
+            entry = PaymentPlanEntry.objects.create(
+                plan=plan, amount=amount, method=method, mpesa_ref=reference, recorded_by=recorded_by,
+            )
+            plan.paid_amount = plan.paid_amount + Decimal(str(amount))
+            plan.save(update_fields=['paid_amount'])
+            self.paid_amount = plan.paid_amount
+            return entry
+
+    def convert_to_sale_locked(self, converted_by):
+        """Plan → real sale on completion (spec's own "inverse action":
+        plan ↔ convert to sale). Creates the actual Issue transaction(s) for
+        the reserved item NOW — this is the ONE moment a plan's money
+        becomes real recognised revenue, not at any individual deposit/
+        instalment payment."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            plan = PaymentPlan.objects.select_for_update().get(pk=self.pk)
+            if plan.status != self.STATUS_OPEN:
+                raise ValueError('Mpango huu si wazi tena.')
+            if plan.balance > 0:
+                raise ValueError('Malipo bado hayajakamilika.')
+            txn = None
+            if plan.reserved_item_id and plan.reserved_qty:
+                txn = Transaction.objects.create(
+                    business=plan.business, item=plan.reserved_item, type='Issue',
+                    qty=-abs(plan.reserved_qty), sale_amount=plan.total_amount,
+                    payment_method='cash', recorded_by=getattr(converted_by, 'user', None),
+                )
+            plan.status = self.STATUS_COMPLETED
+            plan.closed_at = timezone.now()
+            plan.save(update_fields=['status', 'closed_at'])
+            self.status = plan.status
+            self.closed_at = plan.closed_at
+            return txn
+
+    def refund_locked(self, refunded_by, amount=None):
+        """Refunds some or all of paid_amount (default: everything paid so
+        far) and releases any stock reservation. No Transaction is created —
+        no sale ever happened, so there is nothing for a Return to reverse."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            plan = PaymentPlan.objects.select_for_update().get(pk=self.pk)
+            if plan.status != self.STATUS_OPEN:
+                raise ValueError('Mpango huu si wazi tena.')
+            plan.status = self.STATUS_REFUNDED
+            plan.closed_at = timezone.now()
+            plan.save(update_fields=['status', 'closed_at'])
+            self.status = plan.status
+            self.closed_at = plan.closed_at
+            return plan
+
+    def release(self, released_by):
+        """Cancel a hold with no money movement question (e.g. customer
+        never paid a deposit at all yet) — the reserved item becomes
+        available again the instant status leaves OPEN, since
+        Item.reserved_qty() only ever sums OPEN plans."""
+        if self.status != self.STATUS_OPEN:
+            raise ValueError('Mpango huu si wazi tena.')
+        self.status = self.STATUS_CANCELLED
+        self.closed_at = timezone.now()
+        self.save(update_fields=['status', 'closed_at'])
+
+    def forfeit_locked(self, forfeited_by):
+        """Applies Business.layaway_forfeit_policy — never retro-applied,
+        always the policy snapshotted onto forfeit_policy at creation time.
+        full_forfeit/minus_percent both close the plan as FORFEITED (the
+        business keeps some or all of paid_amount); full_refund closes it
+        as REFUNDED instead, since nothing was actually kept."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            plan = PaymentPlan.objects.select_for_update().get(pk=self.pk)
+            if plan.status != self.STATUS_OPEN:
+                raise ValueError('Mpango huu si wazi tena.')
+            policy = plan.business.layaway_forfeit_policy
+            if policy == 'full_refund':
+                plan.status = self.STATUS_REFUNDED
+            else:
+                plan.status = self.STATUS_FORFEITED
+            plan.closed_at = timezone.now()
+            plan.save(update_fields=['status', 'closed_at'])
+            self.status = plan.status
+            self.closed_at = plan.closed_at
+            return plan
+
+
+class PaymentPlanEntry(models.Model):
+    METHOD_CHOICES = [('cash', 'Cash'), ('mpesa', 'M-Pesa'), ('other', 'Nyingine')]
+    plan = models.ForeignKey(PaymentPlan, on_delete=models.CASCADE, related_name='entries')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=10, choices=METHOD_CHOICES, default='cash')
+    mpesa_ref = models.CharField(max_length=40, blank=True)
+    recorded_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    receipt = models.ForeignKey('Receipt', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"KES {self.amount} ({self.method}) on {self.plan}"
+
+
+# ────────────────────────────────────────────────
+# UBA §8.4 (Sprint A3) — fitting-room log (optional, high-shrinkage boutiques)
+# ────────────────────────────────────────────────
+
+class FittingRoomLog(models.Model):
+    """Lightweight: a counter per staff per shift. Pieces out → pieces back.
+    Variance feeds StaffShrinkage via core.accountability's registry (a
+    second real caller for the pattern M0-7's VarianceResult contract was
+    built for)."""
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='fitting_room_logs')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True)
+    staff = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    shift = models.ForeignKey('Shift', on_delete=models.SET_NULL, null=True, blank=True)
+    pieces_out = models.PositiveIntegerField(default=0)
+    pieces_back = models.PositiveIntegerField(default=0)
+    note = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @property
+    def variance(self):
+        return self.pieces_out - self.pieces_back
+
+    def __str__(self):
+        return f"{self.pieces_out} out / {self.pieces_back} back (variance {self.variance})"
+
+
+# ────────────────────────────────────────────────
+# UBA §9.2 (Sprint S1) — Salon: services, recipes, the side-client detector
+# ────────────────────────────────────────────────
+
+class Service(models.Model):
+    """A sold SERVICE, not a physical good. `Transaction.item` is
+    non-nullable throughout this codebase (VERIFY-ME confirmed: every
+    `item = models.ForeignKey(Item, ...)` in this file has no `null=True`) —
+    per the spec's own explicit recommendation, this uses the lower-risk
+    shadow-Item approach (`shadow_item`, `stock_model='SERVICE'`, balance
+    never checked/meaningful) rather than making `Transaction.item`
+    nullable, which the spec calls out as needing a full app-wide audit of
+    every existing `item=`-assuming reader. See `core.salon.
+    get_or_create_shadow_item()` and `complete_service_locked()`."""
+    COMMISSION_CHOICES = [('NONE', 'Hakuna'), ('PERCENT', 'Asilimia'), ('FIXED', 'Kiasi Maalum')]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='services')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True)
+    name = models.CharField(max_length=120)
+    category = models.CharField(max_length=60, blank=True, help_text="'Nywele'|'Kucha'|'Ngozi'.")
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    duration_minutes = models.PositiveIntegerField(default=30)
+    buffer_minutes = models.PositiveIntegerField(default=0)
+    commission_type = models.CharField(max_length=10, choices=COMMISSION_CHOICES, default='NONE')
+    commission_value = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    requires_booking = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    rebook_after_days = models.PositiveIntegerField(
+        null=True, blank=True, help_text='UBA §9.3 rebooking nudge — e.g. 42 for a 6-week retouch cycle.'
+    )
+    display_order = models.IntegerField(default=0)
+    shadow_item = models.OneToOneField(
+        Item, on_delete=models.SET_NULL, null=True, blank=True, related_name='service_for',
+        help_text='Auto-created — see core.salon.get_or_create_shadow_item(). Never sold via '
+                  'the normal item-balance path; its own balance is meaningless/untracked.'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['display_order', 'name']
+
+    def __str__(self):
+        return self.name
+
+    def commission_amount(self, sale_amount):
+        if self.commission_type == 'PERCENT':
+            return (Decimal(str(sale_amount)) * self.commission_value / Decimal('100')).quantize(Decimal('0.01'))
+        if self.commission_type == 'FIXED':
+            return self.commission_value
+        return Decimal('0')
+
+
+class ServiceSupplyLine(models.Model):
+    """The recipe. THIS is what makes the accountability engine work for
+    salons — see core.salon.expected_consumption()."""
+    service = models.ForeignKey(Service, on_delete=models.CASCADE, related_name='supplies')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, help_text='A MEASURE or UNIT stock item.')
+    qty_expected = models.DecimalField(max_digits=10, decimal_places=3, help_text='e.g. 60 (ml of relaxer).')
+    tolerance_pct = models.DecimalField(
+        max_digits=5, decimal_places=1, default=Decimal('25.0'),
+        help_text='Hair varies — be generous or you cry wolf.'
+    )
+
+    def __str__(self):
+        return f"{self.service.name}: {self.qty_expected} {self.item.unit} of {self.item.description}"
+
+
+# ────────────────────────────────────────────────
+# UBA §9.3 (Sprint S2) — bookings, walk-ins, chair queue
+# ────────────────────────────────────────────────
+
+class Appointment(models.Model):
+    STATUS_BOOKED = 'BOOKED'
+    STATUS_CONFIRMED = 'CONFIRMED'
+    STATUS_ARRIVED = 'ARRIVED'
+    STATUS_IN_SERVICE = 'IN_SERVICE'
+    STATUS_DONE = 'DONE'
+    STATUS_NO_SHOW = 'NO_SHOW'
+    STATUS_CANCELLED = 'CANCELLED'
+    STATUS_CHOICES = [
+        (STATUS_BOOKED, 'Imewekwa'), (STATUS_CONFIRMED, 'Imethibitishwa'),
+        (STATUS_ARRIVED, 'Amefika'), (STATUS_IN_SERVICE, 'Inaendelea'),
+        (STATUS_DONE, 'Imekamilika'), (STATUS_NO_SHOW, 'Hakuja'),
+        (STATUS_CANCELLED, 'Imefutwa'),
+    ]
+    SOURCE_CHOICES = [
+        ('walkin', 'Walk-in'), ('phone', 'Simu'), ('whatsapp', 'WhatsApp'), ('online', 'Mtandaoni'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='appointments')
+    store = models.ForeignKey(Store, on_delete=models.CASCADE)
+    customer = models.ForeignKey('Customer', on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
+    customer_name = models.CharField(max_length=200, blank=True)
+    customer_phone = models.CharField(max_length=20, blank=True)
+    staff = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='appointments', help_text='Requested stylist.'
+    )
+    start_at = models.DateTimeField()
+    end_at = models.DateTimeField()
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_BOOKED)
+    source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='walkin')
+    deposit_plan = models.ForeignKey('PaymentPlan', on_delete=models.SET_NULL, null=True, blank=True)
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['start_at']
+
+    def __str__(self):
+        return f"{self.customer_name or (self.customer.name if self.customer else '?')} — {self.start_at:%d %b %H:%M}"
+
+
+class AppointmentService(models.Model):
+    appointment = models.ForeignKey(Appointment, on_delete=models.CASCADE, related_name='services')
+    service = models.ForeignKey(Service, on_delete=models.CASCADE)
+    price_at_booking = models.DecimalField(max_digits=10, decimal_places=2)
+
+    def __str__(self):
+        return f"{self.service.name} @ KES {self.price_at_booking}"
+
+
+# ────────────────────────────────────────────────
+# UBA §10 (Sprints L1-L2) — Rentals: property + equipment, one primitive
+# ────────────────────────────────────────────────
+# Pre-answered decision #2: property first; equipment mode in the SAME
+# sprint since it costs no extra models — RentalUnit.kind is the only
+# thing that differs, exactly as the spec itself frames it ("one
+# primitive, two markets").
+
+class RentalUnit(models.Model):
+    KIND_CHOICES = [('property', 'Nyumba/Chumba'), ('equipment', 'Kifaa')]
+    STATUS_CHOICES = [
+        ('AVAILABLE', 'Iko wazi'), ('RESERVED', 'Imewekwa'), ('OCCUPIED', 'Ina mtu'),
+        ('OUT', 'Imetoka'), ('MAINTENANCE', 'Inatengenezwa'), ('RETIRED', 'Imeondolewa'),
+    ]
+    RATE_PERIOD_CHOICES = [('day', 'Siku'), ('week', 'Wiki'), ('month', 'Mwezi')]
+
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='rental_units')
+    store = models.ForeignKey(Store, on_delete=models.SET_NULL, null=True, blank=True, help_text='Property/portfolio.')
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default='property')
+    code = models.CharField(max_length=30, help_text="'A12' — doubles as the M-Pesa Paybill account number.")
+    name = models.CharField(max_length=120, blank=True, help_text="'Bedsitter A12'.")
+    description = models.TextField(blank=True)
+    default_rate = models.DecimalField(max_digits=12, decimal_places=2, help_text='Per month (property) or per day (equipment).')
+    rate_period = models.CharField(max_length=6, choices=RATE_PERIOD_CHOICES, default='month')
+    deposit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    quantity = models.PositiveIntegerField(default=1, help_text='Equipment: 300 chairs = one unit, qty 300.')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='AVAILABLE')
+    is_metered = models.BooleanField(default=False)
+    is_published = models.BooleanField(default=False, help_text='Storefront listing (Phase 6).')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('business', 'code')]
+        ordering = ['code']
+
+    def __str__(self):
+        return f"{self.code} — {self.name or self.get_kind_display()}"
+
+    def committed_qty(self, on_date=None):
+        """UBA L3-AC1 — equipment: how many of this unit's total quantity
+        are already committed to an ACTIVE agreement covering `on_date`
+        (default: today). Property units are always quantity=1, so this is
+        naturally 0 or 1 for them."""
+        from django.utils import timezone as _tz
+        on_date = on_date or _tz.localdate()
+        agreements = self.agreements.filter(
+            status=RentalAgreement.STATUS_ACTIVE, start_date__lte=on_date,
+        ).filter(models.Q(end_date__isnull=True) | models.Q(end_date__gte=on_date))
+        return sum(a.quantity for a in agreements)
+
+    def available_qty(self, on_date=None):
+        return max(0, self.quantity - self.committed_qty(on_date))
+
+
+class RentalAgreement(models.Model):
+    STATUS_DRAFT = 'DRAFT'
+    STATUS_ACTIVE = 'ACTIVE'
+    STATUS_ENDED = 'ENDED'
+    STATUS_TERMINATED = 'TERMINATED'
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, 'Rasimu'), (STATUS_ACTIVE, 'Inaendelea'),
+        (STATUS_ENDED, 'Imeisha'), (STATUS_TERMINATED, 'Imesitishwa'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='rental_agreements')
+    unit = models.ForeignKey(RentalUnit, on_delete=models.CASCADE, related_name='agreements')
+    customer = models.ForeignKey('Customer', on_delete=models.CASCADE, related_name='rental_agreements', help_text='Tenant/hirer — reuses debt + credit score.')
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    rate = models.DecimalField(max_digits=12, decimal_places=2)
+    rate_period = models.CharField(max_length=6, choices=RentalUnit.RATE_PERIOD_CHOICES, default='month')
+    quantity = models.PositiveIntegerField(default=1, help_text='e.g. 200 of the 300 chairs.')
+    deposit_held = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    deposit_plan = models.ForeignKey('PaymentPlan', on_delete=models.SET_NULL, null=True, blank=True)
+    billing_day = models.PositiveSmallIntegerField(default=5)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    terms_note = models.TextField(blank=True)
+    created_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.unit.code} — {self.customer.name} ({self.get_status_display()})"
+
+    def terminate(self, ended_by=None, reason=''):
+        self.status = self.STATUS_TERMINATED
+        self.end_date = timezone.localdate()
+        if reason:
+            self.terms_note = (self.terms_note + f'\nImesitishwa: {reason}').strip()
+        self.save(update_fields=['status', 'end_date', 'terms_note'])
+
+
+class RentalInvoice(models.Model):
+    STATUS_DUE = 'DUE'
+    STATUS_PARTIAL = 'PARTIAL'
+    STATUS_PAID = 'PAID'
+    STATUS_WAIVED = 'WAIVED'
+    STATUS_CHOICES = [
+        (STATUS_DUE, 'Inadaiwa'), (STATUS_PARTIAL, 'Imelipwa Kiasi'),
+        (STATUS_PAID, 'Imelipwa'), (STATUS_WAIVED, 'Imesamehewa'),
+    ]
+    agreement = models.ForeignKey(RentalAgreement, on_delete=models.CASCADE, related_name='invoices')
+    period_start = models.DateField()
+    period_end = models.DateField()
+    rent_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    utilities_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    other_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    other_note = models.CharField(max_length=200, blank=True)
+    total = models.DecimalField(max_digits=12, decimal_places=2)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    due_date = models.DateField()
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_DUE)
+    issued_at = models.DateTimeField(auto_now_add=True)
+    receipt = models.ForeignKey('Receipt', on_delete=models.SET_NULL, null=True, blank=True)
+    rent_txn = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+        help_text='UBA §10.3 — the credit Transaction the debt tracker actually reads. '
+                  '"Arrears ARE debt" — no parallel aging engine; see core.rentals.py.'
+    )
+
+    class Meta:
+        unique_together = [('agreement', 'period_start')]
+        ordering = ['due_date']
+
+    def __str__(self):
+        return f"{self.agreement.unit.code} — {self.period_start} to {self.period_end} (KES {self.total})"
+
+
+class MeterReading(models.Model):
+    KIND_CHOICES = [('water', 'Maji'), ('electricity', 'Umeme')]
+    unit = models.ForeignKey(RentalUnit, on_delete=models.CASCADE, related_name='meter_readings')
+    kind = models.CharField(max_length=15, choices=KIND_CHOICES)
+    reading = models.DecimalField(max_digits=12, decimal_places=2)
+    read_on = models.DateField(default=timezone.localdate)
+    read_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True)
+    rate_per_unit = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        ordering = ['-read_on']
+
+    def __str__(self):
+        return f"{self.unit.code} {self.get_kind_display()}: {self.reading} ({self.read_on})"
+
+
+class MaintenanceTicket(models.Model):
+    """UBA §10.4 — tenant reports, caretaker updates, owner sees cost and
+    history per unit; feeds the per-unit P&L (rent − maintenance − vacancy)
+    the spec calls "the number no Kenyan landlord currently knows"."""
+    STATUS_OPEN = 'OPEN'
+    STATUS_IN_PROGRESS = 'IN_PROGRESS'
+    STATUS_CLOSED = 'CLOSED'
+    STATUS_CHOICES = [
+        (STATUS_OPEN, 'Wazi'), (STATUS_IN_PROGRESS, 'Inashughulikiwa'), (STATUS_CLOSED, 'Imefungwa'),
+    ]
+    unit = models.ForeignKey(RentalUnit, on_delete=models.CASCADE, related_name='maintenance_tickets')
+    reported_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    description = models.TextField()
+    cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    created_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey('accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    def __str__(self):
+        return f"{self.unit.code}: {self.description[:40]} ({self.get_status_display()})"
+
+    def close(self, closed_by, cost=None):
+        if cost is not None:
+            self.cost = cost
+        self.status = self.STATUS_CLOSED
+        self.closed_at = timezone.now()
+        self.closed_by = closed_by
+        self.save(update_fields=['cost', 'status', 'closed_at', 'closed_by'])
+
+
+# ────────────────────────────────────────────────
 # SALARY DEDUCTIONS  (Sprint WO1)
 # ────────────────────────────────────────────────
 
@@ -2365,6 +3672,20 @@ class ProduceBunch(models.Model):
     opened_on = models.DateTimeField(null=True, blank=True)
     closed_on = models.DateTimeField(null=True, blank=True)
     note = models.CharField(max_length=200, blank=True, default='')
+
+    # ── UBA §8.3 (Sprint A2) — generalised envelope (keeps this model name,
+    # never breaks produce_bunch_id, CLAUDE.md's own flagged discriminator) ──
+    KIND_CHOICES = [
+        ('produce', 'Mboga/Matunda'), ('bale', 'Bale ya mitumba'),
+        ('carcass', 'Nyama'), ('sack', 'Gunia'),
+    ]
+    kind = models.CharField(
+        max_length=16, default='produce', choices=KIND_CHOICES,
+        help_text='Same revenue-envelope maths for every kind — only the vocabulary/label '
+                  'shown to the owner should differ per business profile, never the maths.'
+    )
+    grade = models.CharField(max_length=12, blank=True, help_text="Mitumba grading: '1st'|'2nd'|'3rd'.")
+    label = models.CharField(max_length=60, blank=True, help_text="e.g. 'Bale ya jeans — Gikomba 28/07'.")
 
     class Meta:
         ordering = ['received_on', 'id']  # oldest first → sell-oldest / FIFO
@@ -4584,6 +5905,363 @@ class Receipt(models.Model):
                 meta=meta or {},
                 created_by=user,
             )
+
+
+# ── UBA §5.2 — Stock transfers between stores ────────────────────────────────
+# Goods in transit is the single biggest shrinkage hiding place in a multi-
+# outlet business — "nilipeleka Kahawa branch" with no receipt on the other
+# end is how stock evaporates. DISPATCH creates an Issue transaction at
+# from_store; RECEIVE creates a Receipt transaction at to_store; the gap
+# between them is the in-transit window, and the StockTransfer record itself
+# is the audit trail. Transaction.transfer links both legs and is used by
+# Transaction.revenue()/cost() to exclude transfers from revenue everywhere —
+# a transfer is a stock movement, never a sale.
+
+class StockTransfer(models.Model):
+    STATUS_CHOICES = [
+        ('DRAFT', 'Rasimu'),
+        ('DISPATCHED', 'Imetumwa'),
+        ('RECEIVED', 'Imepokelewa'),
+        ('DISPUTED', 'Ina Utata'),
+        ('CANCELLED', 'Imefutwa'),
+    ]
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='stock_transfers'
+    )
+    transfer_number = models.PositiveIntegerField(
+        help_text='Gap-free per business — same guarantee as Receipt.receipt_number. '
+                  'Display via .reference (e.g. "TRF-0001").'
+    )
+    from_store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='transfers_out')
+    to_store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='transfers_in')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='DRAFT')
+    dispatched_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transfers_dispatched',
+    )
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    received_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transfers_received',
+    )
+    received_at = models.DateTimeField(null=True, blank=True)
+    rider = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transfers_ridden',
+    )
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transfers_created',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('business', 'transfer_number')]
+        ordering = ['-created_at']
+
+    @property
+    def reference(self):
+        return f"TRF-{self.transfer_number:04d}"
+
+    def __str__(self):
+        return f"{self.reference} ({self.from_store} → {self.to_store})"
+
+    @classmethod
+    def create_draft_locked(cls, business, from_store, to_store, lines, note='', created_by=None):
+        """Create a DRAFT transfer with its lines. `lines` is a list of
+        {item_id, qty_sent}. Gap-free transfer_number via the same
+        select_for_update() + order_by().first() pattern Receipt.issue()
+        already uses (select_for_update() + aggregate() is rejected by
+        PostgreSQL — this avoids that entirely)."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            latest = cls.objects.select_for_update().filter(business=business).order_by('-transfer_number').first()
+            last = latest.transfer_number if latest else 0
+            transfer = cls.objects.create(
+                business=business, transfer_number=last + 1,
+                from_store=from_store, to_store=to_store, note=note, created_by=created_by,
+            )
+            for line in lines:
+                StockTransferLine.objects.create(
+                    transfer=transfer, item_id=line['item_id'],
+                    qty_sent=Decimal(str(line['qty_sent'])),
+                )
+            return transfer
+
+    def dispatch_locked(self, dispatched_by=None):
+        """DRAFT -> DISPATCHED. Creates one type='Transfer' Transaction per
+        line at from_store — a real stock-out (current_balance() sums qty
+        across every type, so the balance still deducts correctly) but,
+        per the same precedent as KitchenBatch's 'Draw' type, NOT type=
+        'Issue' — so it is excluded BY CONSTRUCTION from every existing
+        type='Issue'-filtered revenue/analytics/reconciliation query across
+        the whole app, with no per-report exclusion list to find and
+        maintain. An early design of this used type='Issue' + a transfer_id
+        exclusion instead; ruled out after finding it would have required
+        auditing every revenue aggregate app-wide (shift reconciliation,
+        Staff Pouring League, Kibanda Produce Performance...) one at a time
+        to add the exclusion — exactly the failure mode the Draw-type
+        precedent already exists to avoid."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            transfer = StockTransfer.objects.select_for_update().get(pk=self.pk)
+            if transfer.status != 'DRAFT':
+                raise ValueError('Uhamisho huu tayari umeshughulikiwa.')
+            for line in transfer.lines.select_related('item').all():
+                Transaction.objects.create(
+                    business=transfer.business, item=line.item, type='Transfer',
+                    qty=-abs(line.qty_sent), transfer=transfer,
+                    recorded_by=getattr(dispatched_by, 'user', None),
+                )
+            transfer.status = 'DISPATCHED'
+            transfer.dispatched_by = dispatched_by
+            transfer.dispatched_at = timezone.now()
+            transfer.save(update_fields=['status', 'dispatched_by', 'dispatched_at'])
+            self.status = transfer.status
+            self.dispatched_by = transfer.dispatched_by
+            self.dispatched_at = transfer.dispatched_at
+            return transfer
+
+    def receive_locked(self, lines_received, received_by=None):
+        """DISPATCHED -> RECEIVED (or DISPUTED if any line arrived short).
+        `lines_received` is {line_id: qty_received}. Creates one type=
+        'Transfer' Transaction per line at to_store for the counted
+        quantity — never the sent quantity, so a shortfall is never
+        silently absorbed. Not type='Receipt' — same reasoning as
+        dispatch_locked(): excluded by construction from every revenue
+        query, and critically, Receipt-type transactions are Item.
+        cost_price's ONE designed writer path (add_transaction's Receipt
+        flow) elsewhere in this app — a transfer must never look like a
+        real purchase and silently perturb the item's cost price. A short
+        line's shortfall is left for the owner to explain via
+        resolve_dispute_locked()."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            transfer = StockTransfer.objects.select_for_update().get(pk=self.pk)
+            if transfer.status != 'DISPATCHED':
+                raise ValueError('Uhamisho huu si tayari kupokelewa.')
+            any_short = False
+            shortfall_kes = Decimal('0')
+            short_items = []
+            for line in transfer.lines.select_related('item').all():
+                qty_received = Decimal(str(lines_received.get(line.id, line.qty_sent)))
+                line.qty_received = qty_received
+                if qty_received < line.qty_sent:
+                    any_short = True
+                    missing = line.qty_sent - qty_received
+                    shortfall_kes += missing * (line.item.cost_price or Decimal('0'))
+                    short_items.append(f"{line.item.description} ({missing} {line.item.unit})")
+                line.save(update_fields=['qty_received'])
+                if qty_received > 0:
+                    Transaction.objects.create(
+                        business=transfer.business, item=line.item, type='Transfer',
+                        qty=qty_received, transfer=transfer,
+                        recorded_by=getattr(received_by, 'user', None),
+                    )
+            transfer.status = 'DISPUTED' if any_short else 'RECEIVED'
+            transfer.received_by = received_by
+            transfer.received_at = timezone.now()
+            transfer.save(update_fields=['status', 'received_by', 'received_at'])
+            self.status = transfer.status
+            self.received_by = transfer.received_by
+            self.received_at = transfer.received_at
+            # UBA M3 §5.3 — a dispute is exactly the kind of ad-hoc alert
+            # BusinessException exists to unify, and M2-AC1 ("owner got exactly
+            # one notification") was never actually satisfied when the M2
+            # sprint shipped model-layer-only with no view wired up yet. Fire
+            # both here: the durable feed row (Maduka Yangu's exception feed)
+            # and the one-time owner/manager notification, mirroring the
+            # attribution rule in the spec ("against the dispatching shift, not
+            # the receiver — the receiver is the whistle") as closely as this
+            # app's data allows — StockTransfer has no shift FK of its own
+            # (dispatch/receive are staff actions, not shift-scoped, unlike bar/
+            # kitchen sales), so `staff` is set to the DISPATCHER, never the
+            # receiving staffer who is only reporting the shortfall.
+            if any_short:
+                try:
+                    detail = (
+                        f"{transfer.reference}: {', '.join(short_items)} — "
+                        f"{transfer.from_store.name} → {transfer.to_store.name}"
+                    )
+                    BusinessException.raise_exception(
+                        business=transfer.business, kind='transfer_dispute', severity='warn',
+                        title=f"Uhamisho {transfer.reference} una utata",
+                        detail=detail, store=transfer.to_store,
+                        staff=transfer.dispatched_by, amount_kes=shortfall_kes,
+                        link_url='/maduka/',
+                    )
+                    from .notifications import normalize_ke_phone as _nkp, send_sms_notification as _ssms
+                    from accounts.models import UserProfile as _UP
+                    msg = (
+                        f"⚠️ Uhamisho {transfer.reference} una utata — {detail}. "
+                        f"Angalia dukamwecheche.co.ke/maduka/"
+                    )
+                    for _op in _UP.objects.filter(
+                        business=transfer.business, role__in=['owner', 'manager']
+                    ).select_related('user'):
+                        Notification.objects.create(
+                            user=_op.user, title='⚠️ Utata wa Uhamisho', message=msg,
+                            notification_type='warning', link_url='/maduka/',
+                        )
+                        if _op.phone:
+                            try:
+                                _ssms(msg, _nkp(_op.phone))
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            return transfer
+
+    def resolve_dispute_locked(self, resolved_by=None):
+        """DISPUTED -> RECEIVED: the owner has looked into the shortfall and
+        is writing it off — creates a Wastage Transaction at from_store for
+        each short line's missing quantity (a real, now-explained loss),
+        then closes the transfer as RECEIVED. Never auto-called — an owner
+        decision every time, matching this app's own Rekebisha/write-off
+        conventions elsewhere."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            transfer = StockTransfer.objects.select_for_update().get(pk=self.pk)
+            if transfer.status != 'DISPUTED':
+                raise ValueError('Uhamisho huu hauna utata wa kutatua.')
+            for line in transfer.lines.select_related('item').all():
+                qty_received = line.qty_received or Decimal('0')
+                shortfall = line.qty_sent - qty_received
+                if shortfall > 0:
+                    Transaction.objects.create(
+                        business=transfer.business, item=line.item, type='Wastage',
+                        qty=-shortfall, transfer=transfer,
+                        recorded_by=getattr(resolved_by, 'user', None),
+                        invoice_no='[TRF-LOSS]',
+                    )
+            transfer.status = 'RECEIVED'
+            transfer.save(update_fields=['status'])
+            self.status = transfer.status
+            return transfer
+
+    def cancel_locked(self, cancelled_by=None):
+        """Only while DRAFT or DISPATCHED, only by the dispatcher or the
+        owner (permission check is the caller's responsibility, matching
+        every other *_locked() method in this app — the model layer
+        enforces STATE, the view layer enforces WHO). A DRAFT cancel has no
+        Transactions to reverse (nothing moved yet). A DISPATCHED cancel
+        creates a compensating Receipt at from_store for each line's full
+        qty_sent — the goods never actually left, or came back — so the
+        stock movement must reverse; this is the transfer's own inverse
+        action, per CLAUDE.md's Cause-&-Effect protocol."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            transfer = StockTransfer.objects.select_for_update().get(pk=self.pk)
+            if transfer.status not in ('DRAFT', 'DISPATCHED'):
+                raise ValueError('Uhamisho huu hauwezi kufutwa katika hali hii.')
+            if transfer.status == 'DISPATCHED':
+                for line in transfer.lines.select_related('item').all():
+                    Transaction.objects.create(
+                        business=transfer.business, item=line.item, type='Transfer',
+                        qty=abs(line.qty_sent), transfer=transfer,
+                        recorded_by=getattr(cancelled_by, 'user', None),
+                        invoice_no='[TRF-CANCEL]',
+                    )
+            transfer.status = 'CANCELLED'
+            transfer.save(update_fields=['status'])
+            self.status = transfer.status
+            return transfer
+
+
+class StockTransferLine(models.Model):
+    transfer = models.ForeignKey(StockTransfer, on_delete=models.CASCADE, related_name='lines')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    qty_sent = models.DecimalField(max_digits=12, decimal_places=3)
+    qty_received = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    variance_note = models.CharField(max_length=200, blank=True)
+
+    def __str__(self):
+        return f"{self.item.description} × {self.qty_sent} ({self.transfer.reference})"
+
+
+class BusinessException(models.Model):
+    """UBA §5.3 — the single owner-facing exception feed backing "Maduka Yangu"
+    (core/maduka_views.py). Every accountability check in the app should write
+    a row here instead of inventing its own ad-hoc alert shape, so the owner
+    sees ONE prioritised, cross-store feed instead of scattered per-module
+    banners. Deliberately ADDITIVE, not a replacement for the existing
+    per-user Notification/SMS delivery mechanisms — a BusinessException is the
+    durable, queryable audit-trail/feed record; Notification/SMS stay the
+    per-user real-time delivery channel for the same underlying event. Two of
+    them fire side-by-side at the same call site (see close_shift()'s keg/cash
+    variance alerts and StockTransfer.receive_locked()'s dispute path) rather
+    than one replacing the other.
+    """
+    KIND_CHOICES = [
+        ('shrinkage', 'Upungufu wa Bidhaa'),
+        ('cash_variance', 'Tofauti ya Fedha'),
+        ('transfer_dispute', 'Utata wa Uhamisho'),
+        ('below_cost', 'Bei Chini ya Gharama'),
+        ('credit_blocked', 'Deni kwa Mteja Aliyezuiliwa'),
+        ('no_sales', 'Hakuna Mauzo'),
+        ('stock_count_variance', 'Tofauti ya Hesabu ya Stock'),
+        ('till_not_counted', 'Till Haijahesabiwa'),
+        ('other', 'Nyingine'),
+    ]
+    SEVERITY_CHOICES = [
+        ('info', 'Taarifa'),
+        ('warn', 'Onyo'),
+        ('danger', 'Hatari'),
+    ]
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='exceptions')
+    store = models.ForeignKey(
+        Store, on_delete=models.SET_NULL, null=True, blank=True, related_name='exceptions'
+    )
+    shift = models.ForeignKey(
+        'Shift', on_delete=models.SET_NULL, null=True, blank=True, related_name='exceptions'
+    )
+    staff = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='exceptions_caused',
+    )
+    kind = models.CharField(max_length=30, choices=KIND_CHOICES, default='other')
+    severity = models.CharField(max_length=10, choices=SEVERITY_CHOICES, default='info')
+    amount_kes = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    title = models.CharField(max_length=200)
+    detail = models.TextField(blank=True)
+    link_url = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    acknowledged_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='exceptions_acknowledged',
+    )
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.get_severity_display()}] {self.title}"
+
+    @classmethod
+    def raise_exception(cls, business, kind, severity, title, detail='', store=None,
+                         shift=None, staff=None, amount_kes=None, link_url=''):
+        """The one way any accountability check in the app should record an
+        exception — never instantiate BusinessException directly elsewhere,
+        matching this file's own *_locked()/create_*() single-entry-point
+        convention. Never raises — a feed-write failure must never block the
+        real state change (shift close, transfer receive, etc.) it accompanies;
+        callers should still wrap this in their own try/except per this app's
+        established defensive-notification pattern, since a DB-level failure
+        (rare, but possible under load) is still theoretically possible here.
+        """
+        return cls.objects.create(
+            business=business, kind=kind, severity=severity, title=title, detail=detail,
+            store=store, shift=shift, staff=staff, amount_kes=amount_kes, link_url=link_url,
+        )
+
+    def acknowledge(self, by):
+        if self.acknowledged_at:
+            return
+        self.acknowledged_by = by
+        self.acknowledged_at = timezone.now()
+        self.save(update_fields=['acknowledged_by', 'acknowledged_at'])
 
 
 # ── DJ / MC Performer Management ─────────────────────────────────────────────

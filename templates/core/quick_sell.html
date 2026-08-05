@@ -1003,6 +1003,27 @@
                 </div>
               </div>
             </div>
+            <!-- UBA P0-A — "Lipa kidogo": customer pays only PART of a direct
+                 Cash/M-Pesa sale now, the rest becomes ordinary credit debt —
+                 no tab needed. Shown alongside the cash/mpesa split row. -->
+            <div id="qsPartialCreditRow" style="display:none; margin-bottom:0.6rem;">
+              <button type="button" id="qsPartialCreditToggleBtn" onclick="window.qsTogglePartialCredit()"
+                      style="width:100%; background:rgba(192,57,90,.08); border:1px solid rgba(192,57,90,.3);
+                             border-radius:6px; color:#e08aa0; font-size:.78rem; padding:.4rem .6rem; cursor:pointer;">
+                💳 Lipa kidogo — iliyobaki iwe deni
+              </button>
+              <div id="qsPartialCreditInputs" style="display:none; margin-top:.4rem;">
+                <label style="color:#b0b0b0; font-size:.75rem; display:block; margin-bottom:.25rem;">
+                  Amelipa kiasi gani sasa? (KES)
+                </label>
+                <input type="number" id="qsPartialCreditPaidInput" min="0" step="1" placeholder="e.g. 60"
+                       style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                              color:var(--pearl); padding:.45rem .7rem; font-size:.85rem;">
+                <div style="font-size:.72rem; color:#666; margin-top:.25rem;">
+                  Iliyobaki itaandikwa kama deni la mteja aliyeandikwa hapo chini.
+                </div>
+              </div>
+            </div>
             <!-- Customer / tab name — shown for both Tab and Credit/Deni -->
             <div id="qsCreditCustomerRow" style="display:none; margin-bottom:0.6rem;">
               <label id="qsCustomerRowLabel" style="color:var(--gold); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.07em; display:block; margin-bottom:0.3rem;">
@@ -1046,6 +1067,7 @@
     <input type="hidden" name="credit_phone" id="qsCreditPhoneData" value="">
     <input type="hidden" name="split_amount" id="qsSplitAmountData" value="">
     <input type="hidden" name="split_method" id="qsSplitMethodData" value="">
+    <input type="hidden" name="partial_credit_amount" id="qsPartialCreditAmountData" value="">
     <input type="hidden" name="idempotency_token" id="qsIdemToken" value="">
 </form>
 
@@ -1726,6 +1748,16 @@
                     otherLabel.textContent = this.value === 'cash' ? 'M-Pesa' : 'Cash';
                 }
             }
+            // UBA P0-A — "Lipa kidogo" row: same visibility rule as the split
+            // row (direct cash/mpesa only), reset whenever the method changes.
+            var pcRow = document.getElementById('qsPartialCreditRow');
+            var pcInputs = document.getElementById('qsPartialCreditInputs');
+            var pcInput = document.getElementById('qsPartialCreditPaidInput');
+            if (pcInput) pcInput.value = '';
+            if (pcInputs) pcInputs.style.display = 'none';
+            if (pcRow) {
+                pcRow.style.display = (this.value === 'cash' || this.value === 'mpesa') ? 'block' : 'none';
+            }
         });
     });
 
@@ -1736,6 +1768,28 @@
         if (inputs.style.display === 'block') {
             var input = document.getElementById('qsSplitAmountInput');
             if (input) input.focus();
+        }
+    };
+
+    // UBA P0-A — "Lipa kidogo": toggling this also reveals the customer-name
+    // row (a credit remainder needs someone to collect from), same as
+    // choosing Credit/Deni outright.
+    window.qsTogglePartialCredit = function () {
+        var inputs = document.getElementById('qsPartialCreditInputs');
+        if (!inputs) return;
+        var opening = inputs.style.display === 'none';
+        inputs.style.display = opening ? 'block' : 'none';
+        var custRow = document.getElementById('qsCreditCustomerRow');
+        var custLabel = document.getElementById('qsCustomerRowLabel');
+        if (opening) {
+            if (custRow) custRow.style.display = 'block';
+            if (custLabel) custLabel.textContent = 'Jina la mteja (lazima kwa deni)';
+            var input = document.getElementById('qsPartialCreditPaidInput');
+            if (input) input.focus();
+        } else {
+            var selectedMethod = document.querySelector('input[name="payment_method"]:checked');
+            var pm = selectedMethod ? selectedMethod.value : 'cash';
+            if (custRow && pm !== 'credit' && pm !== 'tab') custRow.style.display = 'none';
         }
     };
 
@@ -1751,15 +1805,36 @@
         if (cart.length === 0) return;
         var selectedMethod = document.querySelector('input[name="payment_method"]:checked');
         var pm = selectedMethod ? selectedMethod.value : 'cash';
-        if (pm === 'credit' || pm === 'tab') {
+        var cartTotal = cart.reduce(function(s, c) { return s + c.qty * c.price; }, 0);
+
+        // UBA P0-A — "Lipa kidogo": only meaningful for a direct cash/mpesa
+        // sale, and only when the staffer actually opened the row and
+        // entered an amount less than the cart total.
+        var partialCreditAmountVal = '';
+        var wantsPartialCredit = false;
+        if (pm === 'cash' || pm === 'mpesa') {
+            var pcInputs = document.getElementById('qsPartialCreditInputs');
+            var pcInput = document.getElementById('qsPartialCreditPaidInput');
+            if (pcInputs && pcInputs.style.display !== 'none' && pcInput && pcInput.value !== '') {
+                var paidNow = parseFloat(pcInput.value);
+                if (isNaN(paidNow) || paidNow < 0 || paidNow >= cartTotal) {
+                    alert('Kiasi alicholipa lazima kiwe kati ya 0 na jumla ya mauzo (KES ' + Math.round(cartTotal) + ').');
+                    pcInput.focus();
+                    return;
+                }
+                partialCreditAmountVal = String(Math.round((cartTotal - paidNow) * 100) / 100);
+                wantsPartialCredit = true;
+            }
+        }
+
+        if (pm === 'credit' || pm === 'tab' || wantsPartialCredit) {
             var customerName = (document.getElementById('qsCreditCustomerName') || {}).value || '';
-            // Credit/Deni still requires a name — an unnamed debt has no one
-            // to collect from. Tab deliberately does NOT: busy-counter staff
-            // often have no time to type a name, and the wall-QR + PIN
-            // system exists specifically so the customer can identify
-            // themselves later — the backend already creates the tab with a
-            // "Tab #<id>" placeholder name when this is left blank.
-            if (pm === 'credit' && !customerName.trim()) {
+            // Credit/Deni and a partial-credit remainder both need a name —
+            // an unnamed debt has no one to collect from. Tab deliberately
+            // does NOT: busy-counter staff often have no time to type a
+            // name, and the wall-QR + PIN system exists specifically so the
+            // customer can identify themselves later.
+            if ((pm === 'credit' || wantsPartialCredit) && !customerName.trim()) {
                 alert('Weka jina la mteja kwa deni.');
                 document.getElementById('qsCreditCustomerName').focus();
                 return;
@@ -1771,6 +1846,7 @@
             document.getElementById('qsRecipientData').value = '';
             document.getElementById('qsCreditPhoneData').value = '';
         }
+        document.getElementById('qsPartialCreditAmountData').value = partialCreditAmountVal;
         // 2026-07-28 — checkout-time split payment: only meaningful for a
         // direct cash/mpesa sale, and only sent when the staffer actually
         // opened the split row and entered an amount.
@@ -1781,7 +1857,6 @@
             var splitInput = document.getElementById('qsSplitAmountInput');
             if (splitInputs && splitInputs.style.display !== 'none' && splitInput && splitInput.value) {
                 var splitAmt = parseFloat(splitInput.value);
-                var cartTotal = cart.reduce(function(s, c) { return s + c.qty * c.price; }, 0);
                 if (isNaN(splitAmt) || splitAmt <= 0 || splitAmt >= cartTotal) {
                     alert('Kiasi cha mgawanyo lazima kiwe kati ya 0 na jumla ya mauzo (KES ' + Math.round(cartTotal) + ').');
                     splitInput.focus();
