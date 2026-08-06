@@ -4478,7 +4478,8 @@ class BarTab(models.Model):
                     entry.is_paid = True
                     entry.paid_at = now
                     entry.payment_method = payment_method
-                    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+                    entry.settled_by = recorded_by
+                    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method', 'settled_by'])
                     if entry.transaction_id:
                         entry.transaction.payment_method = payment_method
                         entry.transaction.save(update_fields=['payment_method'])
@@ -4563,6 +4564,18 @@ class BarTabEntry(models.Model):
     is_paid        = models.BooleanField(default=False)
     paid_at        = models.DateTimeField(null=True, blank=True)
     payment_method = models.CharField(max_length=10, blank=True)
+    settled_by     = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    # ↑ 2026-08-06 live request (Monsoon Inn) — a waitress with cross-station
+    # access can now clear bills on either counter; Roy asked for "a trail
+    # that Sarah the waitress cleared a certain bill in a certain manner."
+    # Set only on STAFF-initiated settlement (tick_entry, settle_tab's plain
+    # loop, settle_entries_amount_locked's fully-paid entries, and the paid
+    # portion of split_paid_unpaid_locked) — deliberately left None for a
+    # customer's own STK/QR self-pay (mpesa_views.py, receipt_views.py),
+    # since no staff member acted there and attributing it to whoever
+    # happened to be logged in would be a false trail, not a true one.
 
     class Meta:
         ordering = ['id']
@@ -4750,7 +4763,8 @@ class BarTabEntry(models.Model):
         entry.is_paid = True
         entry.payment_method = paid_method
         entry.paid_at = timezone.now()
-        entry.save(update_fields=['amount', 'is_paid', 'payment_method', 'paid_at'])
+        entry.settled_by = recorded_by
+        entry.save(update_fields=['amount', 'is_paid', 'payment_method', 'paid_at', 'settled_by'])
 
         # payment_method='credit' EXPLICITLY (found 2026-07-25, live Monsoon
         # Inn cash-reconciliation report: system showed KES 2980 expected,
@@ -5362,6 +5376,19 @@ class TableOrder(models.Model):
                   "this tab, not at order-placement time.",
     )
     notes          = models.CharField(max_length=200, blank=True)
+    # 2026-08-06 live request (Monsoon Inn) — a waitress with cross-station
+    # access (UserProfile.can_access_kitchen) can now facilitate orders on
+    # EITHER counter from the Order Desk; this captures which one she was
+    # toggled to at placement time, same explicit-field-captured-from-
+    # context pattern already established by Shift.station (never
+    # inferred from item type after the fact — see that field's own
+    # docstring for why). Blank for orders placed before this field
+    # existed; table_order_queue_api() shows those on BOTH boards rather
+    # than guessing, matching PettyCash.station's blank-row convention.
+    station        = models.CharField(
+        max_length=10, blank=True,
+        choices=[('bar', 'Bar'), ('kitchen', 'Kitchen')],
+    )
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
     served_at      = models.DateTimeField(null=True, blank=True)

@@ -385,6 +385,21 @@ def bar_board(request):
             and (partial_cash > 0 or partial_mpesa > 0)
         )
 
+        # 2026-08-06 live request (Monsoon Inn) — a waitress may take orders
+        # and settle bills on either counter, but must never be the one to
+        # PLACE a debt (only the counter staff, a manager, or the owner
+        # may). An ordinary tab is fine — this only blocks the specific
+        # "part paid now, rest becomes debt" checkout shortcut, which
+        # writes straight to the debt ledger at checkout time.
+        if is_partial_debt_checkout and up.role == 'waitress':
+            from django.contrib import messages as _msg
+            _msg.error(
+                request,
+                'Huwezi kuandika deni (hata sehemu) moja kwa moja — mwombe '
+                'muhusika wa counter, meneja, au mmiliki afanye hivyo.'
+            )
+            return redirect('bar_board')
+
         try:
             cart = json.loads(cart_json)
         except Exception:
@@ -737,6 +752,7 @@ def bar_board(request):
 
     return render(request, 'core/bar/bar_board.html', {
         'is_owner': is_owner,
+        'is_waitress': up.role == 'waitress',
         'business': business,
         'success_data': success_data,
         'current_user_id': request.user.id,
@@ -1575,7 +1591,7 @@ def recent_settled_tabs_api(request):
             tab__source__in=allowed,
         )
         .exclude(payment_method='void')
-        .select_related('transaction__item__store', 'tab')
+        .select_related('transaction__item__store', 'tab', 'settled_by')
         .order_by('-paid_at')
     )
 
@@ -1612,6 +1628,14 @@ def recent_settled_tabs_api(request):
             # of the free-text description string.
             'keg_qty':     e.transaction.keg_qty if e.transaction_id else None,
             'keg_serving': e.transaction.keg_serving if e.transaction_id else '',
+            # 2026-08-06 live request (Monsoon Inn) — a "cleared by" trail
+            # once a waitress with cross-station access started settling
+            # bills on either counter. Blank for a customer's own STK/QR
+            # self-pay (no staff acted) — never a false attribution.
+            'settled_by_name': (
+                (e.settled_by.get_full_name() or e.settled_by.username)
+                if e.settled_by_id else ''
+            ),
         })
         if e.paid_at and (bucket['_latest'] is None or e.paid_at > bucket['_latest']):
             bucket['_latest'] = e.paid_at
@@ -2240,7 +2264,8 @@ def tick_entry(request, entry_id):
     entry.is_paid = True
     entry.paid_at = now
     entry.payment_method = pay
-    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+    entry.settled_by = request.user
+    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method', 'settled_by'])
 
     entry.transaction.payment_method = pay
     entry.transaction.save(update_fields=['payment_method'])
@@ -3045,7 +3070,8 @@ def settle_tab(request, tab_id):
         entry.is_paid = True
         entry.paid_at = now
         entry.payment_method = pay
-        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+        entry.settled_by = request.user
+        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method', 'settled_by'])
         entry.transaction.payment_method = pay
         entry.transaction.save(update_fields=['payment_method'])
 
@@ -3202,6 +3228,16 @@ def convert_tab_to_debt(request, tab_id):
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    # 2026-08-06 live request (Monsoon Inn) — a waitress may settle tabs on
+    # either counter but must never be the one to PLACE a debt — Geuza
+    # Deni goes through counter staff, a manager, or the owner.
+    if up.role == 'waitress':
+        return JsonResponse({
+            'ok': False,
+            'error': 'Huwezi kugeuza tab kuwa deni — mwombe muhusika wa counter, '
+                     'meneja, au mmiliki afanye hivyo.',
+        }, status=403)
 
     if not getattr(up, 'is_owner_or_manager', False):
         from core.shift_views import get_active_staff_shift
@@ -3430,6 +3466,17 @@ def bulk_convert_tabs_to_debt(request):
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    # 2026-08-06 live request (Monsoon Inn) — a waitress must never be the
+    # one to place a debt, even her own leftover tabs at shift close;
+    # counter staff, a manager, or the owner does this instead.
+    if up.role == 'waitress':
+        return JsonResponse({
+            'ok': False,
+            'error': 'Huwezi kugeuza tab kuwa deni — mwombe muhusika wa counter, '
+                     'meneja, au mmiliki afanye hivyo.',
+        }, status=403)
+
     import json as _json
     try:
         tab_ids = _json.loads(request.POST.get('tab_ids', '[]'))

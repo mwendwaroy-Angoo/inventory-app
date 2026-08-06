@@ -3159,6 +3159,22 @@ def quick_sell(request):
         is_tab_sale = (payment_method_raw == "tab")
         payment_method_qs = "credit" if is_tab_sale else payment_method_raw
 
+        # 2026-08-06 live request (Monsoon Inn) — Roy: a waitress may take
+        # orders and clear bills (cash/mpesa/STK/tabs) on either counter,
+        # but must never be the one to PLACE a debt — that decision goes
+        # through the counter staff, a manager, or the owner. A running
+        # 'tab' is NOT a debt in this framing (it's an ordinary open bill,
+        # expected to be settled same-visit) — only a direct credit/Deni
+        # sale (bypassing a tab entirely) is blocked here.
+        if payment_method_raw == 'credit' and user_profile.role == 'waitress':
+            messages.error(
+                request,
+                'Huwezi kuandika deni moja kwa moja — mwombe muhusika wa counter, '
+                'meneja, au mmiliki afanye hivyo. Unaweza kuendelea kuuza kwa cash, '
+                'M-Pesa, au kwenye tab.'
+            )
+            return redirect('quick_sell')
+
         # 2026-07-28 live request — checkout-time split payment (e.g. Chipo
         # at KES 100 paid as 40 cash + 60 mpesa, at the point of sale rather
         # than as a later correction). Only meaningful for a direct cash/mpesa
@@ -3185,6 +3201,13 @@ def quick_sell(request):
             and partial_credit_amount_qs > 0
             and bool(credit_recipient)
         )
+        if _wants_partial_credit and user_profile.role == 'waitress':
+            messages.error(
+                request,
+                'Huwezi kuandika deni (hata sehemu) moja kwa moja — mwombe muhusika '
+                'wa counter, meneja, au mmiliki afanye hivyo.'
+            )
+            return redirect('quick_sell')
 
         # ── CREDIT DISCIPLINE GATE (credit sales only — not bar tabs; tab
         #    creation doesn't use the debt ledger credit_approved path) ────────
@@ -3865,6 +3888,7 @@ def quick_sell(request):
             "stores": stores,
             "success_data": success_data,
             "is_owner": (user_profile.is_owner_or_manager if user_profile else False),
+            "is_waitress": (user_profile.role == 'waitress' if user_profile else False),
             "open_tab_names": open_tab_names,
             "qs_items": items_qs,
         },

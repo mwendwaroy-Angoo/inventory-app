@@ -66,6 +66,12 @@
     transition: .15s;
   }
   .table-chip.active { border-color: var(--gold); background: rgba(201,168,76,.12); color: var(--gold); font-weight: 600; }
+  .station-toggle-btn {
+    flex: 1; border: 1px solid #444; background: transparent; color: #aaa;
+    border-radius: 8px; padding: .5rem; font-size: .88rem; font-weight: 600;
+    cursor: pointer; transition: .15s;
+  }
+  .station-toggle-btn.active { border-color: var(--gold); background: rgba(201,168,76,.15); color: var(--gold); }
   .table-custom-row { padding: 0 1rem .75rem; }
   .table-custom-row input {
     background: #1a1a1a;
@@ -305,7 +311,23 @@
   </span>
 </div>
 
+<!-- 2026-08-06 live request (Monsoon Inn) — a cross-access waitress can
+     facilitate orders on EITHER counter; this toggle picks which one a
+     NEW order is placed for (one order = one station — see place_table_
+     order()'s own docstring for why items aren't mixed across counters
+     in a single order). Only shown when she actually has kitchen access;
+     everyone else keeps the original bar-only screen unchanged. -->
+{% if show_kitchen %}
+<div style="display:flex; gap:.5rem; padding:.6rem 1rem; border-bottom:1px solid #333;">
+  <button type="button" id="stationBtnBar" class="station-toggle-btn active"
+          onclick="window.selectStation('bar')">🍺 Bar</button>
+  <button type="button" id="stationBtnKitchen" class="station-toggle-btn"
+          onclick="window.selectStation('kitchen')">🍗 Kitchen</button>
+</div>
+{% endif %}
+
 <!-- Keg items section -->
+<div id="ws-bar-items">
 {% if keg_items %}
 <div class="section-label">🍺 Bia (from tap)</div>
 <div class="item-grid">
@@ -356,6 +378,44 @@
 <div style="text-align:center; padding:3rem 1rem; color:#666;">
   Hakuna bidhaa za kuagiza kwa sasa.
 </div>
+{% endif %}
+</div><!-- /ws-bar-items -->
+
+{% if show_kitchen %}
+<div id="ws-kitchen-items" style="display:none;">
+{% if kitchen_other_items %}
+<div class="section-label">🍗 Kitchen</div>
+<div class="item-grid">
+  {% for item in kitchen_other_items %}
+    {% if item.portion_presets.all %}
+      {% for preset in item.portion_presets.all %}
+      <div class="item-tile"
+           onclick="window.addToCart({{ item.id }}, '{{ preset.id }}',
+                    '{{ item.description|escapejs }} — {{ preset.label|escapejs }}',
+                    {{ preset.price }}, false)">
+        <div class="name">{{ item.description }}</div>
+        <div class="price">KES {{ preset.price|floatformat:0 }}</div>
+        <div class="sub">{{ preset.label }}</div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="item-tile"
+           onclick="window.addToCart({{ item.id }}, '',
+                    '{{ item.description|escapejs }}',
+                    {{ item.selling_price }}, false)">
+        <div class="name">{{ item.description }}</div>
+        <div class="price">KES {{ item.selling_price|floatformat:0 }}</div>
+        <div class="sub">{{ item.unit }}</div>
+      </div>
+    {% endif %}
+  {% endfor %}
+</div>
+{% else %}
+<div style="text-align:center; padding:3rem 1rem; color:#666;">
+  Hakuna bidhaa za Kitchen za kuagiza kwa sasa.
+</div>
+{% endif %}
+</div><!-- /ws-kitchen-items -->
 {% endif %}
 
 <!-- Today's orders -->
@@ -430,6 +490,26 @@
   var _table = '';
   var _cart  = [];  // [{item_id, preset_id, label, unit_price, is_keg, qty}]
   var _cartOpen = false;
+  // 2026-08-06 live request (Monsoon Inn) — which counter a NEW order is
+  // being placed for; defaults to 'bar' (unchanged behavior for anyone
+  // without kitchen access, where the toggle never even renders).
+  var _currentStation = 'bar';
+
+  window.selectStation = function (station) {
+    if (station === _currentStation) return;
+    if (_cart.length > 0 && !confirm('Kubadilisha counter kutafuta kikapu chako cha sasa. Endelea?')) return;
+    _currentStation = station;
+    _cart = [];
+    if (typeof renderCart === 'function') renderCart();
+    var barBtn = document.getElementById('stationBtnBar');
+    var kitBtn = document.getElementById('stationBtnKitchen');
+    var barItems = document.getElementById('ws-bar-items');
+    var kitItems = document.getElementById('ws-kitchen-items');
+    if (barBtn) barBtn.classList.toggle('active', station === 'bar');
+    if (kitBtn) kitBtn.classList.toggle('active', station === 'kitchen');
+    if (barItems) barItems.style.display = (station === 'bar') ? '' : 'none';
+    if (kitItems) kitItems.style.display = (station === 'kitchen') ? '' : 'none';
+  };
 
   /* ── Reason Chips (2026-07-25) — see bar_board.html for the full comment.
      Copied verbatim; no shared JS bundle in this app. ── */
@@ -626,6 +706,7 @@
     fd.append('table_label', _table);
     fd.append('notes', document.getElementById('cart-notes').value);
     fd.append('items', JSON.stringify(items));
+    fd.append('station', _currentStation);
 
     fetch('/bar/orders/place/', { method: 'POST', body: fd })
       .then(function(r) { return r.json(); })

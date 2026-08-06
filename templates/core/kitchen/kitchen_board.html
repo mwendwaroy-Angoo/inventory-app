@@ -235,6 +235,20 @@
   .kb-wrap { flex-direction:column; }
   .kb-cart-panel { width:100%; position:static; }
 }
+
+/* Order Queue (2026-08-06 — same rules as bar_board.html's identical drawer) */
+.oq-card {
+  background:#1a1a1a; border:1px solid #333; border-radius:10px;
+  padding:.7rem .85rem; margin-bottom:.6rem;
+}
+.oq-btn {
+  border:none; border-radius:7px; padding:.3rem .7rem;
+  font-size:.78rem; font-weight:600; cursor:pointer;
+}
+.oq-btn-accept { background:rgba(33,150,243,.18); color:#64b5f6; }
+.oq-btn-ready  { background:rgba(201,168,76,.18); color:#c9a84c; }
+.oq-btn-serve  { background:rgba(93,222,122,.18); color:#5dde7a; }
+.oq-btn-cancel { background:rgba(192,57,90,.12);  color:#c0395a; }
 </style>
 {% endblock %}
 
@@ -253,6 +267,20 @@
       <div class="kb-revenue-badge">
         🍽 Leo: <strong id="kb-revenue-amount">KES {{ kitchen_revenue_today|floatformat:0 }}</strong>
       </div>
+      <!-- 2026-08-06 live request (Monsoon Inn) — a waitress with kitchen
+           access can now place Table Orders for kitchen items too; this is
+           the counter-side queue where kitchen staff see/accept/prepare/
+           mark them ready, mirroring bar_board.html's identical drawer. -->
+      <button onclick="window.koqOpenOrderQueue()"
+              style="background:rgba(255,152,0,0.1); border:1px solid rgba(255,152,0,0.3);
+                     color:#ff9800; border-radius:8px; padding:4px 12px; font-size:0.8rem;
+                     cursor:pointer; position:relative;">
+        📋 Orders
+        <span id="koq-header-badge"
+              style="display:none; position:absolute; top:-7px; right:-7px;
+                     background:#c0395a; color:#fff; border-radius:50%; width:18px; height:18px;
+                     font-size:0.65rem; line-height:18px; text-align:center; font-weight:700;"></span>
+      </button>
       <button class="btn btn-sm" style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);color:#ff9800;font-size:.8rem;"
               onclick="window.openPettyCashModal()">🪙 Counter Cash</button>
       <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.35);color:#e87090;font-size:.8rem;"
@@ -687,7 +715,9 @@
             <button class="kb-pay-btn pm-stk" onclick="selectPM('stk')" style="border-color:#3cb371;color:#3cb371;">📲 STK</button>
           </div>
           <div class="kb-pay-row">
+            {% if not is_waitress %}
             <button class="kb-pay-btn pm-credit" onclick="selectPM('credit')" style="border-color:#c0395a;color:#c0395a;">🤝 Deni</button>
+            {% endif %}
             <button class="kb-pay-btn pm-food-tab" onclick="selectPM('food_tab')">🍽 Food Tab</button>
             <button class="kb-pay-btn pm-bar-tab" onclick="selectPM('bar_tab')">🍺 Bar Tab</button>
           </div>
@@ -703,7 +733,11 @@
             <div id="kb-merge-hint" style="display:none; font-size:.75rem; margin-top:.35rem; padding:.35rem .6rem;
                  background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.25); border-radius:6px;
                  color:#e2c36e; line-height:1.5;"></div>
-            <!-- 2026-07-31 live request — food_tab only: part paid now, rest becomes debt -->
+            <!-- 2026-07-31 live request — food_tab only: part paid now, rest
+                 becomes debt. 2026-08-06 — hidden for a waitress (backend
+                 also blocks this): she may settle tabs but must never
+                 place a debt. -->
+            {% if not is_waitress %}
             <div id="kb-partial-debt-row" style="display:none; margin-top:0.5rem;">
               <label style="display:flex; align-items:center; gap:6px; font-size:.78rem; color:#b0b0b0; cursor:pointer;">
                 <input type="checkbox" id="kb-partial-debt-toggle" onchange="kbTogglePartialDebt()">
@@ -716,12 +750,15 @@
                 </div>
               </div>
             </div>
+            {% endif %}
           </div>
           <!-- Credit (Deni) customer fields -->
+          {% if not is_waitress %}
           <div id="kb-credit-row" style="display:none; margin-top:0.5rem;">
             <input type="text" id="kb-credit-name" class="form-control form-control-sm mb-1" placeholder="Jina la mteja (lazima)..." autocomplete="off">
             <input type="tel" id="kb-credit-phone" class="form-control form-control-sm" placeholder="Namba ya simu (07XX... — SMS)" autocomplete="off">
           </div>
+          {% endif %}
           <!-- 2026-07-28 live request — checkout-time split payment (e.g.
                Chipo at KES 100 paid as 40 cash + 60 mpesa), at the point of
                sale rather than only as a later Recent Payments correction.
@@ -760,6 +797,34 @@
 
 <!-- Toast -->
 <div id="kb-toast"></div>
+
+<!-- ════════════════════════════════════════════════════
+     ORDER QUEUE DRAWER (2026-08-06 — kitchen-side counterpart to
+     bar_board.html's identical drawer, now that a cross-access waitress
+     can place Table Orders for kitchen items too) ═══════════════════ -->
+<div id="koq-drawer" style="
+  position:fixed; bottom:0; left:0; right:0;
+  background:#2a2a2a; border-top:2px solid #444;
+  transform:translateY(100%); transition:transform .25s ease;
+  z-index:800; max-height:78vh; display:flex; flex-direction:column;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:.7rem 1rem; border-bottom:1px solid #333; cursor:pointer;"
+       onclick="window.koqCloseOrderQueue()">
+    <div style="display:flex; align-items:center; gap:.6rem;">
+      <span style="font-weight:600; color:#f0ece4; font-size:.95rem;">📋 Maagizo ya Meza</span>
+      <span id="koq-drawer-badge" style="display:none; background:#ff9800; color:#111;
+            border-radius:10px; padding:.1rem .5rem; font-size:.72rem; font-weight:700;"></span>
+    </div>
+    <span style="color:#888; font-size:.85rem;">✕</span>
+  </div>
+
+  <div id="koq-body" style="overflow-y:auto; flex:1; padding:.5rem 1rem 1rem;">
+    <div style="text-align:center; color:#666; padding:2rem 0; font-size:.85rem;">
+      Inapakia...
+    </div>
+  </div>
+</div>
 
 <!-- ── Preset selector modal ── -->
 <div class="modal fade" id="kbPresetModal" tabindex="-1">
@@ -1467,6 +1532,148 @@
 (function () {
   var CSRF = '{{ csrf_token }}';
   var IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
+  var IS_WAITRESS = {% if is_waitress %}true{% else %}false{% endif %};
+
+  // ── Order Queue Drawer (2026-08-06 — mirrors bar_board.html's identical
+  //    drawer, station-scoped via ?station=kitchen) ──────────────────────
+  var _koqOpen = false;
+
+  window.koqOpenOrderQueue = function () {
+    _koqOpen = true;
+    document.getElementById('koq-drawer').style.transform = 'translateY(0)';
+    koqLoadOrderQueue();
+  };
+  window.koqCloseOrderQueue = function () {
+    _koqOpen = false;
+    document.getElementById('koq-drawer').style.transform = 'translateY(100%)';
+  };
+
+  function koqUpdateBadge(count) {
+    var hdr = document.getElementById('koq-header-badge');
+    var drw = document.getElementById('koq-drawer-badge');
+    if (count > 0) {
+      hdr.textContent = count; hdr.style.display = 'inline-block';
+      drw.textContent = count + ' inasubiri'; drw.style.display = 'inline-block';
+    } else {
+      hdr.style.display = 'none';
+      drw.style.display = 'none';
+    }
+  }
+
+  function koqLoadOrderQueue() {
+    fetch('/bar/orders/queue/?station=kitchen')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        koqUpdateBadge(d.pending_count || 0);
+        if (_koqOpen) koqRenderOrderQueue(d.orders || []);
+      })
+      .catch(function () {});
+  }
+
+  function koqRenderOrderQueue(orders) {
+    var body = document.getElementById('koq-body');
+    if (!orders.length) {
+      body.innerHTML = '<div style="text-align:center; color:#666; padding:2.5rem 0; font-size:.85rem;">Hakuna maagizo ya sasa.</div>';
+      return;
+    }
+
+    var statusColors = {
+      PENDING:  { bg: 'rgba(255,152,0,.12)', color: '#ff9800' },
+      ACCEPTED: { bg: 'rgba(33,150,243,.12)', color: '#64b5f6' },
+      READY:    { bg: 'rgba(201,168,76,.12)', color: '#c9a84c' },
+    };
+    var statusLabels = { PENDING: 'Inasubiri', ACCEPTED: 'Inatengenezwa', READY: 'Iko tayari' };
+
+    var html = '';
+    orders.forEach(function (o) {
+      var sc = statusColors[o.status] || { bg: '#333', color: '#888' };
+      var sl = statusLabels[o.status] || o.status;
+      var elapsed = o.elapsed_mins < 60
+        ? o.elapsed_mins + ' min'
+        : Math.floor(o.elapsed_mins / 60) + 'h ' + (o.elapsed_mins % 60) + 'm';
+      var itemsHtml = o.items.map(function (i) {
+        var note = i.notes ? ' <em style="color:#888;">(' + koqEsc(i.notes) + ')</em>' : '';
+        return koqEsc(i.label) + ' ×' + i.quantity + note;
+      }).join(', ');
+
+      var actions = '';
+      if (o.status === 'PENDING') {
+        actions = '<button class="oq-btn oq-btn-accept" onclick="window.koqUpdate(' + o.id + ',\'ACCEPTED\')">✓ Pokea</button>'
+                + '<button class="oq-btn oq-btn-cancel" onclick="window.koqUpdate(' + o.id + ',\'CANCELLED\', this)">✕</button>';
+      } else if (o.status === 'ACCEPTED') {
+        actions = '<button class="oq-btn oq-btn-ready" onclick="window.koqUpdate(' + o.id + ',\'READY\')">🔔 Tayari</button>'
+                + '<button class="oq-btn oq-btn-cancel" onclick="window.koqUpdate(' + o.id + ',\'CANCELLED\', this)">✕</button>';
+      } else if (o.status === 'READY') {
+        actions = '<button class="oq-btn oq-btn-serve" onclick="window.koqUpdate(' + o.id + ',\'SERVED\')">✓ Toa</button>';
+      }
+
+      html += '<div class="oq-card" id="koq-card-' + o.id + '">'
+        + '<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:.4rem;">'
+        + '<div>'
+        + '<span style="font-weight:700; color:#f0ece4; font-size:.95rem;">' + koqEsc(o.table_label) + '</span>'
+        + '<span style="color:#888; font-size:.74rem; margin-left:.5rem;">' + koqEsc(o.waitress) + ' · ' + o.created_at + ' (' + elapsed + ')</span>'
+        + '</div>'
+        + '<span style="background:' + sc.bg + '; color:' + sc.color + '; border-radius:10px; padding:.15rem .5rem; font-size:.72rem; font-weight:600;">' + sl + '</span>'
+        + '</div>'
+        + '<div style="font-size:.82rem; color:#b0b0b0; margin-bottom:.5rem;">' + itemsHtml + '</div>'
+        + '<div style="display:flex; justify-content:space-between; align-items:center;">'
+        + '<span style="color:#c9a84c; font-size:.85rem; font-weight:600;">KES ' + Math.round(o.total).toLocaleString() + '</span>'
+        + '<div style="display:flex; gap:.4rem;">' + actions + '</div>'
+        + '</div>'
+        + (o.notes ? '<div style="font-size:.75rem; color:#888; margin-top:.3rem; font-style:italic;">' + koqEsc(o.notes) + '</div>' : '')
+        + '</div>';
+    });
+    body.innerHTML = html;
+  }
+
+  window.koqUpdate = function (orderId, newStatus, anchorEl) {
+    if (newStatus === 'CANCELLED') {
+      if (!confirm('Futa agizo hili?')) return;
+      window.openReasonChips({
+        anchorEl: anchorEl,
+        title: 'Sababu ya kufuta agizo',
+        chips: ['Mteja amebadilisha mawazo', 'Kosa la kuweka agizo', 'Mteja ameondoka', 'Bidhaa haipo'],
+        onSelect: function (reason) { _koqSubmitUpdate(orderId, newStatus, reason); },
+      });
+      return;
+    }
+    _koqSubmitUpdate(orderId, newStatus, '');
+  };
+
+  function _koqSubmitUpdate(orderId, newStatus, reason) {
+    var card = document.getElementById('koq-card-' + orderId);
+    if (card) card.style.opacity = '.4';
+    var fd = new FormData();
+    fd.append('csrfmiddlewaretoken', CSRF);
+    fd.append('status', newStatus);
+    if (newStatus === 'CANCELLED') fd.append('reason', reason);
+    fetch('/bar/orders/' + orderId + '/update/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          if (newStatus === 'SERVED') showToast('✓ Imetolewa! Transactions zimeandikwa.');
+          else if (newStatus === 'CANCELLED') showToast('Agizo limefutwa.');
+          else if (newStatus === 'READY') showToast('🔔 Iko tayari.');
+          else showToast('✓ Imepokewa.');
+          koqLoadOrderQueue();
+        } else {
+          if (card) card.style.opacity = '1';
+          showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+        }
+      })
+      .catch(function () {
+        if (card) card.style.opacity = '1';
+        showToast('Hitilafu ya mtandao.');
+      });
+  }
+
+  function koqEsc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  koqLoadOrderQueue();
+  setInterval(koqLoadOrderQueue, 20000);
+
   window.PETTY_CASH_STATION = 'kitchen';  // 2026-07-27 — which till the shared petty cash modal records against on this board
   // Seeded server-side so the shift gate fires immediately on page load,
   // before the async /kitchen/shift/active/ fetch completes.
@@ -2554,9 +2761,9 @@
           'padding:.25rem .6rem;margin-bottom:.35rem;font-size:.75rem;color:#ff9800;' +
           'display:flex;align-items:center;justify-content:space-between;">' +
           '<span>Tab ya ' + tab.opened_date + ' — bado haijafungwa</span>' +
-          '<button onclick="openKitchenTabDeni(' + tab.id + ',\'' + safeCust + '\')" ' +
+          (IS_WAITRESS ? '' : '<button onclick="openKitchenTabDeni(' + tab.id + ',\'' + safeCust + '\')" ' +
           'style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;' +
-          'color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>' +
+          'color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>') +
           '</div>'
         : '';
       var receiptLink = tab.receipt_url
@@ -2623,7 +2830,7 @@
              '<strong style="color:#c9a84c;">Deni: KES ' + fmt(tab.unpaid_total) + '</strong></div>' +
              '<div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap;">' +
              '<button class="btn btn-sm btn-gold" data-tab-id="' + tab.id + '" data-customer="' + (tab.customer_name||'').replace(/"/g,'&quot;') + '" data-unpaid="' + tab.unpaid_total + '" onclick="openKitchenTabSettle(this)">💰 Lipa</button>' +
-             '<button class="btn btn-sm" style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.35);color:#c0395a;" onclick="openKitchenTabDeni(' + tab.id + ',\'' + safeCust + '\')">🤝 Deni</button>' +
+             (IS_WAITRESS ? '' : '<button class="btn btn-sm" style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.35);color:#c0395a;" onclick="openKitchenTabDeni(' + tab.id + ',\'' + safeCust + '\')">🤝 Deni</button>') +
              (tab.unpaid_total > 0
                ? '<button class="btn btn-sm" style="background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.3);color:#4caf50;" onclick="kbOpenTransferWholeTabModal(' + tab.id + ',\'' + safeCust + '\',' + tab.unpaid_total + ')">🔀 Tab Yote</button>'
                : '') +
@@ -2743,7 +2950,8 @@
         '</div>';
       t.entries.forEach(function (e) {
         html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
-          '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ')</span>' +
+          '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ')' +
+          (e.settled_by_name ? ' <span style="color:#777;">— ilifutwa na ' + e.settled_by_name + '</span>' : '') + '</span>' +
           '<button onclick="window.kbRevokeEntryPayment(' + e.id + ',' + t.tab_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
           'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">↺ Tengua</button>' +
           '</div>';

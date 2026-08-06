@@ -438,6 +438,7 @@ def kitchen_board(request):
 
     return render(request, 'core/kitchen/kitchen_board.html', {
         'is_owner': is_owner,
+        'is_waitress': up.role == 'waitress',
         'business': business,
         'kitchen_store': kitchen_store,
         'portion_items': json.dumps(portion_items),
@@ -560,6 +561,23 @@ def _kitchen_checkout(request, up, business, is_owner):
 
     if not cart:
         return JsonResponse({'ok': False, 'error': 'Cart is empty'}, status=400)
+
+    # 2026-08-06 live request (Monsoon Inn) — a waitress may take orders and
+    # settle bills on either counter, but must never be the one to PLACE a
+    # debt (only the counter staff, a manager, or the owner may). An
+    # ordinary food_tab is fine — this blocks a direct Deni checkout AND
+    # the "part paid now, rest becomes debt" shortcut, both of which write
+    # straight to the debt ledger at checkout time.
+    _wants_partial_debt = (
+        payment_method == 'food_tab' and bool(tab_customer)
+        and (partial_cash > 0 or partial_mpesa > 0)
+    )
+    if up.role == 'waitress' and (payment_method == 'credit' or _wants_partial_debt):
+        return JsonResponse({
+            'ok': False,
+            'error': 'Huwezi kuandika deni moja kwa moja — mwombe muhusika wa '
+                     'counter, meneja, au mmiliki afanye hivyo.',
+        }, status=403)
 
     if payment_method == 'credit' and not credit_name:
         return JsonResponse({'ok': False, 'error': 'Jina la mteja linahitajika kwa deni'}, status=400)

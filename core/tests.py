@@ -25206,3 +25206,370 @@ class SegmentedShiftReconcileTest(TestCase):
         self.assertEqual(len(segments), 2)
         self.assertEqual(segments[0], (base, later_start))
         self.assertEqual(segments[1], (later_end, uncapped_end))
+
+
+class InspectTillBreakdownCommandTest(TestCase):
+    """2026-08-06 live report (Monsoon Inn) — Roy doubted till_expected_cash()'s
+    Bar figure and asked to see it verified against real physical cash. This
+    read-only diagnostic lists every individual transaction the running
+    till calculation summed, so a live discrepancy report can be checked
+    against real rows instead of guesswork."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Till Breakdown Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.staff = User.objects.create_user(username='itb_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='ITB-1',
+            description='Diagnostic Beer', unit='bottle', selling_price=Decimal('100'),
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            opening_float=Decimal('0'), status='CONFIRMED', station='bar',
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('1000'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('300'), payment_method='cash',
+            created_at=timezone.now() - timedelta(hours=1),
+        )
+
+    def test_lists_the_anchor_and_contributing_transaction(self):
+        from django.core.management import call_command
+        from io import StringIO
+        out = StringIO()
+        call_command('inspect_till_breakdown', 'Till Breakdown Biz', 'bar', stdout=out)
+        output = out.getvalue()
+        self.assertIn('Diagnostic Beer', output)
+        self.assertIn('300', output)
+        self.assertIn('1,300.00', output)  # base 1000 + 300 cash sale
+
+    def test_no_anchor_reports_cleanly(self):
+        from django.core.management import call_command
+        from io import StringIO
+        biz2 = Business.objects.create(name='No Anchor Till Biz')
+        out = StringIO()
+        call_command('inspect_till_breakdown', 'No Anchor Till Biz', 'bar', stdout=out)
+        self.assertIn('No anchor established', out.getvalue())
+
+
+class WaitressCrossStationAccessTest(TestCase):
+    """2026-08-06 live request (Monsoon Inn) — a waitress with cross-
+    station access (can_access_kitchen, the same generic toggle any staff
+    member can be granted) can now place Table Orders for either counter
+    and the resulting order routes to the right board's queue. Without
+    the toggle, everything behaves exactly as before (bar-only)."""
+
+    def setUp(self):
+        from core.models import TableOrder
+        self.TableOrder = TableOrder
+        self.biz = Business.objects.create(name='Cross Station Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='cs_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='cs_waitress', password='x')
+        self.waitress_up = UserProfile.objects.create(
+            user=self.waitress, business=self.biz, role='waitress', can_access_kitchen=False,
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='CS-1',
+            description='Soda', unit='Pcs', selling_price=Decimal('50'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, material_no='CS-2',
+            description='Chapati', unit='Pcs', selling_price=Decimal('30'),
+        )
+
+    def _place(self, station, item, client=None):
+        c = client or self.client
+        return c.post('/bar/orders/place/', {
+            'table_label': 'T9', 'notes': '', 'station': station,
+            'items': json.dumps([{
+                'item_id': item.id, 'item_name': item.description,
+                'unit_price': str(item.selling_price), 'quantity': 1,
+            }]),
+        })
+
+    def test_waitress_without_kitchen_access_cannot_place_kitchen_order(self):
+        self.client.force_login(self.waitress)
+        resp = self._place('kitchen', self.kitchen_item)
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        self.assertEqual(self.TableOrder.objects.count(), 0)
+
+    def test_waitress_with_kitchen_access_can_place_kitchen_order(self):
+        self.waitress_up.can_access_kitchen = True
+        self.waitress_up.save()
+        self.client.force_login(self.waitress)
+        resp = self._place('kitchen', self.kitchen_item)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        order = self.TableOrder.objects.get(id=data['order_id'])
+        self.assertEqual(order.station, 'kitchen')
+        self.assertEqual(order.items.first().item_id, self.kitchen_item.id)
+
+    def test_bar_order_still_works_without_kitchen_access(self):
+        self.client.force_login(self.waitress)
+        resp = self._place('bar', self.bar_item)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        order = self.TableOrder.objects.get(id=data['order_id'])
+        self.assertEqual(order.station, 'bar')
+
+    def test_mismatched_item_for_station_is_skipped(self):
+        """A kitchen item submitted under a 'bar' station claim must not
+        silently end up on the bar order — skipped rather than mis-routed."""
+        self.waitress_up.can_access_kitchen = True
+        self.waitress_up.save()
+        self.client.force_login(self.waitress)
+        resp = self.client.post('/bar/orders/place/', {
+            'table_label': 'T9', 'notes': '', 'station': 'bar',
+            'items': json.dumps([{
+                'item_id': self.kitchen_item.id, 'item_name': self.kitchen_item.description,
+                'unit_price': '30', 'quantity': 1,
+            }]),
+        })
+        data = resp.json()
+        self.assertFalse(data['ok'])  # no valid items — order cleaned up
+
+    def test_queue_api_station_filtering(self):
+        self.waitress_up.can_access_kitchen = True
+        self.waitress_up.save()
+        self.client.force_login(self.waitress)
+        self._place('bar', self.bar_item)
+        self._place('kitchen', self.kitchen_item)
+
+        bar_resp = self.client.get('/bar/orders/queue/?station=bar')
+        bar_labels = [o['items'][0]['label'] for o in bar_resp.json()['orders']]
+        self.assertIn('Soda', bar_labels)
+        self.assertNotIn('Chapati', bar_labels)
+
+        kitchen_resp = self.client.get('/bar/orders/queue/?station=kitchen')
+        kitchen_labels = [o['items'][0]['label'] for o in kitchen_resp.json()['orders']]
+        self.assertIn('Chapati', kitchen_labels)
+        self.assertNotIn('Soda', kitchen_labels)
+
+    def test_waitress_screen_hides_kitchen_items_without_access(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/bar/orders/')
+        self.assertNotIn('Chapati', resp.content.decode())
+
+    def test_waitress_screen_shows_kitchen_toggle_with_access(self):
+        self.waitress_up.can_access_kitchen = True
+        self.waitress_up.save()
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/bar/orders/')
+        content = resp.content.decode()
+        self.assertIn('Chapati', content)
+        self.assertIn('selectStation', content)
+
+
+class WaitressCannotPlaceDebtTest(TestCase):
+    """2026-08-06 live request (Monsoon Inn) — a waitress may settle tabs
+    on either counter (cash/mpesa/STK/split) but must never be the one to
+    PLACE a debt — that's for counter staff, a manager, or the owner."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Waitress Debt Block Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='wdb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='wdb_waitress', password='x')
+        UserProfile.objects.create(
+            user=self.waitress, business=self.biz, role='waitress', can_access_kitchen=True,
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='WDB-1',
+            description='Beer', unit='Pcs', selling_price=Decimal('100'),
+        )
+
+    def test_quick_sell_direct_credit_blocked_for_waitress(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'item_id': self.item.id, 'quantity': 1}]),
+            'payment_method': 'credit', 'recipient': 'Mteja X',
+            'idempotency_token': 'wdb-1',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Transaction.objects.filter(business=self.biz, payment_method='credit').exists())
+
+    def test_quick_sell_partial_credit_blocked_for_waitress(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'item_id': self.item.id, 'quantity': 1}]),
+            'payment_method': 'cash', 'recipient': 'Mteja Y',
+            'partial_credit_amount': '50',
+            'idempotency_token': 'wdb-2',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Transaction.objects.filter(business=self.biz, payment_method='credit').exists())
+
+    def test_convert_tab_to_debt_blocked_for_waitress(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Tab Guy', status='OPEN', source='bar',
+        )
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {})
+        self.assertEqual(resp.status_code, 403)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+
+    def test_bulk_convert_tabs_to_debt_blocked_for_waitress(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bulk Tab Guy', status='OPEN', source='bar',
+        )
+        self.client.force_login(self.waitress)
+        resp = self.client.post('/bar/tabs/bulk-convert-to-debt/', {
+            'tab_ids': json.dumps([tab.id]),
+        })
+        self.assertEqual(resp.status_code, 403)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+
+    def test_waitress_can_still_settle_a_tab_cash(self):
+        """Confirms she's NOT broadly blocked from tab actions — only debt
+        creation specifically."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Settle Guy', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='credit',
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='Beer', amount=Decimal('100'))
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {
+            'payment_method': 'cash', 'idempotency_token': 'wdb-settle-1',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+
+
+class SettledByAccountabilityTrailTest(TestCase):
+    """2026-08-06 live request (Monsoon Inn, same waitress cross-station
+    feature) — Roy: "for every bill settled on her side she can clear...
+    with a trail that Sarah the waitress cleared a certain bill in a
+    certain manner." BarTabEntry.settled_by is set on every STAFF-
+    initiated settlement path and surfaced in the Recent Payments panel;
+    deliberately left blank for a customer's own STK/QR self-pay (no staff
+    acted, so no true attribution exists)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Settled By Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='sb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='sb_waitress', password='x')
+        UserProfile.objects.create(
+            user=self.waitress, business=self.biz, role='waitress', can_access_kitchen=True,
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='SB-1',
+            description='Beer', unit='Pcs', selling_price=Decimal('100'),
+        )
+
+    def _mk_tab_entry(self, tab, amount=Decimal('100')):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='credit',
+        )
+        return BarTabEntry.objects.create(tab=tab, transaction=txn, description='Beer', amount=amount)
+
+    def test_settle_tab_full_records_settled_by(self):
+        tab = BarTab.objects.create(business=self.biz, customer_name='Full Settle', status='OPEN', source='bar')
+        entry = self._mk_tab_entry(tab)
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {
+            'payment_method': 'cash', 'idempotency_token': 'sb-settle-1',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        entry.refresh_from_db()
+        self.assertEqual(entry.settled_by_id, self.waitress.id)
+
+    def test_tick_entry_records_settled_by(self):
+        tab = BarTab.objects.create(business=self.biz, customer_name='Tick Guy', status='OPEN', source='bar')
+        entry = self._mk_tab_entry(tab)
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/tabs/entry/{entry.id}/tick/', {'payment_method': 'mpesa'})
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        entry.refresh_from_db()
+        self.assertEqual(entry.settled_by_id, self.waitress.id)
+
+    def test_partial_amount_settle_records_settled_by_on_fully_paid_entry(self):
+        tab = BarTab.objects.create(business=self.biz, customer_name='Partial Guy', status='OPEN', source='bar')
+        e1 = self._mk_tab_entry(tab, Decimal('50'))
+        e2 = self._mk_tab_entry(tab, Decimal('50'))
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {
+            'payment_method': 'cash', 'amount': '50',
+            'entry_ids': [e1.id, e2.id],
+            'idempotency_token': 'sb-settle-2',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        e1.refresh_from_db()
+        self.assertEqual(e1.settled_by_id, self.waitress.id)
+
+    def test_split_boundary_entry_records_settled_by_on_paid_portion_only(self):
+        tab = BarTab.objects.create(business=self.biz, customer_name='Split Guy', status='OPEN', source='bar')
+        entry = self._mk_tab_entry(tab, Decimal('100'))
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {
+            'payment_method': 'mpesa', 'amount': '60',
+            'entry_ids': [entry.id],
+            'idempotency_token': 'sb-settle-3',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount, Decimal('60'))
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(entry.settled_by_id, self.waitress.id)
+        remainder = BarTabEntry.objects.filter(tab=tab).exclude(id=entry.id).first()
+        self.assertIsNotNone(remainder)
+        self.assertFalse(remainder.is_paid)
+        self.assertIsNone(remainder.settled_by_id)
+
+    def test_stk_settlement_leaves_settled_by_blank(self):
+        """A customer's own STK/QR self-pay has no staff acting — must
+        never be attributed to whoever happens to be logged in."""
+        tab = BarTab.objects.create(business=self.biz, customer_name='STK Guy', status='OPEN', source='bar')
+        entry = self._mk_tab_entry(tab)
+        from core.mpesa_views import _settle_tab_from_payment
+        from core.models import Payment
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('100'), status='completed',
+            bar_tab_id=tab.id, phone='254712345678',
+        )
+        _settle_tab_from_payment(payment)
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertIsNone(entry.settled_by_id)
+
+    def test_recent_settled_tabs_api_surfaces_settled_by_name(self):
+        tab = BarTab.objects.create(business=self.biz, customer_name='API Guy', status='OPEN', source='bar')
+        entry = self._mk_tab_entry(tab)
+        self.client.force_login(self.waitress)
+        self.client.post(f'/bar/tabs/{tab.id}/settle/', {
+            'payment_method': 'cash', 'idempotency_token': 'sb-settle-4',
+        })
+        resp = self.client.get('/bar/tabs/recent-settled/?station=bar')
+        data = resp.json()
+        found = [e for t in data['tabs'] for e in t['entries'] if e['id'] == entry.id]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]['settled_by_name'], 'sb_waitress')

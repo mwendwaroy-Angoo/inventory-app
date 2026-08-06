@@ -964,13 +964,15 @@
                   🍺 Tab
                 </label>
 
+                {% if not is_waitress %}
                 <input type="radio" class="btn-check" name="payment_method"
                        id="pm_credit" value="credit">
                 <label class="btn btn-outline-secondary flex-fill text-center"
                        for="pm_credit" style="font-weight:600;">
                   📒 Deni
                 </label>
-                {% else %}
+                {% endif %}
+                {% elif not is_waitress %}
                 <input type="radio" class="btn-check" name="payment_method"
                        id="pm_credit" value="credit">
                 <label class="btn btn-outline-secondary flex-fill text-center"
@@ -1005,7 +1007,10 @@
             </div>
             <!-- UBA P0-A — "Lipa kidogo": customer pays only PART of a direct
                  Cash/M-Pesa sale now, the rest becomes ordinary credit debt —
-                 no tab needed. Shown alongside the cash/mpesa split row. -->
+                 no tab needed. Shown alongside the cash/mpesa split row.
+                 2026-08-06 — hidden for a waitress (backend also blocks
+                 this): she may settle tabs but must never place a debt. -->
+            {% if not is_waitress %}
             <div id="qsPartialCreditRow" style="display:none; margin-bottom:0.6rem;">
               <button type="button" id="qsPartialCreditToggleBtn" onclick="window.qsTogglePartialCredit()"
                       style="width:100%; background:rgba(192,57,90,.08); border:1px solid rgba(192,57,90,.3);
@@ -1024,6 +1029,7 @@
                 </div>
               </div>
             </div>
+            {% endif %}
             <!-- Customer / tab name — shown for both Tab and Credit/Deni -->
             <div id="qsCreditCustomerRow" style="display:none; margin-bottom:0.6rem;">
               <label id="qsCustomerRowLabel" style="color:var(--gold); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.07em; display:block; margin-bottom:0.3rem;">
@@ -2621,6 +2627,7 @@
 (function () {
     var CSRF = '{{ csrf_token }}';
     var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
+    var QS_IS_WAITRESS = {% if is_waitress %}true{% else %}false{% endif %};
     var _qsTabsJustSettled = false;
 
     function qsPost(url, data) {
@@ -2855,9 +2862,9 @@
                   'padding:.25rem .6rem;margin-bottom:.35rem;font-size:.75rem;color:#ff9800;' +
                   'display:flex;align-items:center;justify-content:space-between;">' +
                   '<span>Tab ya ' + tab.opened_date + ' — bado haijafungwa</span>' +
-                  '<button onclick="qsOpenTabDebt(' + tab.id + ',\'' + sc + '\')" ' +
+                  (QS_IS_WAITRESS ? '' : '<button onclick="qsOpenTabDebt(' + tab.id + ',\'' + sc + '\')" ' +
                   'style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;' +
-                  'color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>' +
+                  'color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>') +
                   '</div>'
                 : '';
             var receiptLinkHtml = tab.receipt_url
@@ -2928,7 +2935,7 @@
                 '<button class="qs-tab-btn" style="background:rgba(76,175,80,0.08);color:#4caf50;border:1px solid rgba(76,175,80,0.3);" onclick="qsOpenTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + tab.customer_name.replace(/'/g,"\\'") + '\',\'' + (tab.customer_phone||'').replace(/'/g,"\\'") + '\')">📲 STK Push</button>' +
                 '</div>' +
                 '<div class="qs-tab-actions" style="margin-top:0.3rem;">' +
-                '<button class="qs-tab-btn" style="background:rgba(201,168,76,0.08);color:#c9a84c;border:1px solid rgba(201,168,76,0.25);" onclick="qsOpenTabDebt(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">→ Deni</button>' +
+                (QS_IS_WAITRESS ? '' : '<button class="qs-tab-btn" style="background:rgba(201,168,76,0.08);color:#c9a84c;border:1px solid rgba(201,168,76,0.25);" onclick="qsOpenTabDebt(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">→ Deni</button>') +
                 (tab.unpaid_total > 0
                   ? '<button class="qs-tab-btn" style="background:rgba(76,175,80,0.08);color:#4caf50;border:1px solid rgba(76,175,80,0.3);" onclick="qsOpenTransferWholeTabModal(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\',' + tab.unpaid_total + ')">🔀 Tab Yote</button>'
                   : '') +
@@ -3048,7 +3055,8 @@
                 '</div>';
             t.entries.forEach(function (e) {
                 html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
-                    '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + qsFmt(e.amount) + ' (' + e.payment_method + ')</span>' +
+                    '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + qsFmt(e.amount) + ' (' + e.payment_method + ')' +
+                    (e.settled_by_name ? ' <span style="color:#777;">— ilifutwa na ' + e.settled_by_name + '</span>' : '') + '</span>' +
                     '<button onclick="window.qsRevokeEntryPayment(' + e.id + ',' + t.tab_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
                     'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">↺ Tengua</button>' +
                     '</div>';

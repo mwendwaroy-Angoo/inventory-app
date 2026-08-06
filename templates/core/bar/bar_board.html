@@ -1059,7 +1059,11 @@
     <!-- 2026-07-31 live request — "customer paid cash 120... there is a
          remainder" / "mpesa 100 then 20 cash and there is a remainder" —
          part of this Tab sale is paid right now, the rest becomes debt in
-         the SAME checkout, instead of 3 separate manual steps. -->
+         the SAME checkout, instead of 3 separate manual steps.
+         2026-08-06 — hidden for a waitress (backend also blocks this; see
+         is_partial_debt_checkout in bar_board()): she may settle tabs but
+         must never place a debt. -->
+    {% if not is_waitress %}
     <label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:.78rem; color:#b0b0b0; cursor:pointer;">
       <input type="checkbox" id="partial-debt-toggle" onchange="window.togglePartialDebt()">
       Sehemu inalipwa sasa — iliyobaki ni deni
@@ -1075,6 +1079,7 @@
       </div>
       <div style="font-size:.7rem; color:#888; margin-top:3px;">Kiasi kilichobaki kitawekwa kama deni la jina lililoandikwa hapo juu.</div>
     </div>
+    {% endif %}
   </div>
   <!-- 2026-07-28 live request — checkout-time split payment (e.g. a KES 100
        pour paid as 40 cash + 60 mpesa), at the point of sale rather than
@@ -1831,6 +1836,11 @@
   var KegRevMult  = {{ business.keg_revenue_multiplier }};
   var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
   var CAN_AUTH_TAB = {% if is_owner or user.userprofile.can_authorize_tab_accumulation %}true{% else %}false{% endif %};
+  // 2026-08-06 live request (Monsoon Inn) — a waitress may settle tabs on
+  // either counter but must never place a debt; hide "Geuza Deni" for her
+  // rather than showing a button that always errors (backend also blocks
+  // this — see convert_tab_to_debt/bulk_convert_tabs_to_debt).
+  var IS_WAITRESS = {% if is_waitress %}true{% else %}false{% endif %};
   window.PETTY_CASH_STATION = 'bar';  // 2026-07-27 — which till the shared petty cash modal records against on this board
   var CSRF        = "{{ csrf_token }}";
   /* Seeded from server — updated dynamically once shift API responds */
@@ -2839,7 +2849,7 @@
         var staleHtmlF = isStale
           ? '<div style="background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.3);border-radius:6px;padding:.25rem .6rem;margin-bottom:.35rem;font-size:.75rem;color:#ff9800;display:flex;align-items:center;justify-content:space-between;">' +
             '<span>Tab ya ' + tab.opened_date + ' — bado haijafungwa</span>' +
-            '<button onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')" style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>' +
+            (IS_WAITRESS ? '' : '<button onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')" style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>') +
             '</div>'
           : '';
         var receiptLinkHtmlF = tab.receipt_url
@@ -2955,7 +2965,7 @@
         var staleHtml = isStale
           ? '<div style="background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.3);border-radius:6px;padding:.25rem .6rem;margin-bottom:.35rem;font-size:.75rem;color:#ff9800;display:flex;align-items:center;justify-content:space-between;">' +
             '<span>Tab ya ' + tab.opened_date + ' — bado haijafungwa</span>' +
-            '<button onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')" style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>' +
+            (IS_WAITRESS ? '' : '<button onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')" style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>') +
             '</div>'
           : '';
 
@@ -3040,7 +3050,7 @@
           '<button class="tab-action-btn tab-btn-stk" onclick="window.openTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + safeCust + '\',false,\'' + (tab.customer_phone||'').replace(/'/g,"\\'") + '\')">📲 STK Push</button>' +
           '</div>' +
           '<div class="tab-actions-row" style="margin-top:0.3rem;">' +
-          '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>' +
+          (IS_WAITRESS ? '' : '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>') +
           (tab.unpaid_total > 0
             ? '<button class="tab-action-btn" style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.35);color:#4caf50;" ' +
               'onclick="window.openTransferWholeTabModal(' + tab.id + ',\'' + safeCust + '\',' + tab.unpaid_total + ')">🔀 Tab Yote</button>'
@@ -3225,7 +3235,8 @@
             '</div>';
           t.entries.forEach(function (e) {
             html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
-              '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ')</span>' +
+              '<span style="flex:1;">' + (e.is_kitchen ? '🍽 ' : '🍺 ') + e.description + ' — KES ' + fmt(e.amount) + ' (' + e.payment_method + ')' +
+              (e.settled_by_name ? ' <span style="color:#777;">— ilifutwa na ' + e.settled_by_name + '</span>' : '') + '</span>' +
               '<button onclick="window.revokeEntryPayment(' + e.id + ',' + t.tab_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
               'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">↺ Tengua</button>' +
               '</div>';
@@ -5427,7 +5438,7 @@
   }
 
   function loadOrderQueue() {
-    fetch('/bar/orders/queue/')
+    fetch('/bar/orders/queue/?station=bar')
       .then(function (r) { return r.json(); })
       .then(function (d) {
         updateOqBadge(d.pending_count || 0);

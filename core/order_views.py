@@ -41,6 +41,15 @@ def waitress_screen(request):
 
     business = up.business
 
+    # 2026-08-06 live request (Monsoon Inn) — a waitress with cross-station
+    # access (can_access_kitchen, granted via Staff Permissions same as any
+    # other staff member) can now facilitate orders on EITHER counter from
+    # here, not just bar. _station_scope() is the same generic, role-
+    # agnostic helper every other station-scoped view in this app already
+    # uses — no separate permission model invented for this screen.
+    from .views import _station_scope
+    show_bar, show_kitchen = _station_scope(up)
+
     # Keg items that have at least one TAPPED barrel — show with their presets
     tapped_barrel_item_ids = set(
         KegBarrel.objects.filter(business=business, status='TAPPED')
@@ -59,12 +68,26 @@ def waitress_screen(request):
             # keg item but no presets — include as plain item
             keg_items.append({'item': item, 'presets': []})
 
-    # Other non-keg items with a selling price (snacks, soda, food, etc.)
+    # Other non-keg BAR items with a selling price (snacks, soda, spirits, etc.)
     other_items = Item.objects.filter(
-        store__business=business,
-        is_keg=False,
-        selling_price__gt=0,
+        store__business=business, store__is_kitchen=False,
+        is_keg=False, selling_price__gt=0,
     ).exclude(id__in=tapped_barrel_item_ids).order_by('description').distinct()
+
+    # Kitchen items orderable via the Order Desk — deliberately scoped to
+    # ordinary portion-mode items only (is_produce/is_kitchen_batch=False):
+    # a KitchenBatch envelope (Chipo) or ProduceBunch bunch/greens sale
+    # needs its own record_sale_locked() envelope mechanics, which
+    # _create_transactions_for_order() doesn't implement — those items
+    # still sell fine directly from Kitchen Board itself. Only fetched at
+    # all when this viewer actually has kitchen access.
+    kitchen_other_items = Item.objects.none()
+    if show_kitchen:
+        kitchen_other_items = Item.objects.filter(
+            store__business=business, store__is_kitchen=True,
+            is_keg=False, is_produce=False, is_kitchen_batch=False,
+            selling_price__gt=0,
+        ).order_by('description').distinct()
 
     # Today's orders placed by this waitress (or all today for owner/staff)
     today = timezone.localdate()
@@ -86,6 +109,8 @@ def waitress_screen(request):
     return render(request, 'core/bar/waitress_screen.html', {
         'keg_items':      keg_items,
         'other_items':    other_items,
+        'kitchen_other_items': kitchen_other_items,
+        'show_kitchen':   show_kitchen,
         'recent_orders':  recent_orders,
         'is_owner':       is_owner,
         'business':       business,
@@ -118,6 +143,22 @@ def place_table_order(request):
     if not items_list:
         return JsonResponse({'ok': False, 'error': 'Ongeza bidhaa kwanza'}, status=400)
 
+    # 2026-08-06 live request (Monsoon Inn) — which counter this order is
+    # for, captured from her toggle at placement time (see TableOrder.
+    # station's own docstring for why this is captured, not inferred).
+    # Defaults to 'bar' for a viewer with no kitchen toggle at all (every
+    # order desk user before this feature, and any staff without kitchen
+    # access) — unchanged behavior for everyone else.
+    from .views import _station_scope
+    show_bar, show_kitchen = _station_scope(up)
+    station = (request.POST.get('station') or 'bar').strip()
+    if station not in ('bar', 'kitchen'):
+        station = 'bar'
+    if station == 'kitchen' and not show_kitchen:
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kuagiza upande wa Kitchen.'}, status=403)
+    if station == 'bar' and not show_bar:
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kuagiza upande wa Bar.'}, status=403)
+
     # Find the current open shift (for linking the order)
     current_shift = Shift.objects.filter(
         business=up.business, status='OPEN'
@@ -146,6 +187,7 @@ def place_table_order(request):
         waitress=request.user,
         shift=current_shift,
         notes=notes,
+        station=station,
     )
 
     for entry in items_list:
@@ -160,6 +202,13 @@ def place_table_order(request):
 
             item_obj = Item.objects.filter(id=item_id, store__business=up.business).first()
             if not item_obj:
+                continue
+            # An order's items must all belong to the station it was
+            # placed under — never silently mix a kitchen item into a bar
+            # order's queue or vice versa. Skip a mismatched item rather
+            # than mis-route the whole order.
+            item_is_kitchen = bool(item_obj.store_id and item_obj.store.is_kitchen)
+            if item_is_kitchen != (station == 'kitchen'):
                 continue
 
             preset_obj = None
@@ -211,6 +260,16 @@ def table_order_queue_api(request):
         business=up.business,
         status__in=('PENDING', 'ACCEPTED', 'READY'),
     ).prefetch_related('items__item', 'items__preset').order_by('created_at')
+
+    # 2026-08-06 live request (Monsoon Inn) — Bar Board and Kitchen Board
+    # each pass their own ?station= so a queue drawer only shows orders
+    # meant for that counter. A blank/legacy station (orders placed before
+    # TableOrder.station existed) is shown on BOTH boards rather than
+    # guessed onto one — same convention as PettyCash.station's blank rows.
+    station_param = request.GET.get('station', '').strip()
+    if station_param in ('bar', 'kitchen'):
+        from django.db.models import Q as _Q
+        orders_qs = orders_qs.filter(_Q(station=station_param) | _Q(station=''))
 
     now = timezone.now()
     result = []
